@@ -608,7 +608,10 @@ export class LarkChannel {
 
   /**
    * Handle reaction events on bot messages.
-   * Forwards emoji reactions to Codex as a special message type.
+   *
+   * Reactions are passive UI feedback. Forwarding them into Codex as ordinary
+   * message turns makes the bot send confusing follow-up text even though the
+   * user only clicked an emoji.
    */
   private async handleReactionEvent(data: any): Promise<void> {
     const messageId = data?.message_id ?? '';
@@ -629,22 +632,9 @@ export class LarkChannel {
       return;
     }
 
-    const senderName = await this.resolveUserName(operatorId);
-
-    const larkMessage: LarkMessage = {
-      messageId,
-      chatId: '',
-      chatType: 'reaction',
-      senderId: operatorId,
-      senderName: senderName || undefined,
-      text: `(reacted with ${emojiType} to message ${messageId})`,
-      messageType: 'reaction',
-      rawContent: JSON.stringify(data),
-    };
-
-    if (this.messageHandler) {
-      await this.messageHandler(larkMessage);
-    }
+    debugLog(
+      `[channel] Ignoring user reaction ${emojiType || '(unknown)'} on bot message ${messageId} from ${operatorId}`,
+    );
   }
 
   /**
