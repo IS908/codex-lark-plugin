@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.2] - 2026-06-06
+
+### Fixed
+- User emoji reactions on bot replies are now treated as passive feedback and ignored after filtering, preventing confusing "missing original message" follow-up replies.
+
 ## [1.0.1] - 2026-06-06
 
 ### Added
@@ -29,5 +34,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
+[1.0.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/IS908/codex-lark-plugin/releases/tag/v1.0.1
 [1.0.0]: https://github.com/IS908/codex-lark-plugin/releases/tag/v1.0.0

@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.0.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.2-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -30,7 +30,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **Image auto-download**: images are downloaded to a local inbox so Codex can see them directly
 - Quoted reply support with automatic parent message fetching
 - Attachment extraction (image, file, audio, video) with type-aware download
-- **Reaction events**: user emoji reactions on bot messages are forwarded to Codex
+- User emoji reactions on bot messages are treated as passive feedback and do not trigger noisy bot replies
 
 ### Responding
 
@@ -94,11 +94,9 @@ Create a custom app at [Feishu Open Platform](https://open.feishu.cn/app) and en
 | `im:message:send_as_bot` | Send messages as the bot |
 | `im:resource` | Download attachments |
 | `im:message.reactions:write` | Add emoji reactions |
-| `im:message.reactions:read` | Receive reaction events |
 
 Enable the WebSocket mode under **Event Subscriptions** and subscribe to these events:
 - `im.message.receive_v1` -- receive messages
-- `im.message.reaction.created_v1` -- receive emoji reactions on bot messages
 
 ### 2. Install the Plugin
 
@@ -297,7 +295,7 @@ On every incoming message, the plugin injects relevant memory context in this or
 | Variable | Default | Description |
 |---|---|---|
 | `LARK_ACK_EMOJI` | `MeMeMe` | Emoji reaction on message receive. Set to empty string to disable. |
-| `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | Max bot-sent message IDs tracked for reaction filtering (FIFO) |
+| `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | Max bot-sent message IDs tracked for passive reaction-event filtering (FIFO) |
 
 ### Optional -- CronJob
 

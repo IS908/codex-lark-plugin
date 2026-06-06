@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.0.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.2-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -29,6 +29,7 @@
 - **Codex 会话连续性**：exec delivery 会为每个飞书 chat/thread 保存并恢复一个 Codex session，多轮对话可以复用 Codex 原生 session 上下文
 - 引用回复自动合并上下文
 - 附件下载到本地收件箱
+- 用户对 bot 消息添加的 emoji reaction 视为被动反馈，不会触发额外文字回复
 
 ### 消息回复
 
@@ -282,7 +283,7 @@ git push origin v1.0.0
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `LARK_ACK_EMOJI` | `MeMeMe` | 收到消息时的 emoji 回应。留空可禁用 |
-| `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | 用于 reaction 过滤的 bot 消息 ID 追踪上限（FIFO） |
+| `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | 用于被动 reaction 事件过滤的 bot 消息 ID 追踪上限（FIFO） |
 
 ### 可选 —— 定时任务
 
