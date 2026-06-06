@@ -38,6 +38,8 @@ LARK_ALLOWED_CHAT_IDS:     (not set)
 
 === Messaging ===
 LARK_TEXT_CHUNK_LIMIT:     4000
+LARK_CODEX_DELIVERY_MODE:  exec
+LARK_CODEX_EXEC_USE_SESSIONS: true
 
 === Acknowledgement ===
 LARK_ACK_EMOJI:                MeMeMe
@@ -101,6 +103,9 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_MAX_SEARCH_RESULTS` — max episodes injected per message (default: 2)
 - `LARK_MIN_SEARCH_SCORE` — minimum relevance score for episode search (default: 0.3)
 - `LARK_TEXT_CHUNK_LIMIT` — max chars per reply chunk (default: 4000)
+- `LARK_CODEX_DELIVERY_MODE` — `exec` or `notification` (default: `exec`)
+- `LARK_CODEX_EXEC_SANDBOX` — sandbox passed to `codex exec` (default: `workspace-write`)
+- `LARK_CODEX_EXEC_USE_SESSIONS` — resume one Codex session per Feishu chat/thread (default: true)
 - `LARK_ACK_EMOJI` — emoji reaction on message receive, empty to disable (default: `MeMeMe`)
 - `LARK_BOT_MESSAGE_TRACKER_SIZE` — max bot message IDs tracked for reaction filtering (default: 500)
 - `LARK_CRON_SCAN_INTERVAL` — cronjob scan interval in seconds (default: 60)
@@ -125,6 +130,11 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_ALLOWED_USER_IDS`,
    `LARK_ALLOWED_CHAT_IDS`, `LARK_TEXT_CHUNK_LIMIT`, `LARK_INACTIVITY_HOURS`,
    `LARK_MAX_SEARCH_RESULTS`, `LARK_MIN_SEARCH_SCORE`,
+   `LARK_CODEX_DELIVERY_MODE`, `LARK_CODEX_EXEC_COMMAND`,
+   `LARK_CODEX_EXEC_CWD`, `LARK_CODEX_EXEC_TIMEOUT_MS`,
+   `LARK_CODEX_EXEC_SANDBOX`, `LARK_CODEX_EXEC_MODEL`,
+   `LARK_CODEX_EXEC_PROFILE`, `LARK_CODEX_EXEC_IGNORE_USER_CONFIG`,
+   `LARK_CODEX_EXEC_USE_SESSIONS`,
    `LARK_ACK_EMOJI`, `LARK_BOT_MESSAGE_TRACKER_SIZE`,
    `LARK_CRON_SCAN_INTERVAL`, `LARK_CRON_TIMEZONE`,
    `LARK_OWNER_OPEN_ID`, `LARK_IDENTITY_SESSION_TTL_MS`,
@@ -146,6 +156,15 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_ALLOWED_USER_IDS` | Filtering | No | (empty) |
 | `LARK_ALLOWED_CHAT_IDS` | Filtering | No | (empty) |
 | `LARK_TEXT_CHUNK_LIMIT` | Messaging | No | `4000` |
+| `LARK_CODEX_DELIVERY_MODE` | Messaging | No | `exec` |
+| `LARK_CODEX_EXEC_COMMAND` | Messaging | No | `codex` |
+| `LARK_CODEX_EXEC_CWD` | Messaging | No | plugin cwd |
+| `LARK_CODEX_EXEC_TIMEOUT_MS` | Messaging | No | `600000` |
+| `LARK_CODEX_EXEC_SANDBOX` | Messaging | No | `workspace-write` |
+| `LARK_CODEX_EXEC_MODEL` | Messaging | No | (empty) |
+| `LARK_CODEX_EXEC_PROFILE` | Messaging | No | (empty) |
+| `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | Messaging | No | `true` |
+| `LARK_CODEX_EXEC_USE_SESSIONS` | Messaging | No | `true` |
 | `LARK_ACK_EMOJI` | Acknowledgement | No | `MeMeMe` |
 | `LARK_BOT_MESSAGE_TRACKER_SIZE` | Acknowledgement | No | `500` |
 | `LARK_CRON_SCAN_INTERVAL` | CronJob | No | `60` |

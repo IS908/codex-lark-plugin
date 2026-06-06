@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.0.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -26,6 +26,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 - Direct messages (P2P) and group chats (responds to @bot mentions)
 - Rich message types: text, post (rich text), image, file, audio, video, interactive cards
+- **Codex session continuity**: exec delivery stores one Codex session per Feishu chat/thread and resumes it on later messages, so multi-turn conversations keep Codex's native session context
 - **Image auto-download**: images are downloaded to a local inbox so Codex can see them directly
 - Quoted reply support with automatic parent message fetching
 - Attachment extraction (image, file, audio, video) with type-aware download
@@ -289,6 +290,7 @@ On every incoming message, the plugin injects relevant memory context in this or
 | `LARK_CODEX_EXEC_MODEL` | (empty) | Optional model override for exec delivery |
 | `LARK_CODEX_EXEC_PROFILE` | (empty) | Optional Codex config profile for exec delivery |
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | Pass `--ignore-user-config` to `codex exec` to avoid recursively loading the Lark MCP server |
+| `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | Resume one Codex exec session per Feishu `chat_id` / `thread_id`. This preserves multi-turn context inside the Codex CLI session store; it does not attach to an already-open interactive terminal TUI session. |
 
 ### Optional -- Acknowledgement
 

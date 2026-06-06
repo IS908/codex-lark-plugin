@@ -69,6 +69,7 @@ export const appConfig = {
   codexExecModel: process.env.LARK_CODEX_EXEC_MODEL || null,
   codexExecProfile: process.env.LARK_CODEX_EXEC_PROFILE || null,
   codexExecIgnoreUserConfig: optionalBoolean('LARK_CODEX_EXEC_IGNORE_USER_CONFIG', true),
+  codexExecUseSessions: optionalBoolean('LARK_CODEX_EXEC_USE_SESSIONS', true),
   cronScanInterval: optionalNumber('LARK_CRON_SCAN_INTERVAL', 60),
   cronTimezone: optional('LARK_CRON_TIMEZONE', Intl.DateTimeFormat().resolvedOptions().timeZone),
 
@@ -97,6 +98,7 @@ export const appConfig = {
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),
   inboxDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'inbox'),
   jobsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'jobs'),
+  codexExecSessionsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'codex-sessions'),
 } as const;
 
 export type AppConfig = typeof appConfig;

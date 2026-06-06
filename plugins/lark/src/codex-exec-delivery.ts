@@ -1,13 +1,20 @@
 import { appConfig } from './config.js';
 import type { LarkMessage } from './channel.js';
 import type { CodexExecRequest, CodexExecRunner } from './codex-exec.js';
-import { runCodexExecCommand } from './codex-exec.js';
+import { normalizeCodexExecResult, runCodexExecCommand } from './codex-exec.js';
+import {
+  buildCodexExecSessionKey,
+  FileCodexExecSessionStore,
+  type CodexExecSessionStore,
+} from './codex-session-store.js';
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 
 export interface CodexExecDeliveryOptions {
   message: LarkMessage;
   displayLabel: string;
   runCodexExec?: CodexExecRunner;
+  sessionStore?: CodexExecSessionStore;
+  useCodexSessions?: boolean;
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
 }
 
@@ -30,7 +37,8 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
   return [
     'Reply to this Feishu/Lark message.',
     'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
-    'If the user asks for an action you cannot complete in this one-shot exec environment, say exactly what is missing and keep the answer concise.',
+    'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
+    'If the user asks for an action you cannot complete in this exec bridge environment, say exactly what is missing and keep the answer concise.',
     '',
     '[Feishu metadata]',
     metaLines.join('\n'),
@@ -47,11 +55,17 @@ function collectImagePaths(message: LarkMessage): string[] {
   return [...paths];
 }
 
+const defaultSessionStore = new FileCodexExecSessionStore(appConfig.codexExecSessionsDir);
+
 export async function deliverMessageViaCodexExec(
   opts: CodexExecDeliveryOptions,
 ): Promise<void> {
   const { message, displayLabel, sendReply } = opts;
   const runCodexExec = opts.runCodexExec ?? runCodexExecCommand;
+  const useCodexSessions = opts.useCodexSessions ?? appConfig.codexExecUseSessions;
+  const sessionStore = opts.sessionStore ?? defaultSessionStore;
+  const sessionKey = buildCodexExecSessionKey(message.chatId, message.threadId);
+  const existingSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
   const request: CodexExecRequest = {
     prompt: buildCodexExecPrompt(message, displayLabel),
     imagePaths: collectImagePaths(message),
@@ -63,9 +77,35 @@ export async function deliverMessageViaCodexExec(
     profile: appConfig.codexExecProfile,
     ignoreUserConfig: appConfig.codexExecIgnoreUserConfig,
     skipGitRepoCheck: true,
+    resumeSessionId: existingSession?.sessionId ?? null,
   };
 
-  let text = (await runCodexExec(request)).trim();
+  let result;
+  try {
+    result = normalizeCodexExecResult(await runCodexExec(request));
+  } catch (err) {
+    if (!request.resumeSessionId) throw err;
+    console.error(
+      `[codex-exec] Failed to resume session ${request.resumeSessionId} for ${sessionKey}; starting a new session: ${
+        (err as Error).message
+      }`,
+    );
+    result = normalizeCodexExecResult(
+      await runCodexExec({ ...request, resumeSessionId: null }),
+    );
+  }
+
+  if (useCodexSessions && result.sessionId) {
+    await sessionStore.set({
+      key: sessionKey,
+      sessionId: result.sessionId,
+      chatId: message.chatId,
+      ...(message.threadId ? { threadId: message.threadId } : {}),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  let text = result.text.trim();
   if (!text) {
     text = 'Codex exec returned an empty response.';
   }
