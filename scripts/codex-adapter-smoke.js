@@ -1,0 +1,89 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+
+const root = process.cwd();
+
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(path.join(root, file), 'utf-8'));
+}
+
+function read(file) {
+  return fs.readFileSync(path.join(root, file), 'utf-8');
+}
+
+function readSkillFrontmatter(skillName, base = 'skills') {
+  const text = read(path.join(base, skillName, 'SKILL.md'));
+  const match = text.match(/^---\n([\s\S]*?)\n---/);
+  assert.ok(match, `skill ${skillName} must have YAML frontmatter`);
+  const frontmatter = Object.fromEntries(
+    match[1]
+      .split('\n')
+      .map((line) => line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/))
+      .filter(Boolean)
+      .map(([, key, value]) => [key, value.replace(/^["']|["']$/g, '')])
+  );
+  return frontmatter;
+}
+
+const plugin = readJson('.codex-plugin/plugin.json');
+assert.equal(plugin.name, 'lark');
+assert.equal(plugin.mcpServers, './.mcp.json');
+assert.equal(plugin.skills, './skills/');
+assert.equal(plugin.interface.displayName, 'Lark');
+assert.match(plugin.description, /Codex/);
+
+const marketplace = readJson('.agents/plugins/marketplace.json');
+assert.equal(marketplace.name, 'codex-lark-plugin');
+const larkEntry = marketplace.plugins.find((entry) => entry.name === 'lark');
+assert.ok(larkEntry, 'marketplace must expose the lark plugin');
+assert.deepEqual(larkEntry.source, { source: 'local', path: './plugins/lark' });
+assert.equal(larkEntry.policy.installation, 'AVAILABLE');
+assert.equal(larkEntry.policy.authentication, 'ON_INSTALL');
+assert.equal(larkEntry.category, 'Productivity');
+
+assert.equal(readSkillFrontmatter('configure').name, 'configure');
+assert.equal(readSkillFrontmatter('jobs').name, 'jobs');
+
+const wrappedPlugin = readJson('plugins/lark/.codex-plugin/plugin.json');
+assert.equal(wrappedPlugin.name, 'lark');
+assert.equal(wrappedPlugin.mcpServers, './.mcp.json');
+assert.equal(wrappedPlugin.skills, './skills/');
+assert.equal(readSkillFrontmatter('configure', 'plugins/lark/skills').name, 'configure');
+assert.equal(readSkillFrontmatter('jobs', 'plugins/lark/skills').name, 'jobs');
+
+const wrappedMcp = readJson('plugins/lark/.mcp.json');
+assert.equal(wrappedMcp.mcpServers.lark.command, 'npm');
+assert.deepEqual(wrappedMcp.mcpServers.lark.args, ['run', '--silent', 'start']);
+assert.equal(wrappedMcp.mcpServers.lark.cwd, '.');
+
+const wrappedPackage = readJson('plugins/lark/package.json');
+assert.equal(wrappedPackage.type, 'module');
+assert.equal(wrappedPackage.scripts.start, 'node --import tsx src/index.ts');
+assert.ok(fs.existsSync(path.join(root, 'plugins/lark/src/index.ts')));
+
+const mcp = readJson('.mcp.json');
+assert.equal(mcp.mcpServers.lark.command, 'npm');
+assert.deepEqual(mcp.mcpServers.lark.args, ['run', '--silent', 'start']);
+assert.equal(mcp.mcpServers.lark.cwd, '.');
+
+const index = read('src/index.ts');
+const scheduler = read('src/scheduler.ts');
+assert.match(index, /'Codex\/channel'/);
+assert.match(index, /notifications\/Codex\/channel/);
+assert.match(scheduler, /notifications\/Codex\/channel/);
+assert.doesNotMatch(index, /notifications\/claude\/channel|claude\/channel/);
+assert.doesNotMatch(scheduler, /notifications\/claude\/channel|claude\/channel/);
+
+for (const file of [
+  'src/config.ts',
+  'src/debug-log.ts',
+  'src/audit-log.ts',
+  'src/privacy-rules.ts',
+]) {
+  const text = read(file);
+  assert.match(text, /\.codex/);
+  assert.doesNotMatch(text, /\.claude/);
+}
+
+console.error('[codex-adapter-smoke] ok');

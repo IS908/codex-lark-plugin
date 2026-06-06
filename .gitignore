@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+plugins/lark/dist/
+*.js.map
+*.tsbuildinfo
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+
+# Logs and diagnostics
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test and coverage output
+coverage/
+.nyc_output/
+
+# Local tool/editor state
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+.codex/sessions/
+.codex/logs/
+
+# Scratch files
+tmp/
+temp/
+.cache/

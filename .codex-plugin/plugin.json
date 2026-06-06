@@ -1,0 +1,34 @@
+{
+  "name": "lark",
+  "description": "Feishu/Lark channel plugin for Codex — receive messages via WebSocket, reply with text/images/files, manage cross-session memory",
+  "version": "1.0.0",
+  "author": {
+    "name": "IS908",
+    "email": "kevinchen0635@gmail.com",
+    "url": "https://github.com/IS908"
+  },
+  "repository": "https://github.com/IS908/codex-lark-plugin",
+  "homepage": "https://github.com/IS908/codex-lark-plugin",
+  "license": "Apache-2.0",
+  "keywords": ["feishu", "lark", "im", "bot", "chat", "lite-memory"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Lark",
+    "shortDescription": "Chat with Codex through Feishu/Lark",
+    "longDescription": "Connects Codex to Feishu/Lark through an MCP channel plugin. It receives bot messages over WebSocket, forwards them into Codex, and lets Codex reply with text, cards, images, files, reactions, local memory, and scheduled jobs.",
+    "developerName": "IS908",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://github.com/IS908/codex-lark-plugin",
+    "privacyPolicyURL": "https://github.com/IS908/codex-lark-plugin",
+    "termsOfServiceURL": "https://github.com/IS908/codex-lark-plugin",
+    "defaultPrompt": [
+      "Configure my Lark bot credentials",
+      "List my Lark scheduled jobs",
+      "Summarize what Lark remembers about me"
+    ],
+    "brandColor": "#00B96B",
+    "screenshots": []
+  }
+}

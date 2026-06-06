@@ -1,0 +1,20 @@
+{
+  "name": "codex-lark-plugin",
+  "interface": {
+    "displayName": "Codex Lark Plugin"
+  },
+  "plugins": [
+    {
+      "name": "lark",
+      "source": {
+        "source": "local",
+        "path": "./plugins/lark"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

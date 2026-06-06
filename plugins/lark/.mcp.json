@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "lark": {
+      "command": "npm",
+      "args": ["run", "--silent", "start"],
+      "cwd": "."
+    }
+  }
+}
