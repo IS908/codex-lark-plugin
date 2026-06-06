@@ -16,9 +16,15 @@ export interface CodexExecRequest {
   profile?: string | null;
   ignoreUserConfig?: boolean;
   skipGitRepoCheck?: boolean;
+  resumeSessionId?: string | null;
 }
 
-export type CodexExecRunner = (request: CodexExecRequest) => Promise<string>;
+export interface CodexExecResult {
+  text: string;
+  sessionId?: string | null;
+}
+
+export type CodexExecRunner = (request: CodexExecRequest) => Promise<string | CodexExecResult>;
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const OUTPUT_CAP = 16 * 1024;
@@ -34,15 +40,33 @@ function truncate(text: string, maxLen: number): string {
   return `${text.slice(0, maxLen)}...`;
 }
 
-export async function runCodexExecCommand(request: CodexExecRequest): Promise<string> {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-codex-exec-'));
-  const outputFile = path.join(tmpDir, 'last-message.txt');
-  const command = request.command ?? 'codex';
-  const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const cwd = request.cwd ?? process.cwd();
+function extractSessionIdFromJsonLine(line: string): string | null {
+  try {
+    const event = JSON.parse(line) as { type?: unknown; thread_id?: unknown };
+    if (event.type === 'thread.started' && typeof event.thread_id === 'string') {
+      return event.thread_id;
+    }
+  } catch {
+    // Ignore non-JSON output. Errors still surface through the process exit path.
+  }
+  return null;
+}
 
+export function extractCodexExecSessionId(jsonl: string): string | null {
+  for (const line of jsonl.split(/\r?\n/)) {
+    const sessionId = line.trim() ? extractSessionIdFromJsonLine(line) : null;
+    if (sessionId) return sessionId;
+  }
+  return null;
+}
+
+export function buildCodexExecArgs(
+  request: CodexExecRequest,
+  outputFile: string,
+): string[] {
   const args = [
     'exec',
+    '--json',
     '--color',
     'never',
     '--output-last-message',
@@ -57,10 +81,33 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<st
   for (const imagePath of request.imagePaths ?? []) {
     args.push('--image', imagePath);
   }
-  args.push('-');
+
+  if (request.resumeSessionId) {
+    args.push('resume', request.resumeSessionId, '-');
+  } else {
+    args.push('-');
+  }
+
+  return args;
+}
+
+export function normalizeCodexExecResult(result: string | CodexExecResult): CodexExecResult {
+  if (typeof result === 'string') return { text: result };
+  return result;
+}
+
+export async function runCodexExecCommand(request: CodexExecRequest): Promise<CodexExecResult> {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-codex-exec-'));
+  const outputFile = path.join(tmpDir, 'last-message.txt');
+  const command = request.command ?? 'codex';
+  const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const cwd = request.cwd ?? process.cwd();
+  const args = buildCodexExecArgs(request, outputFile);
 
   let stdout = '';
   let stderr = '';
+  let stdoutLineBuffer = '';
+  let sessionId: string | null = null;
   let timedOut = false;
 
   try {
@@ -82,6 +129,12 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<st
 
       child.stdout.on('data', (chunk: Buffer) => {
         stdout = appendCapped(stdout, chunk);
+        stdoutLineBuffer += chunk.toString('utf8');
+        const lines = stdoutLineBuffer.split(/\r?\n/);
+        stdoutLineBuffer = lines.pop() ?? '';
+        for (const line of lines) {
+          sessionId ??= extractSessionIdFromJsonLine(line);
+        }
       });
       child.stderr.on('data', (chunk: Buffer) => {
         stderr = appendCapped(stderr, chunk);
@@ -107,8 +160,9 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<st
       child.stdin.end(request.prompt);
     });
 
+    sessionId ??= extractCodexExecSessionId(stdoutLineBuffer);
     const answer = await fs.readFile(outputFile, 'utf8');
-    return answer.trim();
+    return { text: answer.trim(), sessionId };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }

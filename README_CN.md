@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.0.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -26,6 +26,7 @@
 
 - 私聊消息和群聊 @机器人 消息
 - 富文本、图片、文件、音视频等多种消息类型
+- **Codex 会话连续性**：exec delivery 会为每个飞书 chat/thread 保存并恢复一个 Codex session，多轮对话可以复用 Codex 原生 session 上下文
 - 引用回复自动合并上下文
 - 附件下载到本地收件箱
 
@@ -274,6 +275,7 @@ git push origin v1.0.0
 | `LARK_CODEX_EXEC_MODEL` | （空） | exec delivery 的可选模型覆盖 |
 | `LARK_CODEX_EXEC_PROFILE` | （空） | exec delivery 的可选 Codex 配置 profile |
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | 传 `--ignore-user-config` 给 `codex exec`，避免递归加载当前 Lark MCP server |
+| `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | 为每个飞书 `chat_id` / `thread_id` 恢复一个 Codex exec session，以保留多轮上下文；这不是接管某个已经打开的终端 TUI 交互 session。 |
 
 ### 可选 —— 确认回应
 
