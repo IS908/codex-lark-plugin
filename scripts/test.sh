@@ -62,6 +62,14 @@ echo "=== Codex exec delivery unit checks ==="
 node --import tsx scripts/codex-exec-delivery-smoke.ts
 
 echo ""
+echo "=== Feishu retry unit checks ==="
+node --import tsx scripts/feishu-retry-smoke.ts
+
+echo ""
+echo "=== Scheduler unit checks ==="
+node --import tsx scripts/scheduler-smoke.ts
+
+echo ""
 echo "=== Privacy rules unit checks ==="
 node --import tsx scripts/privacy-rules-smoke.ts
 

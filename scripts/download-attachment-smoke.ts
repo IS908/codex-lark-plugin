@@ -13,7 +13,7 @@
  *  - Unknown SDK shape throws with a descriptive error (helps future
  *    SDK-upgrade triage).
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
@@ -36,6 +36,26 @@ const tmpInbox = mkdtempSync(path.join(tmpdir(), 'download-attach-inbox-'));
 const originalInboxDir = appConfig.inboxDir;
 (appConfig as { inboxDir: string }).inboxDir = tmpInbox;
 
+async function assertRejects(promise: Promise<unknown>, pattern: RegExp, label: string): Promise<void> {
+  try {
+    await promise;
+    fail(`${label}: expected rejection`);
+  } catch (err: any) {
+    if (!pattern.test(err?.message ?? String(err))) {
+      fail(`${label}: rejection mismatch: ${err?.message ?? String(err)}`);
+    }
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function assertNoTempFiles(label: string): void {
+  const leftovers = readdirSync(tmpInbox).filter((name) => name.includes('.tmp-'));
+  if (leftovers.length) fail(`${label}: temp files left behind: ${leftovers.join(', ')}`);
+}
+
 // 1. writeSdkResource: shape 1 (Buffer)
 {
   const filePath = path.join(tmpInbox, 'shape1.bin');
@@ -49,6 +69,7 @@ const originalInboxDir = appConfig.inboxDir;
 {
   const filePath = path.join(tmpInbox, 'shape2.bin');
   const mockSdkResp = {
+    headers: { 'content-length': '21' },
     async writeFile(p: string): Promise<void> {
       const fsp = await import('node:fs/promises');
       await fsp.writeFile(p, 'sdk-writeFile-content');
@@ -60,6 +81,70 @@ const originalInboxDir = appConfig.inboxDir;
   passed++;
 }
 
+// 2b. writeFile-only fallback rejects when it cannot preflight maxBytes.
+{
+  const filePath = path.join(tmpInbox, 'shape2-no-length.bin');
+  let writeFileCalled = false;
+  const mockSdkResp = {
+    async writeFile(p: string): Promise<void> {
+      writeFileCalled = true;
+      const fsp = await import('node:fs/promises');
+      await fsp.writeFile(p, 'should-not-write');
+    },
+  };
+  await assertRejects(
+    writeSdkResource(mockSdkResp, filePath),
+    /writeFile-only SDK response cannot enforce maxBytes/,
+    '2b',
+  );
+  if (writeFileCalled) fail('2b: writeFile should not be called without content-length preflight');
+  if (existsSync(filePath)) fail('2b: writeFile-only no-length file should not be written');
+  assertNoTempFiles('2b');
+  passed++;
+}
+
+// 2c. writeFile-only fallback rejects oversize content-length before writing.
+{
+  const filePath = path.join(tmpInbox, 'shape2-too-large.bin');
+  let writeFileCalled = false;
+  const mockSdkResp = {
+    headers: { 'content-length': '8' },
+    async writeFile(p: string): Promise<void> {
+      writeFileCalled = true;
+      const fsp = await import('node:fs/promises');
+      await fsp.writeFile(p, '12345678');
+    },
+  };
+  await assertRejects(
+    writeSdkResource(mockSdkResp, filePath, { maxBytes: 6 }),
+    /content-length exceeds maxBytes/,
+    '2c',
+  );
+  if (writeFileCalled) fail('2c: writeFile should not be called for oversize content-length');
+  if (existsSync(filePath)) fail('2c: over-cap writeFile fallback should not be written');
+  assertNoTempFiles('2c');
+  passed++;
+}
+
+// 2d. writeFile fallback synchronous failures still clean up temp paths.
+{
+  const filePath = path.join(tmpInbox, 'shape2-sync-throw.bin');
+  const mockSdkResp = {
+    headers: { 'content-length': '4' },
+    writeFile(): void {
+      throw new Error('sync writeFile boom');
+    },
+  };
+  await assertRejects(
+    writeSdkResource(mockSdkResp, filePath),
+    /sync writeFile boom/,
+    '2d',
+  );
+  if (existsSync(filePath)) fail('2d: sync-throw writeFile fallback should not be written');
+  assertNoTempFiles('2d');
+  passed++;
+}
+
 // 3. writeSdkResource: shape 3 (Readable stream)
 {
   const filePath = path.join(tmpInbox, 'shape3.bin');
@@ -67,6 +152,130 @@ const originalInboxDir = appConfig.inboxDir;
   await writeSdkResource(stream, filePath);
   const written = readFileSync(filePath, 'utf-8');
   if (written !== 'chunk1-chunk2') fail(`3: stream write mismatch: ${written}`);
+  passed++;
+}
+
+// 3b. writeSdkResource: Buffer size cap rejects before writing
+{
+  const filePath = path.join(tmpInbox, 'too-large-buffer.bin');
+  await assertRejects(
+    writeSdkResource(Buffer.from('too-large'), filePath, { maxBytes: 3 }),
+    /exceeds maxBytes/,
+    '3b',
+  );
+  if (existsSync(filePath)) fail('3b: over-cap buffer should not be written');
+  assertNoTempFiles('3b');
+  passed++;
+}
+
+// 3c. writeSdkResource: streams to disk and enforces byte cap
+{
+  const filePath = path.join(tmpInbox, 'too-large-stream.bin');
+  const stream = Readable.from([Buffer.from('1234'), Buffer.from('5678')]);
+  await assertRejects(
+    writeSdkResource(stream, filePath, { maxBytes: 6 }),
+    /exceeds maxBytes/,
+    '3c',
+  );
+  if (existsSync(filePath)) fail('3c: over-cap stream file should be removed');
+  assertNoTempFiles('3c');
+  passed++;
+}
+
+// 3d. writeSdkResource: stalled streams time out
+{
+  const filePath = path.join(tmpInbox, 'stall-stream.bin');
+  const stalled = new Readable({
+    read() {},
+  });
+  await assertRejects(
+    writeSdkResource(stalled, filePath, { timeoutMs: 5 }),
+    /timed out after 5ms/,
+    '3d',
+  );
+  if (existsSync(filePath)) fail('3d: timed-out stream file should be removed');
+  assertNoTempFiles('3d');
+  stalled.destroy();
+  passed++;
+}
+
+// 3e. SDK wrapper shape prefers getReadableStream over writeFile so byte caps
+// are enforced before writing the full resource.
+{
+  const filePath = path.join(tmpInbox, 'sdk-wrapper-too-large.bin');
+  let writeFileCalled = false;
+  const sdkWrapper = {
+    async writeFile(): Promise<void> {
+      writeFileCalled = true;
+      throw new Error('writeFile should not be used when getReadableStream exists');
+    },
+    getReadableStream() {
+      return Readable.from([Buffer.from('1234'), Buffer.from('5678')]);
+    },
+  };
+  await assertRejects(
+    writeSdkResource(sdkWrapper, filePath, { maxBytes: 6 }),
+    /exceeds maxBytes/,
+    '3e',
+  );
+  if (writeFileCalled) fail('3e: writeFile should not be called for SDK stream wrapper');
+  if (existsSync(filePath)) fail('3e: over-cap SDK stream file should be removed');
+  assertNoTempFiles('3e');
+  passed++;
+}
+
+// 3f. SDK wrapper stream timeout destroys and cleans up.
+{
+  const filePath = path.join(tmpInbox, 'sdk-wrapper-stall.bin');
+  const stalled = new Readable({
+    read() {},
+  });
+  const sdkWrapper = {
+    getReadableStream() {
+      return stalled;
+    },
+  };
+  await assertRejects(
+    writeSdkResource(sdkWrapper, filePath, { timeoutMs: 5 }),
+    /timed out after 5ms/,
+    '3f',
+  );
+  if (existsSync(filePath)) fail('3f: timed-out SDK stream file should be removed');
+  assertNoTempFiles('3f');
+  stalled.destroy();
+  passed++;
+}
+
+// 3g. Long final basenames still work because temp names are capped separately.
+{
+  const longName = `${'a'.repeat(240)}.txt`;
+  const filePath = path.join(tmpInbox, longName);
+  await writeSdkResource(Buffer.from('long-name-ok'), filePath);
+  const written = readFileSync(filePath, 'utf-8');
+  if (written !== 'long-name-ok') fail(`3g: long basename write mismatch: ${written}`);
+  passed++;
+}
+
+// 3h. Delayed SDK writeFile fallback cannot be cancelled, so timeout cleanup
+// must also remove temp files created after writeSdkResource rejects.
+{
+  const filePath = path.join(tmpInbox, 'sdk-writefile-timeout.bin');
+  const mockSdkResp = {
+    headers: { 'content-length': '10' },
+    async writeFile(p: string): Promise<void> {
+      const fsp = await import('node:fs/promises');
+      await delay(20);
+      await fsp.writeFile(p, 'late-write');
+    },
+  };
+  await assertRejects(
+    writeSdkResource(mockSdkResp, filePath, { timeoutMs: 5 }),
+    /writeSdkResource\.writeFile timed out after 5ms/,
+    '3h',
+  );
+  await delay(40);
+  if (existsSync(filePath)) fail('3h: timed-out writeFile fallback should not be finalized');
+  assertNoTempFiles('3h');
   passed++;
 }
 
@@ -107,6 +316,9 @@ const originalInboxDir = appConfig.inboxDir;
 {
   if (describeSdkResource(Buffer.from('x')) !== 'Buffer') fail('6: Buffer label');
   if (describeSdkResource({ writeFile: () => {} }) !== 'object{writeFile()}') fail('6: writeFile label');
+  if (describeSdkResource({ getReadableStream: () => Readable.from([]), writeFile: () => {} }) !== 'object{getReadableStream()}') {
+    fail('6: getReadableStream label');
+  }
   if (describeSdkResource(Readable.from([])) !== 'ReadableStream') fail('6: stream label');
   if (describeSdkResource(null) !== 'null') fail('6: null label');
   passed++;
@@ -229,6 +441,7 @@ function setup(respFor: (fileKey: string, type: string) => unknown) {
 // 11. Shape 2 (writeFile method) end-to-end through the tool
 {
   const dl = setup(() => ({
+    headers: { 'content-length': '22' },
     async writeFile(p: string): Promise<void> {
       const fsp = await import('node:fs/promises');
       await fsp.writeFile(p, 'shape-2-end-to-end');
@@ -267,6 +480,46 @@ function setup(respFor: (fileKey: string, type: string) => unknown) {
   const txt = r.content[0].text as string;
   if (!/unrecognised SDK response shape/.test(txt)) {
     fail(`13: diagnostic text missing: ${txt}`);
+  }
+  passed++;
+}
+
+// 14. download_attachment passes configured maxBytes into writeSdkResource.
+{
+  const originalDownloadMaxBytes = appConfig.downloadMaxBytes;
+  (appConfig as { downloadMaxBytes: number }).downloadMaxBytes = 3;
+  try {
+    const dl = setup(() => Readable.from([Buffer.from('1234')]));
+    const r = await dl({ message_id: 'om_x', file_key: 'file_v3_big', file_name: 'big.bin' });
+    if (!r.isError) fail('14: over-cap handler download should return isError');
+    const txt = r.content[0].text as string;
+    if (!/exceeds maxBytes/.test(txt)) fail(`14: maxBytes error missing: ${txt}`);
+    if (existsSync(path.join(tmpInbox, 'file_v3_big-big.bin'))) fail('14: over-cap handler file should not be written');
+    assertNoTempFiles('14');
+  } finally {
+    (appConfig as { downloadMaxBytes: number }).downloadMaxBytes = originalDownloadMaxBytes;
+  }
+  passed++;
+}
+
+// 15. download_attachment passes configured timeout into writeSdkResource.
+{
+  const originalDownloadTimeoutMs = appConfig.downloadTimeoutMs;
+  const stalled = new Readable({
+    read() {},
+  });
+  (appConfig as { downloadTimeoutMs: number }).downloadTimeoutMs = 5;
+  try {
+    const dl = setup(() => stalled);
+    const r = await dl({ message_id: 'om_x', file_key: 'file_v3_stall', file_name: 'stall.bin' });
+    if (!r.isError) fail('15: stalled handler download should return isError');
+    const txt = r.content[0].text as string;
+    if (!/timed out after 5ms/.test(txt)) fail(`15: timeout error missing: ${txt}`);
+    if (existsSync(path.join(tmpInbox, 'file_v3_stall-stall.bin'))) fail('15: timed-out handler file should not be written');
+    assertNoTempFiles('15');
+  } finally {
+    stalled.destroy();
+    (appConfig as { downloadTimeoutMs: number }).downloadTimeoutMs = originalDownloadTimeoutMs;
   }
   passed++;
 }
@@ -323,4 +576,4 @@ function setup(respFor: (fileKey: string, type: string) => unknown) {
 rmSync(tmpInbox, { recursive: true, force: true });
 (appConfig as { inboxDir: string }).inboxDir = originalInboxDir;
 
-console.log(`download-attachment smoke: ${passed}/15 PASS`);
+console.log(`download-attachment smoke: ${passed}/27 PASS`);

@@ -72,12 +72,17 @@ export const appConfig = {
   codexExecUseSessions: optionalBoolean('LARK_CODEX_EXEC_USE_SESSIONS', true),
   cronScanInterval: optionalNumber('LARK_CRON_SCAN_INTERVAL', 60),
   cronTimezone: optional('LARK_CRON_TIMEZONE', Intl.DateTimeFormat().resolvedOptions().timeZone),
+  feishuApiTimeoutMs: optionalNumber('LARK_FEISHU_API_TIMEOUT_MS', 30_000),
+  feishuApiRetryAttempts: optionalNumber('LARK_FEISHU_API_RETRY_ATTEMPTS', 3),
+  feishuApiRetryBaseDelayMs: optionalNumber('LARK_FEISHU_API_RETRY_BASE_DELAY_MS', 250),
 
   // Memory
   minSearchScore: optionalNumber('LARK_MIN_SEARCH_SCORE', 0.3),
   maxSearchResults: optionalNumber('LARK_MAX_SEARCH_RESULTS', 2),
   inactivityHours: optionalNumber('LARK_INACTIVITY_HOURS', 3),
   maxEpisodeBytes: optionalNumber('LARK_MAX_EPISODE_BYTES', 64 * 1024),
+  downloadMaxBytes: optionalNumber('LARK_DOWNLOAD_MAX_BYTES', 25 * 1024 * 1024),
+  downloadTimeoutMs: optionalNumber('LARK_DOWNLOAD_TIMEOUT_MS', 60_000),
 
   // Identity / privacy
   ownerOpenId: process.env.LARK_OWNER_OPEN_ID || null,

@@ -109,6 +109,11 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_ACK_EMOJI` — emoji reaction on message receive, empty to disable (default: `MeMeMe`)
 - `LARK_BOT_MESSAGE_TRACKER_SIZE` — max bot message IDs tracked for reaction filtering (default: 500)
 - `LARK_CRON_SCAN_INTERVAL` — cronjob scan interval in seconds (default: 60)
+- `LARK_FEISHU_API_TIMEOUT_MS` — timeout for Feishu API calls (default: 30000)
+- `LARK_FEISHU_API_RETRY_ATTEMPTS` — retry attempts for retryable Feishu API failures (default: 3)
+- `LARK_FEISHU_API_RETRY_BASE_DELAY_MS` — base delay for Feishu API retry backoff (default: 250)
+- `LARK_DOWNLOAD_MAX_BYTES` — max bytes for streamed downloads (default: 26214400)
+- `LARK_DOWNLOAD_TIMEOUT_MS` — timeout for attachment/image downloads (default: 60000)
 
 If user says "use defaults" or "skip", leave these at defaults.
 
@@ -137,6 +142,9 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_CODEX_EXEC_USE_SESSIONS`,
    `LARK_ACK_EMOJI`, `LARK_BOT_MESSAGE_TRACKER_SIZE`,
    `LARK_CRON_SCAN_INTERVAL`, `LARK_CRON_TIMEZONE`,
+   `LARK_FEISHU_API_TIMEOUT_MS`, `LARK_FEISHU_API_RETRY_ATTEMPTS`,
+   `LARK_FEISHU_API_RETRY_BASE_DELAY_MS`, `LARK_DOWNLOAD_MAX_BYTES`,
+   `LARK_DOWNLOAD_TIMEOUT_MS`,
    `LARK_OWNER_OPEN_ID`, `LARK_IDENTITY_SESSION_TTL_MS`,
    `LARK_PRIVACY_RULES_FILE`, `LARK_AUDIT_LOG`.
 3. If the file becomes empty, delete it.
@@ -169,6 +177,11 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_BOT_MESSAGE_TRACKER_SIZE` | Acknowledgement | No | `500` |
 | `LARK_CRON_SCAN_INTERVAL` | CronJob | No | `60` |
 | `LARK_CRON_TIMEZONE` | CronJob | No | system timezone |
+| `LARK_FEISHU_API_TIMEOUT_MS` | Reliability | No | `30000` |
+| `LARK_FEISHU_API_RETRY_ATTEMPTS` | Reliability | No | `3` |
+| `LARK_FEISHU_API_RETRY_BASE_DELAY_MS` | Reliability | No | `250` |
+| `LARK_DOWNLOAD_MAX_BYTES` | Reliability | No | `26214400` |
+| `LARK_DOWNLOAD_TIMEOUT_MS` | Reliability | No | `60000` |
 | `LARK_OWNER_OPEN_ID` | Identity | No | (empty) |
 | `LARK_IDENTITY_SESSION_TTL_MS` | Identity | No | auto |
 | `LARK_PRIVACY_RULES_FILE` | Privacy | No | `~/.codex/channels/lark/privacy-rules.md` |

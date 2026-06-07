@@ -1,11 +1,26 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { appConfig } from './config.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { BotMessageTracker, LatestMessageTracker } from './channel.js';
 import { buildCards, shouldUseCard } from './feishu-card.js';
 import { JOB_THREAD_PREFIX } from './scheduler.js';
+import { feishuApiCall } from './feishu-retry.js';
+
+const ACK_REVOKED_SENTINEL = '__codex_ack_revoked__';
+
+function markAckRevoked(ackReactions: Map<string, string>, messageId: string): void {
+  if (!messageId || ackReactions.has(messageId)) return;
+  ackReactions.set(messageId, ACK_REVOKED_SENTINEL);
+  const timer = setTimeout(() => {
+    if (ackReactions.get(messageId) === ACK_REVOKED_SENTINEL) {
+      ackReactions.delete(messageId);
+    }
+  }, Math.max(1_000, appConfig.feishuApiTimeoutMs + 5_000));
+  timer.unref?.();
+}
 
 export interface ReplyRequest {
   chat_id: string;
@@ -74,16 +89,21 @@ export async function sendFeishuReply(
   const isSyntheticThread = !!thread_id && thread_id.startsWith(JOB_THREAD_PREFIX);
   const shouldStayInThread = !!thread_id && !isSyntheticThread && !!effectiveReplyTo;
   async function sendFollowup(data: { content: string; msg_type: string }): Promise<any> {
+    const uuid = randomUUID();
     if (shouldStayInThread) {
-      return client.im.v1.message.reply({
-        path: { message_id: effectiveReplyTo! },
-        data: { ...data, reply_in_thread: true } as any,
-      });
+      return feishuApiCall('reply.followup.message.reply', () =>
+        client.im.v1.message.reply({
+          path: { message_id: effectiveReplyTo! },
+          data: { ...data, reply_in_thread: true, uuid } as any,
+        }),
+      );
     }
-    return client.im.v1.message.create({
-      params: { receive_id_type: 'chat_id' },
-      data: { receive_id: chat_id, ...data },
-    });
+    return feishuApiCall('reply.followup.message.create', () =>
+      client.im.v1.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: { receive_id: chat_id, ...data, uuid },
+      }),
+    );
   }
 
   // Helper: record in buffer + revoke ack (shared by card & normal paths).
@@ -95,20 +115,31 @@ export async function sendFeishuReply(
       timestamp: new Date().toISOString(),
     });
 
+    if (ackReactions) {
+      const msgId = effectiveReplyTo || '';
+      markAckRevoked(ackReactions, msgId);
+    }
+
     if (ackReactions && ackReactions.size > 0) {
       const msgId = effectiveReplyTo || '';
       const reactionId = msgId ? ackReactions.get(msgId) : undefined;
-      if (reactionId) {
+      if (reactionId && reactionId !== ACK_REVOKED_SENTINEL) {
         ackReactions.delete(msgId);
-        client.im.v1.messageReaction.delete({
-          path: { message_id: msgId, reaction_id: reactionId },
-        }).catch(() => {});
-      } else {
-        for (const [mid, rid] of ackReactions.entries()) {
-          ackReactions.delete(mid);
+        feishuApiCall('reply.ackReaction.delete', () =>
           client.im.v1.messageReaction.delete({
-            path: { message_id: mid, reaction_id: rid },
-          }).catch(() => {});
+            path: { message_id: msgId, reaction_id: reactionId },
+          }),
+        ).catch(() => {});
+      } else {
+        markAckRevoked(ackReactions, msgId);
+        for (const [mid, rid] of ackReactions.entries()) {
+          if (rid === ACK_REVOKED_SENTINEL) continue;
+          ackReactions.delete(mid);
+          feishuApiCall('reply.ackReaction.delete', () =>
+            client.im.v1.messageReaction.delete({
+              path: { message_id: mid, reaction_id: rid },
+            }),
+          ).catch(() => {});
         }
       }
     }
@@ -130,20 +161,26 @@ export async function sendFeishuReply(
     const content = JSON.stringify(cardObj);
     try {
       let resp: any;
+      const uuid = randomUUID();
       if (effectiveReplyTo) {
-        resp = await client.im.v1.message.reply({
-          path: { message_id: effectiveReplyTo },
-          data: { content, msg_type: 'interactive' },
-        });
+        resp = await feishuApiCall('reply.raw_card.message.reply', () =>
+          client.im.v1.message.reply({
+            path: { message_id: effectiveReplyTo },
+            data: { content, msg_type: 'interactive', uuid },
+          }),
+        );
       } else {
-        resp = await client.im.v1.message.create({
-          params: { receive_id_type: 'chat_id' },
-          data: {
-            receive_id: chat_id,
-            content,
-            msg_type: 'interactive',
-          },
-        });
+        resp = await feishuApiCall('reply.raw_card.message.create', () =>
+          client.im.v1.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+              receive_id: chat_id,
+              content,
+              msg_type: 'interactive',
+              uuid,
+            },
+          }),
+        );
       }
       const sentId = resp?.data?.message_id;
       if (sentId && botMessageTracker) botMessageTracker.add(sentId);
@@ -177,11 +214,14 @@ export async function sendFeishuReply(
       const content = JSON.stringify(cards[i]);
       try {
         let resp: any;
+        const uuid = randomUUID();
         if (i === 0 && effectiveReplyTo) {
-          resp = await client.im.v1.message.reply({
-            path: { message_id: effectiveReplyTo },
-            data: { content, msg_type: 'interactive' },
-          });
+          resp = await feishuApiCall('reply.card.message.reply', () =>
+            client.im.v1.message.reply({
+              path: { message_id: effectiveReplyTo },
+              data: { content, msg_type: 'interactive', uuid },
+            }),
+          );
         } else {
           resp = await sendFollowup({ content, msg_type: 'interactive' });
         }
@@ -210,14 +250,18 @@ export async function sendFeishuReply(
     for (let i = 0; i < chunks.length; i++) {
       try {
         let resp: any;
+        const uuid = randomUUID();
         if (effectiveReplyTo && i === 0) {
-          resp = await client.im.v1.message.reply({
-            path: { message_id: effectiveReplyTo },
-            data: {
-              content: JSON.stringify({ text: chunks[i] }),
-              msg_type: 'text',
-            },
-          });
+          resp = await feishuApiCall('reply.text.message.reply', () =>
+            client.im.v1.message.reply({
+              path: { message_id: effectiveReplyTo },
+              data: {
+                content: JSON.stringify({ text: chunks[i] }),
+                msg_type: 'text',
+                uuid,
+              },
+            }),
+          );
         } else {
           resp = await sendFollowup({
             content: JSON.stringify({ text: chunks[i] }),
@@ -251,12 +295,15 @@ export async function sendFeishuReply(
       try {
         const fileData = await fs.readFile(file.path);
         if (file.type === 'image') {
-          const resp = await client.im.v1.image.create({
-            data: {
-              image_type: 'message',
-              image: fileData as any,
-            },
-          });
+          const resp = await feishuApiCall('reply.image.create', () =>
+            client.im.v1.image.create({
+              data: {
+                image_type: 'message',
+                image: fileData as any,
+              },
+            }),
+            { retryTimeout: false },
+          );
           const imageKey = (resp as any)?.data?.image_key ?? (resp as any)?.image_key;
           if (imageKey) {
             const sent = await sendFollowup({
@@ -267,13 +314,16 @@ export async function sendFeishuReply(
             if (sentId && botMessageTracker) botMessageTracker.add(sentId);
           }
         } else {
-          const resp = await client.im.v1.file.create({
-            data: {
-              file_type: 'stream',
-              file_name: path.basename(file.path),
-              file: fileData as any,
-            },
-          });
+          const resp = await feishuApiCall('reply.file.create', () =>
+            client.im.v1.file.create({
+              data: {
+                file_type: 'stream',
+                file_name: path.basename(file.path),
+                file: fileData as any,
+              },
+            }),
+            { retryTimeout: false },
+          );
           const fileKey = (resp as any)?.data?.file_key ?? (resp as any)?.file_key;
           if (fileKey) {
             const sent = await sendFollowup({

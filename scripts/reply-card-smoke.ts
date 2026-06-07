@@ -145,6 +145,7 @@ async function run() {
   const createCall = apiCalls.find((c) => c.method === 'message.create');
   if (!createCall) fail('Test 1: message.create not called');
   if (createCall.args.data.msg_type !== 'interactive') fail('Test 1: msg_type should be interactive');
+  if (!createCall.args.data.uuid) fail('Test 1: message.create missing uuid');
 
   const sentContent = JSON.parse(createCall.args.data.content);
   if (sentContent.type !== 'template') fail('Test 1: card content not passed through');
@@ -180,6 +181,7 @@ async function run() {
   const replyCall = apiCalls.find((c) => c.method === 'message.reply');
   if (!replyCall) fail('Test 3: message.reply not called');
   if (replyCall.args.path.message_id !== 'om_reply_123') fail('Test 3: wrong reply_to');
+  if (!replyCall.args.data.uuid) fail('Test 3: message.reply missing uuid');
 
   // ── Test 4: card path records in conversationBuffer ──
   apiCalls.length = 0;
@@ -197,6 +199,7 @@ async function run() {
 
   // ── Test 5: card path revokes ack reactions (exact match) ──
   apiCalls.length = 0;
+  ackReactions.clear();
   ackReactions.set('om_ack_msg', 'reaction_abc');
 
   await replyHandler({

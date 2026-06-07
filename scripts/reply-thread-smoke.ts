@@ -147,6 +147,9 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   if (imageCall.args.data.msg_type !== 'image') {
     fail(`1: image reply msg_type wrong: ${imageCall.args.data.msg_type}`);
   }
+  for (const call of replyCalls) {
+    if (!call.args.data.uuid) fail(`1: message.reply missing uuid: ${JSON.stringify(call.args.data)}`);
+  }
   passed++;
 }
 
@@ -169,6 +172,7 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   if (imgCreate.args.data.msg_type !== 'image') {
     fail(`2: image create msg_type wrong: ${imgCreate.args.data.msg_type}`);
   }
+  if (!imgCreate.args.data.uuid) fail('2: image create missing uuid');
   if ('reply_in_thread' in imgCreate.args.data) {
     fail(`2: P2P image create must NOT carry reply_in_thread`);
   }

@@ -7,6 +7,7 @@
  */
 import * as Lark from '@larksuiteoapi/node-sdk';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { createHash } from 'node:crypto';
 import { appConfig } from './config.js';
 import { cronJobPrompt } from './prompts.js';
 import type { IdentitySession } from './identity-session.js';
@@ -16,6 +17,7 @@ import {
   computeNextRun,
   type JobFile,
 } from './job-store.js';
+import { feishuApiCall } from './feishu-retry.js';
 
 /**
  * Prefix for synthetic `thread_id` values injected into cronjob channel
@@ -55,13 +57,12 @@ function isRetryableError(err: any): boolean {
   if (status && RETRYABLE_HTTP_CODES.has(status)) return true;
 
   // Feishu API error codes — permission/param errors are NOT retryable
-  const apiCode = err?.response?.data?.code ?? err?.data?.code;
-  if (apiCode) {
+  const apiCode = Number(err?.response?.data?.code ?? err?.data?.code);
+  if (Number.isFinite(apiCode)) {
     // Known non-retryable Feishu codes
     // 99991672 = permission denied, 230001 = param error
     if (apiCode === 99991672 || apiCode === 230001) return false;
-    // Other Feishu codes starting with 9999 are usually transient
-    if (apiCode >= 99990000 && apiCode < 100000000) return true;
+    return false;
   }
 
   // Error message heuristics
@@ -185,7 +186,7 @@ export class JobScheduler {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         if (job.meta.type === 'message') {
-          await this.executeMessageJob(job);
+          await this.executeMessageJob(job, job.runtime.next_run_at ?? new Date(startTime).toISOString());
         } else if (job.meta.type === 'prompt') {
           await this.executePromptJob(job);
         }
@@ -237,18 +238,26 @@ export class JobScheduler {
   /**
    * message type: send fixed content via Feishu IM API.
    */
-  private async executeMessageJob(job: JobFile): Promise<void> {
+  private async executeMessageJob(job: JobFile, runKey: string): Promise<void> {
     const content = job.meta.content ?? '';
     const msgType = job.meta.msg_type ?? 'text';
+    const uuid = createHash('sha256')
+      .update(`scheduler:${job.meta.id}:${runKey}`)
+      .digest('hex')
+      .slice(0, 32);
 
-    await this.client.im.v1.message.create({
-      params: { receive_id_type: 'chat_id' },
-      data: {
-        receive_id: job.meta.target_chat_id,
-        content: JSON.stringify(msgType === 'text' ? { text: content } : { content }),
-        msg_type: msgType,
-      },
-    });
+    await feishuApiCall('scheduler.message.create', () =>
+      this.client.im.v1.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: job.meta.target_chat_id,
+          content: JSON.stringify(msgType === 'text' ? { text: content } : { content }),
+          msg_type: msgType,
+          uuid,
+        },
+      }),
+      { attempts: 1, retryTimeout: false },
+    );
   }
 
   /**

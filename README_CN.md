@@ -72,6 +72,9 @@
 ### 可靠性
 
 - 每个会话独立消息队列，同一会话按序处理
+- Feishu API 热路径使用统一 retry/timeout wrapper：发送、编辑、reaction、元数据读取、下载都会受控重试
+- 附件/图片下载直接流式写盘，并有可配置大小上限和超时
+- 依赖审计入口：`npm run audit:deps`
 - 单实例锁，防止重复启动
 - 发送者/群聊白名单过滤（两个列表同时配置时为 OR 关系）
 - 定时任务崩溃恢复（错过的任务重启后补执行一次）
@@ -194,6 +197,7 @@ node -e "console.log(require('./package.json').version)"
 ```bash
 npm install
 npm test
+npm run audit:deps
 git status --short --ignored
 ```
 
@@ -285,6 +289,16 @@ git push origin v1.0.0
 |---|---|---|
 | `LARK_ACK_EMOJI` | `MeMeMe` | 收到消息时的 emoji 回应。留空可禁用 |
 | `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | 用于被动 reaction 事件过滤的 bot 消息 ID 追踪上限（FIFO） |
+
+### 可选 -- Feishu API 可靠性
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `LARK_FEISHU_API_TIMEOUT_MS` | `30000` | 单次 Feishu API 调用超时时间（毫秒） |
+| `LARK_FEISHU_API_RETRY_ATTEMPTS` | `3` | 可重试的临时 Feishu/API/网络错误最多尝试次数 |
+| `LARK_FEISHU_API_RETRY_BASE_DELAY_MS` | `250` | 指数退避基础延迟（毫秒） |
+| `LARK_DOWNLOAD_MAX_BYTES` | `26214400` | 附件/图片下载最大字节数，超出会拒绝写入 |
+| `LARK_DOWNLOAD_TIMEOUT_MS` | `60000` | 附件/图片下载超时时间（毫秒） |
 
 ### 可选 —— 定时任务
 
