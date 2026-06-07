@@ -49,8 +49,18 @@ function capUtf8Bytes(content: string, maxBytes: number): string {
 
   const marker = `\n\n[truncated to ${maxBytes} bytes]\n`;
   const markerBytes = Buffer.byteLength(marker, 'utf8');
-  const keepBytes = Math.max(0, maxBytes - markerBytes);
-  return Buffer.from(content, 'utf8').subarray(0, keepBytes).toString('utf8') + marker;
+  if (markerBytes >= maxBytes) return marker.slice(0, maxBytes);
+
+  const keepBytes = maxBytes - markerBytes;
+  let used = 0;
+  let prefix = '';
+  for (const char of content) {
+    const charBytes = Buffer.byteLength(char, 'utf8');
+    if (used + charBytes > keepBytes) break;
+    prefix += char;
+    used += charBytes;
+  }
+  return prefix + marker;
 }
 
 function capEpisodeContent(content: string): string {

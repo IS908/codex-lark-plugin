@@ -74,6 +74,14 @@ function isAsciiWordKeyword(s: string): boolean {
   return /^[a-z0-9_+-]+$/i.test(s);
 }
 
+const OVERBROAD_L2_RULES = new Set([
+  // English stop words / acknowledgements
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'is', 'it',
+  'of', 'ok', 'on', 'or', 'that', 'the', 'to', 'with',
+  // Common Chinese function words and pronouns
+  '的', '了', '和', '与', '或', '在', '是', '我', '你', '他', '她', '它', '们',
+]);
+
 function keywordMatches(haystackLower: string, keyword: string): boolean {
   const kw = keyword.trim();
   if (!kw) return false;
@@ -139,11 +147,9 @@ export async function loadL2Rules(overridePath?: string): Promise<string> {
  * trade-off — deterministic and fast, at the cost of expressivity. Abstract
  * L2 rules still apply at L3 distillation time as before.
  *
- * Warning: very short phrases (e.g. "a", "的") will substring-match almost
- * everything and effectively turn the whole profile private. This extractor
- * does NOT reject them — operators author L2 deliberately, and migration
- * over-protection is safer than under-protection. Prefer concrete multi-char
- * phrases.
+ * Overbroad phrases (e.g. "a", "ok", "的") are skipped for this deterministic
+ * migration path because substring matching would otherwise classify almost
+ * everything as private.
  */
 export function extractL2PrivatePhrases(markdown: string): string[] {
   if (!markdown) return [];
@@ -162,7 +168,17 @@ export function extractL2PrivatePhrases(markdown: string): string[] {
     }
     if (inSection && line.startsWith('- ')) {
       const phrase = line.slice(2).trim();
-      if (phrase) phrases.push(phrase);
+      if (phrase) {
+        try {
+          phrases.push(validateL2Rule(phrase));
+        } catch (err) {
+          console.error(
+            `[privacy] Ignoring invalid L2 private rule during extraction: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
     }
   }
   return phrases;
@@ -177,8 +193,14 @@ export function validateL2Rule(rule: string): string {
   if (/^#+\s/.test(trimmed)) {
     throw new Error('Invalid privacy rule: rule must be a bullet item, not a markdown heading.');
   }
-  if (/^[a-z0-9]$/i.test(trimmed)) {
-    throw new Error('Invalid privacy rule: single ASCII characters are too broad.');
+  if ([...trimmed].length < 2) {
+    throw new Error('Invalid privacy rule: rule is too short and would match too broadly.');
+  }
+  if (isAsciiWordKeyword(trimmed) && trimmed.length < 3) {
+    throw new Error('Invalid privacy rule: short ASCII tokens are too broad.');
+  }
+  if (OVERBROAD_L2_RULES.has(trimmed.toLowerCase())) {
+    throw new Error('Invalid privacy rule: common stop words are too broad.');
   }
   if (trimmed.length > 500) {
     throw new Error('Invalid privacy rule: rule is too long (max 500 chars).');

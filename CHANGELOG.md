@@ -10,11 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `LARK_MAX_EPISODE_BYTES` to cap persisted episode file size.
 
 ### Changed
-- Memory, quote, flush, cronjob, and L2 privacy-rule prompt inputs are wrapped as untrusted data.
+- Memory, quote, flush, cronjob, and L2 privacy-rule prompt inputs are escaped and wrapped as untrusted data.
 - Same-user profile operations are serialized to avoid migration/write/delete races.
 
 ### Fixed
 - Direct public profile writes now apply the L1 privacy safety net and route sensitive spillover to the private tier.
+- Episode persistence now respects the configured UTF-8 byte cap without splitting multi-byte characters.
 - L2 privacy rule additions now reject empty, multiline, heading-like, over-broad, or oversized rules.
 
 ## [1.0.2] - 2026-06-06

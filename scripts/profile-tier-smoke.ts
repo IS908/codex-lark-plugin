@@ -386,6 +386,25 @@ passed++;
   passed++;
 }
 
+// ── 18b. episode cap preserves exact UTF-8 byte budget ────────
+{
+  const r = mkdtempSync(join(tmpdir(), 'episode-cap-utf8-'));
+  const oldLimit = appConfig.maxEpisodeBytes;
+  (appConfig as any).maxEpisodeBytes = 36;
+  const s = new MemoryStore(r);
+  await s.saveEpisode('chat', '中文'.repeat(40), { chatId: 'oc_utf8_cap' });
+  const episode = (await s.listEpisodes('oc_utf8_cap'))[0];
+  const body = readFileSync(join(r, 'episodes', 'oc_utf8_cap', episode.id), 'utf-8');
+  if (Buffer.byteLength(body, 'utf8') > 36) {
+    fail(`18b: capped UTF-8 episode exceeded byte limit (${Buffer.byteLength(body, 'utf8')})`);
+  }
+  if (body.includes('\uFFFD')) fail('18b: capped UTF-8 episode contains replacement character');
+  if (!body.includes('[truncated')) fail('18b: truncation marker missing');
+  (appConfig as any).maxEpisodeBytes = oldLimit;
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
 // ── parseTieredProfile: well-formed JSON ─────────────────────
 {
   const { public: pub, private: priv } = parseTieredProfile(
@@ -447,4 +466,4 @@ rmSync(legacyRoot, { recursive: true, force: true });
 rmSync(partialRoot, { recursive: true, force: true });
 rmSync(writeRoot, { recursive: true, force: true });
 
-console.log(`profile-tier smoke: ${passed}/28 PASS`);
+console.log(`profile-tier smoke: ${passed}/29 PASS`);
