@@ -23,7 +23,20 @@ function normalizeProfileLine(line: string): string {
   return line.trim().replace(/^[-*]\s+/, '').toLowerCase();
 }
 
-function splitProfileContentByL1(content: string): { publicContent: string; privateContent: string } {
+function isL2Private(line: string, l2PrivatePhrases: string[]): boolean {
+  if (l2PrivatePhrases.length === 0) return false;
+  const lower = line.toLowerCase();
+  return l2PrivatePhrases.some((phrase) => lower.includes(phrase));
+}
+
+function isDeterministicPrivate(line: string, l2PrivatePhrases: string[]): boolean {
+  return applyL1(line) === 'private' || isL2Private(line, l2PrivatePhrases);
+}
+
+function splitProfileContentByPrivacy(
+  content: string,
+  l2PrivatePhrases: string[],
+): { publicContent: string; privateContent: string } {
   const publicLines: string[] = [];
   const privateLines: string[] = [];
 
@@ -32,7 +45,7 @@ function splitProfileContentByL1(content: string): { publicContent: string; priv
       publicLines.push(raw);
       continue;
     }
-    if (applyL1(raw) === 'private') privateLines.push(raw);
+    if (isDeterministicPrivate(raw, l2PrivatePhrases)) privateLines.push(raw);
     else publicLines.push(raw);
   }
 
@@ -172,6 +185,10 @@ export class MemoryStore {
     return path.join(this.baseDir, 'profiles', `${userId}.md`);
   }
 
+  private async loadL2PrivatePhrases(): Promise<string[]> {
+    return extractL2PrivatePhrases(await loadL2Rules()).map((p) => p.toLowerCase());
+  }
+
   /**
    * Migrate a pre-v0.10 single-file profile to the tiered layout, applying
    * the L1 classifier line-by-line to split into public/private.
@@ -227,7 +244,7 @@ export class MemoryStore {
     // BEFORE upgrading can influence their own legacy-profile migration
     // (org codenames, people mentions, etc. that L1 doesn't cover).
     // Substring match is case-insensitive, deterministic, no LLM needed.
-    const l2Phrases = extractL2PrivatePhrases(await loadL2Rules()).map((p) => p.toLowerCase());
+    const l2Phrases = await this.loadL2PrivatePhrases();
 
     for (const line of content.split('\n')) {
       if (!line.trim()) {
@@ -329,15 +346,16 @@ export class MemoryStore {
       await fs.mkdir(dir, { recursive: true });
 
       if (tier === 'public') {
-        const { publicContent, privateContent } = splitProfileContentByL1(content);
-        await this.writeProfileTierUnlocked(userId, 'public', publicContent, mode);
+        const l2Phrases = await this.loadL2PrivatePhrases();
+        const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
+        await this.writeProfileTierUnlocked(userId, 'public', publicContent, mode, l2Phrases);
         if (privateContent.trim()) {
-          await this.writeProfileTierUnlocked(userId, 'private', privateContent, 'append');
+          await this.writeProfileTierUnlocked(userId, 'private', privateContent, 'append', l2Phrases);
         }
         return;
       }
 
-      await this.writeProfileTierUnlocked(userId, tier, content, mode);
+      await this.writeProfileTierUnlocked(userId, tier, content, mode, await this.loadL2PrivatePhrases());
     });
   }
 
@@ -346,11 +364,25 @@ export class MemoryStore {
     tier: Tier,
     content: string,
     mode: 'append' | 'replace',
+    l2PrivatePhrases: string[],
   ): Promise<void> {
     const filePath = this.profileTierPath(userId, tier);
 
     if (mode === 'replace') {
-      await fs.writeFile(filePath, content, 'utf-8');
+      if (tier !== 'private' || !existsSync(filePath)) {
+        await fs.writeFile(filePath, content, 'utf-8');
+        return;
+      }
+
+      const existing = await fs.readFile(filePath, 'utf-8');
+      const deterministicExisting = existing
+        .split('\n')
+        .filter((line) => line.trim() && isDeterministicPrivate(line, l2PrivatePhrases))
+        .join('\n');
+      const next = deterministicExisting
+        ? mergeProfileLines(content, deterministicExisting, { userId, tier })
+        : content;
+      await fs.writeFile(filePath, next, 'utf-8');
       return;
     }
 

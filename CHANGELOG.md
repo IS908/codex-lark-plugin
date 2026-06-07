@@ -14,7 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Same-user profile operations are serialized to avoid migration/write/delete races.
 
 ### Fixed
+- Cron job names are now treated as untrusted prompt data, and cron routing chat ids reject control characters.
 - Direct public profile writes now apply the L1 privacy safety net and route sensitive spillover to the private tier.
+- Direct public profile writes now also apply deterministic L2 always-private spillover.
 - Episode persistence now respects the configured UTF-8 byte cap without splitting multi-byte characters.
 - L2 privacy rule additions now reject empty, multiline, heading-like, over-broad, or oversized rules.
 

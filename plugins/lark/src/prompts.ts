@@ -24,6 +24,13 @@ export function untrustedDataBlock(label: string, content: string | null | undef
   ].join('\n');
 }
 
+function trustedSingleLine(label: string, value: string): string {
+  if (/[\r\n\u2028\u2029]/.test(value)) {
+    throw new Error(`${label} must not contain control characters.`);
+  }
+  return value;
+}
+
 /**
  * Distillation Stage 1: Buffer → Episode.
  * Instructs Codex to summarize a conversation and persist it as a chat
@@ -123,10 +130,13 @@ export const mcpServerInstructions: string = [
  * Wraps the user's prompt with execution instructions for Codex.
  */
 export function cronJobPrompt(jobName: string, sendChatId: string, prompt: string): string {
+  const safeChatId = trustedSingleLine('chat_id', sendChatId);
   return [
-    `[CronJob: ${jobName}]`,
-    `Execute this task and reply to chat_id=${sendChatId} with the result.`,
+    `[CronJob]`,
+    `Execute this task and reply to chat_id=${safeChatId} with the result.`,
     `Do NOT reply to any other chat. Use a subagent when possible so the main thread stays responsive.`,
+    ``,
+    untrustedDataBlock('cronjob-name', jobName),
     ``,
     untrustedDataBlock('cronjob-user-prompt', prompt),
   ].join('\n');

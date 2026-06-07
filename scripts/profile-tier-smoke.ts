@@ -353,6 +353,43 @@ passed++;
   passed++;
 }
 
+// ── 16b. public profile writes apply L2 safety net ────────────
+{
+  const r = mkdtempSync(join(tmpdir(), 'profile-l2-save-'));
+  const oldL2 = process.env.LARK_PRIVACY_RULES_FILE;
+  const l2Path = join(r, 'privacy-rules.md');
+  writeFileSync(l2Path, '## Always private\n- 项目代号 Phoenix\n', 'utf-8');
+  process.env.LARK_PRIVACY_RULES_FILE = l2Path;
+  const s = new MemoryStore(r);
+  await s.saveProfile('ou_l2', '- works on TypeScript\n- 项目代号 Phoenix', 'public');
+
+  const pub = readFileSync(join(r, 'profiles', 'ou_l2', 'public.md'), 'utf-8');
+  const privPath = join(r, 'profiles', 'ou_l2', 'private.md');
+  const priv = existsSync(privPath) ? readFileSync(privPath, 'utf-8') : '';
+  if (pub.includes('Phoenix')) fail(`16b: L2 private fact leaked to public: ${pub}`);
+  if (!priv.includes('Phoenix')) fail(`16b: L2 private spillover missing: ${priv}`);
+  if (oldL2 === undefined) delete process.env.LARK_PRIVACY_RULES_FILE;
+  else process.env.LARK_PRIVACY_RULES_FILE = oldL2;
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
+// ── 16c. private replace preserves deterministic spillover ────
+{
+  const r = mkdtempSync(join(tmpdir(), 'profile-replace-spill-'));
+  const s = new MemoryStore(r);
+  await s.saveProfile('ou_spill', '- public safe\n- 手机号 13800138000', 'public', 'replace');
+  await s.saveProfile('ou_spill', '- explicit private fact', 'private', 'replace');
+
+  const pub = readFileSync(join(r, 'profiles', 'ou_spill', 'public.md'), 'utf-8');
+  const priv = readFileSync(join(r, 'profiles', 'ou_spill', 'private.md'), 'utf-8');
+  if (pub.includes('13800138000')) fail(`16c: L1 private fact leaked to public: ${pub}`);
+  if (!priv.includes('13800138000')) fail(`16c: L1 spillover lost after private replace: ${priv}`);
+  if (!priv.includes('explicit private fact')) fail(`16c: private replace content missing: ${priv}`);
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
 // ── 17. same-user concurrent profile appends are serialized ──
 {
   const r = mkdtempSync(join(tmpdir(), 'profile-concurrent-'));
@@ -379,7 +416,7 @@ passed++;
   await s.saveEpisode('chat', 'x'.repeat(200), { chatId: 'oc_cap' });
   const episode = (await s.listEpisodes('oc_cap'))[0];
   const body = readFileSync(join(r, 'episodes', 'oc_cap', episode.id), 'utf-8');
-  if (Buffer.byteLength(body, 'utf8') > 100) fail(`18: capped episode still too large (${Buffer.byteLength(body)})`);
+  if (Buffer.byteLength(body, 'utf8') > 40) fail(`18: capped episode still too large (${Buffer.byteLength(body, 'utf8')})`);
   if (!body.includes('[truncated')) fail('18: truncation marker missing');
   (appConfig as any).maxEpisodeBytes = oldLimit;
   rmSync(r, { recursive: true, force: true });
@@ -466,4 +503,4 @@ rmSync(legacyRoot, { recursive: true, force: true });
 rmSync(partialRoot, { recursive: true, force: true });
 rmSync(writeRoot, { recursive: true, force: true });
 
-console.log(`profile-tier smoke: ${passed}/29 PASS`);
+console.log(`profile-tier smoke: ${passed}/31 PASS`);
