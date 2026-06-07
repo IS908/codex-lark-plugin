@@ -61,18 +61,29 @@ interface SessionEntry {
 
 export class IdentitySession {
   private map = new Map<string, SessionEntry>();
+  private readonly ownerFallback: () => string | null;
+  private readonly maxAgeMs: number;
+  private readonly maxEntries: number;
 
   constructor(
-    private readonly ownerFallback: () => string | null,
-    private readonly maxAgeMs: number = 3600_000,
-  ) {}
+    ownerFallback: () => string | null,
+    maxAgeMs: number = 3600_000,
+    maxEntries: number = 5000,
+  ) {
+    this.ownerFallback = ownerFallback;
+    this.maxAgeMs = Number.isFinite(maxAgeMs) && maxAgeMs > 0 ? Math.floor(maxAgeMs) : 3600_000;
+    this.maxEntries = Number.isFinite(maxEntries) && maxEntries > 0 ? Math.floor(maxEntries) : 5000;
+  }
 
   private key(chatId: string, threadId?: string): string {
     return threadId ? `${chatId}#${threadId}` : chatId;
   }
 
   setCaller(chatId: string, threadId: string | undefined, userId: string): void {
-    this.map.set(this.key(chatId, threadId), { userId, updatedAt: Date.now() });
+    const key = this.key(chatId, threadId);
+    this.map.delete(key);
+    this.map.set(key, { userId, updatedAt: Date.now() });
+    this.enforceMaxEntries();
   }
 
   /**
@@ -85,11 +96,21 @@ export class IdentitySession {
       return this.ownerFallback();
     }
     if (threadId) {
-      const entry = this.map.get(this.key(chatId, threadId));
-      if (entry && !this.isStale(entry)) return entry.userId;
+      const key = this.key(chatId, threadId);
+      const entry = this.map.get(key);
+      if (entry && !this.isStale(entry)) {
+        this.map.delete(key);
+        this.map.set(key, entry);
+        return entry.userId;
+      }
     }
-    const chatEntry = this.map.get(this.key(chatId));
-    if (chatEntry && !this.isStale(chatEntry)) return chatEntry.userId;
+    const chatKey = this.key(chatId);
+    const chatEntry = this.map.get(chatKey);
+    if (chatEntry && !this.isStale(chatEntry)) {
+      this.map.delete(chatKey);
+      this.map.set(chatKey, chatEntry);
+      return chatEntry.userId;
+    }
     return null;
   }
 
@@ -102,6 +123,13 @@ export class IdentitySession {
 
   private isStale(entry: SessionEntry): boolean {
     return Date.now() - entry.updatedAt > this.maxAgeMs;
+  }
+
+  private enforceMaxEntries(): void {
+    while (this.map.size > this.maxEntries) {
+      const oldest = this.map.keys().next().value as string;
+      this.map.delete(oldest);
+    }
   }
 
   /** Test-only helper. */

@@ -1,13 +1,11 @@
-import { appendFileSync } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-
-const DEBUG_LOG = path.join(os.homedir(), '.codex', 'channels', 'lark', 'debug.log');
+import { appConfig } from './config.js';
+import { appendRotatingLine } from './resource-governance.js';
 
 export function debugLog(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
-  try {
-    appendFileSync(DEBUG_LOG, line);
-  } catch {}
+  void appendRotatingLine(appConfig.debugLogPath, line, {
+    maxBytes: appConfig.logMaxBytes,
+    maxFiles: appConfig.logMaxFiles,
+  }).catch(() => undefined);
   console.error(msg);
 }

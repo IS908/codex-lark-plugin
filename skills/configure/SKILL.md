@@ -31,15 +31,24 @@ LARK_APP_SECRET:   abc****xy
 LARK_INACTIVITY_HOURS:     3
 LARK_MAX_SEARCH_RESULTS:   2
 LARK_MIN_SEARCH_SCORE:     0.3
+LARK_MAX_EPISODE_BYTES:    65536
 
 === Filtering ===
 LARK_ALLOWED_USER_IDS:     (not set)
 LARK_ALLOWED_CHAT_IDS:     (not set)
 
 === Messaging ===
-LARK_TEXT_CHUNK_LIMIT:     4000
-LARK_CODEX_DELIVERY_MODE:  exec
-LARK_CODEX_EXEC_USE_SESSIONS: true
+LARK_TEXT_CHUNK_LIMIT:              4000
+LARK_QUEUE_HANDLER_TIMEOUT_MS:      30000
+LARK_CODEX_DELIVERY_MODE:           exec
+LARK_CODEX_EXEC_COMMAND:            codex
+LARK_CODEX_EXEC_CWD:                plugin cwd
+LARK_CODEX_EXEC_TIMEOUT_MS:         600000
+LARK_CODEX_EXEC_SANDBOX:            workspace-write
+LARK_CODEX_EXEC_MODEL:              (not set)
+LARK_CODEX_EXEC_PROFILE:            (not set)
+LARK_CODEX_EXEC_IGNORE_USER_CONFIG: true
+LARK_CODEX_EXEC_USE_SESSIONS:       true
 
 === Acknowledgement ===
 LARK_ACK_EMOJI:                MeMeMe
@@ -48,6 +57,32 @@ LARK_BOT_MESSAGE_TRACKER_SIZE: 500
 === CronJob ===
 LARK_CRON_SCAN_INTERVAL:   60
 LARK_CRON_TIMEZONE:        (system tz)
+
+=== Reliability ===
+LARK_FEISHU_API_TIMEOUT_MS:            30000
+LARK_FEISHU_API_RETRY_ATTEMPTS:        3
+LARK_FEISHU_API_RETRY_BASE_DELAY_MS:   250
+LARK_DOWNLOAD_MAX_BYTES:               26214400
+LARK_DOWNLOAD_TIMEOUT_MS:              60000
+
+=== Resource Governance ===
+LARK_MAX_EPISODE_FILES_PER_SCOPE: 200
+LARK_MAX_EPISODE_SCOPE_BYTES:     10485760
+LARK_IDENTITY_SESSION_MAX_ENTRIES: 5000
+LARK_DEBUG_LOG:                   ~/.codex/channels/lark/debug.log
+LARK_LOG_MAX_BYTES:               5242880
+LARK_LOG_MAX_FILES:               5
+LARK_INBOX_MAX_AGE_HOURS:         168
+LARK_INBOX_MAX_BYTES:             209715200
+LARK_NAME_CACHE_SIZE:             1000
+LARK_CHAT_TYPE_CACHE_SIZE:        1000
+LARK_LATEST_MESSAGE_TRACKER_SIZE: 1000
+
+=== Identity / Privacy ===
+LARK_OWNER_OPEN_ID:               (not set)
+LARK_IDENTITY_SESSION_TTL_MS:     auto
+LARK_PRIVACY_RULES_FILE:          ~/.codex/channels/lark/privacy-rules.md
+LARK_AUDIT_LOG:                   ~/.codex/channels/lark/audit.log
 ```
 
 5. Suggest next steps:
@@ -103,6 +138,7 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_MAX_SEARCH_RESULTS` — max episodes injected per message (default: 2)
 - `LARK_MIN_SEARCH_SCORE` — minimum relevance score for episode search (default: 0.3)
 - `LARK_TEXT_CHUNK_LIMIT` — max chars per reply chunk (default: 4000)
+- `LARK_QUEUE_HANDLER_TIMEOUT_MS` — per-message queue handler timeout (default: 30000)
 - `LARK_CODEX_DELIVERY_MODE` — `exec` or `notification` (default: `exec`)
 - `LARK_CODEX_EXEC_SANDBOX` — sandbox passed to `codex exec` (default: `workspace-write`)
 - `LARK_CODEX_EXEC_USE_SESSIONS` — resume one Codex session per Feishu chat/thread (default: true)
@@ -114,6 +150,18 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_FEISHU_API_RETRY_BASE_DELAY_MS` — base delay for Feishu API retry backoff (default: 250)
 - `LARK_DOWNLOAD_MAX_BYTES` — max bytes for streamed downloads (default: 26214400)
 - `LARK_DOWNLOAD_TIMEOUT_MS` — timeout for attachment/image downloads (default: 60000)
+- `LARK_MAX_EPISODE_BYTES` — max bytes per episode file before truncation (default: 65536)
+- `LARK_MAX_EPISODE_FILES_PER_SCOPE` — max episode files per chat/thread scope (default: 200)
+- `LARK_MAX_EPISODE_SCOPE_BYTES` — max total episode bytes per chat/thread scope (default: 10485760)
+- `LARK_IDENTITY_SESSION_MAX_ENTRIES` — max caller session entries (default: 5000)
+- `LARK_DEBUG_LOG` — debug log path (default: `~/.codex/channels/lark/debug.log`)
+- `LARK_LOG_MAX_BYTES` — rotate debug/audit logs after this many bytes (default: 5242880)
+- `LARK_LOG_MAX_FILES` — rotated log files to keep (default: 5)
+- `LARK_INBOX_MAX_AGE_HOURS` — remove old inbox downloads on startup (default: 168)
+- `LARK_INBOX_MAX_BYTES` — LRU byte cap for inbox downloads (default: 209715200)
+- `LARK_NAME_CACHE_SIZE` — max cached Feishu user/chat names (default: 1000)
+- `LARK_CHAT_TYPE_CACHE_SIZE` — max cached Feishu chat types (default: 1000)
+- `LARK_LATEST_MESSAGE_TRACKER_SIZE` — max latest-message tracker entries (default: 1000)
 
 If user says "use defaults" or "skip", leave these at defaults.
 
@@ -133,7 +181,8 @@ If user says "use defaults" or "skip", leave these at defaults.
 1. Read `~/.codex/channels/lark/.env`.
 2. Remove all recognized keys:
    `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_ALLOWED_USER_IDS`,
-   `LARK_ALLOWED_CHAT_IDS`, `LARK_TEXT_CHUNK_LIMIT`, `LARK_INACTIVITY_HOURS`,
+   `LARK_ALLOWED_CHAT_IDS`, `LARK_TEXT_CHUNK_LIMIT`, `LARK_QUEUE_HANDLER_TIMEOUT_MS`,
+   `LARK_INACTIVITY_HOURS`,
    `LARK_MAX_SEARCH_RESULTS`, `LARK_MIN_SEARCH_SCORE`,
    `LARK_CODEX_DELIVERY_MODE`, `LARK_CODEX_EXEC_COMMAND`,
    `LARK_CODEX_EXEC_CWD`, `LARK_CODEX_EXEC_TIMEOUT_MS`,
@@ -144,7 +193,13 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_CRON_SCAN_INTERVAL`, `LARK_CRON_TIMEZONE`,
    `LARK_FEISHU_API_TIMEOUT_MS`, `LARK_FEISHU_API_RETRY_ATTEMPTS`,
    `LARK_FEISHU_API_RETRY_BASE_DELAY_MS`, `LARK_DOWNLOAD_MAX_BYTES`,
-   `LARK_DOWNLOAD_TIMEOUT_MS`,
+   `LARK_DOWNLOAD_TIMEOUT_MS`, `LARK_MAX_EPISODE_BYTES`,
+   `LARK_MAX_EPISODE_FILES_PER_SCOPE`, `LARK_MAX_EPISODE_SCOPE_BYTES`,
+   `LARK_IDENTITY_SESSION_MAX_ENTRIES`, `LARK_DEBUG_LOG`,
+   `LARK_LOG_MAX_BYTES`, `LARK_LOG_MAX_FILES`,
+   `LARK_INBOX_MAX_AGE_HOURS`, `LARK_INBOX_MAX_BYTES`,
+   `LARK_NAME_CACHE_SIZE`, `LARK_CHAT_TYPE_CACHE_SIZE`,
+   `LARK_LATEST_MESSAGE_TRACKER_SIZE`,
    `LARK_OWNER_OPEN_ID`, `LARK_IDENTITY_SESSION_TTL_MS`,
    `LARK_PRIVACY_RULES_FILE`, `LARK_AUDIT_LOG`.
 3. If the file becomes empty, delete it.
@@ -164,6 +219,7 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_ALLOWED_USER_IDS` | Filtering | No | (empty) |
 | `LARK_ALLOWED_CHAT_IDS` | Filtering | No | (empty) |
 | `LARK_TEXT_CHUNK_LIMIT` | Messaging | No | `4000` |
+| `LARK_QUEUE_HANDLER_TIMEOUT_MS` | Messaging | No | `30000` |
 | `LARK_CODEX_DELIVERY_MODE` | Messaging | No | `exec` |
 | `LARK_CODEX_EXEC_COMMAND` | Messaging | No | `codex` |
 | `LARK_CODEX_EXEC_CWD` | Messaging | No | plugin cwd |
@@ -182,6 +238,18 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_FEISHU_API_RETRY_BASE_DELAY_MS` | Reliability | No | `250` |
 | `LARK_DOWNLOAD_MAX_BYTES` | Reliability | No | `26214400` |
 | `LARK_DOWNLOAD_TIMEOUT_MS` | Reliability | No | `60000` |
+| `LARK_MAX_EPISODE_BYTES` | Memory | No | `65536` |
+| `LARK_MAX_EPISODE_FILES_PER_SCOPE` | Resource governance | No | `200` |
+| `LARK_MAX_EPISODE_SCOPE_BYTES` | Resource governance | No | `10485760` |
+| `LARK_IDENTITY_SESSION_MAX_ENTRIES` | Resource governance | No | `5000` |
+| `LARK_DEBUG_LOG` | Resource governance | No | `~/.codex/channels/lark/debug.log` |
+| `LARK_LOG_MAX_BYTES` | Resource governance | No | `5242880` |
+| `LARK_LOG_MAX_FILES` | Resource governance | No | `5` |
+| `LARK_INBOX_MAX_AGE_HOURS` | Resource governance | No | `168` |
+| `LARK_INBOX_MAX_BYTES` | Resource governance | No | `209715200` |
+| `LARK_NAME_CACHE_SIZE` | Resource governance | No | `1000` |
+| `LARK_CHAT_TYPE_CACHE_SIZE` | Resource governance | No | `1000` |
+| `LARK_LATEST_MESSAGE_TRACKER_SIZE` | Resource governance | No | `1000` |
 | `LARK_OWNER_OPEN_ID` | Identity | No | (empty) |
 | `LARK_IDENTITY_SESSION_TTL_MS` | Identity | No | auto |
 | `LARK_PRIVACY_RULES_FILE` | Privacy | No | `~/.codex/channels/lark/privacy-rules.md` |
