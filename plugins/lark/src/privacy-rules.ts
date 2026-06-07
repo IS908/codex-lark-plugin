@@ -40,7 +40,7 @@ export const L1_BLACKLIST_REGEX: { name: string; regex: RegExp }[] = [
   { name: 'money-amount', regex: /\b\d+\s*[wk万千]\s*(?:元|块|RMB|CNY|USD)?\b|\$\d{3,}/ },
 ];
 
-/** Keywords that force a fact into `private` when present (case-insensitive substring match). */
+/** Keywords that force a fact into `private` when present. */
 export const L1_BLACKLIST_KEYWORDS: string[] = [
   // 财务
   '薪资', '工资', 'KPI', '绩效', '奖金', 'bonus',
@@ -66,6 +66,25 @@ export const L1_WHITELIST_KEYWORDS: string[] = [
 
 export type TierDecision = 'private' | 'public' | 'gray';
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isAsciiWordKeyword(s: string): boolean {
+  return /^[a-z0-9_+-]+$/i.test(s);
+}
+
+function keywordMatches(haystackLower: string, keyword: string): boolean {
+  const kw = keyword.trim();
+  if (!kw) return false;
+  if (isAsciiWordKeyword(kw)) {
+    return new RegExp(`(^|[^a-z0-9_])${escapeRegExp(kw.toLowerCase())}($|[^a-z0-9_])`).test(
+      haystackLower,
+    );
+  }
+  return haystackLower.includes(kw.toLowerCase());
+}
+
 /** Apply L1 only. Returns a decision or `gray` when L1 gives no signal. */
 export function applyL1(fact: string): TierDecision {
   for (const { regex } of L1_BLACKLIST_REGEX) {
@@ -73,10 +92,10 @@ export function applyL1(fact: string): TierDecision {
   }
   const lower = fact.toLowerCase();
   for (const kw of L1_BLACKLIST_KEYWORDS) {
-    if (lower.includes(kw.toLowerCase())) return 'private';
+    if (keywordMatches(lower, kw)) return 'private';
   }
   for (const kw of L1_WHITELIST_KEYWORDS) {
-    if (lower.includes(kw.toLowerCase())) return 'public';
+    if (keywordMatches(lower, kw)) return 'public';
   }
   return 'gray';
 }
@@ -149,6 +168,24 @@ export function extractL2PrivatePhrases(markdown: string): string[] {
   return phrases;
 }
 
+export function validateL2Rule(rule: string): string {
+  const trimmed = rule.trim();
+  if (!trimmed) throw new Error('Invalid privacy rule: rule cannot be empty.');
+  if (trimmed.includes('\n') || trimmed.includes('\r')) {
+    throw new Error('Invalid privacy rule: rule must be a single line.');
+  }
+  if (/^#+\s/.test(trimmed)) {
+    throw new Error('Invalid privacy rule: rule must be a bullet item, not a markdown heading.');
+  }
+  if (/^[a-z0-9]$/i.test(trimmed)) {
+    throw new Error('Invalid privacy rule: single ASCII characters are too broad.');
+  }
+  if (trimmed.length > 500) {
+    throw new Error('Invalid privacy rule: rule is too long (max 500 chars).');
+  }
+  return trimmed;
+}
+
 /**
  * Add a rule line to the L2 file under the given section. Creates the file
  * if missing; creates the section header if missing. New rules are inserted
@@ -160,6 +197,7 @@ export async function addL2Rule(
   section: 'Always private' | 'Always public',
   overridePath?: string,
 ): Promise<void> {
+  const cleanRule = validateL2Rule(rule);
   const path = resolveL2Path(overridePath);
   await mkdir(dirname(path), { recursive: true });
   const existing = existsSync(path) ? await readFile(path, 'utf8') : '';
@@ -175,7 +213,7 @@ export async function addL2Rule(
   const sectionIdx = next.indexOf(header);
   const newlineAfterHeader = next.indexOf('\n', sectionIdx);
   const insertAt = newlineAfterHeader + 1;
-  next = `${next.slice(0, insertAt)}- ${rule}\n${next.slice(insertAt)}`;
+  next = `${next.slice(0, insertAt)}- ${cleanRule}\n${next.slice(insertAt)}`;
 
   await writeFile(path, next, 'utf8');
 }

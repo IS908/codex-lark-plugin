@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemoryStore } from '../src/memory/file.js';
 import { parseTieredProfile } from '../src/memory/distiller.js';
+import { appConfig } from '../src/config.js';
 
 function fail(msg: string): never {
   console.error(`FAIL: ${msg}`);
@@ -333,6 +334,58 @@ passed++;
   passed++;
 }
 
+// ── 16. public profile writes apply L1 safety net ─────────────
+{
+  const r = mkdtempSync(join(tmpdir(), 'profile-l1-save-'));
+  const s = new MemoryStore(r);
+  await s.saveProfile(
+    'ou_l1',
+    '- works on TypeScript\n- 手机号 13800138000\n- 最近在准备跳槽',
+    'public',
+  );
+
+  const pub = readFileSync(join(r, 'profiles', 'ou_l1', 'public.md'), 'utf-8');
+  const priv = readFileSync(join(r, 'profiles', 'ou_l1', 'private.md'), 'utf-8');
+  if (!pub.includes('TypeScript')) fail('16: safe public fact missing');
+  if (pub.includes('13800138000') || pub.includes('跳槽')) fail(`16: L1 private fact leaked to public: ${pub}`);
+  if (!priv.includes('13800138000') || !priv.includes('跳槽')) fail(`16: L1 private spillover missing: ${priv}`);
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
+// ── 17. same-user concurrent profile appends are serialized ──
+{
+  const r = mkdtempSync(join(tmpdir(), 'profile-concurrent-'));
+  const s = new MemoryStore(r);
+  await Promise.all(
+    Array.from({ length: 12 }, (_, i) => s.saveProfile('ou_lock', `fact ${i}`, 'private')),
+  );
+  const listed = await s.listProfileLines('ou_lock', 'private');
+  for (let i = 0; i < 12; i++) {
+    if (!listed.some((line) => line.text === `fact ${i}`)) {
+      fail(`17: concurrent append lost fact ${i}; got ${JSON.stringify(listed)}`);
+    }
+  }
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
+// ── 18. episode saves are capped to configured byte limit ────
+{
+  const r = mkdtempSync(join(tmpdir(), 'episode-cap-'));
+  const oldLimit = appConfig.maxEpisodeBytes;
+  (appConfig as any).maxEpisodeBytes = 40;
+  const s = new MemoryStore(r);
+  await s.saveEpisode('chat', 'x'.repeat(200), { chatId: 'oc_cap' });
+  const episode = (await s.listEpisodes('oc_cap'))[0];
+  const body = readFileSync(join(r, 'episodes', 'oc_cap', episode.id), 'utf-8');
+  if (Buffer.byteLength(body, 'utf8') > 100) fail(`18: capped episode still too large (${Buffer.byteLength(body)})`);
+  if (!body.includes('[truncated')) fail('18: truncation marker missing');
+  (appConfig as any).maxEpisodeBytes = oldLimit;
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
 // ── parseTieredProfile: well-formed JSON ─────────────────────
 {
   const { public: pub, private: priv } = parseTieredProfile(
@@ -394,4 +447,4 @@ rmSync(legacyRoot, { recursive: true, force: true });
 rmSync(partialRoot, { recursive: true, force: true });
 rmSync(writeRoot, { recursive: true, force: true });
 
-console.log(`profile-tier smoke: ${passed}/25 PASS`);
+console.log(`profile-tier smoke: ${passed}/28 PASS`);

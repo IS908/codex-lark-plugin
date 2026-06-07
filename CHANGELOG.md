@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- `LARK_MAX_EPISODE_BYTES` to cap persisted episode file size.
+
+### Changed
+- Memory, quote, flush, cronjob, and L2 privacy-rule prompt inputs are wrapped as untrusted data.
+- Same-user profile operations are serialized to avoid migration/write/delete races.
+
+### Fixed
+- Direct public profile writes now apply the L1 privacy safety net and route sensitive spillover to the private tier.
+- L2 privacy rule additions now reject empty, multiline, heading-like, over-broad, or oversized rules.
+
 ## [1.0.2] - 2026-06-06
 
 ### Fixed
@@ -34,6 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.2...HEAD
 [1.0.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/IS908/codex-lark-plugin/releases/tag/v1.0.1
 [1.0.0]: https://github.com/IS908/codex-lark-plugin/releases/tag/v1.0.0

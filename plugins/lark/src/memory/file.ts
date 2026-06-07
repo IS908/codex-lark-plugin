@@ -23,6 +23,40 @@ function normalizeProfileLine(line: string): string {
   return line.trim().replace(/^[-*]\s+/, '').toLowerCase();
 }
 
+function splitProfileContentByL1(content: string): { publicContent: string; privateContent: string } {
+  const publicLines: string[] = [];
+  const privateLines: string[] = [];
+
+  for (const raw of content.split('\n')) {
+    if (!raw.trim()) {
+      publicLines.push(raw);
+      continue;
+    }
+    if (applyL1(raw) === 'private') privateLines.push(raw);
+    else publicLines.push(raw);
+  }
+
+  return {
+    publicContent: publicLines.join('\n'),
+    privateContent: privateLines.join('\n'),
+  };
+}
+
+function capUtf8Bytes(content: string, maxBytes: number): string {
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) return content;
+  const bytes = Buffer.byteLength(content, 'utf8');
+  if (bytes <= maxBytes) return content;
+
+  const marker = `\n\n[truncated to ${maxBytes} bytes]\n`;
+  const markerBytes = Buffer.byteLength(marker, 'utf8');
+  const keepBytes = Math.max(0, maxBytes - markerBytes);
+  return Buffer.from(content, 'utf8').subarray(0, keepBytes).toString('utf8') + marker;
+}
+
+function capEpisodeContent(content: string): string {
+  return capUtf8Bytes(content, appConfig.maxEpisodeBytes);
+}
+
 /**
  * Merge new profile lines into an existing tier file body.
  *
@@ -106,6 +140,7 @@ export interface Skill {
  */
 export class MemoryStore {
   private baseDir: string;
+  private profileLocks = new Map<string, Promise<void>>();
 
   constructor(baseDir?: string) {
     this.baseDir = baseDir ?? appConfig.memoriesDir;
@@ -140,7 +175,28 @@ export class MemoryStore {
    * See spec's "Migration" section for the trade-off discussion (approach B:
    * deterministic L1 filter, no LLM dependency).
    */
-  private async migrateIfNeeded(userId: string): Promise<void> {
+  private async withProfileLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.profileLocks.get(userId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = previous
+      .catch(() => {})
+      .then(() => new Promise<void>((resolve) => {
+        release = resolve;
+      }));
+    this.profileLocks.set(userId, current);
+
+    await previous.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.profileLocks.get(userId) === current) {
+        this.profileLocks.delete(userId);
+      }
+    }
+  }
+
+  private async migrateIfNeededUnlocked(userId: string): Promise<void> {
     const legacy = this.legacyProfilePath(userId);
     const dir = this.profileDir(userId);
 
@@ -216,20 +272,22 @@ export class MemoryStore {
    * intentionally different, and their consumers are disjoint.
    */
   async getProfile(ownerId: string, caller: string): Promise<string | null> {
-    await this.migrateIfNeeded(ownerId);
+    return this.withProfileLock(ownerId, async () => {
+      await this.migrateIfNeededUnlocked(ownerId);
 
-    const readOpt = async (p: string): Promise<string> => {
-      if (!existsSync(p)) return '';
-      try { return await fs.readFile(p, 'utf-8'); } catch { return ''; }
-    };
+      const readOpt = async (p: string): Promise<string> => {
+        if (!existsSync(p)) return '';
+        try { return await fs.readFile(p, 'utf-8'); } catch { return ''; }
+      };
 
-    const pub = (await readOpt(this.profileTierPath(ownerId, 'public'))).trim();
-    if (caller === ownerId) {
-      const priv = (await readOpt(this.profileTierPath(ownerId, 'private'))).trim();
-      const joined = [pub, priv].filter(Boolean).join('\n\n');
-      return joined || null;
-    }
-    return pub || null;
+      const pub = (await readOpt(this.profileTierPath(ownerId, 'public'))).trim();
+      if (caller === ownerId) {
+        const priv = (await readOpt(this.profileTierPath(ownerId, 'private'))).trim();
+        const joined = [pub, priv].filter(Boolean).join('\n\n');
+        return joined || null;
+      }
+      return pub || null;
+    });
   }
 
   /**
@@ -255,9 +313,30 @@ export class MemoryStore {
     tier: Tier,
     mode: 'append' | 'replace' = 'append',
   ): Promise<void> {
-    await this.migrateIfNeeded(userId);
-    const dir = this.profileDir(userId);
-    await fs.mkdir(dir, { recursive: true });
+    await this.withProfileLock(userId, async () => {
+      await this.migrateIfNeededUnlocked(userId);
+      const dir = this.profileDir(userId);
+      await fs.mkdir(dir, { recursive: true });
+
+      if (tier === 'public') {
+        const { publicContent, privateContent } = splitProfileContentByL1(content);
+        await this.writeProfileTierUnlocked(userId, 'public', publicContent, mode);
+        if (privateContent.trim()) {
+          await this.writeProfileTierUnlocked(userId, 'private', privateContent, 'append');
+        }
+        return;
+      }
+
+      await this.writeProfileTierUnlocked(userId, tier, content, mode);
+    });
+  }
+
+  private async writeProfileTierUnlocked(
+    userId: string,
+    tier: Tier,
+    content: string,
+    mode: 'append' | 'replace',
+  ): Promise<void> {
     const filePath = this.profileTierPath(userId, tier);
 
     if (mode === 'replace') {
@@ -265,10 +344,9 @@ export class MemoryStore {
       return;
     }
 
-    // append mode
     const existing = existsSync(filePath) ? await fs.readFile(filePath, 'utf-8') : '';
     const merged = mergeProfileLines(existing, content, { userId, tier });
-    if (merged === existing) return; // all incoming lines were duplicates — skip write
+    if (merged === existing) return;
     await fs.writeFile(filePath, merged, 'utf-8');
   }
 
@@ -285,7 +363,13 @@ export class MemoryStore {
    * in `what_do_you_know`.
    */
   async listProfileLines(ownerId: string, tier: Tier): Promise<ProfileLine[]> {
-    await this.migrateIfNeeded(ownerId);
+    return this.withProfileLock(ownerId, async () => {
+      await this.migrateIfNeededUnlocked(ownerId);
+      return this.listProfileLinesUnlocked(ownerId, tier);
+    });
+  }
+
+  private async listProfileLinesUnlocked(ownerId: string, tier: Tier): Promise<ProfileLine[]> {
     const p = this.profileTierPath(ownerId, tier);
     if (!existsSync(p)) return [];
     const content = await fs.readFile(p, 'utf-8');
@@ -307,13 +391,16 @@ export class MemoryStore {
    * append-mode storage convention.
    */
   async removeProfileLine(ownerId: string, tier: Tier, hash: string): Promise<boolean> {
-    const lines = await this.listProfileLines(ownerId, tier);
-    const kept = lines.filter((l) => l.hash !== hash);
-    if (kept.length === lines.length) return false;
+    return this.withProfileLock(ownerId, async () => {
+      await this.migrateIfNeededUnlocked(ownerId);
+      const lines = await this.listProfileLinesUnlocked(ownerId, tier);
+      const kept = lines.filter((l) => l.hash !== hash);
+      if (kept.length === lines.length) return false;
 
-    const next = kept.map((l) => `- ${l.text}`).join('\n') + (kept.length > 0 ? '\n' : '');
-    await fs.writeFile(this.profileTierPath(ownerId, tier), next, 'utf-8');
-    return true;
+      const next = kept.map((l) => `- ${l.text}`).join('\n') + (kept.length > 0 ? '\n' : '');
+      await fs.writeFile(this.profileTierPath(ownerId, tier), next, 'utf-8');
+      return true;
+    });
   }
 
   // ── Episodes ──
@@ -395,7 +482,7 @@ export class MemoryStore {
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const fileName = `${timestamp}.md`;
-    await fs.writeFile(path.join(dir, fileName), content, 'utf-8');
+    await fs.writeFile(path.join(dir, fileName), capEpisodeContent(content), 'utf-8');
   }
 
   async listEpisodes(chatId: string): Promise<Episode[]> {
