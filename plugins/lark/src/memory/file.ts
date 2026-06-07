@@ -23,6 +23,63 @@ function normalizeProfileLine(line: string): string {
   return line.trim().replace(/^[-*]\s+/, '').toLowerCase();
 }
 
+function isL2Private(line: string, l2PrivatePhrases: string[]): boolean {
+  if (l2PrivatePhrases.length === 0) return false;
+  const lower = line.toLowerCase();
+  return l2PrivatePhrases.some((phrase) => lower.includes(phrase));
+}
+
+function isDeterministicPrivate(line: string, l2PrivatePhrases: string[]): boolean {
+  return applyL1(line) === 'private' || isL2Private(line, l2PrivatePhrases);
+}
+
+function splitProfileContentByPrivacy(
+  content: string,
+  l2PrivatePhrases: string[],
+): { publicContent: string; privateContent: string } {
+  const publicLines: string[] = [];
+  const privateLines: string[] = [];
+
+  for (const raw of content.split('\n')) {
+    if (!raw.trim()) {
+      publicLines.push(raw);
+      continue;
+    }
+    if (isDeterministicPrivate(raw, l2PrivatePhrases)) privateLines.push(raw);
+    else publicLines.push(raw);
+  }
+
+  return {
+    publicContent: publicLines.join('\n'),
+    privateContent: privateLines.join('\n'),
+  };
+}
+
+function capUtf8Bytes(content: string, maxBytes: number): string {
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) return content;
+  const bytes = Buffer.byteLength(content, 'utf8');
+  if (bytes <= maxBytes) return content;
+
+  const marker = `\n\n[truncated to ${maxBytes} bytes]\n`;
+  const markerBytes = Buffer.byteLength(marker, 'utf8');
+  if (markerBytes >= maxBytes) return marker.slice(0, maxBytes);
+
+  const keepBytes = maxBytes - markerBytes;
+  let used = 0;
+  let prefix = '';
+  for (const char of content) {
+    const charBytes = Buffer.byteLength(char, 'utf8');
+    if (used + charBytes > keepBytes) break;
+    prefix += char;
+    used += charBytes;
+  }
+  return prefix + marker;
+}
+
+function capEpisodeContent(content: string): string {
+  return capUtf8Bytes(content, appConfig.maxEpisodeBytes);
+}
+
 /**
  * Merge new profile lines into an existing tier file body.
  *
@@ -106,6 +163,7 @@ export interface Skill {
  */
 export class MemoryStore {
   private baseDir: string;
+  private profileLocks = new Map<string, Promise<void>>();
 
   constructor(baseDir?: string) {
     this.baseDir = baseDir ?? appConfig.memoriesDir;
@@ -127,6 +185,10 @@ export class MemoryStore {
     return path.join(this.baseDir, 'profiles', `${userId}.md`);
   }
 
+  private async loadL2PrivatePhrases(): Promise<string[]> {
+    return extractL2PrivatePhrases(await loadL2Rules()).map((p) => p.toLowerCase());
+  }
+
   /**
    * Migrate a pre-v0.10 single-file profile to the tiered layout, applying
    * the L1 classifier line-by-line to split into public/private.
@@ -140,7 +202,28 @@ export class MemoryStore {
    * See spec's "Migration" section for the trade-off discussion (approach B:
    * deterministic L1 filter, no LLM dependency).
    */
-  private async migrateIfNeeded(userId: string): Promise<void> {
+  private async withProfileLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.profileLocks.get(userId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = previous
+      .catch(() => {})
+      .then(() => new Promise<void>((resolve) => {
+        release = resolve;
+      }));
+    this.profileLocks.set(userId, current);
+
+    await previous.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.profileLocks.get(userId) === current) {
+        this.profileLocks.delete(userId);
+      }
+    }
+  }
+
+  private async migrateIfNeededUnlocked(userId: string): Promise<void> {
     const legacy = this.legacyProfilePath(userId);
     const dir = this.profileDir(userId);
 
@@ -161,7 +244,7 @@ export class MemoryStore {
     // BEFORE upgrading can influence their own legacy-profile migration
     // (org codenames, people mentions, etc. that L1 doesn't cover).
     // Substring match is case-insensitive, deterministic, no LLM needed.
-    const l2Phrases = extractL2PrivatePhrases(await loadL2Rules()).map((p) => p.toLowerCase());
+    const l2Phrases = await this.loadL2PrivatePhrases();
 
     for (const line of content.split('\n')) {
       if (!line.trim()) {
@@ -216,20 +299,22 @@ export class MemoryStore {
    * intentionally different, and their consumers are disjoint.
    */
   async getProfile(ownerId: string, caller: string): Promise<string | null> {
-    await this.migrateIfNeeded(ownerId);
+    return this.withProfileLock(ownerId, async () => {
+      await this.migrateIfNeededUnlocked(ownerId);
 
-    const readOpt = async (p: string): Promise<string> => {
-      if (!existsSync(p)) return '';
-      try { return await fs.readFile(p, 'utf-8'); } catch { return ''; }
-    };
+      const readOpt = async (p: string): Promise<string> => {
+        if (!existsSync(p)) return '';
+        try { return await fs.readFile(p, 'utf-8'); } catch { return ''; }
+      };
 
-    const pub = (await readOpt(this.profileTierPath(ownerId, 'public'))).trim();
-    if (caller === ownerId) {
-      const priv = (await readOpt(this.profileTierPath(ownerId, 'private'))).trim();
-      const joined = [pub, priv].filter(Boolean).join('\n\n');
-      return joined || null;
-    }
-    return pub || null;
+      const pub = (await readOpt(this.profileTierPath(ownerId, 'public'))).trim();
+      if (caller === ownerId) {
+        const priv = (await readOpt(this.profileTierPath(ownerId, 'private'))).trim();
+        const joined = [pub, priv].filter(Boolean).join('\n\n');
+        return joined || null;
+      }
+      return pub || null;
+    });
   }
 
   /**
@@ -255,20 +340,55 @@ export class MemoryStore {
     tier: Tier,
     mode: 'append' | 'replace' = 'append',
   ): Promise<void> {
-    await this.migrateIfNeeded(userId);
-    const dir = this.profileDir(userId);
-    await fs.mkdir(dir, { recursive: true });
+    await this.withProfileLock(userId, async () => {
+      await this.migrateIfNeededUnlocked(userId);
+      const dir = this.profileDir(userId);
+      await fs.mkdir(dir, { recursive: true });
+
+      if (tier === 'public') {
+        const l2Phrases = await this.loadL2PrivatePhrases();
+        const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
+        await this.writeProfileTierUnlocked(userId, 'public', publicContent, mode, l2Phrases);
+        if (privateContent.trim()) {
+          await this.writeProfileTierUnlocked(userId, 'private', privateContent, 'append', l2Phrases);
+        }
+        return;
+      }
+
+      await this.writeProfileTierUnlocked(userId, tier, content, mode, await this.loadL2PrivatePhrases());
+    });
+  }
+
+  private async writeProfileTierUnlocked(
+    userId: string,
+    tier: Tier,
+    content: string,
+    mode: 'append' | 'replace',
+    l2PrivatePhrases: string[],
+  ): Promise<void> {
     const filePath = this.profileTierPath(userId, tier);
 
     if (mode === 'replace') {
-      await fs.writeFile(filePath, content, 'utf-8');
+      if (tier !== 'private' || !existsSync(filePath)) {
+        await fs.writeFile(filePath, content, 'utf-8');
+        return;
+      }
+
+      const existing = await fs.readFile(filePath, 'utf-8');
+      const deterministicExisting = existing
+        .split('\n')
+        .filter((line) => line.trim() && isDeterministicPrivate(line, l2PrivatePhrases))
+        .join('\n');
+      const next = deterministicExisting
+        ? mergeProfileLines(content, deterministicExisting, { userId, tier })
+        : content;
+      await fs.writeFile(filePath, next, 'utf-8');
       return;
     }
 
-    // append mode
     const existing = existsSync(filePath) ? await fs.readFile(filePath, 'utf-8') : '';
     const merged = mergeProfileLines(existing, content, { userId, tier });
-    if (merged === existing) return; // all incoming lines were duplicates — skip write
+    if (merged === existing) return;
     await fs.writeFile(filePath, merged, 'utf-8');
   }
 
@@ -285,7 +405,13 @@ export class MemoryStore {
    * in `what_do_you_know`.
    */
   async listProfileLines(ownerId: string, tier: Tier): Promise<ProfileLine[]> {
-    await this.migrateIfNeeded(ownerId);
+    return this.withProfileLock(ownerId, async () => {
+      await this.migrateIfNeededUnlocked(ownerId);
+      return this.listProfileLinesUnlocked(ownerId, tier);
+    });
+  }
+
+  private async listProfileLinesUnlocked(ownerId: string, tier: Tier): Promise<ProfileLine[]> {
     const p = this.profileTierPath(ownerId, tier);
     if (!existsSync(p)) return [];
     const content = await fs.readFile(p, 'utf-8');
@@ -307,13 +433,16 @@ export class MemoryStore {
    * append-mode storage convention.
    */
   async removeProfileLine(ownerId: string, tier: Tier, hash: string): Promise<boolean> {
-    const lines = await this.listProfileLines(ownerId, tier);
-    const kept = lines.filter((l) => l.hash !== hash);
-    if (kept.length === lines.length) return false;
+    return this.withProfileLock(ownerId, async () => {
+      await this.migrateIfNeededUnlocked(ownerId);
+      const lines = await this.listProfileLinesUnlocked(ownerId, tier);
+      const kept = lines.filter((l) => l.hash !== hash);
+      if (kept.length === lines.length) return false;
 
-    const next = kept.map((l) => `- ${l.text}`).join('\n') + (kept.length > 0 ? '\n' : '');
-    await fs.writeFile(this.profileTierPath(ownerId, tier), next, 'utf-8');
-    return true;
+      const next = kept.map((l) => `- ${l.text}`).join('\n') + (kept.length > 0 ? '\n' : '');
+      await fs.writeFile(this.profileTierPath(ownerId, tier), next, 'utf-8');
+      return true;
+    });
   }
 
   // ── Episodes ──
@@ -395,7 +524,7 @@ export class MemoryStore {
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const fileName = `${timestamp}.md`;
-    await fs.writeFile(path.join(dir, fileName), content, 'utf-8');
+    await fs.writeFile(path.join(dir, fileName), capEpisodeContent(content), 'utf-8');
   }
 
   async listEpisodes(chatId: string): Promise<Episode[]> {

@@ -40,7 +40,7 @@ export const L1_BLACKLIST_REGEX: { name: string; regex: RegExp }[] = [
   { name: 'money-amount', regex: /\b\d+\s*[wk万千]\s*(?:元|块|RMB|CNY|USD)?\b|\$\d{3,}/ },
 ];
 
-/** Keywords that force a fact into `private` when present (case-insensitive substring match). */
+/** Keywords that force a fact into `private` when present. */
 export const L1_BLACKLIST_KEYWORDS: string[] = [
   // 财务
   '薪资', '工资', 'KPI', '绩效', '奖金', 'bonus',
@@ -66,6 +66,33 @@ export const L1_WHITELIST_KEYWORDS: string[] = [
 
 export type TierDecision = 'private' | 'public' | 'gray';
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isAsciiWordKeyword(s: string): boolean {
+  return /^[a-z0-9_+-]+$/i.test(s);
+}
+
+const OVERBROAD_L2_RULES = new Set([
+  // English stop words / acknowledgements
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'is', 'it',
+  'of', 'ok', 'on', 'or', 'that', 'the', 'to', 'with',
+  // Common Chinese function words and pronouns
+  '的', '了', '和', '与', '或', '在', '是', '我', '你', '他', '她', '它', '们',
+]);
+
+function keywordMatches(haystackLower: string, keyword: string): boolean {
+  const kw = keyword.trim();
+  if (!kw) return false;
+  if (isAsciiWordKeyword(kw)) {
+    return new RegExp(`(^|[^a-z0-9_])${escapeRegExp(kw.toLowerCase())}($|[^a-z0-9_])`).test(
+      haystackLower,
+    );
+  }
+  return haystackLower.includes(kw.toLowerCase());
+}
+
 /** Apply L1 only. Returns a decision or `gray` when L1 gives no signal. */
 export function applyL1(fact: string): TierDecision {
   for (const { regex } of L1_BLACKLIST_REGEX) {
@@ -73,10 +100,10 @@ export function applyL1(fact: string): TierDecision {
   }
   const lower = fact.toLowerCase();
   for (const kw of L1_BLACKLIST_KEYWORDS) {
-    if (lower.includes(kw.toLowerCase())) return 'private';
+    if (keywordMatches(lower, kw)) return 'private';
   }
   for (const kw of L1_WHITELIST_KEYWORDS) {
-    if (lower.includes(kw.toLowerCase())) return 'public';
+    if (keywordMatches(lower, kw)) return 'public';
   }
   return 'gray';
 }
@@ -120,11 +147,9 @@ export async function loadL2Rules(overridePath?: string): Promise<string> {
  * trade-off — deterministic and fast, at the cost of expressivity. Abstract
  * L2 rules still apply at L3 distillation time as before.
  *
- * Warning: very short phrases (e.g. "a", "的") will substring-match almost
- * everything and effectively turn the whole profile private. This extractor
- * does NOT reject them — operators author L2 deliberately, and migration
- * over-protection is safer than under-protection. Prefer concrete multi-char
- * phrases.
+ * Overbroad phrases (e.g. "a", "ok", "的") are skipped for this deterministic
+ * migration path because substring matching would otherwise classify almost
+ * everything as private.
  */
 export function extractL2PrivatePhrases(markdown: string): string[] {
   if (!markdown) return [];
@@ -143,10 +168,44 @@ export function extractL2PrivatePhrases(markdown: string): string[] {
     }
     if (inSection && line.startsWith('- ')) {
       const phrase = line.slice(2).trim();
-      if (phrase) phrases.push(phrase);
+      if (phrase) {
+        try {
+          phrases.push(validateL2Rule(phrase));
+        } catch (err) {
+          console.error(
+            `[privacy] Ignoring invalid L2 private rule during extraction: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
     }
   }
   return phrases;
+}
+
+export function validateL2Rule(rule: string): string {
+  const trimmed = rule.trim();
+  if (!trimmed) throw new Error('Invalid privacy rule: rule cannot be empty.');
+  if (trimmed.includes('\n') || trimmed.includes('\r')) {
+    throw new Error('Invalid privacy rule: rule must be a single line.');
+  }
+  if (/^#+\s/.test(trimmed)) {
+    throw new Error('Invalid privacy rule: rule must be a bullet item, not a markdown heading.');
+  }
+  if ([...trimmed].length < 2) {
+    throw new Error('Invalid privacy rule: rule is too short and would match too broadly.');
+  }
+  if (isAsciiWordKeyword(trimmed) && trimmed.length < 3) {
+    throw new Error('Invalid privacy rule: short ASCII tokens are too broad.');
+  }
+  if (OVERBROAD_L2_RULES.has(trimmed.toLowerCase())) {
+    throw new Error('Invalid privacy rule: common stop words are too broad.');
+  }
+  if (trimmed.length > 500) {
+    throw new Error('Invalid privacy rule: rule is too long (max 500 chars).');
+  }
+  return trimmed;
 }
 
 /**
@@ -160,6 +219,7 @@ export async function addL2Rule(
   section: 'Always private' | 'Always public',
   overridePath?: string,
 ): Promise<void> {
+  const cleanRule = validateL2Rule(rule);
   const path = resolveL2Path(overridePath);
   await mkdir(dirname(path), { recursive: true });
   const existing = existsSync(path) ? await readFile(path, 'utf8') : '';
@@ -175,7 +235,7 @@ export async function addL2Rule(
   const sectionIdx = next.indexOf(header);
   const newlineAfterHeader = next.indexOf('\n', sectionIdx);
   const insertAt = newlineAfterHeader + 1;
-  next = `${next.slice(0, insertAt)}- ${rule}\n${next.slice(insertAt)}`;
+  next = `${next.slice(0, insertAt)}- ${cleanRule}\n${next.slice(insertAt)}`;
 
   await writeFile(path, next, 'utf8');
 }

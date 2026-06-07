@@ -59,6 +59,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **Tiered profile memory (v0.10.0+)**: each user's profile is split into `public.md` (visible to anyone who @mentions the user) and `private.md` (owner-only). Private-chat preferences no longer leak into groups via @mention injection
 - **L1/L2/L3 classification** (v0.10.0+): hardcoded regex + keyword rules catch phones / credentials / sensitive Chinese keywords. Email is intentionally NOT in L1 — the plugin targets **work-chat use cases** where emails are commonly shared via signatures/directories; personal deployments can add their own "Always private" email rule to `privacy-rules.md`. User-editable `privacy-rules.md` covers personal/org-specific cases; LLM handles the nuance. `parseTieredProfile` applies an L1 safety net over LLM output so misclassified credentials get forced to private
 - **Legacy-profile migration respects L2 rules (v0.11.1+)**: if the operator authors `privacy-rules.md` before (or during) the upgrade, `## Always private` phrases are applied as case-insensitive substring matches during migration — org-specific codenames, client names, and people mentions get routed to `private.md` even though L1 alone wouldn't flag them
+- **Memory hardening**: public profile writes are server-side checked with L1 and sensitive spillover is routed to `private.md`; same-user profile operations are serialized; stored memory, quotes, flush buffers, cron prompts, and L2 rules are wrapped as untrusted data in prompts; episode files are capped by `LARK_MAX_EPISODE_BYTES`
 - **`list_jobs` visibility filter**: in a group chat, members only see jobs whose `target_chat_id` matches that group (with prompt bodies redacted for non-owners); in a private chat, the caller sees their own jobs. Group members can no longer inspect each other's private jobs
 - **Owner-only mutations**: `update_job` / `delete_job` require `caller == created_by`
 - **CronJob isolation**: each cronjob execution runs under a unique `thread_id` so scheduled actions don't collide with concurrent human messages in the same chat
@@ -311,6 +312,7 @@ On every incoming message, the plugin injects relevant memory context in this or
 | `LARK_MIN_SEARCH_SCORE` | `0.3` | Minimum similarity score for memory search results |
 | `LARK_MAX_SEARCH_RESULTS` | `2` | Maximum number of memory search results to inject |
 | `LARK_INACTIVITY_HOURS` | `3` | Hours of inactivity before buffer flush to episodic memory |
+| `LARK_MAX_EPISODE_BYTES` | `65536` | Maximum UTF-8 bytes persisted per episode file before truncation |
 
 ### Optional -- Identity / privacy (v0.9.0+)
 
@@ -351,6 +353,7 @@ Step 3: CronJob (optional)
 Step 4: Advanced tuning (optional)
   -> LARK_INACTIVITY_HOURS, LARK_MAX_SEARCH_RESULTS, LARK_MIN_SEARCH_SCORE,
      LARK_TEXT_CHUNK_LIMIT, LARK_ACK_EMOJI, LARK_BOT_MESSAGE_TRACKER_SIZE,
+     LARK_MAX_EPISODE_BYTES,
      LARK_CRON_SCAN_INTERVAL
 
 Step 5: Write config

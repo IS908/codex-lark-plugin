@@ -497,7 +497,9 @@ export class LarkChannel {
   }
 
   private async enrichWithMemory(msg: LarkMessage): Promise<string> {
-    if (!this.memoryStore) return msg.text;
+    if (!this.memoryStore) {
+      return enrichmentPrompt('', msg.parentContent, msg.senderId, msg.chatId, msg.text);
+    }
 
     const parts: string[] = [];
 
@@ -569,8 +571,6 @@ export class LarkChannel {
     }
 
     // Assemble
-    if (parts.length === 0) return msg.text;
-
     return enrichmentPrompt(
       parts.join('\n\n'),
       msg.parentContent,

@@ -77,6 +77,7 @@ export const appConfig = {
   minSearchScore: optionalNumber('LARK_MIN_SEARCH_SCORE', 0.3),
   maxSearchResults: optionalNumber('LARK_MAX_SEARCH_RESULTS', 2),
   inactivityHours: optionalNumber('LARK_INACTIVITY_HOURS', 3),
+  maxEpisodeBytes: optionalNumber('LARK_MAX_EPISODE_BYTES', 64 * 1024),
 
   // Identity / privacy
   ownerOpenId: process.env.LARK_OWNER_OPEN_ID || null,

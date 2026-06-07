@@ -66,6 +66,10 @@ echo "=== Privacy rules unit checks ==="
 node --import tsx scripts/privacy-rules-smoke.ts
 
 echo ""
+echo "=== Prompt hardening unit checks ==="
+node --import tsx scripts/prompt-hardening-smoke.ts
+
+echo ""
 echo "=== Profile tiering unit checks ==="
 node --import tsx scripts/profile-tier-smoke.ts
 

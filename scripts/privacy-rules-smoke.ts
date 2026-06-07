@@ -25,6 +25,8 @@ const l1Cases: [string, 'private' | 'public' | 'gray'][] = [
   ['token: sk-abcdef1234567890abcdef', 'private'],
   ['我是 TikTok Live 团队的工程师', 'public'],
   ['熟悉 TypeScript 和 Rust', 'public'],
+  ['这个 coffer word should stay gray', 'gray'],
+  ['PM2 process manager should stay gray', 'gray'],
   ['晚上想吃烤鱼', 'gray'],
   ['偏好会议安排在下午', 'gray'],
 ];
@@ -73,6 +75,18 @@ process.env.LARK_PRIVACY_RULES_FILE = tmpFile;
 const d = await loadL2Rules(); // no arg, should use env
 if (d !== c) fail('L2.5: env override not honored');
 delete process.env.LARK_PRIVACY_RULES_FILE;
+l2Passed++;
+
+// L2.6 — rejects empty / malformed / overbroad rules before persisting
+for (const bad of ['', ' ', '# heading', 'line one\nline two', 'a', 'ok', 'the', '的']) {
+  let rejected = false;
+  try {
+    await addL2Rule(bad, 'Always private', tmpFile);
+  } catch (err) {
+    rejected = /privacy rule/i.test(err instanceof Error ? err.message : String(err));
+  }
+if (!rejected) fail(`L2.6: bad rule should be rejected: ${JSON.stringify(bad)}`);
+}
 l2Passed++;
 
 rmSync(tmp, { recursive: true, force: true });
@@ -129,4 +143,14 @@ extractPassed++;
 if (extractL2PrivatePhrases('## Always public\n- x\n').length !== 0) fail('extract.6');
 extractPassed++;
 
-console.log(`privacy-rules smoke: L1 ${l1Passed}/${l1Cases.length}, L2 ${l2Passed}/5, extract ${extractPassed}/6 — PASS`);
+// E.7 — overbroad manually-edited rules are ignored for deterministic migration
+const p7 = extractL2PrivatePhrases(`## Always private
+- 的
+- ok
+- the
+- 项目代号 Phoenix
+`);
+if (p7.length !== 1 || p7[0] !== '项目代号 Phoenix') fail(`extract.7: ${JSON.stringify(p7)}`);
+extractPassed++;
+
+console.log(`privacy-rules smoke: L1 ${l1Passed}/${l1Cases.length}, L2 ${l2Passed}/6, extract ${extractPassed}/7 — PASS`);
