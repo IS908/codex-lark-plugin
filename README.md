@@ -76,6 +76,9 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 ### Reliability
 
 - Per-chat message queue for sequential processing within each conversation
+- Shared Feishu API retry/timeout wrapper for hot-path sends, edits, reactions, metadata reads, and downloads
+- Attachment/image downloads stream to disk with configurable byte caps and bounded timeouts
+- Dependency audit gate available via `npm run audit:deps`
 - Single-instance lock to prevent duplicate event handling
 - User and chat ID whitelisting for access control (OR semantics when both lists set)
 - Crash recovery for scheduled jobs (missed executions run once on restart)
@@ -205,6 +208,7 @@ Before the first public push, verify the repository metadata and make sure no lo
 ```bash
 npm install
 npm test
+npm run audit:deps
 git status --short --ignored
 ```
 
@@ -297,6 +301,16 @@ On every incoming message, the plugin injects relevant memory context in this or
 |---|---|---|
 | `LARK_ACK_EMOJI` | `MeMeMe` | Emoji reaction on message receive. Set to empty string to disable. |
 | `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | Max bot-sent message IDs tracked for passive reaction-event filtering (FIFO) |
+
+### Optional -- Feishu API reliability
+
+| Variable | Default | Description |
+|---|---|---|
+| `LARK_FEISHU_API_TIMEOUT_MS` | `30000` | Per Feishu API call timeout in milliseconds |
+| `LARK_FEISHU_API_RETRY_ATTEMPTS` | `3` | Attempts for retryable transient Feishu/API/network failures |
+| `LARK_FEISHU_API_RETRY_BASE_DELAY_MS` | `250` | Exponential backoff base delay in milliseconds |
+| `LARK_DOWNLOAD_MAX_BYTES` | `26214400` | Maximum bytes for downloaded attachments/images before the write is rejected |
+| `LARK_DOWNLOAD_TIMEOUT_MS` | `60000` | Attachment/image download timeout in milliseconds |
 
 ### Optional -- CronJob
 

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- Shared Feishu API retry/timeout wrapper with bounded exponential backoff.
+- Config flags for Feishu API timeout/retry tuning and download byte/time limits.
+- Dependency audit gate via `npm run audit:deps`.
+
+### Changed
+- Hot-path Feishu calls for replies, edits, reactions, attachment/image downloads, metadata lookups, and scheduler sends now use the shared retry wrapper.
+- Attachment/image downloads stream to disk through a temp file with byte caps and cleanup on timeout or oversize failures.
+- Patched transitive dependency versions are pinned with npm overrides so `npm run audit:deps` passes without downgrading the Lark SDK.
+- Feishu message sends include idempotency `uuid` values, and timeout retries are disabled for non-idempotent writes/uploads.
+- The marketplace wrapper package now carries the same dependency audit gate and patched overrides as the root package.
+- npm dry-run packages now use explicit ignore files to avoid stale generated artifacts.
+- Write-file-only SDK download fallbacks now require a preflight `content-length` before writing so byte caps are not bypassed.
+
 ## [1.0.3] - 2026-06-07
 
 ### Added

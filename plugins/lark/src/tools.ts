@@ -13,6 +13,7 @@ import { audit } from './audit-log.js';
 import { writeSdkResource } from './sdk-resource.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { assertSafeChatId } from './prompts.js';
+import { feishuApiCall } from './feishu-retry.js';
 
 /**
  * Sanitize and length-cap a Feishu attachment filename for safe local
@@ -224,22 +225,28 @@ export function registerTools(
     },
     async ({ message_id, text, format }) => {
       if (format === 'card_markdown') {
-        await client.im.v1.message.patch({
-          path: { message_id },
-          data: {
-            content: Lark.messageCard.defaultCard({
-              title: '',
-              content: text,
-            }),
-          },
-        });
+        await feishuApiCall('edit_message.patch.card_markdown', () =>
+          client.im.v1.message.patch({
+            path: { message_id },
+            data: {
+              content: Lark.messageCard.defaultCard({
+                title: '',
+                content: text,
+              }),
+            },
+          }),
+          { retryTimeout: false },
+        );
       } else {
-        await client.im.v1.message.patch({
-          path: { message_id },
-          data: {
-            content: JSON.stringify({ text }),
-          },
-        });
+        await feishuApiCall('edit_message.patch.text', () =>
+          client.im.v1.message.patch({
+            path: { message_id },
+            data: {
+              content: JSON.stringify({ text }),
+            },
+          }),
+          { retryTimeout: false },
+        );
       }
 
       return {
@@ -259,12 +266,15 @@ export function registerTools(
       }),
     },
     async ({ message_id, emoji }) => {
-      await client.im.v1.messageReaction.create({
-        path: { message_id },
-        data: {
-          reaction_type: { emoji_type: emoji },
-        },
-      });
+      await feishuApiCall('react.create', () =>
+        client.im.v1.messageReaction.create({
+          path: { message_id },
+          data: {
+            reaction_type: { emoji_type: emoji },
+          },
+        }),
+        { retryTimeout: false },
+      );
 
       return {
         content: [{ type: 'text' as const, text: `Added ${emoji} reaction to ${message_id}` }],
@@ -317,10 +327,15 @@ export function registerTools(
       try {
         // Always use messageResource.get for user-uploaded resources.
         // image.get only works for images the bot itself uploaded.
-        const data: unknown = await client.im.v1.messageResource.get({
-          path: { message_id, file_key },
-          params: { type: resourceType },
-        });
+        const data: unknown = await feishuApiCall(
+          'download_attachment.messageResource.get',
+          () =>
+            client.im.v1.messageResource.get({
+              path: { message_id, file_key },
+              params: { type: resourceType },
+            }),
+          { timeoutMs: appConfig.downloadTimeoutMs },
+        );
         if (!data) {
           return {
             content: [
@@ -332,7 +347,10 @@ export function registerTools(
             isError: true,
           };
         }
-        await writeSdkResource(data, filePath);
+        await writeSdkResource(data, filePath, {
+          maxBytes: appConfig.downloadMaxBytes,
+          timeoutMs: appConfig.downloadTimeoutMs,
+        });
         return { content: [{ type: 'text' as const, text: `Downloaded to ${filePath}` }] };
       } catch (err: any) {
         const apiError = err?.response?.data ?? err?.data;

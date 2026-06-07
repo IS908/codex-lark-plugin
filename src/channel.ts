@@ -10,6 +10,9 @@ import type { IdentitySession } from './identity-session.js';
 import { TERMINAL_CHAT_ID } from './identity-session.js';
 import { writeSdkResource } from './sdk-resource.js';
 import { debugLog } from './debug-log.js';
+import { feishuApiCall } from './feishu-retry.js';
+
+const ACK_REVOKED_SENTINEL = '__codex_ack_revoked__';
 
 /**
  * Build a Lark SDK logger that routes every level to stderr. The SDK's default
@@ -326,12 +329,26 @@ export class LarkChannel {
     // Fire-and-forget ack reaction (Typing for P2P, MeMeMe for group @bot)
     const ackEmoji = chatType === 'p2p' ? 'Typing' : appConfig.ackEmoji;
     if (ackEmoji) {
-      this.client.im.v1.messageReaction.create({
-        path: { message_id: messageId },
-        data: { reaction_type: { emoji_type: ackEmoji } },
-      }).then((resp: any) => {
+      feishuApiCall('channel.ackReaction.create', () =>
+        this.client.im.v1.messageReaction.create({
+          path: { message_id: messageId },
+          data: { reaction_type: { emoji_type: ackEmoji } },
+        }),
+        { attempts: 1, retryTimeout: false },
+      ).then((resp: any) => {
         const reactionId = resp?.data?.reaction_id;
-        if (reactionId) this.ackReactions.set(messageId, reactionId);
+        if (!reactionId) return;
+        if (this.ackReactions.get(messageId) === ACK_REVOKED_SENTINEL) {
+          this.ackReactions.delete(messageId);
+          feishuApiCall('channel.ackReaction.delete_late', () =>
+            this.client.im.v1.messageReaction.delete({
+              path: { message_id: messageId, reaction_id: reactionId },
+            }),
+            { attempts: 1, retryTimeout: false },
+          ).catch(() => {});
+          return;
+        }
+        this.ackReactions.set(messageId, reactionId);
       }).catch(() => {});
     }
 
@@ -423,9 +440,11 @@ export class LarkChannel {
     // Fetch parent message content if this is a quoted reply
     if (parentId) {
       try {
-        const parentMsg = await this.client.im.v1.message.get({
-          path: { message_id: parentId },
-        });
+        const parentMsg = await feishuApiCall('channel.parentMessage.get', () =>
+          this.client.im.v1.message.get({
+            path: { message_id: parentId },
+          }),
+        );
         const parentItem = parentMsg?.data?.items?.[0];
         if (parentItem?.body?.content) {
           // Parent-message mentions may arrive either as the receive-event
@@ -590,14 +609,22 @@ export class LarkChannel {
   private async downloadImage(imageKey: string, messageId: string): Promise<string | undefined> {
     try {
       mkdirSync(appConfig.inboxDir, { recursive: true });
-      const resp = await this.client.im.v1.messageResource.get({
-        path: { message_id: messageId, file_key: imageKey },
-        params: { type: 'image' },
-      } as any);
+      const resp = await feishuApiCall(
+        'channel.image.messageResource.get',
+        () =>
+          this.client.im.v1.messageResource.get({
+            path: { message_id: messageId, file_key: imageKey },
+            params: { type: 'image' },
+          } as any),
+        { timeoutMs: appConfig.downloadTimeoutMs },
+      );
       if (!resp) return undefined;
       const filename = `${Date.now()}-${imageKey}.png`;
       const filePath = path.join(appConfig.inboxDir, filename);
-      await writeSdkResource(resp, filePath);
+      await writeSdkResource(resp, filePath, {
+        maxBytes: appConfig.downloadMaxBytes,
+        timeoutMs: appConfig.downloadTimeoutMs,
+      });
       debugLog(`[channel] Downloaded image ${imageKey} → ${filePath}`);
       return filePath;
     } catch (err) {
@@ -643,10 +670,12 @@ export class LarkChannel {
    */
   private async fetchBotOpenId(): Promise<void> {
     try {
-      const resp = await this.client.request({
-        method: 'GET',
-        url: 'https://open.feishu.cn/open-apis/bot/v3/info',
-      });
+      const resp = await feishuApiCall('channel.botInfo.get', () =>
+        this.client.request({
+          method: 'GET',
+          url: 'https://open.feishu.cn/open-apis/bot/v3/info',
+        }),
+      );
       const openId = (resp as any)?.bot?.open_id;
       if (openId) {
         this.botOpenId = openId;
@@ -672,10 +701,12 @@ export class LarkChannel {
 
     // Try contact API (requires contact:contact.base:readonly permission)
     try {
-      const resp = await this.client.contact.v3.user.get({
-        path: { user_id: openId },
-        params: { user_id_type: 'open_id' },
-      });
+      const resp = await feishuApiCall('channel.contact.user.get', () =>
+        this.client.contact.v3.user.get({
+          path: { user_id: openId },
+          params: { user_id_type: 'open_id' },
+        }),
+      );
       const name = (resp?.data as any)?.user?.name;
       if (name) {
         this.nameCache.set(openId, name);
@@ -710,9 +741,11 @@ export class LarkChannel {
     if (cached) return cached;
 
     try {
-      const resp = await this.client.im.v1.chat.get({
-        path: { chat_id: chatId },
-      });
+      const resp = await feishuApiCall('channel.chat.get', () =>
+        this.client.im.v1.chat.get({
+          path: { chat_id: chatId },
+        }),
+      );
       const name = (resp?.data as any)?.name;
       if (name) {
         this.nameCache.set(chatId, name);
