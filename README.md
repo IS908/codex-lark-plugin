@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.0.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.3-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -59,7 +59,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **Tiered profile memory (v0.10.0+)**: each user's profile is split into `public.md` (visible to anyone who @mentions the user) and `private.md` (owner-only). Private-chat preferences no longer leak into groups via @mention injection
 - **L1/L2/L3 classification** (v0.10.0+): hardcoded regex + keyword rules catch phones / credentials / sensitive Chinese keywords. Email is intentionally NOT in L1 — the plugin targets **work-chat use cases** where emails are commonly shared via signatures/directories; personal deployments can add their own "Always private" email rule to `privacy-rules.md`. User-editable `privacy-rules.md` covers personal/org-specific cases; LLM handles the nuance. `parseTieredProfile` applies an L1 safety net over LLM output so misclassified credentials get forced to private
 - **Legacy-profile migration respects L2 rules (v0.11.1+)**: if the operator authors `privacy-rules.md` before (or during) the upgrade, `## Always private` phrases are applied as case-insensitive substring matches during migration — org-specific codenames, client names, and people mentions get routed to `private.md` even though L1 alone wouldn't flag them
-- **Memory hardening**: public profile writes are server-side checked with L1 and sensitive spillover is routed to `private.md`; same-user profile operations are serialized; stored memory, quotes, flush buffers, cron prompts, and L2 rules are wrapped as untrusted data in prompts; episode files are capped by `LARK_MAX_EPISODE_BYTES`
+- **Memory hardening**: public profile writes are server-side checked with L1 and deterministic L2 always-private rules, with sensitive spillover routed to `private.md`; same-user profile operations are serialized; stored memory, quotes, flush buffers, cron prompts, Codex exec prompts, and L2 rules are wrapped as untrusted data in prompts; episode files are capped by `LARK_MAX_EPISODE_BYTES`
 - **`list_jobs` visibility filter**: in a group chat, members only see jobs whose `target_chat_id` matches that group (with prompt bodies redacted for non-owners); in a private chat, the caller sees their own jobs. Group members can no longer inspect each other's private jobs
 - **Owner-only mutations**: `update_job` / `delete_job` require `caller == created_by`
 - **CronJob isolation**: each cronjob execution runs under a unique `thread_id` so scheduled actions don't collide with concurrent human messages in the same chat

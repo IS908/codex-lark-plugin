@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-06-07
+
 ### Added
 - `LARK_MAX_EPISODE_BYTES` to cap persisted episode file size.
 
@@ -51,7 +53,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/IS908/codex-lark-plugin/releases/tag/v1.0.1
 [1.0.0]: https://github.com/IS908/codex-lark-plugin/releases/tag/v1.0.0

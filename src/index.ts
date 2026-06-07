@@ -66,7 +66,7 @@ async function main() {
 
   // 2. Create MCP server
   const server = new McpServer(
-    { name: 'codex-lark-plugin', version: '1.0.8' },
+    { name: 'codex-lark-plugin', version: '1.0.3' },
     {
       capabilities: {
         logging: {},

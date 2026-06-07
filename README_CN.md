@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.0.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.3-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -55,7 +55,7 @@
 - **分层 profile 记忆（v0.10.0+）**：每个用户的 profile 拆成 `public.md`（他人 @mention 时可见）和 `private.md`（仅 owner 可见）。私聊里的偏好不会通过 @mention 注入泄露到群聊
 - **L1/L2/L3 分类体系**（v0.10.0+）：硬编码的 regex + 关键词规则拦截手机/凭据/敏感中文词。邮箱**不在** L1——本插件定位为**工作 IM 场景**，工作邮箱常通过签名和通讯录公开；个人使用的部署可以在自己的 `privacy-rules.md` 里加一条 "Always private" 规则专门归类邮箱。用户可编辑的 `privacy-rules.md` 处理个人和组织特有场景；LLM 处理灰色地带。`parseTieredProfile` 在 LLM 分类之上加 L1 兜底——误判为 public 的凭据被强制归 private
 - **老版本 profile 迁移尊重 L2 规则（v0.11.1+）**：操作者在升级前（或同步）编辑 `privacy-rules.md`，`## Always private` 段的短语会以 case-insensitive 子串方式在迁移时生效——组织内项目代号、客户名、人名提及等 L1 无法覆盖的内容会被直接分到 `private.md`
-- **记忆硬化**：public profile 写入会在服务端经过 L1 检查，敏感 spillover 会转写到 `private.md`；同一用户的 profile 操作串行化；已存记忆、引用、flush buffer、cron prompt、L2 规则在 prompt 中都以 untrusted data 包裹；episode 文件受 `LARK_MAX_EPISODE_BYTES` 限制
+- **记忆硬化**：public profile 写入会在服务端经过 L1 和 deterministic L2 always-private 规则检查，敏感 spillover 会转写到 `private.md`；同一用户的 profile 操作串行化；已存记忆、引用、flush buffer、cron prompt、Codex exec prompt、L2 规则在 prompt 中都以 untrusted data 包裹；episode 文件受 `LARK_MAX_EPISODE_BYTES` 限制
 - **`list_jobs` 可见性过滤**：群聊里只能看到 `target_chat_id` 匹配本群的 job（非 owner 看不到 prompt 正文）；私聊里只能看到自己建的 job。群成员不再能互相窥探定时任务
 - **仅 owner 可改**：`update_job` / `delete_job` 要求 `caller == created_by`
 - **CronJob 身份隔离**：每次 cronjob 触发使用独立 `thread_id`，不会和同一 chat 的真人消息串线
