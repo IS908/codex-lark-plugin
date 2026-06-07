@@ -390,6 +390,28 @@ passed++;
   passed++;
 }
 
+// ── 16d. private replace preserves L2 spillover ───────────────
+{
+  const r = mkdtempSync(join(tmpdir(), 'profile-replace-l2-spill-'));
+  const oldL2 = process.env.LARK_PRIVACY_RULES_FILE;
+  const l2Path = join(r, 'privacy-rules.md');
+  writeFileSync(l2Path, '## Always private\n- 项目代号 Phoenix\n', 'utf-8');
+  process.env.LARK_PRIVACY_RULES_FILE = l2Path;
+  const s = new MemoryStore(r);
+  await s.saveProfile('ou_l2_spill', '- 项目代号 Phoenix', 'public', 'replace');
+  await s.saveProfile('ou_l2_spill', '- explicit private fact', 'private', 'replace');
+
+  const pub = readFileSync(join(r, 'profiles', 'ou_l2_spill', 'public.md'), 'utf-8');
+  const priv = readFileSync(join(r, 'profiles', 'ou_l2_spill', 'private.md'), 'utf-8');
+  if (pub.includes('Phoenix')) fail(`16d: L2 private fact leaked to public: ${pub}`);
+  if (!priv.includes('Phoenix')) fail(`16d: L2 spillover lost after private replace: ${priv}`);
+  if (!priv.includes('explicit private fact')) fail(`16d: private replace content missing: ${priv}`);
+  if (oldL2 === undefined) delete process.env.LARK_PRIVACY_RULES_FILE;
+  else process.env.LARK_PRIVACY_RULES_FILE = oldL2;
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
 // ── 17. same-user concurrent profile appends are serialized ──
 {
   const r = mkdtempSync(join(tmpdir(), 'profile-concurrent-'));
@@ -503,4 +525,4 @@ rmSync(legacyRoot, { recursive: true, force: true });
 rmSync(partialRoot, { recursive: true, force: true });
 rmSync(writeRoot, { recursive: true, force: true });
 
-console.log(`profile-tier smoke: ${passed}/31 PASS`);
+console.log(`profile-tier smoke: ${passed}/32 PASS`);

@@ -59,6 +59,15 @@ try {
 if (!rejectedUnsafeChat) fail('3b: cron prompt should reject target chat ids with control characters');
 passed++;
 
+let rejectedControlChat = false;
+try {
+  cronJobPrompt('job_1', 'oc_1\toc_evil', malicious);
+} catch (err) {
+  rejectedControlChat = /chat_id/i.test(err instanceof Error ? err.message : String(err));
+}
+if (!rejectedControlChat) fail('3c: cron prompt should reject target chat ids with ASCII controls');
+passed++;
+
 const enriched = enrichmentPrompt(malicious, malicious, 'ou_1', 'oc_1', malicious);
 if ((enriched.match(/<untrusted-data/g) || []).length < 3) {
   fail('4: enrichment prompt should wrap memory, quote, and current message');
@@ -87,4 +96,4 @@ if (!escapedBlock.includes('&lt;untrusted-data source=&quot;evil&quot;&gt;')) {
 }
 passed++;
 
-console.log(`prompt-hardening smoke: ${passed}/6 PASS`);
+console.log(`prompt-hardening smoke: ${passed}/7 PASS`);

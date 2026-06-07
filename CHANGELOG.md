@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Same-user profile operations are serialized to avoid migration/write/delete races.
 
 ### Fixed
+- Default Codex exec delivery now wraps Feishu display data, quotes, attachments, and current messages as escaped untrusted data.
 - Cron job names are now treated as untrusted prompt data, and cron routing chat ids reject control characters.
 - Direct public profile writes now apply the L1 privacy safety net and route sensitive spillover to the private tier.
 - Direct public profile writes now also apply deterministic L2 always-private spillover.

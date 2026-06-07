@@ -24,9 +24,9 @@ export function untrustedDataBlock(label: string, content: string | null | undef
   ].join('\n');
 }
 
-function trustedSingleLine(label: string, value: string): string {
-  if (/[\r\n\u2028\u2029]/.test(value)) {
-    throw new Error(`${label} must not contain control characters.`);
+export function assertSafeChatId(value: string): string {
+  if (/[\x00-\x1F\x7F]/.test(value)) {
+    throw new Error('chat_id must not contain control characters.');
   }
   return value;
 }
@@ -130,7 +130,7 @@ export const mcpServerInstructions: string = [
  * Wraps the user's prompt with execution instructions for Codex.
  */
 export function cronJobPrompt(jobName: string, sendChatId: string, prompt: string): string {
-  const safeChatId = trustedSingleLine('chat_id', sendChatId);
+  const safeChatId = assertSafeChatId(sendChatId);
   return [
     `[CronJob]`,
     `Execute this task and reply to chat_id=${safeChatId} with the result.`,

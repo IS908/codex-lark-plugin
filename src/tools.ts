@@ -12,6 +12,7 @@ import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import { audit } from './audit-log.js';
 import { writeSdkResource } from './sdk-resource.js';
 import { sendFeishuReply } from './reply-sender.js';
+import { assertSafeChatId } from './prompts.js';
 
 /**
  * Sanitize and length-cap a Feishu attachment filename for safe local
@@ -539,6 +540,19 @@ export function registerTools(
       if (type === 'message' && !content) {
         return {
           content: [{ type: 'text' as const, text: 'content is required for type=message' }],
+          isError: true,
+        };
+      }
+      try {
+        assertSafeChatId(target_chat_id);
+      } catch (err: any) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Invalid target_chat_id: ${err?.message ?? target_chat_id}`,
+            },
+          ],
           isError: true,
         };
       }

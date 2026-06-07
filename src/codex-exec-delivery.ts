@@ -8,6 +8,7 @@ import {
   type CodexExecSessionStore,
 } from './codex-session-store.js';
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
+import { untrustedDataBlock } from './prompts.js';
 
 export interface CodexExecDeliveryOptions {
   message: LarkMessage;
@@ -23,14 +24,18 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
     `message_id: ${message.messageId}`,
     `chat_id: ${message.chatId}`,
     `chat_type: ${message.chatType}`,
-    `user: ${displayLabel}`,
     `user_id: ${message.senderId}`,
-    ...(message.chatName ? [`chat_name: ${message.chatName}`] : []),
     ...(message.threadId ? [`thread_id: ${message.threadId}`] : []),
     ...(message.botMentioned ? ['bot_mentioned: true'] : []),
-    ...(message.parentContent ? [`parent_content: ${message.parentContent}`] : []),
+  ];
+  const displayBlocks = [
+    untrustedDataBlock('codex-exec-display-label', displayLabel),
+    ...(message.chatName ? [untrustedDataBlock('codex-exec-chat-name', message.chatName)] : []),
+    ...(message.parentContent
+      ? [untrustedDataBlock('codex-exec-parent-message', message.parentContent)]
+      : []),
     ...(message.attachments?.length
-      ? [`attachments: ${JSON.stringify(message.attachments)}`]
+      ? [untrustedDataBlock('codex-exec-attachments', JSON.stringify(message.attachments))]
       : []),
   ];
 
@@ -43,8 +48,11 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
     '[Feishu metadata]',
     metaLines.join('\n'),
     '',
+    '[Feishu display data]',
+    displayBlocks.join('\n\n'),
+    '',
     '[Message text]',
-    message.text,
+    untrustedDataBlock('codex-exec-message-text', message.text),
   ].join('\n');
 }
 

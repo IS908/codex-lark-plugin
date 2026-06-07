@@ -224,6 +224,28 @@ const auditLog = await waitForAuditLog();
   passed++;
 }
 
+// ── 9. create_job rejects unsafe target_chat_id before persistence ──
+{
+  const createJob = handlers.get('create_job');
+  if (!createJob) fail('9: create_job handler not registered');
+
+  identitySession.setCaller('oc_thread_chat', undefined, 'ou_owner');
+  const r = await createJob!({
+    name: 'bad-target',
+    type: 'message',
+    schedule: 'every 5m',
+    content: 'hi',
+    target_chat_id: 'oc_thread_chat\toc_evil',
+    chat_id: 'oc_thread_chat',
+  });
+  if (!r.isError) fail(`9: create_job must reject target_chat_id with control chars`);
+  const txt = r.content[0].text as string;
+  if (!/target_chat_id|chat_id/i.test(txt)) {
+    fail(`9: error should mention target_chat_id/chat_id, got: ${txt}`);
+  }
+  passed++;
+}
+
 rmSync(tmp, { recursive: true, force: true });
 
-console.log(`auto-flush smoke: ${passed}/8 PASS`);
+console.log(`auto-flush smoke: ${passed}/9 PASS`);
