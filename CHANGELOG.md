@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-06-08
+
 ### Added
 - Feishu doc-comment @bot events now route into Codex using synthetic `doc:<file_token>` chats, preserving selected text, parent comment, reply body, document title, caller identity, whitelist checks, and duplicate-event filtering.
 - `reply_doc_comment` and `create_doc_comment` MCP tools for owner-scoped replies/new top-level comments in the triggering document, with strict `doc_token` binding against prompt-injected cross-document writes.
@@ -126,7 +128,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.9...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.10...HEAD
+[1.0.10]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.6...v1.0.7
