@@ -6,7 +6,9 @@ import {
   sanitizeJobId,
   expandSchedule,
   computeNextRun,
+  computeLatestDueRun,
   backfillJob,
+  readJob,
   listAllJobs,
   type JobFile,
 } from '../src/job-store.js';
@@ -141,6 +143,40 @@ if (nextA === nextB) fail('computeNextRun: different crons produced same time');
 const aliasResult = expandSchedule('daily at 09:00');
 if (aliasResult.cron !== '0 9 * * *') fail(`alias validation: got ${aliasResult.cron}`);
 
+// 24b. expandSchedule rejects empty schedules before cron-parser fallback
+try {
+  expandSchedule('   ');
+  fail('24b: empty schedule should throw');
+} catch (err: any) {
+  if (!String(err?.message ?? err).includes('schedule is required')) {
+    fail(`24b: expected schedule required error, got ${err?.message ?? err}`);
+  }
+}
+
+// 24c. friendly every-N aliases must evenly divide their base unit
+try {
+  expandSchedule('every 7m');
+  fail('24c: every 7m should throw');
+} catch (err: any) {
+  if (!String(err?.message ?? err).includes('divide evenly into 60')) {
+    fail(`24c: expected minute divisibility error, got ${err?.message ?? err}`);
+  }
+}
+try {
+  expandSchedule('every 5h');
+  fail('24c: every 5h should throw');
+} catch (err: any) {
+  if (!String(err?.message ?? err).includes('divide evenly into 24')) {
+    fail(`24c: expected hour divisibility error, got ${err?.message ?? err}`);
+  }
+}
+
+// 24d. computeLatestDueRun includes exact cron boundaries for recovery
+const latestDue = computeLatestDueRun('*/5 * * * *', new Date('2026-06-07T01:15:00.000Z'));
+if (latestDue !== '2026-06-07T01:15:00.000Z') {
+  fail(`24d: expected exact-boundary latest due run, got ${latestDue}`);
+}
+
 // ── Backfill tests (v0.9.0) ─────────────────────────────────
 
 function makeLegacyJob(overrides: Partial<JobFile['meta']> = {}): JobFile {
@@ -250,13 +286,12 @@ if (typeof b3.meta.created_by !== 'string') fail(`created_by must be string: got
 const b4 = backfillJob(makeLegacyJob({ created_by: 'ou_alice' }));
 if (b4.meta.created_by !== 'ou_alice') fail(`backfill must preserve created_by: got "${b4.meta.created_by}"`);
 
-// ── listAllJobs: filename/meta.id mismatch defense (#62) ──
+// ── listAllJobs/readJob: filename is canonical id (#9) ──
 //
-// Defends against the duplicate-execution bug: if a job file's on-disk
-// name doesn't match its internal meta.id, listAllJobs must skip it
-// (rather than yield a JobFile that no readJob/deleteJob can address),
-// otherwise the scheduler would happily execute orphan files at every
-// tick. See issue #62 for the full failure path.
+// If a job file's on-disk name doesn't match its internal meta.id, readers
+// must derive the canonical id from the filename. This keeps update/delete
+// addressability aligned with the actual file path and avoids stale embedded
+// ids from resurrecting old names.
 
 const tmpJobsDir = mkdtempSync(join(tmpdir(), 'job-mismatch-smoke-'));
 const originalJobsDir = appConfig.jobsDir;
@@ -313,24 +348,29 @@ try {
   };
   writeFileSync(join(tmpJobsDir, 'job-good.json'), JSON.stringify(goodJob, null, 2));
 
-  // 31. bad-file: filename does NOT match meta.id → skipped + warning
+  // 31. bad-file: filename does NOT match meta.id → loaded under filename id
   // Simulates `cp job-good.json renamed.json` or a hand-edit gone wrong.
   const badJob: JobFile = { ...goodJob, meta: { ...goodJob.meta, id: 'job-original' } };
   writeFileSync(join(tmpJobsDir, 'renamed.json'), JSON.stringify(badJob, null, 2));
 
   const listed = await listAllJobs();
+  const readRenamed = await readJob('renamed');
 
   // Restore stderr before assertions so failures print normally.
   process.stderr.write = origStderr;
 
-  if (listed.length !== 1) {
-    failClean(`30/31: expected 1 job (mismatched file skipped), got ${listed.length}: ${listed.map((j) => j.meta.id).join(',')}`);
+  if (listed.length !== 2) {
+    failClean(`30/31: expected 2 jobs (mismatched file loaded canonically), got ${listed.length}: ${listed.map((j) => j.meta.id).join(',')}`);
   }
-  if (listed[0].meta.id !== 'job-good') {
-    failClean(`30: expected job-good, got ${listed[0].meta.id}`);
+  const ids = listed.map((j) => j.meta.id).sort();
+  if (ids.join(',') !== 'job-good,renamed') {
+    failClean(`30/31: expected canonical ids job-good,renamed; got ${ids.join(',')}`);
   }
-  if (!stderrCapture.includes('Skipping renamed.json')) {
-    failClean(`31: warning not emitted for mismatched filename. Captured stderr:\n${stderrCapture}`);
+  if (!readRenamed || readRenamed.meta.id !== 'renamed') {
+    failClean(`31: readJob should canonicalize renamed.json to id=renamed, got ${readRenamed?.meta.id ?? '(null)'}`);
+  }
+  if (!stderrCapture.includes('Using filename id "renamed"')) {
+    failClean(`31: canonical-id warning not emitted for mismatched filename. Captured stderr:\n${stderrCapture}`);
   }
   if (!stderrCapture.includes('meta.id="job-original"')) {
     failClean(`31: warning missing meta.id detail. Captured stderr:\n${stderrCapture}`);

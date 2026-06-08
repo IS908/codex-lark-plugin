@@ -13,8 +13,9 @@ import { cronJobPrompt } from './prompts.js';
 import type { IdentitySession } from './identity-session.js';
 import {
   listAllJobs,
-  writeJob,
+  mutateJob,
   computeNextRun,
+  computeLatestDueRun,
   type JobFile,
 } from './job-store.js';
 import { feishuApiCall } from './feishu-retry.js';
@@ -74,6 +75,16 @@ function isRetryableError(err: any): boolean {
   return false;
 }
 
+function isPermanentTargetError(err: any): boolean {
+  if (isRetryableError(err)) return false;
+
+  const status = err?.response?.status ?? err?.status;
+  if (status === 400 || status === 403 || status === 404) return true;
+
+  const apiCode = Number(err?.response?.data?.code ?? err?.data?.code);
+  return Number.isFinite(apiCode);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -84,6 +95,7 @@ export class JobScheduler {
   private client: Lark.Client;
   private identitySession: IdentitySession;
   private running = false;
+  private ticking = false;
 
   constructor(opts: SchedulerOptions) {
     this.server = opts.server;
@@ -150,23 +162,33 @@ export class JobScheduler {
    * stale entries so the in-memory map does not grow unboundedly.
    */
   private async tick(): Promise<void> {
-    this.identitySession.cleanup();
+    if (this.ticking) {
+      console.error('[scheduler] Tick skipped: previous tick still running');
+      return;
+    }
+    this.ticking = true;
 
-    const jobs = await listAllJobs();
-    const now = Date.now();
+    try {
+      this.identitySession.cleanup();
 
-    for (const job of jobs) {
-      if (job.meta.status !== 'active') continue;
-      if (!job.runtime.next_run_at) continue;
+      const jobs = await listAllJobs();
+      const now = Date.now();
 
-      const nextRun = new Date(job.runtime.next_run_at).getTime();
-      if (nextRun <= now) {
-        try {
-          await this.executeJob(job);
-        } catch (err) {
-          console.error(`[scheduler] Failed to execute job ${job.meta.id}:`, err);
+      for (const job of jobs) {
+        if (job.meta.status !== 'active') continue;
+        if (!job.runtime.next_run_at) continue;
+
+        const nextRun = new Date(job.runtime.next_run_at).getTime();
+        if (nextRun <= now) {
+          try {
+            await this.executeJob(job);
+          } catch (err) {
+            console.error(`[scheduler] Failed to execute job ${job.meta.id}:`, err);
+          }
         }
       }
+    } finally {
+      this.ticking = false;
     }
   }
 
@@ -181,29 +203,33 @@ export class JobScheduler {
    */
   private async executeJob(job: JobFile): Promise<void> {
     const startTime = Date.now();
+    const runKey = this.computeRunKey(job, new Date(startTime));
     let lastErr: any = null;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         if (job.meta.type === 'message') {
-          await this.executeMessageJob(job, job.runtime.next_run_at ?? new Date(startTime).toISOString());
+          await this.executeMessageJob(job, runKey);
         } else if (job.meta.type === 'prompt') {
           await this.executePromptJob(job);
         }
 
-        // Success — update runtime
-        job.runtime.last_run_at = new Date(startTime).toISOString();
-        job.runtime.next_run_at = computeNextRun(job.meta.schedule);
-        job.runtime.run_count += 1;
-        job.runtime.last_error = null;
+        const updated = await this.persistJobRuntime(job, {
+          startedAt: new Date(startTime),
+          incrementRunCount: true,
+          lastError: null,
+          autoPause: false,
+        });
 
         if (attempt > 0) {
           console.error(`[scheduler] Job ${job.meta.id} succeeded on retry #${attempt} (run #${job.runtime.run_count})`);
         } else {
           console.error(`[scheduler] Job ${job.meta.id} executed successfully (run #${job.runtime.run_count})`);
         }
+        if (!updated) {
+          console.error(`[scheduler] Job ${job.meta.id} disappeared before runtime update`);
+        }
 
-        await writeJob(job);
         return;
       } catch (err: any) {
         lastErr = err;
@@ -222,17 +248,61 @@ export class JobScheduler {
       }
     }
 
-    // All retries exhausted or permanent error — record failure
-    job.runtime.last_run_at = new Date(startTime).toISOString();
-    job.runtime.next_run_at = computeNextRun(job.meta.schedule);
-    job.runtime.last_error = lastErr?.message ?? String(lastErr);
+    const autoPause = isPermanentTargetError(lastErr);
+    const lastError =
+      `${lastErr?.message ?? String(lastErr)}${autoPause ? ' (auto-paused: permanent target error)' : ''}`;
+    const updated = await this.persistJobRuntime(job, {
+      startedAt: new Date(startTime),
+      incrementRunCount: false,
+      lastError,
+      autoPause,
+    });
 
     const retryNote = isRetryableError(lastErr)
       ? ` (exhausted ${MAX_RETRIES} retries)`
       : ' (non-retryable)';
-    console.error(`[scheduler] Job ${job.meta.id} failed${retryNote}: ${job.runtime.last_error}`);
+    const pauseNote = autoPause ? '; auto-paused' : '';
+    console.error(`[scheduler] Job ${job.meta.id} failed${retryNote}${pauseNote}: ${job.runtime.last_error}`);
+    if (!updated) {
+      console.error(`[scheduler] Job ${job.meta.id} disappeared before runtime update`);
+    }
+  }
 
-    await writeJob(job);
+  private computeRunKey(job: JobFile, now: Date): string {
+    const fallback = job.runtime.next_run_at ?? now.toISOString();
+    const nextRun = new Date(fallback).getTime();
+    if (!Number.isFinite(nextRun) || nextRun > now.getTime()) {
+      return fallback;
+    }
+    try {
+      return computeLatestDueRun(job.meta.schedule, now);
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async persistJobRuntime(
+    job: JobFile,
+    result: {
+      startedAt: Date;
+      incrementRunCount: boolean;
+      lastError: string | null;
+      autoPause: boolean;
+    },
+  ): Promise<JobFile | null> {
+    const updated = await mutateJob(job.meta.id, (latest) => {
+      latest.runtime.last_run_at = result.startedAt.toISOString();
+      latest.runtime.next_run_at = computeNextRun(latest.meta.schedule);
+      if (result.incrementRunCount) latest.runtime.run_count += 1;
+      latest.runtime.last_error = result.lastError;
+      if (result.autoPause) latest.meta.status = 'paused';
+    });
+
+    if (updated) {
+      job.meta = updated.meta;
+      job.runtime = updated.runtime;
+    }
+    return updated;
   }
 
   /**
@@ -280,19 +350,27 @@ export class JobScheduler {
       job.meta.prompt ?? ''
     );
 
-    await this.server.notification({
-      method: 'notifications/Codex/channel',
-      params: {
-        content: promptContent,
-        meta: {
-          chat_id: job.meta.target_chat_id,
-          thread_id: jobThreadId,
-          source: 'cronjob',
-          job_id: job.meta.id,
-          job_name: job.meta.name,
-          ...(job.meta.model ? { model: job.meta.model } : {}),
+    try {
+      await this.server.notification({
+        method: 'notifications/Codex/channel',
+        params: {
+          content: promptContent,
+          meta: {
+            chat_id: job.meta.target_chat_id,
+            thread_id: jobThreadId,
+            source: 'cronjob',
+            job_id: job.meta.id,
+            job_name: job.meta.name,
+            ...(job.meta.model ? { model: job.meta.model } : {}),
+          },
         },
-      },
-    });
+      });
+    } catch (err: any) {
+      const wrapped = new Error(
+        `[LARK_DEFER] CronJob prompt delivery failed before Codex accepted the turn: ${err?.message ?? err}`,
+      );
+      (wrapped as Error & { cause?: unknown }).cause = err;
+      throw wrapped;
+    }
   }
 }

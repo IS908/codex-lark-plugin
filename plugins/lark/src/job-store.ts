@@ -70,12 +70,21 @@ const DAY_MAP: Record<string, string> = {
  */
 export function expandSchedule(input: string): { cron: string; human: string } {
   const trimmed = input.trim().toLowerCase();
+  if (!trimmed) {
+    throw new Error('schedule is required');
+  }
   let result: { cron: string; human: string } | null = null;
 
   // every Nm
   let match = trimmed.match(/^every\s+(\d+)\s*m(?:in(?:ute)?s?)?$/);
   if (match) {
-    const n = match[1];
+    const n = Number(match[1]);
+    if (!Number.isInteger(n) || n < 1 || n > 59) {
+      throw new Error('every Nm must be between 1m and 59m');
+    }
+    if (60 % n !== 0) {
+      throw new Error('every Nm must divide evenly into 60 minutes');
+    }
     result = { cron: `*/${n} * * * *`, human: `every ${n}m` };
   }
 
@@ -83,7 +92,13 @@ export function expandSchedule(input: string): { cron: string; human: string } {
   if (!result) {
     match = trimmed.match(/^every\s+(\d+)\s*h(?:ours?)?$/);
     if (match) {
-      const n = match[1];
+      const n = Number(match[1]);
+      if (!Number.isInteger(n) || n < 1 || n > 23) {
+        throw new Error('every Nh must be between 1h and 23h');
+      }
+      if (24 % n !== 0) {
+        throw new Error('every Nh must divide evenly into 24 hours');
+      }
       result = { cron: `0 */${n} * * *`, human: `every ${n}h` };
     }
   }
@@ -143,6 +158,22 @@ export function computeNextRun(cronExpr: string): string {
   return expr.next().toISOString()!;
 }
 
+/**
+ * Compute the latest scheduled occurrence at or before `now`.
+ *
+ * Used by crash recovery for jobs that may have missed many intervals while
+ * the daemon was offline. Adding 1ms makes exact-boundary timestamps inclusive
+ * because cron-parser's `prev()` is exclusive of `currentDate`.
+ */
+export function computeLatestDueRun(cronExpr: string, now: Date = new Date()): string {
+  const inclusiveNow = new Date(now.getTime() + 1);
+  const expr = CronExpressionParser.parse(cronExpr, {
+    tz: appConfig.cronTimezone,
+    currentDate: inclusiveNow,
+  });
+  return expr.prev().toISOString()!;
+}
+
 // ─── CRUD ───────────────────────────────────────────────────
 
 async function ensureJobsDir(): Promise<string> {
@@ -153,6 +184,42 @@ async function ensureJobsDir(): Promise<string> {
 
 function jobPath(id: string): string {
   return path.join(appConfig.jobsDir, `${id}.json`);
+}
+
+function canonicalJobIdFromFile(file: string): string {
+  return path.basename(file, '.json');
+}
+
+const jobWriteQueues = new Map<string, Promise<void>>();
+
+async function withJobWriteQueue<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const previous = jobWriteQueues.get(id) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.catch(() => undefined).then(() => gate);
+  jobWriteQueues.set(id, queued);
+
+  await previous.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (jobWriteQueues.get(id) === queued) {
+      jobWriteQueues.delete(id);
+    }
+  }
+}
+
+function applyCanonicalJobId(job: JobFile, id: string, source: string): JobFile {
+  if (job.meta.id && job.meta.id !== id) {
+    console.error(
+      `[job-store] Using filename id "${id}" for ${source}; file meta.id="${job.meta.id}" is stale.`,
+    );
+  }
+  job.meta.id = id;
+  return job;
 }
 
 /**
@@ -196,9 +263,13 @@ export function backfillJob(job: JobFile): JobFile {
 }
 
 export async function readJob(id: string): Promise<JobFile | null> {
+  return readJobUnlocked(id);
+}
+
+async function readJobUnlocked(id: string): Promise<JobFile | null> {
   try {
     const data = await fs.readFile(jobPath(id), 'utf-8');
-    return backfillJob(JSON.parse(data) as JobFile);
+    return applyCanonicalJobId(backfillJob(JSON.parse(data) as JobFile), id, `${id}.json`);
   } catch {
     return null;
   }
@@ -207,29 +278,43 @@ export async function readJob(id: string): Promise<JobFile | null> {
 /**
  * Persist a JobFile to disk under `{jobsDir}/{job.meta.id}.json`.
  *
- * **Invariant for callers**: a job's `meta.id` is stable across its
- * lifetime. If a future feature ever lets users rename a job, the caller
- * MUST call `deleteJob(oldId)` BEFORE this with the new id — otherwise
- * the old file is orphaned. listAllJobs (since v1.0.6, #62) will skip
- * the orphan with a filename/meta.id-mismatch warning so duplicate
- * execution won't happen, but the orphan still wastes inode + appears
- * confusingly in `ls`. Track at #64.
- *
- * Today every caller (create_job / update_job / scheduler runtime
- * persistence) keeps the id stable, so writeJob is a pure overwrite.
+ * The filename is the canonical job id when reading. writeJob is still a
+ * full-file overwrite for new jobs or deliberate whole-job rewrites; callers
+ * that update an existing job should prefer mutateJob so concurrent runtime
+ * writes do not clobber user-edited metadata.
  */
 export async function writeJob(job: JobFile): Promise<void> {
+  await withJobWriteQueue(job.meta.id, () => writeJobUnlocked(job));
+}
+
+async function writeJobUnlocked(job: JobFile): Promise<void> {
   await ensureJobsDir();
   await fs.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), 'utf-8');
 }
 
+export async function mutateJob(
+  id: string,
+  mutate: (job: JobFile) => void | false | Promise<void | false>,
+): Promise<JobFile | null> {
+  return withJobWriteQueue(id, async () => {
+    const job = await readJobUnlocked(id);
+    if (!job) return null;
+    const shouldContinue = await mutate(job);
+    if (shouldContinue === false) return job;
+    await writeJobUnlocked(job);
+    return job;
+  });
+}
+
 export async function deleteJob(id: string): Promise<boolean> {
-  try {
-    await fs.unlink(jobPath(id));
-    return true;
-  } catch {
-    return false;
-  }
+  return withJobWriteQueue(id, async () => {
+    try {
+      await fs.unlink(jobPath(id));
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 export async function listAllJobs(): Promise<JobFile[]> {
@@ -252,29 +337,8 @@ export async function listAllJobs(): Promise<JobFile[]> {
     jsonFiles.map(async (file): Promise<JobFile | null> => {
       try {
         const data = await fs.readFile(path.join(dir, file), 'utf-8');
-        const job = backfillJob(JSON.parse(data) as JobFile);
-        // Defensive: the rest of the job-store (readJob/writeJob/deleteJob)
-        // locates files via `{meta.id}.json`. If the on-disk filename
-        // diverges from meta.id, two failure modes follow:
-        //   (a) update_job / delete_job by id silently fail (the looked-up
-        //       file doesn't exist), and
-        //   (b) if a second file later lands at `{meta.id}.json`, BOTH
-        //       files surface from listAllJobs with the same meta.id and
-        //       the scheduler executes the job once per file (duplicate
-        //       message sends / duplicate prompt subagent dispatches).
-        // See #62 for the full failure analysis. Skip-and-warn rather than
-        // auto-reconcile: operators may have deliberately renamed files,
-        // and silently mutating their on-disk state would be worse than
-        // surfacing the mismatch.
-        if (file !== `${job.meta.id}.json`) {
-          console.error(
-            `[job-store] Skipping ${file}: meta.id="${job.meta.id}" doesn't match filename. ` +
-            `Either rename the file to ${job.meta.id}.json or edit meta.id to match. ` +
-            `Skipping prevents duplicate execution if a matching ${job.meta.id}.json also exists.`,
-          );
-          return null;
-        }
-        return job;
+        const id = canonicalJobIdFromFile(file);
+        return applyCanonicalJobId(backfillJob(JSON.parse(data) as JobFile), id, file);
       } catch (err: any) {
         // Distinguish three failure modes so the operator's log signal
         // matches the actual cause (#64):
