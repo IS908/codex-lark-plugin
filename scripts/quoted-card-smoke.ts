@@ -99,6 +99,31 @@ const legacyCard = {
   const channel = new LarkChannel();
   const text = (channel as any).extractText(
     JSON.stringify({
+      elements: [
+        {
+          tag: 'div',
+          text: { tag: 'plain_text', content: 'Main div text' },
+          extra: {
+            tag: 'button',
+            text: { tag: 'plain_text', content: 'Extra Button Label' },
+            url: 'https://internal.example.com/extra',
+            value: { token: 'extra_secret_token' },
+          },
+        },
+      ],
+    }),
+    'interactive',
+  );
+  assert.match(text, /Main div text/);
+  assert.match(text, /Extra Button Label/);
+  assert.doesNotMatch(text, /extra_secret_token/);
+  assert.doesNotMatch(text, /internal\.example\.com\/extra/);
+}
+
+{
+  const channel = new LarkChannel();
+  const text = (channel as any).extractText(
+    JSON.stringify({
       config: {
         summary: {
           content: 'Fallback summary preview',
