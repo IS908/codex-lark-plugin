@@ -14,6 +14,8 @@ import {
   type AckReactionTracker,
 } from './ack-reactions.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
+import { isFeishuOpenMessageId, isSyntheticSystemMessageId } from './codex-exec-error.js';
+import { logSafeError } from './safe-log.js';
 
 function wrapFeishuApiError(err: any): Error | null {
   const apiError = err?.response?.data ?? err?.data;
@@ -102,6 +104,21 @@ export async function sendFeishuReply(
         `[reply-sender] Auto-filled reply_to=${latest.messageId} for chat=${chat_id} thread=${thread_id ?? '(none)'}`
       );
     }
+  }
+  if (effectiveReplyTo && !isFeishuOpenMessageId(effectiveReplyTo)) {
+    if (isSyntheticSystemMessageId(effectiveReplyTo)) {
+      console.error(`[reply-sender] Skipping visible reply for synthetic system message ${effectiveReplyTo}`);
+      return {
+        sentCount: 0,
+        statusText: `Skipped reply for synthetic system message ${effectiveReplyTo}`,
+      };
+    }
+    return {
+      sentCount: 0,
+      statusText: `Invalid reply_to: ${effectiveReplyTo}`,
+      isError: true,
+      errorText: `Invalid reply_to: expected a Feishu open_message_id starting with "om_", got "${effectiveReplyTo}".`,
+    };
   }
 
   // Thread-aware routing: follow-up messages (text chunks 2..N, card 2..N,
@@ -329,7 +346,7 @@ export async function sendFeishuReply(
           }
         }
       } catch (err) {
-        console.error(`[reply-sender] Failed to upload file ${file.path}:`, err);
+        logSafeError(`[reply-sender] Failed to upload file ${file.path}:`, err);
       }
     }
   }

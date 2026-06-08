@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { appConfig } from '../config.js';
+import { logSafeError } from '../safe-log.js';
 
 export interface BufferedMessage {
   role: 'user' | 'assistant';
@@ -120,7 +121,7 @@ export class ConversationBuffer {
         await this.flushHandler(chatId, [...messages]);
       }
     } catch (err) {
-      console.error(`[buffer] Flush failed for chat ${chatId}:`, err);
+      logSafeError(`[buffer] Flush failed for chat ${chatId}:`, err);
     } finally {
       this.flushing.delete(chatId);
     }

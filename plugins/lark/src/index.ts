@@ -17,6 +17,8 @@ import { sendFeishuReply } from './reply-sender.js';
 import { TurnObligationTracker } from './turn-obligation.js';
 import { postDocCommentReply, splitDocCommentText } from './doc-comment-api.js';
 import { buildChannelNotificationMeta } from './channel-notification.js';
+import { shouldSendCodexExecFailureReply } from './codex-exec-error.js';
+import { logSafeError, redactErrorForLog } from './safe-log.js';
 import {
   acquireSingleInstanceLock,
   registerLockCleanup,
@@ -227,7 +229,7 @@ async function main() {
       debugLog(
         `[channel] Failed to deliver inbound to Codex for message ${message.messageId}: ${errText}`
       );
-      console.error('[channel] Failed to deliver inbound to Codex:', err);
+      console.error('[channel] Failed to deliver inbound to Codex:', redactErrorForLog(err));
       if (appConfig.codexDeliveryMode === 'exec') {
         const errorText = `Codex exec failed: ${errText.slice(0, 1500)}`;
         if (message.chatType === 'doc_comment' && message.docComment) {
@@ -238,10 +240,10 @@ async function main() {
               fileType: message.docComment.fileType,
               content: chunk,
             }).catch((replyErr) => {
-              console.error('[channel] Failed to send codex exec doc-comment error reply:', replyErr);
+              logSafeError('[channel] Failed to send codex exec doc-comment error reply:', replyErr);
             });
           }
-        } else {
+        } else if (shouldSendCodexExecFailureReply(message)) {
           await sendFeishuReply(
             {
               client: channel.getClient(),
@@ -258,8 +260,12 @@ async function main() {
               thread_id: message.threadId,
             },
           ).catch((replyErr) => {
-            console.error('[channel] Failed to send codex exec error reply:', replyErr);
+            console.error('[channel] Failed to send codex exec error reply:', redactErrorForLog(replyErr));
           });
+        } else {
+          console.error(
+            `[channel] Suppressed codex exec error reply for non-user-visible or synthetic message ${message.messageId} (${message.chatType}): ${errorText}`,
+          );
         }
       }
     } finally {
@@ -303,6 +309,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[index] Fatal error:', err);
+  logSafeError('[index] Fatal error:', err);
   process.exit(1);
 });

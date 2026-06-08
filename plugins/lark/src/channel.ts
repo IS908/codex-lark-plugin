@@ -14,6 +14,7 @@ import { feishuApiCall } from './feishu-retry.js';
 import { BoundedCache } from './resource-governance.js';
 import { AckReactionTracker, deleteAckReaction } from './ack-reactions.js';
 import { extractInteractiveCardText } from './interactive-card-text.js';
+import { logSafeError, redactErrorForLog } from './safe-log.js';
 
 /**
  * Build a Lark SDK logger that routes every level to stderr. The SDK's default
@@ -31,7 +32,7 @@ function makeSdkLogger(prefix: string) {
   return {
     info: (...args: any[]) => console.error(`[${prefix}]`, ...args),
     warn: (...args: any[]) => console.error(`[${prefix}][warn]`, ...args),
-    error: (...args: any[]) => console.error(`[${prefix}][error]`, ...args),
+    error: (...args: any[]) => console.error(`[${prefix}][error]`, ...args.map(redactErrorForLog)),
     debug: (...args: any[]) => console.error(`[${prefix}][debug]`, ...args),
     trace: (...args: any[]) => console.error(`[${prefix}][trace]`, ...args),
   };
@@ -530,7 +531,7 @@ export class LarkChannel {
         try {
           await this.handleMessageEvent(data);
         } catch (err) {
-          console.error('[channel] Error handling message event:', err);
+          logSafeError('[channel] Error handling message event:', err);
         }
       },
     }).register({
@@ -539,7 +540,7 @@ export class LarkChannel {
         try {
           await this.handleReactionEvent(data);
         } catch (err) {
-          console.error('[channel] Error handling reaction event:', err);
+          logSafeError('[channel] Error handling reaction event:', err);
         }
       },
     }).register({
@@ -557,7 +558,7 @@ export class LarkChannel {
             client: this.client as any,
           });
         } catch (err) {
-          console.error('[channel] Error handling doc comment event:', err);
+          logSafeError('[channel] Error handling doc comment event:', err);
         }
       },
     });
@@ -985,7 +986,7 @@ export class LarkChannel {
         console.error('[channel] Warning: could not resolve bot open_id from /bot/v3/info');
       }
     } catch (err) {
-      console.error('[channel] Warning: failed to fetch bot info:', err);
+      logSafeError('[channel] Warning: failed to fetch bot info:', err);
     }
   }
 

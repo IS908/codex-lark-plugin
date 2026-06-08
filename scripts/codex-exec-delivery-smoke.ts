@@ -294,6 +294,27 @@ assert.equal(deferTracker.get('om_inbound_defer')?.status, 'deferred');
 assert.equal(deferTracker.get('om_inbound_defer')?.source, 'exec_assistant_text');
 deferTracker.clear();
 
+const syntheticReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    messageId: 'flush-1780923345577',
+    chatId: 'oc_group_001',
+    chatType: 'system',
+    senderId: 'system',
+    text: '[Auto-memory-flush] summarize buffered context',
+    messageType: 'text',
+    rawContent: '[Auto-memory-flush] summarize buffered context',
+  },
+  displayLabel: 'system auto-flush',
+  useCodexSessions: false,
+  runCodexExec: async () => 'flush completed',
+  sendReply: async (request) => {
+    syntheticReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(syntheticReplies.length, 0);
+
 const maliciousRequests: any[] = [];
 await deliverMessageViaCodexExec({
   message: {
