@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-06-08
+
+### Fixed
+- Hardened ack reaction lifecycle tracking so revoke-before-set races delete late ack reactions instead of leaking them.
+- Successful replies, reactions, and attachment downloads now satisfy the originating turn and revoke its ack reaction, including partial multi-message replies after the first visible bot response.
+- Active ack reaction handles now survive inbound TTL cleanup so long-running turns can still revoke their Feishu reaction ids.
+- Bot-sent message tracking now includes chat/thread metadata across reply and scheduler direct-send paths, improving reaction filtering for passive emoji feedback.
+
+### Added
+- Ack lifecycle smoke tests covering late set, create failure, revoke partial failure, stale/non-inbound gating, active-handle TTL/cap behavior, partial reply failure, and non-text satisfiers.
+
 ## [1.0.6] - 2026-06-08
 
 ### Fixed
