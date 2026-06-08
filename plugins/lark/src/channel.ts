@@ -13,6 +13,7 @@ import { debugLog } from './debug-log.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { BoundedCache } from './resource-governance.js';
 import { AckReactionTracker, deleteAckReaction } from './ack-reactions.js';
+import { extractInteractiveCardText } from './interactive-card-text.js';
 
 /**
  * Build a Lark SDK logger that routes every level to stderr. The SDK's default
@@ -811,7 +812,7 @@ export class LarkChannel {
         case 'video':
           return '[Video]';
         case 'interactive':
-          return parsed.title?.content ?? parsed.header?.title?.content ?? '[Interactive Card]';
+          return extractInteractiveCardText(rawContent) ?? '[Interactive Card]';
         default:
           return parsed.text ?? rawContent;
       }

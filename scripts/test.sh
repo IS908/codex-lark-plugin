@@ -42,6 +42,10 @@ echo "=== Card builder unit checks ==="
 node --import tsx scripts/card-smoke.ts
 
 echo ""
+echo "=== Quoted interactive card unit checks ==="
+node --import tsx scripts/quoted-card-smoke.ts
+
+echo ""
 echo "=== Job store unit checks ==="
 node --import tsx scripts/job-smoke.ts
 
