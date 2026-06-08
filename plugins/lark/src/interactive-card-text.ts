@@ -76,8 +76,28 @@ function isLocaleMap(record: Record<string, unknown>): boolean {
   return keys.length > 0 && keys.every((key) => /^[a-z]{2}(?:[-_][a-z]{2})?$/i.test(key));
 }
 
-function normalizeText(text: string): string {
+function preferredLocaleValue(record: Record<string, unknown>): unknown[] {
+  if (!isLocaleMap(record)) return [];
+  const preferred = record.en_us ?? record.zh_cn ?? Object.values(record)[0];
+  return preferred === undefined ? [] : [preferred];
+}
+
+function stripLarkMarkdownTags(text: string): string {
   return text
+    .replace(/<link\b[^>]*>([\s\S]*?)<\/link>/gi, '$1')
+    .replace(/<person\b[^>]*>([\s\S]*?)<\/person>/gi, '$1')
+    .replace(/<person\b[^>]*\/?>/gi, '')
+    .replace(/<at\b[^>]*>([\s\S]*?)<\/at>/gi, (_match, label: string) => {
+      const trimmed = String(label).trim().replace(/^@+/, '');
+      return trimmed ? `@${trimmed}` : '';
+    })
+    .replace(/<at\b[^>]*\/?>/gi, '')
+    .replace(/<([a-z_][\w-]*)\b[^>]*>([\s\S]*?)<\/\1>/gi, '$2')
+    .replace(/<[^>]+>/g, '');
+}
+
+function normalizeText(text: string): string {
+  return stripLarkMarkdownTags(text)
     .replace(/\r\n?/g, '\n')
     .replace(/\[([^\]]+)\]\((?:https?:\/\/|lark:\/\/|mailto:|file:\/\/)[^)]+\)/g, '$1')
     .replace(/\b(?:https?:\/\/|lark:\/\/|mailto:|file:\/\/)\S+/g, '')
@@ -98,6 +118,11 @@ function collectTextNode(value: unknown, add: (text: string) => void): void {
   }
   if (!isRecord(parsed)) return;
 
+  if (isLocaleMap(parsed)) {
+    for (const child of preferredLocaleValue(parsed)) collectTextNode(child, add);
+    return;
+  }
+
   const tag = typeof parsed.tag === 'string' ? parsed.tag : '';
   if (TEXT_TAGS.has(tag)) {
     if (typeof parsed.content === 'string') add(parsed.content);
@@ -106,10 +131,17 @@ function collectTextNode(value: unknown, add: (text: string) => void): void {
 
   const i18n = parsed.i18n;
   if (isRecord(i18n)) {
-    collectTextNode(i18n.zh_cn ?? i18n.en_us ?? Object.values(i18n)[0], add);
+    for (const child of preferredLocaleValue(i18n)) collectTextNode(child, add);
   }
 
-  if (typeof parsed.content === 'string' && !parsed.content.trim().startsWith('{')) {
+  const i18nContent = parsed.i18n_content;
+  const hasPreferredI18nContent =
+    isRecord(i18nContent) && preferredLocaleValue(i18nContent).length > 0;
+  if (isRecord(i18nContent)) {
+    for (const child of preferredLocaleValue(i18nContent)) collectTextNode(child, add);
+  }
+
+  if (!hasPreferredI18nContent && typeof parsed.content === 'string' && !parsed.content.trim().startsWith('{')) {
     add(parsed.content);
   }
   if (typeof parsed.text === 'string') add(parsed.text);
@@ -136,6 +168,10 @@ function visitCardNode(value: unknown, add: (text: string) => void): void {
   for (const [rawKey, child] of Object.entries(parsed)) {
     const key = rawKey.toLowerCase();
     if (UNSAFE_KEYS.has(key)) continue;
+    if (key === 'config') {
+      if (isRecord(child) && 'summary' in child) collectTextNode(child.summary, add);
+      continue;
+    }
     if (TEXT_KEYS.has(key)) {
       collectTextNode(child, add);
       continue;

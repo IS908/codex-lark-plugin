@@ -97,6 +97,51 @@ const legacyCard = {
 
 {
   const channel = new LarkChannel();
+  const text = (channel as any).extractText(
+    JSON.stringify({
+      config: {
+        summary: {
+          content: 'Fallback summary preview',
+          i18n_content: {
+            en_us: 'Localized summary preview',
+          },
+        },
+      },
+      header: {
+        title: {
+          tag: 'plain_text',
+          i18n_content: {
+            en_us: 'CardKit 2.0 Header',
+          },
+        },
+      },
+      body: {
+        elements: [
+          {
+            tag: 'markdown',
+            i18n_content: {
+              en_us:
+                "Open <link url='https://internal.example.com/private?token=abc'>details</link> for <person id='ou_secret_person'>Alice</person> and <at id='ou_secret_at'>Bob</at> <text_tag color='red'>P0</text_tag>.",
+            },
+          },
+        ],
+      },
+    }),
+    'interactive',
+  );
+  assert.match(text, /Localized summary preview/);
+  assert.match(text, /CardKit 2\.0 Header/);
+  assert.match(text, /Open details for Alice and @Bob P0\./);
+  assert.doesNotMatch(text, /Fallback summary preview/);
+  assert.doesNotMatch(text, /internal\.example\.com/);
+  assert.doesNotMatch(text, /token=abc/);
+  assert.doesNotMatch(text, /ou_secret_person/);
+  assert.doesNotMatch(text, /ou_secret_at/);
+  assert.doesNotMatch(text, /<link|<person|<at|<text_tag/);
+}
+
+{
+  const channel = new LarkChannel();
   let captured: any;
   channel.setMessageHandler(async (message: any) => {
     captured = message;
