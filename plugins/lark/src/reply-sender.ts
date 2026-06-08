@@ -22,6 +22,17 @@ function markAckRevoked(ackReactions: Map<string, string>, messageId: string): v
   timer.unref?.();
 }
 
+function wrapFeishuApiError(err: any): Error | null {
+  const apiError = err?.response?.data ?? err?.data;
+  if (!apiError?.code || !apiError?.msg) return null;
+  console.error(`[reply-sender] Feishu API error [${apiError.code}]: ${apiError.msg}`);
+  const wrapped = new Error(`Feishu API [${apiError.code}]: ${apiError.msg}`);
+  (wrapped as Error & { response?: unknown }).response = err?.response;
+  (wrapped as Error & { data?: unknown }).data = apiError;
+  (wrapped as Error & { cause?: unknown }).cause = err;
+  return wrapped;
+}
+
 export interface ReplyRequest {
   chat_id: string;
   text: string;
@@ -185,11 +196,8 @@ export async function sendFeishuReply(
       const sentId = resp?.data?.message_id;
       if (sentId && botMessageTracker) botMessageTracker.add(sentId);
     } catch (err: any) {
-      const apiError = err?.response?.data ?? err?.data;
-      if (apiError?.code && apiError?.msg) {
-        console.error(`[reply-sender] Feishu API error [${apiError.code}]: ${apiError.msg}`);
-        throw new Error(`Feishu API [${apiError.code}]: ${apiError.msg}`);
-      }
+      const wrapped = wrapFeishuApiError(err);
+      if (wrapped) throw wrapped;
       throw err;
     }
 
@@ -228,15 +236,8 @@ export async function sendFeishuReply(
         const sentId = resp?.data?.message_id;
         if (sentId && botMessageTracker) botMessageTracker.add(sentId);
       } catch (err: any) {
-        const apiError = err?.response?.data ?? err?.data;
-        if (apiError?.code && apiError?.msg) {
-          console.error(
-            `[reply-sender] Feishu API error [${apiError.code}]: ${apiError.msg}`
-          );
-          throw new Error(
-            `Feishu API [${apiError.code}]: ${apiError.msg}`
-          );
-        }
+        const wrapped = wrapFeishuApiError(err);
+        if (wrapped) throw wrapped;
         console.error(
           `[reply-sender] send card failed:`,
           err?.message ?? String(err)
@@ -271,15 +272,8 @@ export async function sendFeishuReply(
         const sentId = resp?.data?.message_id;
         if (sentId && botMessageTracker) botMessageTracker.add(sentId);
       } catch (err: any) {
-        const apiError = err?.response?.data ?? err?.data;
-        if (apiError?.code && apiError?.msg) {
-          console.error(
-            `[reply-sender] Feishu API error [${apiError.code}]: ${apiError.msg}`
-          );
-          throw new Error(
-            `Feishu API [${apiError.code}]: ${apiError.msg}`
-          );
-        }
+        const wrapped = wrapFeishuApiError(err);
+        if (wrapped) throw wrapped;
         console.error(
           `[reply-sender] send message failed:`,
           err?.message ?? String(err)

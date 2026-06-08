@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - Hardened scheduled jobs against overlapping scheduler ticks, runtime/user-edit write races, stale missed-run replay, and permanent Feishu target errors.
-- Prompt cronjob delivery failures now persist an explicit defer/no-reply signal instead of failing silently.
+- Prompt cronjob delivery failures now persist an explicit defer/no-reply signal, and permanent reply failures from cronjob turns can auto-pause the originating job.
 
 ### Changed
 - Friendly `every Nm` / `every Nh` schedule aliases now reject empty, out-of-range, or non-dividing intervals with specific validation errors.

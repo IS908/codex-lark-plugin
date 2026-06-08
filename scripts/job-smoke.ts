@@ -170,6 +170,10 @@ try {
     fail(`24c: expected hour divisibility error, got ${err?.message ?? err}`);
   }
 }
+const e13 = expandSchedule('every 60m');
+if (e13.cron !== '*/60 * * * *') fail(`24c: every 60m should be accepted, got ${e13.cron}`);
+const e14 = expandSchedule('every 24h');
+if (e14.cron !== '0 */24 * * *') fail(`24c: every 24h should be accepted, got ${e14.cron}`);
 
 // 24d. computeLatestDueRun includes exact cron boundaries for recovery
 const latestDue = computeLatestDueRun('*/5 * * * *', new Date('2026-06-07T01:15:00.000Z'));

@@ -14,6 +14,11 @@ import { writeSdkResource } from './sdk-resource.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { assertSafeChatId } from './prompts.js';
 import { feishuApiCall } from './feishu-retry.js';
+import {
+  autoPauseJobForPermanentTargetError,
+  isPermanentTargetError,
+  parseJobThreadId,
+} from './scheduler.js';
 
 /**
  * Sanitize and length-cap a Feishu attachment filename for safe local
@@ -139,6 +144,29 @@ export function registerTools(
     }
     return { caller };
   }
+
+  async function maybeAutoPauseCronJobReplyFailure(
+    thread_id: string | undefined,
+    err: unknown,
+  ): Promise<void> {
+    const parsed = parseJobThreadId(thread_id);
+    if (!parsed || !isPermanentTargetError(err)) return;
+    const reason = err instanceof Error ? err.message : String(err);
+    try {
+      const paused = await autoPauseJobForPermanentTargetError(parsed.jobId, reason, {
+        createdAtHash: parsed.createdAtHash,
+      });
+      if (paused) {
+        console.error(`[tools] Auto-paused cronjob ${parsed.jobId} after permanent reply failure: ${reason}`);
+      }
+    } catch (pauseErr) {
+      console.error(
+        `[tools] Failed to auto-pause cronjob ${parsed.jobId} after permanent reply failure:`,
+        pauseErr,
+      );
+    }
+  }
+
   // ── 1. reply ──
   server.registerTool(
     'reply',
@@ -185,18 +213,29 @@ export function registerTools(
       }),
     },
     async ({ chat_id, text, card, reply_to, thread_id, format, footer, files }) => {
-      const result = await sendFeishuReply(
-        {
-          client,
-          conversationBuffer,
-          ackReactions,
-          botMessageTracker,
-          latestMessageTracker,
-        },
-        { chat_id, text, card, reply_to, thread_id, format, footer, files },
-      );
+      let result;
+      try {
+        result = await sendFeishuReply(
+          {
+            client,
+            conversationBuffer,
+            ackReactions,
+            botMessageTracker,
+            latestMessageTracker,
+          },
+          { chat_id, text, card, reply_to, thread_id, format, footer, files },
+        );
+      } catch (err) {
+        await maybeAutoPauseCronJobReplyFailure(thread_id, err);
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text' as const, text: msg }],
+          isError: true,
+        };
+      }
 
       if (result.isError) {
+        await maybeAutoPauseCronJobReplyFailure(thread_id, result.errorText ?? result.statusText);
         return {
           content: [{ type: 'text' as const, text: result.errorText ?? result.statusText }],
           isError: true,

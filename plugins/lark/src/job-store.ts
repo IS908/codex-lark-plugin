@@ -79,8 +79,8 @@ export function expandSchedule(input: string): { cron: string; human: string } {
   let match = trimmed.match(/^every\s+(\d+)\s*m(?:in(?:ute)?s?)?$/);
   if (match) {
     const n = Number(match[1]);
-    if (!Number.isInteger(n) || n < 1 || n > 59) {
-      throw new Error('every Nm must be between 1m and 59m');
+    if (!Number.isInteger(n) || n < 1 || n > 60) {
+      throw new Error('every Nm must be between 1m and 60m');
     }
     if (60 % n !== 0) {
       throw new Error('every Nm must divide evenly into 60 minutes');
@@ -93,8 +93,8 @@ export function expandSchedule(input: string): { cron: string; human: string } {
     match = trimmed.match(/^every\s+(\d+)\s*h(?:ours?)?$/);
     if (match) {
       const n = Number(match[1]);
-      if (!Number.isInteger(n) || n < 1 || n > 23) {
-        throw new Error('every Nh must be between 1h and 23h');
+      if (!Number.isInteger(n) || n < 1 || n > 24) {
+        throw new Error('every Nh must be between 1h and 24h');
       }
       if (24 % n !== 0) {
         throw new Error('every Nh must divide evenly into 24 hours');
