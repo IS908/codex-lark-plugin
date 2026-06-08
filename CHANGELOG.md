@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-06-08
+
 ### Changed
 - Generated Feishu cards now use the `red` header theme, and LLM-facing guidance tells Codex to prefer plain text and use cards sparingly.
 - README guidance now documents when to force `format='card'` versus keeping plain text.
@@ -132,7 +134,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.10...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.11...HEAD
+[1.0.11]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.7...v1.0.8
