@@ -13,6 +13,7 @@ import { audit } from './audit-log.js';
 import { writeSdkResource } from './sdk-resource.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { revokeAckReaction, type AckReactionTracker } from './ack-reactions.js';
+import type { TurnObligationTracker } from './turn-obligation.js';
 import { assertSafeChatId } from './prompts.js';
 import { feishuApiCall } from './feishu-retry.js';
 import {
@@ -73,7 +74,8 @@ export function registerTools(
   conversationBuffer?: ConversationBuffer,
   ackReactions?: AckReactionTracker,
   botMessageTracker?: BotMessageTracker,
-  latestMessageTracker?: LatestMessageTracker
+  latestMessageTracker?: LatestMessageTracker,
+  turnObligations?: TurnObligationTracker
 ): void {
   /**
    * Resolve the true caller for a sensitive tool invocation via the server-side
@@ -168,6 +170,32 @@ export function registerTools(
     }
   }
 
+  function resolveTurnMessageId(args: {
+    reply_to?: string;
+    chat_id?: string;
+    thread_id?: string;
+    fallback_message_id?: string;
+  }): string | undefined {
+    if (args.reply_to) return args.reply_to;
+    const fallback = turnObligations?.resolveFallback(args.chat_id, args.thread_id);
+    if (fallback?.status === 'ambiguous') {
+      throw new Error(
+        `reply_to is required: ${fallback.count} pending Lark turns match chat=${args.chat_id} thread=${args.thread_id ?? '(none)'}.`,
+      );
+    }
+    if (fallback?.status === 'active' || fallback?.status === 'single-pending') {
+      return fallback.messageId;
+    }
+    if (args.chat_id && latestMessageTracker) {
+      return latestMessageTracker.getLatest(args.chat_id, args.thread_id)?.messageId;
+    }
+    return args.fallback_message_id;
+  }
+
+  function satisfyTurn(messageId: string | undefined, source: Parameters<TurnObligationTracker['markSatisfied']>[1]): void {
+    turnObligations?.markSatisfied(messageId, source);
+  }
+
   // ── 1. reply ──
   server.registerTool(
     'reply',
@@ -223,6 +251,7 @@ export function registerTools(
             ackReactions,
             botMessageTracker,
             latestMessageTracker,
+            turnObligations,
           },
           { chat_id, text, card, reply_to, thread_id, format, footer, files },
         );
@@ -262,9 +291,28 @@ export function registerTools(
           .enum(['text', 'card_markdown'])
           .default('text')
           .describe('Format of the content'),
+        chat_id: z
+          .string()
+          .optional()
+          .describe('Current channel chat_id. Pass this with thread_id/reply_to so the edit satisfies the current Lark turn.'),
+        thread_id: z
+          .string()
+          .optional()
+          .describe('Current channel thread_id, when present. Used only to satisfy the current Lark turn.'),
+        reply_to: z
+          .string()
+          .optional()
+          .describe('Current inbound message_id. Used only to satisfy the current Lark turn after the edit succeeds.'),
       }),
     },
-    async ({ message_id, text, format }) => {
+    async ({ message_id, text, format, chat_id, thread_id, reply_to }) => {
+      let turnMessageId: string | undefined;
+      try {
+        turnMessageId = resolveTurnMessageId({ reply_to, chat_id, thread_id });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: msg }], isError: true };
+      }
       if (format === 'card_markdown') {
         await feishuApiCall('edit_message.patch.card_markdown', () =>
           client.im.v1.message.patch({
@@ -289,6 +337,8 @@ export function registerTools(
           { retryTimeout: false },
         );
       }
+      satisfyTurn(turnMessageId, 'edit_message');
+      revokeAckReaction(client, ackReactions, turnMessageId, 'edit_message');
 
       return {
         content: [{ type: 'text' as const, text: `Edited message ${message_id}` }],
@@ -317,6 +367,7 @@ export function registerTools(
         { retryTimeout: false },
       );
       revokeAckReaction(client, ackReactions, message_id, 'react');
+      satisfyTurn(message_id, 'react');
 
       return {
         content: [{ type: 'text' as const, text: `Added ${emoji} reaction to ${message_id}` }],
@@ -394,6 +445,7 @@ export function registerTools(
           timeoutMs: appConfig.downloadTimeoutMs,
         });
         revokeAckReaction(client, ackReactions, message_id, 'download_attachment');
+        satisfyTurn(message_id, 'download_attachment');
         return { content: [{ type: 'text' as const, text: `Downloaded to ${filePath}` }] };
       } catch (err: any) {
         const apiError = err?.response?.data ?? err?.data;
@@ -424,7 +476,54 @@ export function registerTools(
     }
   );
 
-  // ── 5. save_memory ──
+  // ── 5. defer_reply ──
+  server.registerTool(
+    'defer_reply',
+    {
+      description:
+        'Explicitly mark the current Lark turn as intentionally deferred or no-reply. This does not send a Feishu message; it only satisfies the reply obligation and revokes the ack reaction.',
+      inputSchema: z.object({
+        chat_id: z.string().describe('The current channel chat_id'),
+        reply_to: z
+          .string()
+          .optional()
+          .describe('Current inbound message_id. Pass meta.message_id when available.'),
+        thread_id: z
+          .string()
+          .optional()
+          .describe('Current channel thread_id, when present.'),
+        marker: z
+          .enum(['LARK_DEFER', 'LARK_NO_REPLY'])
+          .default('LARK_DEFER')
+          .describe('Use LARK_DEFER for delayed handling, LARK_NO_REPLY when no Feishu reply is intended.'),
+        reason: z.string().optional().describe('Short operator-facing reason.'),
+      }),
+    },
+    async ({ chat_id, reply_to, thread_id, marker, reason }) => {
+      let messageId: string | undefined;
+      try {
+        messageId = resolveTurnMessageId({ reply_to, chat_id, thread_id });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: msg }], isError: true };
+      }
+      const marked = turnObligations?.markDeferred(messageId, 'defer_tool', marker, reason) ?? false;
+      revokeAckReaction(client, ackReactions, messageId, 'defer_reply');
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: marked
+              ? `[${marker}] ${reason ?? 'Lark turn intentionally deferred.'}`
+              : `[${marker}] No pending Lark turn matched this defer request.`,
+          },
+        ],
+        ...(marked ? {} : { isError: true }),
+      };
+    }
+  );
+
+  // ── 6. save_memory ──
   server.registerTool(
     'save_memory',
     {
@@ -537,7 +636,7 @@ export function registerTools(
     }
   );
 
-  // ── 6. save_skill ──
+  // ── 7. save_skill ──
   server.registerTool(
     'save_skill',
     {

@@ -9,6 +9,7 @@ import {
 } from './codex-session-store.js';
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { untrustedDataBlock } from './prompts.js';
+import type { TurnObligationTracker } from './turn-obligation.js';
 
 export interface CodexExecDeliveryOptions {
   message: LarkMessage;
@@ -17,6 +18,7 @@ export interface CodexExecDeliveryOptions {
   sessionStore?: CodexExecSessionStore;
   useCodexSessions?: boolean;
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
+  turnObligations?: TurnObligationTracker;
 }
 
 export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string): string {
@@ -44,6 +46,7 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
     'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'If the user asks for an action you cannot complete in this exec bridge environment, say exactly what is missing and keep the answer concise.',
+    'If this turn intentionally should not send a Feishu reply, put [LARK_DEFER] or [LARK_NO_REPLY] on its own line outside code fences, optionally followed by a short reason.',
     '',
     '[Feishu metadata]',
     metaLines.join('\n'),
@@ -68,7 +71,7 @@ const defaultSessionStore = new FileCodexExecSessionStore(appConfig.codexExecSes
 export async function deliverMessageViaCodexExec(
   opts: CodexExecDeliveryOptions,
 ): Promise<void> {
-  const { message, displayLabel, sendReply } = opts;
+  const { message, displayLabel, sendReply, turnObligations } = opts;
   const runCodexExec = opts.runCodexExec ?? runCodexExecCommand;
   const useCodexSessions = opts.useCodexSessions ?? appConfig.codexExecUseSessions;
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
@@ -116,6 +119,9 @@ export async function deliverMessageViaCodexExec(
   let text = result.text.trim();
   if (!text) {
     text = 'Codex exec returned an empty response.';
+  }
+  if (turnObligations?.markDeferredFromText(message.messageId, 'exec_assistant_text', text)) {
+    return;
   }
 
   await sendReply({

@@ -11,6 +11,7 @@ import { deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
 import { buildCodexExecArgs, extractCodexExecSessionId } from '../src/codex-exec.js';
 import type { LarkMessage } from '../src/channel.js';
 import type { ReplyRequest } from '../src/reply-sender.js';
+import { TurnObligationTracker } from '../src/turn-obligation.js';
 
 const message: LarkMessage = {
   messageId: 'om_inbound_001',
@@ -174,6 +175,34 @@ assert.equal(
   sessionRecords.get('chat:oc_group_001:thread:omt_thread_001')?.sessionId,
   '0199a213-81c0-7800-8aa1-bbab2a035a54',
 );
+
+const deferTracker = new TurnObligationTracker({ timeoutMs: 60_000 });
+deferTracker.begin({
+  messageId: 'om_inbound_defer',
+  chatId: 'oc_group_001',
+  threadId: 'omt_thread_001',
+  caller: 'ou_sender_001',
+  mode: 'exec',
+});
+const deferredReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_inbound_defer',
+  },
+  displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+  useCodexSessions: false,
+  turnObligations: deferTracker,
+  runCodexExec: async () => '[LARK_DEFER] waiting for local credentials',
+  sendReply: async (request) => {
+    deferredReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(deferredReplies.length, 0);
+assert.equal(deferTracker.get('om_inbound_defer')?.status, 'deferred');
+assert.equal(deferTracker.get('om_inbound_defer')?.source, 'exec_assistant_text');
+deferTracker.clear();
 
 const maliciousRequests: any[] = [];
 await deliverMessageViaCodexExec({

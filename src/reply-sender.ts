@@ -13,6 +13,7 @@ import {
   revokeAllAckReactions,
   type AckReactionTracker,
 } from './ack-reactions.js';
+import type { TurnObligationTracker } from './turn-obligation.js';
 
 function wrapFeishuApiError(err: any): Error | null {
   const apiError = err?.response?.data ?? err?.data;
@@ -42,6 +43,7 @@ export interface ReplySenderDeps {
   ackReactions?: AckReactionTracker;
   botMessageTracker?: BotMessageTracker;
   latestMessageTracker?: LatestMessageTracker;
+  turnObligations?: TurnObligationTracker;
 }
 
 export interface ReplySendResult {
@@ -71,12 +73,27 @@ export async function sendFeishuReply(
     ackReactions,
     botMessageTracker,
     latestMessageTracker,
+    turnObligations,
   } = deps;
 
   // Auto-correct reply_to from the plugin's per-thread tracker when Codex
   // omits it. Works for both threaded and non-threaded (P2P) messages.
   // Explicit reply_to from Codex always wins.
   let effectiveReplyTo = reply_to;
+  if (!effectiveReplyTo && turnObligations) {
+    const fallback = turnObligations.resolveFallback(chat_id, thread_id);
+    if (fallback.status === 'ambiguous') {
+      throw new Error(
+        `reply_to is required: ${fallback.count} pending Lark turns match chat=${chat_id} thread=${thread_id ?? '(none)'}.`,
+      );
+    }
+    if (fallback.status === 'active' || fallback.status === 'single-pending') {
+      effectiveReplyTo = fallback.messageId;
+      console.error(
+        `[reply-sender] Auto-filled reply_to=${effectiveReplyTo} from ${fallback.status} turn for chat=${chat_id} thread=${thread_id ?? '(none)'}`
+      );
+    }
+  }
   if (!effectiveReplyTo && latestMessageTracker) {
     const latest = latestMessageTracker.getLatest(chat_id, thread_id);
     if (latest) {
@@ -129,6 +146,7 @@ export async function sendFeishuReply(
     });
 
     if (effectiveReplyTo) {
+      turnObligations?.markSatisfied(effectiveReplyTo, 'reply');
       revokeAckReaction(client, ackReactions, effectiveReplyTo, 'reply');
     } else {
       revokeAllAckReactions(client, ackReactions, 'reply.bulk');
