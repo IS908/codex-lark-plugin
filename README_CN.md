@@ -44,7 +44,7 @@
 ### 记忆系统
 
 - 三层架构：Buffer（短期）/ 情景记忆（中期）/ 语义记忆（长期）
-- 自动蒸馏：对话静默超时后自动触发摘要
+- 自动蒸馏：对话静默超时后自动触发摘要；系统触发的 flush turn 是后台行为，exec 失败只记日志，不会作为可见飞书回复发送
 - 本地 markdown 文件存储，路径 `~/.codex/channels/lark/memories/`
 - 用户 profile 分层存储（v0.10.0+）：`public.md`（@mention 可见）/ `private.md`（仅 owner 可见）
 

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- Suppressed Feishu replies for synthetic auto-flush `flush-*` turns so exec failures no longer call `message.reply` with invalid open message ids.
+- Added defensive `reply_to` validation and sanitized Feishu/Axios error logging to avoid leaking authorization headers while preserving Feishu diagnostic codes and log ids.
+
 ## [1.0.11] - 2026-06-08
 
 ### Changed

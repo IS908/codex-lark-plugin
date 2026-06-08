@@ -21,6 +21,7 @@ import {
   type JobFile,
 } from './job-store.js';
 import { feishuApiCall } from './feishu-retry.js';
+import { logSafeError } from './safe-log.js';
 
 /**
  * Prefix for synthetic `thread_id` values injected into cronjob channel
@@ -175,7 +176,7 @@ export class JobScheduler {
     const intervalMs = appConfig.cronScanInterval * 1000;
     this.timer = setInterval(() => {
       this.tick().catch((err) => {
-        console.error('[scheduler] Tick error:', err);
+        logSafeError('[scheduler] Tick error:', err);
       });
     }, intervalMs);
 
@@ -241,7 +242,7 @@ export class JobScheduler {
           try {
             await this.executeJob(job);
           } catch (err) {
-            console.error(`[scheduler] Failed to execute job ${job.meta.id}:`, err);
+            logSafeError(`[scheduler] Failed to execute job ${job.meta.id}:`, err);
           }
         }
       }

@@ -11,6 +11,7 @@ import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { untrustedDataBlock } from './prompts.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
+import { shouldSendFeishuReplyForMessage } from './codex-exec-error.js';
 
 export interface CodexExecDeliveryOptions {
   message: LarkMessage;
@@ -167,6 +168,13 @@ export async function deliverMessageViaCodexExec(
       chatId: message.chatId,
       text,
     });
+    return;
+  }
+
+  if (!shouldSendFeishuReplyForMessage(message)) {
+    console.error(
+      `[codex-exec] Suppressed Feishu reply for non-user-visible or synthetic message ${message.messageId} (${message.chatType})`,
+    );
     return;
   }
 

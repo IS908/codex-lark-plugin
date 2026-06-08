@@ -290,6 +290,25 @@ async function run() {
     fail(`Test 9: expected red header template, got ${generatedCard.header?.template}`);
   }
 
+  // ── Test 10: synthetic reply_to ids must not create any visible Feishu message ──
+  apiCalls.length = 0;
+  botTrackerAdded.length = 0;
+  buffer.recorded.length = 0;
+
+  const r10 = await replyHandler({
+    chat_id: 'chat_001',
+    text: 'synthetic id fallback',
+    reply_to: 'flush-1780923345577',
+  });
+
+  if (r10.isError) fail(`Test 10: unexpected error: ${r10.content[0].text}`);
+  if (!r10.content[0].text.includes('Skipped reply for synthetic system message')) {
+    fail(`Test 10: wrong status text: ${r10.content[0].text}`);
+  }
+  if (apiCalls.length !== 0) fail(`Test 10: synthetic reply_to should not call Feishu APIs: ${JSON.stringify(apiCalls)}`);
+  if (botTrackerAdded.length !== 0) fail('Test 10: synthetic reply should not track a bot message');
+  if (buffer.recorded.length !== 0) fail('Test 10: synthetic reply should not record assistant text');
+
   console.log('PASS');
 }
 

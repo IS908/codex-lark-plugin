@@ -47,7 +47,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 ### Memory
 
 - Three-layer architecture: Buffer, Episodic, and Semantic memory
-- Auto-flush distillation from conversation buffer to episodic memory
+- Auto-flush distillation from conversation buffer to episodic memory; system-initiated flush turns are background-only, so exec failures are logged instead of sent as visible Feishu replies
 - Local markdown-file storage under `~/.codex/channels/lark/memories/`
 - User profiles (tiered public/private since v0.10.0), chat episodes, thread episodes, and global skills
 - Memory-enriched context injection on every incoming message, filtered by caller identity

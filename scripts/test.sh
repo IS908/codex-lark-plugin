@@ -94,6 +94,10 @@ echo "=== Feishu retry unit checks ==="
 node --import tsx scripts/feishu-retry-smoke.ts
 
 echo ""
+echo "=== Safe logging unit checks ==="
+node --import tsx scripts/safe-log-smoke.ts
+
+echo ""
 echo "=== Scheduler unit checks ==="
 node --import tsx scripts/scheduler-smoke.ts
 
