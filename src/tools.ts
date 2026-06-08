@@ -14,6 +14,11 @@ import { writeSdkResource } from './sdk-resource.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { assertSafeChatId } from './prompts.js';
 import { feishuApiCall } from './feishu-retry.js';
+import {
+  autoPauseJobForPermanentTargetError,
+  isPermanentTargetError,
+  parseJobThreadId,
+} from './scheduler.js';
 
 /**
  * Sanitize and length-cap a Feishu attachment filename for safe local
@@ -48,6 +53,7 @@ import {
   computeNextRun,
   readJob,
   writeJob,
+  mutateJob,
   deleteJob as deleteJobFile,
   listAllJobs,
   jobExists,
@@ -138,6 +144,29 @@ export function registerTools(
     }
     return { caller };
   }
+
+  async function maybeAutoPauseCronJobReplyFailure(
+    thread_id: string | undefined,
+    err: unknown,
+  ): Promise<void> {
+    const parsed = parseJobThreadId(thread_id);
+    if (!parsed?.createdAtHash || !isPermanentTargetError(err)) return;
+    const reason = err instanceof Error ? err.message : String(err);
+    try {
+      const paused = await autoPauseJobForPermanentTargetError(parsed.jobId, reason, {
+        createdAtHash: parsed.createdAtHash,
+      });
+      if (paused) {
+        console.error(`[tools] Auto-paused cronjob ${parsed.jobId} after permanent reply failure: ${reason}`);
+      }
+    } catch (pauseErr) {
+      console.error(
+        `[tools] Failed to auto-pause cronjob ${parsed.jobId} after permanent reply failure:`,
+        pauseErr,
+      );
+    }
+  }
+
   // ── 1. reply ──
   server.registerTool(
     'reply',
@@ -184,18 +213,29 @@ export function registerTools(
       }),
     },
     async ({ chat_id, text, card, reply_to, thread_id, format, footer, files }) => {
-      const result = await sendFeishuReply(
-        {
-          client,
-          conversationBuffer,
-          ackReactions,
-          botMessageTracker,
-          latestMessageTracker,
-        },
-        { chat_id, text, card, reply_to, thread_id, format, footer, files },
-      );
+      let result;
+      try {
+        result = await sendFeishuReply(
+          {
+            client,
+            conversationBuffer,
+            ackReactions,
+            botMessageTracker,
+            latestMessageTracker,
+          },
+          { chat_id, text, card, reply_to, thread_id, format, footer, files },
+        );
+      } catch (err) {
+        await maybeAutoPauseCronJobReplyFailure(thread_id, err);
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text' as const, text: msg }],
+          isError: true,
+        };
+      }
 
       if (result.isError) {
+        await maybeAutoPauseCronJobReplyFailure(thread_id, result.errorText ?? result.statusText);
         return {
           content: [{ type: 'text' as const, text: result.errorText ?? result.statusText }],
           isError: true,
@@ -800,32 +840,58 @@ export function registerTools(
         }
       }
 
-      // All inputs validated — apply updates
-      if (name !== undefined) job.meta.name = name;
-      if (prompt !== undefined) job.meta.prompt = prompt;
-      if (content !== undefined) job.meta.content = content;
-      if (model !== undefined) job.meta.model = model || undefined; // empty string clears
-      if (expandedSchedule) {
-        job.meta.schedule = expandedSchedule.cron;
-        job.meta.schedule_human = expandedSchedule.human;
-        job.runtime.next_run_at = computeNextRun(expandedSchedule.cron);
-      }
-      if (status !== undefined) {
-        job.meta.status = status;
-        if (status === 'active' && !schedule) {
-          // Recompute next_run_at when resuming
-          job.runtime.next_run_at = computeNextRun(job.meta.schedule);
+      let ownerMismatch: string | null = null;
+      const updated = await mutateJob(id, (latest) => {
+        if (latest.meta.created_by !== caller) {
+          ownerMismatch = latest.meta.created_by;
+          return false;
         }
+
+        // All inputs validated — apply updates against the latest on-disk job
+        if (name !== undefined) latest.meta.name = name;
+        if (prompt !== undefined) latest.meta.prompt = prompt;
+        if (content !== undefined) latest.meta.content = content;
+        if (model !== undefined) latest.meta.model = model || undefined; // empty string clears
+        if (expandedSchedule) {
+          latest.meta.schedule = expandedSchedule.cron;
+          latest.meta.schedule_human = expandedSchedule.human;
+          latest.runtime.next_run_at = computeNextRun(expandedSchedule.cron);
+        }
+        if (status !== undefined) {
+          latest.meta.status = status;
+          if (status === 'active' && !schedule) {
+            // Recompute next_run_at when resuming
+            latest.runtime.next_run_at = computeNextRun(latest.meta.schedule);
+          }
+        }
+      });
+
+      if (!updated) {
+        return {
+          content: [{ type: 'text' as const, text: `Job "${id}" not found.` }],
+          isError: true,
+        };
+      }
+      if (ownerMismatch) {
+        void audit('update_job', caller, auditArgs, 'denied');
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `You are not the owner of "${id}". Only ${ownerMismatch} can update it.`,
+            },
+          ],
+          isError: true,
+        };
       }
 
-      await writeJob(job);
       void audit('update_job', caller, auditArgs, 'ok');
 
       return {
         content: [
           {
             type: 'text' as const,
-            text: `Updated job "${id}". Status: ${job.meta.status}, Next run: ${job.runtime.next_run_at} (tz=${appConfig.cronTimezone})`,
+            text: `Updated job "${id}". Status: ${updated.meta.status}, Next run: ${updated.runtime.next_run_at} (tz=${appConfig.cronTimezone})`,
           },
         ],
       };

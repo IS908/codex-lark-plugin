@@ -46,6 +46,10 @@ echo "=== Job store unit checks ==="
 node --import tsx scripts/job-smoke.ts
 
 echo ""
+echo "=== Job tool unit checks ==="
+node --import tsx scripts/job-tools-smoke.ts
+
+echo ""
 echo "=== Reply raw-card unit checks ==="
 node --import tsx scripts/reply-card-smoke.ts
 

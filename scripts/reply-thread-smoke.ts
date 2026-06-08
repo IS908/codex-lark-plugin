@@ -5,14 +5,15 @@
  * thread when `thread_id` is present, and fall through to `message.create`
  * otherwise.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerTools } from '../src/tools.js';
 import type { MemoryStore } from '../src/memory/file.js';
 import { IdentitySession } from '../src/identity-session.js';
 import type { LarkChannel } from '../src/channel.js';
-import { JOB_THREAD_PREFIX } from '../src/scheduler.js';
+import { appConfig } from '../src/config.js';
+import { JOB_THREAD_PREFIX, jobCreatedAtHash } from '../src/scheduler.js';
 
 function fail(msg: string): never {
   console.error(`FAIL: ${msg}`);
@@ -22,7 +23,7 @@ function fail(msg: string): never {
 let passed = 0;
 const apiCalls: { method: string; args: any }[] = [];
 
-function mockClient() {
+function mockClient(opts: { failReply?: unknown } = {}) {
   return {
     im: {
       v1: {
@@ -32,6 +33,7 @@ function mockClient() {
             return { data: { message_id: `created_${apiCalls.length}` } };
           },
           reply: async (args: any) => {
+            if (opts.failReply) throw opts.failReply;
             apiCalls.push({ method: 'message.reply', args });
             return { data: { message_id: `replied_${apiCalls.length}` } };
           },
@@ -83,9 +85,9 @@ const fakeServer = {
   },
 };
 
-async function setup() {
+async function setup(opts: { client?: ReturnType<typeof mockClient> } = {}) {
   apiCalls.length = 0;
-  const client = mockClient();
+  const client = opts.client ?? mockClient();
   const botTracker = {
     ids: new Set<string>(),
     add(id: string) { this.ids.add(id); },
@@ -327,4 +329,196 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   passed++;
 }
 
-console.log(`reply-thread smoke: ${passed}/7 PASS`);
+// ── 8. Synthetic cronjob reply permanent target failures auto-pause job ──
+{
+  const originalJobsDir = appConfig.jobsDir;
+  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-autopause-'));
+  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
+  try {
+    const jobId = 'reply-autopause';
+    const createdAt = '2026-06-07T00:00:00.000Z';
+    writeFileSync(
+      join(jobsDir, `${jobId}.json`),
+      JSON.stringify(
+        {
+          meta: {
+            id: jobId,
+            name: 'Reply AutoPause',
+            type: 'prompt',
+            schedule: '* * * * *',
+            schedule_human: 'every 1m',
+            prompt: 'reply',
+            target_chat_id: 'chat_grp',
+            origin_chat_id: 'chat_grp',
+            status: 'active',
+            created_by: 'ou_caller',
+            created_at: createdAt,
+          },
+          runtime: {
+            last_run_at: null,
+            next_run_at: '2099-01-01T00:00:00.000Z',
+            run_count: 1,
+            last_error: null,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const err = new Error('permission denied') as Error & {
+      response?: { status: number; data: { code: number; msg: string } };
+    };
+    err.response = { status: 403, data: { code: 99991672, msg: 'permission denied' } };
+    const { reply } = await setup({ client: mockClient({ failReply: err }) });
+    const result = await reply({
+      chat_id: 'chat_grp',
+      text: 'cron reply',
+      reply_to: 'om_source',
+      thread_id: `${JOB_THREAD_PREFIX}${jobId}-${jobCreatedAtHash(createdAt)}-1760000000000`,
+      format: 'text',
+    });
+    if (!result.isError) fail('8: expected reply tool to return isError for permanent Feishu failure');
+
+    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
+    if (persisted.meta.status !== 'paused') {
+      fail(`8: expected cronjob auto-paused, got ${persisted.meta.status}`);
+    }
+    if (!persisted.runtime.last_error?.includes('auto-paused')) {
+      fail(`8: expected auto-pause reason in last_error, got ${persisted.runtime.last_error}`);
+    }
+  } finally {
+    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
+    rmSync(jobsDir, { recursive: true, force: true });
+  }
+  passed++;
+}
+
+// ── 9. Legacy cronjob thread ids without created_at hash do not auto-pause ──
+{
+  const originalJobsDir = appConfig.jobsDir;
+  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-legacy-autopause-'));
+  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
+  try {
+    const jobId = 'reply-legacy-autopause';
+    writeFileSync(
+      join(jobsDir, `${jobId}.json`),
+      JSON.stringify(
+        {
+          meta: {
+            id: jobId,
+            name: 'Reply Legacy AutoPause',
+            type: 'prompt',
+            schedule: '* * * * *',
+            schedule_human: 'every 1m',
+            prompt: 'reply',
+            target_chat_id: 'chat_grp',
+            origin_chat_id: 'chat_grp',
+            status: 'active',
+            created_by: 'ou_caller',
+            created_at: '2026-06-07T00:00:00.000Z',
+          },
+          runtime: {
+            last_run_at: null,
+            next_run_at: '2099-01-01T00:00:00.000Z',
+            run_count: 0,
+            last_error: null,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const err = new Error('permission denied') as Error & {
+      response?: { status: number; data: { code: number; msg: string } };
+    };
+    err.response = { status: 403, data: { code: 99991672, msg: 'permission denied' } };
+    const { reply } = await setup({ client: mockClient({ failReply: err }) });
+    const result = await reply({
+      chat_id: 'chat_grp',
+      text: 'cron reply',
+      reply_to: 'om_source',
+      thread_id: `${JOB_THREAD_PREFIX}${jobId}-1760000000000`,
+      format: 'text',
+    });
+    if (!result.isError) fail('9: expected reply tool to return isError for permanent Feishu failure');
+
+    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
+    if (persisted.meta.status !== 'active') {
+      fail(`9: legacy hashless cronjob turn should not auto-pause, got ${persisted.meta.status}`);
+    }
+  } finally {
+    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
+    rmSync(jobsDir, { recursive: true, force: true });
+  }
+  passed++;
+}
+
+// ── 10. Stale cronjob reply failures do not pause a recreated same-id job ──
+{
+  const originalJobsDir = appConfig.jobsDir;
+  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-stale-autopause-'));
+  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
+  try {
+    const jobId = 'reply-stale-autopause';
+    const oldCreatedAt = '2026-06-07T00:00:00.000Z';
+    const newCreatedAt = '2026-06-07T00:01:00.000Z';
+    writeFileSync(
+      join(jobsDir, `${jobId}.json`),
+      JSON.stringify(
+        {
+          meta: {
+            id: jobId,
+            name: 'Reply Stale AutoPause',
+            type: 'prompt',
+            schedule: '* * * * *',
+            schedule_human: 'every 1m',
+            prompt: 'reply',
+            target_chat_id: 'chat_grp',
+            origin_chat_id: 'chat_grp',
+            status: 'active',
+            created_by: 'ou_caller',
+            created_at: newCreatedAt,
+          },
+          runtime: {
+            last_run_at: null,
+            next_run_at: '2099-01-01T00:00:00.000Z',
+            run_count: 0,
+            last_error: null,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const err = new Error('permission denied') as Error & {
+      response?: { status: number; data: { code: number; msg: string } };
+    };
+    err.response = { status: 403, data: { code: 99991672, msg: 'permission denied' } };
+    const { reply } = await setup({ client: mockClient({ failReply: err }) });
+    const result = await reply({
+      chat_id: 'chat_grp',
+      text: 'cron reply',
+      reply_to: 'om_source',
+      thread_id: `${JOB_THREAD_PREFIX}${jobId}-${jobCreatedAtHash(oldCreatedAt)}-1760000000000`,
+      format: 'text',
+    });
+    if (!result.isError) fail('10: expected reply tool to return isError for permanent Feishu failure');
+
+    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
+    if (persisted.meta.status !== 'active') {
+      fail(`10: stale cronjob turn should not pause recreated job, got ${persisted.meta.status}`);
+    }
+    if (persisted.runtime.last_error !== null) {
+      fail(`10: stale cronjob turn should not write last_error, got ${persisted.runtime.last_error}`);
+    }
+  } finally {
+    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
+    rmSync(jobsDir, { recursive: true, force: true });
+  }
+  passed++;
+}
+
+console.log(`reply-thread smoke: ${passed}/10 PASS`);

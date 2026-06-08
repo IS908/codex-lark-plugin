@@ -13,8 +13,10 @@ import { cronJobPrompt } from './prompts.js';
 import type { IdentitySession } from './identity-session.js';
 import {
   listAllJobs,
-  writeJob,
+  readJob,
+  mutateJob,
   computeNextRun,
+  computeLatestDueRun,
   type JobFile,
 } from './job-store.js';
 import { feishuApiCall } from './feishu-retry.js';
@@ -26,6 +28,28 @@ import { feishuApiCall } from './feishu-retry.js';
  * (e.g. the `reply` tool) must exclude thread_ids with this prefix.
  */
 export const JOB_THREAD_PREFIX = 'job-';
+
+export interface ParsedJobThreadId {
+  jobId: string;
+  createdAtHash?: string;
+}
+
+export function jobCreatedAtHash(createdAt: string): string {
+  return createHash('sha256').update(createdAt).digest('hex').slice(0, 12);
+}
+
+export function parseJobThreadId(threadId: string | undefined): ParsedJobThreadId | null {
+  if (!threadId?.startsWith(JOB_THREAD_PREFIX)) return null;
+  const rest = threadId.slice(JOB_THREAD_PREFIX.length);
+  const current = rest.match(/^(.+)-([a-f0-9]{12})-(\d{10,})$/);
+  if (current) return { jobId: current[1], createdAtHash: current[2] };
+  const legacy = rest.match(/^(.+)-(\d{10,})$/);
+  return legacy ? { jobId: legacy[1] } : null;
+}
+
+export function parseJobIdFromThreadId(threadId: string | undefined): string | null {
+  return parseJobThreadId(threadId)?.jobId ?? null;
+}
 
 export interface SchedulerOptions {
   server: Server;
@@ -46,18 +70,24 @@ const RETRYABLE_NETWORK_ERRORS = new Set([
 
 /** HTTP status codes that warrant a retry. */
 const RETRYABLE_HTTP_CODES = new Set([429, 500, 502, 503, 504]);
+const PERMANENT_TARGET_HTTP_CODES = new Set([403, 404]);
+const PERMANENT_TARGET_API_CODES = new Set([
+  99991672, // permission denied / target inaccessible
+]);
 
-function isRetryableError(err: any): boolean {
+export function isRetryableError(err: any): boolean {
   // Network-level errors (Node.js syscall errors)
   if (err?.code && RETRYABLE_NETWORK_ERRORS.has(err.code)) return true;
   if (err?.cause?.code && RETRYABLE_NETWORK_ERRORS.has(err.cause.code)) return true;
 
   // HTTP status from Feishu SDK (wrapped in response)
-  const status = err?.response?.status ?? err?.status;
+  const status = err?.response?.status ?? err?.status ?? err?.cause?.response?.status ?? err?.cause?.status;
   if (status && RETRYABLE_HTTP_CODES.has(status)) return true;
 
   // Feishu API error codes — permission/param errors are NOT retryable
-  const apiCode = Number(err?.response?.data?.code ?? err?.data?.code);
+  const apiCode = Number(
+    err?.response?.data?.code ?? err?.data?.code ?? err?.cause?.response?.data?.code ?? err?.cause?.data?.code,
+  );
   if (Number.isFinite(apiCode)) {
     // Known non-retryable Feishu codes
     // 99991672 = permission denied, 230001 = param error
@@ -74,8 +104,43 @@ function isRetryableError(err: any): boolean {
   return false;
 }
 
+export function isPermanentTargetError(err: any): boolean {
+  if (isRetryableError(err)) return false;
+
+  const status = err?.response?.status ?? err?.status ?? err?.cause?.response?.status ?? err?.cause?.status;
+  if (PERMANENT_TARGET_HTTP_CODES.has(status)) return true;
+
+  const apiCode = Number(
+    err?.response?.data?.code ?? err?.data?.code ?? err?.cause?.response?.data?.code ?? err?.cause?.data?.code,
+  );
+  return PERMANENT_TARGET_API_CODES.has(apiCode);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function autoPauseJobForPermanentTargetError(
+  jobId: string,
+  reason: string,
+  opts: { createdAtHash?: string } = {},
+): Promise<boolean> {
+  const lastError = `${reason} (auto-paused: permanent target error)`;
+  let replaced = false;
+  const updated = await mutateJob(jobId, (job) => {
+    if (opts.createdAtHash && jobCreatedAtHash(job.meta.created_at) !== opts.createdAtHash) {
+      replaced = true;
+      return false;
+    }
+    job.meta.status = 'paused';
+    job.runtime.last_run_at = new Date().toISOString();
+    job.runtime.last_error = lastError;
+  });
+  if (replaced) {
+    console.error(`[scheduler] Job ${jobId} was replaced before reply-failure auto-pause; skipping stale pause`);
+    return false;
+  }
+  return updated !== null;
 }
 
 export class JobScheduler {
@@ -84,6 +149,7 @@ export class JobScheduler {
   private client: Lark.Client;
   private identitySession: IdentitySession;
   private running = false;
+  private ticking = false;
 
   constructor(opts: SchedulerOptions) {
     this.server = opts.server;
@@ -150,23 +216,33 @@ export class JobScheduler {
    * stale entries so the in-memory map does not grow unboundedly.
    */
   private async tick(): Promise<void> {
-    this.identitySession.cleanup();
+    if (this.ticking) {
+      console.error('[scheduler] Tick skipped: previous tick still running');
+      return;
+    }
+    this.ticking = true;
 
-    const jobs = await listAllJobs();
-    const now = Date.now();
+    try {
+      this.identitySession.cleanup();
 
-    for (const job of jobs) {
-      if (job.meta.status !== 'active') continue;
-      if (!job.runtime.next_run_at) continue;
+      const jobs = await listAllJobs();
+      const now = Date.now();
 
-      const nextRun = new Date(job.runtime.next_run_at).getTime();
-      if (nextRun <= now) {
-        try {
-          await this.executeJob(job);
-        } catch (err) {
-          console.error(`[scheduler] Failed to execute job ${job.meta.id}:`, err);
+      for (const job of jobs) {
+        if (job.meta.status !== 'active') continue;
+        if (!job.runtime.next_run_at) continue;
+
+        const nextRun = new Date(job.runtime.next_run_at).getTime();
+        if (nextRun <= now) {
+          try {
+            await this.executeJob(job);
+          } catch (err) {
+            console.error(`[scheduler] Failed to execute job ${job.meta.id}:`, err);
+          }
         }
       }
+    } finally {
+      this.ticking = false;
     }
   }
 
@@ -181,29 +257,43 @@ export class JobScheduler {
    */
   private async executeJob(job: JobFile): Promise<void> {
     const startTime = Date.now();
+    const runKey = this.computeRunKey(job, new Date(startTime));
     let lastErr: any = null;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const refreshed = await this.refreshRunnableJob(job, attempt);
+      if (!refreshed) return;
+      if (refreshed !== job) {
+        job.meta = refreshed.meta;
+        job.runtime = refreshed.runtime;
+      }
+
       try {
         if (job.meta.type === 'message') {
-          await this.executeMessageJob(job, job.runtime.next_run_at ?? new Date(startTime).toISOString());
+          await this.executeMessageJob(job, runKey);
         } else if (job.meta.type === 'prompt') {
           await this.executePromptJob(job);
         }
 
-        // Success — update runtime
-        job.runtime.last_run_at = new Date(startTime).toISOString();
-        job.runtime.next_run_at = computeNextRun(job.meta.schedule);
-        job.runtime.run_count += 1;
-        job.runtime.last_error = null;
+        const updated = await this.persistJobRuntime(job, {
+          startedAt: new Date(startTime),
+          incrementRunCount: true,
+          lastError: null,
+          autoPause: false,
+        });
 
+        if (!updated) {
+          console.error(
+            `[scheduler] Job ${job.meta.id} delivered, but runtime update was skipped because the job disappeared or was replaced`,
+          );
+          return;
+        }
         if (attempt > 0) {
           console.error(`[scheduler] Job ${job.meta.id} succeeded on retry #${attempt} (run #${job.runtime.run_count})`);
         } else {
           console.error(`[scheduler] Job ${job.meta.id} executed successfully (run #${job.runtime.run_count})`);
         }
 
-        await writeJob(job);
         return;
       } catch (err: any) {
         lastErr = err;
@@ -222,17 +312,91 @@ export class JobScheduler {
       }
     }
 
-    // All retries exhausted or permanent error — record failure
-    job.runtime.last_run_at = new Date(startTime).toISOString();
-    job.runtime.next_run_at = computeNextRun(job.meta.schedule);
-    job.runtime.last_error = lastErr?.message ?? String(lastErr);
+    const autoPause = isPermanentTargetError(lastErr);
+    const lastError =
+      `${lastErr?.message ?? String(lastErr)}${autoPause ? ' (auto-paused: permanent target error)' : ''}`;
+    const updated = await this.persistJobRuntime(job, {
+      startedAt: new Date(startTime),
+      incrementRunCount: false,
+      lastError,
+      autoPause,
+    });
 
     const retryNote = isRetryableError(lastErr)
       ? ` (exhausted ${MAX_RETRIES} retries)`
       : ' (non-retryable)';
-    console.error(`[scheduler] Job ${job.meta.id} failed${retryNote}: ${job.runtime.last_error}`);
+    const pauseNote = autoPause ? '; auto-paused' : '';
+    if (!updated) {
+      console.error(
+        `[scheduler] Job ${job.meta.id} failed${retryNote}, but runtime update was skipped because the job disappeared or was replaced: ${lastError}`,
+      );
+      return;
+    }
+    console.error(`[scheduler] Job ${job.meta.id} failed${retryNote}${pauseNote}: ${job.runtime.last_error}`);
+  }
 
-    await writeJob(job);
+  private computeRunKey(job: JobFile, now: Date): string {
+    const fallback = job.runtime.next_run_at ?? now.toISOString();
+    const nextRun = new Date(fallback).getTime();
+    if (!Number.isFinite(nextRun) || nextRun > now.getTime()) {
+      return fallback;
+    }
+    try {
+      return computeLatestDueRun(job.meta.schedule, now);
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async refreshRunnableJob(job: JobFile, attempt: number): Promise<JobFile | null> {
+    const latest = await readJob(job.meta.id);
+    const label = attempt > 0 ? 'retry' : 'execution';
+    if (!latest) {
+      console.error(`[scheduler] Job ${job.meta.id} was deleted before ${label}; skipping`);
+      return null;
+    }
+    if (latest.meta.created_at !== job.meta.created_at) {
+      console.error(`[scheduler] Job ${job.meta.id} was replaced before ${label}; skipping stale run`);
+      return null;
+    }
+    if (latest.meta.status !== 'active') {
+      console.error(`[scheduler] Job ${job.meta.id} is ${latest.meta.status} before ${label}; skipping`);
+      return null;
+    }
+    return latest;
+  }
+
+  private async persistJobRuntime(
+    job: JobFile,
+    result: {
+      startedAt: Date;
+      incrementRunCount: boolean;
+      lastError: string | null;
+      autoPause: boolean;
+    },
+  ): Promise<JobFile | null> {
+    let replaced = false;
+    const updated = await mutateJob(job.meta.id, (latest) => {
+      if (latest.meta.created_at !== job.meta.created_at) {
+        replaced = true;
+        return false;
+      }
+      latest.runtime.last_run_at = result.startedAt.toISOString();
+      latest.runtime.next_run_at = computeNextRun(latest.meta.schedule);
+      if (result.incrementRunCount) latest.runtime.run_count += 1;
+      latest.runtime.last_error = result.lastError;
+      if (result.autoPause) latest.meta.status = 'paused';
+    });
+
+    if (replaced) {
+      console.error(`[scheduler] Job ${job.meta.id} was replaced during execution; skipping stale runtime update`);
+      return null;
+    }
+    if (updated) {
+      job.meta = updated.meta;
+      job.runtime = updated.runtime;
+    }
+    return updated;
   }
 
   /**
@@ -267,7 +431,7 @@ export class JobScheduler {
    * does not clobber concurrent inbound human messages in the same chat.
    */
   private async executePromptJob(job: JobFile): Promise<void> {
-    const jobThreadId = `${JOB_THREAD_PREFIX}${job.meta.id}-${Date.now()}`;
+    const jobThreadId = `${JOB_THREAD_PREFIX}${job.meta.id}-${jobCreatedAtHash(job.meta.created_at)}-${Date.now()}`;
 
     // Bind the job owner as caller so tools invoked from this Codex turn
     // (e.g. save_memory, list_jobs) resolve to the job creator, not to any
@@ -280,19 +444,27 @@ export class JobScheduler {
       job.meta.prompt ?? ''
     );
 
-    await this.server.notification({
-      method: 'notifications/Codex/channel',
-      params: {
-        content: promptContent,
-        meta: {
-          chat_id: job.meta.target_chat_id,
-          thread_id: jobThreadId,
-          source: 'cronjob',
-          job_id: job.meta.id,
-          job_name: job.meta.name,
-          ...(job.meta.model ? { model: job.meta.model } : {}),
+    try {
+      await this.server.notification({
+        method: 'notifications/Codex/channel',
+        params: {
+          content: promptContent,
+          meta: {
+            chat_id: job.meta.target_chat_id,
+            thread_id: jobThreadId,
+            source: 'cronjob',
+            job_id: job.meta.id,
+            job_name: job.meta.name,
+            ...(job.meta.model ? { model: job.meta.model } : {}),
+          },
         },
-      },
-    });
+      });
+    } catch (err: any) {
+      const wrapped = new Error(
+        `[LARK_DEFER] CronJob prompt delivery failed before Codex accepted the turn: ${err?.message ?? err}`,
+      );
+      (wrapped as Error & { cause?: unknown }).cause = err;
+      throw wrapped;
+    }
   }
 }
