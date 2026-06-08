@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-06-08
+
 ### Fixed
 - Hardened scheduled jobs against overlapping scheduler ticks, runtime/user-edit write races, stale missed-run replay, and permanent Feishu target errors.
 - Prompt cronjob delivery failures now persist an explicit defer/no-reply signal, and permanent reply failures from cronjob turns can auto-pause the originating job.
@@ -86,7 +88,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.2...v1.0.3
