@@ -28,7 +28,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Rich message types: text, post (rich text), image, file, audio, video, interactive cards
 - **Codex session continuity**: exec delivery stores one Codex session per Feishu chat/thread and resumes it on later messages, so multi-turn conversations keep Codex's native session context
 - **Image auto-download**: images are downloaded to a local inbox so Codex can see them directly
-- Quoted reply support with automatic parent message fetching
+- Quoted reply support with automatic parent message fetching, including readable visible text from quoted interactive cards
 - Attachment extraction (image, file, audio, video) with type-aware download
 - User emoji reactions on bot messages are treated as passive feedback and do not trigger noisy bot replies
 

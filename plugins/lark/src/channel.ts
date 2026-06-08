@@ -13,6 +13,7 @@ import { debugLog } from './debug-log.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { BoundedCache } from './resource-governance.js';
 import { AckReactionTracker, deleteAckReaction } from './ack-reactions.js';
+import { extractInteractiveCardText } from './interactive-card-text.js';
 
 /**
  * Build a Lark SDK logger that routes every level to stderr. The SDK's default
@@ -459,12 +460,15 @@ export class LarkChannel {
       imagePaths,
     };
 
-    // Fetch parent message content if this is a quoted reply
-    if (parentId) {
+    // Fetch quoted context. Prefer an explicit parent reply; for root-only
+    // thread events, fall back to the root message when it is distinct from
+    // the current message.
+    const quotedMessageId = parentId || (threadId && threadId !== messageId ? threadId : undefined);
+    if (quotedMessageId) {
       try {
         const parentMsg = await feishuApiCall('channel.parentMessage.get', () =>
           this.client.im.v1.message.get({
-            path: { message_id: parentId },
+            path: { message_id: quotedMessageId },
           }),
         );
         const parentItem = parentMsg?.data?.items?.[0];
@@ -811,11 +815,12 @@ export class LarkChannel {
         case 'video':
           return '[Video]';
         case 'interactive':
-          return parsed.title?.content ?? parsed.header?.title?.content ?? '[Interactive Card]';
+          return extractInteractiveCardText(rawContent) ?? '[Interactive Card]';
         default:
           return parsed.text ?? rawContent;
       }
     } catch {
+      if (messageType === 'interactive') return '[Interactive Card]';
       return rawContent;
     }
   }
