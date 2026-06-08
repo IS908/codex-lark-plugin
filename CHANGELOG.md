@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-06-08
+
 ### Fixed
 - Suppressed Feishu replies for synthetic auto-flush `flush-*` turns so exec failures no longer call `message.reply` with invalid open message ids.
 - Added defensive `reply_to` validation and sanitized Feishu/Axios error logging to avoid leaking authorization headers while preserving Feishu diagnostic codes and log ids.
@@ -138,7 +140,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.11...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.12...HEAD
+[1.0.12]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.8...v1.0.9
