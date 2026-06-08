@@ -100,6 +100,96 @@ assert.deepEqual(replyRequests, [
   },
 ]);
 
+const docCommentExecRequests: any[] = [];
+const docCommentReplies: any[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    messageId: 'rpl_doc_001',
+    chatId: 'doc:dox_doc_001',
+    chatType: 'doc_comment',
+    senderId: 'ou_owner',
+    senderName: 'Kevin',
+    text: '<doc_comment doc_token="dox_doc_001" comment_id="cmt_doc_001" file_type="docx"><body>@Codex please review</body></doc_comment>',
+    messageType: 'doc_comment',
+    threadId: 'cmt_doc_001',
+    rawContent: '{}',
+    docComment: {
+      fileToken: 'dox_doc_001',
+      commentId: 'cmt_doc_001',
+      fileType: 'docx',
+    },
+  },
+  displayLabel: 'Kevin · Design Doc · thread_oc_001',
+  useCodexSessions: false,
+  runCodexExec: async (request) => {
+    docCommentExecRequests.push(request);
+    return 'doc comment answer';
+  },
+  sendReply: async () => {
+    throw new Error('doc_comment exec delivery must not use Feishu IM reply');
+  },
+  sendDocCommentReply: async (request) => {
+    docCommentReplies.push(request);
+    return { replyId: 'rpl_doc_codex' };
+  },
+});
+
+assert.equal(docCommentExecRequests.length, 1);
+assert.match(docCommentExecRequests[0].prompt, /Reply to this Feishu\/Lark document comment/);
+assert.match(docCommentExecRequests[0].prompt, /doc_token: dox_doc_001/);
+assert.deepEqual(docCommentReplies, [
+  {
+    chat_id: 'doc:dox_doc_001',
+    thread_id: 'cmt_doc_001',
+    doc_token: 'dox_doc_001',
+    comment_id: 'cmt_doc_001',
+    file_type: 'docx',
+    content: 'doc comment answer',
+  },
+]);
+
+const longDocCommentReplies: any[] = [];
+const longDocAssistantRecords: any[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    messageId: 'rpl_doc_long',
+    chatId: 'doc:dox_doc_long',
+    chatType: 'doc_comment',
+    senderId: 'ou_owner',
+    text: '<doc_comment doc_token="dox_doc_long" comment_id="cmt_doc_long"><body>@Codex summarize</body></doc_comment>',
+    messageType: 'doc_comment',
+    threadId: 'cmt_doc_long',
+    rawContent: '{}',
+    docComment: {
+      fileToken: 'dox_doc_long',
+      commentId: 'cmt_doc_long',
+      fileType: 'docx',
+    },
+  },
+  displayLabel: 'Kevin · Long Doc',
+  useCodexSessions: false,
+  runCodexExec: async () => `${'a'.repeat(1000)} ${'b'.repeat(1000)} ${'c'.repeat(300)}`,
+  sendReply: async () => {
+    throw new Error('doc_comment exec delivery must not use Feishu IM reply');
+  },
+  sendDocCommentReply: async (request) => {
+    longDocCommentReplies.push(request);
+    return {};
+  },
+  recordAssistantMessage: (message) => {
+    longDocAssistantRecords.push(message);
+  },
+});
+assert.equal(longDocCommentReplies.length, 3);
+assert.ok(longDocCommentReplies.every((r) => r.content.length <= 1000));
+assert.equal(longDocCommentReplies.map((r) => r.content).join(' ').replace(/\s+/g, ' ').trim().length, 2302);
+assert.deepEqual(longDocAssistantRecords, [
+  {
+    chatId: 'doc:dox_doc_long',
+    text: `${'a'.repeat(1000)} ${'b'.repeat(1000)} ${'c'.repeat(300)}`,
+  },
+]);
+
 const sessionRequests: any[] = [];
 const sessionRecords = new Map<string, any>();
 const sessionStore = {

@@ -46,6 +46,18 @@ echo "=== Quoted interactive card unit checks ==="
 node --import tsx scripts/quoted-card-smoke.ts
 
 echo ""
+echo "=== Comment event unit checks ==="
+node --import tsx scripts/comment-event-smoke.ts
+
+echo ""
+echo "=== Doc comment tool unit checks ==="
+node --import tsx scripts/reply-doc-comment-smoke.ts
+
+echo ""
+echo "=== Channel notification meta unit checks ==="
+node --import tsx scripts/channel-notification-smoke.ts
+
+echo ""
 echo "=== Job store unit checks ==="
 node --import tsx scripts/job-smoke.ts
 

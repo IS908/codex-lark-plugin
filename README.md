@@ -25,6 +25,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 ### Messaging
 
 - Direct messages (P2P) and group chats (responds to @bot mentions)
+- Feishu doc-comment @bot events route into Codex with selected text, parent comment, reply body, and document title context
 - Rich message types: text, post (rich text), image, file, audio, video, interactive cards
 - **Codex session continuity**: exec delivery stores one Codex session per Feishu chat/thread and resumes it on later messages, so multi-turn conversations keep Codex's native session context
 - **Image auto-download**: images are downloaded to a local inbox so Codex can see them directly
@@ -39,6 +40,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **Ack reaction**: bot automatically reacts with an emoji (default: MeMeMe) on receive, removes it after replying
 - Image and file uploads (images up to 10 MB, files up to 30 MB)
 - Message editing (plain text and card markdown)
+- Replies to existing Feishu doc-comment threads and creation of new top-level doc comments
 - Emoji reactions on any message
 - Auto-chunking splits at paragraph, line, or word boundaries
 
@@ -53,6 +55,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 ### Privacy & Security (v0.9.0+)
 
 - **Server-derived caller identity**: sensitive tools (`save_memory`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
+- **Doc-comment binding**: doc-comment tools only run from `doc:<file_token>` turns, require the current `thread_id`, and reject prompt-injected `doc_token` mismatches so comments cannot be posted into a different document
 - **Memory transparency (v0.11.0+)**: `what_do_you_know` lists what the bot has stored about the caller (filtered by current-chat visibility); `forget_memory` removes a specific line by hash. Optional `promote_to_rule` feeds corrections into `privacy-rules.md` — a self-learning loop that makes future misclassifications less likely
 - **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/audit.log` records every sensitive-tool invocation (timestamp / tool / caller / outcome / redacted args) so the operator can retrospectively inspect what was accessed on their machine
 - **Terminal skills default to redacted output (v0.11.0+)**: `$lark:jobs` hides prompt bodies by default; verbose opt-in is required. Destructive operations require interactive confirmation
@@ -98,9 +101,13 @@ Create a custom app at [Feishu Open Platform](https://open.feishu.cn/app) and en
 | `im:message:send_as_bot` | Send messages as the bot |
 | `im:resource` | Download attachments |
 | `im:message.reactions:write` | Add emoji reactions |
+| `docs:document.comment:read` | Pre-fetch doc-comment bodies and selected text |
+| `docs:document.comment:create` | Post doc-comment replies and new top-level comments |
+| `drive:drive.metadata:readonly` | Fetch document titles for doc-comment context |
 
 Enable the WebSocket mode under **Event Subscriptions** and subscribe to these events:
 - `im.message.receive_v1` -- receive messages
+- `drive.notice.comment_add_v1` -- receive doc-comment notifications when @-mentioned
 
 ### 2. Install the Plugin
 
@@ -278,6 +285,8 @@ On every incoming message, the plugin injects relevant memory context in this or
 | `LARK_ALLOWED_CHAT_IDS` | (empty) | Comma-separated list of allowed chat IDs. Empty means all chats allowed. |
 
 > **Whitelist semantics:** when both lists are set, a message is accepted if **either** the sender is in `LARK_ALLOWED_USER_IDS` **or** the chat is in `LARK_ALLOWED_CHAT_IDS` (OR). Setting only one list gates on that list alone.
+>
+> For `drive.notice.comment_add_v1` doc-comment events, `LARK_ALLOWED_USER_IDS` filters the comment author's `open_id`. If only `LARK_ALLOWED_CHAT_IDS` is set, doc-comment events pass because the synthetic `doc:<file_token>` chat id cannot match a real chat id; Feishu's document ACL and @mention requirement remain the upstream boundary.
 
 ### Optional -- Messaging
 
@@ -431,6 +440,8 @@ The plugin registers the following MCP tools for Codex to use:
 | `react` | Add an emoji reaction to a message. |
 | `download_attachment` | Download an attachment (image, file, audio, video) from a message to the local inbox. |
 | `defer_reply` | Mark the current Lark turn as intentionally deferred or no-reply without sending a Feishu message. Used by the reply-obligation guard. |
+| `reply_doc_comment` | Reply to the triggering Feishu doc-comment thread. Owner-only and scoped to the current `doc:<file_token>` turn. |
+| `create_doc_comment` | Create a new top-level comment in the triggering Feishu document. Owner-only and scoped to the current `doc:<file_token>` turn. |
 | `save_memory` | Save a memory entry (profile / chat episode / thread episode) for cross-session recall. Profile writes target the resolved caller (server-derived, v0.9.0+) and go into the chosen `tier` (`public` or `private`, default `private`, v0.10.0+). Requires `chat_id`. |
 | `save_skill` | Save a reusable procedure as a globally searchable skill. |
 | `create_job` | Create a scheduled cronjob (message or prompt type). Creator derived from session; requires `chat_id` (used to populate `origin_chat_id`). |

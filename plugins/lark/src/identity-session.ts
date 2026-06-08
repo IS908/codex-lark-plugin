@@ -24,6 +24,7 @@
  */
 
 export const TERMINAL_CHAT_ID = '__terminal__';
+export const DOC_CHAT_ID_PREFIX = 'doc:';
 
 /**
  * Sentinel caller for buffer auto-flush turns (#66). The flush is a

@@ -15,6 +15,8 @@ import { debugLog } from './debug-log.js';
 import { deliverMessageViaCodexExec } from './codex-exec-delivery.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { TurnObligationTracker } from './turn-obligation.js';
+import { postDocCommentReply, splitDocCommentText } from './doc-comment-api.js';
+import { buildChannelNotificationMeta } from './channel-notification.js';
 import {
   acquireSingleInstanceLock,
   registerLockCleanup,
@@ -179,6 +181,23 @@ async function main() {
             },
             request,
           ),
+          sendDocCommentReply: async (request) => {
+            const resp = await postDocCommentReply(channel.getClient(), {
+              docToken: request.doc_token,
+              commentId: request.comment_id,
+              fileType: request.file_type,
+              content: request.content,
+            });
+            return { replyId: resp?.data?.reply_id };
+          },
+          recordAssistantMessage: ({ chatId, text }) => {
+            buffer.record(chatId, {
+              role: 'assistant',
+              senderId: 'bot',
+              text: text.slice(0, 500),
+              timestamp: new Date().toISOString(),
+            });
+          },
           turnObligations,
         });
         if (hasReplyObligation) {
@@ -197,29 +216,7 @@ async function main() {
         method: 'notifications/Codex/channel',
         params: {
           content: message.text,
-          meta: {
-            chat_id: message.chatId,
-            message_id: message.messageId,
-            user: displayLabel,
-            user_id: message.senderId,
-            chat_type: message.chatType,
-            ...(message.chatName ? { chat_name: message.chatName } : {}),
-            ...(message.threadId ? { thread_id: message.threadId } : {}),
-            ...(message.botMentioned ? { bot_mentioned: 'true' } : {}),
-            ts: new Date().toISOString(),
-            ...(message.parentContent ? { parent_content: message.parentContent } : {}),
-            ...(message.imagePath ? { image_path: message.imagePath } : {}),
-            ...(message.imagePaths?.length ? { image_paths: message.imagePaths.join(',') } : {}),
-            ...(message.attachments?.length === 1
-              ? {
-                  attachment_kind: message.attachments[0].fileType,
-                  attachment_file_id: message.attachments[0].fileKey,
-                  attachment_name: message.attachments[0].fileName,
-                }
-              : message.attachments && message.attachments.length > 1
-                ? { attachments: JSON.stringify(message.attachments) }
-                : {}),
-          },
+          meta: buildChannelNotificationMeta(message, displayLabel),
         },
       });
       debugLog(
@@ -232,24 +229,38 @@ async function main() {
       );
       console.error('[channel] Failed to deliver inbound to Codex:', err);
       if (appConfig.codexDeliveryMode === 'exec') {
-        await sendFeishuReply(
-          {
-            client: channel.getClient(),
-            conversationBuffer: buffer,
-            ackReactions: channel.getAckReactions(),
-            botMessageTracker: channel.getBotMessageTracker(),
-            latestMessageTracker: channel.getLatestMessageTracker(),
-            turnObligations,
-          },
-          {
-            chat_id: message.chatId,
-            text: `Codex exec failed: ${errText.slice(0, 1500)}`,
-            reply_to: message.messageId,
-            thread_id: message.threadId,
-          },
-        ).catch((replyErr) => {
-          console.error('[channel] Failed to send codex exec error reply:', replyErr);
-        });
+        const errorText = `Codex exec failed: ${errText.slice(0, 1500)}`;
+        if (message.chatType === 'doc_comment' && message.docComment) {
+          for (const chunk of splitDocCommentText(errorText)) {
+            await postDocCommentReply(channel.getClient(), {
+              docToken: message.docComment.fileToken,
+              commentId: message.docComment.commentId,
+              fileType: message.docComment.fileType,
+              content: chunk,
+            }).catch((replyErr) => {
+              console.error('[channel] Failed to send codex exec doc-comment error reply:', replyErr);
+            });
+          }
+        } else {
+          await sendFeishuReply(
+            {
+              client: channel.getClient(),
+              conversationBuffer: buffer,
+              ackReactions: channel.getAckReactions(),
+              botMessageTracker: channel.getBotMessageTracker(),
+              latestMessageTracker: channel.getLatestMessageTracker(),
+              turnObligations,
+            },
+            {
+              chat_id: message.chatId,
+              text: errorText,
+              reply_to: message.messageId,
+              thread_id: message.threadId,
+            },
+          ).catch((replyErr) => {
+            console.error('[channel] Failed to send codex exec error reply:', replyErr);
+          });
+        }
       }
     } finally {
       if (hasReplyObligation) {
