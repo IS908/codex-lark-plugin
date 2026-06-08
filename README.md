@@ -430,6 +430,7 @@ The plugin registers the following MCP tools for Codex to use:
 | `edit_message` | Edit a previously sent bot message (text or card_markdown). |
 | `react` | Add an emoji reaction to a message. |
 | `download_attachment` | Download an attachment (image, file, audio, video) from a message to the local inbox. |
+| `defer_reply` | Mark the current Lark turn as intentionally deferred or no-reply without sending a Feishu message. Used by the reply-obligation guard. |
 | `save_memory` | Save a memory entry (profile / chat episode / thread episode) for cross-session recall. Profile writes target the resolved caller (server-derived, v0.9.0+) and go into the chosen `tier` (`public` or `private`, default `private`, v0.10.0+). Requires `chat_id`. |
 | `save_skill` | Save a reusable procedure as a globally searchable skill. |
 | `create_job` | Create a scheduled cronjob (message or prompt type). Creator derived from session; requires `chat_id` (used to populate `origin_chat_id`). |

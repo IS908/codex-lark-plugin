@@ -14,6 +14,7 @@ import { mcpServerInstructions } from './prompts.js';
 import { debugLog } from './debug-log.js';
 import { deliverMessageViaCodexExec } from './codex-exec-delivery.js';
 import { sendFeishuReply } from './reply-sender.js';
+import { TurnObligationTracker } from './turn-obligation.js';
 import {
   acquireSingleInstanceLock,
   registerLockCleanup,
@@ -65,7 +66,7 @@ async function main() {
 
   // 2. Create MCP server
   const server = new McpServer(
-    { name: 'codex-lark-plugin', version: '1.0.6' },
+    { name: 'codex-lark-plugin', version: '1.0.7' },
     {
       capabilities: {
         logging: {},
@@ -81,6 +82,7 @@ async function main() {
   const channel = new LarkChannel();
   channel.setMemoryStore(memoryStore);
   channel.setIdentitySession(identitySession);
+  const turnObligations = new TurnObligationTracker();
 
   // 4. Create conversation buffer + wire flush handler
   const buffer = new ConversationBuffer();
@@ -130,7 +132,8 @@ async function main() {
     buffer,
     channel.getAckReactions(),
     channel.getBotMessageTracker(),
-    channel.getLatestMessageTracker()
+    channel.getLatestMessageTracker(),
+    turnObligations
   );
 
   // 6. Set message handler — forwards Feishu messages to Codex via MCP
@@ -145,6 +148,17 @@ async function main() {
     debugLog(
       `[channel] Handler received message ${message.messageId} chat=${message.chatId} thread=${message.threadId ?? '(none)'} from=${displayLabel}: ${message.text.slice(0, 100)}...`
     );
+    const hasReplyObligation = message.chatType === 'p2p' || message.chatType === 'group';
+    if (hasReplyObligation) {
+      turnObligations.begin({
+        messageId: message.messageId,
+        chatId: message.chatId,
+        ...(message.threadId ? { threadId: message.threadId } : {}),
+        caller: message.senderId,
+        mode: appConfig.codexDeliveryMode,
+      });
+      turnObligations.setActive(message.chatId, message.threadId, message.messageId);
+    }
 
     try {
       if (appConfig.codexDeliveryMode === 'exec') {
@@ -161,10 +175,15 @@ async function main() {
               ackReactions: channel.getAckReactions(),
               botMessageTracker: channel.getBotMessageTracker(),
               latestMessageTracker: channel.getLatestMessageTracker(),
+              turnObligations,
             },
             request,
           ),
+          turnObligations,
         });
+        if (hasReplyObligation) {
+          turnObligations.requireSatisfiedOrDeferred(message.messageId);
+        }
         debugLog(
           `[channel] codex exec delivery completed for message ${message.messageId}`
         );
@@ -220,6 +239,7 @@ async function main() {
             ackReactions: channel.getAckReactions(),
             botMessageTracker: channel.getBotMessageTracker(),
             latestMessageTracker: channel.getLatestMessageTracker(),
+            turnObligations,
           },
           {
             chat_id: message.chatId,
@@ -230,6 +250,10 @@ async function main() {
         ).catch((replyErr) => {
           console.error('[channel] Failed to send codex exec error reply:', replyErr);
         });
+      }
+    } finally {
+      if (hasReplyObligation) {
+        turnObligations.clearActive(message.chatId, message.threadId, message.messageId);
       }
     }
   });

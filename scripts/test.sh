@@ -70,6 +70,10 @@ echo "=== Codex exec delivery unit checks ==="
 node --import tsx scripts/codex-exec-delivery-smoke.ts
 
 echo ""
+echo "=== Reply obligation unit checks ==="
+node --import tsx scripts/turn-obligation-smoke.ts
+
+echo ""
 echo "=== Feishu retry unit checks ==="
 node --import tsx scripts/feishu-retry-smoke.ts
 

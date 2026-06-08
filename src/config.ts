@@ -72,6 +72,10 @@ export const appConfig = {
   codexExecProfile: process.env.LARK_CODEX_EXEC_PROFILE || null,
   codexExecIgnoreUserConfig: optionalBoolean('LARK_CODEX_EXEC_IGNORE_USER_CONFIG', true),
   codexExecUseSessions: optionalBoolean('LARK_CODEX_EXEC_USE_SESSIONS', true),
+  replyObligationTimeoutMs: optionalNumber(
+    'LARK_REPLY_OBLIGATION_TIMEOUT_MS',
+    Math.max(60_000, optionalNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000) + 60_000),
+  ),
   cronScanInterval: optionalNumber('LARK_CRON_SCAN_INTERVAL', 60),
   cronTimezone: optional('LARK_CRON_TIMEZONE', Intl.DateTimeFormat().resolvedOptions().timeZone),
   feishuApiTimeoutMs: optionalNumber('LARK_FEISHU_API_TIMEOUT_MS', 30_000),
