@@ -273,6 +273,23 @@ async function run() {
   );
   if (!normalCreate) fail('Test 8: plain text path should use msg_type=text');
 
+  // ── Test 9: explicit format=card uses generated card theme ──
+  apiCalls.length = 0;
+
+  const r9 = await replyHandler({
+    chat_id: 'chat_001',
+    text: 'short but explicitly carded',
+    format: 'card',
+  });
+
+  if (r9.isError) fail(`Test 9: unexpected error: ${r9.content[0].text}`);
+  const formatCardCall = apiCalls.find((c) => c.method === 'message.create');
+  if (!formatCardCall) fail('Test 9: message.create not called');
+  const generatedCard = JSON.parse(formatCardCall.args.data.content);
+  if (generatedCard.header?.template !== 'red') {
+    fail(`Test 9: expected red header template, got ${generatedCard.header?.template}`);
+  }
+
   console.log('PASS');
 }
 

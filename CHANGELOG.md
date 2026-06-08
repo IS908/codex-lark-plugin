@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- Generated Feishu cards now use the `red` header theme, and LLM-facing guidance tells Codex to prefer plain text and use cards sparingly.
+- README guidance now documents when to force `format='card'` versus keeping plain text.
+
 ## [1.0.10] - 2026-06-08
 
 ### Added

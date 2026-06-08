@@ -2,6 +2,7 @@ import {
   cronJobPrompt,
   enrichmentPrompt,
   flushPrompt,
+  mcpServerInstructions,
   profileDistillationPrompt,
   untrustedDataBlock,
 } from '../src/prompts.js';
@@ -96,4 +97,9 @@ if (!escapedBlock.includes('&lt;untrusted-data source=&quot;evil&quot;&gt;')) {
 }
 passed++;
 
-console.log(`prompt-hardening smoke: ${passed}/7 PASS`);
+if (!/prefer plain text/i.test(mcpServerInstructions) || !/Feishu card/i.test(mcpServerInstructions) || !/sparingly/i.test(mcpServerInstructions)) {
+  fail('6: MCP instructions should tell the LLM to prefer plain text and use Feishu cards sparingly');
+}
+passed++;
+
+console.log(`prompt-hardening smoke: ${passed}/8 PASS`);

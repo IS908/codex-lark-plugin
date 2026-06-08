@@ -341,7 +341,7 @@ function buildCardContent(text: string): CardContentResult {
 
 /**
  * Assemble a Schema 2.0 (CardKit) card JSON object.
- * Header uses fixed `wathet` template; title shown in both header and
+ * Header uses fixed `red` template; title shown in both header and
  * `config.summary` (drives the chat-list preview).
  */
 function buildSchema2Card(elements: Element[], title: string): object {
@@ -353,7 +353,7 @@ function buildSchema2Card(elements: Element[], title: string): object {
     },
     header: {
       title: { tag: 'plain_text', content: title },
-      template: 'wathet',
+      template: 'red',
     },
     body: { elements },
   };
