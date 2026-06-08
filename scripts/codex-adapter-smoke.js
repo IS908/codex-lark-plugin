@@ -82,8 +82,20 @@ for (const file of [
   'src/privacy-rules.ts',
 ]) {
   const text = read(file);
-  assert.match(text, /\.codex/);
   assert.doesNotMatch(text, /\.claude/);
 }
+
+const config = read('src/config.ts');
+assert.match(config, /\.codex/);
+assert.match(config, /debugLogPath/);
+assert.match(config, /auditLogPath/);
+
+const debugLog = read('src/debug-log.ts');
+assert.match(debugLog, /appendRotatingLine/);
+assert.match(debugLog, /console\.error/);
+assert.doesNotMatch(debugLog, /console\.log/);
+
+const auditLog = read('src/audit-log.ts');
+assert.match(auditLog, /appendRotatingLine/);
 
 console.error('[codex-adapter-smoke] ok');

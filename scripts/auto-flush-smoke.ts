@@ -123,6 +123,23 @@ if (!saveMemory) fail('save_memory handler not registered');
 }
 
 // ── 4. save_memory(type=profile) DENIED with SYSTEM_FLUSH_CALLER ──
+{
+  identitySession.setCaller('oc_thread_chat', undefined, SYSTEM_FLUSH_CALLER);
+  const r = await saveMemory!({
+    type: 'thread',
+    content: 'thread summary missing a thread id',
+    reason: 'regression check',
+    chat_id: 'oc_thread_chat',
+  });
+  if (!r.isError) fail('4: save_memory(type=thread) without thread_id must be denied');
+  const txt = r.content[0].text as string;
+  if (!/thread_id/i.test(txt)) fail(`4: error should mention thread_id, got: ${txt}`);
+  const chatFiles = readdirSync(join(memRoot, 'episodes', 'oc_thread_chat')).filter((f) => f.endsWith('.md'));
+  if (chatFiles.length !== 1) fail(`4: rejected thread save must not create chat episode, got ${chatFiles.length}`);
+  passed++;
+}
+
+// ── 5. save_memory(type=profile) DENIED with SYSTEM_FLUSH_CALLER ──
 // Defense in depth: even if Codex goes off-script and tries to write a
 // profile during a flush turn, the server rejects.
 {
@@ -137,12 +154,12 @@ if (!saveMemory) fail('save_memory handler not registered');
   if (!r.isError) fail(`4: save_memory(type=profile) must be denied for system caller`);
   const txt = r.content[0].text as string;
   if (!/system-flush sentinel/.test(txt)) {
-    fail(`4: error must mention sentinel, got: ${txt}`);
+    fail(`5: error must mention sentinel, got: ${txt}`);
   }
   // No profile written to disk for the sentinel "user"
   const sentinelProfileDir = join(memRoot, 'profiles', SYSTEM_FLUSH_CALLER);
   if (existsSync(sentinelProfileDir)) {
-    fail(`4: sentinel must not have a profile directory`);
+    fail(`5: sentinel must not have a profile directory`);
   }
   passed++;
 }
@@ -165,23 +182,23 @@ async function waitForAuditLog(): Promise<string> {
 
 const auditLog = await waitForAuditLog();
 
-// ── 5. Audit log records the denial ──
+// ── 6. Audit log records the denial ──
 {
-  if (!auditLog.includes('denied')) fail(`5: audit log should record denial`);
+  if (!auditLog.includes('denied')) fail(`6: audit log should record denial`);
   if (!auditLog.includes(SYSTEM_FLUSH_CALLER)) {
-    fail(`5: audit log should record the sentinel caller`);
+    fail(`6: audit log should record the sentinel caller`);
   }
   passed++;
 }
 
-// ── 6. save_memory(type=chat) audit shows sentinel as caller (operator can grep) ──
+// ── 7. save_memory(type=chat) audit shows sentinel as caller (operator can grep) ──
 {
   const okLine = auditLog.split('\n').find((l) => l.includes('ok') && l.includes(SYSTEM_FLUSH_CALLER));
-  if (!okLine) fail(`6: audit log should record ok save with sentinel caller. Got:\n${auditLog}`);
+  if (!okLine) fail(`7: audit log should record ok save with sentinel caller. Got:\n${auditLog}`);
   passed++;
 }
 
-// ── 7. Other sensitive tools are denied for SYSTEM_FLUSH_CALLER ──
+// ── 8. Other sensitive tools are denied for SYSTEM_FLUSH_CALLER ──
 // Defense: the sentinel is bound only to let save_memory persist chat
 // episodes during a flush. It must not authorize create_job /
 // forget_memory / etc. — any such call would produce records owned by
@@ -189,7 +206,7 @@ const auditLog = await waitForAuditLog();
 // update/delete/inspect. resolveCaller centralises this guard.
 {
   const createJob = handlers.get('create_job');
-  if (!createJob) fail('7: create_job handler not registered');
+  if (!createJob) fail('8: create_job handler not registered');
 
   identitySession.setCaller('oc_thread_chat', undefined, SYSTEM_FLUSH_CALLER);
   const r = await createJob!({
@@ -201,18 +218,18 @@ const auditLog = await waitForAuditLog();
     chat_id: 'oc_thread_chat',
     // no thread_id — mirrors what a flush turn would have
   });
-  if (!r.isError) fail(`7: create_job must be denied for system caller, got: ${JSON.stringify(r.content)}`);
+  if (!r.isError) fail(`8: create_job must be denied for system caller, got: ${JSON.stringify(r.content)}`);
   const txt = r.content[0].text as string;
   if (!/system-flush caller|sentinel/i.test(txt)) {
-    fail(`7: error should explain sentinel restriction, got: ${txt}`);
+    fail(`8: error should explain sentinel restriction, got: ${txt}`);
   }
   passed++;
 }
 
-// ── 8. forget_memory also denied for SYSTEM_FLUSH_CALLER ──
+// ── 9. forget_memory also denied for SYSTEM_FLUSH_CALLER ──
 {
   const forgetMemory = handlers.get('forget_memory');
-  if (!forgetMemory) fail('8: forget_memory handler not registered');
+  if (!forgetMemory) fail('9: forget_memory handler not registered');
 
   identitySession.setCaller('oc_thread_chat', undefined, SYSTEM_FLUSH_CALLER);
   const r = await forgetMemory!({
@@ -220,14 +237,14 @@ const auditLog = await waitForAuditLog();
     tier: 'private',
     chat_id: 'oc_thread_chat',
   });
-  if (!r.isError) fail(`8: forget_memory must be denied for system caller, got: ${JSON.stringify(r.content)}`);
+  if (!r.isError) fail(`9: forget_memory must be denied for system caller, got: ${JSON.stringify(r.content)}`);
   passed++;
 }
 
-// ── 9. create_job rejects unsafe target_chat_id before persistence ──
+// ── 10. create_job rejects unsafe target_chat_id before persistence ──
 {
   const createJob = handlers.get('create_job');
-  if (!createJob) fail('9: create_job handler not registered');
+  if (!createJob) fail('10: create_job handler not registered');
 
   identitySession.setCaller('oc_thread_chat', undefined, 'ou_owner');
   const r = await createJob!({
@@ -238,14 +255,14 @@ const auditLog = await waitForAuditLog();
     target_chat_id: 'oc_thread_chat\toc_evil',
     chat_id: 'oc_thread_chat',
   });
-  if (!r.isError) fail(`9: create_job must reject target_chat_id with control chars`);
+  if (!r.isError) fail(`10: create_job must reject target_chat_id with control chars`);
   const txt = r.content[0].text as string;
   if (!/target_chat_id|chat_id/i.test(txt)) {
-    fail(`9: error should mention target_chat_id/chat_id, got: ${txt}`);
+    fail(`10: error should mention target_chat_id/chat_id, got: ${txt}`);
   }
   passed++;
 }
 
 rmSync(tmp, { recursive: true, force: true });
 
-console.log(`auto-flush smoke: ${passed}/9 PASS`);
+console.log(`auto-flush smoke: ${passed}/10 PASS`);

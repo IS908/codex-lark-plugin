@@ -22,7 +22,9 @@ function optionalList(key: string): string[] {
 
 function optionalNumber(key: string, fallback: number): number {
   const val = process.env[key];
-  return val ? Number(val) : fallback;
+  if (!val) return fallback;
+  const parsed = Number(val);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function optionalBoolean(key: string, fallback: boolean): boolean {
@@ -75,14 +77,20 @@ export const appConfig = {
   feishuApiTimeoutMs: optionalNumber('LARK_FEISHU_API_TIMEOUT_MS', 30_000),
   feishuApiRetryAttempts: optionalNumber('LARK_FEISHU_API_RETRY_ATTEMPTS', 3),
   feishuApiRetryBaseDelayMs: optionalNumber('LARK_FEISHU_API_RETRY_BASE_DELAY_MS', 250),
+  logMaxBytes: optionalNumber('LARK_LOG_MAX_BYTES', 5 * 1024 * 1024),
+  logMaxFiles: optionalNumber('LARK_LOG_MAX_FILES', 5),
 
   // Memory
   minSearchScore: optionalNumber('LARK_MIN_SEARCH_SCORE', 0.3),
   maxSearchResults: optionalNumber('LARK_MAX_SEARCH_RESULTS', 2),
   inactivityHours: optionalNumber('LARK_INACTIVITY_HOURS', 3),
   maxEpisodeBytes: optionalNumber('LARK_MAX_EPISODE_BYTES', 64 * 1024),
+  maxEpisodeFilesPerScope: optionalNumber('LARK_MAX_EPISODE_FILES_PER_SCOPE', 200),
+  maxEpisodeScopeBytes: optionalNumber('LARK_MAX_EPISODE_SCOPE_BYTES', 10 * 1024 * 1024),
   downloadMaxBytes: optionalNumber('LARK_DOWNLOAD_MAX_BYTES', 25 * 1024 * 1024),
   downloadTimeoutMs: optionalNumber('LARK_DOWNLOAD_TIMEOUT_MS', 60_000),
+  inboxMaxAgeHours: optionalNumber('LARK_INBOX_MAX_AGE_HOURS', 168),
+  inboxMaxBytes: optionalNumber('LARK_INBOX_MAX_BYTES', 200 * 1024 * 1024),
 
   // Identity / privacy
   ownerOpenId: process.env.LARK_OWNER_OPEN_ID || null,
@@ -99,12 +107,18 @@ export const appConfig = {
       optionalNumber('LARK_INACTIVITY_HOURS', 3) * 2 * 60 * 60 * 1000,
     ),
   ),
+  identitySessionMaxEntries: optionalNumber('LARK_IDENTITY_SESSION_MAX_ENTRIES', 5000),
+  nameCacheSize: optionalNumber('LARK_NAME_CACHE_SIZE', 1000),
+  chatTypeCacheSize: optionalNumber('LARK_CHAT_TYPE_CACHE_SIZE', 1000),
+  latestMessageTrackerSize: optionalNumber('LARK_LATEST_MESSAGE_TRACKER_SIZE', 1000),
 
   // Paths
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),
   inboxDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'inbox'),
   jobsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'jobs'),
   codexExecSessionsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'codex-sessions'),
+  debugLogPath: optional('LARK_DEBUG_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'debug.log')),
+  auditLogPath: optional('LARK_AUDIT_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'audit.log')),
 } as const;
 
 export type AppConfig = typeof appConfig;

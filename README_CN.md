@@ -315,6 +315,8 @@ git push origin v1.0.0
 | `LARK_MAX_SEARCH_RESULTS` | `2` | 每次查询返回的最大情景数 |
 | `LARK_INACTIVITY_HOURS` | `3` | 自动蒸馏触发的静默时长（小时） |
 | `LARK_MAX_EPISODE_BYTES` | `65536` | 单个 episode 文件持久化前的最大 UTF-8 字节数，超出会截断 |
+| `LARK_MAX_EPISODE_FILES_PER_SCOPE` | `200` | 每个 chat/thread scope 最多保留的 episode 文件数 |
+| `LARK_MAX_EPISODE_SCOPE_BYTES` | `10485760` | 每个 chat/thread scope 最多保留的 episode 总字节数 |
 
 ### 可选 -- 身份 / 隐私（v0.9.0+）
 
@@ -322,8 +324,22 @@ git push origin v1.0.0
 |------|--------|------|
 | `LARK_OWNER_OPEN_ID` | （空） | 运营者 open_id。用于终端技能（如 `$lark:jobs`）通过 `__terminal__` 哨兵 chat_id 解析调用者。未设置时，终端侧的敏感操作将被拒绝 |
 | `LARK_IDENTITY_SESSION_TTL_MS` | `max(2h, LARK_INACTIVITY_HOURS × 2h)` | 服务端 `(chat_id, thread_id?) → open_id` 会话条目的 TTL。必须超过自动蒸馏窗口，以保证 flush 触发的工具调用仍能解析到最后的真实用户 |
+| `LARK_IDENTITY_SESSION_MAX_ENTRIES` | `5000` | 服务端调用者会话的最大内存条目数，超过后按最旧条目淘汰 |
 | `LARK_PRIVACY_RULES_FILE` | `~/.codex/channels/lark/privacy-rules.md` | L2 用户规则文件路径。蒸馏器会把文件内容注入分类 prompt（v0.10.0+）|
 | `LARK_AUDIT_LOG` | `~/.codex/channels/lark/audit.log` | 审计日志路径。每次敏感工具调用都会追加一行（尽力而为，写入失败不影响工具行为）（v0.11.0+）|
+
+### 可选 -- 资源治理
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LARK_DEBUG_LOG` | `~/.codex/channels/lark/debug.log` | debug 日志路径 |
+| `LARK_LOG_MAX_BYTES` | `5242880` | debug/audit 日志达到该大小后轮转 |
+| `LARK_LOG_MAX_FILES` | `5` | 保留的轮转日志文件数量 |
+| `LARK_INBOX_MAX_AGE_HOURS` | `168` | 启动清理时删除早于该时长的 inbox 下载文件 |
+| `LARK_INBOX_MAX_BYTES` | `209715200` | 启动清理时按 LRU 删除 inbox 文件直到低于该总字节上限 |
+| `LARK_NAME_CACHE_SIZE` | `1000` | Feishu 用户/群聊展示名缓存上限 |
+| `LARK_CHAT_TYPE_CACHE_SIZE` | `1000` | Feishu chat type 缓存上限 |
+| `LARK_LATEST_MESSAGE_TRACKER_SIZE` | `1000` | latest inbound message tracker 条目上限 |
 
 ---
 
@@ -354,9 +370,17 @@ git push origin v1.0.0
 
 第 4 步：高级调优（可选）
   -> LARK_INACTIVITY_HOURS、LARK_MAX_SEARCH_RESULTS、LARK_MIN_SEARCH_SCORE、
-     LARK_TEXT_CHUNK_LIMIT、LARK_ACK_EMOJI、LARK_BOT_MESSAGE_TRACKER_SIZE、
-     LARK_MAX_EPISODE_BYTES、
-     LARK_CRON_SCAN_INTERVAL
+     LARK_TEXT_CHUNK_LIMIT、LARK_QUEUE_HANDLER_TIMEOUT_MS、
+     LARK_ACK_EMOJI、LARK_BOT_MESSAGE_TRACKER_SIZE、
+     LARK_MAX_EPISODE_BYTES、LARK_MAX_EPISODE_FILES_PER_SCOPE、
+     LARK_MAX_EPISODE_SCOPE_BYTES、LARK_CRON_SCAN_INTERVAL、
+     LARK_FEISHU_API_TIMEOUT_MS、LARK_FEISHU_API_RETRY_ATTEMPTS、
+     LARK_FEISHU_API_RETRY_BASE_DELAY_MS、
+     LARK_DOWNLOAD_MAX_BYTES、LARK_DOWNLOAD_TIMEOUT_MS、
+     LARK_IDENTITY_SESSION_MAX_ENTRIES、LARK_DEBUG_LOG、
+     LARK_LOG_MAX_BYTES、LARK_LOG_MAX_FILES、LARK_INBOX_MAX_AGE_HOURS、
+     LARK_INBOX_MAX_BYTES、LARK_NAME_CACHE_SIZE、
+     LARK_CHAT_TYPE_CACHE_SIZE、LARK_LATEST_MESSAGE_TRACKER_SIZE
 
 第 5 步：写入配置
   -> ~/.codex/channels/lark/.env

@@ -10,15 +10,8 @@
  * Best-effort: log failures never propagate out of this module (would be
  * worse to crash a tool call because of a log I/O issue).
  */
-import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
-
-const DEFAULT_PATH = join(homedir(), '.codex', 'channels', 'lark', 'audit.log');
-
-function resolvePath(): string {
-  return process.env.LARK_AUDIT_LOG || DEFAULT_PATH;
-}
+import { appConfig } from './config.js';
+import { appendRotatingLine } from './resource-governance.js';
 
 export type AuditOutcome = 'ok' | 'denied' | 'error';
 
@@ -48,9 +41,10 @@ export async function audit(
         `args=${argsStr}`,
       ].join('  ') + '\n';
 
-    const path = resolvePath();
-    await mkdir(dirname(path), { recursive: true });
-    await appendFile(path, line, 'utf8');
+    await appendRotatingLine(appConfig.auditLogPath, line, {
+      maxBytes: appConfig.logMaxBytes,
+      maxFiles: appConfig.logMaxFiles,
+    });
   } catch {
     // Silent — log failures should never affect tool behavior.
   }

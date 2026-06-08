@@ -464,6 +464,19 @@ export function registerTools(
         };
       }
 
+      if (type === 'thread' && !thread_id) {
+        void audit('save_memory', caller, auditArgs, 'denied');
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'save_memory(type=thread) requires thread_id from the current notification metadata.',
+            },
+          ],
+          isError: true,
+        };
+      }
+
       await memoryStore.saveEpisode(type, content, {
         chatId: chat_id,
         threadId: thread_id,

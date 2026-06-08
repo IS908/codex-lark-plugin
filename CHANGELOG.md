@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- Daemon resource governance for PID/start-time locks, rotating debug/audit logs, inbox garbage collection, bounded caches, and episode pruning.
+- Smoke tests covering lock reuse, live lock rejection, log rotation, inbox LRU cleanup, identity-session caps, and episode pruning.
+
+### Changed
+- Startup now schedules inbox and episode cleanup without blocking the Feishu WebSocket connection path.
+- MCP server metadata version now matches the current package release.
+
 ## [1.0.4] - 2026-06-07
 
 ### Added

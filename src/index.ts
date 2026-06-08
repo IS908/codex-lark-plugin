@@ -1,7 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import fs from 'node:fs/promises';
-import { unlinkSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { appConfig } from './config.js';
@@ -16,34 +14,34 @@ import { mcpServerInstructions } from './prompts.js';
 import { debugLog } from './debug-log.js';
 import { deliverMessageViaCodexExec } from './codex-exec-delivery.js';
 import { sendFeishuReply } from './reply-sender.js';
+import {
+  acquireSingleInstanceLock,
+  registerLockCleanup,
+  sweepInbox,
+} from './resource-governance.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
-async function acquireLock(): Promise<void> {
-  try {
-    // Try to create lock file exclusively
-    await fs.writeFile(LOCK_FILE, String(process.pid), { flag: 'wx' });
-  } catch {
-    // Lock file exists — check if the process is still alive
-    try {
-      const pid = parseInt(await fs.readFile(LOCK_FILE, 'utf-8'), 10);
-      try {
-        process.kill(pid, 0); // Check if process exists
-        console.error(`[lock] Another instance is running (PID ${pid}). Exiting.`);
-        process.exit(1);
-      } catch {
-        // Process is dead — stale lock, overwrite
-        await fs.writeFile(LOCK_FILE, String(process.pid));
+function runStartupResourceCleanup(memoryStore: MemoryStore): void {
+  void sweepInbox(appConfig.inboxDir, {
+    maxAgeMs: appConfig.inboxMaxAgeHours * 60 * 60 * 1000,
+    maxBytes: appConfig.inboxMaxBytes,
+  })
+    .then((result) => {
+      if (result.removedOld || result.removedForSize) {
+        debugLog(
+          `[governance] Inbox cleanup removed ${result.removedOld} old and ${result.removedForSize} LRU files`,
+        );
       }
-    } catch {
-      await fs.writeFile(LOCK_FILE, String(process.pid));
-    }
-  }
-  // Clean up lock on exit
-  const cleanup = () => { try { unlinkSync(LOCK_FILE); } catch {} };
-  process.on('exit', cleanup);
-  process.on('SIGINT', () => { cleanup(); process.exit(0); });
-  process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+    })
+    .catch((err) => debugLog(`[governance] Inbox cleanup failed: ${err}`));
+
+  void memoryStore
+    .pruneEpisodes()
+    .then((result) => {
+      if (result.removedFiles) debugLog(`[governance] Episode pruning removed ${result.removedFiles} files`);
+    })
+    .catch((err) => debugLog(`[governance] Episode pruning failed: ${err}`));
 }
 
 async function main() {
@@ -57,6 +55,7 @@ async function main() {
   const identitySession = new IdentitySession(
     () => appConfig.ownerOpenId,
     appConfig.identitySessionTtlMs,
+    appConfig.identitySessionMaxEntries,
   );
   if (appConfig.ownerOpenId) {
     console.error(`[identity] owner fallback: ${appConfig.ownerOpenId}`);
@@ -66,7 +65,7 @@ async function main() {
 
   // 2. Create MCP server
   const server = new McpServer(
-    { name: 'codex-lark-plugin', version: '1.0.3' },
+    { name: 'codex-lark-plugin', version: '1.0.4' },
     {
       capabilities: {
         logging: {},
@@ -247,7 +246,8 @@ async function main() {
   console.error('[index] MCP server connected via stdio');
 
   // 8. Acquire single-instance lock and start Lark WebSocket
-  await acquireLock();
+  const lock = await acquireSingleInstanceLock(LOCK_FILE);
+  registerLockCleanup(lock);
   await channel.start();
 
   // 9. Re-arm flush timers from persisted episodes
@@ -260,6 +260,8 @@ async function main() {
     identitySession,
   });
   await scheduler.start();
+
+  runStartupResourceCleanup(memoryStore);
 
   console.error('[index] codex-lark-plugin started successfully');
 }

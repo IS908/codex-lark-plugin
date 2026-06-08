@@ -11,6 +11,7 @@ import { TERMINAL_CHAT_ID } from './identity-session.js';
 import { writeSdkResource } from './sdk-resource.js';
 import { debugLog } from './debug-log.js';
 import { feishuApiCall } from './feishu-retry.js';
+import { BoundedCache } from './resource-governance.js';
 
 const ACK_REVOKED_SENTINEL = '__codex_ack_revoked__';
 
@@ -105,10 +106,11 @@ export class BotMessageTracker {
   private readonly maxSize: number;
 
   constructor(maxSize = 500) {
-    this.maxSize = maxSize;
+    this.maxSize = Number.isFinite(maxSize) ? Math.max(0, Math.floor(maxSize)) : 0;
   }
 
   add(messageId: string): void {
+    if (this.maxSize <= 0) return;
     if (this.set.has(messageId)) return;
     this.set.add(messageId);
     this.ids.push(messageId);
@@ -137,9 +139,11 @@ export interface TrackedMessage {
 export class LatestMessageTracker {
   private map = new Map<string, TrackedMessage>();
   private readonly ttlMs: number;
+  private readonly maxSize: number;
 
-  constructor(ttlMs = 10 * 60 * 1000) {
-    this.ttlMs = ttlMs;
+  constructor(ttlMs = 10 * 60 * 1000, maxSize = 1000) {
+    this.ttlMs = Number.isFinite(ttlMs) && ttlMs > 0 ? Math.floor(ttlMs) : 10 * 60 * 1000;
+    this.maxSize = Number.isFinite(maxSize) ? Math.max(0, Math.floor(maxSize)) : 0;
   }
 
   private key(chatId: string, threadId?: string): string {
@@ -148,24 +152,33 @@ export class LatestMessageTracker {
   }
 
   record(chatId: string, msg: TrackedMessage): void {
-    this.map.set(this.key(chatId, msg.threadId), msg);
+    const key = this.key(chatId, msg.threadId);
+    this.map.delete(key);
+    this.map.set(key, msg);
+    while (this.map.size > this.maxSize) {
+      const oldest = this.map.keys().next().value as string;
+      this.map.delete(oldest);
+    }
   }
 
   getLatest(chatId: string, threadId?: string): TrackedMessage | undefined {
-    const m = this.map.get(this.key(chatId, threadId));
+    const key = this.key(chatId, threadId);
+    const m = this.map.get(key);
     if (!m) return undefined;
     if (Date.now() - m.timestamp > this.ttlMs) {
-      this.map.delete(this.key(chatId, threadId));
+      this.map.delete(key);
       return undefined;
     }
+    this.map.delete(key);
+    this.map.set(key, m);
     return m;
   }
 }
 
 export class LarkChannel {
   private client: Lark.Client;
-  private nameCache = new Map<string, string>(); // open_id/chat_id → display name
-  private chatTypeCache = new Map<string, 'p2p' | 'group'>(); // chatId → type (populated from inbound events)
+  private nameCache = new BoundedCache<string, string>(appConfig.nameCacheSize); // open_id/chat_id → display name
+  private chatTypeCache = new BoundedCache<string, 'p2p' | 'group'>(appConfig.chatTypeCacheSize); // chatId → type (populated from inbound events)
   private botOpenId: string = '';
   private wsClient: Lark.WSClient | null = null;
   private queue = new MessageQueue({ handlerTimeoutMs: appConfig.queueHandlerTimeoutMs });
@@ -175,7 +188,7 @@ export class LarkChannel {
   private identitySession: IdentitySession | null = null;
   private ackReactions = new Map<string, string>(); // messageId → reactionId
   private botMessageTracker = new BotMessageTracker(appConfig.botMessageTrackerSize);
-  private latestMessageTracker = new LatestMessageTracker();
+  private latestMessageTracker = new LatestMessageTracker(10 * 60 * 1000, appConfig.latestMessageTrackerSize);
 
   constructor() {
     this.client = new Lark.Client({

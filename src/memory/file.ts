@@ -144,6 +144,11 @@ export interface Episode {
   threadId?: string;
 }
 
+export interface EpisodePruneOptions {
+  maxFilesPerScope?: number;
+  maxBytesPerScope?: number;
+}
+
 export interface EpisodeMeta {
   chatId: string;
   threadId?: string;
@@ -525,6 +530,10 @@ export class MemoryStore {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const fileName = `${timestamp}.md`;
     await fs.writeFile(path.join(dir, fileName), capEpisodeContent(content), 'utf-8');
+    await this.pruneEpisodeDir(dir, {
+      maxFilesPerScope: appConfig.maxEpisodeFilesPerScope,
+      maxBytesPerScope: appConfig.maxEpisodeScopeBytes,
+    });
   }
 
   async listEpisodes(chatId: string): Promise<Episode[]> {
@@ -561,6 +570,90 @@ export class MemoryStore {
         // ignore missing files
       }
     }
+  }
+
+  async pruneEpisodes(options: EpisodePruneOptions = {}): Promise<{ removedFiles: number; removedBytes: number }> {
+    const episodesDir = path.join(this.baseDir, 'episodes');
+    const totals = { removedFiles: 0, removedBytes: 0 };
+    await this.walkEpisodeDirs(episodesDir, async (dir) => {
+      const result = await this.pruneEpisodeDir(dir, {
+        maxFilesPerScope: Number.isFinite(options.maxFilesPerScope)
+          ? options.maxFilesPerScope!
+          : appConfig.maxEpisodeFilesPerScope,
+        maxBytesPerScope: Number.isFinite(options.maxBytesPerScope)
+          ? options.maxBytesPerScope!
+          : appConfig.maxEpisodeScopeBytes,
+      });
+      totals.removedFiles += result.removedFiles;
+      totals.removedBytes += result.removedBytes;
+    });
+    return totals;
+  }
+
+  private async walkEpisodeDirs(dir: string, visit: (dir: string) => Promise<void>): Promise<void> {
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    if (entries.some((entry) => entry.isFile() && entry.name.endsWith('.md'))) {
+      await visit(dir);
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) await this.walkEpisodeDirs(path.join(dir, entry.name), visit);
+    }
+  }
+
+  private async pruneEpisodeDir(
+    dir: string,
+    options: Required<EpisodePruneOptions>,
+  ): Promise<{ removedFiles: number; removedBytes: number }> {
+    const maxFiles = Number.isFinite(options.maxFilesPerScope)
+      ? Math.max(0, Math.floor(options.maxFilesPerScope))
+      : 0;
+    const maxBytes = Number.isFinite(options.maxBytesPerScope)
+      ? Math.max(0, Math.floor(options.maxBytesPerScope))
+      : 0;
+    if (maxFiles <= 0 && maxBytes <= 0) return { removedFiles: 0, removedBytes: 0 };
+
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    const files: Array<{ path: string; mtimeMs: number; size: number }> = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      const filePath = path.join(dir, entry.name);
+      try {
+        const s = await fs.stat(filePath);
+        files.push({ path: filePath, mtimeMs: s.mtimeMs, size: s.size });
+      } catch {}
+    }
+
+    files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    let keptCount = 0;
+    let keptBytes = 0;
+    const remove: Array<{ path: string; size: number }> = [];
+
+    for (const file of files) {
+      const overCount = maxFiles > 0 && keptCount >= maxFiles;
+      const overBytes = maxBytes > 0 && keptBytes + file.size > maxBytes;
+      if (overCount || overBytes) {
+        remove.push(file);
+      } else {
+        keptCount++;
+        keptBytes += file.size;
+      }
+    }
+
+    let removedFiles = 0;
+    let removedBytes = 0;
+    for (const file of remove) {
+      try {
+        await fs.unlink(file.path);
+        removedFiles++;
+        removedBytes += file.size;
+      } catch {}
+    }
+    return { removedFiles, removedBytes };
   }
 
   // ── Skills ──

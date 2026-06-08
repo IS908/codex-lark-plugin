@@ -54,6 +54,10 @@ echo "=== Identity session unit checks ==="
 node --import tsx scripts/identity-smoke.ts
 
 echo ""
+echo "=== Resource governance unit checks ==="
+node --import tsx scripts/resource-governance-smoke.ts
+
+echo ""
 echo "=== Message queue unit checks ==="
 node --import tsx scripts/message-queue-smoke.ts
 

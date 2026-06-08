@@ -327,6 +327,8 @@ On every incoming message, the plugin injects relevant memory context in this or
 | `LARK_MAX_SEARCH_RESULTS` | `2` | Maximum number of memory search results to inject |
 | `LARK_INACTIVITY_HOURS` | `3` | Hours of inactivity before buffer flush to episodic memory |
 | `LARK_MAX_EPISODE_BYTES` | `65536` | Maximum UTF-8 bytes persisted per episode file before truncation |
+| `LARK_MAX_EPISODE_FILES_PER_SCOPE` | `200` | Maximum episode files retained per chat/thread scope after pruning |
+| `LARK_MAX_EPISODE_SCOPE_BYTES` | `10485760` | Maximum total episode bytes retained per chat/thread scope after pruning |
 
 ### Optional -- Identity / privacy (v0.9.0+)
 
@@ -334,8 +336,22 @@ On every incoming message, the plugin injects relevant memory context in this or
 |---|---|---|
 | `LARK_OWNER_OPEN_ID` | (empty) | Operator open_id. Enables terminal skill invocations (e.g. `$lark:jobs`) to resolve the caller via the reserved `__terminal__` chat id. When unset, terminal-side sensitive operations are denied. |
 | `LARK_IDENTITY_SESSION_TTL_MS` | `max(2h, LARK_INACTIVITY_HOURS × 2h)` | Lifetime of a server-side `(chat_id, thread_id?) → open_id` session entry. Must exceed the auto-flush window so distillation-triggered tool calls still resolve to the last real user. |
+| `LARK_IDENTITY_SESSION_MAX_ENTRIES` | `5000` | Maximum server-derived caller session entries retained in memory. Oldest entries are evicted first. |
 | `LARK_PRIVACY_RULES_FILE` | `~/.codex/channels/lark/privacy-rules.md` | Override the path to the L2 user rules file. The distiller injects this file's contents into its classification prompt. |
 | `LARK_AUDIT_LOG` | `~/.codex/channels/lark/audit.log` | Override the path to the append-only audit log. Every sensitive-tool invocation is recorded (best-effort; log failures never propagate). (v0.11.0+) |
+
+### Optional -- Resource Governance
+
+| Variable | Default | Description |
+|---|---|---|
+| `LARK_DEBUG_LOG` | `~/.codex/channels/lark/debug.log` | Override the debug log path |
+| `LARK_LOG_MAX_BYTES` | `5242880` | Rotate debug/audit logs once the active file exceeds this size |
+| `LARK_LOG_MAX_FILES` | `5` | Number of rotated log files to retain |
+| `LARK_INBOX_MAX_AGE_HOURS` | `168` | Startup cleanup deletes inbox downloads older than this |
+| `LARK_INBOX_MAX_BYTES` | `209715200` | Startup cleanup deletes least-recently-used inbox files until under this byte cap |
+| `LARK_NAME_CACHE_SIZE` | `1000` | Maximum cached Feishu user/chat display names |
+| `LARK_CHAT_TYPE_CACHE_SIZE` | `1000` | Maximum cached Feishu chat type entries |
+| `LARK_LATEST_MESSAGE_TRACKER_SIZE` | `1000` | Maximum latest-inbound message tracker entries |
 
 ---
 
@@ -366,9 +382,17 @@ Step 3: CronJob (optional)
 
 Step 4: Advanced tuning (optional)
   -> LARK_INACTIVITY_HOURS, LARK_MAX_SEARCH_RESULTS, LARK_MIN_SEARCH_SCORE,
-     LARK_TEXT_CHUNK_LIMIT, LARK_ACK_EMOJI, LARK_BOT_MESSAGE_TRACKER_SIZE,
-     LARK_MAX_EPISODE_BYTES,
-     LARK_CRON_SCAN_INTERVAL
+     LARK_TEXT_CHUNK_LIMIT, LARK_QUEUE_HANDLER_TIMEOUT_MS,
+     LARK_ACK_EMOJI, LARK_BOT_MESSAGE_TRACKER_SIZE,
+     LARK_MAX_EPISODE_BYTES, LARK_MAX_EPISODE_FILES_PER_SCOPE,
+     LARK_MAX_EPISODE_SCOPE_BYTES, LARK_CRON_SCAN_INTERVAL,
+     LARK_FEISHU_API_TIMEOUT_MS, LARK_FEISHU_API_RETRY_ATTEMPTS,
+     LARK_FEISHU_API_RETRY_BASE_DELAY_MS,
+     LARK_DOWNLOAD_MAX_BYTES, LARK_DOWNLOAD_TIMEOUT_MS,
+     LARK_IDENTITY_SESSION_MAX_ENTRIES, LARK_DEBUG_LOG,
+     LARK_LOG_MAX_BYTES, LARK_LOG_MAX_FILES, LARK_INBOX_MAX_AGE_HOURS,
+     LARK_INBOX_MAX_BYTES, LARK_NAME_CACHE_SIZE,
+     LARK_CHAT_TYPE_CACHE_SIZE, LARK_LATEST_MESSAGE_TRACKER_SIZE
 
 Step 5: Write config
   -> ~/.codex/channels/lark/.env
