@@ -394,7 +394,68 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   passed++;
 }
 
-// ── 9. Stale cronjob reply failures do not pause a recreated same-id job ──
+// ── 9. Legacy cronjob thread ids without created_at hash do not auto-pause ──
+{
+  const originalJobsDir = appConfig.jobsDir;
+  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-legacy-autopause-'));
+  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
+  try {
+    const jobId = 'reply-legacy-autopause';
+    writeFileSync(
+      join(jobsDir, `${jobId}.json`),
+      JSON.stringify(
+        {
+          meta: {
+            id: jobId,
+            name: 'Reply Legacy AutoPause',
+            type: 'prompt',
+            schedule: '* * * * *',
+            schedule_human: 'every 1m',
+            prompt: 'reply',
+            target_chat_id: 'chat_grp',
+            origin_chat_id: 'chat_grp',
+            status: 'active',
+            created_by: 'ou_caller',
+            created_at: '2026-06-07T00:00:00.000Z',
+          },
+          runtime: {
+            last_run_at: null,
+            next_run_at: '2099-01-01T00:00:00.000Z',
+            run_count: 0,
+            last_error: null,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const err = new Error('permission denied') as Error & {
+      response?: { status: number; data: { code: number; msg: string } };
+    };
+    err.response = { status: 403, data: { code: 99991672, msg: 'permission denied' } };
+    const { reply } = await setup({ client: mockClient({ failReply: err }) });
+    const result = await reply({
+      chat_id: 'chat_grp',
+      text: 'cron reply',
+      reply_to: 'om_source',
+      thread_id: `${JOB_THREAD_PREFIX}${jobId}-1760000000000`,
+      format: 'text',
+    });
+    if (!result.isError) fail('9: expected reply tool to return isError for permanent Feishu failure');
+
+    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
+    if (persisted.meta.status !== 'active') {
+      fail(`9: legacy hashless cronjob turn should not auto-pause, got ${persisted.meta.status}`);
+    }
+  } finally {
+    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
+    rmSync(jobsDir, { recursive: true, force: true });
+  }
+  passed++;
+}
+
+// ── 10. Stale cronjob reply failures do not pause a recreated same-id job ──
 {
   const originalJobsDir = appConfig.jobsDir;
   const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-stale-autopause-'));
@@ -444,14 +505,14 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
       thread_id: `${JOB_THREAD_PREFIX}${jobId}-${jobCreatedAtHash(oldCreatedAt)}-1760000000000`,
       format: 'text',
     });
-    if (!result.isError) fail('9: expected reply tool to return isError for permanent Feishu failure');
+    if (!result.isError) fail('10: expected reply tool to return isError for permanent Feishu failure');
 
     const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
     if (persisted.meta.status !== 'active') {
-      fail(`9: stale cronjob turn should not pause recreated job, got ${persisted.meta.status}`);
+      fail(`10: stale cronjob turn should not pause recreated job, got ${persisted.meta.status}`);
     }
     if (persisted.runtime.last_error !== null) {
-      fail(`9: stale cronjob turn should not write last_error, got ${persisted.runtime.last_error}`);
+      fail(`10: stale cronjob turn should not write last_error, got ${persisted.runtime.last_error}`);
     }
   } finally {
     (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
@@ -460,4 +521,4 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   passed++;
 }
 
-console.log(`reply-thread smoke: ${passed}/9 PASS`);
+console.log(`reply-thread smoke: ${passed}/10 PASS`);

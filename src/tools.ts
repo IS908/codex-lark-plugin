@@ -150,7 +150,7 @@ export function registerTools(
     err: unknown,
   ): Promise<void> {
     const parsed = parseJobThreadId(thread_id);
-    if (!parsed || !isPermanentTargetError(err)) return;
+    if (!parsed?.createdAtHash || !isPermanentTargetError(err)) return;
     const reason = err instanceof Error ? err.message : String(err);
     try {
       const paused = await autoPauseJobForPermanentTargetError(parsed.jobId, reason, {
