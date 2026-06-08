@@ -12,6 +12,7 @@ import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import { audit } from './audit-log.js';
 import { writeSdkResource } from './sdk-resource.js';
 import { sendFeishuReply } from './reply-sender.js';
+import { revokeAckReaction, type AckReactionTracker } from './ack-reactions.js';
 import { assertSafeChatId } from './prompts.js';
 import { feishuApiCall } from './feishu-retry.js';
 import {
@@ -70,7 +71,7 @@ export function registerTools(
   identitySession: IdentitySession,
   channel: LarkChannel,
   conversationBuffer?: ConversationBuffer,
-  ackReactions?: Map<string, string>,
+  ackReactions?: AckReactionTracker,
   botMessageTracker?: BotMessageTracker,
   latestMessageTracker?: LatestMessageTracker
 ): void {
@@ -315,6 +316,7 @@ export function registerTools(
         }),
         { retryTimeout: false },
       );
+      revokeAckReaction(client, ackReactions, message_id, 'react');
 
       return {
         content: [{ type: 'text' as const, text: `Added ${emoji} reaction to ${message_id}` }],
@@ -391,6 +393,7 @@ export function registerTools(
           maxBytes: appConfig.downloadMaxBytes,
           timeoutMs: appConfig.downloadTimeoutMs,
         });
+        revokeAckReaction(client, ackReactions, message_id, 'download_attachment');
         return { content: [{ type: 'text' as const, text: `Downloaded to ${filePath}` }] };
       } catch (err: any) {
         const apiError = err?.response?.data ?? err?.data;
