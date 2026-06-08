@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-06-08
+
+### Added
+- Mechanical reply-obligation tracking for inbound Lark IM turns, with `reply`, `react`, `edit_message`, `download_attachment`, and `defer_reply` as turn satisfiers.
+- Line-scoped `[LARK_DEFER]` / `[LARK_NO_REPLY]` parsing for exec-mode assistant text, ignoring code-block spoofing.
+- `defer_reply` MCP tool for explicit no-reply/deferred turns with audit logging.
+- Smoke tests covering normal replies, missing replies, explicit defers, code-block spoofing, notification fallback ambiguity, active-turn routing, and watchdog audit behavior.
+
+### Fixed
+- Omitted `reply_to` fallback now prefers the active queued turn, auto-fills only when exactly one pending turn matches, and rejects ambiguous notification-mode turns instead of replying to the wrong interleaved message.
+
 ## [1.0.7] - 2026-06-08
 
 ### Fixed
