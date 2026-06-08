@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- Feishu doc-comment @bot events now route into Codex using synthetic `doc:<file_token>` chats, preserving selected text, parent comment, reply body, document title, caller identity, whitelist checks, and duplicate-event filtering.
+- `reply_doc_comment` and `create_doc_comment` MCP tools for owner-scoped replies/new top-level comments in the triggering document, with strict `doc_token` binding against prompt-injected cross-document writes.
+- Default `exec` delivery now posts Codex's final answer back to the triggering doc-comment thread instead of treating `doc:<file_token>` as a Feishu IM chat id.
+- Smoke tests for doc-comment event routing, SDK payload shape, selected-text/reply degradation, identity binding, whitelist behavior, tool authorization, doc-token mismatches, empty content, and Feishu permission failures.
+
 ## [1.0.9] - 2026-06-08
 
 ### Added

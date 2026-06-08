@@ -16,7 +16,7 @@
                                                   <── 回复 / 编辑 / 表情 ──<
 ```
 
-本插件以 MCP Server 形式运行在 Codex 内部。通过 WebSocket 连接飞书开放平台（无需公网回调地址），接收消息后注入记忆上下文，转发给 Codex 处理。Codex 通过内置的 12 个 MCP 工具进行回复、编辑、加表情、下载附件，以及管理记忆与定时任务。lark-cli 的各项技能负责处理更广泛的飞书 API 操作（日历、文档、表格、任务、通讯录等）。
+本插件以 MCP Server 形式运行在 Codex 内部。通过 WebSocket 连接飞书开放平台（无需公网回调地址），接收消息后注入记忆上下文，转发给 Codex 处理。Codex 通过内置 MCP 工具进行回复、编辑、加表情、下载附件、回复文档评论，以及管理记忆与定时任务。lark-cli 的各项技能负责处理更广泛的飞书 API 操作（日历、文档、表格、任务、通讯录等）。
 
 ---
 
@@ -25,6 +25,7 @@
 ### 消息接收
 
 - 私聊消息和群聊 @机器人 消息
+- 飞书文档评论 @机器人 事件会携带选中文本、父评论、回复正文和文档标题上下文进入 Codex
 - 富文本、图片、文件、音视频等多种消息类型
 - **Codex 会话连续性**：exec delivery 会为每个飞书 chat/thread 保存并恢复一个 Codex session，多轮对话可以复用 Codex 原生 session 上下文
 - 引用回复自动合并上下文，并可读取被引用交互卡片中的可见文本
@@ -36,6 +37,7 @@
 - 文字、图片（不超过 10 MB）、文件（不超过 30 MB）
 - **卡片渲染**：长文本或富 markdown 内容（标题、代码块、表格、列表、粗体，或超过 500 字符）自动渲染为飞书卡片。可通过 `format='card'` 强制卡片，`format='text'` 强制纯文本，可选 `footer` 底部小字脚注
 - 编辑已发送的消息
+- 回复已有飞书文档评论线程，或在当前文档中新建顶级评论
 - 表情回复
 - 长文本自动按段落、换行、空格分段发送
 
@@ -49,6 +51,7 @@
 ### 隐私与安全（v0.9.0+）
 
 - **服务端派生的调用者身份**：敏感工具（`save_memory` / `create_job` / `list_jobs` / `update_job` / `delete_job` / `what_do_you_know` / `forget_memory`）从飞书事件流派生调用者身份，不信任工具参数——社工提示无法假冒他人操作
+- **文档评论绑定**：文档评论工具只能在 `doc:<file_token>` 触发的 turn 中调用，必须携带当前 `thread_id`，并会拒绝 prompt 注入造成的 `doc_token` 不匹配，避免把评论发到其他文档
 - **记忆透明度（v0.11.0+）**：`what_do_you_know` 列出 bot 记住了调用者的哪些信息（按当前 chat 可见性过滤）；`forget_memory` 按 hash 删除特定条目，可选 `promote_to_rule` 把删除动作沉淀为 `privacy-rules.md` 中的规则——**自学习闭环**让误判随使用递减
 - **追加式审计日志（v0.11.0+）**：`~/.codex/channels/lark/audit.log` 记录每次敏感工具调用（时间戳 / 工具名 / 调用者 / 结果 / 脱敏后的参数摘要），运营者可事后回溯查看本机上发生了什么
 - **终端技能默认脱敏（v0.11.0+）**：`$lark:jobs` 默认不展示 prompt 正文，需显式要求 verbose；破坏性操作需交互确认
@@ -87,8 +90,9 @@
 
 1. 前往[飞书开放平台](https://open.feishu.cn/)创建自建应用
 2. 启用「机器人」能力
-3. 添加以下权限：`im:message`、`im:message:send_as_bot`、`im:resource`
-4. 获取 App ID 和 App Secret
+3. 添加以下权限：`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`、`im:message:send_as_bot`、`im:resource`、`im:message.reactions:write`、`docs:document.comment:read`、`docs:document.comment:create`、`drive:drive.metadata:readonly`
+4. 在「事件订阅」中启用 WebSocket 模式，并订阅 `im.message.receive_v1`、`drive.notice.comment_add_v1`
+5. 获取 App ID 和 App Secret
 
 ### 第 2 步：安装插件
 
@@ -266,6 +270,8 @@ git push origin v1.0.0
 | `LARK_ALLOWED_CHAT_IDS` | （空） | 群聊 ID 白名单，逗号分隔 |
 
 > **白名单语义**：两个列表都设置时，发送者在 `LARK_ALLOWED_USER_IDS` 里**或**聊天在 `LARK_ALLOWED_CHAT_IDS` 里即允许（OR 关系）。只设置一个列表时，只用那个列表过滤。
+>
+> 对于 `drive.notice.comment_add_v1` 文档评论事件，`LARK_ALLOWED_USER_IDS` 会过滤评论作者的 `open_id`。如果只设置 `LARK_ALLOWED_CHAT_IDS`，文档评论事件会放行，因为合成的 `doc:<file_token>` chat id 无法匹配真实群聊；上游边界仍由飞书文档 ACL 和 @机器人 要求保证。
 
 ### 可选 —— 消息
 
@@ -428,6 +434,9 @@ tmux kill-session -t lark
 | `edit_message` | `(message_id, text, format?)` | 编辑已发送的机器人消息（支持 text 和 card_markdown 格式） |
 | `react` | `(message_id, emoji)` | 对消息添加表情回复 |
 | `download_attachment` | `(message_id, file_key)` | 下载消息中的附件到本地收件箱 |
+| `defer_reply` | `(message_id, chat_id, thread_id?, reason?)` | 标记当前飞书 turn 已有意延后或无需回复，不发送可见消息 |
+| `reply_doc_comment` | `(chat_id, doc_token, comment_id, content, file_type, thread_id?)` | 回复当前触发的飞书文档评论线程。仅 owner 可调用，并绑定到当前 `doc:<file_token>` turn |
+| `create_doc_comment` | `(chat_id, doc_token, content, file_type, thread_id?)` | 在当前触发的飞书文档中新建顶级评论。仅 owner 可调用，并绑定到当前 `doc:<file_token>` turn |
 | `save_memory` | `(type, content, reason, chat_id, thread_id?, tier?)` | 保存用户画像、会话情景或话题情景。画像写入总是针对调用者本人（v0.9.0 起）；v0.10.0 起可选 `tier` 参数（`public` / `private`，默认 `private`）决定归属哪一档 |
 | `save_skill` | `(name, description, content, chat_id?)` | 保存可复用的操作流程为全局技能 |
 | `create_job` | `(name, type, schedule, prompt?, content?, target_chat_id, chat_id, thread_id?)` | 创建定时任务。创建者由 session 派生，不再接受 `created_by`；`chat_id` 用于派生调用者身份并填充 `origin_chat_id` |

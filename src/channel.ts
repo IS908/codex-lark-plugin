@@ -7,7 +7,7 @@ import { MessageQueue } from './queue.js';
 import type { MemoryStore } from './memory/file.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { IdentitySession } from './identity-session.js';
-import { TERMINAL_CHAT_ID } from './identity-session.js';
+import { DOC_CHAT_ID_PREFIX, TERMINAL_CHAT_ID } from './identity-session.js';
 import { writeSdkResource } from './sdk-resource.js';
 import { debugLog } from './debug-log.js';
 import { feishuApiCall } from './feishu-retry.js';
@@ -53,6 +53,11 @@ function passesWhitelist(senderId: string, chatId: string): boolean {
   return userOk || chatOk;
 }
 
+export function passesDocCommentWhitelist(senderId: string): boolean {
+  if (appConfig.allowedUserIds.length === 0) return true;
+  return appConfig.allowedUserIds.includes(senderId);
+}
+
 export interface LarkMessage {
   messageId: string;
   chatId: string;
@@ -72,6 +77,12 @@ export interface LarkMessage {
   rawContent: string;
   imagePath?: string;
   imagePaths?: string[];
+  docComment?: {
+    fileToken: string;
+    commentId: string;
+    fileType: string;
+    replyId?: string;
+  };
 }
 
 /**
@@ -98,7 +109,246 @@ export function resolveMentionPlaceholders(
   });
 }
 
-type MessageHandler = (message: LarkMessage) => Promise<void>;
+export type MessageHandler = (message: LarkMessage) => Promise<void>;
+
+const DOC_COMMENT_BODY_CAP_BYTES = 8 * 1024;
+
+export interface CommentEventDeps {
+  botOpenId: string;
+  seenEventIds: BoundedCache<string, true>;
+  identitySession: IdentitySession;
+  queue: MessageQueue;
+  messageHandler: MessageHandler | null;
+  processMessage?: (message: LarkMessage) => Promise<void>;
+  resolveUserName: (openId: string) => Promise<string>;
+  client: {
+    drive: {
+      fileComment: { list: (req: any) => Promise<any> };
+      fileCommentReply: { list: (req: any) => Promise<any> };
+      meta: { batchQuery: (req: any) => Promise<any> };
+    };
+  };
+}
+
+function capUtf8(s: string | undefined, maxBytes: number): string | undefined {
+  if (s === undefined) return undefined;
+  const buf = Buffer.from(s, 'utf8');
+  if (buf.length <= maxBytes) return s;
+  let cut = maxBytes;
+  while (cut > 0 && (buf[cut] & 0xc0) === 0x80) cut--;
+  return `${buf.subarray(0, cut).toString('utf8')} ...[truncated]`;
+}
+
+function extractCommentText(content: any): string | undefined {
+  if (!content) return undefined;
+  if (typeof content.text === 'string') return content.text;
+  if (Array.isArray(content.elements)) {
+    const text = content.elements
+      .map((el: any) => el?.text_run?.text ?? el?.docs_link?.url ?? '')
+      .join('');
+    return text || undefined;
+  }
+  return undefined;
+}
+
+function escapeAttr(s: string | undefined): string {
+  if (!s) return '';
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeBody(s: string | undefined): string {
+  if (!s) return '';
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+interface DocCommentEnvelopeArgs {
+  fileToken: string;
+  commentId: string;
+  replyId?: string;
+  fileType: string;
+  operator: string;
+  isMentioned: boolean;
+  docTitle?: string;
+  quote?: string;
+  parentBody?: string;
+  body?: string;
+  fetchError?: string;
+}
+
+function buildDocCommentEnvelope(args: DocCommentEnvelopeArgs): string {
+  const kind = args.replyId ? 'reply' : 'comment';
+  const attrs = [
+    `doc_token="${escapeAttr(args.fileToken)}"`,
+    `comment_id="${escapeAttr(args.commentId)}"`,
+    args.replyId ? `reply_id="${escapeAttr(args.replyId)}"` : '',
+    `kind="${kind}"`,
+    `operator="${escapeAttr(args.operator)}"`,
+    args.docTitle ? `doc_title="${escapeAttr(args.docTitle)}"` : '',
+    `file_type="${escapeAttr(args.fileType)}"`,
+    `is_mentioned="${args.isMentioned}"`,
+  ].filter(Boolean).join(' ');
+
+  const inner: string[] = [];
+  if (args.fetchError) inner.push(`  <fetch_error>${escapeBody(args.fetchError)}</fetch_error>`);
+  if (args.quote) inner.push(`  <selected_text>${escapeBody(args.quote)}</selected_text>`);
+  if (args.parentBody) inner.push(`  <parent>${escapeBody(args.parentBody)}</parent>`);
+  if (args.body !== undefined) {
+    inner.push(`  <body>${escapeBody(args.body)}</body>`);
+  } else {
+    inner.push(`  <body unknown="true"></body>`);
+  }
+  return `<doc_comment ${attrs}>\n${inner.join('\n')}\n</doc_comment>`;
+}
+
+export async function handleCommentEvent(data: any, deps: CommentEventDeps): Promise<void> {
+  const eventId = data?.event_id;
+  if (eventId && deps.seenEventIds.has(eventId)) return;
+  if (eventId) deps.seenEventIds.set(eventId, true);
+
+  const meta = data?.notice_meta;
+  if (!meta) {
+    debugLog(`[channel] Doc comment event missing notice_meta — dropped (event_id=${eventId ?? '<none>'})`);
+    return;
+  }
+  if (data?.is_mentioned !== true) {
+    debugLog(`[channel] Doc comment event is_mentioned=false — dropped (event_id=${eventId ?? '<none>'})`);
+    return;
+  }
+  if (meta.to_user_id?.open_id !== deps.botOpenId) {
+    debugLog(
+      `[channel] Doc comment to_user_id=${meta.to_user_id?.open_id ?? '<none>'} != bot=${deps.botOpenId} — dropped (event_id=${eventId ?? '<none>'})`,
+    );
+    return;
+  }
+  if (meta.from_user_id?.open_id === deps.botOpenId) {
+    debugLog(`[channel] Doc comment from bot itself — dropped (event_id=${eventId ?? '<none>'})`);
+    return;
+  }
+
+  const fileToken = String(meta.file_token ?? '');
+  const commentId = String(data?.comment_id ?? '');
+  const replyId = typeof data?.reply_id === 'string' && data.reply_id ? data.reply_id : undefined;
+  const fileType = String(meta.file_type ?? '');
+  const fromOpenId = String(meta.from_user_id?.open_id ?? '');
+  if (!fileToken || !commentId || !fileType || !fromOpenId) {
+    debugLog(`[channel] Doc comment event missing required fields — dropped (event_id=${eventId ?? '<none>'})`);
+    return;
+  }
+  if (!passesDocCommentWhitelist(fromOpenId)) {
+    debugLog(`[channel] Doc comment from ${fromOpenId} on doc ${fileToken} rejected by whitelist`);
+    return;
+  }
+
+  let parentBody: string | undefined;
+  let body: string | undefined;
+  let quote: string | undefined;
+  let fetchError: string | undefined;
+
+  const [repliesResult, commentsResult] = await Promise.allSettled([
+    deps.client.drive.fileCommentReply.list({
+      path: { file_token: fileToken, comment_id: commentId },
+      params: { file_type: fileType, page_size: 100 },
+    }),
+    deps.client.drive.fileComment.list({
+      path: { file_token: fileToken },
+      params: { file_type: fileType, page_size: 100 },
+    }),
+  ]);
+
+  const replies: any[] =
+    repliesResult.status === 'fulfilled' ? (repliesResult.value?.data?.items ?? []) : [];
+  const comments: any[] =
+    commentsResult.status === 'fulfilled' ? (commentsResult.value?.data?.items ?? []) : [];
+
+  if (repliesResult.status === 'rejected' && commentsResult.status === 'rejected') {
+    const err: any = repliesResult.reason;
+    fetchError = err?.message ?? String(err);
+    debugLog(`[channel] Doc comment pre-fetch failed (event_id=${eventId ?? '<none>'}): ${fetchError}`);
+  } else if (repliesResult.status === 'rejected') {
+    const err: any = repliesResult.reason;
+    fetchError = err?.message ?? String(err);
+    debugLog(`[channel] Doc comment replies list failed (event_id=${eventId ?? '<none>'}): ${fetchError}`);
+  } else if (commentsResult.status === 'rejected') {
+    const err: any = commentsResult.reason;
+    debugLog(
+      `[channel] Doc comment list failed; selected text omitted (event_id=${eventId ?? '<none>'}): ${err?.message ?? String(err)}`,
+    );
+  }
+
+  const targetComment = comments.find((comment: any) => comment?.comment_id === commentId);
+  quote = typeof targetComment?.quote === 'string' && targetComment.quote ? targetComment.quote : undefined;
+
+  if (replyId) {
+    parentBody = extractCommentText(replies[0]?.content);
+    const targetReply = replies.find((reply: any) => reply?.reply_id === replyId);
+    body = targetReply ? extractCommentText(targetReply.content) : undefined;
+  } else {
+    body = extractCommentText(replies[0]?.content);
+  }
+
+  body = capUtf8(body, DOC_COMMENT_BODY_CAP_BYTES);
+  parentBody = capUtf8(parentBody, DOC_COMMENT_BODY_CAP_BYTES);
+
+  let docTitle: string | undefined;
+  try {
+    const metaResp = await deps.client.drive.meta.batchQuery({
+      data: { request_docs: [{ doc_token: fileToken, doc_type: fileType }] },
+    });
+    docTitle = metaResp?.data?.metas?.[0]?.title;
+  } catch {
+    docTitle = undefined;
+  }
+
+  const senderName = await deps.resolveUserName(fromOpenId);
+  const envelope = buildDocCommentEnvelope({
+    fileToken,
+    commentId,
+    replyId,
+    fileType,
+    operator: senderName,
+    isMentioned: true,
+    docTitle,
+    quote,
+    parentBody,
+    body,
+    fetchError,
+  });
+
+  const chatId = `${DOC_CHAT_ID_PREFIX}${fileToken}`;
+  const syntheticMessage: LarkMessage = {
+    messageId: replyId ?? commentId,
+    chatId,
+    chatType: 'doc_comment',
+    senderId: fromOpenId,
+    senderName,
+    text: envelope,
+    messageType: 'doc_comment',
+    threadId: commentId,
+    rawContent: JSON.stringify(data),
+    docComment: {
+      fileToken,
+      commentId,
+      fileType,
+      ...(replyId ? { replyId } : {}),
+    },
+  };
+
+  deps.queue.enqueue(chatId, commentId, async () => {
+    if (deps.processMessage) {
+      await deps.processMessage(syntheticMessage);
+      return;
+    }
+    deps.identitySession.setCaller(chatId, commentId, fromOpenId);
+    if (deps.messageHandler) await deps.messageHandler(syntheticMessage);
+  });
+}
 
 export class BotMessageTracker {
   private ids: string[] = [];
@@ -205,6 +455,7 @@ export class LarkChannel {
   private ackReactions = new AckReactionTracker();
   private botMessageTracker = new BotMessageTracker(appConfig.botMessageTrackerSize);
   private latestMessageTracker = new LatestMessageTracker(10 * 60 * 1000, appConfig.latestMessageTrackerSize);
+  private commentEventIdSeen = new BoundedCache<string, true>(1000);
 
   constructor() {
     this.client = new Lark.Client({
@@ -289,6 +540,24 @@ export class LarkChannel {
           await this.handleReactionEvent(data);
         } catch (err) {
           console.error('[channel] Error handling reaction event:', err);
+        }
+      },
+    }).register({
+      'drive.notice.comment_add_v1': async (data: any) => {
+        debugLog(`[channel] Event received: drive.notice.comment_add_v1`);
+        try {
+          await handleCommentEvent(data, {
+            botOpenId: this.botOpenId,
+            seenEventIds: this.commentEventIdSeen,
+            identitySession: this.identitySession!,
+            queue: this.queue,
+            messageHandler: this.messageHandler,
+            processMessage: this.processEnqueuedMessage.bind(this),
+            resolveUserName: this.resolveUserName.bind(this),
+            client: this.client as any,
+          });
+        } catch (err) {
+          console.error('[channel] Error handling doc comment event:', err);
         }
       },
     });
@@ -507,38 +776,43 @@ export class LarkChannel {
 
     // Enqueue for sequential per-chat processing
     this.queue.enqueue(chatId, threadId, async () => {
-      debugLog(
-        `[channel] Queue handler start message ${messageId} chat=${chatId} thread=${threadId ?? '(none)'}`
-      );
-
-      // Bind identity for this chat/thread so MCP tools can resolve the
-      // true caller without trusting Codex-declared identity arguments.
-      this.identitySession?.setCaller(chatId, threadId, senderId);
-
-      // Record in conversation buffer
-      this.conversationBuffer?.record(chatId, {
-        role: 'user',
-        senderId,
-        text: larkMessage.text,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Build memory-enriched context
-      debugLog(`[channel] Enriching memory for message ${messageId}`);
-      const enrichedText = await this.enrichWithMemory(larkMessage);
-      debugLog(`[channel] Memory enrichment complete for message ${messageId}`);
-
-      // Forward to handler with enriched context
-      const enrichedMessage = { ...larkMessage, text: enrichedText };
-
-      if (this.messageHandler) {
-        debugLog(`[channel] Calling message handler for message ${messageId}`);
-        await this.messageHandler(enrichedMessage);
-        debugLog(`[channel] Message handler completed for message ${messageId}`);
-      } else {
-        debugLog(`[channel] No message handler registered for message ${messageId}`);
-      }
+      await this.processEnqueuedMessage(larkMessage);
     });
+  }
+
+  private async processEnqueuedMessage(larkMessage: LarkMessage): Promise<void> {
+    const { messageId, chatId, threadId, senderId } = larkMessage;
+    debugLog(
+      `[channel] Queue handler start message ${messageId} chat=${chatId} thread=${threadId ?? '(none)'}`
+    );
+
+    // Bind identity for this chat/thread so MCP tools can resolve the
+    // true caller without trusting Codex-declared identity arguments.
+    this.identitySession?.setCaller(chatId, threadId, senderId);
+
+    // Record in conversation buffer
+    this.conversationBuffer?.record(chatId, {
+      role: 'user',
+      senderId,
+      text: larkMessage.text,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Build memory-enriched context
+    debugLog(`[channel] Enriching memory for message ${messageId}`);
+    const enrichedText = await this.enrichWithMemory(larkMessage);
+    debugLog(`[channel] Memory enrichment complete for message ${messageId}`);
+
+    // Forward to handler with enriched context
+    const enrichedMessage = { ...larkMessage, text: enrichedText };
+
+    if (this.messageHandler) {
+      debugLog(`[channel] Calling message handler for message ${messageId}`);
+      await this.messageHandler(enrichedMessage);
+      debugLog(`[channel] Message handler completed for message ${messageId}`);
+    } else {
+      debugLog(`[channel] No message handler registered for message ${messageId}`);
+    }
   }
 
   private async enrichWithMemory(msg: LarkMessage): Promise<string> {

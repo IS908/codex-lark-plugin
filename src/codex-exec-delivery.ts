@@ -10,6 +10,7 @@ import {
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { untrustedDataBlock } from './prompts.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
+import { splitDocCommentText } from './doc-comment-api.js';
 
 export interface CodexExecDeliveryOptions {
   message: LarkMessage;
@@ -18,16 +19,35 @@ export interface CodexExecDeliveryOptions {
   sessionStore?: CodexExecSessionStore;
   useCodexSessions?: boolean;
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
+  sendDocCommentReply?: (request: DocCommentExecReplyRequest) => Promise<{ replyId?: string }>;
+  recordAssistantMessage?: (message: { chatId: string; text: string }) => void;
   turnObligations?: TurnObligationTracker;
 }
 
+export interface DocCommentExecReplyRequest {
+  chat_id: string;
+  thread_id: string;
+  doc_token: string;
+  comment_id: string;
+  file_type: string;
+  content: string;
+}
+
 export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string): string {
+  const isDocComment = message.chatType === 'doc_comment';
   const metaLines = [
     `message_id: ${message.messageId}`,
     `chat_id: ${message.chatId}`,
     `chat_type: ${message.chatType}`,
     `user_id: ${message.senderId}`,
     ...(message.threadId ? [`thread_id: ${message.threadId}`] : []),
+    ...(message.docComment
+      ? [
+          `doc_token: ${message.docComment.fileToken}`,
+          `comment_id: ${message.docComment.commentId}`,
+          `file_type: ${message.docComment.fileType}`,
+        ]
+      : []),
     ...(message.botMentioned ? ['bot_mentioned: true'] : []),
   ];
   const displayBlocks = [
@@ -42,8 +62,10 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
   ];
 
   return [
-    'Reply to this Feishu/Lark message.',
-    'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
+    isDocComment ? 'Reply to this Feishu/Lark document comment.' : 'Reply to this Feishu/Lark message.',
+    isDocComment
+      ? 'Return only the plain text that should be posted as a Feishu document-comment reply. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.'
+      : 'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'If the user asks for an action you cannot complete in this exec bridge environment, say exactly what is missing and keep the answer concise.',
     'If this turn intentionally should not send a Feishu reply, put [LARK_DEFER] or [LARK_NO_REPLY] on its own line outside code fences, optionally followed by a short reason.',
@@ -121,6 +143,30 @@ export async function deliverMessageViaCodexExec(
     text = 'Codex exec returned an empty response.';
   }
   if (turnObligations?.markDeferredFromText(message.messageId, 'exec_assistant_text', text)) {
+    return;
+  }
+
+  if (message.chatType === 'doc_comment') {
+    if (!message.docComment) {
+      throw new Error('doc_comment exec delivery requires docComment metadata');
+    }
+    if (!opts.sendDocCommentReply) {
+      throw new Error('doc_comment exec delivery requires sendDocCommentReply');
+    }
+    for (const chunk of splitDocCommentText(text)) {
+      await opts.sendDocCommentReply({
+        chat_id: message.chatId,
+        thread_id: message.threadId ?? message.docComment.commentId,
+        doc_token: message.docComment.fileToken,
+        comment_id: message.docComment.commentId,
+        file_type: message.docComment.fileType,
+        content: chunk,
+      });
+    }
+    opts.recordAssistantMessage?.({
+      chatId: message.chatId,
+      text,
+    });
     return;
   }
 
