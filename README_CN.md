@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.0.6-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.9-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -27,7 +27,7 @@
 - 私聊消息和群聊 @机器人 消息
 - 富文本、图片、文件、音视频等多种消息类型
 - **Codex 会话连续性**：exec delivery 会为每个飞书 chat/thread 保存并恢复一个 Codex session，多轮对话可以复用 Codex 原生 session 上下文
-- 引用回复自动合并上下文
+- 引用回复自动合并上下文，并可读取被引用交互卡片中的可见文本
 - 附件下载到本地收件箱
 - 用户对 bot 消息添加的 emoji reaction 视为被动反馈，不会触发额外文字回复
 

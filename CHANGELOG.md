@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-06-08
+
+### Added
+- Quoted interactive card extraction now surfaces safe visible card text from parent/root messages, including titles, markdown/plain text, localized CardKit content, summaries, button labels, and `div.extra` accessories.
+- Smoke tests covering quoted-card fallback, unsafe payload filtering, localized card text, Lark markdown tag sanitization, parent quote integration, and root-only quoted context.
+
+### Fixed
+- Malformed or unsupported interactive card payloads now fall back to `[Interactive Card]` instead of exposing raw JSON.
+- Quoted-card extraction skips action payloads, callback values, URLs, raw IDs, confirmation payloads, and other machine-only fields while preserving user-visible labels.
+
 ## [1.0.8] - 2026-06-08
 
 ### Added
@@ -110,7 +120,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.8...v1.0.9
+[1.0.8]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.7...v1.0.8
+[1.0.7]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.3...v1.0.4
