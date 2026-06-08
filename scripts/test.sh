@@ -102,6 +102,10 @@ echo "=== Reply thread-routing unit checks ==="
 node --import tsx scripts/reply-thread-smoke.ts
 
 echo ""
+echo "=== Ack reaction lifecycle unit checks ==="
+node --import tsx scripts/ack-reaction-smoke.ts
+
+echo ""
 echo "=== Reaction event unit checks ==="
 node --import tsx scripts/reaction-event-smoke.ts
 

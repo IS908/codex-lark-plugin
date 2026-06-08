@@ -7,10 +7,16 @@ import { registerTools } from '../src/tools.js';
 import type { MemoryStore } from '../src/memory/file.js';
 import { IdentitySession } from '../src/identity-session.js';
 import type { LarkChannel } from '../src/channel.js';
+import { AckReactionTracker } from '../src/ack-reactions.js';
 
 function fail(msg: string): never {
   console.error(`FAIL: ${msg}`);
   process.exit(1);
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 // ── Mock helpers ──
@@ -103,7 +109,7 @@ async function run() {
     has(id: string) { return this.ids.has(id); },
   };
   const buffer = makeBuffer();
-  const ackReactions = new Map<string, string>();
+  const ackReactions = new AckReactionTracker({ maxTrackedMessages: 20 });
 
   // Register tools (captures handlers via fake server)
   const identitySession = new IdentitySession(() => null);
@@ -200,7 +206,8 @@ async function run() {
   // ── Test 5: card path revokes ack reactions (exact match) ──
   apiCalls.length = 0;
   ackReactions.clear();
-  ackReactions.set('om_ack_msg', 'reaction_abc');
+  ackReactions.recordInbound('om_ack_msg');
+  ackReactions.storeReaction('om_ack_msg', 'reaction_abc');
 
   await replyHandler({
     chat_id: 'chat_ack',
@@ -208,16 +215,21 @@ async function run() {
     card: validCard,
     reply_to: 'om_ack_msg',
   });
+  await flushMicrotasks();
 
-  if (ackReactions.size !== 0) fail(`Test 5: ack reactions not cleared (size=${ackReactions.size})`);
+  if (ackReactions.activeCount !== 0) {
+    fail(`Test 5: ack reactions not cleared (active=${ackReactions.activeCount})`);
+  }
   const deleteCall = apiCalls.find((c) => c.method === 'messageReaction.delete');
   if (!deleteCall) fail('Test 5: messageReaction.delete not called');
   if (deleteCall.args.path.reaction_id !== 'reaction_abc') fail('Test 5: wrong reaction_id');
 
   // ── Test 6: card path revokes all acks when no exact match ──
   apiCalls.length = 0;
-  ackReactions.set('om_other1', 'r1');
-  ackReactions.set('om_other2', 'r2');
+  ackReactions.recordInbound('om_other1');
+  ackReactions.recordInbound('om_other2');
+  ackReactions.storeReaction('om_other1', 'r1');
+  ackReactions.storeReaction('om_other2', 'r2');
 
   await replyHandler({
     chat_id: 'chat_ack2',
@@ -225,8 +237,11 @@ async function run() {
     card: validCard,
     // no reply_to — should revoke all pending acks
   });
+  await flushMicrotasks();
 
-  if (ackReactions.size !== 0) fail(`Test 6: ack reactions not fully cleared (size=${ackReactions.size})`);
+  if (ackReactions.activeCount !== 0) {
+    fail(`Test 6: ack reactions not fully cleared (active=${ackReactions.activeCount})`);
+  }
   const deleteCalls = apiCalls.filter((c) => c.method === 'messageReaction.delete');
   if (deleteCalls.length !== 2) fail(`Test 6: expected 2 reaction deletes, got ${deleteCalls.length}`);
 

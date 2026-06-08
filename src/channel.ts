@@ -12,8 +12,7 @@ import { writeSdkResource } from './sdk-resource.js';
 import { debugLog } from './debug-log.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { BoundedCache } from './resource-governance.js';
-
-const ACK_REVOKED_SENTINEL = '__codex_ack_revoked__';
+import { AckReactionTracker, deleteAckReaction } from './ack-reactions.js';
 
 /**
  * Build a Lark SDK logger that routes every level to stderr. The SDK's default
@@ -102,27 +101,43 @@ type MessageHandler = (message: LarkMessage) => Promise<void>;
 
 export class BotMessageTracker {
   private ids: string[] = [];
-  private set = new Set<string>();
+  private map = new Map<string, TrackedBotMessage>();
   private readonly maxSize: number;
 
   constructor(maxSize = 500) {
     this.maxSize = Number.isFinite(maxSize) ? Math.max(0, Math.floor(maxSize)) : 0;
   }
 
-  add(messageId: string): void {
-    if (this.maxSize <= 0) return;
-    if (this.set.has(messageId)) return;
-    this.set.add(messageId);
+  add(messageId: string, meta: Omit<TrackedBotMessage, 'messageId' | 'timestamp'> = {}): void {
+    if (this.maxSize <= 0 || !messageId) return;
+    if (this.map.has(messageId)) return;
+    this.map.set(messageId, {
+      messageId,
+      chatId: meta.chatId,
+      threadId: meta.threadId,
+      timestamp: Date.now(),
+    });
     this.ids.push(messageId);
     while (this.ids.length > this.maxSize) {
       const oldest = this.ids.shift()!;
-      this.set.delete(oldest);
+      this.map.delete(oldest);
     }
   }
 
   has(messageId: string): boolean {
-    return this.set.has(messageId);
+    return this.map.has(messageId);
   }
+
+  get(messageId: string): TrackedBotMessage | undefined {
+    return this.map.get(messageId);
+  }
+}
+
+export interface TrackedBotMessage {
+  messageId: string;
+  chatId?: string;
+  threadId?: string;
+  timestamp: number;
 }
 
 /**
@@ -186,7 +201,7 @@ export class LarkChannel {
   private memoryStore: MemoryStore | null = null;
   private conversationBuffer: ConversationBuffer | null = null;
   private identitySession: IdentitySession | null = null;
-  private ackReactions = new Map<string, string>(); // messageId → reactionId
+  private ackReactions = new AckReactionTracker();
   private botMessageTracker = new BotMessageTracker(appConfig.botMessageTrackerSize);
   private latestMessageTracker = new LatestMessageTracker(10 * 60 * 1000, appConfig.latestMessageTrackerSize);
 
@@ -234,7 +249,7 @@ export class LarkChannel {
     return this.client;
   }
 
-  getAckReactions(): Map<string, string> {
+  getAckReactions(): AckReactionTracker {
     return this.ackReactions;
   }
 
@@ -338,6 +353,7 @@ export class LarkChannel {
       threadId,
       timestamp: Date.now(),
     });
+    this.ackReactions.recordInbound(messageId);
 
     // Fire-and-forget ack reaction (Typing for P2P, MeMeMe for group @bot)
     const ackEmoji = chatType === 'p2p' ? 'Typing' : appConfig.ackEmoji;
@@ -351,17 +367,10 @@ export class LarkChannel {
       ).then((resp: any) => {
         const reactionId = resp?.data?.reaction_id;
         if (!reactionId) return;
-        if (this.ackReactions.get(messageId) === ACK_REVOKED_SENTINEL) {
-          this.ackReactions.delete(messageId);
-          feishuApiCall('channel.ackReaction.delete_late', () =>
-            this.client.im.v1.messageReaction.delete({
-              path: { message_id: messageId, reaction_id: reactionId },
-            }),
-            { attempts: 1, retryTimeout: false },
-          ).catch(() => {});
-          return;
+        const stored = this.ackReactions.storeReaction(messageId, reactionId);
+        if (stored.action === 'delete-now') {
+          deleteAckReaction(this.client, stored.reaction, 'channel.delete_late');
         }
-        this.ackReactions.set(messageId, reactionId);
       }).catch(() => {});
     }
 
@@ -663,11 +672,12 @@ export class LarkChannel {
     // Ignore bot's own reactions (operator_type=app means the bot itself)
     if (operatorType === 'app') return;
 
-    // Only process reactions on messages the bot sent
-    if (!this.botMessageTracker.has(messageId)) return;
+    // Only process reactions on messages the bot sent.
+    const trackedMessage = this.botMessageTracker.get(messageId);
+    if (!trackedMessage) return;
 
-    // Whitelist filtering (reaction events carry no chat_id, so pass '')
-    if (!passesWhitelist(operatorId, '')) {
+    // Whitelist filtering uses the tracked outbound chat when available.
+    if (!passesWhitelist(operatorId, trackedMessage.chatId ?? '')) {
       debugLog(`[channel] Reaction from ${operatorId} rejected by whitelist`);
       return;
     }

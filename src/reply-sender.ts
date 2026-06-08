@@ -8,19 +8,11 @@ import type { BotMessageTracker, LatestMessageTracker } from './channel.js';
 import { buildCards, shouldUseCard } from './feishu-card.js';
 import { JOB_THREAD_PREFIX } from './scheduler.js';
 import { feishuApiCall } from './feishu-retry.js';
-
-const ACK_REVOKED_SENTINEL = '__codex_ack_revoked__';
-
-function markAckRevoked(ackReactions: Map<string, string>, messageId: string): void {
-  if (!messageId || ackReactions.has(messageId)) return;
-  ackReactions.set(messageId, ACK_REVOKED_SENTINEL);
-  const timer = setTimeout(() => {
-    if (ackReactions.get(messageId) === ACK_REVOKED_SENTINEL) {
-      ackReactions.delete(messageId);
-    }
-  }, Math.max(1_000, appConfig.feishuApiTimeoutMs + 5_000));
-  timer.unref?.();
-}
+import {
+  revokeAckReaction,
+  revokeAllAckReactions,
+  type AckReactionTracker,
+} from './ack-reactions.js';
 
 function wrapFeishuApiError(err: any): Error | null {
   const apiError = err?.response?.data ?? err?.data;
@@ -47,7 +39,7 @@ export interface ReplyRequest {
 export interface ReplySenderDeps {
   client: Lark.Client;
   conversationBuffer?: ConversationBuffer;
-  ackReactions?: Map<string, string>;
+  ackReactions?: AckReactionTracker;
   botMessageTracker?: BotMessageTracker;
   latestMessageTracker?: LatestMessageTracker;
 }
@@ -117,8 +109,18 @@ export async function sendFeishuReply(
     );
   }
 
+  function trackBotMessage(messageId: string | undefined): void {
+    if (messageId && botMessageTracker) {
+      botMessageTracker.add(messageId, { chatId: chat_id, threadId: thread_id });
+    }
+  }
+
   // Helper: record in buffer + revoke ack (shared by card & normal paths).
+  let satisfactionRecorded = false;
   function recordAndRevokeAck(replyText: string) {
+    if (satisfactionRecorded) return;
+    satisfactionRecorded = true;
+
     conversationBuffer?.record(chat_id, {
       role: 'assistant',
       senderId: 'bot',
@@ -126,33 +128,10 @@ export async function sendFeishuReply(
       timestamp: new Date().toISOString(),
     });
 
-    if (ackReactions) {
-      const msgId = effectiveReplyTo || '';
-      markAckRevoked(ackReactions, msgId);
-    }
-
-    if (ackReactions && ackReactions.size > 0) {
-      const msgId = effectiveReplyTo || '';
-      const reactionId = msgId ? ackReactions.get(msgId) : undefined;
-      if (reactionId && reactionId !== ACK_REVOKED_SENTINEL) {
-        ackReactions.delete(msgId);
-        feishuApiCall('reply.ackReaction.delete', () =>
-          client.im.v1.messageReaction.delete({
-            path: { message_id: msgId, reaction_id: reactionId },
-          }),
-        ).catch(() => {});
-      } else {
-        markAckRevoked(ackReactions, msgId);
-        for (const [mid, rid] of ackReactions.entries()) {
-          if (rid === ACK_REVOKED_SENTINEL) continue;
-          ackReactions.delete(mid);
-          feishuApiCall('reply.ackReaction.delete', () =>
-            client.im.v1.messageReaction.delete({
-              path: { message_id: mid, reaction_id: rid },
-            }),
-          ).catch(() => {});
-        }
-      }
+    if (effectiveReplyTo) {
+      revokeAckReaction(client, ackReactions, effectiveReplyTo, 'reply');
+    } else {
+      revokeAllAckReactions(client, ackReactions, 'reply.bulk');
     }
   }
 
@@ -193,8 +172,8 @@ export async function sendFeishuReply(
           }),
         );
       }
-      const sentId = resp?.data?.message_id;
-      if (sentId && botMessageTracker) botMessageTracker.add(sentId);
+      trackBotMessage(resp?.data?.message_id);
+      recordAndRevokeAck(text || '[card]');
     } catch (err: any) {
       const wrapped = wrapFeishuApiError(err);
       if (wrapped) throw wrapped;
@@ -233,8 +212,8 @@ export async function sendFeishuReply(
         } else {
           resp = await sendFollowup({ content, msg_type: 'interactive' });
         }
-        const sentId = resp?.data?.message_id;
-        if (sentId && botMessageTracker) botMessageTracker.add(sentId);
+        trackBotMessage(resp?.data?.message_id);
+        recordAndRevokeAck(text);
       } catch (err: any) {
         const wrapped = wrapFeishuApiError(err);
         if (wrapped) throw wrapped;
@@ -269,8 +248,8 @@ export async function sendFeishuReply(
             msg_type: 'text',
           });
         }
-        const sentId = resp?.data?.message_id;
-        if (sentId && botMessageTracker) botMessageTracker.add(sentId);
+        trackBotMessage(resp?.data?.message_id);
+        recordAndRevokeAck(text);
       } catch (err: any) {
         const wrapped = wrapFeishuApiError(err);
         if (wrapped) throw wrapped;
@@ -304,8 +283,8 @@ export async function sendFeishuReply(
               content: JSON.stringify({ image_key: imageKey }),
               msg_type: 'image',
             });
-            const sentId = (sent as any)?.data?.message_id;
-            if (sentId && botMessageTracker) botMessageTracker.add(sentId);
+            trackBotMessage((sent as any)?.data?.message_id);
+            recordAndRevokeAck(text || '[image]');
           }
         } else {
           const resp = await feishuApiCall('reply.file.create', () =>
@@ -327,8 +306,8 @@ export async function sendFeishuReply(
               }),
               msg_type: 'file',
             });
-            const sentId = (sent as any)?.data?.message_id;
-            if (sentId && botMessageTracker) botMessageTracker.add(sentId);
+            trackBotMessage((sent as any)?.data?.message_id);
+            recordAndRevokeAck(text || '[file]');
           }
         }
       } catch (err) {

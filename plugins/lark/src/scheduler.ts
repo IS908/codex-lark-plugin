@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { appConfig } from './config.js';
 import { cronJobPrompt } from './prompts.js';
 import type { IdentitySession } from './identity-session.js';
+import type { BotMessageTracker } from './channel.js';
 import {
   listAllJobs,
   readJob,
@@ -55,6 +56,7 @@ export interface SchedulerOptions {
   server: Server;
   client: Lark.Client;
   identitySession: IdentitySession;
+  botMessageTracker?: BotMessageTracker;
 }
 
 // ─── Retry Logic ────────────────────────────────────────────
@@ -148,6 +150,7 @@ export class JobScheduler {
   private server: Server;
   private client: Lark.Client;
   private identitySession: IdentitySession;
+  private botMessageTracker?: BotMessageTracker;
   private running = false;
   private ticking = false;
 
@@ -155,6 +158,7 @@ export class JobScheduler {
     this.server = opts.server;
     this.client = opts.client;
     this.identitySession = opts.identitySession;
+    this.botMessageTracker = opts.botMessageTracker;
   }
 
   /**
@@ -410,7 +414,7 @@ export class JobScheduler {
       .digest('hex')
       .slice(0, 32);
 
-    await feishuApiCall('scheduler.message.create', () =>
+    const resp: any = await feishuApiCall('scheduler.message.create', () =>
       this.client.im.v1.message.create({
         params: { receive_id_type: 'chat_id' },
         data: {
@@ -422,6 +426,10 @@ export class JobScheduler {
       }),
       { attempts: 1, retryTimeout: false },
     );
+    const messageId = resp?.data?.message_id;
+    if (messageId) {
+      this.botMessageTracker?.add(messageId, { chatId: job.meta.target_chat_id });
+    }
   }
 
   /**

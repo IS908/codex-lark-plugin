@@ -68,6 +68,7 @@ function readJobFixture(id: string): JobFile {
 // 1. Same logical due run uses a stable uuid.
 {
   const uuids: string[] = [];
+  const trackedBotMessages: Array<{ id: string; meta: any }> = [];
   const client = {
     im: {
       v1: {
@@ -84,12 +85,25 @@ function readJobFixture(id: string): JobFile {
     server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
+    botMessageTracker: {
+      add: (id: string, meta: any) => trackedBotMessages.push({ id, meta }),
+      has: () => false,
+      get: () => undefined,
+    } as any,
   });
   const job = makeJob();
   await (scheduler as any).executeMessageJob(job, job.runtime.next_run_at);
   await (scheduler as any).executeMessageJob(job, job.runtime.next_run_at);
   if (!uuids[0] || uuids[0] !== uuids[1]) {
     fail(`1: expected stable uuid for same runKey, got ${JSON.stringify(uuids)}`);
+  }
+  if (
+    trackedBotMessages.length !== 2 ||
+    trackedBotMessages[0].id !== 'om_1' ||
+    trackedBotMessages[0].meta?.chatId !== 'oc_target' ||
+    trackedBotMessages[1].id !== 'om_2'
+  ) {
+    fail(`1: scheduler bot tracker not updated: ${JSON.stringify(trackedBotMessages)}`);
   }
   passed++;
 }

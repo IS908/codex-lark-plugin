@@ -258,6 +258,7 @@ async function main() {
     server: server.server,
     client: channel.getClient(),
     identitySession,
+    botMessageTracker: channel.getBotMessageTracker(),
   });
   await scheduler.start();
 

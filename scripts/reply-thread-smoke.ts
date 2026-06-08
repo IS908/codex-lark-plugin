@@ -105,7 +105,7 @@ async function setup(opts: { client?: ReturnType<typeof mockClient> } = {}) {
     identitySession,
     fakeChannel,
     makeBuffer() as any,
-    new Map<string, string>(),
+    undefined,
     botTracker as any,
     undefined,
   );

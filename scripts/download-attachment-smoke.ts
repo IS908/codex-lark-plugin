@@ -377,7 +377,7 @@ function setup(respFor: (fileKey: string, type: string) => unknown) {
     identitySession,
     fakeChannel,
     { record() {}, flush: async () => {}, startAutoFlush: () => {}, stopAutoFlush: () => {} } as any,
-    new Map<string, string>(),
+    undefined,
     { ids: new Set(), add() {}, has: () => false } as any,
     undefined,
   );
