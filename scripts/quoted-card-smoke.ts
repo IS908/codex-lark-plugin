@@ -58,6 +58,41 @@ const legacyCard = {
   const channel = new LarkChannel();
   const text = (channel as any).extractText(JSON.stringify({ config: {} }), 'interactive');
   assert.equal(text, '[Interactive Card]');
+
+  const malformed = (channel as any).extractText(
+    '{"title":{"content":"Safe"},"value":{"token":"secret_token_456"',
+    'interactive',
+  );
+  assert.equal(malformed, '[Interactive Card]');
+}
+
+{
+  const channel = new LarkChannel();
+  const text = (channel as any).extractText(
+    JSON.stringify({
+      i18n_header: {
+        en_us: { title: { tag: 'plain_text', content: 'Localized Header' } },
+      },
+      i18n_elements: {
+        en_us: [
+          {
+            tag: 'markdown',
+            content: 'Localized **body** text',
+          },
+        ],
+        zh_cn: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '查看详情' },
+          },
+        ],
+      },
+    }),
+    'interactive',
+  );
+  assert.match(text, /Localized Header/);
+  assert.match(text, /Localized \*\*body\*\* text/);
+  assert.match(text, /查看详情/);
 }
 
 {
@@ -139,6 +174,70 @@ const legacyCard = {
   assert.match(captured.text, /Roll back completed for \*\*api-gateway\*\*\./);
   assert.match(captured.text, /View Details/);
   assert.doesNotMatch(captured.text, /internal\.example\.com/);
+}
+
+{
+  const channel = new LarkChannel();
+  let captured: any;
+  channel.setMessageHandler(async (message: any) => {
+    captured = message;
+  });
+  (channel as any).nameCache.set('ou_root_card', 'Root Tester');
+  (channel as any).client = {
+    im: {
+      v1: {
+        message: {
+          get: async (args: any) => {
+            assert.equal(args.path.message_id, 'om_root_card');
+            return {
+              data: {
+                items: [
+                  {
+                    msg_type: 'interactive',
+                    body: {
+                      content: JSON.stringify({
+                        header: {
+                          title: { tag: 'plain_text', content: 'Thread Root Card' },
+                        },
+                        elements: [
+                          {
+                            tag: 'div',
+                            text: { tag: 'plain_text', content: 'Root card body' },
+                          },
+                        ],
+                      }),
+                    },
+                    mentions: [],
+                  },
+                ],
+              },
+            };
+          },
+        },
+        messageReaction: {
+          create: async () => ({ data: { reaction_id: 'reaction_root_card' } }),
+          delete: async () => ({}),
+        },
+      },
+    },
+  };
+
+  await (channel as any).handleMessageEvent({
+    message: {
+      message_id: 'om_root_child',
+      chat_id: 'oc_root_card',
+      chat_type: 'p2p',
+      content: JSON.stringify({ text: 'follow-up in thread' }),
+      message_type: 'text',
+      root_id: 'om_root_card',
+    },
+    sender: { sender_id: { open_id: 'ou_root_card' } },
+  });
+
+  await waitFor(() => Boolean(captured));
+  assert.match(captured.text, /\[Quoted Message\]/);
+  assert.match(captured.text, /Thread Root Card/);
+  assert.match(captured.text, /Root card body/);
 }
 
 console.log('PASS');

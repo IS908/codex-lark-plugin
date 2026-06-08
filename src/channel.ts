@@ -460,12 +460,15 @@ export class LarkChannel {
       imagePaths,
     };
 
-    // Fetch parent message content if this is a quoted reply
-    if (parentId) {
+    // Fetch quoted context. Prefer an explicit parent reply; for root-only
+    // thread events, fall back to the root message when it is distinct from
+    // the current message.
+    const quotedMessageId = parentId || (threadId && threadId !== messageId ? threadId : undefined);
+    if (quotedMessageId) {
       try {
         const parentMsg = await feishuApiCall('channel.parentMessage.get', () =>
           this.client.im.v1.message.get({
-            path: { message_id: parentId },
+            path: { message_id: quotedMessageId },
           }),
         );
         const parentItem = parentMsg?.data?.items?.[0];
@@ -817,6 +820,7 @@ export class LarkChannel {
           return parsed.text ?? rawContent;
       }
     } catch {
+      if (messageType === 'interactive') return '[Interactive Card]';
       return rawContent;
     }
   }

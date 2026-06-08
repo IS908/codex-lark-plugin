@@ -8,6 +8,7 @@ const CONTAINER_KEYS = new Set([
   'fields',
   'header',
   'i18n_elements',
+  'i18n_header',
   'items',
   'option',
   'options',
@@ -70,6 +71,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isLocaleMap(record: Record<string, unknown>): boolean {
+  const keys = Object.keys(record);
+  return keys.length > 0 && keys.every((key) => /^[a-z]{2}(?:[-_][a-z]{2})?$/i.test(key));
+}
+
 function normalizeText(text: string): string {
   return text
     .replace(/\r\n?/g, '\n')
@@ -116,6 +122,11 @@ function visitCardNode(value: unknown, add: (text: string) => void): void {
     return;
   }
   if (!isRecord(parsed)) return;
+
+  if (isLocaleMap(parsed)) {
+    for (const child of Object.values(parsed)) visitCardNode(child, add);
+    return;
+  }
 
   const tag = typeof parsed.tag === 'string' ? parsed.tag : '';
   if (TEXT_TAGS.has(tag) || tag === 'button') {
