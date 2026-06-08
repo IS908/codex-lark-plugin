@@ -120,6 +120,7 @@ Return ONLY the JSON object, no prose or code fences. Then call save_memory(type
 export const mcpServerInstructions: string = [
   'Users see Feishu, not this transcript. Interact via reply / edit_message / react.',
   'Each reply targets exactly one <channel> notification: pass its message_id as reply_to and its thread_id (if present) as thread_id. Do not cross fields between different notifications.',
+  'Prefer plain text replies. Use Feishu cards sparingly, only when structure clearly improves readability (tables, long code, dense lists, or multi-section summaries).',
   'Doc-comment notifications use synthetic chat_id="doc:<file_token>" and thread_id=comment_id. Reply with reply_doc_comment for that thread or create_doc_comment for a new top-level comment; pass chat_id, thread_id, doc_token, and comment_id verbatim from the current notification.',
   'Every inbound Lark turn must be satisfied by reply, react, edit_message, download_attachment, or defer_reply. Use defer_reply only when no Feishu-visible response is intended.',
   'Meta image_path → Read that file. Meta attachment_file_id → call download_attachment(message_id, file_key, file_name=meta.attachment_name) then Read the returned path. Always pass file_name so the saved file keeps its extension (.pdf, .txt, etc.) — Read infers MIME from the extension.',

@@ -75,4 +75,10 @@ if (!c7[0] || !c7[0].body || !Array.isArray(c7[0].body.elements)) {
   fail('empty text produced invalid card');
 }
 
+// 12. Generated cards use the configured pale-red Feishu header theme.
+const c8: any = buildCards('# Theme\nbody');
+if (c8.some((card: any) => card.header?.template !== 'red')) {
+  fail(`cards should use red header template: ${JSON.stringify(c8.map((card: any) => card.header?.template))}`);
+}
+
 console.log('PASS');

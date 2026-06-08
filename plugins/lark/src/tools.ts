@@ -455,7 +455,7 @@ export function registerTools(
     'reply',
     {
       description:
-        'Send a reply to a Feishu chat. Plain text by default; long or markdown-rich content auto-renders as a Feishu card. Pass "card" param with raw Schema 2.0 JSON to send a pre-built card directly.',
+        'Send a reply to a Feishu chat. Prefer plain text. Use Feishu cards sparingly, only when structure clearly improves readability. Long or markdown-rich content may auto-render as a card; pass "card" param with raw Schema 2.0 JSON only for pre-built cards.',
       inputSchema: z.object({
         chat_id: z.string().describe('The chat ID to reply in'),
         text: z.string().describe('The text content to send (ignored when card is provided)'),
@@ -476,7 +476,7 @@ export function registerTools(
           .enum(['text', 'card'])
           .optional()
           .describe(
-            'Output format. Omit for heuristic auto-detection: text with markdown features (headings/code blocks/tables/lists/bold) or length > 500 chars renders as a Feishu card. Set to "text" or "card" to override.'
+            'Output format. Prefer "text" unless a card makes structured content significantly easier to scan. Omit for heuristic auto-detection; set to "card" only for structured summaries, tables, code blocks, dense lists, or multi-section content.'
           ),
         footer: z
           .string()
