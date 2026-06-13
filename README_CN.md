@@ -252,6 +252,11 @@ git push origin v1.0.0
 | 会话情景 (Chat Episode) | 按 chatId | 该会话内所有参与者共享 |
 | 技能 (Skill) | 全局 | 可被任意用户/会话搜索和注入 |
 
+同一个 `(chat_id, thread_id)` 下未变化的记忆块会在
+`LARK_MEMORY_DEDUP_WINDOW_MS` 窗口内去重（默认 30 分钟）。Profile 被抑制时会留下一个
+`<memory_context_omitted>` 小占位；episode / skill 会直接省略，直到内容变化或窗口过期。
+如果投递给 Codex 失败，该 scope 的去重状态会失效，下一轮重新注入完整上下文。
+
 ### 蒸馏管道
 
 | 阶段 | 描述 | 状态 |
@@ -333,6 +338,7 @@ git push origin v1.0.0
 | `LARK_MAX_EPISODE_BYTES` | `65536` | 单个 episode 文件持久化前的最大 UTF-8 字节数，超出会截断 |
 | `LARK_MAX_EPISODE_FILES_PER_SCOPE` | `200` | 每个 chat/thread scope 最多保留的 episode 文件数 |
 | `LARK_MAX_EPISODE_SCOPE_BYTES` | `10485760` | 每个 chat/thread scope 最多保留的 episode 总字节数 |
+| `LARK_MEMORY_DEDUP_WINDOW_MS` | `1800000` | 同一 chat/thread 内未变化记忆块的去重窗口（毫秒）。设为 `0` 可禁用 |
 
 ### 可选 -- 身份 / 隐私（v0.9.0+）
 

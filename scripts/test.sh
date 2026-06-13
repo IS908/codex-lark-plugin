@@ -55,6 +55,10 @@ echo "=== Comment event unit checks ==="
 node --import tsx scripts/comment-event-smoke.ts
 
 echo ""
+echo "=== Memory context dedup unit checks ==="
+node --import tsx scripts/memory-context-dedup-smoke.ts
+
+echo ""
 echo "=== Doc comment tool unit checks ==="
 node --import tsx scripts/reply-doc-comment-smoke.ts
 

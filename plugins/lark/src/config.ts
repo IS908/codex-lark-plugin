@@ -97,6 +97,7 @@ export const appConfig = {
   maxEpisodeBytes: optionalNumber('LARK_MAX_EPISODE_BYTES', 64 * 1024),
   maxEpisodeFilesPerScope: optionalNumber('LARK_MAX_EPISODE_FILES_PER_SCOPE', 200),
   maxEpisodeScopeBytes: optionalNumber('LARK_MAX_EPISODE_SCOPE_BYTES', 10 * 1024 * 1024),
+  memoryDedupWindowMs: optionalNumber('LARK_MEMORY_DEDUP_WINDOW_MS', 30 * 60 * 1000),
   downloadMaxBytes: optionalNumber('LARK_DOWNLOAD_MAX_BYTES', 25 * 1024 * 1024),
   downloadTimeoutMs: optionalNumber('LARK_DOWNLOAD_TIMEOUT_MS', 60_000),
   inboxMaxAgeHours: optionalNumber('LARK_INBOX_MAX_AGE_HOURS', 168),
