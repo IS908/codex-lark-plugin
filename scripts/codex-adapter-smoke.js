@@ -27,11 +27,13 @@ function readSkillFrontmatter(skillName, base = 'skills') {
 }
 
 const plugin = readJson('.codex-plugin/plugin.json');
+const pkg = readJson('package.json');
 assert.equal(plugin.name, 'lark');
 assert.equal(plugin.mcpServers, './.mcp.json');
 assert.equal(plugin.skills, './skills/');
 assert.equal(plugin.interface.displayName, 'Lark');
 assert.match(plugin.description, /Codex/);
+assert.equal(plugin.version, pkg.version, 'root plugin manifest version must match package.json');
 
 const marketplace = readJson('.agents/plugins/marketplace.json');
 assert.equal(marketplace.name, 'codex-lark-plugin');
@@ -46,9 +48,12 @@ assert.equal(readSkillFrontmatter('configure').name, 'configure');
 assert.equal(readSkillFrontmatter('jobs').name, 'jobs');
 
 const wrappedPlugin = readJson('plugins/lark/.codex-plugin/plugin.json');
+const wrappedPackage = readJson('plugins/lark/package.json');
 assert.equal(wrappedPlugin.name, 'lark');
 assert.equal(wrappedPlugin.mcpServers, './.mcp.json');
 assert.equal(wrappedPlugin.skills, './skills/');
+assert.equal(wrappedPlugin.version, pkg.version, 'wrapped plugin manifest version must match package.json');
+assert.equal(wrappedPackage.version, pkg.version, 'wrapped package version must match package.json');
 assert.equal(readSkillFrontmatter('configure', 'plugins/lark/skills').name, 'configure');
 assert.equal(readSkillFrontmatter('jobs', 'plugins/lark/skills').name, 'jobs');
 
@@ -57,7 +62,6 @@ assert.equal(wrappedMcp.mcpServers.lark.command, 'npm');
 assert.deepEqual(wrappedMcp.mcpServers.lark.args, ['run', '--silent', 'start']);
 assert.equal(wrappedMcp.mcpServers.lark.cwd, '.');
 
-const wrappedPackage = readJson('plugins/lark/package.json');
 assert.equal(wrappedPackage.type, 'module');
 assert.equal(wrappedPackage.scripts.start, 'node --import tsx src/index.ts');
 assert.ok(fs.existsSync(path.join(root, 'plugins/lark/src/index.ts')));
@@ -68,7 +72,14 @@ assert.deepEqual(mcp.mcpServers.lark.args, ['run', '--silent', 'start']);
 assert.equal(mcp.mcpServers.lark.cwd, '.');
 
 const index = read('src/index.ts');
+const wrappedIndex = read('plugins/lark/src/index.ts');
 const scheduler = read('src/scheduler.ts');
+assert.ok(fs.existsSync(path.join(root, 'scripts/check-release-version.js')));
+assert.equal(pkg.scripts['check:release-version'], 'node scripts/check-release-version.js');
+assert.match(index, /packageVersion/);
+assert.match(wrappedIndex, /packageVersion/);
+assert.doesNotMatch(index, /version:\s*['"]\d+\.\d+\.\d+['"]/);
+assert.doesNotMatch(wrappedIndex, /version:\s*['"]\d+\.\d+\.\d+['"]/);
 assert.match(index, /'Codex\/channel'/);
 assert.match(index, /notifications\/Codex\/channel/);
 assert.match(scheduler, /notifications\/Codex\/channel/);

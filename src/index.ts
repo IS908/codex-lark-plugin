@@ -19,6 +19,7 @@ import { postDocCommentReply, splitDocCommentText } from './doc-comment-api.js';
 import { buildChannelNotificationMeta } from './channel-notification.js';
 import { shouldSendCodexExecFailureReply } from './codex-exec-error.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
+import { packageName, packageVersion } from './package-metadata.js';
 import {
   acquireSingleInstanceLock,
   registerLockCleanup,
@@ -70,7 +71,7 @@ async function main() {
 
   // 2. Create MCP server
   const server = new McpServer(
-    { name: 'codex-lark-plugin', version: '1.0.12' },
+    { name: packageName, version: packageVersion },
     {
       capabilities: {
         logging: {},

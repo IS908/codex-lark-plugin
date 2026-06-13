@@ -29,6 +29,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "bash scripts/test.sh",
+    "check:release-version": "node scripts/check-release-version.js",
     "audit:deps": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
