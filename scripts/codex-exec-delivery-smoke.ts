@@ -192,6 +192,7 @@ assert.deepEqual(longDocAssistantRecords, [
 
 const sessionRequests: any[] = [];
 const sessionRecords = new Map<string, any>();
+const sessionHealthRecords: any[] = [];
 const sessionStore = {
   async get(key: string) {
     return sessionRecords.get(key) ?? null;
@@ -209,6 +210,11 @@ await deliverMessageViaCodexExec({
     sessionRequests.push(request);
     return { text: 'first answer', sessionId: '0199a213-81c0-7800-8aa1-bbab2a035a53' };
   },
+  sessionHealth: {
+    recordTurn: (input) => {
+      sessionHealthRecords.push(input);
+    },
+  },
   sendReply: async () => ({ sentCount: 1 }),
 });
 
@@ -224,12 +230,23 @@ await deliverMessageViaCodexExec({
     sessionRequests.push(request);
     return { text: 'second answer', sessionId: '0199a213-81c0-7800-8aa1-bbab2a035a53' };
   },
+  sessionHealth: {
+    recordTurn: (input) => {
+      sessionHealthRecords.push(input);
+    },
+  },
   sendReply: async () => ({ sentCount: 1 }),
 });
 
 assert.equal(sessionRequests.length, 2);
 assert.equal(sessionRequests[0].resumeSessionId, null);
 assert.equal(sessionRequests[1].resumeSessionId, '0199a213-81c0-7800-8aa1-bbab2a035a53');
+assert.equal(sessionHealthRecords.length, 2);
+assert.equal(sessionHealthRecords[0].sessionKey, 'chat:oc_group_001:thread:omt_thread_001');
+assert.equal(sessionHealthRecords[0].resumed, false);
+assert.equal(sessionHealthRecords[1].resumed, true);
+assert.ok(sessionHealthRecords[0].promptBytes > 0);
+assert.ok(sessionHealthRecords[0].responseBytes > 0);
 
 sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   key: 'chat:oc_group_001:thread:omt_thread_001',

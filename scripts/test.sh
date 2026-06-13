@@ -95,6 +95,10 @@ echo "=== Codex exec delivery unit checks ==="
 node --import tsx scripts/codex-exec-delivery-smoke.ts
 
 echo ""
+echo "=== Session health unit checks ==="
+node --import tsx scripts/session-health-smoke.ts
+
+echo ""
 echo "=== Reply obligation unit checks ==="
 node --import tsx scripts/turn-obligation-smoke.ts
 

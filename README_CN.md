@@ -328,6 +328,29 @@ git push origin v1.0.0
 | `LARK_CRON_SCAN_INTERVAL` | `60` | 定时任务扫描间隔（秒） |
 | `LARK_CRON_TIMEZONE` | 系统时区 | IANA 时区名（如 `Asia/Shanghai`、`UTC`），影响 cron 表达式中小时字段的墙钟映射 |
 
+### 可选 -- Codex Exec Session Health
+
+Session health 提醒默认关闭，仅当 `LARK_SESSION_HEALTH_ENABLED=true`、
+`LARK_OWNER_OPEN_ID` 已设置且 Codex exec session resume 启用时才运行。插件不会自动
+clear、compact 或 reset Codex session。
+
+当前 `codex exec --json` 对本插件稳定暴露的是 session id，没有稳定 token/context usage
+统计，因此 monitor 使用较弱的启发式：同一 chat/thread 下的 exec turn 数和桥接层观察到的
+prompt bytes。提醒只会在安静窗口发送给 owner：消息队列空闲、ack reaction 已清空、没有待
+满足的 reply obligation。重复提醒会指数退避，并受每个 session episode 的次数上限约束。
+当同一 chat/thread 返回新的 Codex session id（例如 stale session 恢复后新建会话）或插件进程重启时，
+启发式计数会重置。
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LARK_SESSION_HEALTH_ENABLED` | `false` | 启用长时间 Codex exec session 的 owner DM 提醒 |
+| `LARK_SESSION_HEALTH_TURN_THRESHOLD` | `80` | 同一 chat/thread session 达到该 exec turn 数后提醒 |
+| `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD` | `524288` | 桥接层累计观察到的 prompt bytes 达到该值后提醒 |
+| `LARK_SESSION_HEALTH_IDLE_DELAY_MS` | `30000` | 触发后等待多久再检查 idle/quiet gates |
+| `LARK_SESSION_HEALTH_COOLDOWN_MS` | `1800000` | 首次提醒后的冷却时间（毫秒） |
+| `LARK_SESSION_HEALTH_MAX_COOLDOWN_MS` | `21600000` | 指数退避冷却上限（毫秒） |
+| `LARK_SESSION_HEALTH_MAX_NUDGES` | `3` | 每个启发式 session episode 最多提醒次数 |
+
 ### 可选 -- 记忆
 
 | 变量 | 默认值 | 说明 |

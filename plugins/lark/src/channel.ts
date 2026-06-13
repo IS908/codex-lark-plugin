@@ -579,6 +579,10 @@ export class LarkChannel {
     debugLog(`[memory-dedup] invalidated scope=${scopeKey} reason=${reason}`);
   }
 
+  isIdle(): boolean {
+    return this.queue.isIdle();
+  }
+
   async start(): Promise<void> {
     // Fetch bot's own open_id for filtering group @mentions
     await this.fetchBotOpenId();
