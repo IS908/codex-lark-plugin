@@ -66,6 +66,7 @@ function makeDeps(overrides: any = {}) {
   const replyListCalls: any[] = [];
   const commentListCalls: any[] = [];
   const metaCalls: any[] = [];
+  const reactionCalls: any[] = [];
   const identitySession = new IdentitySession(() => 'ou_owner');
   const deps = {
     botOpenId: 'ou_bot',
@@ -77,6 +78,10 @@ function makeDeps(overrides: any = {}) {
     },
     resolveUserName: async (openId: string) => `Name ${openId}`,
     client: {
+      request: async (req: any) => {
+        reactionCalls.push(req);
+        return { data: {} };
+      },
       drive: {
         fileCommentReply: {
           list: async (req: any) => {
@@ -121,6 +126,7 @@ function makeDeps(overrides: any = {}) {
     replyListCalls,
     commentListCalls,
     metaCalls,
+    reactionCalls,
   });
 }
 
@@ -132,6 +138,15 @@ function makeDeps(overrides: any = {}) {
   assert.equal(deps.replyListCalls.length, 1);
   assert.equal(deps.commentListCalls.length, 1);
   assert.equal(deps.metaCalls.length, 1);
+  assert.equal(deps.reactionCalls.length, 1);
+  assert.equal(deps.reactionCalls[0].method, 'POST');
+  assert.equal(deps.reactionCalls[0].url, 'https://open.feishu.cn/open-apis/drive/v2/files/dox_doc_1/comments/reaction');
+  assert.deepEqual(deps.reactionCalls[0].params, { file_type: 'docx' });
+  assert.deepEqual(deps.reactionCalls[0].data, {
+    action: 'add',
+    reply_id: 'cmt_doc_1',
+    reaction_type: 'THUMBSUP',
+  });
   assert.equal(deps.handlerCalls.length, 1);
   const msg = deps.handlerCalls[0];
   assert.equal(msg.chatId, 'doc:dox_doc_1');
@@ -199,6 +214,10 @@ function makeDeps(overrides: any = {}) {
 {
   const deps = makeDeps({
     client: {
+      request: async (req: any) => {
+        deps.reactionCalls.push(req);
+        return { data: {} };
+      },
       drive: {
         fileCommentReply: {
           list: async (req: any) => {
@@ -231,11 +250,62 @@ function makeDeps(overrides: any = {}) {
   await handleCommentEvent(makeEvent({ reply_id: 'rpl_doc_1' }), deps);
   await flush();
   assert.equal(deps.handlerCalls.length, 1);
+  assert.equal(deps.reactionCalls.length, 1);
+  assert.deepEqual(deps.reactionCalls[0].data, {
+    action: 'add',
+    reply_id: 'rpl_doc_1',
+    reaction_type: 'THUMBSUP',
+  });
   assert.match(deps.handlerCalls[0].text, /kind="reply"/);
   assert.match(deps.handlerCalls[0].text, /reply_id="rpl_doc_1"/);
   assert.match(deps.handlerCalls[0].text, /<selected_text>anchored selection<\/selected_text>/);
   assert.match(deps.handlerCalls[0].text, /<parent>parent body<\/parent>/);
   assert.match(deps.handlerCalls[0].text, /<body>reply body<\/body>/);
+}
+
+// 5b. Empty LARK_DOC_COMMENT_ACK_EMOJI disables doc-comment ack reactions.
+{
+  const originalAck = (appConfig as any).docCommentAckEmoji;
+  (appConfig as any).docCommentAckEmoji = '';
+  try {
+    const deps = makeDeps();
+    await handleCommentEvent(makeEvent(), deps);
+    await flush();
+    assert.equal(deps.handlerCalls.length, 1);
+    assert.equal(deps.reactionCalls.length, 0);
+  } finally {
+    (appConfig as any).docCommentAckEmoji = originalAck;
+  }
+}
+
+// 5c. Doc-comment ack failures are fire-and-forget and do not block routing.
+{
+  const deps = makeDeps({
+    client: {
+      request: async () => {
+        throw new Error('reaction denied');
+      },
+      drive: {
+        fileCommentReply: {
+          list: async (req: any) => {
+            deps.replyListCalls.push(req);
+            return { data: { items: [{ reply_id: req.path.comment_id, content: textContent('body ok') }] } };
+          },
+        },
+        fileComment: {
+          list: async (req: any) => {
+            deps.commentListCalls.push(req);
+            return { data: { items: [{ comment_id: 'cmt_doc_1', quote: 'quote ok' }] } };
+          },
+        },
+        meta: { batchQuery: async (req: any) => { deps.metaCalls.push(req); return { data: { metas: [] } }; } },
+      },
+    },
+  });
+  await handleCommentEvent(makeEvent(), deps);
+  await flush();
+  assert.equal(deps.handlerCalls.length, 1);
+  assert.match(deps.handlerCalls[0].text, /<body>body ok<\/body>/);
 }
 
 // 6. Comment list failure omits selected text but still routes body.
