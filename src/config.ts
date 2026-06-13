@@ -138,6 +138,10 @@ export const appConfig = {
   inboxDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'inbox'),
   jobsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'jobs'),
   codexExecSessionsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'codex-sessions'),
+  localCliToolsConfigPath: optional(
+    'LARK_LOCAL_CLI_TOOLS_CONFIG',
+    path.join(os.homedir(), '.codex', 'channels', 'lark', 'local-cli-tools.json'),
+  ),
   debugLogPath: optional('LARK_DEBUG_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'debug.log')),
   auditLogPath: optional('LARK_AUDIT_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'audit.log')),
 } as const;
