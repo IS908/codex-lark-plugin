@@ -30,6 +30,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "bash scripts/test.sh",
+    "smoke:sdk": "node --import tsx scripts/sdk-channel-scaffold-smoke.ts && node --import tsx scripts/sdk-identity-smoke.ts && node --import tsx scripts/sdk-message-parity-smoke.ts && node --import tsx scripts/sdk-outbound-parity-smoke.ts && node --import tsx scripts/sdk-rollout-doc-smoke.ts",
     "check:release-version": "node scripts/check-release-version.js",
     "audit:deps": "npm audit --omit=dev --audit-level=high"
   },

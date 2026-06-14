@@ -308,6 +308,9 @@ git push origin v1.0.0
 
 exec delivery 也内置父进程 action bridge，用于处理子 `codex exec` 进程不能安全调用当前 MCP server 的内置动作：`save_memory`、`create_job` 和 `run_local_cli_tool`。子进程返回经过校验的 `LARK_ACTIONS_JSON` 标记块；父进程会从可见回复中剥离该块，使用当前飞书事件派生调用者身份，在本地执行动作，并拒绝格式错误的 action block，而不是递归加载 Lark MCP server。
 
+SDK 迁移 smoke 命令、rollout 控制和 rollback 步骤见
+[SDK channel rollout](docs/sdk-channel-rollout.md)。
+
 ### 可选 -- 本地 CLI 工具
 
 `run_local_cli_tool` 是受控 MCP 工具，用于可信的 host-local CLI 或 skill-backed workflow，
