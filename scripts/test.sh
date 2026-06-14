@@ -41,6 +41,10 @@ fi
 echo "PASS"
 
 echo ""
+echo "=== SDK channel scaffold checks ==="
+node --import tsx scripts/sdk-channel-scaffold-smoke.ts
+
+echo ""
 echo "=== Start launcher timestamp checks ==="
 node --import tsx scripts/start-sh-smoke.ts
 

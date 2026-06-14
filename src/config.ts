@@ -82,6 +82,11 @@ export const appConfig = {
     'exec',
     ['exec', 'notification'] as const,
   ),
+  channelRuntime: optionalChoice(
+    'LARK_CHANNEL_RUNTIME',
+    'legacy',
+    ['legacy', 'sdk'] as const,
+  ),
   codexExecCommand: optional('LARK_CODEX_EXEC_COMMAND', 'codex'),
   codexExecCwd: optional('LARK_CODEX_EXEC_CWD', defaultCodexExecCwd),
   codexExecTimeoutMs: optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000),
