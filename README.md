@@ -519,6 +519,14 @@ tmux new-session -d -s codex-lark 'bash scripts/start.sh'
 
 Reattach with `tmux attach -t codex-lark`. View logs with `tmux capture-pane -t codex-lark -p`.
 
+Stop the active plugin instance safely without deleting lock files by hand:
+
+```bash
+npm run stop
+# or
+bash scripts/stop.sh
+```
+
 ---
 
 ## Available Tools

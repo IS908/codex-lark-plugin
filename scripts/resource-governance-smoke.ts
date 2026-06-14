@@ -21,6 +21,7 @@ import {
   acquireSingleInstanceLock,
   appendRotatingLine,
   BoundedCache,
+  stopSingleInstanceLock,
   sweepInbox,
 } from '../src/resource-governance.js';
 import { IdentitySession } from '../src/identity-session.js';
@@ -211,6 +212,125 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   assert.equal(readFileSync(logPath, 'utf-8'), 'c'.repeat(40) + '\n');
   assert.equal(readFileSync(`${logPath}.1`, 'utf-8'), 'b'.repeat(40) + '\n');
   assert.equal(readFileSync(`${logPath}.2`, 'utf-8'), 'a'.repeat(40) + '\n');
+  cleanup(dir);
+  passed++;
+}
+
+// 7a. Safe stop sends SIGTERM only to a matching live lark plugin process and removes its lock after exit.
+{
+  const dir = tmpRoot('resource-stop-live-');
+  const lockPath = join(dir, 'bridge.lock');
+  writeFileSync(lockPath, JSON.stringify({ pid: 12345, startedAt: 1111 }), 'utf-8');
+  let alive = true;
+  const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+
+  const result = await stopSingleInstanceLock(lockPath, {
+    waitMs: 10,
+    sleepMs: 0,
+    processExists: () => alive,
+    getProcessStartedAt: async () => 1111,
+    getProcessCommand: async () => 'node --import tsx src/index.ts',
+    killProcess: async (pid, signal) => {
+      signals.push({ pid, signal });
+      alive = false;
+    },
+  });
+
+  assert.equal(result.status, 'process_terminated');
+  assert.deepEqual(signals, [{ pid: 12345, signal: 'SIGTERM' }]);
+  assert.equal(existsSync(lockPath), false);
+  cleanup(dir);
+  passed++;
+}
+
+// 7b. Safe stop refuses a live unrelated process and leaves the lock intact.
+{
+  const dir = tmpRoot('resource-stop-unrelated-');
+  const lockPath = join(dir, 'bridge.lock');
+  writeFileSync(lockPath, JSON.stringify({ pid: 12345, startedAt: 1111 }), 'utf-8');
+  let killed = false;
+
+  const result = await stopSingleInstanceLock(lockPath, {
+    waitMs: 10,
+    sleepMs: 0,
+    processExists: () => true,
+    getProcessStartedAt: async () => 1111,
+    getProcessCommand: async () => '/usr/bin/python unrelated.py',
+    killProcess: async () => {
+      killed = true;
+    },
+  });
+
+  assert.equal(result.status, 'unrelated_process');
+  assert.equal(killed, false);
+  assert.equal(existsSync(lockPath), true);
+  cleanup(dir);
+  passed++;
+}
+
+// 7c. Safe stop removes stale locks only after proving the PID is gone or reused.
+{
+  const goneDir = tmpRoot('resource-stop-stale-gone-');
+  const goneLock = join(goneDir, 'bridge.lock');
+  writeFileSync(goneLock, JSON.stringify({ pid: 12345, startedAt: 1111 }), 'utf-8');
+  const gone = await stopSingleInstanceLock(goneLock, {
+    processExists: () => false,
+    getProcessStartedAt: async () => null,
+    getProcessCommand: async () => null,
+  });
+  assert.equal(gone.status, 'stale_lock_removed');
+  assert.equal(existsSync(goneLock), false);
+  cleanup(goneDir);
+
+  const reusedDir = tmpRoot('resource-stop-stale-reused-');
+  const reusedLock = join(reusedDir, 'bridge.lock');
+  writeFileSync(reusedLock, JSON.stringify({ pid: 12345, startedAt: 1111 }), 'utf-8');
+  const reused = await stopSingleInstanceLock(reusedLock, {
+    processExists: () => true,
+    getProcessStartedAt: async () => 2222,
+    getProcessCommand: async () => '/bin/sleep 100',
+  });
+  assert.equal(reused.status, 'stale_lock_removed');
+  assert.equal(existsSync(reusedLock), false);
+  cleanup(reusedDir);
+  passed++;
+}
+
+// 7d. Safe stop keeps the lock when a matching process ignores SIGTERM.
+{
+  const dir = tmpRoot('resource-stop-stubborn-');
+  const lockPath = join(dir, 'bridge.lock');
+  writeFileSync(lockPath, JSON.stringify({ pid: 12345, startedAt: 1111 }), 'utf-8');
+
+  const result = await stopSingleInstanceLock(lockPath, {
+    waitMs: 1,
+    sleepMs: 0,
+    processExists: () => true,
+    getProcessStartedAt: async () => 1111,
+    getProcessCommand: async () => 'node --import tsx src/index.ts',
+    killProcess: async () => {},
+  });
+
+  assert.equal(result.status, 'process_still_running');
+  assert.equal(existsSync(lockPath), true);
+  cleanup(dir);
+  passed++;
+}
+
+// 7e. Safe stop refuses unparsable locks because it cannot prove ownership.
+{
+  const dir = tmpRoot('resource-stop-invalid-');
+  const lockPath = join(dir, 'bridge.lock');
+  writeFileSync(lockPath, 'not-json-not-pid', 'utf-8');
+
+  const result = await stopSingleInstanceLock(lockPath, {
+    processExists: () => false,
+    getProcessStartedAt: async () => null,
+    getProcessCommand: async () => null,
+  });
+
+  assert.equal(result.status, 'invalid_lock');
+  assert.equal(existsSync(lockPath), true);
   cleanup(dir);
   passed++;
 }
@@ -499,4 +619,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/22 PASS`);
+console.log(`resource-governance smoke: ${passed}/27 PASS`);

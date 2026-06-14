@@ -45,6 +45,10 @@ echo "=== Start launcher timestamp checks ==="
 node --import tsx scripts/start-sh-smoke.ts
 
 echo ""
+echo "=== Stop launcher checks ==="
+node --import tsx scripts/stop-sh-smoke.ts
+
+echo ""
 echo "=== SDK constructors have stderr logger ==="
 # Dry-run cannot catch stdout pollution from SDK constructors that only run
 # inside channel.start() (e.g. EventDispatcher). Their default logger writes

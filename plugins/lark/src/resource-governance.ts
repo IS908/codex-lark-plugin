@@ -40,6 +40,34 @@ interface LockRecord {
   createdAt?: string;
 }
 
+export type StopSingleInstanceLockStatus =
+  | 'no_lock'
+  | 'invalid_lock'
+  | 'stale_lock_removed'
+  | 'unrelated_process'
+  | 'process_terminated'
+  | 'process_still_running'
+  | 'permission_denied';
+
+export interface StopSingleInstanceLockResult {
+  status: StopSingleInstanceLockStatus;
+  lockPath: string;
+  pid?: number;
+  startedAt?: number;
+  command?: string | null;
+  message: string;
+}
+
+export interface StopSingleInstanceLockOptions {
+  waitMs?: number;
+  sleepMs?: number;
+  processExists?: (pid: number) => boolean | Promise<boolean>;
+  getProcessStartedAt?: (pid: number) => number | null | Promise<number | null>;
+  getProcessCommand?: (pid: number) => string | null | Promise<string | null>;
+  killProcess?: (pid: number, signal: NodeJS.Signals) => void | Promise<void>;
+  isExpectedProcess?: (command: string) => boolean;
+}
+
 interface LockState {
   record: LockRecord | null;
   ageMs: number;
@@ -81,6 +109,20 @@ async function defaultProcessStartedAt(pid: number): Promise<number | null> {
   }
 }
 
+async function defaultProcessCommand(pid: number): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('ps', ['-o', 'command=', '-p', String(pid)]);
+    const raw = String(stdout).trim();
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
+
+async function defaultKillProcess(pid: number, signal: NodeJS.Signals): Promise<void> {
+  process.kill(pid, signal);
+}
+
 function parseLock(raw: string): LockRecord | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -106,6 +148,29 @@ function serializeLock(record: LockRecord): string {
 
 function sameStartTime(a: number, b: number): boolean {
   return Math.abs(a - b) <= 1000;
+}
+
+function sameLockOwner(a: LockRecord | null, b: LockRecord): boolean {
+  if (!a) return false;
+  if (a.pid !== b.pid) return false;
+  if (b.startedAt !== undefined) return a.startedAt === b.startedAt;
+  return true;
+}
+
+async function removeLockIfStillOwned(lockPath: string, record: LockRecord): Promise<boolean> {
+  const current = await readLockState(lockPath);
+  if (!current || !sameLockOwner(current.record, record)) return false;
+  await removePathIfExists(lockPath);
+  return true;
+}
+
+export function isCodexLarkProcessCommand(command: string): boolean {
+  const normalized = command.toLowerCase();
+  return (
+    normalized.includes('codex-lark-plugin') ||
+    normalized.includes('scripts/start.sh') ||
+    (normalized.includes('src/index.ts') && normalized.includes('tsx'))
+  );
 }
 
 function makeHandle(lockPath: string, pid: number, startedAt: number): SingleInstanceLockHandle {
@@ -333,6 +398,146 @@ export async function acquireSingleInstanceLock(
   }
 
   throw new Error('Could not acquire single-instance lock after removing a stale lock.');
+}
+
+export async function stopSingleInstanceLock(
+  lockPath: string,
+  options: StopSingleInstanceLockOptions = {},
+): Promise<StopSingleInstanceLockResult> {
+  const processExists = options.processExists ?? defaultProcessExists;
+  const getProcessStartedAt = options.getProcessStartedAt ?? defaultProcessStartedAt;
+  const getProcessCommand = options.getProcessCommand ?? defaultProcessCommand;
+  const killProcess = options.killProcess ?? defaultKillProcess;
+  const isExpectedProcess = options.isExpectedProcess ?? isCodexLarkProcessCommand;
+  const waitMs = Math.max(0, Math.floor(options.waitMs ?? 5_000));
+  const sleepMs = Math.max(0, Math.floor(options.sleepMs ?? 100));
+
+  const state = await readLockState(lockPath);
+  if (!state) {
+    return {
+      status: 'no_lock',
+      lockPath,
+      message: `No codex-lark-plugin lock found at ${lockPath}.`,
+    };
+  }
+
+  const record = state.record;
+  if (!record) {
+    return {
+      status: 'invalid_lock',
+      lockPath,
+      message: `Refusing to stop: lock file ${lockPath} does not contain a valid PID.`,
+    };
+  }
+
+  const base = {
+    lockPath,
+    pid: record.pid,
+    ...(record.startedAt ? { startedAt: record.startedAt } : {}),
+  };
+
+  const alive = await processExists(record.pid);
+  if (!alive) {
+    const removed = await removeLockIfStillOwned(lockPath, record);
+    return {
+      ...base,
+      status: 'stale_lock_removed',
+      message: removed
+        ? `Removed stale codex-lark-plugin lock for non-running PID ${record.pid}.`
+        : `Stale lock for PID ${record.pid} changed before cleanup; left it untouched.`,
+    };
+  }
+
+  if (record.startedAt) {
+    const actualStartedAt = await getProcessStartedAt(record.pid);
+    if (actualStartedAt !== null && !sameStartTime(actualStartedAt, record.startedAt)) {
+      const removed = await removeLockIfStillOwned(lockPath, record);
+      return {
+        ...base,
+        status: 'stale_lock_removed',
+        message: removed
+          ? `Removed stale codex-lark-plugin lock for reused PID ${record.pid}.`
+          : `Stale lock for reused PID ${record.pid} changed before cleanup; left it untouched.`,
+      };
+    }
+  }
+
+  const command = await getProcessCommand(record.pid);
+  if (!command || !isExpectedProcess(command)) {
+    return {
+      ...base,
+      command,
+      status: 'unrelated_process',
+      message:
+        `Refusing to stop PID ${record.pid}: it does not look like codex-lark-plugin. ` +
+        `Command: ${command ?? '<unknown>'}. Lock left intact.`,
+    };
+  }
+
+  try {
+    await killProcess(record.pid, 'SIGTERM');
+  } catch (err: any) {
+    if (err?.code === 'ESRCH') {
+      const removed = await removeLockIfStillOwned(lockPath, record);
+      return {
+        ...base,
+        command,
+        status: 'stale_lock_removed',
+        message: removed
+          ? `Removed stale codex-lark-plugin lock after PID ${record.pid} disappeared.`
+          : `PID ${record.pid} disappeared, but the lock changed before cleanup; left it untouched.`,
+      };
+    }
+    if (err?.code === 'EPERM') {
+      return {
+        ...base,
+        command,
+        status: 'permission_denied',
+        message: `Permission denied while sending SIGTERM to PID ${record.pid}. Lock left intact.`,
+      };
+    }
+    throw err;
+  }
+
+  const deadline = Date.now() + waitMs;
+  do {
+    if (!(await processExists(record.pid))) {
+      const removed = await removeLockIfStillOwned(lockPath, record);
+      return {
+        ...base,
+        command,
+        status: 'process_terminated',
+        message: removed
+          ? `Stopped codex-lark-plugin PID ${record.pid} and removed its lock.`
+          : `Stopped PID ${record.pid}, but the lock changed before cleanup; left it untouched.`,
+      };
+    }
+
+    if (record.startedAt) {
+      const actualStartedAt = await getProcessStartedAt(record.pid);
+      if (actualStartedAt !== null && !sameStartTime(actualStartedAt, record.startedAt)) {
+        const removed = await removeLockIfStillOwned(lockPath, record);
+        return {
+          ...base,
+          command,
+          status: 'process_terminated',
+          message: removed
+            ? `Stopped codex-lark-plugin PID ${record.pid} and removed its lock after PID reuse check.`
+            : `PID ${record.pid} changed, but the lock changed before cleanup; left it untouched.`,
+        };
+      }
+    }
+
+    if (Date.now() >= deadline) break;
+    await sleep(sleepMs);
+  } while (true);
+
+  return {
+    ...base,
+    command,
+    status: 'process_still_running',
+    message: `PID ${record.pid} still appears to be running after SIGTERM. Lock left intact.`,
+  };
 }
 
 export function registerLockCleanup(
