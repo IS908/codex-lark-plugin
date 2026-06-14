@@ -446,6 +446,7 @@ export class JobScheduler {
     // (e.g. save_memory, list_jobs) resolve to the job creator, not to any
     // human who happened to send a message to the same chat.
     this.identitySession.setCaller(job.meta.target_chat_id, jobThreadId, job.meta.created_by);
+    this.identitySession.beginChannelTurn(job.meta.target_chat_id, jobThreadId, appConfig.replyObligationTimeoutMs);
 
     const promptContent = cronJobPrompt(
       job.meta.name,
@@ -469,6 +470,7 @@ export class JobScheduler {
         },
       });
     } catch (err: any) {
+      this.identitySession.endChannelTurn(job.meta.target_chat_id, jobThreadId);
       const wrapped = new Error(
         `[LARK_DEFER] CronJob prompt delivery failed before Codex accepted the turn: ${err?.message ?? err}`,
       );

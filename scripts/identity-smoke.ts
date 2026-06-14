@@ -44,13 +44,31 @@ function fail(msg: string): never {
   if (s.getCaller(TERMINAL_CHAT_ID) !== null) fail('terminal null when unset');
 }
 
-// 6. unknown chat returns null
+// 6. terminal sentinel is denied while a real channel turn is active
+{
+  const s = new IdentitySession(() => 'ou_owner');
+  s.beginChannelTurn('chat_A', undefined, 60_000);
+  if (s.getCaller(TERMINAL_CHAT_ID) !== null) fail('terminal fallback blocked during active channel turn');
+  s.endChannelTurn('chat_A', undefined);
+  if (s.getCaller(TERMINAL_CHAT_ID) !== 'ou_owner') fail('terminal fallback restored after active channel turn');
+}
+
+// 7. terminal sentinel is restored after the active channel turn TTL expires
+{
+  const s = new IdentitySession(() => 'ou_owner');
+  s.beginChannelTurn('chat_A', undefined, 10);
+  if (s.getCaller(TERMINAL_CHAT_ID) !== null) fail('terminal fallback blocked before active channel turn ttl');
+  await new Promise((r) => setTimeout(r, 30));
+  if (s.getCaller(TERMINAL_CHAT_ID) !== 'ou_owner') fail('terminal fallback restored after active channel turn ttl');
+}
+
+// 8. unknown chat returns null
 {
   const s = new IdentitySession(() => null);
   if (s.getCaller('chat_unknown') !== null) fail('unknown chat');
 }
 
-// 7. stale entry is not returned; cleanup removes it
+// 9. stale entry is not returned; cleanup removes it
 {
   const s = new IdentitySession(() => null, 10); // 10ms ttl
   s.setCaller('chat_A', undefined, 'ou_alice');
@@ -60,7 +78,7 @@ function fail(msg: string): never {
   if (s._size() !== 0) fail('cleanup should remove stale');
 }
 
-// 8. overwrite refreshes
+// 10. overwrite refreshes
 {
   const s = new IdentitySession(() => null);
   s.setCaller('chat_A', undefined, 'ou_alice');
@@ -68,4 +86,4 @@ function fail(msg: string): never {
   if (s.getCaller('chat_A') !== 'ou_bob') fail('overwrite');
 }
 
-console.log('identity smoke: 8/8 PASS');
+console.log('identity smoke: 10/10 PASS');

@@ -17,8 +17,8 @@
  *   1. MCP server instructions (index.ts) tell Codex to use the chat_id
  *      from notification metadata verbatim and never substitute sentinels.
  *   2. Phase 3 adds audit logging so any such attempt leaves a trail.
- *   3. Future work may add server-side heuristic (reject __terminal__ when
- *      there is a fresh real-chat session entry within the last N seconds).
+ *   3. Active channel turns block the __terminal__ fallback server-side until
+ *      the turn ends (exec mode) or its TTL expires (notification/cron mode).
  * The sentinel is not exposed in any notification metadata, so Codex would
  * need to invent the string on its own — practical risk is low.
  */
@@ -62,6 +62,7 @@ interface SessionEntry {
 
 export class IdentitySession {
   private map = new Map<string, SessionEntry>();
+  private activeChannelTurns = new Map<string, number>();
   private readonly ownerFallback: () => string | null;
   private readonly maxAgeMs: number;
   private readonly maxEntries: number;
@@ -87,13 +88,27 @@ export class IdentitySession {
     this.enforceMaxEntries();
   }
 
+  beginChannelTurn(chatId: string, threadId: string | undefined, ttlMs: number = 15 * 60_000): void {
+    if (!chatId || chatId === TERMINAL_CHAT_ID) return;
+    const ttl = Number.isFinite(ttlMs) && ttlMs > 0 ? Math.floor(ttlMs) : 15 * 60_000;
+    this.activeChannelTurns.set(this.key(chatId, threadId), Date.now() + ttl);
+  }
+
+  endChannelTurn(chatId: string, threadId: string | undefined): void {
+    if (!chatId || chatId === TERMINAL_CHAT_ID) return;
+    this.activeChannelTurns.delete(this.key(chatId, threadId));
+  }
+
   /**
    * Returns the current caller for the given chat/thread, or null if none.
    * Prefers the thread-specific entry; falls back to chat-level.
-   * Special-cases the terminal sentinel to the owner fallback.
+   * Special-cases the terminal sentinel to the owner fallback only when no
+   * real channel turn is active.
    */
   getCaller(chatId: string, threadId?: string): string | null {
     if (chatId === TERMINAL_CHAT_ID) {
+      this.cleanupActiveChannelTurns();
+      if (this.activeChannelTurns.size > 0) return null;
       return this.ownerFallback();
     }
     if (threadId) {
@@ -120,6 +135,13 @@ export class IdentitySession {
     for (const [k, v] of this.map.entries()) {
       if (this.isStale(v)) this.map.delete(k);
     }
+    this.cleanupActiveChannelTurns();
+  }
+
+  private cleanupActiveChannelTurns(now = Date.now()): void {
+    for (const [k, expiresAt] of this.activeChannelTurns.entries()) {
+      if (expiresAt <= now) this.activeChannelTurns.delete(k);
+    }
   }
 
   private isStale(entry: SessionEntry): boolean {
@@ -136,5 +158,10 @@ export class IdentitySession {
   /** Test-only helper. */
   _size(): number {
     return this.map.size;
+  }
+
+  _activeChannelTurnCount(): number {
+    this.cleanupActiveChannelTurns();
+    return this.activeChannelTurns.size;
   }
 }

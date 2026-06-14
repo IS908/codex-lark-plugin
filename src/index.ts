@@ -191,6 +191,7 @@ async function main() {
       `[channel] Handler received message ${message.messageId} chat=${message.chatId} thread=${message.threadId ?? '(none)'} from=${displayLabel}: ${message.text.slice(0, 100)}...`
     );
     const hasReplyObligation = message.chatType === 'p2p' || message.chatType === 'group';
+    identitySession.beginChannelTurn(message.chatId, message.threadId, appConfig.replyObligationTimeoutMs);
     if (hasReplyObligation) {
       turnObligations.begin({
         messageId: message.messageId,
@@ -309,6 +310,9 @@ async function main() {
         }
       }
     } finally {
+      if (appConfig.codexDeliveryMode === 'exec') {
+        identitySession.endChannelTurn(message.chatId, message.threadId);
+      }
       if (hasReplyObligation) {
         turnObligations.clearActive(message.chatId, message.threadId, message.messageId);
       }
