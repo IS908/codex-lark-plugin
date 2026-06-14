@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-06-14
+
+### Added
+- Added a parent-process Codex exec action bridge for `save_memory`, `create_job`, and `run_local_cli_tool`, so exec mode can safely invoke supported built-in Lark actions without exposing caller identity fields to model output.
+- Added `npm run stop` / `scripts/stop.sh` to safely stop a matching plugin process or clear stale single-instance locks without killing unrelated processes.
+- Added default-off Stage 2 profile distillation from recent episodes into tiered profiles, gated by minimum episode count, per-user cooldown, per-user locking, L1/L2 safety checks, and audit logging.
+
+### Changed
+- Default Codex exec working directory now uses an isolated channel workdir, with startup diagnostics for `.mcp.json` / profile recursion risk.
+- Session-health nudges now prefer reported Codex exec token/context usage when JSONL exposes it, falling back to prompt-byte heuristics only when usage is unavailable.
+
+### Fixed
+- Exec-mode structured Lark actions now execute in the parent bridge with server-derived caller identity instead of being unavailable to `codex exec`.
+- Interactive-card thread roots now keep `thread_id` / `omt_*` separate from root `om_*` message ids and can recover readable card content through `messages/mget` when event/parent context contains only client-upgrade placeholders.
+- Episode filenames now avoid same-millisecond overwrites so profile distillation thresholds and episode history remain accurate.
+
 ## [1.1.2] - 2026-06-14
 
 ### Added
@@ -172,7 +188,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.12...v1.1.0
