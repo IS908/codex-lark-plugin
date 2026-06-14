@@ -111,6 +111,7 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   let timedOut = false;
 
   try {
+    await fs.mkdir(cwd, { recursive: true });
     await new Promise<void>((resolve, reject) => {
       const child = spawn(command, args, {
         cwd,

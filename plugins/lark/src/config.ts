@@ -5,6 +5,9 @@ import os from 'node:os';
 const envPath = path.join(os.homedir(), '.codex', 'channels', 'lark', '.env');
 config({ path: envPath });
 
+const channelHome = path.join(os.homedir(), '.codex', 'channels', 'lark');
+const defaultCodexExecCwd = path.join(channelHome, 'codex-exec-workdir');
+
 function required(key: string): string {
   const val = process.env[key];
   if (!val) throw new Error(`Missing required env var: ${key}`);
@@ -80,7 +83,7 @@ export const appConfig = {
     ['exec', 'notification'] as const,
   ),
   codexExecCommand: optional('LARK_CODEX_EXEC_COMMAND', 'codex'),
-  codexExecCwd: optional('LARK_CODEX_EXEC_CWD', process.cwd()),
+  codexExecCwd: optional('LARK_CODEX_EXEC_CWD', defaultCodexExecCwd),
   codexExecTimeoutMs: optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000),
   codexExecSandbox: optionalChoice(
     'LARK_CODEX_EXEC_SANDBOX',

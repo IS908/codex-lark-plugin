@@ -18,6 +18,10 @@ echo "=== Config validation checks ==="
 node --import tsx scripts/config-validation-smoke.ts
 
 echo ""
+echo "=== Codex exec config safety checks ==="
+node --import tsx scripts/codex-exec-config-smoke.ts
+
+echo ""
 echo "=== Release version checks ==="
 npm run --silent check:release-version
 echo "PASS"

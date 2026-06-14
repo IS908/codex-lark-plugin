@@ -30,6 +30,7 @@ import {
   registerLockCleanup,
   sweepInbox,
 } from './resource-governance.js';
+import { emitCodexExecConfigDiagnostics } from './codex-exec-config.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
@@ -57,6 +58,7 @@ function runStartupResourceCleanup(memoryStore: MemoryStore): void {
 
 async function main() {
   const isDryRun = process.argv.includes('--dry-run');
+  await emitCodexExecConfigDiagnostics(appConfig);
 
   // 1. Create memory store
   const memoryStore = new MemoryStore();
