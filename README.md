@@ -320,6 +320,14 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | Pass `--ignore-user-config` to `codex exec` to avoid recursively loading the Lark MCP server |
 | `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | Resume one Codex exec session per Feishu `chat_id` / `thread_id`. This preserves multi-turn context inside the Codex CLI session store; it does not attach to an already-open interactive terminal TUI session. |
 
+Exec delivery also supports a parent-process action bridge for built-in actions
+that cannot safely call this MCP server from the child `codex exec` process:
+`save_memory`, `create_job`, and `run_local_cli_tool`. The child returns a
+validated `LARK_ACTIONS_JSON` marker block; the parent strips the block from the
+visible reply, derives caller identity from the current Feishu event, executes
+the action locally, and rejects malformed blocks instead of recursively loading
+the Lark MCP server.
+
 ### Optional -- Local CLI Tools
 
 `run_local_cli_tool` is a controlled MCP tool for trusted host-local CLI or

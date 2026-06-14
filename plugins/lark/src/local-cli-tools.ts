@@ -43,6 +43,20 @@ export interface RegisterLocalCliToolsOptions {
   identitySession: IdentitySession;
 }
 
+export interface RunConfiguredLocalCliToolOptions {
+  identitySession: IdentitySession;
+  tool: string;
+  args?: string[];
+  chat_id: string;
+  thread_id?: string;
+  configPath?: string;
+}
+
+export interface RunConfiguredLocalCliToolResult {
+  ok: boolean;
+  message: string;
+}
+
 interface ProcessResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -341,6 +355,84 @@ async function runProcess(
   });
 }
 
+export async function runConfiguredLocalCliTool(
+  options: RunConfiguredLocalCliToolOptions,
+): Promise<RunConfiguredLocalCliToolResult> {
+  const { identitySession, tool, chat_id, thread_id, configPath } = options;
+  const requestedArgs = Array.isArray(options.args) ? options.args.map(String) : [];
+  const auditArgs = { tool, chat_id, thread_id, args: redactArgs(requestedArgs) };
+
+  if (!chat_id) {
+    await audit('run_local_cli_tool', null, auditArgs, 'denied');
+    return { ok: false, message: 'chat_id is required for run_local_cli_tool' };
+  }
+
+  const caller = identitySession.getCaller(chat_id, thread_id);
+  if (!caller) {
+    await audit('run_local_cli_tool', null, auditArgs, 'denied');
+    return { ok: false, message: `No active identity session for chat ${chat_id}.` };
+  }
+  if (caller === SYSTEM_FLUSH_CALLER) {
+    await audit('run_local_cli_tool', caller, auditArgs, 'denied');
+    return { ok: false, message: 'System flush identity is not authorized for local CLI execution.' };
+  }
+
+  let loaded: LoadedConfig;
+  try {
+    loaded = await loadConfig(configPath);
+  } catch (err: any) {
+    await audit('run_local_cli_tool', caller, auditArgs, 'denied');
+    return { ok: false, message: `Invalid local CLI config: ${err?.message ?? String(err)}` };
+  }
+
+  const config = Object.prototype.hasOwnProperty.call(loaded.tools, tool)
+    ? loaded.tools[tool]
+    : undefined;
+  if (!config) {
+    await audit('run_local_cli_tool', caller, auditArgs, 'denied');
+    return { ok: false, message: `Local CLI tool "${tool}" is not configured.` };
+  }
+
+  if (!isCallerAllowed(caller, config.allowedCallers)) {
+    await audit('run_local_cli_tool', caller, auditArgs, 'denied');
+    return { ok: false, message: `Caller ${caller} is not authorized for local CLI tool "${tool}".` };
+  }
+
+  const validationError = validateExecution(config, requestedArgs);
+  if (validationError) {
+    await audit('run_local_cli_tool', caller, auditArgs, 'denied');
+    return { ok: false, message: validationError };
+  }
+
+  const finalArgs = [...config.fixedArgs, ...requestedArgs];
+  let result: ProcessResult;
+  try {
+    result = await runProcess(config.command, finalArgs, config.timeoutMs, config.maxOutputBytes, buildProcessEnv(config));
+  } catch (err: any) {
+    await audit('run_local_cli_tool', caller, auditArgs, 'error');
+    return { ok: false, message: `Failed to execute local CLI tool "${tool}": ${err?.message ?? String(err)}` };
+  }
+
+  const ok = !result.timedOut && result.exitCode === 0;
+  await audit('run_local_cli_tool', caller, auditArgs, ok ? 'ok' : 'error');
+  return {
+    ok,
+    message: JSON.stringify(
+      {
+        tool,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        timedOut: result.timedOut,
+        truncated: result.truncated,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      },
+      null,
+      2,
+    ),
+  };
+}
+
 export function registerLocalCliTools(options: RegisterLocalCliToolsOptions): void {
   const { server, identitySession } = options;
 
@@ -357,78 +449,14 @@ export function registerLocalCliTools(options: RegisterLocalCliToolsOptions): vo
       }),
     },
     async ({ tool, args = [], chat_id, thread_id }) => {
-      const requestedArgs = Array.isArray(args) ? args.map(String) : [];
-      const auditArgs = { tool, chat_id, thread_id, args: redactArgs(requestedArgs) };
-
-      if (!chat_id) {
-        await audit('run_local_cli_tool', null, auditArgs, 'denied');
-        return mcpText('chat_id is required for run_local_cli_tool', true);
-      }
-
-      const caller = identitySession.getCaller(chat_id, thread_id);
-      if (!caller) {
-        await audit('run_local_cli_tool', null, auditArgs, 'denied');
-        return mcpText(`No active identity session for chat ${chat_id}.`, true);
-      }
-      if (caller === SYSTEM_FLUSH_CALLER) {
-        await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-        return mcpText('System flush identity is not authorized for local CLI execution.', true);
-      }
-
-      let loaded: LoadedConfig;
-      try {
-        loaded = await loadConfig();
-      } catch (err: any) {
-        await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-        return mcpText(`Invalid local CLI config: ${err?.message ?? String(err)}`, true);
-      }
-
-      const config = Object.prototype.hasOwnProperty.call(loaded.tools, tool)
-        ? loaded.tools[tool]
-        : undefined;
-      if (!config) {
-        await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-        return mcpText(`Local CLI tool "${tool}" is not configured.`, true);
-      }
-
-      if (!isCallerAllowed(caller, config.allowedCallers)) {
-        await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-        return mcpText(`Caller ${caller} is not authorized for local CLI tool "${tool}".`, true);
-      }
-
-      const validationError = validateExecution(config, requestedArgs);
-      if (validationError) {
-        await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-        return mcpText(validationError, true);
-      }
-
-      const finalArgs = [...config.fixedArgs, ...requestedArgs];
-      let result: ProcessResult;
-      try {
-        result = await runProcess(config.command, finalArgs, config.timeoutMs, config.maxOutputBytes, buildProcessEnv(config));
-      } catch (err: any) {
-        await audit('run_local_cli_tool', caller, auditArgs, 'error');
-        return mcpText(`Failed to execute local CLI tool "${tool}": ${err?.message ?? String(err)}`, true);
-      }
-
-      const isError = result.timedOut || result.exitCode !== 0;
-      await audit('run_local_cli_tool', caller, auditArgs, isError ? 'error' : 'ok');
-      return mcpText(
-        JSON.stringify(
-          {
-            tool,
-            exitCode: result.exitCode,
-            signal: result.signal,
-            timedOut: result.timedOut,
-            truncated: result.truncated,
-            stdout: result.stdout,
-            stderr: result.stderr,
-          },
-          null,
-          2,
-        ),
-        isError,
-      );
+      const result = await runConfiguredLocalCliTool({
+        identitySession,
+        tool,
+        args,
+        chat_id,
+        thread_id,
+      });
+      return mcpText(result.message, !result.ok);
     },
   );
 }

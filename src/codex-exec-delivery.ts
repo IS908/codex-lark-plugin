@@ -12,6 +12,13 @@ import { untrustedDataBlock } from './prompts.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import { shouldSendFeishuReplyForMessage } from './codex-exec-error.js';
+import {
+  CODEX_EXEC_ACTIONS_END,
+  CODEX_EXEC_ACTIONS_START,
+  formatCodexExecActionResults,
+  parseCodexExecActionOutput,
+  type CodexExecActionDispatcher,
+} from './codex-exec-actions.js';
 
 export interface CodexExecDeliveryOptions {
   message: LarkMessage;
@@ -24,6 +31,7 @@ export interface CodexExecDeliveryOptions {
   sendDocCommentReply?: (request: DocCommentExecReplyRequest) => Promise<{ replyId?: string }>;
   recordAssistantMessage?: (message: { chatId: string; text: string }) => void;
   turnObligations?: TurnObligationTracker;
+  actionDispatcher?: CodexExecActionDispatcher;
 }
 
 export interface CodexExecSessionHealthRecorder {
@@ -82,7 +90,11 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
       : 'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',
-    'If the user asks for an action you cannot complete in this exec bridge environment, say exactly what is missing and keep the answer concise.',
+    'If the user asks for a supported built-in Lark action, request it with the structured action block below instead of saying the MCP tool is unavailable.',
+    'Supported action block format (append at most one block at the very end, outside code fences):',
+    `${CODEX_EXEC_ACTIONS_START}\n{"version":1,"actions":[{"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"private|public"},{"type":"create_job","job_type":"message|prompt","name":"...","schedule":"daily at 09:00","content":"...","prompt":"...","target_chat_id":"optional"},{"type":"run_local_cli_tool","tool":"configured-name","args":["..."]}]}\n${CODEX_EXEC_ACTIONS_END}`,
+    'Do not put chat_id, thread_id, open_id, created_by, or caller in the action block; the parent Lark bridge derives identity from the current Feishu event.',
+    'For ordinary replies, omit the action block.',
     'If this turn intentionally should not send a Feishu reply, put [LARK_DEFER] or [LARK_NO_REPLY] on its own line outside code fences, optionally followed by a short reason.',
     '',
     '[Feishu metadata]',
@@ -155,7 +167,28 @@ export async function deliverMessageViaCodexExec(
     });
   }
 
-  let text = result.text.trim();
+  const parsedOutput = parseCodexExecActionOutput(result.text);
+  let text = parsedOutput.replyText.trim();
+  if (parsedOutput.kind === 'invalid_actions') {
+    text = `Invalid Lark action block: ${parsedOutput.error}`;
+  } else if (parsedOutput.kind === 'actions' && parsedOutput.actions.length > 0) {
+    const actionResults = opts.actionDispatcher
+      ? await opts.actionDispatcher.execute({ message, actions: parsedOutput.actions })
+      : [
+          {
+            ok: false,
+            action: 'save_memory' as const,
+            message: 'Lark exec action dispatcher is not configured.',
+          },
+        ];
+    const actionSummary = formatCodexExecActionResults(actionResults);
+    const hasActionError = actionResults.some((actionResult) => !actionResult.ok);
+    if (!text) {
+      text = actionSummary;
+    } else if (hasActionError) {
+      text = `${text}\n\n[Action results]\n${actionSummary}`;
+    }
+  }
   if (!text) {
     text = 'Codex exec returned an empty response.';
   }

@@ -31,6 +31,7 @@ import {
   sweepInbox,
 } from './resource-governance.js';
 import { emitCodexExecConfigDiagnostics } from './codex-exec-config.js';
+import { createCodexExecActionDispatcher } from './codex-exec-actions.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
@@ -165,6 +166,10 @@ async function main() {
     }
   });
   channel.setConversationBuffer(buffer);
+  const codexExecActionDispatcher = createCodexExecActionDispatcher({
+    memoryStore,
+    identitySession,
+  });
 
   // 5. Register MCP tools (pass buffer so reply records assistant messages)
   registerTools(
@@ -243,6 +248,7 @@ async function main() {
           },
           sessionHealth: sessionHealthMonitor ?? undefined,
           turnObligations,
+          actionDispatcher: codexExecActionDispatcher,
         });
         if (hasReplyObligation) {
           turnObligations.requireSatisfiedOrDeferred(message.messageId);

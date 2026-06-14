@@ -304,6 +304,8 @@ git push origin v1.0.0
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | 传 `--ignore-user-config` 给 `codex exec`，避免递归加载当前 Lark MCP server |
 | `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | 为每个飞书 `chat_id` / `thread_id` 恢复一个 Codex exec session，以保留多轮上下文；这不是接管某个已经打开的终端 TUI 交互 session。 |
 
+exec delivery 也内置父进程 action bridge，用于处理子 `codex exec` 进程不能安全调用当前 MCP server 的内置动作：`save_memory`、`create_job` 和 `run_local_cli_tool`。子进程返回经过校验的 `LARK_ACTIONS_JSON` 标记块；父进程会从可见回复中剥离该块，使用当前飞书事件派生调用者身份，在本地执行动作，并拒绝格式错误的 action block，而不是递归加载 Lark MCP server。
+
 ### 可选 -- 本地 CLI 工具
 
 `run_local_cli_tool` 是受控 MCP 工具，用于可信的 host-local CLI 或 skill-backed workflow，
