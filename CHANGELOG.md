@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-14
+
+### Added
+- Added the first SDK migration layer with `LARK_CHANNEL_RUNTIME=legacy|sdk`, defaulting to the existing legacy runtime while allowing SDK scaffold validation in dry-run mode.
+- Added `@larksuite/channel` scaffold loading with stderr-only logging checks and live SDK startup fail-closed until rollout criteria are met.
+- Added SDK dry-run parity adapters and smoke tests for server-derived identity binding, reserved terminal-id rejection, normalized message mapping, doc-comment identity envelopes, outbound reply/edit/reaction/defer mappings, and SDK rollout documentation.
+- Added `npm run smoke:sdk` plus `docs/sdk-channel-rollout.md` covering SDK validation commands, rollback steps, workspace/marketplace/cache sync requirements, and criteria for making SDK the default or removing the legacy path.
+
+### Changed
+- Documented `LARK_CHANNEL_RUNTIME` in README and `.env.example`; `sdk` remains validation-only for 1.2.0 and real operation should keep `legacy` or leave the variable unset.
+
 ## [1.1.3] - 2026-06-14
 
 ### Added
@@ -188,7 +199,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.0...v1.1.1
