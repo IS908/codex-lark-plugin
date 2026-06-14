@@ -4,7 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
-import type { IdentitySession } from './identity-session.js';
+import { SYSTEM_FLUSH_CALLER, type IdentitySession } from './identity-session.js';
 
 type CallerMode = 'owners' | 'lark_allowed_user_ids' | 'public' | string[];
 type ParamMode = 'allowlist' | 'blocklist';
@@ -156,11 +156,17 @@ async function loadConfig(configPath = appConfig.localCliToolsConfigPath): Promi
   }
 
   const parsed = JSON.parse(rawText);
-  if (!parsed || typeof parsed !== 'object' || !parsed.tools || typeof parsed.tools !== 'object') {
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    !parsed.tools ||
+    typeof parsed.tools !== 'object' ||
+    Array.isArray(parsed.tools)
+  ) {
     throw new Error('local CLI config must contain a "tools" object');
   }
 
-  const tools: Record<string, LocalCliToolConfig> = {};
+  const tools: Record<string, LocalCliToolConfig> = Object.create(null);
   for (const [name, raw] of Object.entries(parsed.tools)) {
     tools[name] = parseToolConfig(name, raw);
   }
@@ -307,6 +313,10 @@ export function registerLocalCliTools(options: RegisterLocalCliToolsOptions): vo
         await audit('run_local_cli_tool', null, auditArgs, 'denied');
         return mcpText(`No active identity session for chat ${chat_id}.`, true);
       }
+      if (caller === SYSTEM_FLUSH_CALLER) {
+        await audit('run_local_cli_tool', caller, auditArgs, 'denied');
+        return mcpText('System flush identity is not authorized for local CLI execution.', true);
+      }
 
       let loaded: LoadedConfig;
       try {
@@ -316,7 +326,9 @@ export function registerLocalCliTools(options: RegisterLocalCliToolsOptions): vo
         return mcpText(`Invalid local CLI config: ${err?.message ?? String(err)}`, true);
       }
 
-      const config = loaded.tools[tool];
+      const config = Object.prototype.hasOwnProperty.call(loaded.tools, tool)
+        ? loaded.tools[tool]
+        : undefined;
       if (!config) {
         await audit('run_local_cli_tool', caller, auditArgs, 'denied');
         return mcpText(`Local CLI tool "${tool}" is not configured.`, true);

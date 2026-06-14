@@ -7,7 +7,7 @@ process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
 
 const { registerLocalCliTools } = await import('../src/local-cli-tools.js');
-const { IdentitySession } = await import('../src/identity-session.js');
+const { IdentitySession, SYSTEM_FLUSH_CALLER } = await import('../src/identity-session.js');
 const { appConfig } = await import('../src/config.js');
 
 const tmpDir = mkdtempSync(join(tmpdir(), 'local-cli-tools-'));
@@ -48,6 +48,7 @@ const identity = new IdentitySession(() => 'ou_owner');
 identity.setCaller('chat_owner', 'thread_owner', 'ou_owner');
 identity.setCaller('chat_allowed', 'thread_allowed', 'ou_allowed');
 identity.setCaller('chat_other', 'thread_other', 'ou_other');
+identity.setCaller('chat_flush', 'thread_flush', SYSTEM_FLUSH_CALLER);
 
 function writeConfig(config: unknown): void {
   writeFileSync(configPath, JSON.stringify(config, null, 2));
@@ -92,6 +93,12 @@ try {
         paramBlocklist: ['--token'],
         allowedCallers: 'owners',
       },
+      public_echo: {
+        command: process.execPath,
+        fixedArgs: [helperPath],
+        paramBlocklist: ['--token'],
+        allowedCallers: 'public',
+      },
     },
   });
   {
@@ -115,7 +122,31 @@ try {
     assert.doesNotMatch(text(ok), /\nhacked\n/);
   }
 
-  // 3. Blocklisted params are denied before execution.
+  // 3. Prototype property tool names are treated as unconfigured, not executable configs.
+  {
+    const denied = await run!({
+      tool: 'toString',
+      args: [],
+      chat_id: 'chat_owner',
+      thread_id: 'thread_owner',
+    });
+    assert.equal(denied.isError, true);
+    assert.match(text(denied), /not configured/);
+  }
+
+  // 4. System flush identity cannot execute local CLI tools, even public ones.
+  {
+    const denied = await run!({
+      tool: 'public_echo',
+      args: ['doc'],
+      chat_id: 'chat_flush',
+      thread_id: 'thread_flush',
+    });
+    assert.equal(denied.isError, true);
+    assert.match(text(denied), /System flush identity/);
+  }
+
+  // 5. Blocklisted params are denied before execution.
   {
     const blocked = await run!({
       tool: 'owner_echo',
@@ -128,7 +159,7 @@ try {
     assert.doesNotMatch(text(blocked), /abc123/);
   }
 
-  // 4. Allowlist mode permits configured flags and rejects raw positionals.
+  // 6. Allowlist mode permits configured flags and rejects raw positionals.
   writeConfig({
     tools: {
       strict_doc: {
@@ -159,7 +190,7 @@ try {
     assert.match(text(denied), /positional argument/);
   }
 
-  // 5. Time and output are bounded; secrets in output are redacted.
+  // 7. Time and output are bounded; secrets in output are redacted.
   writeConfig({
     tools: {
       bounded: {
