@@ -119,6 +119,10 @@ echo "=== Codex exec delivery unit checks ==="
 node --import tsx scripts/codex-exec-delivery-smoke.ts
 
 echo ""
+echo "=== Codex exec action bridge unit checks ==="
+node --import tsx scripts/codex-exec-actions-smoke.ts
+
+echo ""
 echo "=== Session health unit checks ==="
 node --import tsx scripts/session-health-smoke.ts
 

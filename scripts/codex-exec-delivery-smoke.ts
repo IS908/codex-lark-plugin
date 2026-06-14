@@ -248,6 +248,81 @@ assert.equal(sessionHealthRecords[1].resumed, true);
 assert.ok(sessionHealthRecords[0].promptBytes > 0);
 assert.ok(sessionHealthRecords[0].responseBytes > 0);
 
+const actionDispatches: any[] = [];
+const actionReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message,
+  displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+  useCodexSessions: false,
+  runCodexExec: async () =>
+    [
+      'I will remember that.',
+      '',
+      '<LARK_ACTIONS_JSON>',
+      JSON.stringify({
+        version: 1,
+        actions: [
+          {
+            type: 'save_memory',
+            memory_type: 'profile',
+            content: '- prefers concise release notes',
+            reason: 'User asked the bot to remember this preference',
+            tier: 'private',
+          },
+        ],
+      }),
+      '</LARK_ACTIONS_JSON>',
+    ].join('\n'),
+  actionDispatcher: {
+    execute: async (request) => {
+      actionDispatches.push(request);
+      return [{ ok: true, action: 'save_memory', message: 'Saved private profile.' }];
+    },
+  },
+  sendReply: async (request) => {
+    actionReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+
+assert.equal(actionDispatches.length, 1);
+assert.equal(actionDispatches[0].actions.length, 1);
+assert.equal(actionDispatches[0].actions[0].type, 'save_memory');
+assert.deepEqual(actionReplies, [
+  {
+    chat_id: 'oc_group_001',
+    text: 'I will remember that.',
+    reply_to: 'om_inbound_001',
+    thread_id: 'omt_thread_001',
+  },
+]);
+
+const invalidActionReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message,
+  displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+  useCodexSessions: false,
+  runCodexExec: async () =>
+    [
+      'Trying an action.',
+      '',
+      '<LARK_ACTIONS_JSON>',
+      '{"version":1,"actions":[{"type":"save_memory","memory_type":"profile"}]}',
+      '</LARK_ACTIONS_JSON>',
+    ].join('\n'),
+  actionDispatcher: {
+    execute: async () => {
+      throw new Error('invalid action blocks must not dispatch');
+    },
+  },
+  sendReply: async (request) => {
+    invalidActionReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(invalidActionReplies.length, 1);
+assert.match(invalidActionReplies[0].text, /Invalid Lark action block/);
+
 sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   key: 'chat:oc_group_001:thread:omt_thread_001',
   sessionId: 'stale-session',
