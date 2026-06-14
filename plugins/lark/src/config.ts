@@ -84,7 +84,7 @@ export const appConfig = {
   ),
   channelRuntime: optionalChoice(
     'LARK_CHANNEL_RUNTIME',
-    'legacy',
+    'sdk',
     ['legacy', 'sdk'] as const,
   ),
   codexExecCommand: optional('LARK_CODEX_EXEC_COMMAND', 'codex'),

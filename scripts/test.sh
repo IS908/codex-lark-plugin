@@ -123,6 +123,10 @@ echo "=== SDK outbound parity checks ==="
 node --import tsx scripts/sdk-outbound-parity-smoke.ts
 
 echo ""
+echo "=== SDK runtime adapter checks ==="
+node --import tsx scripts/sdk-runtime-smoke.ts
+
+echo ""
 echo "=== SDK rollout docs checks ==="
 node --import tsx scripts/sdk-rollout-doc-smoke.ts
 

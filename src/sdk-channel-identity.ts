@@ -49,7 +49,8 @@ export function bindSdkMessageIdentity(
     throw new Error('SDK message used reserved terminal chat id');
   }
 
-  identitySession.setCaller(chatId, sdkMessage.threadId, senderId);
+  const threadId = sdkMessage.threadId ?? sdkMessage.rootId;
+  identitySession.setCaller(chatId, threadId, senderId);
 
   return {
     messageId,
@@ -61,7 +62,7 @@ export function bindSdkMessageIdentity(
     text: sdkMessage.content,
     messageType: rawContentType,
     parentId: sdkMessage.replyToMessageId,
-    threadId: sdkMessage.threadId,
+    threadId,
     rootMessageId: sdkMessage.rootId,
     mentions: normalizeMentions(sdkMessage.mentions),
     botMentioned: sdkMessage.mentionedBot,

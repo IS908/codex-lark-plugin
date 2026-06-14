@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.2.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.3.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -296,7 +296,7 @@ git push origin v1.0.0
 | `LARK_QUEUE_HANDLER_TIMEOUT_MS` | `30000` | 每个 thread 的消息处理超时时间（毫秒） |
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | `max(60000, LARK_CODEX_EXEC_TIMEOUT_MS + 60000)` | 可见回复或 defer 前的最长等待时间，超时后记录未满足的 Lark turn |
 | `LARK_CODEX_DELIVERY_MODE` | `exec` | `exec` 表示每条飞书消息运行一次 `codex exec`，并把最终回答直接发回飞书；`notification` 保留旧的 `notifications/Codex/channel` 路径，仅用于兼容支持该协议的 host |
-| `LARK_CHANNEL_RUNTIME` | `legacy` | Channel runtime 选择器。SDK 迁移期间只有 `legacy` 用于真实启动；`sdk` 目前只在 dry-run 中验证 SDK scaffold，真实启动会 fail closed，直到 parity 完成。 |
+| `LARK_CHANNEL_RUNTIME` | `sdk` | Channel runtime 选择器。内部测试阶段默认使用 SDK live runtime；如需回滚，可设为 `legacy` 回到迁移前的 WebSocket 路径，不需要变更凭据、记忆或任务数据。 |
 | `LARK_CODEX_EXEC_COMMAND` | `codex` | exec delivery 使用的 Codex CLI 命令 |
 | `LARK_CODEX_EXEC_CWD` | `~/.codex/channels/lark/codex-exec-workdir` | `codex exec` 的工作目录；保持目录内没有 `.mcp.json`，避免递归加载当前 Lark MCP server |
 | `LARK_CODEX_EXEC_TIMEOUT_MS` | `600000` | 单次 `codex exec` 超时时间 |

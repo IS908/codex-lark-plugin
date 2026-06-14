@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.2.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.3.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -312,7 +312,7 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_QUEUE_HANDLER_TIMEOUT_MS` | `30000` | Per-thread message handler timeout in milliseconds |
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | `max(60000, LARK_CODEX_EXEC_TIMEOUT_MS + 60000)` | Max wait for a visible reply/defer before logging a missed Lark turn |
 | `LARK_CODEX_DELIVERY_MODE` | `exec` | `exec` runs `codex exec` for each Feishu message and sends the final answer directly through Feishu. `notification` keeps the legacy `notifications/Codex/channel` path for compatible hosts. |
-| `LARK_CHANNEL_RUNTIME` | `legacy` | Channel runtime selector. `legacy` is the only live runtime during the SDK migration; `sdk` validates SDK scaffold loading in dry-run and fails closed for live startup until parity is complete. |
+| `LARK_CHANNEL_RUNTIME` | `sdk` | Channel runtime selector. `sdk` is the default live runtime during internal testing; set `legacy` to roll back to the pre-SDK WebSocket path without changing credentials, memory, or jobs. |
 | `LARK_CODEX_EXEC_COMMAND` | `codex` | Codex CLI command used by exec delivery |
 | `LARK_CODEX_EXEC_CWD` | `~/.codex/channels/lark/codex-exec-workdir` | Working directory for `codex exec`; keep it free of `.mcp.json` to avoid recursively loading this Lark MCP server |
 | `LARK_CODEX_EXEC_TIMEOUT_MS` | `600000` | Timeout for one `codex exec` run |

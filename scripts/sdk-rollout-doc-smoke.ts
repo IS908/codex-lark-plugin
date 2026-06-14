@@ -7,12 +7,13 @@ const doc = readFileSync(join(process.cwd(), 'docs/sdk-channel-rollout.md'), 'ut
 for (const pattern of [
   /npm run smoke:sdk/,
   /npm start -- --dry-run/,
-  /LARK_CHANNEL_RUNTIME=sdk/,
+  /default SDK runtime/i,
   /Rollback/i,
+  /LARK_CHANNEL_RUNTIME=legacy/,
   /workspace/i,
   /marketplace clone/i,
   /runtime cache/i,
-  /make the SDK path the default/i,
+  /message.*comment.*reaction/is,
   /remove the legacy path/i,
 ]) {
   assert.match(doc, pattern);

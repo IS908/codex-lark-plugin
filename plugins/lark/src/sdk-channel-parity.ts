@@ -3,19 +3,19 @@ import type { LarkMessage } from './channel.js';
 import { DOC_CHAT_ID_PREFIX, type IdentitySession } from './identity-session.js';
 import { bindSdkMessageIdentity } from './sdk-channel-identity.js';
 
-export type SdkDryRunDropReason = 'no_mention' | 'not_allowed';
-export type SdkDryRunResult =
+export type SdkMessageDropReason = 'no_mention' | 'not_allowed';
+export type SdkMessageResult =
   | { status: 'processed'; message: LarkMessage }
-  | { status: 'dropped'; reason: SdkDryRunDropReason };
+  | { status: 'dropped'; reason: SdkMessageDropReason };
 
-export interface SdkDryRunDeps {
+export interface SdkMessageDeps {
   identitySession: IdentitySession;
   allowedUserIds: string[];
   allowedChatIds: string[];
   handleMessage: (message: LarkMessage) => Promise<void>;
 }
 
-function passesSdkWhitelist(senderId: string, chatId: string, deps: SdkDryRunDeps): boolean {
+function passesSdkWhitelist(senderId: string, chatId: string, deps: SdkMessageDeps): boolean {
   const userConfigured = deps.allowedUserIds.length > 0;
   const chatConfigured = deps.allowedChatIds.length > 0;
   if (!userConfigured && !chatConfigured) return true;
@@ -38,10 +38,10 @@ function mapSdkResources(
   return mapped.length > 0 ? mapped : undefined;
 }
 
-export async function processSdkMessageDryRun(
+export async function processSdkMessage(
   sdkMessage: NormalizedMessage,
-  deps: SdkDryRunDeps,
-): Promise<SdkDryRunResult> {
+  deps: SdkMessageDeps,
+): Promise<SdkMessageResult> {
   if (sdkMessage.chatType === 'group' && !sdkMessage.mentionedBot) {
     return { status: 'dropped', reason: 'no_mention' };
   }

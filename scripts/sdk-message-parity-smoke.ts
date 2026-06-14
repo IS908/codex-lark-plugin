@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { IdentitySession } from '../src/identity-session.js';
 import {
   bindSdkCommentIdentity,
-  processSdkMessageDryRun,
+  processSdkMessage,
 } from '../src/sdk-channel-parity.js';
 
 {
   const identitySession = new IdentitySession(() => null);
   const handled: any[] = [];
-  const result = await processSdkMessageDryRun(
+  const result = await processSdkMessage(
     {
       messageId: 'om_group_mentioned',
       chatId: 'oc_group',
@@ -59,7 +59,7 @@ import {
 {
   const identitySession = new IdentitySession(() => null);
   let handled = false;
-  const result = await processSdkMessageDryRun(
+  const result = await processSdkMessage(
     {
       messageId: 'om_group_unmentioned',
       chatId: 'oc_group',
@@ -91,7 +91,7 @@ import {
 {
   const identitySession = new IdentitySession(() => null);
   let handled = false;
-  const result = await processSdkMessageDryRun(
+  const result = await processSdkMessage(
     {
       messageId: 'om_p2p',
       chatId: 'oc_p2p',
@@ -118,6 +118,43 @@ import {
   assert.equal(result.status, 'processed');
   assert.equal(handled, true);
   assert.equal(identitySession.getCaller('oc_p2p'), 'ou_sender');
+}
+
+{
+  const identitySession = new IdentitySession(() => null);
+  const handled: any[] = [];
+  const result = await processSdkMessage(
+    {
+      messageId: 'om_root_child',
+      chatId: 'oc_group',
+      chatType: 'group',
+      senderId: 'ou_sender',
+      content: 'reply with root only',
+      rawContentType: 'text',
+      mentionedBot: true,
+      mentionAll: false,
+      mentions: [],
+      resources: [],
+      rootId: 'om_root_parent',
+      replyToMessageId: 'om_parent',
+      createTime: Date.now(),
+    },
+    {
+      identitySession,
+      allowedUserIds: [],
+      allowedChatIds: [],
+      handleMessage: async (message) => {
+        handled.push(message);
+      },
+    },
+  );
+
+  assert.equal(result.status, 'processed');
+  assert.equal(handled[0].threadId, 'om_root_parent');
+  assert.equal(handled[0].rootMessageId, 'om_root_parent');
+  assert.equal(handled[0].parentId, 'om_parent');
+  assert.equal(identitySession.getCaller('oc_group', 'om_root_parent'), 'ou_sender');
+  assert.equal(identitySession.getCaller('oc_group'), null);
 }
 
 {

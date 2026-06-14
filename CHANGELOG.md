@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-15
+
+### Added
+- Added a live SDK channel runtime bridge that connects `@larksuite/channel` `message`, `comment`, and `reaction` events into the existing local Codex processing pipeline.
+- Added SDK runtime smoke coverage with a fake SDK channel, covering live event registration, message delivery, doc-comment delivery, server-derived identity binding, attachment metadata, and passive reaction handling.
+
+### Changed
+- `LARK_CHANNEL_RUNTIME` now defaults to `sdk` for internal testing.
+- `LARK_CHANNEL_RUNTIME=legacy` remains available as a rollback path to the pre-SDK WebSocket runtime.
+- Updated SDK rollout documentation, README configuration tables, and `.env.example` for the SDK-default runtime.
+
 ## [1.2.0] - 2026-06-14
 
 ### Added
@@ -199,7 +210,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.1...v1.1.2
