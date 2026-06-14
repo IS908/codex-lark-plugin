@@ -310,4 +310,115 @@ const legacyCard = {
   assert.match(captured.text, /Root card body/);
 }
 
+{
+  const channel = new LarkChannel();
+  const captured: any[] = [];
+  let mgetCalls = 0;
+  channel.setMessageHandler(async (message: any) => {
+    captured.push(message);
+  });
+  (channel as any).nameCache.set('ou_mget_card', 'Mget Tester');
+  (channel as any).client = {
+    request: async (args: any) => {
+      assert.equal(args.method, 'POST');
+      assert.match(args.url, /\/open-apis\/im\/v1\/messages\/mget$/);
+      assert.deepEqual(args.data, { message_ids: ['om_thread_root_card'] });
+      mgetCalls++;
+      return {
+        data: {
+          items: [
+            {
+              message_id: 'om_thread_root_card',
+              msg_type: 'interactive',
+              body: {
+                content: JSON.stringify({
+                  header: {
+                    title: { tag: 'plain_text', content: 'Fetched Root Card' },
+                  },
+                  body: {
+                    elements: [
+                      {
+                        tag: 'markdown',
+                        content: 'Fetched card body with **links hidden**.',
+                      },
+                    ],
+                  },
+                }),
+              },
+              mentions: [],
+            },
+          ],
+        },
+      };
+    },
+    im: {
+      v1: {
+        message: {
+          get: async (args: any) => {
+            assert.equal(args.path.message_id, 'om_thread_root_card');
+            return {
+              data: {
+                items: [
+                  {
+                    message_id: 'om_thread_root_card',
+                    thread_id: 'omt_thread_card',
+                    msg_type: 'text',
+                    body: {
+                      content: JSON.stringify({
+                        text: '已整理：Claude Code 大项目最佳实践（官方文档摘录）— 2026...\n请升级至最新版本客户端，以查看内容',
+                      }),
+                    },
+                    mentions: [],
+                  },
+                ],
+              },
+            };
+          },
+        },
+        messageReaction: {
+          create: async () => ({ data: { reaction_id: 'reaction_mget_card' } }),
+          delete: async () => ({}),
+        },
+      },
+    },
+  };
+
+  await (channel as any).handleMessageEvent({
+    message: {
+      message_id: 'om_thread_child_1',
+      chat_id: 'oc_mget_card',
+      chat_type: 'p2p',
+      content: JSON.stringify({ text: 'summarize root card' }),
+      message_type: 'text',
+      thread_id: 'omt_thread_card',
+      root_id: 'om_thread_root_card',
+    },
+    sender: { sender_id: { open_id: 'ou_mget_card' } },
+  });
+
+  await waitFor(() => captured.length === 1);
+  assert.equal(captured[0].threadId, 'omt_thread_card');
+  assert.match(captured[0].text, /\[Quoted Message\]/);
+  assert.match(captured[0].text, /Fetched Root Card/);
+  assert.match(captured[0].text, /Fetched card body with \*\*links hidden\*\*\./);
+  assert.doesNotMatch(captured[0].text, /请升级至最新版本客户端/);
+
+  await (channel as any).handleMessageEvent({
+    message: {
+      message_id: 'om_thread_child_2',
+      chat_id: 'oc_mget_card',
+      chat_type: 'p2p',
+      content: JSON.stringify({ text: 'use cached root card' }),
+      message_type: 'text',
+      thread_id: 'omt_thread_card',
+      root_id: 'om_thread_root_card',
+    },
+    sender: { sender_id: { open_id: 'ou_mget_card' } },
+  });
+
+  await waitFor(() => captured.length === 2);
+  assert.equal(mgetCalls, 1);
+  assert.match(captured[1].text, /Fetched Root Card/);
+}
+
 console.log('PASS');

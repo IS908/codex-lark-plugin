@@ -64,6 +64,7 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
     `chat_type: ${message.chatType}`,
     `user_id: ${message.senderId}`,
     ...(message.threadId ? [`thread_id: ${message.threadId}`] : []),
+    ...(message.rootMessageId ? [`root_message_id: ${message.rootMessageId}`] : []),
     ...(message.docComment
       ? [
           `doc_token: ${message.docComment.fileToken}`,

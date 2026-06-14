@@ -467,6 +467,8 @@ process restarts.
 | `LARK_NAME_CACHE_SIZE` | `1000` | Maximum cached Feishu user/chat display names |
 | `LARK_CHAT_TYPE_CACHE_SIZE` | `1000` | Maximum cached Feishu chat type entries |
 | `LARK_LATEST_MESSAGE_TRACKER_SIZE` | `1000` | Maximum latest-inbound message tracker entries |
+| `LARK_CARD_CONTEXT_CACHE_SIZE` | `200` | Maximum cached fetched-card parent/root contexts |
+| `LARK_CARD_CONTEXT_CACHE_TTL_MS` | `1800000` | TTL for fetched interactive-card parent/root context cache |
 
 ---
 

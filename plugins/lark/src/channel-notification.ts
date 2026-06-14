@@ -12,6 +12,7 @@ export function buildChannelNotificationMeta(
     chat_type: message.chatType,
     ...(message.chatName ? { chat_name: message.chatName } : {}),
     ...(message.threadId ? { thread_id: message.threadId } : {}),
+    ...(message.rootMessageId ? { root_message_id: message.rootMessageId } : {}),
     ...(message.botMentioned ? { bot_mentioned: 'true' } : {}),
     ...(message.docComment
       ? {

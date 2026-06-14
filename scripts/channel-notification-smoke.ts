@@ -36,10 +36,14 @@ const imMeta = buildChannelNotificationMeta({
   senderId: 'ou_001',
   text: 'hello',
   messageType: 'text',
+  threadId: 'omt_001',
+  rootMessageId: 'om_root_001',
   rawContent: '{}',
 }, 'Kevin · Group');
 
 assert.equal(imMeta.chat_id, 'oc_001');
+assert.equal(imMeta.thread_id, 'omt_001');
+assert.equal(imMeta.root_message_id, 'om_root_001');
 assert.equal(imMeta.doc_token, undefined);
 assert.equal(imMeta.comment_id, undefined);
 assert.equal(imMeta.file_type, undefined);
