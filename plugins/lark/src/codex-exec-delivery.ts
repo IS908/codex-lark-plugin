@@ -43,6 +43,7 @@ export interface CodexExecSessionHealthRecorder {
     resumed: boolean;
     promptBytes: number;
     responseBytes: number;
+    usage?: import('./codex-exec.js').CodexExecUsage | null;
   }): void;
 }
 
@@ -200,6 +201,7 @@ export async function deliverMessageViaCodexExec(
     resumed: !!usedResumeSessionId,
     promptBytes: Buffer.byteLength(request.prompt, 'utf8'),
     responseBytes: Buffer.byteLength(result.text, 'utf8'),
+    usage: result.usage ?? null,
   });
   if (turnObligations?.markDeferredFromText(message.messageId, 'exec_assistant_text', text)) {
     return;

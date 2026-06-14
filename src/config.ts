@@ -100,6 +100,7 @@ export const appConfig = {
     'LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD',
     512 * 1024,
   ),
+  sessionHealthTokenThreshold: optionalPositiveNumber('LARK_SESSION_HEALTH_TOKEN_THRESHOLD', 160_000),
   sessionHealthIdleDelayMs: optionalNonNegativeNumber('LARK_SESSION_HEALTH_IDLE_DELAY_MS', 30_000),
   sessionHealthCooldownMs: optionalPositiveNumber('LARK_SESSION_HEALTH_COOLDOWN_MS', 30 * 60 * 1000),
   sessionHealthMaxCooldownMs: optionalPositiveNumber('LARK_SESSION_HEALTH_MAX_COOLDOWN_MS', 6 * 60 * 60 * 1000),

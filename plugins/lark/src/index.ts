@@ -103,6 +103,7 @@ async function main() {
           ownerOpenId: appConfig.ownerOpenId,
           turnThreshold: appConfig.sessionHealthTurnThreshold,
           promptBytesThreshold: appConfig.sessionHealthPromptBytesThreshold,
+          tokenUsageThreshold: appConfig.sessionHealthTokenThreshold,
           quietDelayMs: appConfig.sessionHealthIdleDelayMs,
           baseCooldownMs: appConfig.sessionHealthCooldownMs,
           maxCooldownMs: appConfig.sessionHealthMaxCooldownMs,

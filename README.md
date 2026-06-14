@@ -407,20 +407,21 @@ Session-health nudges are off by default and only run when
 session resume is enabled. The plugin does not clear, compact, or reset Codex
 sessions automatically.
 
-Codex exec JSON currently gives the bridge a session id but no stable token or
-context usage statistic, so the monitor uses a weaker heuristic: exec turn
-count and prompt bytes observed by the bridge. It only DMs the owner after the
-channel is quiet: the message queue is idle, ack reactions are clear, and no
-reply obligations are pending. Repeated nudges use exponential cooldown and stop
-after the configured per-session cap. The heuristic resets when Codex returns a
-new session id for the same chat/thread, such as after stale-session recovery,
-or when the plugin process restarts.
+When Codex exec JSONL exposes token/context usage, the monitor uses that real
+usage before falling back to the weaker heuristic of exec turn count and prompt
+bytes observed by the bridge. It only DMs the owner after the channel is quiet:
+the message queue is idle, ack reactions are clear, and no reply obligations are
+pending. Repeated nudges use exponential cooldown and stop after the configured
+per-session cap. The episode resets when Codex returns a new session id for the
+same chat/thread, such as after stale-session recovery, or when the plugin
+process restarts.
 
 | Variable | Default | Description |
 |---|---|---|
 | `LARK_SESSION_HEALTH_ENABLED` | `false` | Enable owner DM nudges for long-running Codex exec sessions |
 | `LARK_SESSION_HEALTH_TURN_THRESHOLD` | `80` | Nudge after this many exec turns in the same chat/thread session |
-| `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD` | `524288` | Nudge after this many cumulative prompt bytes observed by the bridge |
+| `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD` | `524288` | Nudge after this many cumulative prompt bytes when Codex exec JSONL does not expose token usage |
+| `LARK_SESSION_HEALTH_TOKEN_THRESHOLD` | `160000` | Nudge after this many reported Codex exec total tokens when JSONL usage is available |
 | `LARK_SESSION_HEALTH_IDLE_DELAY_MS` | `30000` | Delay before checking the idle/quiet gates |
 | `LARK_SESSION_HEALTH_COOLDOWN_MS` | `1800000` | First nudge cooldown in milliseconds |
 | `LARK_SESSION_HEALTH_MAX_COOLDOWN_MS` | `21600000` | Maximum exponential cooldown in milliseconds |

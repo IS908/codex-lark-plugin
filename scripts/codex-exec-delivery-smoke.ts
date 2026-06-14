@@ -8,7 +8,11 @@
  */
 import assert from 'node:assert/strict';
 import { deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
-import { buildCodexExecArgs, extractCodexExecSessionId } from '../src/codex-exec.js';
+import {
+  buildCodexExecArgs,
+  extractCodexExecSessionId,
+  extractCodexExecUsage,
+} from '../src/codex-exec.js';
 import type { LarkMessage } from '../src/channel.js';
 import type { ReplyRequest } from '../src/reply-sender.js';
 import { TurnObligationTracker } from '../src/turn-obligation.js';
@@ -67,6 +71,30 @@ assert.equal(
     '{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}\n',
   ),
   '0199a213-81c0-7800-8aa1-bbab2a035a53',
+);
+
+assert.deepEqual(
+  extractCodexExecUsage(
+    [
+      '{"type":"turn.completed","usage":{"input_tokens":1200,"output_tokens":300,"total_tokens":1500,"context_window":200000}}',
+      '{"type":"ignored"}',
+    ].join('\n'),
+  ),
+  {
+    inputTokens: 1200,
+    outputTokens: 300,
+    totalTokens: 1500,
+    contextWindowTokens: 200000,
+  },
+);
+
+assert.deepEqual(
+  extractCodexExecUsage('{"usage":{"prompt_tokens":10,"completion_tokens":5}}'),
+  {
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 15,
+  },
 );
 
 await deliverMessageViaCodexExec({
@@ -208,7 +236,11 @@ await deliverMessageViaCodexExec({
   sessionStore,
   runCodexExec: async (request) => {
     sessionRequests.push(request);
-    return { text: 'first answer', sessionId: '0199a213-81c0-7800-8aa1-bbab2a035a53' };
+    return {
+      text: 'first answer',
+      sessionId: '0199a213-81c0-7800-8aa1-bbab2a035a53',
+      usage: { inputTokens: 100, outputTokens: 25, totalTokens: 125, contextWindowTokens: 200000 },
+    };
   },
   sessionHealth: {
     recordTurn: (input) => {
@@ -247,6 +279,12 @@ assert.equal(sessionHealthRecords[0].resumed, false);
 assert.equal(sessionHealthRecords[1].resumed, true);
 assert.ok(sessionHealthRecords[0].promptBytes > 0);
 assert.ok(sessionHealthRecords[0].responseBytes > 0);
+assert.deepEqual(sessionHealthRecords[0].usage, {
+  inputTokens: 100,
+  outputTokens: 25,
+  totalTokens: 125,
+  contextWindowTokens: 200000,
+});
 
 const actionDispatches: any[] = [];
 const actionReplies: ReplyRequest[] = [];

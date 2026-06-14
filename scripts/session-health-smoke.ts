@@ -201,7 +201,49 @@ const {
   assert.equal(await monitor.checkNow('chat:oc_3', 1_100), false);
 }
 
-// 6. Nudge text documents the heuristic and avoids implying auto clear/compact.
+// 6. Real Codex usage, when present, takes precedence over prompt-byte heuristics.
+{
+  const sent: any[] = [];
+  const monitor = new SessionHealthMonitor({
+    enabled: true,
+    ownerOpenId: 'ou_owner',
+    turnThreshold: 100,
+    promptBytesThreshold: 100,
+    tokenUsageThreshold: 500,
+    quietDelayMs: 0,
+    baseCooldownMs: 100,
+    maxCooldownMs: 250,
+    maxNudges: 2,
+    quiet: () => ({ queueIdle: true, ackQuiet: true, turnQuiet: true }),
+    notifyOwner: async (nudge: any) => { sent.push(nudge); },
+  });
+  monitor.recordTurn({
+    sessionKey: 'chat:oc_usage',
+    chatId: 'oc_usage',
+    sessionId: 'session_usage',
+    resumed: true,
+    promptBytes: 1_000_000,
+    responseBytes: 20,
+    usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120, contextWindowTokens: 2000 },
+  }, 1_000);
+  assert.equal(await monitor.checkNow('chat:oc_usage', 1_000), false);
+
+  monitor.recordTurn({
+    sessionKey: 'chat:oc_usage',
+    chatId: 'oc_usage',
+    sessionId: 'session_usage',
+    resumed: true,
+    promptBytes: 1,
+    responseBytes: 20,
+    usage: { inputTokens: 450, outputTokens: 75, totalTokens: 525, contextWindowTokens: 2000 },
+  }, 1_100);
+  assert.equal(await monitor.checkNow('chat:oc_usage', 1_100), true);
+  assert.equal(sent[0].reason, 'token_usage_threshold');
+  assert.equal(sent[0].totalTokens, 525);
+  assert.equal(sent[0].contextWindowTokens, 2000);
+}
+
+// 7. Nudge text documents real usage when available and avoids implying auto clear/compact.
 {
   const text = buildSessionHealthNudgeText({
     sessionKey: 'chat:oc_1',
@@ -211,13 +253,17 @@ const {
     turnCount: 10,
     promptBytes: 1234,
     responseBytes: 567,
-    reason: 'prompt_bytes_threshold',
+    reason: 'token_usage_threshold',
+    totalTokens: 4567,
+    contextWindowTokens: 200000,
+    usageSamples: 3,
+    missingUsageSamples: 1,
     nudgeCount: 1,
     cooldownMs: 1000,
   });
-  assert.match(text, /heuristic/i);
+  assert.match(text, /Codex exec usage/i);
   assert.match(text, /No automatic clear or compact/i);
   assert.match(text, /subagents/i);
 }
 
-console.log('session-health smoke: 6/6 PASS');
+console.log('session-health smoke: 7/7 PASS');
