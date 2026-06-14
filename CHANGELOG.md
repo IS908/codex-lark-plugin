@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-06-14
+
+### Security
+- Blocked the reserved `__terminal__` owner fallback while active Lark channel turns are in flight.
+- Made `save_skill` owner-only with server-derived caller identity and audit logging because skills are global across users and chats.
+- Stopped `run_local_cli_tool` from inheriting the plugin process environment by default; tool configs must now explicitly use `envAllowlist`, literal `env`, or opt-in `inheritEnv`.
+- Updated the locked `tsx` / `esbuild` dependency set so `npm run audit:deps` passes again.
+
+### Fixed
+- Aligned README, AGENTS, `.env.example`, and MCP server instructions with the current tool list and config surface.
+- Rejected invalid numeric configuration values at startup instead of silently falling back or accepting unsafe ranges.
+
 ## [1.1.0] - 2026-06-14
 
 ### Added
@@ -154,7 +166,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.12...v1.1.0
 [1.0.12]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.10...v1.0.11
