@@ -11,7 +11,8 @@ const code = `
     textChunkLimit: appConfig.textChunkLimit,
     minSearchScore: appConfig.minSearchScore,
     memoryDedupWindowMs: appConfig.memoryDedupWindowMs,
-    inboxMaxBytes: appConfig.inboxMaxBytes
+    inboxMaxBytes: appConfig.inboxMaxBytes,
+    codexExecCwd: appConfig.codexExecCwd
   }));
 `;
 
@@ -57,5 +58,9 @@ const zeroAllowed = expectOk({
 });
 assert.equal(zeroAllowed.memoryDedupWindowMs, 0);
 assert.equal(zeroAllowed.inboxMaxBytes, 0);
+
+const defaultPaths = expectOk({});
+assert.match(defaultPaths.codexExecCwd, /codex-exec-workdir$/);
+assert.doesNotMatch(defaultPaths.codexExecCwd, /codex-lark-plugin$/);
 
 console.log('config-validation smoke: PASS');

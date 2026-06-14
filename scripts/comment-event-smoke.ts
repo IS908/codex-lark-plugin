@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
+process.env.LARK_DOC_COMMENT_ACK_EMOJI = 'THUMBSUP';
 
 const { handleCommentEvent, LarkChannel } = await import('../src/channel.js');
 const { IdentitySession } = await import('../src/identity-session.js');

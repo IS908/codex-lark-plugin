@@ -312,11 +312,11 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | `max(60000, LARK_CODEX_EXEC_TIMEOUT_MS + 60000)` | Max wait for a visible reply/defer before logging a missed Lark turn |
 | `LARK_CODEX_DELIVERY_MODE` | `exec` | `exec` runs `codex exec` for each Feishu message and sends the final answer directly through Feishu. `notification` keeps the legacy `notifications/Codex/channel` path for compatible hosts. |
 | `LARK_CODEX_EXEC_COMMAND` | `codex` | Codex CLI command used by exec delivery |
-| `LARK_CODEX_EXEC_CWD` | plugin process cwd | Working directory for `codex exec` |
+| `LARK_CODEX_EXEC_CWD` | `~/.codex/channels/lark/codex-exec-workdir` | Working directory for `codex exec`; keep it free of `.mcp.json` to avoid recursively loading this Lark MCP server |
 | `LARK_CODEX_EXEC_TIMEOUT_MS` | `600000` | Timeout for one `codex exec` run |
 | `LARK_CODEX_EXEC_SANDBOX` | `workspace-write` | Sandbox passed to `codex exec`: `read-only`, `workspace-write`, or `danger-full-access` |
 | `LARK_CODEX_EXEC_MODEL` | (empty) | Optional model override for exec delivery |
-| `LARK_CODEX_EXEC_PROFILE` | (empty) | Optional Codex config profile for exec delivery |
+| `LARK_CODEX_EXEC_PROFILE` | (empty) | Optional Codex config profile for exec delivery; startup warns if the selected profile appears to include the Lark MCP server |
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | Pass `--ignore-user-config` to `codex exec` to avoid recursively loading the Lark MCP server |
 | `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | Resume one Codex exec session per Feishu `chat_id` / `thread_id`. This preserves multi-turn context inside the Codex CLI session store; it does not attach to an already-open interactive terminal TUI session. |
 

@@ -296,11 +296,11 @@ git push origin v1.0.0
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | `max(60000, LARK_CODEX_EXEC_TIMEOUT_MS + 60000)` | 可见回复或 defer 前的最长等待时间，超时后记录未满足的 Lark turn |
 | `LARK_CODEX_DELIVERY_MODE` | `exec` | `exec` 表示每条飞书消息运行一次 `codex exec`，并把最终回答直接发回飞书；`notification` 保留旧的 `notifications/Codex/channel` 路径，仅用于兼容支持该协议的 host |
 | `LARK_CODEX_EXEC_COMMAND` | `codex` | exec delivery 使用的 Codex CLI 命令 |
-| `LARK_CODEX_EXEC_CWD` | 插件进程 cwd | `codex exec` 的工作目录 |
+| `LARK_CODEX_EXEC_CWD` | `~/.codex/channels/lark/codex-exec-workdir` | `codex exec` 的工作目录；保持目录内没有 `.mcp.json`，避免递归加载当前 Lark MCP server |
 | `LARK_CODEX_EXEC_TIMEOUT_MS` | `600000` | 单次 `codex exec` 超时时间 |
 | `LARK_CODEX_EXEC_SANDBOX` | `workspace-write` | 传给 `codex exec` 的沙箱：`read-only`、`workspace-write` 或 `danger-full-access` |
 | `LARK_CODEX_EXEC_MODEL` | （空） | exec delivery 的可选模型覆盖 |
-| `LARK_CODEX_EXEC_PROFILE` | （空） | exec delivery 的可选 Codex 配置 profile |
+| `LARK_CODEX_EXEC_PROFILE` | （空） | exec delivery 的可选 Codex 配置 profile；启动时会提示该 profile 是否疑似包含 Lark MCP server |
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | 传 `--ignore-user-config` 给 `codex exec`，避免递归加载当前 Lark MCP server |
 | `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | 为每个飞书 `chat_id` / `thread_id` 恢复一个 Codex exec session，以保留多轮上下文；这不是接管某个已经打开的终端 TUI 交互 session。 |
 
