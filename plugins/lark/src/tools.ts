@@ -897,16 +897,37 @@ export function registerTools(
     'save_skill',
     {
       description:
-        'Save a reusable procedure as a global skill. Skills are searchable across all users and chats. Use for repeatable workflows, deployment procedures, troubleshooting guides, etc.',
+        'Save a reusable procedure as a global skill. Owner-only because skills are searchable across all users and chats. Use for repeatable workflows, deployment procedures, troubleshooting guides, etc.',
       inputSchema: z.object({
         name: z.string().describe('Short skill name (e.g., "deploy-service")'),
         description: z.string().describe('One-line description of what this skill does'),
         content: z.string().describe('The full procedure/instructions'),
-        chat_id: z.string().optional().describe('Chat ID where this skill was created (for context)'),
+        chat_id: z.string().describe('Current channel chat_id. Required to resolve caller identity server-side.'),
+        thread_id: z.string().optional().describe('Current channel thread_id, when present.'),
       }),
     },
-    async ({ name, description, content }) => {
-      await memoryStore.saveSkill(name, description, content);
+    async ({ name, description, content, chat_id, thread_id }) => {
+      const auditArgs = { name, chat_id, thread_id };
+      const auth = resolveCaller('save_skill', chat_id, thread_id, auditArgs);
+      if ('error' in auth) return auth.error;
+      const { caller } = auth;
+      if (!appConfig.ownerOpenId || caller !== appConfig.ownerOpenId) {
+        void audit('save_skill', caller, auditArgs, 'denied');
+        return {
+          content: [{ type: 'text' as const, text: 'save_skill is owner-only because skills are global across users and chats.' }],
+          isError: true,
+        };
+      }
+      try {
+        await memoryStore.saveSkill(name, description, content);
+        void audit('save_skill', caller, auditArgs, 'ok');
+      } catch (err: any) {
+        void audit('save_skill', caller, auditArgs, 'error');
+        return {
+          content: [{ type: 'text' as const, text: `Failed to save skill "${name}": ${err?.message ?? String(err)}` }],
+          isError: true,
+        };
+      }
       return {
         content: [{ type: 'text' as const, text: `Saved skill "${name}": ${description}` }],
       };

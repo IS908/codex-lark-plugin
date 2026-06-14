@@ -75,6 +75,10 @@ echo "=== Job tool unit checks ==="
 node --import tsx scripts/job-tools-smoke.ts
 
 echo ""
+echo "=== Save skill tool unit checks ==="
+node --import tsx scripts/save-skill-smoke.ts
+
+echo ""
 echo "=== Local CLI tool unit checks ==="
 node --import tsx scripts/local-cli-tools-smoke.ts
 
