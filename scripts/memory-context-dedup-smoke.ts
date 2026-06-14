@@ -87,7 +87,7 @@ function makeBlocks(profileContent = '- likes concise reviews') {
   assert.match(second.memoryContext, /likes concise reviews/);
 }
 
-// 4. Delivery failure invalidates the scope so the next turn does not point at unseen context.
+// 4. Thrown delivery failure invalidates the scope so the next turn does not point at unseen context.
 {
   const originalWindow = appConfig.memoryDedupWindowMs;
   (appConfig as { memoryDedupWindowMs: number }).memoryDedupWindowMs = 30 * 60 * 1000;
@@ -129,4 +129,49 @@ function makeBlocks(profileContent = '- likes concise reviews') {
   }
 }
 
-console.log('memory-context-dedup smoke: 4/4 PASS');
+// 5. Internally handled delivery failure can still explicitly invalidate the scope.
+{
+  const originalWindow = appConfig.memoryDedupWindowMs;
+  (appConfig as { memoryDedupWindowMs: number }).memoryDedupWindowMs = 30 * 60 * 1000;
+  try {
+    const channel = new LarkChannel();
+    channel.setMemoryStore({
+      getProfile: async () => '- internally handled failure must see this',
+      searchEpisodes: async () => [],
+      searchSkills: async () => [],
+    } as any);
+
+    let calls = 0;
+    const handled: any[] = [];
+    channel.setMessageHandler(async (msg: any) => {
+      calls += 1;
+      if (calls === 1) {
+        channel.invalidateMemoryDedupScope(msg.chatId, msg.threadId, 'simulated caught delivery failure');
+        return;
+      }
+      handled.push(msg);
+    });
+
+    const message = {
+      messageId: 'mid_caught_1',
+      chatId: 'oc_caught_failure',
+      chatType: 'group',
+      senderId: 'ou_owner',
+      text: 'review this',
+      messageType: 'text',
+      threadId: 'thread_1',
+      rawContent: '{}',
+    };
+
+    await (channel as any).processEnqueuedMessage(message);
+    await (channel as any).processEnqueuedMessage({ ...message, messageId: 'mid_caught_2' });
+
+    assert.equal(handled.length, 1);
+    assert.match(handled[0].text, /internally handled failure must see this/);
+    assert.doesNotMatch(handled[0].text, /<memory_context_omitted /);
+  } finally {
+    (appConfig as { memoryDedupWindowMs: number }).memoryDedupWindowMs = originalWindow;
+  }
+}
+
+console.log('memory-context-dedup smoke: 5/5 PASS');

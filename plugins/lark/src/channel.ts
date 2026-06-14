@@ -573,6 +573,12 @@ export class LarkChannel {
     return this.latestMessageTracker;
   }
 
+  invalidateMemoryDedupScope(chatId: string, threadId?: string, reason = 'manual'): void {
+    const scopeKey = createMemoryDedupScopeKey(chatId, threadId);
+    this.memoryDeduper.invalidate(scopeKey);
+    debugLog(`[memory-dedup] invalidated scope=${scopeKey} reason=${reason}`);
+  }
+
   async start(): Promise<void> {
     // Fetch bot's own open_id for filtering group @mentions
     await this.fetchBotOpenId();
@@ -872,14 +878,11 @@ export class LarkChannel {
         await this.messageHandler(enrichedMessage);
         debugLog(`[channel] Message handler completed for message ${messageId}`);
       } catch (err) {
-        this.memoryDeduper.invalidate(createMemoryDedupScopeKey(chatId, threadId));
-        debugLog(
-          `[memory-dedup] invalidated scope=${createMemoryDedupScopeKey(chatId, threadId)} after delivery failure for message ${messageId}`
-        );
+        this.invalidateMemoryDedupScope(chatId, threadId, `delivery failure for message ${messageId}`);
         throw err;
       }
     } else {
-      this.memoryDeduper.invalidate(createMemoryDedupScopeKey(chatId, threadId));
+      this.invalidateMemoryDedupScope(chatId, threadId, `no handler for message ${messageId}`);
       debugLog(`[channel] No message handler registered for message ${messageId}`);
     }
   }
