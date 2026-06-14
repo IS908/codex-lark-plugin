@@ -55,7 +55,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 ### Privacy & Security (v0.9.0+)
 
-- **Server-derived caller identity**: sensitive tools (`save_memory`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
+- **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `run_local_cli_tool`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
 - **Doc-comment binding**: doc-comment tools only run from `doc:<file_token>` turns, require the current `thread_id`, and reject prompt-injected `doc_token` mismatches so comments cannot be posted into a different document
 - **Memory transparency (v0.11.0+)**: `what_do_you_know` lists what the bot has stored about the caller (filtered by current-chat visibility); `forget_memory` removes a specific line by hash. Optional `promote_to_rule` feeds corrections into `privacy-rules.md` — a self-learning loop that makes future misclassifications less likely
 - **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/audit.log` records every sensitive-tool invocation (timestamp / tool / caller / outcome / redacted args) so the operator can retrospectively inspect what was accessed on their machine
@@ -67,7 +67,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **`list_jobs` visibility filter**: in a group chat, members only see jobs whose `target_chat_id` matches that group (with prompt bodies redacted for non-owners); in a private chat, the caller sees their own jobs. Group members can no longer inspect each other's private jobs
 - **Owner-only mutations**: `update_job` / `delete_job` require `caller == created_by`
 - **CronJob isolation**: each cronjob execution runs under a unique `thread_id` so scheduled actions don't collide with concurrent human messages in the same chat
-- **Terminal fallback**: terminal skill invocations (e.g. `$lark:jobs`) resolve via the reserved `__terminal__` chat id -> `LARK_OWNER_OPEN_ID`
+- **Terminal fallback**: terminal skill invocations (e.g. `$lark:jobs`) resolve via the reserved `__terminal__` chat id -> `LARK_OWNER_OPEN_ID` only outside active Lark channel turns
 
 ### Scheduled Jobs (CronJob)
 
@@ -309,6 +309,7 @@ failure invalidates that scope so the next turn receives the full context.
 |---|---|---|
 | `LARK_TEXT_CHUNK_LIMIT` | `4000` | Maximum characters per message chunk |
 | `LARK_QUEUE_HANDLER_TIMEOUT_MS` | `30000` | Per-thread message handler timeout in milliseconds |
+| `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | `max(60000, LARK_CODEX_EXEC_TIMEOUT_MS + 60000)` | Max wait for a visible reply/defer before logging a missed Lark turn |
 | `LARK_CODEX_DELIVERY_MODE` | `exec` | `exec` runs `codex exec` for each Feishu message and sends the final answer directly through Feishu. `notification` keeps the legacy `notifications/Codex/channel` path for compatible hosts. |
 | `LARK_CODEX_EXEC_COMMAND` | `codex` | Codex CLI command used by exec delivery |
 | `LARK_CODEX_EXEC_CWD` | plugin process cwd | Working directory for `codex exec` |
@@ -327,6 +328,10 @@ does not change the general `codex exec` sandbox. Each invocation resolves the
 caller from `IdentitySession`, authorizes against the per-tool config, applies
 one parameter filtering mode, runs `spawn(command, args, { shell: false })`,
 captures bounded output, redacts common secrets, and writes the audit log.
+By default, the child process receives only a small runtime environment
+(`HOME`, `PATH`, temp/user/locale keys). Use `envAllowlist` for selected parent
+environment keys, literal `env` for fixed values, or `inheritEnv: true` only for
+trusted tools that intentionally need the full plugin process environment.
 
 Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
 `~/.codex/channels/lark/local-cli-tools.json`.
@@ -338,6 +343,7 @@ Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
       "command": "/opt/homebrew/bin/lark-cli",
       "allowedSubcommands": ["doc", "drive", "sheets"],
       "paramBlocklist": ["--token", "--secret", "--app-secret", "--debug-dump-env"],
+      "envAllowlist": ["LARK_APP_ID"],
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
       "allowedCallers": "owners"
@@ -346,6 +352,7 @@ Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
       "command": "/opt/homebrew/bin/lark-cli",
       "fixedArgs": ["doc", "create"],
       "paramAllowlist": ["--title", "--content", "--folder", "--format"],
+      "env": { "LARK_CLI_OUTPUT": "json" },
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
       "allowedCallers": "lark_allowed_user_ids"
@@ -357,6 +364,8 @@ Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
 `allowedCallers` accepts `"owners"`, `"lark_allowed_user_ids"`, `"public"`, or
 an explicit array of Feishu/Lark `open_id` values. Tool configs must set exactly
 one of `paramAllowlist` or `paramBlocklist`. Commands must be absolute paths.
+Environment keys in `envAllowlist` and `env` must use shell-compatible names
+such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 
 ### Optional -- Acknowledgement
 
@@ -425,7 +434,7 @@ or when the plugin process restarts.
 
 | Variable | Default | Description |
 |---|---|---|
-| `LARK_OWNER_OPEN_ID` | (empty) | Operator open_id. Enables terminal skill invocations (e.g. `$lark:jobs`) to resolve the caller via the reserved `__terminal__` chat id. When unset, terminal-side sensitive operations are denied. |
+| `LARK_OWNER_OPEN_ID` | (empty) | Operator open_id. Enables terminal skill invocations (e.g. `$lark:jobs`) to resolve the caller via the reserved `__terminal__` chat id outside active Lark turns. When unset, terminal-side sensitive operations are denied. |
 | `LARK_IDENTITY_SESSION_TTL_MS` | `max(2h, LARK_INACTIVITY_HOURS × 2h)` | Lifetime of a server-side `(chat_id, thread_id?) → open_id` session entry. Must exceed the auto-flush window so distillation-triggered tool calls still resolve to the last real user. |
 | `LARK_IDENTITY_SESSION_MAX_ENTRIES` | `5000` | Maximum server-derived caller session entries retained in memory. Oldest entries are evicted first. |
 | `LARK_PRIVACY_RULES_FILE` | `~/.codex/channels/lark/privacy-rules.md` | Override the path to the L2 user rules file. The distiller injects this file's contents into its classification prompt. |
@@ -526,13 +535,14 @@ The plugin registers the following MCP tools for Codex to use:
 | `reply_doc_comment` | Reply to the triggering Feishu doc-comment thread. Owner-only and scoped to the current `doc:<file_token>` turn. |
 | `create_doc_comment` | Create a new top-level comment in the triggering Feishu document. Owner-only and scoped to the current `doc:<file_token>` turn. |
 | `save_memory` | Save a memory entry (profile / chat episode / thread episode) for cross-session recall. Profile writes target the resolved caller (server-derived, v0.9.0+) and go into the chosen `tier` (`public` or `private`, default `private`, v0.10.0+). Requires `chat_id`. |
-| `save_skill` | Save a reusable procedure as a globally searchable skill. |
+| `save_skill` | Save a reusable procedure as a globally searchable skill. Owner-only because skills are visible across users/chats; requires `chat_id` and optional `thread_id` for server-derived caller identity. |
 | `create_job` | Create a scheduled cronjob (message or prompt type). Creator derived from session; requires `chat_id` (used to populate `origin_chat_id`). |
 | `list_jobs` | List cronjobs visible in the current chat. Filter follows rendering-visibility: private → caller's own jobs, group → jobs with `target_chat_id == currentChat` (prompts redacted for non-owners). Requires `chat_id`. |
 | `update_job` | Update a cronjob (schedule, content, pause/resume). Owner-only. Requires `chat_id`. |
 | `delete_job` | Delete a cronjob. Owner-only. Requires `chat_id`. |
 | `what_do_you_know` | List what the bot has stored in the caller's profile. Filtered by rendering visibility (both tiers in p2p, public only in groups). Each line carries an 8-char hash for use with `forget_memory`. (v0.11.0+) |
 | `forget_memory` | Remove a specific line from the caller's profile by hash. Caller-scoped and idempotent. Optional `promote_to_rule` promotes the removal into a durable `## Always private` rule in `privacy-rules.md`. (v0.11.0+) |
+| `run_local_cli_tool` | Run a configured allowlisted local CLI capability on the plugin host. Caller identity is server-derived from `chat_id` / `thread_id`; parameters and environment are filtered by `local-cli-tools.json`. (v1.1.0+) |
 
 ---
 
