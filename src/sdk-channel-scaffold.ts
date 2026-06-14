@@ -20,6 +20,7 @@ export function createSdkChannelScaffold() {
     transport: 'websocket',
     logger: makeSdkChannelLogger('lark-channel-sdk'),
     loggerLevel: LoggerLevel.info,
+    includeRawEvent: true,
     source: 'codex-lark-plugin',
   });
 }

@@ -24,20 +24,15 @@ function runStart(extraEnv: Record<string, string>, args: string[] = ['--dry-run
   }
 }
 
-const legacyDryRun = runStart({});
-assert.equal(legacyDryRun.status, 0, legacyDryRun.stderr + legacyDryRun.stdout);
-assert.equal(legacyDryRun.stdout, '');
-assert.match(legacyDryRun.stderr, /\[dry-run\] Channel runtime: legacy/);
-
-const sdkDryRun = runStart({ LARK_CHANNEL_RUNTIME: 'sdk' });
+const sdkDryRun = runStart({});
 assert.equal(sdkDryRun.status, 0, sdkDryRun.stderr + sdkDryRun.stdout);
 assert.equal(sdkDryRun.stdout, '');
 assert.match(sdkDryRun.stderr, /\[dry-run\] Channel runtime: sdk/);
 assert.match(sdkDryRun.stderr, /\[sdk-channel\] SDK scaffold validated/);
 
-const sdkLive = runStart({ LARK_CHANNEL_RUNTIME: 'sdk' }, []);
-assert.notEqual(sdkLive.status, 0, 'live SDK runtime must fail closed');
-assert.equal(sdkLive.stdout, '');
-assert.match(sdkLive.stderr, /SDK-backed channel runtime is dry-run only/i);
+const legacyDryRun = runStart({ LARK_CHANNEL_RUNTIME: 'legacy' });
+assert.equal(legacyDryRun.status, 0, legacyDryRun.stderr + legacyDryRun.stdout);
+assert.equal(legacyDryRun.stdout, '');
+assert.match(legacyDryRun.stderr, /\[dry-run\] Channel runtime: legacy/);
 
 console.log('sdk-channel-scaffold smoke: PASS');

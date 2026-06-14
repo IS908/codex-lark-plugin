@@ -34,6 +34,7 @@ import { emitCodexExecConfigDiagnostics } from './codex-exec-config.js';
 import { createCodexExecActionDispatcher } from './codex-exec-actions.js';
 import { ProfileDistillationManager } from './profile-distillation.js';
 import { validateSdkChannelScaffold } from './sdk-channel-scaffold.js';
+import { startSdkChannelRuntime } from './sdk-channel-runtime.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
@@ -374,12 +375,6 @@ async function main() {
     process.exit(0);
   }
 
-  if (appConfig.channelRuntime === 'sdk') {
-    throw new Error(
-      'SDK-backed channel runtime is dry-run only until #62 and #65 preserve identity and message parity.',
-    );
-  }
-
   // 7. Connect MCP server via stdio
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -388,7 +383,11 @@ async function main() {
   // 8. Acquire single-instance lock and start Lark WebSocket
   const lock = await acquireSingleInstanceLock(LOCK_FILE);
   registerLockCleanup(lock);
-  await channel.start();
+  if (appConfig.channelRuntime === 'sdk') {
+    await startSdkChannelRuntime(channel);
+  } else {
+    await channel.start();
+  }
 
   // 9. Re-arm flush timers from persisted episodes
   await buffer.rearmFromDisk();

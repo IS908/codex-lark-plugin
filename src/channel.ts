@@ -1,4 +1,11 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
+import type {
+  CommentEvent,
+  LarkChannel as SdkLarkChannel,
+  NormalizedMessage,
+  ReactionEvent,
+  ResourceDescriptor,
+} from '@larksuite/channel';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { appConfig } from './config.js';
@@ -15,6 +22,7 @@ import { BoundedCache } from './resource-governance.js';
 import { AckReactionTracker, deleteAckReaction } from './ack-reactions.js';
 import { extractInteractiveCardText } from './interactive-card-text.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
+import { bindSdkCommentIdentity, processSdkMessage } from './sdk-channel-parity.js';
 import {
   createMemoryDedupScopeKey,
   MemoryContextDeduper,
@@ -688,6 +696,216 @@ export class LarkChannel {
 
     this.wsClient.start({ eventDispatcher });
     debugLog('[channel] lark channel: connected to Feishu via WebSocket');
+  }
+
+  async handleSdkMessageEvent(
+    sdkMessage: NormalizedMessage,
+    sdkChannel?: Pick<SdkLarkChannel, 'downloadResource' | 'fetchMessage' | 'addReaction'>,
+  ): Promise<void> {
+    const result = await processSdkMessage(sdkMessage, {
+      identitySession: this.identitySession!,
+      allowedUserIds: appConfig.allowedUserIds,
+      allowedChatIds: appConfig.allowedChatIds,
+      handleMessage: async (message) => {
+        await this.prepareSdkMessage(message, sdkMessage, sdkChannel);
+        this.enqueueMessage(message);
+      },
+    });
+
+    if (result.status === 'dropped') {
+      debugLog(`[sdk-channel] Dropped message ${sdkMessage.messageId}: ${result.reason}`);
+    }
+  }
+
+  async handleSdkCommentEvent(
+    comment: CommentEvent,
+    sdkChannel?: Pick<SdkLarkChannel, 'comments'>,
+  ): Promise<void> {
+    if (comment.raw) {
+      await handleCommentEvent(comment.raw, {
+        botOpenId: this.botOpenId,
+        seenEventIds: this.commentEventIdSeen,
+        identitySession: this.identitySession!,
+        queue: this.queue,
+        messageHandler: this.messageHandler,
+        processMessage: this.processEnqueuedMessage.bind(this),
+        resolveUserName: this.resolveUserName.bind(this),
+        client: this.client as any,
+      });
+      return;
+    }
+
+    try {
+      const message = bindSdkCommentIdentity(comment, this.identitySession!);
+      await this.addSdkCommentContext(message, comment, sdkChannel);
+      this.enqueueMessage(message);
+    } catch (err) {
+      logSafeError('[sdk-channel] Error handling SDK comment event:', err);
+    }
+  }
+
+  async handleSdkReactionEvent(reaction: ReactionEvent): Promise<void> {
+    if (reaction.action !== 'added') return;
+
+    const messageId = reaction.messageId;
+    const emojiType = reaction.emojiType ?? '';
+    const operatorId = reaction.operator.openId ?? '';
+    const trackedMessage = this.botMessageTracker.get(messageId);
+    if (!trackedMessage) return;
+
+    if (!passesWhitelist(operatorId, trackedMessage.chatId ?? '')) {
+      debugLog(`[sdk-channel] Reaction from ${operatorId} rejected by whitelist`);
+      return;
+    }
+
+    debugLog(
+      `[sdk-channel] Ignoring user reaction ${emojiType || '(unknown)'} on bot message ${messageId} from ${operatorId}`,
+    );
+  }
+
+  setBotOpenId(openId: string | undefined): void {
+    if (openId) {
+      this.botOpenId = openId;
+      debugLog(`[sdk-channel] Bot open_id resolved: ${openId}`);
+    }
+  }
+
+  private async prepareSdkMessage(
+    message: LarkMessage,
+    sdkMessage: NormalizedMessage,
+    sdkChannel?: Pick<SdkLarkChannel, 'downloadResource' | 'fetchMessage' | 'addReaction'>,
+  ): Promise<void> {
+    this.latestMessageTracker.record(message.chatId, {
+      messageId: message.messageId,
+      threadId: message.threadId,
+      timestamp: Date.now(),
+    });
+    this.ackReactions.recordInbound(message.messageId);
+
+    await this.addSdkAckReaction(message, sdkChannel);
+    await this.addSdkImageDownloads(message, sdkMessage.resources, sdkChannel);
+    await this.addSdkParentContext(message, sdkChannel);
+
+    if (message.chatType === 'p2p' || message.chatType === 'group') {
+      this.chatTypeCache.set(message.chatId, message.chatType);
+    }
+  }
+
+  private enqueueMessage(message: LarkMessage): void {
+    debugLog(
+      `[channel] Enqueue message ${message.messageId} chat=${message.chatId} thread=${message.threadId ?? '(none)'}`
+    );
+
+    this.queue.enqueue(message.chatId, message.threadId, async () => {
+      await this.processEnqueuedMessage(message);
+    });
+  }
+
+  private async addSdkAckReaction(
+    message: LarkMessage,
+    sdkChannel?: Pick<SdkLarkChannel, 'addReaction'>,
+  ): Promise<void> {
+    const ackEmoji = message.chatType === 'p2p' ? 'Typing' : appConfig.ackEmoji;
+    if (!ackEmoji || !sdkChannel?.addReaction) return;
+
+    sdkChannel.addReaction(message.messageId, ackEmoji).then((reactionId) => {
+      if (!reactionId) return;
+      const stored = this.ackReactions.storeReaction(message.messageId, reactionId);
+      if (stored.action === 'delete-now') {
+        deleteAckReaction(this.client, stored.reaction, 'sdk-channel.delete_late');
+      }
+    }).catch(() => {});
+  }
+
+  private async addSdkImageDownloads(
+    message: LarkMessage,
+    resources: ResourceDescriptor[],
+    sdkChannel?: Pick<SdkLarkChannel, 'downloadResource'>,
+  ): Promise<void> {
+    if (!sdkChannel?.downloadResource) return;
+    const imageResources = resources.filter((resource) => resource.type === 'image' && resource.fileKey);
+    if (imageResources.length === 0) return;
+
+    const downloadedPaths: string[] = [];
+    for (const resource of imageResources) {
+      const downloaded = await this.downloadSdkResource(
+        sdkChannel,
+        message.messageId,
+        resource.fileKey,
+        'image',
+        resource.fileName ?? 'image.png',
+      );
+      if (downloaded) downloadedPaths.push(downloaded);
+    }
+
+    if (downloadedPaths.length === 1) {
+      message.imagePath = downloadedPaths[0];
+    } else if (downloadedPaths.length > 1) {
+      message.imagePaths = downloadedPaths;
+    }
+  }
+
+  private async addSdkParentContext(
+    message: LarkMessage,
+    sdkChannel?: Pick<SdkLarkChannel, 'fetchMessage'>,
+  ): Promise<void> {
+    if (!sdkChannel?.fetchMessage) return;
+    const quotedMessageId =
+      message.parentId ||
+      (isOpenMessageId(message.rootMessageId) && message.rootMessageId !== message.messageId
+        ? message.rootMessageId
+        : undefined) ||
+      (isOpenMessageId(message.threadId) && message.threadId !== message.messageId ? message.threadId : undefined);
+    if (!quotedMessageId) return;
+
+    try {
+      const parent = await sdkChannel.fetchMessage(quotedMessageId);
+      if (parent?.content) message.parentContent = normalizeFetchedMessageText(parent.content);
+    } catch {
+      // Parent message fetch failed; continue without it.
+    }
+  }
+
+  private async addSdkCommentContext(
+    message: LarkMessage,
+    comment: CommentEvent,
+    sdkChannel?: Pick<SdkLarkChannel, 'comments'>,
+  ): Promise<void> {
+    if (!sdkChannel?.comments) return;
+    try {
+      const target = await sdkChannel.comments.resolveTarget(comment.fileToken, comment.fileType);
+      if (!target) return;
+      const fetched = await sdkChannel.comments.fetch(target, comment.commentId);
+      if (fetched?.quote) {
+        message.text = `${message.text}\n\n[Selected Text]\n${capUtf8(fetched.quote, DOC_COMMENT_BODY_CAP_BYTES)}`;
+      }
+    } catch {
+      // Comment context is best-effort; keep the turn deliverable without it.
+    }
+  }
+
+  private async downloadSdkResource(
+    sdkChannel: Pick<SdkLarkChannel, 'downloadResource'>,
+    messageId: string,
+    fileKey: string,
+    resourceType: 'image' | 'file',
+    fileName: string,
+  ): Promise<string | undefined> {
+    try {
+      mkdirSync(appConfig.inboxDir, { recursive: true });
+      const data = await sdkChannel.downloadResource(messageId, fileKey, resourceType);
+      const safeName = fileName.replace(/[\\/:\0]/g, '_').slice(0, 120) || fileKey;
+      const filePath = path.join(appConfig.inboxDir, `${Date.now()}-${fileKey}-${safeName}`);
+      await writeSdkResource(data, filePath, {
+        maxBytes: appConfig.downloadMaxBytes,
+        timeoutMs: appConfig.downloadTimeoutMs,
+      });
+      debugLog(`[sdk-channel] Downloaded ${resourceType} ${fileKey} -> ${filePath}`);
+      return filePath;
+    } catch (err) {
+      debugLog(`[sdk-channel] Failed to download ${resourceType} ${fileKey}: ${err}`);
+      return undefined;
+    }
   }
 
   private async handleMessageEvent(data: any): Promise<void> {

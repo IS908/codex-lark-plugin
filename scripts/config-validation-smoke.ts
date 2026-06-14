@@ -64,9 +64,12 @@ assert.equal(zeroAllowed.inboxMaxBytes, 0);
 const defaultPaths = expectOk({});
 assert.match(defaultPaths.codexExecCwd, /codex-exec-workdir$/);
 assert.doesNotMatch(defaultPaths.codexExecCwd, /codex-lark-plugin$/);
-assert.equal(defaultPaths.channelRuntime, 'legacy');
+assert.equal(defaultPaths.channelRuntime, 'sdk');
 
 const sdkRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'sdk' });
 assert.equal(sdkRuntime.channelRuntime, 'sdk');
+
+const legacyRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'legacy' });
+assert.equal(legacyRuntime.channelRuntime, 'legacy');
 
 console.log('config-validation smoke: PASS');
