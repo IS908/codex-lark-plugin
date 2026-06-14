@@ -330,6 +330,9 @@ visible reply, derives caller identity from the current Feishu event, executes
 the action locally, and rejects malformed blocks instead of recursively loading
 the Lark MCP server.
 
+For SDK migration smoke commands, rollout controls, and rollback steps, see
+[SDK channel rollout](docs/sdk-channel-rollout.md).
+
 ### Optional -- Local CLI Tools
 
 `run_local_cli_tool` is a controlled MCP tool for trusted host-local CLI or
