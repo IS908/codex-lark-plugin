@@ -1,8 +1,9 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { randomUUID } from 'node:crypto';
 import { feishuApiCall } from './feishu-retry.js';
+import type { CodexExecUsage } from './codex-exec.js';
 
-export type SessionHealthNudgeReason = 'turn_threshold' | 'prompt_bytes_threshold';
+export type SessionHealthNudgeReason = 'turn_threshold' | 'prompt_bytes_threshold' | 'token_usage_threshold';
 
 export interface SessionHealthQuietStatus {
   queueIdle: boolean;
@@ -18,6 +19,7 @@ export interface SessionHealthTurn {
   resumed: boolean;
   promptBytes: number;
   responseBytes: number;
+  usage?: CodexExecUsage | null;
 }
 
 export interface SessionHealthNudge {
@@ -28,6 +30,10 @@ export interface SessionHealthNudge {
   turnCount: number;
   promptBytes: number;
   responseBytes: number;
+  totalTokens?: number;
+  contextWindowTokens?: number;
+  usageSamples: number;
+  missingUsageSamples: number;
   reason: SessionHealthNudgeReason;
   nudgeCount: number;
   cooldownMs: number;
@@ -41,6 +47,10 @@ export interface SessionHealthSnapshot {
   turnCount: number;
   promptBytes: number;
   responseBytes: number;
+  totalTokens?: number;
+  contextWindowTokens?: number;
+  usageSamples: number;
+  missingUsageSamples: number;
   nudgeCount: number;
   nextNudgeAt: number;
   lastResetReason?: 'session_id_changed' | 'manual';
@@ -51,6 +61,7 @@ export interface SessionHealthMonitorOptions {
   ownerOpenId: string | null | undefined;
   turnThreshold: number;
   promptBytesThreshold: number;
+  tokenUsageThreshold?: number;
   quietDelayMs: number;
   baseCooldownMs: number;
   maxCooldownMs: number;
@@ -67,6 +78,10 @@ interface SessionHealthState {
   turnCount: number;
   promptBytes: number;
   responseBytes: number;
+  totalTokens?: number;
+  contextWindowTokens?: number;
+  usageSamples: number;
+  missingUsageSamples: number;
   nudgeCount: number;
   nextNudgeAt: number;
   lastResetReason?: 'session_id_changed' | 'manual';
@@ -76,6 +91,7 @@ export class SessionHealthMonitor {
   private readonly enabled: boolean;
   private readonly turnThreshold: number;
   private readonly promptBytesThreshold: number;
+  private readonly tokenUsageThreshold: number;
   private readonly quietDelayMs: number;
   private readonly baseCooldownMs: number;
   private readonly maxCooldownMs: number;
@@ -89,6 +105,7 @@ export class SessionHealthMonitor {
     this.enabled = options.enabled && !!options.ownerOpenId;
     this.turnThreshold = Math.max(1, Math.floor(options.turnThreshold));
     this.promptBytesThreshold = Math.max(1, Math.floor(options.promptBytesThreshold));
+    this.tokenUsageThreshold = Math.max(1, Math.floor(options.tokenUsageThreshold ?? 160_000));
     this.quietDelayMs = Math.max(0, Math.floor(options.quietDelayMs));
     this.baseCooldownMs = Math.max(1, Math.floor(options.baseCooldownMs));
     this.maxCooldownMs = Math.max(this.baseCooldownMs, Math.floor(options.maxCooldownMs));
@@ -110,6 +127,15 @@ export class SessionHealthMonitor {
     current.turnCount += 1;
     current.promptBytes += Math.max(0, Math.floor(input.promptBytes));
     current.responseBytes += Math.max(0, Math.floor(input.responseBytes));
+    if (input.usage?.totalTokens !== undefined) {
+      current.totalTokens = input.usage.totalTokens;
+      current.usageSamples += 1;
+      if (input.usage.contextWindowTokens !== undefined) {
+        current.contextWindowTokens = input.usage.contextWindowTokens;
+      }
+    } else {
+      current.missingUsageSamples += 1;
+    }
 
     if (this.reasonFor(current)) this.scheduleQuietCheck(input.sessionKey, now);
   }
@@ -138,6 +164,10 @@ export class SessionHealthMonitor {
       turnCount: state.turnCount,
       promptBytes: state.promptBytes,
       responseBytes: state.responseBytes,
+      ...(state.totalTokens !== undefined ? { totalTokens: state.totalTokens } : {}),
+      ...(state.contextWindowTokens !== undefined ? { contextWindowTokens: state.contextWindowTokens } : {}),
+      usageSamples: state.usageSamples,
+      missingUsageSamples: state.missingUsageSamples,
       reason,
       nudgeCount: state.nudgeCount + 1,
       cooldownMs,
@@ -163,6 +193,8 @@ export class SessionHealthMonitor {
       turnCount: 0,
       promptBytes: 0,
       responseBytes: 0,
+      usageSamples: 0,
+      missingUsageSamples: 0,
       nudgeCount: 0,
       nextNudgeAt: 0,
       lastResetReason: reason,
@@ -192,6 +224,8 @@ export class SessionHealthMonitor {
       turnCount: 0,
       promptBytes: 0,
       responseBytes: 0,
+      usageSamples: 0,
+      missingUsageSamples: 0,
       nudgeCount: 0,
       nextNudgeAt: 0,
     };
@@ -200,7 +234,11 @@ export class SessionHealthMonitor {
   }
 
   private reasonFor(state: SessionHealthState): SessionHealthNudgeReason | null {
-    if (state.promptBytes >= this.promptBytesThreshold) return 'prompt_bytes_threshold';
+    if (state.totalTokens !== undefined) {
+      if (state.totalTokens >= this.tokenUsageThreshold) return 'token_usage_threshold';
+    } else if (state.promptBytes >= this.promptBytesThreshold) {
+      return 'prompt_bytes_threshold';
+    }
     if (state.turnCount >= this.turnThreshold) return 'turn_threshold';
     return null;
   }
@@ -229,19 +267,29 @@ export function buildSessionHealthNudgeText(nudge: SessionHealthNudge): string {
     ? `${nudge.chatId} / ${nudge.threadId}`
     : nudge.chatId;
   const reason =
-    nudge.reason === 'prompt_bytes_threshold'
+    nudge.reason === 'token_usage_threshold'
+      ? 'reported Codex exec token usage crossed the configured threshold'
+      : nudge.reason === 'prompt_bytes_threshold'
       ? 'estimated prompt bytes crossed the configured threshold'
       : 'turn count crossed the configured threshold';
+  const usageLine = nudge.totalTokens !== undefined
+    ? `Codex exec usage: ${nudge.totalTokens} total tokens${
+        nudge.contextWindowTokens ? ` / ${nudge.contextWindowTokens} context window` : ''
+      } (usage samples: ${nudge.usageSamples}, missing: ${nudge.missingUsageSamples}).`
+    : `Heuristic: ${nudge.turnCount} exec turns, ${nudge.promptBytes} prompt bytes, ${nudge.responseBytes} response bytes observed by the Lark bridge.`;
+  const usageNote = nudge.totalTokens !== undefined
+    ? 'Codex exec JSON exposed token/context usage for this session, so token usage was preferred over the prompt-byte heuristic.'
+    : 'Codex exec JSON did not expose a stable token/context usage statistic for this session, so this warning is heuristic.';
 
   return [
     '[Codex session health nudge]',
     `Scope: ${scope}`,
     nudge.sessionId ? `Session: ${nudge.sessionId}` : 'Session: unknown',
     `Reason: ${reason}`,
-    `Heuristic: ${nudge.turnCount} exec turns, ${nudge.promptBytes} prompt bytes, ${nudge.responseBytes} response bytes observed by the Lark bridge.`,
+    usageLine,
     `Nudge: ${nudge.nudgeCount}; next cooldown: ${Math.round(nudge.cooldownMs / 1000)}s.`,
     '',
-    'Codex exec JSON currently gives this plugin a session id but no stable token/context usage statistic, so this warning is heuristic.',
+    usageNote,
     'No automatic clear or compact was attempted. Consider finishing the thread, starting a fresh session when safe, or asking Codex to summarize durable state before continuing.',
     'For heavy multi-step work, prefer subagents where available so the main resumed session stays smaller.',
   ].join('\n');
