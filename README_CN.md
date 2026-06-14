@@ -38,6 +38,7 @@
 - **卡片渲染**：默认优先纯文本。请慎用飞书卡片，仅在结构化摘要、表格、代码块、密集列表或多段内容明显更易扫读时使用。长文本或富 markdown 内容可自动渲染为淡红色飞书卡片；可通过 `format='card'` 强制卡片，`format='text'` 强制纯文本，可选 `footer` 底部小字脚注
 - 编辑已发送的消息
 - 回复已有飞书文档评论线程，或在当前文档中新建顶级评论
+- 文档评论 @bot 事件会收到可配置的持久 emoji 确认回应（默认 `THUMBSUP`）
 - 表情回复
 - 长文本自动按段落、换行、空格分段发送
 
@@ -302,6 +303,7 @@ git push origin v1.0.0
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `LARK_ACK_EMOJI` | `MeMeMe` | 收到消息时的 emoji 回应。留空可禁用 |
+| `LARK_DOC_COMMENT_ACK_EMOJI` | `THUMBSUP` | 收到文档评论 @bot 事件时保留的 emoji 回应。留空可禁用 |
 | `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | 用于被动 reaction 事件过滤的 bot 消息 ID 追踪上限（FIFO） |
 
 ### 可选 -- Feishu API 可靠性

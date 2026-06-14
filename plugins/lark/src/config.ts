@@ -15,6 +15,11 @@ function optional(key: string, fallback: string): string {
   return process.env[key] || fallback;
 }
 
+function optionalAllowEmpty(key: string, fallback: string): string {
+  const val = process.env[key];
+  return val === undefined ? fallback : val;
+}
+
 function optionalList(key: string): string[] {
   const val = process.env[key];
   return val ? val.split(',').map(s => s.trim()).filter(Boolean) : [];
@@ -53,6 +58,7 @@ export const appConfig = {
   allowedChatIds: optionalList('LARK_ALLOWED_CHAT_IDS'),
   textChunkLimit: optionalNumber('LARK_TEXT_CHUNK_LIMIT', 4000),
   ackEmoji: optional('LARK_ACK_EMOJI', 'MeMeMe'),
+  docCommentAckEmoji: optionalAllowEmpty('LARK_DOC_COMMENT_ACK_EMOJI', 'THUMBSUP'),
   botMessageTrackerSize: optionalNumber('LARK_BOT_MESSAGE_TRACKER_SIZE', 500),
   queueHandlerTimeoutMs: optionalNumber('LARK_QUEUE_HANDLER_TIMEOUT_MS', 30_000),
   codexDeliveryMode: optionalChoice(

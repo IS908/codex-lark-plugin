@@ -123,6 +123,12 @@ export interface CommentEventDeps {
   processMessage?: (message: LarkMessage) => Promise<void>;
   resolveUserName: (openId: string) => Promise<string>;
   client: {
+    request?: (req: {
+      method: 'POST';
+      url: string;
+      params: { file_type: string };
+      data: { action: 'add'; reply_id: string; reaction_type: string };
+    }) => Promise<any>;
     drive: {
       fileComment: { list: (req: any) => Promise<any> };
       fileCommentReply: { list: (req: any) => Promise<any> };
@@ -208,6 +214,40 @@ function buildDocCommentEnvelope(args: DocCommentEnvelopeArgs): string {
   return `<doc_comment ${attrs}>\n${inner.join('\n')}\n</doc_comment>`;
 }
 
+function addDocCommentAckReaction(
+  deps: CommentEventDeps,
+  args: { fileToken: string; fileType: string; replyId: string; eventId?: string },
+): void {
+  const reactionType = appConfig.docCommentAckEmoji;
+  if (!reactionType) return;
+
+  if (!deps.client.request) {
+    debugLog(`[channel] Doc comment ack skipped: client.request unavailable (event_id=${args.eventId ?? '<none>'})`);
+    return;
+  }
+
+  void feishuApiCall(
+    'doc_comment_ack_reaction.update',
+    () => deps.client.request!({
+      method: 'POST',
+      url: `https://open.feishu.cn/open-apis/drive/v2/files/${encodeURIComponent(args.fileToken)}/comments/reaction`,
+      params: { file_type: args.fileType },
+      data: {
+        action: 'add',
+        reply_id: args.replyId,
+        reaction_type: reactionType,
+      },
+    }),
+    { retryTimeout: false },
+  ).catch((err) => {
+    debugLog(
+      `[channel] Failed to add doc-comment ack ${reactionType} on reply ${args.replyId} (event_id=${args.eventId ?? '<none>'}): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  });
+}
+
 export async function handleCommentEvent(data: any, deps: CommentEventDeps): Promise<void> {
   const eventId = data?.event_id;
   if (eventId && deps.seenEventIds.has(eventId)) return;
@@ -252,6 +292,10 @@ export async function handleCommentEvent(data: any, deps: CommentEventDeps): Pro
   let quote: string | undefined;
   let fetchError: string | undefined;
 
+  if (replyId) {
+    addDocCommentAckReaction(deps, { fileToken, fileType, replyId, eventId });
+  }
+
   const [repliesResult, commentsResult] = await Promise.allSettled([
     deps.client.drive.fileCommentReply.list({
       path: { file_token: fileToken, comment_id: commentId },
@@ -267,6 +311,15 @@ export async function handleCommentEvent(data: any, deps: CommentEventDeps): Pro
     repliesResult.status === 'fulfilled' ? (repliesResult.value?.data?.items ?? []) : [];
   const comments: any[] =
     commentsResult.status === 'fulfilled' ? (commentsResult.value?.data?.items ?? []) : [];
+
+  if (!replyId) {
+    const originalReplyId = replies.find((reply: any) => typeof reply?.reply_id === 'string' && reply.reply_id)?.reply_id;
+    if (originalReplyId) {
+      addDocCommentAckReaction(deps, { fileToken, fileType, replyId: originalReplyId, eventId });
+    } else {
+      debugLog(`[channel] Doc comment ack skipped: original reply_id unavailable (event_id=${eventId ?? '<none>'})`);
+    }
+  }
 
   if (repliesResult.status === 'rejected' && commentsResult.status === 'rejected') {
     const err: any = repliesResult.reason;
