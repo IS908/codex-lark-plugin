@@ -201,11 +201,19 @@ node -e "console.log(require('./package.json').version)"
 ```bash
 npm install
 npm test
+npm run check:release-version
 npm run audit:deps
 git status --short --ignored
 ```
 
 仓库会有意提交 `.env.example`、`.mcp.json`、`.codex-plugin/`、`.agents/plugins/marketplace.json` 和 `plugins/lark` 插件市场包装目录。生成产物、依赖、本地 `.env*` 文件、日志、编辑器/工具状态会由 `.gitignore` 忽略。
+
+发布版本检查清单：
+
+- 同步更新 `package.json`、`package-lock.json`、`plugins/lark/package.json` 和 `plugins/lark/package-lock.json`。
+- 同步更新 `.codex-plugin/plugin.json` 和 `plugins/lark/.codex-plugin/plugin.json`；Codex 会根据 manifest version 选择插件 runtime cache 目录，manifest 版本滞后可能导致新 package 仍从旧 cache 运行。
+- 更新 README 徽章和 `CHANGELOG.md` release heading。
+- 打 tag 前运行 `npm run check:release-version`。MCP server-info version 会在启动时读取 `package.json`，因此 package 版本正确后运行时版本会自动跟随。
 
 新仓库可以这样初始化并发布：
 

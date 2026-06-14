@@ -215,11 +215,19 @@ Before the first public push, verify the repository metadata and make sure no lo
 ```bash
 npm install
 npm test
+npm run check:release-version
 npm run audit:deps
 git status --short --ignored
 ```
 
 The repository intentionally tracks `.env.example`, `.mcp.json`, `.codex-plugin/`, `.agents/plugins/marketplace.json`, and the `plugins/lark` marketplace wrapper. Generated output, dependencies, local `.env*` files, logs, and editor/tool state are ignored by `.gitignore`.
+
+Release version checklist:
+
+- Bump `package.json`, `package-lock.json`, `plugins/lark/package.json`, and `plugins/lark/package-lock.json`.
+- Bump `.codex-plugin/plugin.json` and `plugins/lark/.codex-plugin/plugin.json`; Codex uses manifest versions when selecting plugin cache directories, so stale manifest versions can leave a new package running from an old runtime cache.
+- Update the README badges and `CHANGELOG.md` release heading.
+- Run `npm run check:release-version` before tagging. The MCP server-info version is read from `package.json` at startup, so it follows the package version automatically once the package bump is correct.
 
 For a fresh repository:
 
