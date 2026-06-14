@@ -506,7 +506,9 @@ tmux attach -t lark
 # 按 Ctrl+B 然后按 D
 
 # 停止
-tmux kill-session -t lark
+npm run stop
+# 或
+bash scripts/stop.sh
 ```
 
 ---

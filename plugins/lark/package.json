@@ -26,6 +26,7 @@
   "scripts": {
     "prestart": "npm install --prefer-offline --silent",
     "start": "node --import tsx src/index.ts",
+    "stop": "node --import tsx src/stop.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "audit:deps": "npm audit --omit=dev --audit-level=high"
