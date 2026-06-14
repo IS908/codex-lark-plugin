@@ -33,6 +33,7 @@ import {
 import { emitCodexExecConfigDiagnostics } from './codex-exec-config.js';
 import { createCodexExecActionDispatcher } from './codex-exec-actions.js';
 import { ProfileDistillationManager } from './profile-distillation.js';
+import { validateSdkChannelScaffold } from './sdk-channel-scaffold.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
@@ -366,9 +367,17 @@ async function main() {
   });
 
   if (isDryRun) {
+    console.error(`[dry-run] Channel runtime: ${appConfig.channelRuntime}`);
+    if (appConfig.channelRuntime === 'sdk') validateSdkChannelScaffold();
     console.error('[dry-run] All modules loaded successfully.');
     console.error('[dry-run] Tools registered. Exiting.');
     process.exit(0);
+  }
+
+  if (appConfig.channelRuntime === 'sdk') {
+    throw new Error(
+      'SDK-backed channel runtime is dry-run only until #62 and #65 preserve identity and message parity.',
+    );
   }
 
   // 7. Connect MCP server via stdio

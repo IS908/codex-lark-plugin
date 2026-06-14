@@ -1,6 +1,6 @@
 /**
- * Static check: every `new Lark.<Client|EventDispatcher|WSClient>(` call in
- * `src/channel.ts` must include a `logger:` option in its argument block.
+ * Static check: every Lark SDK object that can log to stdout must include a
+ * `logger:` option in its argument block.
  *
  * Why this matters: the Lark SDK's default logger uses `console.log`, which
  * writes to stdout. The MCP server uses stdout for JSON-RPC framing, so any
@@ -19,14 +19,15 @@
  *     Human review covers the "is the value actually stderr-routing?"
  *     question — the lint catches the far more common mistake of
  *     omitting the option entirely.
- *   - Only scans `src/channel.ts`. No other file in the project constructs
- *     Lark SDK objects today; a `grep -r "new Lark\\." src/` run during
- *     review confirms this remains true.
+ *   - Scans the legacy `new Lark.<...>(` constructors and the SDK scaffold's
+ *     `createLarkChannel(...)` factory. If new construction paths are added,
+ *     extend this script before relying on dry-run stdout checks.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const src = readFileSync(join(process.cwd(), 'src/channel.ts'), 'utf-8');
+const channelSrc = readFileSync(join(process.cwd(), 'src/channel.ts'), 'utf-8');
+const sdkScaffoldSrc = readFileSync(join(process.cwd(), 'src/sdk-channel-scaffold.ts'), 'utf-8');
 
 const ctors = ['Client', 'EventDispatcher', 'WSClient'] as const;
 const problems: string[] = [];
@@ -54,10 +55,10 @@ function extractArgBlock(source: string, openParenIdx: number): string | null {
 for (const ctor of ctors) {
   const pattern = new RegExp(`new Lark\\.${ctor}\\(`, 'g');
   let found: RegExpExecArray | null;
-  while ((found = pattern.exec(src)) !== null) {
+  while ((found = pattern.exec(channelSrc)) !== null) {
     totalMatches++;
     const parenIdx = found.index + found[0].length - 1;
-    const block = extractArgBlock(src, parenIdx);
+    const block = extractArgBlock(channelSrc, parenIdx);
     if (block === null) {
       problems.push(
         `src/channel.ts — new Lark.${ctor}( at char ${parenIdx} has unbalanced parens (cannot verify)`,
@@ -65,11 +66,31 @@ for (const ctor of ctors) {
       continue;
     }
     if (!/\blogger:/.test(block)) {
-      const lineNo = src.slice(0, found.index).split('\n').length;
+      const lineNo = channelSrc.slice(0, found.index).split('\n').length;
       problems.push(
         `src/channel.ts:${lineNo} — new Lark.${ctor}( has no 'logger:' option in its argument block (would corrupt MCP stdout)`,
       );
     }
+  }
+}
+
+const sdkPattern = /\bcreateLarkChannel\(/g;
+let sdkFound: RegExpExecArray | null;
+while ((sdkFound = sdkPattern.exec(sdkScaffoldSrc)) !== null) {
+  totalMatches++;
+  const parenIdx = sdkFound.index + sdkFound[0].length - 1;
+  const block = extractArgBlock(sdkScaffoldSrc, parenIdx);
+  if (block === null) {
+    problems.push(
+      `src/sdk-channel-scaffold.ts — createLarkChannel( at char ${parenIdx} has unbalanced parens (cannot verify)`,
+    );
+    continue;
+  }
+  if (!/\blogger:/.test(block)) {
+    const lineNo = sdkScaffoldSrc.slice(0, sdkFound.index).split('\n').length;
+    problems.push(
+      `src/sdk-channel-scaffold.ts:${lineNo} — createLarkChannel( has no 'logger:' option in its argument block (would corrupt MCP stdout)`,
+    );
   }
 }
 
