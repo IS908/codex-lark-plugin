@@ -115,6 +115,10 @@ echo "=== SDK identity bridge checks ==="
 node --import tsx scripts/sdk-identity-smoke.ts
 
 echo ""
+echo "=== SDK message parity checks ==="
+node --import tsx scripts/sdk-message-parity-smoke.ts
+
+echo ""
 echo "=== Resource governance unit checks ==="
 node --import tsx scripts/resource-governance-smoke.ts
 
