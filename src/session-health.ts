@@ -206,7 +206,13 @@ export class SessionHealthMonitor {
   }
 
   private scheduleQuietCheck(sessionKey: string, now: number): void {
-    if (this.quietDelayMs <= 0 || this.timers.has(sessionKey)) return;
+    if (this.quietDelayMs <= 0) {
+      void this.checkNow(sessionKey, now).catch((err) => {
+        console.error(`[session-health] Failed to send nudge for ${sessionKey}:`, err);
+      });
+      return;
+    }
+    if (this.timers.has(sessionKey)) return;
     const timer = setTimeout(() => {
       this.timers.delete(sessionKey);
       void this.checkNow(sessionKey, now + this.quietDelayMs).catch((err) => {

@@ -108,7 +108,7 @@ const {
     ownerOpenId: 'ou_owner',
     turnThreshold: 1,
     promptBytesThreshold: 10_000,
-    quietDelayMs: 0,
+    quietDelayMs: 10_000,
     baseCooldownMs: 100,
     maxCooldownMs: 250,
     maxNudges: 2,
@@ -134,7 +134,35 @@ const {
   assert.equal(sent.length, 2);
 }
 
-// 4. New Codex session ids reset the heuristic episode.
+// 4. A zero quiet delay still schedules an immediate quiet-gated nudge.
+{
+  const sent: any[] = [];
+  const monitor = new SessionHealthMonitor({
+    enabled: true,
+    ownerOpenId: 'ou_owner',
+    turnThreshold: 1,
+    promptBytesThreshold: 10_000,
+    quietDelayMs: 0,
+    baseCooldownMs: 100,
+    maxCooldownMs: 250,
+    maxNudges: 2,
+    quiet: () => ({ queueIdle: true, ackQuiet: true, turnQuiet: true }),
+    notifyOwner: async (nudge: any) => { sent.push(nudge); },
+  });
+  monitor.recordTurn({
+    sessionKey: 'chat:oc_immediate',
+    chatId: 'oc_immediate',
+    sessionId: 'session_immediate',
+    resumed: true,
+    promptBytes: 100,
+    responseBytes: 20,
+  }, 1_000);
+  await Promise.resolve();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].sessionKey, 'chat:oc_immediate');
+}
+
+// 5. New Codex session ids reset the heuristic episode.
 {
   const sent: any[] = [];
   const monitor = new SessionHealthMonitor({
@@ -173,7 +201,7 @@ const {
   assert.equal(await monitor.checkNow('chat:oc_3', 1_100), false);
 }
 
-// 5. Nudge text documents the heuristic and avoids implying auto clear/compact.
+// 6. Nudge text documents the heuristic and avoids implying auto clear/compact.
 {
   const text = buildSessionHealthNudgeText({
     sessionKey: 'chat:oc_1',
@@ -192,4 +220,4 @@ const {
   assert.match(text, /subagents/i);
 }
 
-console.log('session-health smoke: 5/5 PASS');
+console.log('session-health smoke: 6/6 PASS');
