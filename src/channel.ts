@@ -76,6 +76,7 @@ export interface LarkMessage {
   parentId?: string;
   parentContent?: string;
   threadId?: string;
+  rootMessageId?: string;
   mentions?: Array<{ id: string; name: string }>;
   /** True when this bot's open_id appears in mentions. Forwarded to Codex as meta.bot_mentioned. */
   botMentioned?: boolean;
@@ -118,6 +119,49 @@ export function resolveMentionPlaceholders(
 export type MessageHandler = (message: LarkMessage) => Promise<void>;
 
 const DOC_COMMENT_BODY_CAP_BYTES = 8 * 1024;
+const CARD_CLIENT_PLACEHOLDER = '请升级至最新版本客户端，以查看内容';
+
+function isOpenMessageId(value: string | undefined): value is string {
+  return typeof value === 'string' && value.startsWith('om_');
+}
+
+function compactCardAttribute(attrs: string, name: string): string | null {
+  const re = new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
+  const match = attrs.match(re);
+  return (match?.[2] ?? match?.[3] ?? match?.[4] ?? '').trim() || null;
+}
+
+function stripCompactCardTags(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function extractCompactCardText(text: string): string | null {
+  const match = text.match(/<card\b([^>]*)>([\s\S]*?)<\/card>/i);
+  if (!match) return null;
+  const title = compactCardAttribute(match[1] ?? '', 'title');
+  const body = stripCompactCardTags(match[2] ?? '');
+  const parts = [title, body].filter(Boolean);
+  return parts.length > 0 ? parts.join('\n') : null;
+}
+
+function normalizeFetchedMessageText(text: string): string {
+  return extractCompactCardText(text) ?? text;
+}
+
+function needsCardContextFetch(text: string, messageType: string | undefined): boolean {
+  const trimmed = text.trim();
+  return (
+    trimmed === '[Interactive Card]' ||
+    trimmed.includes(CARD_CLIENT_PLACEHOLDER) ||
+    /^<card\b/i.test(trimmed) ||
+    (messageType === 'interactive' && !trimmed)
+  );
+}
 
 export interface CommentEventDeps {
   botOpenId: string;
@@ -504,6 +548,9 @@ export class LarkChannel {
   private client: Lark.Client;
   private nameCache = new BoundedCache<string, string>(appConfig.nameCacheSize); // open_id/chat_id → display name
   private chatTypeCache = new BoundedCache<string, 'p2p' | 'group'>(appConfig.chatTypeCacheSize); // chatId → type (populated from inbound events)
+  private cardContextCache = new BoundedCache<string, { text: string; expiresAt: number }>(
+    appConfig.cardContextCacheSize,
+  );
   private botOpenId: string = '';
   private wsClient: Lark.WSClient | null = null;
   private queue = new MessageQueue({ handlerTimeoutMs: appConfig.queueHandlerTimeoutMs });
@@ -652,9 +699,11 @@ export class LarkChannel {
       content: rawContent,
       message_type: messageType,
       parent_id: parentId,
-      root_id: threadId,
+      root_id: rootMessageId,
+      thread_id: eventThreadId,
       mentions,
     } = message;
+    const threadId = eventThreadId ?? rootMessageId;
 
     const senderId = sender?.sender_id?.open_id ?? '';
 
@@ -791,6 +840,7 @@ export class LarkChannel {
       messageType,
       parentId,
       threadId,
+      rootMessageId,
       mentions: parsedMentions,
       botMentioned,
       attachments,
@@ -801,8 +851,13 @@ export class LarkChannel {
 
     // Fetch quoted context. Prefer an explicit parent reply; for root-only
     // thread events, fall back to the root message when it is distinct from
-    // the current message.
-    const quotedMessageId = parentId || (threadId && threadId !== messageId ? threadId : undefined);
+    // the current message. Keep OpenAPI thread ids (`omt_*`) separate from
+    // root open-message ids (`om_*`) because only `om_*` can be fetched as a
+    // message.
+    const quotedMessageId =
+      parentId ||
+      (isOpenMessageId(rootMessageId) && rootMessageId !== messageId ? rootMessageId : undefined) ||
+      (isOpenMessageId(threadId) && threadId !== messageId ? threadId : undefined);
     if (quotedMessageId) {
       try {
         const parentMsg = await feishuApiCall('channel.parentMessage.get', () =>
@@ -812,23 +867,20 @@ export class LarkChannel {
         );
         const parentItem = parentMsg?.data?.items?.[0];
         if (parentItem?.body?.content) {
-          // Parent-message mentions may arrive either as the receive-event
-          // shape (`id: { open_id, union_id, user_id }`) or, in some API
-          // responses, as a flat string. Normalize both so name-based
-          // resolution works and `id` never stringifies to "[object Object]".
-          const parentMentions: Array<{ id: string; name: string }> = (
-            parentItem.mentions ?? []
-          ).map((m: any) => ({
-            id:
-              m.id?.open_id ??
-              m.id?.union_id ??
-              (typeof m.id === 'string' ? m.id : ''),
-            name: m.name ?? '',
-          }));
-          larkMessage.parentContent = resolveMentionPlaceholders(
-            this.extractText(parentItem.body.content, parentItem.msg_type ?? 'text'),
-            parentMentions,
-          );
+          const parentMessageType = parentItem.msg_type ?? 'text';
+          const parentText = normalizeFetchedMessageText(resolveMentionPlaceholders(
+            this.extractText(parentItem.body.content, parentMessageType),
+            this.normalizeMessageMentions(parentItem),
+          ));
+          const shouldFetchCardContext = needsCardContextFetch(parentText, parentMessageType);
+          const fetchedCardText = shouldFetchCardContext
+            ? await this.fetchCachedCardContext(quotedMessageId)
+            : null;
+          larkMessage.parentContent =
+            fetchedCardText ??
+            (shouldFetchCardContext
+              ? `${parentText}\n\n[Interactive card content unavailable: fetch requires im:message:readonly scope, bot chat visibility, and a readable root message.]`
+              : parentText);
         }
       } catch {
         // Parent message fetch failed; continue without it
@@ -848,6 +900,69 @@ export class LarkChannel {
     this.queue.enqueue(chatId, threadId, async () => {
       await this.processEnqueuedMessage(larkMessage);
     });
+  }
+
+  private normalizeMessageMentions(item: any): Array<{ id: string; name: string }> {
+    return (item?.mentions ?? []).map((m: any) => ({
+      id:
+        m.id?.open_id ??
+        m.id?.union_id ??
+        (typeof m.id === 'string' ? m.id : ''),
+      name: m.name ?? '',
+    }));
+  }
+
+  private messageItemText(item: any): { text: string; messageType: string } | null {
+    const content = item?.body?.content;
+    if (!content) return null;
+    const messageType = item.msg_type ?? item.message_type ?? 'text';
+    const text = normalizeFetchedMessageText(resolveMentionPlaceholders(
+      this.extractText(content, messageType),
+      this.normalizeMessageMentions(item),
+    ));
+    return { text, messageType };
+  }
+
+  private async fetchCachedCardContext(messageId: string): Promise<string | null> {
+    const cached = this.cardContextCache.get(messageId);
+    const now = Date.now();
+    if (cached && cached.expiresAt > now) return cached.text;
+    if (cached) this.cardContextCache.delete(messageId);
+
+    const text = await this.fetchCardContextViaMget(messageId);
+    if (!text) return null;
+    this.cardContextCache.set(messageId, {
+      text,
+      expiresAt: now + appConfig.cardContextCacheTtlMs,
+    });
+    return text;
+  }
+
+  private async fetchCardContextViaMget(messageId: string): Promise<string | null> {
+    if (!this.client.request) {
+      debugLog(`[channel] Card context mget skipped: client.request unavailable for ${messageId}`);
+      return null;
+    }
+    try {
+      const resp = await feishuApiCall('channel.parentMessage.mget', () =>
+        this.client.request({
+          method: 'POST',
+          url: 'https://open.feishu.cn/open-apis/im/v1/messages/mget',
+          params: { user_id_type: 'open_id' },
+          data: { message_ids: [messageId] },
+        }),
+      );
+      const items = (resp as any)?.data?.items ?? (resp as any)?.data?.messages ?? [];
+      const item = Array.isArray(items)
+        ? items.find((candidate: any) => !candidate?.message_id || candidate.message_id === messageId) ?? items[0]
+        : null;
+      const parsed = this.messageItemText(item);
+      if (!parsed || needsCardContextFetch(parsed.text, parsed.messageType)) return null;
+      return parsed.text;
+    } catch (err) {
+      logSafeError(`[channel] Card context mget failed for ${messageId}:`, err);
+      return null;
+    }
   }
 
   private async processEnqueuedMessage(larkMessage: LarkMessage): Promise<void> {

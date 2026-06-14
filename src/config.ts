@@ -156,6 +156,8 @@ export const appConfig = {
   nameCacheSize: optionalNonNegativeNumber('LARK_NAME_CACHE_SIZE', 1000),
   chatTypeCacheSize: optionalNonNegativeNumber('LARK_CHAT_TYPE_CACHE_SIZE', 1000),
   latestMessageTrackerSize: optionalNonNegativeNumber('LARK_LATEST_MESSAGE_TRACKER_SIZE', 1000),
+  cardContextCacheSize: optionalNonNegativeNumber('LARK_CARD_CONTEXT_CACHE_SIZE', 200),
+  cardContextCacheTtlMs: optionalNonNegativeNumber('LARK_CARD_CONTEXT_CACHE_TTL_MS', 30 * 60 * 1000),
 
   // Paths
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),
