@@ -124,6 +124,13 @@ export const appConfig = {
   maxEpisodeBytes: optionalNonNegativeNumber('LARK_MAX_EPISODE_BYTES', 64 * 1024),
   maxEpisodeFilesPerScope: optionalNonNegativeNumber('LARK_MAX_EPISODE_FILES_PER_SCOPE', 200),
   maxEpisodeScopeBytes: optionalNonNegativeNumber('LARK_MAX_EPISODE_SCOPE_BYTES', 10 * 1024 * 1024),
+  profileDistillationEnabled: optionalBoolean('LARK_PROFILE_DISTILLATION_ENABLED', false),
+  profileDistillationMinEpisodes: optionalPositiveNumber('LARK_PROFILE_DISTILLATION_MIN_EPISODES', 3),
+  profileDistillationMaxEpisodes: optionalPositiveNumber('LARK_PROFILE_DISTILLATION_MAX_EPISODES', 5),
+  profileDistillationCooldownMs: optionalNonNegativeNumber(
+    'LARK_PROFILE_DISTILLATION_COOLDOWN_MS',
+    24 * 60 * 60 * 1000,
+  ),
   memoryDedupWindowMs: optionalNonNegativeNumber('LARK_MEMORY_DEDUP_WINDOW_MS', 30 * 60 * 1000),
   downloadMaxBytes: optionalPositiveNumber('LARK_DOWNLOAD_MAX_BYTES', 25 * 1024 * 1024),
   downloadTimeoutMs: optionalNonNegativeNumber('LARK_DOWNLOAD_TIMEOUT_MS', 60_000),

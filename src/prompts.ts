@@ -94,6 +94,10 @@ Output a JSON object with exactly two arrays:
   "private": [ "fact", "fact", ... ]    // facts only the user themselves should see
 }
 
+Extract durable facts only about the target user. Do not write facts about
+other participants unless the episode explicitly states they are facts about
+the target user. Prefer no output over guessing.
+
 Classification rules (apply in order; higher priority wins):
 1. Match any "Always private" rule in L2 → private.
 2. Match any "Always public" rule in L2 → public.
@@ -103,7 +107,8 @@ Classification rules (apply in order; higher priority wins):
    - chatType=p2p → unknown facts default to private (never voluntarily shared beyond 1:1).
 5. When truly uncertain: choose private.
 
-Return ONLY the JSON object, no prose or code fences. Then call save_memory(type="profile", content=<public-array-as-markdown-list>, reason=<why>, chat_id=<current>, tier="public", mode="replace") and again with tier="private" for the private array. Skip either call if its array is empty. mode="replace" is required — this flush rewrites the full tier from a fresh read of history, so the existing file should be overwritten rather than appended to.`;
+Return ONLY the JSON object, no prose, code fences, tool calls, or transport
+metadata. The parent Lark bridge will parse, validate, and persist the result.`;
 }
 
 /**

@@ -528,7 +528,10 @@ export class MemoryStore {
     await fs.mkdir(dir, { recursive: true });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const fileName = `${timestamp}.md`;
+    let fileName = `${timestamp}.md`;
+    for (let i = 1; existsSync(path.join(dir, fileName)); i++) {
+      fileName = `${timestamp}-${i}.md`;
+    }
     await fs.writeFile(path.join(dir, fileName), capEpisodeContent(content), 'utf-8');
     await this.pruneEpisodeDir(dir, {
       maxFilesPerScope: appConfig.maxEpisodeFilesPerScope,
@@ -536,8 +539,10 @@ export class MemoryStore {
     });
   }
 
-  async listEpisodes(chatId: string): Promise<Episode[]> {
-    const dir = path.join(this.baseDir, 'episodes', chatId);
+  async listEpisodes(chatId: string, threadId?: string): Promise<Episode[]> {
+    const dir = threadId
+      ? path.join(this.baseDir, 'episodes', chatId, 'threads', threadId)
+      : path.join(this.baseDir, 'episodes', chatId);
     try {
       const files = await fs.readdir(dir);
       const episodes: Episode[] = [];
@@ -551,6 +556,7 @@ export class MemoryStore {
           content,
           timestamp: stat.mtime.toISOString(),
           chatId,
+          ...(threadId ? { threadId } : {}),
         });
       }
 

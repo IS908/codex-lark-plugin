@@ -32,6 +32,7 @@ import {
 } from './resource-governance.js';
 import { emitCodexExecConfigDiagnostics } from './codex-exec-config.js';
 import { createCodexExecActionDispatcher } from './codex-exec-actions.js';
+import { ProfileDistillationManager } from './profile-distillation.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
@@ -95,6 +96,19 @@ async function main() {
   const channel = new LarkChannel();
   channel.setMemoryStore(memoryStore);
   channel.setIdentitySession(identitySession);
+  const profileDistiller = new ProfileDistillationManager({
+    enabled: appConfig.profileDistillationEnabled,
+    memoryStore,
+    minEpisodes: appConfig.profileDistillationMinEpisodes,
+    maxEpisodes: appConfig.profileDistillationMaxEpisodes,
+    cooldownMs: appConfig.profileDistillationCooldownMs,
+  });
+  if (appConfig.profileDistillationEnabled) {
+    console.error(
+      `[profile-distill] enabled: minEpisodes=${appConfig.profileDistillationMinEpisodes} ` +
+      `maxEpisodes=${appConfig.profileDistillationMaxEpisodes} cooldownMs=${appConfig.profileDistillationCooldownMs}`,
+    );
+  }
   const turnObligations = new TurnObligationTracker();
   const sessionHealthMonitor =
     appConfig.sessionHealthEnabled && appConfig.ownerOpenId
@@ -165,11 +179,33 @@ async function main() {
         rawContent: flushPrompt,
       });
     }
+
+    const activeUserIds = [...new Set(
+      messages
+        .filter((message) => message.role === 'user')
+        .map((message) => message.senderId)
+        .filter((senderId) => senderId && senderId !== 'system'),
+    )];
+    for (const userId of activeUserIds) {
+      void profileDistiller
+        .maybeDispatch({
+          userId,
+          chatId,
+          chatType: channel.isPrivateChat(chatId) ? 'p2p' : 'group',
+        })
+        .then((result) => {
+          if (result.status === 'error') {
+            console.error(`[profile-distill] dispatch failed for ${userId}: ${result.error ?? 'unknown error'}`);
+          }
+        })
+        .catch((err) => logSafeError('[profile-distill] dispatch failed:', err));
+    }
   });
   channel.setConversationBuffer(buffer);
   const codexExecActionDispatcher = createCodexExecActionDispatcher({
     memoryStore,
     identitySession,
+    profileDistiller,
   });
 
   // 5. Register MCP tools (pass buffer so reply records assistant messages)
@@ -183,7 +219,8 @@ async function main() {
     channel.getAckReactions(),
     channel.getBotMessageTracker(),
     channel.getLatestMessageTracker(),
-    turnObligations
+    turnObligations,
+    profileDistiller
   );
 
   // 6. Set message handler — forwards Feishu messages to Codex via MCP

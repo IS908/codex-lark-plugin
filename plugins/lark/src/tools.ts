@@ -18,6 +18,8 @@ import { assertSafeChatId } from './prompts.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { buildCommentElements } from './doc-comment-api.js';
 import { registerLocalCliTools } from './local-cli-tools.js';
+import type { ProfileDistillationDispatcher } from './profile-distillation.js';
+import { logSafeError } from './safe-log.js';
 import {
   autoPauseJobForPermanentTargetError,
   isPermanentTargetError,
@@ -302,7 +304,8 @@ export function registerTools(
   ackReactions?: AckReactionTracker,
   botMessageTracker?: BotMessageTracker,
   latestMessageTracker?: LatestMessageTracker,
-  turnObligations?: TurnObligationTracker
+  turnObligations?: TurnObligationTracker,
+  profileDistiller?: ProfileDistillationDispatcher
 ): void {
   /**
    * Resolve the true caller for a sensitive tool invocation via the server-side
@@ -373,6 +376,27 @@ export function registerTools(
       };
     }
     return { caller };
+  }
+
+  function triggerProfileDistillation(
+    caller: string,
+    chatId: string,
+    threadId: string | undefined,
+  ): void {
+    if (!profileDistiller) return;
+    void profileDistiller
+      .maybeDispatch({
+        userId: caller,
+        chatId,
+        ...(threadId ? { threadId } : {}),
+        chatType: channel.isPrivateChat(chatId) ? 'p2p' : 'group',
+      })
+      .then((result) => {
+        if (result.status === 'error') {
+          console.error(`[profile-distill] dispatch failed for ${caller}: ${result.error ?? 'unknown error'}`);
+        }
+      })
+      .catch((err) => logSafeError('[profile-distill] dispatch failed:', err));
   }
 
   async function maybeAutoPauseCronJobReplyFailure(
@@ -879,6 +903,7 @@ export function registerTools(
         chatId: chat_id,
         threadId: thread_id,
       });
+      triggerProfileDistillation(caller, chat_id, thread_id);
       void audit('save_memory', caller, auditArgs, 'ok');
 
       return {

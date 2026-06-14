@@ -155,6 +155,10 @@ echo "=== Profile tiering unit checks ==="
 node --import tsx scripts/profile-tier-smoke.ts
 
 echo ""
+echo "=== Profile distillation unit checks ==="
+node --import tsx scripts/profile-distillation-smoke.ts
+
+echo ""
 echo "=== Transparency unit checks ==="
 node --import tsx scripts/transparency-smoke.ts
 

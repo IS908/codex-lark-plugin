@@ -16,6 +16,8 @@ import {
 } from './job-store.js';
 import { findLarkDeferSentinel } from './turn-obligation.js';
 import { runConfiguredLocalCliTool } from './local-cli-tools.js';
+import type { ProfileDistillationDispatcher } from './profile-distillation.js';
+import { logSafeError } from './safe-log.js';
 
 export const CODEX_EXEC_ACTIONS_START = '<LARK_ACTIONS_JSON>';
 export const CODEX_EXEC_ACTIONS_END = '</LARK_ACTIONS_JSON>';
@@ -85,6 +87,7 @@ export interface CreateCodexExecActionDispatcherOptions {
   memoryStore: MemoryStore;
   identitySession: IdentitySession;
   localCliToolsConfigPath?: string;
+  profileDistiller?: ProfileDistillationDispatcher;
 }
 
 function formatZodError(err: z.ZodError): string {
@@ -229,6 +232,21 @@ async function executeSaveMemory(
     chatId: message.chatId,
     threadId: message.threadId,
   });
+  if (deps.profileDistiller) {
+    void deps.profileDistiller
+      .maybeDispatch({
+        userId: caller,
+        chatId: message.chatId,
+        ...(message.threadId ? { threadId: message.threadId } : {}),
+        chatType: message.chatType === 'p2p' ? 'p2p' : 'group',
+      })
+      .then((result) => {
+        if (result.status === 'error') {
+          console.error(`[profile-distill] dispatch failed for ${caller}: ${result.error ?? 'unknown error'}`);
+        }
+      })
+      .catch((err) => logSafeError('[profile-distill] dispatch failed:', err));
+  }
   void audit('save_memory', caller, auditArgs, 'ok');
   return { ok: true, action: 'save_memory', message: `Saved ${action.memory_type} episode for chat ${message.chatId}.` };
 }

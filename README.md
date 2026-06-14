@@ -49,6 +49,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 - Three-layer architecture: Buffer, Episodic, and Semantic memory
 - Auto-flush distillation from conversation buffer to episodic memory; system-initiated flush turns are background-only, so exec failures are logged instead of sent as visible Feishu replies
+- Optional Stage 2 profile distillation from recent episodes, default off and gated by per-user cooldowns / minimum episode thresholds
 - Local markdown-file storage under `~/.codex/channels/lark/memories/`
 - User profiles (tiered public/private since v0.10.0), chat episodes, thread episodes, and global skills
 - Memory-enriched context injection on every incoming message, filtered by caller identity
@@ -278,7 +279,7 @@ failure invalidates that scope so the next turn receives the full context.
 | Stage | Description | Status |
 |---|---|---|
 | Buffer to Episode | Conversation buffer flushes to episodic memory after inactivity timeout | MVP |
-| Episodes to Profile | Periodic extraction of user preferences from episodes | Future |
+| Episodes to Profile | Optional active-user extraction from recent episodes into tiered profiles; default off, per-user cooldown, L1/L2 safety checks, audited dispatch | Gated |
 | Episode compression | Merging and summarizing old episodes | Future |
 
 ---
@@ -437,6 +438,10 @@ process restarts.
 | `LARK_MAX_EPISODE_BYTES` | `65536` | Maximum UTF-8 bytes persisted per episode file before truncation |
 | `LARK_MAX_EPISODE_FILES_PER_SCOPE` | `200` | Maximum episode files retained per chat/thread scope after pruning |
 | `LARK_MAX_EPISODE_SCOPE_BYTES` | `10485760` | Maximum total episode bytes retained per chat/thread scope after pruning |
+| `LARK_PROFILE_DISTILLATION_ENABLED` | `false` | Enable Stage 2 profile distillation from recent episodes into tiered profiles |
+| `LARK_PROFILE_DISTILLATION_MIN_EPISODES` | `3` | Minimum episodes in the chat/thread scope before a profile distillation dispatch |
+| `LARK_PROFILE_DISTILLATION_MAX_EPISODES` | `5` | Maximum recent episodes included in one profile distillation prompt |
+| `LARK_PROFILE_DISTILLATION_COOLDOWN_MS` | `86400000` | Per-user cooldown between profile distillation dispatches |
 | `LARK_MEMORY_DEDUP_WINDOW_MS` | `1800000` | Suppress unchanged memory blocks per chat/thread for this many milliseconds. Set `0` to disable. |
 
 ### Optional -- Identity / privacy (v0.9.0+)
