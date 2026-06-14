@@ -15,6 +15,9 @@ interface LocalCliToolConfig {
   allowedSubcommands?: string[];
   paramAllowlist?: string[];
   paramBlocklist?: string[];
+  envAllowlist: string[];
+  env: Record<string, string>;
+  inheritEnv: boolean;
   timeoutMs: number;
   maxOutputBytes: number;
   allowedCallers: CallerMode;
@@ -50,7 +53,9 @@ interface ProcessResult {
 }
 
 const TOOL_NAME_RE = /^[A-Za-z0-9_.-]{1,80}$/;
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SECRET_KEY_RE = /(token|secret|password|passwd|credential|authorization|api[_-]?key|app[_-]?secret)/i;
+const DEFAULT_ENV_KEYS = ['HOME', 'PATH', 'TMPDIR', 'TEMP', 'TMP', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE'];
 
 function mcpText(text: string, isError = false) {
   return {
@@ -99,6 +104,35 @@ function parseStringArray(value: unknown, field: string, fallback: string[] = []
   return value;
 }
 
+function parseEnvAllowlist(value: unknown, field: string): string[] {
+  const keys = parseStringArray(value, field);
+  for (const key of keys) {
+    if (!ENV_KEY_RE.test(key)) throw new Error(`${field} contains invalid environment key "${key}"`);
+  }
+  return keys;
+}
+
+function parseStringRecord(value: unknown, field: string): Record<string, string> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${field} must be an object with string values`);
+  }
+
+  const parsed: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (!ENV_KEY_RE.test(key)) throw new Error(`${field} contains invalid environment key "${key}"`);
+    if (typeof item !== 'string') throw new Error(`${field}.${key} must be a string`);
+    parsed[key] = item;
+  }
+  return parsed;
+}
+
+function parseBoolean(value: unknown, field: string, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'boolean') throw new Error(`${field} must be a boolean`);
+  return value;
+}
+
 function parseAllowedCallers(value: unknown): CallerMode {
   if (value === undefined) return 'owners';
   if (value === 'owners' || value === 'lark_allowed_user_ids' || value === 'public') return value;
@@ -140,6 +174,9 @@ function parseToolConfig(name: string, raw: any): LocalCliToolConfig {
         : parseStringArray(raw.allowedSubcommands, `Tool ${name} allowedSubcommands`),
     ...(hasAllowlist ? { paramAllowlist: parseStringArray(raw.paramAllowlist, `Tool ${name} paramAllowlist`) } : {}),
     ...(hasBlocklist ? { paramBlocklist: parseStringArray(raw.paramBlocklist, `Tool ${name} paramBlocklist`) } : {}),
+    envAllowlist: parseEnvAllowlist(raw.envAllowlist, `Tool ${name} envAllowlist`),
+    env: parseStringRecord(raw.env, `Tool ${name} env`),
+    inheritEnv: parseBoolean(raw.inheritEnv, `Tool ${name} inheritEnv`, false),
     timeoutMs: parsePositiveNumber(raw.timeoutMs, `Tool ${name} timeoutMs`, 30_000),
     maxOutputBytes: parsePositiveNumber(raw.maxOutputBytes, `Tool ${name} maxOutputBytes`, 64 * 1024),
     allowedCallers: parseAllowedCallers(raw.allowedCallers),
@@ -224,6 +261,20 @@ function validateExecution(config: LocalCliToolConfig, args: string[]): string |
   return validateSubcommand(config, args) ?? validateParams(config, args);
 }
 
+function buildProcessEnv(config: LocalCliToolConfig): NodeJS.ProcessEnv {
+  if (config.inheritEnv) return { ...process.env, ...config.env };
+
+  const env: NodeJS.ProcessEnv = {};
+  const copyFromProcess = (key: string) => {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  };
+
+  for (const key of DEFAULT_ENV_KEYS) copyFromProcess(key);
+  for (const key of config.envAllowlist) copyFromProcess(key);
+  return { ...env, ...config.env };
+}
+
 function appendCappedOutput(
   current: string,
   chunk: Buffer,
@@ -241,7 +292,13 @@ function appendCappedOutput(
   return current + slice.toString('utf8');
 }
 
-async function runProcess(command: string, args: string[], timeoutMs: number, maxOutputBytes: number): Promise<ProcessResult> {
+async function runProcess(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+  maxOutputBytes: number,
+  env: NodeJS.ProcessEnv,
+): Promise<ProcessResult> {
   let stdout = '';
   let stderr = '';
   const outputState = { bytes: 0, truncated: false };
@@ -251,7 +308,7 @@ async function runProcess(command: string, args: string[], timeoutMs: number, ma
     const child = spawn(command, args, {
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+      env,
     });
 
     const timer = setTimeout(() => {
@@ -348,7 +405,7 @@ export function registerLocalCliTools(options: RegisterLocalCliToolsOptions): vo
       const finalArgs = [...config.fixedArgs, ...requestedArgs];
       let result: ProcessResult;
       try {
-        result = await runProcess(config.command, finalArgs, config.timeoutMs, config.maxOutputBytes);
+        result = await runProcess(config.command, finalArgs, config.timeoutMs, config.maxOutputBytes, buildProcessEnv(config));
       } catch (err: any) {
         await audit('run_local_cli_tool', caller, auditArgs, 'error');
         return mcpText(`Failed to execute local CLI tool "${tool}": ${err?.message ?? String(err)}`, true);

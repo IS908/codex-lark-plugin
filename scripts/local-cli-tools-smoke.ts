@@ -20,6 +20,8 @@ writeFileSync(
   [
     'const args = process.argv.slice(2);',
     'if (args.includes("--sleep")) setTimeout(() => {}, 1000);',
+    'else if (args[0] === "--print-env") console.log(`${args[1]}=${process.env[args[1]] ?? "<missing>"}`);',
+    'else if (args[0] === "--has-env") console.log(`env-present=${process.env[args[1]] === undefined ? "no" : "yes"}`);',
     'else {',
     '  console.log(args.join("|"));',
     '  console.error("stderr token=should-hide");',
@@ -221,6 +223,62 @@ try {
     });
     assert.match(text(capped), /truncated/);
     assert.doesNotMatch(text(capped), /should-hide/);
+  }
+
+  // 8. Local CLI tools do not inherit plugin secrets by default; env must be explicit.
+  process.env.LARK_APP_SECRET = 'super-secret-for-env-test';
+  writeConfig({
+    tools: {
+      env_default: {
+        command: process.execPath,
+        fixedArgs: [helperPath],
+        paramBlocklist: ['--token'],
+        allowedCallers: 'public',
+      },
+      env_allowlisted: {
+        command: process.execPath,
+        fixedArgs: [helperPath],
+        paramBlocklist: ['--token'],
+        allowedCallers: 'public',
+        envAllowlist: ['LARK_APP_SECRET'],
+      },
+      env_literal: {
+        command: process.execPath,
+        fixedArgs: [helperPath],
+        paramBlocklist: ['--token'],
+        allowedCallers: 'public',
+        env: { CUSTOM_SAFE: 'ok' },
+      },
+    },
+  });
+  {
+    const hidden = await run!({
+      tool: 'env_default',
+      args: ['--has-env', 'LARK_APP_SECRET'],
+      chat_id: 'chat_other',
+      thread_id: 'thread_other',
+    });
+    assert.equal(hidden.isError, undefined);
+    assert.match(text(hidden), /env-present=no/);
+    assert.doesNotMatch(text(hidden), /super-secret-for-env-test/);
+
+    const allowlisted = await run!({
+      tool: 'env_allowlisted',
+      args: ['--has-env', 'LARK_APP_SECRET'],
+      chat_id: 'chat_other',
+      thread_id: 'thread_other',
+    });
+    assert.equal(allowlisted.isError, undefined);
+    assert.match(text(allowlisted), /env-present=yes/);
+
+    const literal = await run!({
+      tool: 'env_literal',
+      args: ['--print-env', 'CUSTOM_SAFE'],
+      chat_id: 'chat_other',
+      thread_id: 'thread_other',
+    });
+    assert.equal(literal.isError, undefined);
+    assert.match(text(literal), /CUSTOM_SAFE=ok/);
   }
 
   const audit = readFileSync(auditPath, 'utf-8');
