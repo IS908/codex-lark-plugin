@@ -14,6 +14,10 @@ node scripts/codex-adapter-smoke.js
 echo "PASS"
 
 echo ""
+echo "=== Config validation checks ==="
+node --import tsx scripts/config-validation-smoke.ts
+
+echo ""
 echo "=== Release version checks ==="
 npm run --silent check:release-version
 echo "PASS"
