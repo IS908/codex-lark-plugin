@@ -74,7 +74,11 @@ export class MessageQueue {
         if (this.chains.get(k) === next) {
           this.chains.delete(k);
         }
-      });
+    });
     this.chains.set(k, next);
+  }
+
+  isIdle(): boolean {
+    return this.chains.size === 0;
   }
 }

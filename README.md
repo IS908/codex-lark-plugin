@@ -344,6 +344,32 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_CRON_SCAN_INTERVAL` | `60` | CronJob scheduler scan interval in seconds |
 | `LARK_CRON_TIMEZONE` | system timezone | IANA timezone for cron schedule evaluation (e.g. `Asia/Shanghai`, `UTC`). Affects how hours in cron expressions map to wall-clock time. |
 
+### Optional -- Codex Exec Session Health
+
+Session-health nudges are off by default and only run when
+`LARK_SESSION_HEALTH_ENABLED=true`, `LARK_OWNER_OPEN_ID` is set, and Codex exec
+session resume is enabled. The plugin does not clear, compact, or reset Codex
+sessions automatically.
+
+Codex exec JSON currently gives the bridge a session id but no stable token or
+context usage statistic, so the monitor uses a weaker heuristic: exec turn
+count and prompt bytes observed by the bridge. It only DMs the owner after the
+channel is quiet: the message queue is idle, ack reactions are clear, and no
+reply obligations are pending. Repeated nudges use exponential cooldown and stop
+after the configured per-session cap. The heuristic resets when Codex returns a
+new session id for the same chat/thread, such as after stale-session recovery,
+or when the plugin process restarts.
+
+| Variable | Default | Description |
+|---|---|---|
+| `LARK_SESSION_HEALTH_ENABLED` | `false` | Enable owner DM nudges for long-running Codex exec sessions |
+| `LARK_SESSION_HEALTH_TURN_THRESHOLD` | `80` | Nudge after this many exec turns in the same chat/thread session |
+| `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD` | `524288` | Nudge after this many cumulative prompt bytes observed by the bridge |
+| `LARK_SESSION_HEALTH_IDLE_DELAY_MS` | `30000` | Delay before checking the idle/quiet gates |
+| `LARK_SESSION_HEALTH_COOLDOWN_MS` | `1800000` | First nudge cooldown in milliseconds |
+| `LARK_SESSION_HEALTH_MAX_COOLDOWN_MS` | `21600000` | Maximum exponential cooldown in milliseconds |
+| `LARK_SESSION_HEALTH_MAX_NUDGES` | `3` | Maximum nudges per heuristic session episode |
+
 ### Optional -- Memory
 
 | Variable | Default | Description |

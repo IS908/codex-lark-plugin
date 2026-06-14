@@ -19,10 +19,23 @@ export interface CodexExecDeliveryOptions {
   runCodexExec?: CodexExecRunner;
   sessionStore?: CodexExecSessionStore;
   useCodexSessions?: boolean;
+  sessionHealth?: CodexExecSessionHealthRecorder;
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
   sendDocCommentReply?: (request: DocCommentExecReplyRequest) => Promise<{ replyId?: string }>;
   recordAssistantMessage?: (message: { chatId: string; text: string }) => void;
   turnObligations?: TurnObligationTracker;
+}
+
+export interface CodexExecSessionHealthRecorder {
+  recordTurn(input: {
+    sessionKey: string;
+    chatId: string;
+    threadId?: string;
+    sessionId?: string | null;
+    resumed: boolean;
+    promptBytes: number;
+    responseBytes: number;
+  }): void;
 }
 
 export interface DocCommentExecReplyRequest {
@@ -68,6 +81,7 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
       ? 'Return only the plain text that should be posted as a Feishu document-comment reply. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.'
       : 'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
+    'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',
     'If the user asks for an action you cannot complete in this exec bridge environment, say exactly what is missing and keep the answer concise.',
     'If this turn intentionally should not send a Feishu reply, put [LARK_DEFER] or [LARK_NO_REPLY] on its own line outside code fences, optionally followed by a short reason.',
     '',
@@ -115,6 +129,7 @@ export async function deliverMessageViaCodexExec(
   };
 
   let result;
+  let usedResumeSessionId = request.resumeSessionId;
   try {
     result = normalizeCodexExecResult(await runCodexExec(request));
   } catch (err) {
@@ -127,6 +142,7 @@ export async function deliverMessageViaCodexExec(
     result = normalizeCodexExecResult(
       await runCodexExec({ ...request, resumeSessionId: null }),
     );
+    usedResumeSessionId = null;
   }
 
   if (useCodexSessions && result.sessionId) {
@@ -143,6 +159,15 @@ export async function deliverMessageViaCodexExec(
   if (!text) {
     text = 'Codex exec returned an empty response.';
   }
+  opts.sessionHealth?.recordTurn({
+    sessionKey,
+    chatId: message.chatId,
+    ...(message.threadId ? { threadId: message.threadId } : {}),
+    sessionId: result.sessionId ?? usedResumeSessionId ?? null,
+    resumed: !!usedResumeSessionId,
+    promptBytes: Buffer.byteLength(request.prompt, 'utf8'),
+    responseBytes: Buffer.byteLength(result.text, 'utf8'),
+  });
   if (turnObligations?.markDeferredFromText(message.messageId, 'exec_assistant_text', text)) {
     return;
   }

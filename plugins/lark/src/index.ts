@@ -21,6 +21,11 @@ import { shouldSendCodexExecFailureReply } from './codex-exec-error.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
 import { packageName, packageVersion } from './package-metadata.js';
 import {
+  buildSessionHealthNudgeText,
+  sendSessionHealthOwnerDm,
+  SessionHealthMonitor,
+} from './session-health.js';
+import {
   acquireSingleInstanceLock,
   registerLockCleanup,
   sweepInbox,
@@ -88,6 +93,38 @@ async function main() {
   channel.setMemoryStore(memoryStore);
   channel.setIdentitySession(identitySession);
   const turnObligations = new TurnObligationTracker();
+  const sessionHealthMonitor =
+    appConfig.sessionHealthEnabled && appConfig.ownerOpenId
+      ? new SessionHealthMonitor({
+          enabled: appConfig.codexExecUseSessions,
+          ownerOpenId: appConfig.ownerOpenId,
+          turnThreshold: appConfig.sessionHealthTurnThreshold,
+          promptBytesThreshold: appConfig.sessionHealthPromptBytesThreshold,
+          quietDelayMs: appConfig.sessionHealthIdleDelayMs,
+          baseCooldownMs: appConfig.sessionHealthCooldownMs,
+          maxCooldownMs: appConfig.sessionHealthMaxCooldownMs,
+          maxNudges: appConfig.sessionHealthMaxNudges,
+          quiet: () => ({
+            queueIdle: channel.isIdle(),
+            ackQuiet:
+              channel.getAckReactions().activeCount === 0 &&
+              channel.getAckReactions().pendingCount === 0,
+            turnQuiet: turnObligations.pendingCount() === 0,
+          }),
+          notifyOwner: async (nudge) => {
+            await sendSessionHealthOwnerDm(
+              channel.getClient(),
+              appConfig.ownerOpenId!,
+              buildSessionHealthNudgeText(nudge),
+            );
+          },
+        })
+      : null;
+  if (appConfig.sessionHealthEnabled && !appConfig.ownerOpenId) {
+    console.error('[session-health] disabled: LARK_OWNER_OPEN_ID is required');
+  } else if (appConfig.sessionHealthEnabled && !appConfig.codexExecUseSessions) {
+    console.error('[session-health] disabled: LARK_CODEX_EXEC_USE_SESSIONS=false');
+  }
 
   // 4. Create conversation buffer + wire flush handler
   const buffer = new ConversationBuffer();
@@ -201,6 +238,7 @@ async function main() {
               timestamp: new Date().toISOString(),
             });
           },
+          sessionHealth: sessionHealthMonitor ?? undefined,
           turnObligations,
         });
         if (hasReplyObligation) {
