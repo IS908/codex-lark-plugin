@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-06-14
+
+### Added
+- `scripts/start.sh` now prefixes launcher and child-process stderr lines with local timestamps while keeping MCP stdout clean.
+- Added a launcher smoke test to guard timestamped stderr output and stdout cleanliness.
+
 ## [1.1.1] - 2026-06-14
 
 ### Security
@@ -166,7 +172,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.12...v1.1.0
 [1.0.12]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.11...v1.0.12
