@@ -119,6 +119,10 @@ echo "=== SDK message parity checks ==="
 node --import tsx scripts/sdk-message-parity-smoke.ts
 
 echo ""
+echo "=== SDK outbound parity checks ==="
+node --import tsx scripts/sdk-outbound-parity-smoke.ts
+
+echo ""
 echo "=== Resource governance unit checks ==="
 node --import tsx scripts/resource-governance-smoke.ts
 
