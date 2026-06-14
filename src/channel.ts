@@ -15,6 +15,11 @@ import { BoundedCache } from './resource-governance.js';
 import { AckReactionTracker, deleteAckReaction } from './ack-reactions.js';
 import { extractInteractiveCardText } from './interactive-card-text.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
+import {
+  createMemoryDedupScopeKey,
+  MemoryContextDeduper,
+  type MemoryContextBlock,
+} from './memory-context-dedup.js';
 
 /**
  * Build a Lark SDK logger that routes every level to stderr. The SDK's default
@@ -510,6 +515,7 @@ export class LarkChannel {
   private botMessageTracker = new BotMessageTracker(appConfig.botMessageTrackerSize);
   private latestMessageTracker = new LatestMessageTracker(10 * 60 * 1000, appConfig.latestMessageTrackerSize);
   private commentEventIdSeen = new BoundedCache<string, true>(1000);
+  private memoryDeduper = new MemoryContextDeduper({ windowMs: appConfig.memoryDedupWindowMs });
 
   constructor() {
     this.client = new Lark.Client({
@@ -565,6 +571,12 @@ export class LarkChannel {
 
   getLatestMessageTracker(): LatestMessageTracker {
     return this.latestMessageTracker;
+  }
+
+  invalidateMemoryDedupScope(chatId: string, threadId?: string, reason = 'manual'): void {
+    const scopeKey = createMemoryDedupScopeKey(chatId, threadId);
+    this.memoryDeduper.invalidate(scopeKey);
+    debugLog(`[memory-dedup] invalidated scope=${scopeKey} reason=${reason}`);
   }
 
   async start(): Promise<void> {
@@ -862,9 +874,15 @@ export class LarkChannel {
 
     if (this.messageHandler) {
       debugLog(`[channel] Calling message handler for message ${messageId}`);
-      await this.messageHandler(enrichedMessage);
-      debugLog(`[channel] Message handler completed for message ${messageId}`);
+      try {
+        await this.messageHandler(enrichedMessage);
+        debugLog(`[channel] Message handler completed for message ${messageId}`);
+      } catch (err) {
+        this.invalidateMemoryDedupScope(chatId, threadId, `delivery failure for message ${messageId}`);
+        throw err;
+      }
     } else {
+      this.invalidateMemoryDedupScope(chatId, threadId, `no handler for message ${messageId}`);
       debugLog(`[channel] No message handler registered for message ${messageId}`);
     }
   }
@@ -874,7 +892,8 @@ export class LarkChannel {
       return enrichmentPrompt('', msg.parentContent, msg.senderId, msg.chatId, msg.text);
     }
 
-    const parts: string[] = [];
+    this.memoryDeduper.setWindowMs(appConfig.memoryDedupWindowMs);
+    const blocks: MemoryContextBlock[] = [];
 
     // Build search query — enhance short messages with recent buffer context
     let searchQuery = msg.text;
@@ -892,7 +911,12 @@ export class LarkChannel {
       .getProfile(msg.senderId, msg.senderId)
       .catch(() => null);
     if (profile) {
-      parts.push(`[User Profile]\n${profile}`);
+      blocks.push({
+        key: `profile:${msg.senderId}`,
+        kind: 'profile',
+        label: '[User Profile]',
+        content: profile,
+      });
     }
 
     // 2. Mentioned user profiles (hot injection)
@@ -904,7 +928,12 @@ export class LarkChannel {
             .getProfile(mention.id, msg.senderId)
             .catch(() => null);
           if (mentionProfile) {
-            parts.push(`[Mentioned User: ${mention.name}]\n${mentionProfile}`);
+            blocks.push({
+              key: `mentioned_profile:${mention.id}`,
+              kind: 'mentioned_profile',
+              label: `[Mentioned User: ${mention.name}]`,
+              content: mentionProfile,
+            });
           }
         }
       }
@@ -916,10 +945,15 @@ export class LarkChannel {
         .searchEpisodes(searchQuery, { chatId: msg.chatId, threadId: msg.threadId })
         .catch(() => []);
       const filtered = threadEps.filter(ep => ep.score === undefined || ep.score >= appConfig.minSearchScore);
-      for (const ep of filtered) {
+      for (const [index, ep] of filtered.entries()) {
         const scoreTag = ep.score !== undefined ? ` · score:${ep.score.toFixed(2)}` : '';
         const dateTag = ep.timestamp.slice(0, 10);
-        parts.push(`[Thread Context${scoreTag} · ${dateTag}]\n${ep.content}`);
+        blocks.push({
+          key: `thread_episode:${ep.id ?? `${ep.timestamp}:${index}`}`,
+          kind: 'thread_episode',
+          label: `[Thread Context${scoreTag} · ${dateTag}]`,
+          content: ep.content,
+        });
       }
     }
 
@@ -928,10 +962,15 @@ export class LarkChannel {
       .searchEpisodes(searchQuery, { chatId: msg.chatId })
       .catch(() => []);
     const filteredChat = chatEps.filter(ep => ep.score === undefined || ep.score >= appConfig.minSearchScore);
-    for (const ep of filteredChat) {
+    for (const [index, ep] of filteredChat.entries()) {
       const scoreTag = ep.score !== undefined ? ` · score:${ep.score.toFixed(2)}` : '';
       const dateTag = ep.timestamp.slice(0, 10);
-      parts.push(`[Chat Context${scoreTag} · ${dateTag}]\n${ep.content}`);
+      blocks.push({
+        key: `chat_episode:${ep.id ?? `${ep.timestamp}:${index}`}`,
+        kind: 'chat_episode',
+        label: `[Chat Context${scoreTag} · ${dateTag}]`,
+        content: ep.content,
+      });
     }
 
     // 5. Skills (cold injection — inject name + description + path only, not full content)
@@ -940,12 +979,24 @@ export class LarkChannel {
     for (const skill of filteredSkills) {
       const scoreTag = skill.score !== undefined ? ` · score:${skill.score.toFixed(2)}` : '';
       const skillPath = `${appConfig.memoriesDir}/skills/${skill.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`;
-      parts.push(`[Skill: ${skill.name}${scoreTag}]\n${skill.description}\n→ ${skillPath}`);
+      blocks.push({
+        key: `skill:${skill.name.toLowerCase()}`,
+        kind: 'skill',
+        label: `[Skill: ${skill.name}${scoreTag}]`,
+        content: `${skill.description}\n→ ${skillPath}`,
+      });
     }
 
     // Assemble
+    const scopeKey = createMemoryDedupScopeKey(msg.chatId, msg.threadId);
+    const deduped = this.memoryDeduper.filter(scopeKey, blocks);
+    if (blocks.length > 0) {
+      debugLog(
+        `[memory-dedup] scope=${scopeKey} injected=${deduped.injectedCount} suppressed=${deduped.suppressedCount} bytes_saved=${deduped.bytesSaved}`
+      );
+    }
     return enrichmentPrompt(
-      parts.join('\n\n'),
+      deduped.memoryContext,
       msg.parentContent,
       msg.senderId,
       msg.chatId,

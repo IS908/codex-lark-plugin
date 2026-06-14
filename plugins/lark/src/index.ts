@@ -227,6 +227,7 @@ async function main() {
       );
     } catch (err) {
       const errText = err instanceof Error ? err.message : String(err);
+      channel.invalidateMemoryDedupScope(message.chatId, message.threadId, `delivery catch for message ${message.messageId}`);
       debugLog(
         `[channel] Failed to deliver inbound to Codex for message ${message.messageId}: ${errText}`
       );

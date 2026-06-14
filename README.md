@@ -267,6 +267,12 @@ On every incoming message, the plugin injects relevant memory context in this or
 4. **Chat episodes** -- searched by relevance for the current chat
 5. **Skills** -- globally searched by relevance
 
+Unchanged memory blocks are deduplicated per `(chat_id, thread_id)` for
+`LARK_MEMORY_DEDUP_WINDOW_MS` (30 minutes by default). Profile blocks leave a
+small `<memory_context_omitted>` stub when suppressed; episode and skill blocks
+are omitted until their content changes or the window expires. A delivery
+failure invalidates that scope so the next turn receives the full context.
+
 ### Distillation Pipeline
 
 | Stage | Description | Status |
@@ -348,6 +354,7 @@ On every incoming message, the plugin injects relevant memory context in this or
 | `LARK_MAX_EPISODE_BYTES` | `65536` | Maximum UTF-8 bytes persisted per episode file before truncation |
 | `LARK_MAX_EPISODE_FILES_PER_SCOPE` | `200` | Maximum episode files retained per chat/thread scope after pruning |
 | `LARK_MAX_EPISODE_SCOPE_BYTES` | `10485760` | Maximum total episode bytes retained per chat/thread scope after pruning |
+| `LARK_MEMORY_DEDUP_WINDOW_MS` | `1800000` | Suppress unchanged memory blocks per chat/thread for this many milliseconds. Set `0` to disable. |
 
 ### Optional -- Identity / privacy (v0.9.0+)
 
