@@ -17,6 +17,7 @@ import type { TurnObligationTracker } from './turn-obligation.js';
 import { assertSafeChatId } from './prompts.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { buildCommentElements } from './doc-comment-api.js';
+import { registerLocalCliTools } from './local-cli-tools.js';
 import {
   autoPauseJobForPermanentTargetError,
   isPermanentTargetError,
@@ -449,6 +450,7 @@ export function registerTools(
     },
   };
   registerDocCommentTools({ server, client: docCommentClient, identitySession, conversationBuffer });
+  registerLocalCliTools({ server, identitySession });
 
   // ── 1. reply ──
   server.registerTool(

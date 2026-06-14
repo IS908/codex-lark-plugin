@@ -319,6 +319,45 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | Pass `--ignore-user-config` to `codex exec` to avoid recursively loading the Lark MCP server |
 | `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | Resume one Codex exec session per Feishu `chat_id` / `thread_id`. This preserves multi-turn context inside the Codex CLI session store; it does not attach to an already-open interactive terminal TUI session. |
 
+### Optional -- Local CLI Tools
+
+`run_local_cli_tool` is a controlled MCP tool for trusted host-local CLI or
+skill-backed workflows, such as `lark-cli`. It does not run shell strings and
+does not change the general `codex exec` sandbox. Each invocation resolves the
+caller from `IdentitySession`, authorizes against the per-tool config, applies
+one parameter filtering mode, runs `spawn(command, args, { shell: false })`,
+captures bounded output, redacts common secrets, and writes the audit log.
+
+Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
+`~/.codex/channels/lark/local-cli-tools.json`.
+
+```json
+{
+  "tools": {
+    "lark_cli": {
+      "command": "/opt/homebrew/bin/lark-cli",
+      "allowedSubcommands": ["doc", "drive", "sheets"],
+      "paramBlocklist": ["--token", "--secret", "--app-secret", "--debug-dump-env"],
+      "timeoutMs": 30000,
+      "maxOutputBytes": 65536,
+      "allowedCallers": "owners"
+    },
+    "lark_doc_create": {
+      "command": "/opt/homebrew/bin/lark-cli",
+      "fixedArgs": ["doc", "create"],
+      "paramAllowlist": ["--title", "--content", "--folder", "--format"],
+      "timeoutMs": 30000,
+      "maxOutputBytes": 65536,
+      "allowedCallers": "lark_allowed_user_ids"
+    }
+  }
+}
+```
+
+`allowedCallers` accepts `"owners"`, `"lark_allowed_user_ids"`, `"public"`, or
+an explicit array of Feishu/Lark `open_id` values. Tool configs must set exactly
+one of `paramAllowlist` or `paramBlocklist`. Commands must be absolute paths.
+
 ### Optional -- Acknowledgement
 
 | Variable | Default | Description |
@@ -391,6 +430,7 @@ or when the plugin process restarts.
 | `LARK_IDENTITY_SESSION_MAX_ENTRIES` | `5000` | Maximum server-derived caller session entries retained in memory. Oldest entries are evicted first. |
 | `LARK_PRIVACY_RULES_FILE` | `~/.codex/channels/lark/privacy-rules.md` | Override the path to the L2 user rules file. The distiller injects this file's contents into its classification prompt. |
 | `LARK_AUDIT_LOG` | `~/.codex/channels/lark/audit.log` | Override the path to the append-only audit log. Every sensitive-tool invocation is recorded (best-effort; log failures never propagate). (v0.11.0+) |
+| `LARK_LOCAL_CLI_TOOLS_CONFIG` | `~/.codex/channels/lark/local-cli-tools.json` | Allowlist config for `run_local_cli_tool` host-local CLI execution. (v0.12.0+) |
 
 ### Optional -- Resource Governance
 
