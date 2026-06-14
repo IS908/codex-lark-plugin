@@ -29,7 +29,20 @@ function optionalNumber(key: string, fallback: number): number {
   const val = process.env[key];
   if (!val) return fallback;
   const parsed = Number(val);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (!Number.isFinite(parsed)) throw new Error(`Invalid ${key}: ${val}. Expected a number.`);
+  return parsed;
+}
+
+function optionalPositiveNumber(key: string, fallback: number): number {
+  const parsed = optionalNumber(key, fallback);
+  if (parsed <= 0) throw new Error(`Invalid ${key}: ${parsed}. Expected a positive number.`);
+  return parsed;
+}
+
+function optionalNonNegativeNumber(key: string, fallback: number): number {
+  const parsed = optionalNumber(key, fallback);
+  if (parsed < 0) throw new Error(`Invalid ${key}: ${parsed}. Expected a non-negative number.`);
+  return parsed;
 }
 
 function optionalBoolean(key: string, fallback: boolean): boolean {
@@ -56,11 +69,11 @@ export const appConfig = {
   // Filtering
   allowedUserIds: optionalList('LARK_ALLOWED_USER_IDS'),
   allowedChatIds: optionalList('LARK_ALLOWED_CHAT_IDS'),
-  textChunkLimit: optionalNumber('LARK_TEXT_CHUNK_LIMIT', 4000),
+  textChunkLimit: optionalPositiveNumber('LARK_TEXT_CHUNK_LIMIT', 4000),
   ackEmoji: optional('LARK_ACK_EMOJI', 'MeMeMe'),
   docCommentAckEmoji: optionalAllowEmpty('LARK_DOC_COMMENT_ACK_EMOJI', 'THUMBSUP'),
-  botMessageTrackerSize: optionalNumber('LARK_BOT_MESSAGE_TRACKER_SIZE', 500),
-  queueHandlerTimeoutMs: optionalNumber('LARK_QUEUE_HANDLER_TIMEOUT_MS', 30_000),
+  botMessageTrackerSize: optionalNonNegativeNumber('LARK_BOT_MESSAGE_TRACKER_SIZE', 500),
+  queueHandlerTimeoutMs: optionalNonNegativeNumber('LARK_QUEUE_HANDLER_TIMEOUT_MS', 30_000),
   codexDeliveryMode: optionalChoice(
     'LARK_CODEX_DELIVERY_MODE',
     'exec',
@@ -68,7 +81,7 @@ export const appConfig = {
   ),
   codexExecCommand: optional('LARK_CODEX_EXEC_COMMAND', 'codex'),
   codexExecCwd: optional('LARK_CODEX_EXEC_CWD', process.cwd()),
-  codexExecTimeoutMs: optionalNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000),
+  codexExecTimeoutMs: optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000),
   codexExecSandbox: optionalChoice(
     'LARK_CODEX_EXEC_SANDBOX',
     'workspace-write',
@@ -79,39 +92,39 @@ export const appConfig = {
   codexExecIgnoreUserConfig: optionalBoolean('LARK_CODEX_EXEC_IGNORE_USER_CONFIG', true),
   codexExecUseSessions: optionalBoolean('LARK_CODEX_EXEC_USE_SESSIONS', true),
   sessionHealthEnabled: optionalBoolean('LARK_SESSION_HEALTH_ENABLED', false),
-  sessionHealthTurnThreshold: optionalNumber('LARK_SESSION_HEALTH_TURN_THRESHOLD', 80),
-  sessionHealthPromptBytesThreshold: optionalNumber(
+  sessionHealthTurnThreshold: optionalPositiveNumber('LARK_SESSION_HEALTH_TURN_THRESHOLD', 80),
+  sessionHealthPromptBytesThreshold: optionalPositiveNumber(
     'LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD',
     512 * 1024,
   ),
-  sessionHealthIdleDelayMs: optionalNumber('LARK_SESSION_HEALTH_IDLE_DELAY_MS', 30_000),
-  sessionHealthCooldownMs: optionalNumber('LARK_SESSION_HEALTH_COOLDOWN_MS', 30 * 60 * 1000),
-  sessionHealthMaxCooldownMs: optionalNumber('LARK_SESSION_HEALTH_MAX_COOLDOWN_MS', 6 * 60 * 60 * 1000),
-  sessionHealthMaxNudges: optionalNumber('LARK_SESSION_HEALTH_MAX_NUDGES', 3),
-  replyObligationTimeoutMs: optionalNumber(
+  sessionHealthIdleDelayMs: optionalNonNegativeNumber('LARK_SESSION_HEALTH_IDLE_DELAY_MS', 30_000),
+  sessionHealthCooldownMs: optionalPositiveNumber('LARK_SESSION_HEALTH_COOLDOWN_MS', 30 * 60 * 1000),
+  sessionHealthMaxCooldownMs: optionalPositiveNumber('LARK_SESSION_HEALTH_MAX_COOLDOWN_MS', 6 * 60 * 60 * 1000),
+  sessionHealthMaxNudges: optionalPositiveNumber('LARK_SESSION_HEALTH_MAX_NUDGES', 3),
+  replyObligationTimeoutMs: optionalPositiveNumber(
     'LARK_REPLY_OBLIGATION_TIMEOUT_MS',
-    Math.max(60_000, optionalNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000) + 60_000),
+    Math.max(60_000, optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000) + 60_000),
   ),
-  cronScanInterval: optionalNumber('LARK_CRON_SCAN_INTERVAL', 60),
+  cronScanInterval: optionalPositiveNumber('LARK_CRON_SCAN_INTERVAL', 60),
   cronTimezone: optional('LARK_CRON_TIMEZONE', Intl.DateTimeFormat().resolvedOptions().timeZone),
-  feishuApiTimeoutMs: optionalNumber('LARK_FEISHU_API_TIMEOUT_MS', 30_000),
-  feishuApiRetryAttempts: optionalNumber('LARK_FEISHU_API_RETRY_ATTEMPTS', 3),
-  feishuApiRetryBaseDelayMs: optionalNumber('LARK_FEISHU_API_RETRY_BASE_DELAY_MS', 250),
-  logMaxBytes: optionalNumber('LARK_LOG_MAX_BYTES', 5 * 1024 * 1024),
-  logMaxFiles: optionalNumber('LARK_LOG_MAX_FILES', 5),
+  feishuApiTimeoutMs: optionalNonNegativeNumber('LARK_FEISHU_API_TIMEOUT_MS', 30_000),
+  feishuApiRetryAttempts: optionalPositiveNumber('LARK_FEISHU_API_RETRY_ATTEMPTS', 3),
+  feishuApiRetryBaseDelayMs: optionalNonNegativeNumber('LARK_FEISHU_API_RETRY_BASE_DELAY_MS', 250),
+  logMaxBytes: optionalNonNegativeNumber('LARK_LOG_MAX_BYTES', 5 * 1024 * 1024),
+  logMaxFiles: optionalNonNegativeNumber('LARK_LOG_MAX_FILES', 5),
 
   // Memory
-  minSearchScore: optionalNumber('LARK_MIN_SEARCH_SCORE', 0.3),
-  maxSearchResults: optionalNumber('LARK_MAX_SEARCH_RESULTS', 2),
-  inactivityHours: optionalNumber('LARK_INACTIVITY_HOURS', 3),
-  maxEpisodeBytes: optionalNumber('LARK_MAX_EPISODE_BYTES', 64 * 1024),
-  maxEpisodeFilesPerScope: optionalNumber('LARK_MAX_EPISODE_FILES_PER_SCOPE', 200),
-  maxEpisodeScopeBytes: optionalNumber('LARK_MAX_EPISODE_SCOPE_BYTES', 10 * 1024 * 1024),
-  memoryDedupWindowMs: optionalNumber('LARK_MEMORY_DEDUP_WINDOW_MS', 30 * 60 * 1000),
-  downloadMaxBytes: optionalNumber('LARK_DOWNLOAD_MAX_BYTES', 25 * 1024 * 1024),
-  downloadTimeoutMs: optionalNumber('LARK_DOWNLOAD_TIMEOUT_MS', 60_000),
-  inboxMaxAgeHours: optionalNumber('LARK_INBOX_MAX_AGE_HOURS', 168),
-  inboxMaxBytes: optionalNumber('LARK_INBOX_MAX_BYTES', 200 * 1024 * 1024),
+  minSearchScore: optionalNonNegativeNumber('LARK_MIN_SEARCH_SCORE', 0.3),
+  maxSearchResults: optionalPositiveNumber('LARK_MAX_SEARCH_RESULTS', 2),
+  inactivityHours: optionalPositiveNumber('LARK_INACTIVITY_HOURS', 3),
+  maxEpisodeBytes: optionalNonNegativeNumber('LARK_MAX_EPISODE_BYTES', 64 * 1024),
+  maxEpisodeFilesPerScope: optionalNonNegativeNumber('LARK_MAX_EPISODE_FILES_PER_SCOPE', 200),
+  maxEpisodeScopeBytes: optionalNonNegativeNumber('LARK_MAX_EPISODE_SCOPE_BYTES', 10 * 1024 * 1024),
+  memoryDedupWindowMs: optionalNonNegativeNumber('LARK_MEMORY_DEDUP_WINDOW_MS', 30 * 60 * 1000),
+  downloadMaxBytes: optionalPositiveNumber('LARK_DOWNLOAD_MAX_BYTES', 25 * 1024 * 1024),
+  downloadTimeoutMs: optionalNonNegativeNumber('LARK_DOWNLOAD_TIMEOUT_MS', 60_000),
+  inboxMaxAgeHours: optionalNonNegativeNumber('LARK_INBOX_MAX_AGE_HOURS', 168),
+  inboxMaxBytes: optionalNonNegativeNumber('LARK_INBOX_MAX_BYTES', 200 * 1024 * 1024),
 
   // Identity / privacy
   ownerOpenId: process.env.LARK_OWNER_OPEN_ID || null,
@@ -121,17 +134,17 @@ export const appConfig = {
    * by a flush still resolve to the last real user of the chat.
    * Default: max(2h, inactivityHours × 2).
    */
-  identitySessionTtlMs: optionalNumber(
+  identitySessionTtlMs: optionalPositiveNumber(
     'LARK_IDENTITY_SESSION_TTL_MS',
     Math.max(
       2 * 60 * 60 * 1000,
-      optionalNumber('LARK_INACTIVITY_HOURS', 3) * 2 * 60 * 60 * 1000,
+      optionalPositiveNumber('LARK_INACTIVITY_HOURS', 3) * 2 * 60 * 60 * 1000,
     ),
   ),
-  identitySessionMaxEntries: optionalNumber('LARK_IDENTITY_SESSION_MAX_ENTRIES', 5000),
-  nameCacheSize: optionalNumber('LARK_NAME_CACHE_SIZE', 1000),
-  chatTypeCacheSize: optionalNumber('LARK_CHAT_TYPE_CACHE_SIZE', 1000),
-  latestMessageTrackerSize: optionalNumber('LARK_LATEST_MESSAGE_TRACKER_SIZE', 1000),
+  identitySessionMaxEntries: optionalPositiveNumber('LARK_IDENTITY_SESSION_MAX_ENTRIES', 5000),
+  nameCacheSize: optionalNonNegativeNumber('LARK_NAME_CACHE_SIZE', 1000),
+  chatTypeCacheSize: optionalNonNegativeNumber('LARK_CHAT_TYPE_CACHE_SIZE', 1000),
+  latestMessageTrackerSize: optionalNonNegativeNumber('LARK_LATEST_MESSAGE_TRACKER_SIZE', 1000),
 
   // Paths
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),
