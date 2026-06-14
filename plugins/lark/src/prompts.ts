@@ -126,7 +126,7 @@ export const mcpServerInstructions: string = [
   'Meta image_path → Read that file. Meta attachment_file_id → call download_attachment(message_id, file_key, file_name=meta.attachment_name) then Read the returned path. Always pass file_name so the saved file keeps its extension (.pdf, .txt, etc.) — Read infers MIME from the extension.',
   'CronJob notifications carry source=\'cronjob\'. Dispatch to a subagent so the main thread stays responsive to Feishu messages.',
   'For heavy multi-step tasks, use subagents where available so the main Codex session stays small and responsive.',
-  'Sensitive tools (save_memory, what_do_you_know, forget_memory, create_job, list_jobs, update_job, delete_job) authorize the caller server-side from chat_id + thread_id. Always pass BOTH verbatim from the current notification\'s metadata — never substitute sentinels like "__terminal__" for a real chat_id.',
+  'Sensitive tools (save_memory, save_skill, what_do_you_know, forget_memory, create_job, list_jobs, update_job, delete_job, run_local_cli_tool) authorize the caller server-side from chat_id + thread_id. Always pass BOTH verbatim from the current notification\'s metadata — never substitute sentinels like "__terminal__" for a real chat_id.',
 ].join('\n');
 
 /**
