@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-14
+
+### Added
+- Persistent acknowledgement reactions for Feishu doc-comment turns, including comment-event smoke coverage.
+- Session health nudges for long-running Codex exec sessions, gated by idle queue/ack/turn state and owner-only notifications.
+- `run_local_cli_tool` for allowlisted host-local CLI execution with server-derived caller identity, per-tool caller authorization, parameter allow/block filters, bounded output, secret redaction, and audit logging.
+
+### Changed
+- MCP server metadata now reads the version from package metadata, and release checks verify package, wrapper, plugin manifest, README badge, and changelog versions stay aligned.
+- Repeated memory context injection is deduplicated per chat/thread scope, with invalidation after delivery failures so the next turn receives full context again.
+
+### Fixed
+- Local CLI tool lookup now uses own-property resolution and rejects the system-flush sentinel, avoiding accidental execution from synthetic memory-distillation turns.
+
 ## [1.0.12] - 2026-06-08
 
 ### Fixed
@@ -140,7 +154,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.12...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.12...v1.1.0
 [1.0.12]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/IS908/codex-lark-plugin/compare/v1.0.9...v1.0.10
