@@ -583,13 +583,57 @@ export function registerTools(
     }
   );
 
+  function validateTrackedBotMessage(
+    toolName: 'edit_message' | 'recall_message',
+    messageId: string,
+    chatId: string,
+    threadId: string | undefined,
+  ):
+    | { tracked: NonNullable<ReturnType<BotMessageTracker['get']>> }
+    | { error: { isError: true; content: { type: 'text'; text: string }[] } } {
+    const tracked = botMessageTracker?.get(messageId);
+    if (!tracked) {
+      return {
+        error: {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: `${toolName} denied: ${messageId} is not a tracked bot message.`,
+            },
+          ],
+        },
+      };
+    }
+    const trackedThread = tracked.threadId ?? '';
+    const requestedThread = threadId ?? '';
+    if (tracked.chatId !== chatId || trackedThread !== requestedThread) {
+      return {
+        error: {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `${toolName} denied: ${messageId} belongs to chat=${tracked.chatId ?? '(unknown)'}` +
+                ` thread=${tracked.threadId ?? '(none)'}, does not belong to chat=${chatId}` +
+                ` thread=${threadId ?? '(none)'}.`,
+            },
+          ],
+        },
+      };
+    }
+    return { tracked };
+  }
+
   // ── 2. edit_message ──
   server.registerTool(
     'edit_message',
     {
-      description: 'Edit a previously sent bot message (text or card_markdown).',
+      description:
+        'Edit a previously sent bot message (text or card_markdown). Only tracked bot messages sent by this plugin in the current chat/thread can be edited.',
       inputSchema: z.object({
-        message_id: z.string().describe('The message ID to edit'),
+        message_id: z.string().describe('Tracked bot message ID to edit'),
         text: z.string().describe('New content'),
         format: z
           .enum(['text', 'card_markdown'])
@@ -597,12 +641,11 @@ export function registerTools(
           .describe('Format of the content'),
         chat_id: z
           .string()
-          .optional()
-          .describe('Current channel chat_id. Pass this with thread_id/reply_to so the edit satisfies the current Lark turn.'),
+          .describe('Current channel chat_id'),
         thread_id: z
           .string()
           .optional()
-          .describe('Current channel thread_id, when present. Used only to satisfy the current Lark turn.'),
+          .describe('Current channel thread_id, when present'),
         reply_to: z
           .string()
           .optional()
@@ -610,6 +653,16 @@ export function registerTools(
       }),
     },
     async ({ message_id, text, format, chat_id, thread_id, reply_to }) => {
+      const auditArgs = { message_id, chat_id, thread_id, reply_to, format };
+      const auth = resolveCaller('edit_message', chat_id, thread_id, auditArgs);
+      if ('error' in auth) return auth.error;
+      const { caller } = auth;
+      const tracked = validateTrackedBotMessage('edit_message', message_id, chat_id, thread_id);
+      if ('error' in tracked) {
+        void audit('edit_message', caller, auditArgs, 'denied');
+        return tracked.error;
+      }
+
       let turnMessageId: string | undefined;
       try {
         turnMessageId = resolveTurnMessageId({ reply_to, chat_id, thread_id });
@@ -617,17 +670,24 @@ export function registerTools(
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text' as const, text: msg }], isError: true };
       }
-      if (format === 'card_markdown') {
-        await transport.updateCard({
-          messageId: message_id,
-          card: Lark.messageCard.defaultCard({
-            title: '',
-            content: text,
-          }),
-        });
-      } else {
-        await transport.editMessage({ messageId: message_id, text });
+      try {
+        if (format === 'card_markdown') {
+          await transport.updateCard({
+            messageId: message_id,
+            card: Lark.messageCard.defaultCard({
+              title: '',
+              content: text,
+            }),
+          });
+        } else {
+          await transport.editMessage({ messageId: message_id, text });
+        }
+      } catch (err) {
+        void audit('edit_message', caller, auditArgs, 'error');
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: msg }], isError: true };
       }
+      void audit('edit_message', caller, auditArgs, 'ok');
       satisfyTurn(turnMessageId, 'edit_message');
       revokeAckReactionWithTransport(transport, ackReactions, turnMessageId, 'edit_message');
 
@@ -658,35 +718,10 @@ export function registerTools(
       const auth = resolveCaller('recall_message', chat_id, thread_id, auditArgs);
       if ('error' in auth) return auth.error;
       const { caller } = auth;
-      const tracked = botMessageTracker?.get(message_id);
-      if (!tracked) {
+      const tracked = validateTrackedBotMessage('recall_message', message_id, chat_id, thread_id);
+      if ('error' in tracked) {
         void audit('recall_message', caller, auditArgs, 'denied');
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text: `recall_message denied: ${message_id} is not a tracked bot message.`,
-            },
-          ],
-        };
-      }
-      const trackedThread = tracked.threadId ?? '';
-      const requestedThread = thread_id ?? '';
-      if (tracked.chatId !== chat_id || trackedThread !== requestedThread) {
-        void audit('recall_message', caller, auditArgs, 'denied');
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text:
-                `recall_message denied: ${message_id} belongs to chat=${tracked.chatId ?? '(unknown)'}` +
-                ` thread=${tracked.threadId ?? '(none)'}, does not belong to chat=${chat_id}` +
-                ` thread=${thread_id ?? '(none)'}.`,
-            },
-          ],
-        };
+        return tracked.error;
       }
 
       let turnMessageId: string | undefined;
