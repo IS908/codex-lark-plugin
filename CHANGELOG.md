@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.13] - 2026-06-16
+
+### Fixed
+- Made `save-skill` smoke audit-log polling wait for the expected success audit line instead of returning as soon as the log file exists.
+
 ## [1.5.12] - 2026-06-16
 
 ### Fixed
