@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-06-15
+
+### Fixed
+- Added raw OpenAPI fallback and structured diagnostics when SDK outbound `send` fails, preventing SDK `Internal Error` responses from surfacing as failed Codex exec replies.
+
 ## [1.4.0] - 2026-06-15
 
 ### Added
@@ -222,7 +227,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.3...v1.2.0

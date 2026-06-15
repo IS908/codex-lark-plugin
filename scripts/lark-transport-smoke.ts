@@ -152,6 +152,107 @@ const transport = createLarkTransport({
 }
 
 {
+  const diagnostics: string[] = [];
+  const failingSdkChannel = {
+    rawClient,
+    send: async (to: string, input: any, opts?: any) => {
+      calls.push({ method: 'sdk.send.fail', args: { to, input, opts } });
+      const err = new Error('Internal Error') as Error & {
+        code?: string;
+        context?: unknown;
+        cause?: unknown;
+      };
+      err.name = 'LarkChannelError';
+      err.code = 'unknown';
+      err.context = { to };
+      err.cause = {
+        response: {
+          status: 500,
+          data: { code: 99991663, msg: 'Internal Error' },
+        },
+        config: { headers: { Authorization: 'Bearer should-not-log' } },
+      };
+      throw err;
+    },
+  };
+  const transportWithFallback = createLarkTransport({
+    sdkChannel: failingSdkChannel as any,
+    rawClient: rawClient as any,
+  });
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    diagnostics.push(args.map(String).join(' '));
+  };
+  try {
+    const result = await transportWithFallback.sendMessage({
+      chatId: 'oc_chat',
+      input: { text: 'fallback' },
+      replyTo: 'om_user',
+      replyInThread: true,
+    });
+    assert.deepEqual(result, { messageId: 'om_raw_reply' });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.deepEqual(calls.slice(-2).map((call) => call.method), [
+    'sdk.send.fail',
+    'raw.message.reply',
+  ]);
+  const rawReply = calls.at(-1);
+  assert.equal(rawReply?.args.path.message_id, 'om_user');
+  assert.equal(rawReply?.args.data.reply_in_thread, true);
+  assert.equal(rawReply?.args.data.content, JSON.stringify({ text: 'fallback' }));
+  assert.ok(
+    diagnostics.some(
+      (line) =>
+        line.includes('[lark-transport] SDK send failed; falling back to raw OpenAPI') &&
+        line.includes('code=unknown') &&
+        line.includes('status=500') &&
+        line.includes('feishu_code=99991663') &&
+        !line.includes('should-not-log'),
+    ),
+    `missing SDK fallback diagnostic: ${diagnostics.join('\n')}`,
+  );
+}
+
+{
+  const failingSdkChannel = {
+    rawClient,
+    send: async (to: string, input: any, opts?: any) => {
+      calls.push({ method: 'sdk.send.card.fail', args: { to, input, opts } });
+      throw new Error('Internal Error');
+    },
+  };
+  const transportWithFallback = createLarkTransport({
+    sdkChannel: failingSdkChannel as any,
+    rawClient: rawClient as any,
+  });
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const result = await transportWithFallback.sendMessage({
+      chatId: 'oc_chat',
+      input: { card: { elements: [{ tag: 'markdown', content: 'card body' }] } },
+    });
+    assert.deepEqual(result, { messageId: 'om_raw_created' });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.deepEqual(calls.slice(-2).map((call) => call.method), [
+    'sdk.send.card.fail',
+    'raw.message.create',
+  ]);
+  const rawCreate = calls.at(-1);
+  assert.equal(rawCreate?.args.data.msg_type, 'interactive');
+  assert.equal(
+    rawCreate?.args.data.content,
+    JSON.stringify({ elements: [{ tag: 'markdown', content: 'card body' }] }),
+  );
+}
+
+{
   const result = await transport.sendMessage({
     chatId: 'oc_chat',
     input: { text: 'scheduled' },
