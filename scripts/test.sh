@@ -84,6 +84,14 @@ echo "=== Message content parser unit checks ==="
 node --import tsx scripts/message-content-smoke.ts
 
 echo ""
+echo "=== Display name resolver unit checks ==="
+node --import tsx scripts/display-name-resolver-smoke.ts
+
+echo ""
+echo "=== Inbound message normalizer unit checks ==="
+node --import tsx scripts/inbound-message-normalizer-smoke.ts
+
+echo ""
 echo "=== Comment event unit checks ==="
 node --import tsx scripts/comment-event-smoke.ts
 
@@ -230,6 +238,10 @@ node --import tsx scripts/reaction-router-smoke.ts
 echo ""
 echo "=== Download attachment unit checks ==="
 node --import tsx scripts/download-attachment-smoke.ts
+
+echo ""
+echo "=== Inbound attachment downloader unit checks ==="
+node --import tsx scripts/inbound-attachment-downloader-smoke.ts
 
 echo ""
 echo "=== Auto-flush caller binding unit checks ==="

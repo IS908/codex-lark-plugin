@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.7] - 2026-06-15
+
+### Changed
+- Completed the remaining #90 inbound-boundary split by extracting legacy message normalization, inbound image download handling, and display-name resolution out of `LarkChannel` while keeping channel-level ack, queue, memory, and quoted-context orchestration unchanged.
+
 ## [1.5.6] - 2026-06-15
 
 ### Changed

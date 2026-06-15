@@ -4,10 +4,7 @@ import type {
   LarkChannel as SdkLarkChannel,
   NormalizedMessage,
   ReactionEvent,
-  ResourceDescriptor,
 } from '@larksuite/channel';
-import { mkdirSync } from 'node:fs';
-import path from 'node:path';
 import { appConfig } from './config.js';
 import { enrichmentPrompt } from './prompts.js';
 import { MessageQueue } from './queue.js';
@@ -15,16 +12,10 @@ import type { MemoryStore } from './memory/file.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { IdentitySession } from './identity-session.js';
 import { DOC_CHAT_ID_PREFIX, TERMINAL_CHAT_ID } from './identity-session.js';
-import { writeSdkResource } from './sdk-resource.js';
 import { debugLog } from './debug-log.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { BoundedCache } from './resource-governance.js';
 import { AckReactionTracker, deleteAckReactionWithTransport } from './ack-reactions.js';
-import {
-  extractMessageAttachments,
-  extractMessageText,
-  resolveMentionPlaceholders,
-} from './message-content.js';
 import {
   createOpenApiLarkTransport,
   createSdkLarkTransport,
@@ -44,6 +35,12 @@ import {
   sdkReactionRouteEvent,
 } from './reaction-router.js';
 import { addQuotedContext } from './quoted-context-loader.js';
+import {
+  addLegacyImageDownloads,
+  addSdkImageDownloads,
+} from './inbound-attachment-downloader.js';
+import { DisplayNameResolver } from './display-name-resolver.js';
+import { normalizeLegacyMessageEvent } from './inbound-message-normalizer.js';
 
 export { resolveMentionPlaceholders } from './message-content.js';
 
@@ -506,6 +503,7 @@ export class LatestMessageTracker {
 export class LarkChannel {
   private client: Lark.Client;
   private nameCache = new BoundedCache<string, string>(appConfig.nameCacheSize); // open_id/chat_id → display name
+  private displayNameResolver: DisplayNameResolver;
   private chatTypeCache = new BoundedCache<string, 'p2p' | 'group'>(appConfig.chatTypeCacheSize); // chatId → type (populated from inbound events)
   private botOpenId: string = '';
   private wsClient: Lark.WSClient | null = null;
@@ -530,6 +528,10 @@ export class LarkChannel {
       appType: Lark.AppType.SelfBuild,
       domain: Lark.Domain.Feishu,
       logger: makeSdkLogger('lark-sdk'),
+    });
+    this.displayNameResolver = new DisplayNameResolver({
+      cache: this.nameCache,
+      client: () => this.client as any,
     });
     this.larkTransport = createOpenApiLarkTransport(this.client);
     this.larkTransportRawClient = this.client;
@@ -649,7 +651,7 @@ export class LarkChannel {
             queue: this.queue,
             messageHandler: this.messageHandler,
             processMessage: this.processEnqueuedMessage.bind(this),
-            resolveUserName: this.resolveUserName.bind(this),
+            resolveUserName: this.displayNameResolver.resolveUserName.bind(this.displayNameResolver),
             client: this.client as any,
           });
         } catch (err) {
@@ -700,7 +702,7 @@ export class LarkChannel {
         queue: this.queue,
         messageHandler: this.messageHandler,
         processMessage: this.processEnqueuedMessage.bind(this),
-        resolveUserName: this.resolveUserName.bind(this),
+        resolveUserName: this.displayNameResolver.resolveUserName.bind(this.displayNameResolver),
         client: this.client as any,
       });
       return;
@@ -747,7 +749,7 @@ export class LarkChannel {
     this.ackReactions.recordInbound(message.messageId);
 
     await this.addSdkAckReaction(message, sdkChannel);
-    await this.addSdkImageDownloads(message, sdkMessage.resources, sdkChannel);
+    await addSdkImageDownloads(message, sdkMessage.resources, sdkChannel);
     await addQuotedContext(message, this.larkTransport);
 
     if (message.chatType === 'p2p' || message.chatType === 'group') {
@@ -781,34 +783,6 @@ export class LarkChannel {
     }).catch(() => {});
   }
 
-  private async addSdkImageDownloads(
-    message: LarkMessage,
-    resources: ResourceDescriptor[],
-    sdkChannel?: Pick<SdkLarkChannel, 'downloadResource'>,
-  ): Promise<void> {
-    if (!sdkChannel?.downloadResource) return;
-    const imageResources = resources.filter((resource) => resource.type === 'image' && resource.fileKey);
-    if (imageResources.length === 0) return;
-
-    const downloadedPaths: string[] = [];
-    for (const resource of imageResources) {
-      const downloaded = await this.downloadSdkResource(
-        sdkChannel,
-        message.messageId,
-        resource.fileKey,
-        'image',
-        resource.fileName ?? 'image.png',
-      );
-      if (downloaded) downloadedPaths.push(downloaded);
-    }
-
-    if (downloadedPaths.length === 1) {
-      message.imagePath = downloadedPaths[0];
-    } else if (downloadedPaths.length > 1) {
-      message.imagePaths = downloadedPaths;
-    }
-  }
-
   private async addSdkCommentContext(
     message: LarkMessage,
     comment: CommentEvent,
@@ -827,75 +801,18 @@ export class LarkChannel {
     }
   }
 
-  private async downloadSdkResource(
-    sdkChannel: Pick<SdkLarkChannel, 'downloadResource'>,
-    messageId: string,
-    fileKey: string,
-    resourceType: 'image' | 'file',
-    fileName: string,
-  ): Promise<string | undefined> {
-    try {
-      mkdirSync(appConfig.inboxDir, { recursive: true });
-      const data = await sdkChannel.downloadResource(messageId, fileKey, resourceType);
-      const safeName = fileName.replace(/[\\/:\0]/g, '_').slice(0, 120) || fileKey;
-      const filePath = path.join(appConfig.inboxDir, `${Date.now()}-${fileKey}-${safeName}`);
-      await writeSdkResource(data, filePath, {
-        maxBytes: appConfig.downloadMaxBytes,
-        timeoutMs: appConfig.downloadTimeoutMs,
-      });
-      debugLog(`[sdk-channel] Downloaded ${resourceType} ${fileKey} -> ${filePath}`);
-      return filePath;
-    } catch (err) {
-      debugLog(`[sdk-channel] Failed to download ${resourceType} ${fileKey}: ${err}`);
-      return undefined;
-    }
-  }
-
   private async handleMessageEvent(data: any): Promise<void> {
     this.ensureOpenApiTransportCurrent();
-    const { message, sender } = data;
-    const {
-      message_id: messageId,
-      chat_id: chatId,
-      chat_type: chatType,
-      content: rawContent,
-      message_type: messageType,
-      parent_id: parentId,
-      root_id: rootMessageId,
-      thread_id: eventThreadId,
-      mentions,
-    } = message;
-    const threadId = eventThreadId ?? rootMessageId;
+    const normalized = await normalizeLegacyMessageEvent(data, {
+      botOpenId: this.botOpenId,
+      passesWhitelist,
+      resolveUserName: this.displayNameResolver.resolveUserName.bind(this.displayNameResolver),
+      log: debugLog,
+    });
+    if (normalized.status === 'dropped') return;
 
-    const senderId = sender?.sender_id?.open_id ?? '';
-
-    // Resolve sender display name (from event data or cache)
-    const senderName = await this.resolveUserName(senderId, sender);
-
-    // Whitelist filtering (OR semantics when both lists are set)
-    if (!passesWhitelist(senderId, chatId)) {
-      debugLog(`[channel] Message from ${senderId} in ${chatId} rejected by whitelist`);
-      return;
-    }
-
-    // In group chats, only process messages that @mention the bot
-    if (chatType === 'group') {
-      if (!mentions || mentions.length === 0) {
-        debugLog(`[channel] Ignoring group message: no mentions`);
-        return;
-      }
-      // If we know the bot's open_id, match precisely; otherwise accept any mention
-      if (this.botOpenId) {
-        const botMentioned = mentions.some(
-          (m: any) => (m.id?.open_id ?? m.id?.union_id) === this.botOpenId
-        );
-        if (!botMentioned) {
-          debugLog(`[channel] Ignoring group message: bot not @mentioned`);
-          return;
-        }
-      }
-      debugLog(`[channel] Group message with @mention, processing`);
-    }
+    const larkMessage: LarkMessage = normalized.message;
+    const { messageId, chatId, threadId } = larkMessage;
 
     // Record latest inbound message for this (chat, thread) — used by reply tool
     // to auto-correct reply_to in concurrent thread scenarios.
@@ -907,7 +824,7 @@ export class LarkChannel {
     this.ackReactions.recordInbound(messageId);
 
     // Fire-and-forget ack reaction (Typing for P2P, MeMeMe for group @bot)
-    const ackEmoji = chatType === 'p2p' ? 'Typing' : appConfig.ackEmoji;
+    const ackEmoji = larkMessage.chatType === 'p2p' ? 'Typing' : appConfig.ackEmoji;
     if (ackEmoji) {
       this.larkTransport.addReaction(messageId, ackEmoji).then((reactionId) => {
         if (!reactionId) return;
@@ -918,107 +835,24 @@ export class LarkChannel {
       }).catch(() => {});
     }
 
-    // Parse mentions
-    const parsedMentions: Array<{ id: string; name: string }> = (mentions ?? []).map(
-      (m: any) => ({
-        id: m.id?.open_id ?? m.id?.union_id ?? '',
-        name: m.name ?? '',
-      }),
+    await addLegacyImageDownloads(
+      larkMessage,
+      larkMessage.rawContent,
+      larkMessage.messageType,
+      this.larkTransport,
     );
-
-    // Detect whether this bot was among the mentioned users — forwarded to
-    // Codex as meta.bot_mentioned so Codex has a text-independent signal
-    // when multiple users are @mentioned in the same message.
-    const botMentioned = this.botOpenId
-      ? parsedMentions.some((m) => m.id === this.botOpenId)
-      : parsedMentions.length > 0; // fallback: same heuristic as the group-filter
-
-    // Parse message text, resolving @_user_N placeholders to @<name>
-    const text = resolveMentionPlaceholders(
-      this.extractText(rawContent, messageType),
-      parsedMentions,
-    );
-
-    // Parse attachments
-    const attachments = this.extractAttachments(message);
-
-    // Auto-download images
-    let imagePath: string | undefined;
-    let imagePaths: string[] | undefined;
-
-    if (messageType === 'image') {
-      try {
-        const parsed = JSON.parse(rawContent);
-        const imageKey = parsed.image_key;
-        if (imageKey) {
-          const downloaded = await this.downloadImage(imageKey, messageId);
-          if (downloaded) imagePath = downloaded;
-        }
-      } catch {
-        debugLog(`[channel] Failed to parse image content for auto-download`);
-      }
-    } else if (messageType === 'post') {
-      try {
-        const parsed = JSON.parse(rawContent);
-        const content = parsed.content ?? parsed.zh_cn?.content ?? parsed.en_us?.content ?? [];
-        const downloadedPaths: string[] = [];
-        for (const line of content) {
-          for (const node of line as any[]) {
-            if (node.tag === 'img' && node.image_key) {
-              const downloaded = await this.downloadImage(node.image_key, messageId);
-              if (downloaded) downloadedPaths.push(downloaded);
-            }
-          }
-        }
-        if (downloadedPaths.length === 1) {
-          imagePath = downloadedPaths[0];
-        } else if (downloadedPaths.length > 1) {
-          imagePaths = downloadedPaths;
-        }
-      } catch {
-        debugLog(`[channel] Failed to parse post content for image auto-download`);
-      }
+    if (larkMessage.chatType === 'group') {
+      const chatName = await this.displayNameResolver.resolveChatName(chatId);
+      larkMessage.chatName = chatName || undefined;
     }
-
-    // Resolve chat name for group chats
-    const chatName = chatType === 'group' ? await this.resolveChatName(chatId) : '';
-
-    // Build message object
-    const larkMessage: LarkMessage = {
-      messageId,
-      chatId,
-      chatType,
-      senderId,
-      senderName: senderName || undefined,
-      chatName: chatName || undefined,
-      text,
-      messageType,
-      parentId,
-      threadId,
-      rootMessageId,
-      mentions: parsedMentions,
-      botMentioned,
-      attachments,
-      rawContent,
-      imagePath,
-      imagePaths,
-    };
-
     await addQuotedContext(larkMessage, this.larkTransport);
 
     // Cache chat type for later lookups (e.g. list_jobs visibility filter).
-    if (chatType === 'p2p' || chatType === 'group') {
-      this.chatTypeCache.set(chatId, chatType);
+    if (larkMessage.chatType === 'p2p' || larkMessage.chatType === 'group') {
+      this.chatTypeCache.set(chatId, larkMessage.chatType);
     }
 
-    debugLog(
-      `[channel] Enqueue message ${messageId} chat=${chatId} thread=${threadId ?? '(none)'}`
-    );
-
-    // Enqueue for sequential per-chat processing
-    this.queue.enqueue(chatId, threadId, async () => {
-      await this.processEnqueuedMessage(larkMessage);
-    });
+    this.enqueueMessage(larkMessage);
   }
 
   private async processEnqueuedMessage(larkMessage: LarkMessage): Promise<void> {
@@ -1180,32 +1014,6 @@ export class LarkChannel {
   }
 
   /**
-   * Download an image by image_key and save to inboxDir.
-   * Returns the absolute path to the saved file, or undefined on failure.
-   *
-   * Uses messageResource.get because image.get can only download images that
-   * the bot itself uploaded — not images users send to the bot.
-   */
-  private async downloadImage(imageKey: string, messageId: string): Promise<string | undefined> {
-    try {
-      mkdirSync(appConfig.inboxDir, { recursive: true });
-      const resp = await this.larkTransport.downloadResource(messageId, imageKey, 'image');
-      if (!resp) return undefined;
-      const filename = `${Date.now()}-${imageKey}.png`;
-      const filePath = path.join(appConfig.inboxDir, filename);
-      await writeSdkResource(resp, filePath, {
-        maxBytes: appConfig.downloadMaxBytes,
-        timeoutMs: appConfig.downloadTimeoutMs,
-      });
-      debugLog(`[channel] Downloaded image ${imageKey} → ${filePath}`);
-      return filePath;
-    } catch (err) {
-      debugLog(`[channel] Failed to download image ${imageKey}: ${err}`);
-      return undefined;
-    }
-  }
-
-  /**
    * Handle reaction events on bot messages.
    *
    * Reactions are passive UI feedback. Forwarding them into Codex as ordinary
@@ -1244,86 +1052,5 @@ export class LarkChannel {
     } catch (err) {
       logSafeError('[channel] Warning: failed to fetch bot info:', err);
     }
-  }
-
-  /**
-   * Resolve a user's display name. Tries event data first, then API, then cache.
-   * Falls back to a truncated open_id if all else fails.
-   */
-  private async resolveUserName(openId: string, _sender?: any): Promise<string> {
-    if (!openId) return '';
-
-    // Check cache
-    const cached = this.nameCache.get(openId);
-    if (cached) return cached;
-
-    // Try contact API (requires contact:contact.base:readonly permission)
-    try {
-      const resp = await feishuApiCall('channel.contact.user.get', () =>
-        this.client.contact.v3.user.get({
-          path: { user_id: openId },
-          params: { user_id_type: 'open_id' },
-        }),
-      );
-      const name = (resp?.data as any)?.user?.name;
-      if (name) {
-        this.nameCache.set(openId, name);
-        return name;
-      }
-    } catch {
-      // Permission not granted or API failed; fall through
-    }
-
-    // Fallback: generate a stable short alias from the open_id
-    const alias = this.generateAlias(openId);
-    this.nameCache.set(openId, alias);
-    return alias;
-  }
-
-  /**
-   * Generate a stable alias like "user_e4338bc" from an ID string.
-   * Uses the last 7 chars of the ID which are unique per user.
-   */
-  private generateAlias(id: string): string {
-    const suffix = id.slice(-7);
-    return `user_${suffix}`;
-  }
-
-  /**
-   * Resolve a chat's display name. Caches the result.
-   */
-  private async resolveChatName(chatId: string): Promise<string> {
-    if (!chatId) return '';
-
-    const cached = this.nameCache.get(chatId);
-    if (cached) return cached;
-
-    try {
-      const resp = await feishuApiCall('channel.chat.get', () =>
-        this.client.im.v1.chat.get({
-          path: { chat_id: chatId },
-        }),
-      );
-      const name = (resp?.data as any)?.name;
-      if (name) {
-        this.nameCache.set(chatId, name);
-        return name;
-      }
-    } catch {
-      // Chat name fetch failed; fall through to alias
-    }
-
-    // Fallback: chat_xxx alias
-    const alias = `chat_${chatId.slice(-7)}`;
-    this.nameCache.set(chatId, alias);
-    return alias;
-  }
-
-  private extractText(rawContent: string, messageType: string): string {
-    return extractMessageText(rawContent, messageType);
-  }
-
-  private extractAttachments(message: any): Array<{ fileKey: string; fileName: string; fileType: string }> {
-    return extractMessageAttachments(message);
   }
 }
