@@ -11,8 +11,13 @@ import { registerTools } from '../src/tools.js';
 import { IdentitySession } from '../src/identity-session.js';
 import { appConfig } from '../src/config.js';
 import type { JobFile } from '../src/job-store.js';
-import type { MemoryStore } from '../src/memory/file.js';
 import type { LarkChannel } from '../src/channel.js';
+import {
+  createMockLarkClient,
+  createNoopMemoryStore,
+  createPrivateChatChannel,
+  createToolServerHarness,
+} from './test-helpers/tool-fixtures.js';
 
 function fail(msg: string): never {
   console.error(`FAIL: ${msg}`);
@@ -20,36 +25,9 @@ function fail(msg: string): never {
 }
 
 let passed = 0;
-const handlers = new Map<string, (args: any) => Promise<any>>();
-const fakeServer = {
-  registerTool(name: string, _config: any, handler: any) {
-    handlers.set(name, handler);
-  },
-};
-
-const noopMemory = {
-  healthCheck: async () => true,
-  getProfile: async () => null,
-  saveProfile: async () => {},
-  searchEpisodes: async () => [],
-  saveEpisode: async () => {},
-  listEpisodes: async () => [],
-  deleteEpisodes: async () => {},
-  searchSkills: async () => [],
-  saveSkill: async () => {},
-} as unknown as MemoryStore;
-
-const fakeClient = {
-  im: {
-    v1: {
-      message: { create: async () => ({}), reply: async () => ({}), patch: async () => ({}) },
-      messageReaction: { create: async () => ({}), delete: async () => ({}) },
-      image: { create: async () => ({ data: { image_key: 'img' } }), get: async () => Buffer.from('x') },
-      file: { create: async () => ({ data: { file_key: 'file' } }) },
-      messageResource: { get: async () => Buffer.from('x') },
-    },
-  },
-};
+const { server: fakeServer, handlers, getTool } = createToolServerHarness();
+const noopMemory = createNoopMemoryStore();
+const fakeClient = createMockLarkClient();
 
 function makeJob(overrides: Partial<JobFile['meta']> = {}, runtime: Partial<JobFile['runtime']> = {}): JobFile {
   return {
@@ -99,7 +77,7 @@ try {
   const identity = new IdentitySession(() => null);
   identity.setCaller('chat_owner', 'thread_owner', 'ou_owner');
   identity.setCaller('chat_other', 'thread_other', 'ou_other');
-  const fakeChannel = { isPrivateChat: () => true } as unknown as LarkChannel;
+  const fakeChannel = createPrivateChatChannel() as unknown as LarkChannel;
 
   registerTools(
     fakeServer as any,
@@ -112,8 +90,7 @@ try {
     undefined,
     undefined,
   );
-  const updateJob = handlers.get('update_job');
-  if (!updateJob) fail('update_job handler not registered');
+  const updateJob = getTool('update_job');
 
   // 1. Missing job returns an MCP error.
   {
