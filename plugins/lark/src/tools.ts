@@ -21,6 +21,7 @@ import {
   createOpenApiLarkTransport,
   type LarkTransport,
 } from './lark-transport.js';
+import { validateTrackedBotMessageScope } from './message-mutation.js';
 
 type LarkTransportProvider = LarkTransport | (() => LarkTransport);
 
@@ -583,49 +584,6 @@ export function registerTools(
     }
   );
 
-  function validateTrackedBotMessage(
-    toolName: 'edit_message' | 'recall_message',
-    messageId: string,
-    chatId: string,
-    threadId: string | undefined,
-  ):
-    | { tracked: NonNullable<ReturnType<BotMessageTracker['get']>> }
-    | { error: { isError: true; content: { type: 'text'; text: string }[] } } {
-    const tracked = botMessageTracker?.get(messageId);
-    if (!tracked) {
-      return {
-        error: {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text: `${toolName} denied: ${messageId} is not a tracked bot message.`,
-            },
-          ],
-        },
-      };
-    }
-    const trackedThread = tracked.threadId ?? '';
-    const requestedThread = threadId ?? '';
-    if (tracked.chatId !== chatId || trackedThread !== requestedThread) {
-      return {
-        error: {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text:
-                `${toolName} denied: ${messageId} belongs to chat=${tracked.chatId ?? '(unknown)'}` +
-                ` thread=${tracked.threadId ?? '(none)'}, does not belong to chat=${chatId}` +
-                ` thread=${threadId ?? '(none)'}.`,
-            },
-          ],
-        },
-      };
-    }
-    return { tracked };
-  }
-
   // ── 2. edit_message ──
   server.registerTool(
     'edit_message',
@@ -657,10 +615,16 @@ export function registerTools(
       const auth = resolveCaller('edit_message', chat_id, thread_id, auditArgs);
       if ('error' in auth) return auth.error;
       const { caller } = auth;
-      const tracked = validateTrackedBotMessage('edit_message', message_id, chat_id, thread_id);
-      if ('error' in tracked) {
+      const tracked = validateTrackedBotMessageScope({
+        toolName: 'edit_message',
+        messageId: message_id,
+        chatId: chat_id,
+        threadId: thread_id,
+        botMessageTracker,
+      });
+      if (!tracked.ok) {
         void audit('edit_message', caller, auditArgs, 'denied');
-        return tracked.error;
+        return { isError: true, content: [{ type: 'text' as const, text: tracked.message }] };
       }
 
       let turnMessageId: string | undefined;
@@ -718,10 +682,16 @@ export function registerTools(
       const auth = resolveCaller('recall_message', chat_id, thread_id, auditArgs);
       if ('error' in auth) return auth.error;
       const { caller } = auth;
-      const tracked = validateTrackedBotMessage('recall_message', message_id, chat_id, thread_id);
-      if ('error' in tracked) {
+      const tracked = validateTrackedBotMessageScope({
+        toolName: 'recall_message',
+        messageId: message_id,
+        chatId: chat_id,
+        threadId: thread_id,
+        botMessageTracker,
+      });
+      if (!tracked.ok) {
         void audit('recall_message', caller, auditArgs, 'denied');
-        return tracked.error;
+        return { isError: true, content: [{ type: 'text' as const, text: tracked.message }] };
       }
 
       let turnMessageId: string | undefined;

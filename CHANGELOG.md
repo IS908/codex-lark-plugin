@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-06-15
+
+### Changed
+- Documented MCP-tool versus Codex-exec Lark action parity and shared the tracked bot-message scope guard between MCP message mutations and Codex exec recall actions.
+
 ## [1.5.2] - 2026-06-15
 
 ### Fixed

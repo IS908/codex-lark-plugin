@@ -186,6 +186,26 @@ try {
   });
   assert.equal(deniedRecall[0].ok, false);
   assert.match(deniedRecall[0].message, /not a tracked bot message/i);
+
+  botTracker.add('om_bot_other_scope', { chatId: 'oc_other', threadId: 'thread_exec' });
+  const wrongScopeRecall = await recallDispatcher.execute({
+    message: {
+      messageId: 'om_exec_recall_wrong_scope',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'recall wrong scope',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'recall_message', message_id: 'om_bot_other_scope' }],
+  });
+  assert.equal(wrongScopeRecall[0].ok, false);
+  assert.match(
+    wrongScopeRecall[0].message,
+    /recall_message denied: om_bot_other_scope belongs to chat=oc_other thread=thread_exec, does not belong to chat=oc_exec thread=thread_exec/i,
+  );
 } finally {
   (appConfig as any).jobsDir = oldJobsDir;
   rmSync(root, { recursive: true, force: true });
