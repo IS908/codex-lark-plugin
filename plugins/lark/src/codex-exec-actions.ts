@@ -18,6 +18,9 @@ import { findLarkDeferSentinel } from './turn-obligation.js';
 import { runConfiguredLocalCliTool } from './local-cli-tools.js';
 import type { ProfileDistillationDispatcher } from './profile-distillation.js';
 import { logSafeError } from './safe-log.js';
+import type { BotMessageTracker } from './channel.js';
+import type { LarkTransport } from './lark-transport.js';
+import type { TurnObligationTracker } from './turn-obligation.js';
 
 export const CODEX_EXEC_ACTIONS_START = '<LARK_ACTIONS_JSON>';
 export const CODEX_EXEC_ACTIONS_END = '</LARK_ACTIONS_JSON>';
@@ -48,10 +51,16 @@ const RunLocalCliToolActionSchema = z.object({
   args: z.array(z.string()).optional(),
 });
 
+const RecallMessageActionSchema = z.object({
+  type: z.literal('recall_message'),
+  message_id: z.string().min(1),
+});
+
 const CodexExecActionSchema = z.discriminatedUnion('type', [
   SaveMemoryActionSchema,
   CreateJobActionSchema,
   RunLocalCliToolActionSchema,
+  RecallMessageActionSchema,
 ]);
 
 const CodexExecActionEnvelopeSchema = z.object({
@@ -88,6 +97,9 @@ export interface CreateCodexExecActionDispatcherOptions {
   identitySession: IdentitySession;
   localCliToolsConfigPath?: string;
   profileDistiller?: ProfileDistillationDispatcher;
+  larkTransport?: Pick<LarkTransport, 'recallMessage'> | (() => Pick<LarkTransport, 'recallMessage'>);
+  botMessageTracker?: Pick<BotMessageTracker, 'get'>;
+  turnObligations?: Pick<TurnObligationTracker, 'markSatisfied'>;
 }
 
 function formatZodError(err: z.ZodError): string {
@@ -342,6 +354,68 @@ async function executeRunLocalCliTool(
   return { ok: result.ok, action: 'run_local_cli_tool', message: result.message };
 }
 
+function resolveRecallTransport(
+  transport: CreateCodexExecActionDispatcherOptions['larkTransport'],
+): Pick<LarkTransport, 'recallMessage'> | undefined {
+  return typeof transport === 'function' ? transport() : transport;
+}
+
+async function executeRecallMessage(
+  action: z.infer<typeof RecallMessageActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'recall_message');
+  const auditArgs = { message_id: action.message_id, chat_id: message.chatId, thread_id: message.threadId };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+  const tracked = deps.botMessageTracker?.get(action.message_id);
+  if (!tracked) {
+    void audit('recall_message', caller, auditArgs, 'denied');
+    return {
+      ok: false,
+      action: 'recall_message',
+      message: `${action.message_id} is not a tracked bot message.`,
+    };
+  }
+  if (tracked.chatId !== message.chatId || (tracked.threadId ?? '') !== (message.threadId ?? '')) {
+    void audit('recall_message', caller, auditArgs, 'denied');
+    return {
+      ok: false,
+      action: 'recall_message',
+      message:
+        `${action.message_id} belongs to chat=${tracked.chatId ?? '(unknown)'}` +
+        ` thread=${tracked.threadId ?? '(none)'}, not chat=${message.chatId}` +
+        ` thread=${message.threadId ?? '(none)'}.`,
+    };
+  }
+
+  const transport = resolveRecallTransport(deps.larkTransport);
+  if (!transport?.recallMessage) {
+    void audit('recall_message', caller, auditArgs, 'denied');
+    return {
+      ok: false,
+      action: 'recall_message',
+      message: 'recall_message is not configured for this runtime.',
+    };
+  }
+
+  try {
+    await transport.recallMessage(action.message_id);
+  } catch (err) {
+    void audit('recall_message', caller, auditArgs, 'error');
+    return {
+      ok: false,
+      action: 'recall_message',
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  deps.turnObligations?.markSatisfied(message.messageId, 'recall_message');
+  void audit('recall_message', caller, auditArgs, 'ok');
+  return { ok: true, action: 'recall_message', message: `Recalled message ${action.message_id}.` };
+}
+
 export function formatCodexExecActionResults(results: CodexExecActionExecutionResult[]): string {
   return results
     .map((result) => `${result.ok ? 'OK' : 'ERROR'} ${result.action}: ${result.message}`)
@@ -359,6 +433,8 @@ export function createCodexExecActionDispatcher(
           results.push(await executeSaveMemory(action, request.message, deps));
         } else if (action.type === 'create_job') {
           results.push(await executeCreateJob(action, request.message, deps));
+        } else if (action.type === 'recall_message') {
+          results.push(await executeRecallMessage(action, request.message, deps));
         } else {
           results.push(await executeRunLocalCliTool(action, request.message, deps));
         }
