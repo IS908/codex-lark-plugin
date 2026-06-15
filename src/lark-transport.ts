@@ -1,12 +1,16 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { randomUUID } from 'node:crypto';
 import { feishuApiCall, type FeishuRetryOptions } from './feishu-retry.js';
-import { extractInteractiveCardText } from './interactive-card-text.js';
 import { buildCommentElements } from './doc-comment-api.js';
 import { appConfig } from './config.js';
 import { redactErrorForLog } from './safe-log.js';
+import {
+  fetchedMessageContentText,
+  isPlaceholderCardText,
+  messageItemText,
+} from './message-content.js';
 
-const CARD_CLIENT_PLACEHOLDER = '请升级至最新版本客户端，以查看内容';
+export { isPlaceholderCardText } from './message-content.js';
 
 export type LarkTransportInput =
   | { text: string }
@@ -82,113 +86,6 @@ export interface SdkLarkTransportChannel {
 export interface LarkTransportOptions {
   sdkChannel?: SdkLarkTransportChannel;
   rawClient?: Lark.Client;
-}
-
-function compactCardAttribute(attrs: string, name: string): string | null {
-  const re = new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
-  const match = attrs.match(re);
-  return (match?.[2] ?? match?.[3] ?? match?.[4] ?? '').trim() || null;
-}
-
-function stripCompactCardTags(text: string): string {
-  return text
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function extractCompactCardText(text: string): string | null {
-  const match = text.match(/<card\b([^>]*)>([\s\S]*?)<\/card>/i);
-  if (!match) return null;
-  const title = compactCardAttribute(match[1] ?? '', 'title');
-  const body = stripCompactCardTags(match[2] ?? '');
-  const parts = [title, body].filter(Boolean);
-  return parts.length > 0 ? parts.join('\n') : null;
-}
-
-function normalizeFetchedMessageText(text: string): string {
-  return extractCompactCardText(text) ?? text;
-}
-
-export function isPlaceholderCardText(text: string, messageType: string | undefined): boolean {
-  const trimmed = text.trim();
-  return (
-    trimmed === '[Interactive Card]' ||
-    trimmed.includes(CARD_CLIENT_PLACEHOLDER) ||
-    /^<card\b/i.test(trimmed) ||
-    (messageType === 'interactive' && !trimmed)
-  );
-}
-
-function normalizeMessageMentions(item: any): Array<{ id: string; name: string }> {
-  return (item?.mentions ?? []).map((m: any) => ({
-    id:
-      m.id?.open_id ??
-      m.id?.union_id ??
-      (typeof m.id === 'string' ? m.id : ''),
-    name: m.name ?? '',
-  }));
-}
-
-function resolveMentionPlaceholders(
-  text: string,
-  mentions: Array<{ id: string; name: string }> | undefined,
-): string {
-  if (!text || !mentions || mentions.length === 0) return text;
-  return text.replace(/@_user_(\d+)/g, (match, n) => {
-    const idx = Number(n) - 1;
-    const mention = mentions[idx];
-    return mention?.name ? `@${mention.name}` : match;
-  });
-}
-
-function extractText(rawContent: string, messageType: string): string {
-  try {
-    const parsed = JSON.parse(rawContent);
-    switch (messageType) {
-      case 'text':
-        return parsed.text ?? rawContent;
-      case 'post': {
-        const lines: string[] = [];
-        const content = parsed.content ?? parsed.zh_cn?.content ?? parsed.en_us?.content ?? [];
-        for (const line of content) {
-          const texts = (line as any[])
-            .filter((node: any) => node.tag === 'text' || node.tag === 'a')
-            .map((node: any) => node.text ?? node.href ?? '');
-          lines.push(texts.join(''));
-        }
-        return lines.join('\n') || rawContent;
-      }
-      case 'image':
-        return '[Image]';
-      case 'file':
-        return `[File: ${parsed.file_name ?? 'attachment'}]`;
-      case 'audio':
-        return '[Audio]';
-      case 'video':
-        return '[Video]';
-      case 'interactive':
-        return extractInteractiveCardText(rawContent) ?? '[Interactive Card]';
-      default:
-        return parsed.text ?? rawContent;
-    }
-  } catch {
-    if (messageType === 'interactive') return '[Interactive Card]';
-    return rawContent;
-  }
-}
-
-function messageItemText(item: any): { text: string; messageType: string } | null {
-  const content = item?.body?.content;
-  if (!content) return null;
-  const messageType = item.msg_type ?? item.message_type ?? 'text';
-  const text = normalizeFetchedMessageText(resolveMentionPlaceholders(
-    extractText(content, messageType),
-    normalizeMessageMentions(item),
-  ));
-  return { text, messageType };
 }
 
 function serializeInput(input: LarkTransportInput): { msg_type: string; content: string } {
@@ -530,7 +427,7 @@ class DefaultLarkTransport implements LarkTransport {
       const message = await this.sdkChannel.fetchMessage(messageId);
       if (!message?.content) return null;
       const messageType = message.rawContentType ?? message.messageType ?? 'text';
-      return { text: normalizeFetchedMessageText(message.content), messageType };
+      return { text: fetchedMessageContentText(message.content, messageType), messageType };
     } catch {
       return null;
     }
