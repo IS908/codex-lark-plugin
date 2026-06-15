@@ -123,6 +123,10 @@ echo "=== SDK outbound parity checks ==="
 node --import tsx scripts/sdk-outbound-parity-smoke.ts
 
 echo ""
+echo "=== Lark transport boundary checks ==="
+node --import tsx scripts/lark-transport-smoke.ts
+
+echo ""
 echo "=== SDK runtime adapter checks ==="
 node --import tsx scripts/sdk-runtime-smoke.ts
 

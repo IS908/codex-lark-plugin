@@ -19,8 +19,14 @@ import { writeSdkResource } from './sdk-resource.js';
 import { debugLog } from './debug-log.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { BoundedCache } from './resource-governance.js';
-import { AckReactionTracker, deleteAckReaction } from './ack-reactions.js';
+import { AckReactionTracker, deleteAckReactionWithTransport } from './ack-reactions.js';
 import { extractInteractiveCardText } from './interactive-card-text.js';
+import {
+  createOpenApiLarkTransport,
+  createSdkLarkTransport,
+  type LarkTransport,
+  type SdkLarkTransportChannel,
+} from './lark-transport.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
 import { bindSdkCommentIdentity, processSdkMessage } from './sdk-channel-parity.js';
 import {
@@ -127,48 +133,9 @@ export function resolveMentionPlaceholders(
 export type MessageHandler = (message: LarkMessage) => Promise<void>;
 
 const DOC_COMMENT_BODY_CAP_BYTES = 8 * 1024;
-const CARD_CLIENT_PLACEHOLDER = '请升级至最新版本客户端，以查看内容';
 
 function isOpenMessageId(value: string | undefined): value is string {
   return typeof value === 'string' && value.startsWith('om_');
-}
-
-function compactCardAttribute(attrs: string, name: string): string | null {
-  const re = new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
-  const match = attrs.match(re);
-  return (match?.[2] ?? match?.[3] ?? match?.[4] ?? '').trim() || null;
-}
-
-function stripCompactCardTags(text: string): string {
-  return text
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function extractCompactCardText(text: string): string | null {
-  const match = text.match(/<card\b([^>]*)>([\s\S]*?)<\/card>/i);
-  if (!match) return null;
-  const title = compactCardAttribute(match[1] ?? '', 'title');
-  const body = stripCompactCardTags(match[2] ?? '');
-  const parts = [title, body].filter(Boolean);
-  return parts.length > 0 ? parts.join('\n') : null;
-}
-
-function normalizeFetchedMessageText(text: string): string {
-  return extractCompactCardText(text) ?? text;
-}
-
-function needsCardContextFetch(text: string, messageType: string | undefined): boolean {
-  const trimmed = text.trim();
-  return (
-    trimmed === '[Interactive Card]' ||
-    trimmed.includes(CARD_CLIENT_PLACEHOLDER) ||
-    /^<card\b/i.test(trimmed) ||
-    (messageType === 'interactive' && !trimmed)
-  );
 }
 
 export interface CommentEventDeps {
@@ -556,9 +523,6 @@ export class LarkChannel {
   private client: Lark.Client;
   private nameCache = new BoundedCache<string, string>(appConfig.nameCacheSize); // open_id/chat_id → display name
   private chatTypeCache = new BoundedCache<string, 'p2p' | 'group'>(appConfig.chatTypeCacheSize); // chatId → type (populated from inbound events)
-  private cardContextCache = new BoundedCache<string, { text: string; expiresAt: number }>(
-    appConfig.cardContextCacheSize,
-  );
   private botOpenId: string = '';
   private wsClient: Lark.WSClient | null = null;
   private queue = new MessageQueue({ handlerTimeoutMs: appConfig.queueHandlerTimeoutMs });
@@ -571,6 +535,9 @@ export class LarkChannel {
   private latestMessageTracker = new LatestMessageTracker(10 * 60 * 1000, appConfig.latestMessageTrackerSize);
   private commentEventIdSeen = new BoundedCache<string, true>(1000);
   private memoryDeduper = new MemoryContextDeduper({ windowMs: appConfig.memoryDedupWindowMs });
+  private larkTransport: LarkTransport;
+  private larkTransportRawClient: Lark.Client;
+  private larkTransportRuntime: 'openapi' | 'sdk' = 'openapi';
 
   constructor() {
     this.client = new Lark.Client({
@@ -580,6 +547,8 @@ export class LarkChannel {
       domain: Lark.Domain.Feishu,
       logger: makeSdkLogger('lark-sdk'),
     });
+    this.larkTransport = createOpenApiLarkTransport(this.client);
+    this.larkTransportRawClient = this.client;
   }
 
   setMessageHandler(handler: MessageHandler): void {
@@ -614,6 +583,24 @@ export class LarkChannel {
 
   getClient(): Lark.Client {
     return this.client;
+  }
+
+  getLarkTransport(): LarkTransport {
+    this.ensureOpenApiTransportCurrent();
+    return this.larkTransport;
+  }
+
+  setSdkTransportChannel(sdkChannel: SdkLarkTransportChannel): void {
+    this.larkTransport = createSdkLarkTransport(sdkChannel, this.client);
+    this.larkTransportRawClient = this.client;
+    this.larkTransportRuntime = 'sdk';
+  }
+
+  private ensureOpenApiTransportCurrent(): void {
+    if (this.larkTransportRuntime !== 'openapi') return;
+    if (this.larkTransportRawClient === this.client) return;
+    this.larkTransport = createOpenApiLarkTransport(this.client);
+    this.larkTransportRawClient = this.client;
   }
 
   getAckReactions(): AckReactionTracker {
@@ -803,16 +790,16 @@ export class LarkChannel {
 
   private async addSdkAckReaction(
     message: LarkMessage,
-    sdkChannel?: Pick<SdkLarkChannel, 'addReaction'>,
+    _sdkChannel?: Pick<SdkLarkChannel, 'addReaction'>,
   ): Promise<void> {
     const ackEmoji = message.chatType === 'p2p' ? 'Typing' : appConfig.ackEmoji;
-    if (!ackEmoji || !sdkChannel?.addReaction) return;
+    if (!ackEmoji) return;
 
-    sdkChannel.addReaction(message.messageId, ackEmoji).then((reactionId) => {
+    this.larkTransport.addReaction(message.messageId, ackEmoji).then((reactionId) => {
       if (!reactionId) return;
       const stored = this.ackReactions.storeReaction(message.messageId, reactionId);
       if (stored.action === 'delete-now') {
-        deleteAckReaction(this.client, stored.reaction, 'sdk-channel.delete_late');
+        deleteAckReactionWithTransport(this.larkTransport, stored.reaction, 'sdk-channel.delete_late');
       }
     }).catch(() => {});
   }
@@ -847,9 +834,8 @@ export class LarkChannel {
 
   private async addSdkParentContext(
     message: LarkMessage,
-    sdkChannel?: Pick<SdkLarkChannel, 'fetchMessage'>,
+    _sdkChannel?: Pick<SdkLarkChannel, 'fetchMessage'>,
   ): Promise<void> {
-    if (!sdkChannel?.fetchMessage) return;
     const quotedMessageId =
       message.parentId ||
       (isOpenMessageId(message.rootMessageId) && message.rootMessageId !== message.messageId
@@ -859,8 +845,8 @@ export class LarkChannel {
     if (!quotedMessageId) return;
 
     try {
-      const parent = await sdkChannel.fetchMessage(quotedMessageId);
-      if (parent?.content) message.parentContent = normalizeFetchedMessageText(parent.content);
+      const parentText = await this.larkTransport.fetchMessageText(quotedMessageId);
+      if (parentText) message.parentContent = parentText;
     } catch {
       // Parent message fetch failed; continue without it.
     }
@@ -909,6 +895,7 @@ export class LarkChannel {
   }
 
   private async handleMessageEvent(data: any): Promise<void> {
+    this.ensureOpenApiTransportCurrent();
     const { message, sender } = data;
     const {
       message_id: messageId,
@@ -965,18 +952,11 @@ export class LarkChannel {
     // Fire-and-forget ack reaction (Typing for P2P, MeMeMe for group @bot)
     const ackEmoji = chatType === 'p2p' ? 'Typing' : appConfig.ackEmoji;
     if (ackEmoji) {
-      feishuApiCall('channel.ackReaction.create', () =>
-        this.client.im.v1.messageReaction.create({
-          path: { message_id: messageId },
-          data: { reaction_type: { emoji_type: ackEmoji } },
-        }),
-        { attempts: 1, retryTimeout: false },
-      ).then((resp: any) => {
-        const reactionId = resp?.data?.reaction_id;
+      this.larkTransport.addReaction(messageId, ackEmoji).then((reactionId) => {
         if (!reactionId) return;
         const stored = this.ackReactions.storeReaction(messageId, reactionId);
         if (stored.action === 'delete-now') {
-          deleteAckReaction(this.client, stored.reaction, 'channel.delete_late');
+          deleteAckReactionWithTransport(this.larkTransport, stored.reaction, 'channel.delete_late');
         }
       }).catch(() => {});
     }
@@ -1078,31 +1058,11 @@ export class LarkChannel {
       (isOpenMessageId(threadId) && threadId !== messageId ? threadId : undefined);
     if (quotedMessageId) {
       try {
-        const parentMsg = await feishuApiCall('channel.parentMessage.get', () =>
-          this.client.im.v1.message.get({
-            path: { message_id: quotedMessageId },
-          }),
-        );
-        const parentItem = parentMsg?.data?.items?.[0];
-        if (parentItem?.body?.content) {
-          const parentMessageType = parentItem.msg_type ?? 'text';
-          const parentText = normalizeFetchedMessageText(resolveMentionPlaceholders(
-            this.extractText(parentItem.body.content, parentMessageType),
-            this.normalizeMessageMentions(parentItem),
-          ));
-          const shouldFetchCardContext = needsCardContextFetch(parentText, parentMessageType);
-          const fetchedCardText = shouldFetchCardContext
-            ? await this.fetchCachedCardContext(quotedMessageId)
-            : null;
-          larkMessage.parentContent =
-            fetchedCardText ??
-            (shouldFetchCardContext
-              ? `${parentText}\n\n[Interactive card content unavailable: fetch requires im:message:readonly scope, bot chat visibility, and a readable root message.]`
-              : parentText);
-        }
-      } catch {
-        // Parent message fetch failed; continue without it
-      }
+      const parentText = await this.larkTransport.fetchMessageText(quotedMessageId);
+      if (parentText) larkMessage.parentContent = parentText;
+    } catch {
+      // Parent message fetch failed; continue without it
+    }
     }
 
     // Cache chat type for later lookups (e.g. list_jobs visibility filter).
@@ -1118,69 +1078,6 @@ export class LarkChannel {
     this.queue.enqueue(chatId, threadId, async () => {
       await this.processEnqueuedMessage(larkMessage);
     });
-  }
-
-  private normalizeMessageMentions(item: any): Array<{ id: string; name: string }> {
-    return (item?.mentions ?? []).map((m: any) => ({
-      id:
-        m.id?.open_id ??
-        m.id?.union_id ??
-        (typeof m.id === 'string' ? m.id : ''),
-      name: m.name ?? '',
-    }));
-  }
-
-  private messageItemText(item: any): { text: string; messageType: string } | null {
-    const content = item?.body?.content;
-    if (!content) return null;
-    const messageType = item.msg_type ?? item.message_type ?? 'text';
-    const text = normalizeFetchedMessageText(resolveMentionPlaceholders(
-      this.extractText(content, messageType),
-      this.normalizeMessageMentions(item),
-    ));
-    return { text, messageType };
-  }
-
-  private async fetchCachedCardContext(messageId: string): Promise<string | null> {
-    const cached = this.cardContextCache.get(messageId);
-    const now = Date.now();
-    if (cached && cached.expiresAt > now) return cached.text;
-    if (cached) this.cardContextCache.delete(messageId);
-
-    const text = await this.fetchCardContextViaMget(messageId);
-    if (!text) return null;
-    this.cardContextCache.set(messageId, {
-      text,
-      expiresAt: now + appConfig.cardContextCacheTtlMs,
-    });
-    return text;
-  }
-
-  private async fetchCardContextViaMget(messageId: string): Promise<string | null> {
-    if (!this.client.request) {
-      debugLog(`[channel] Card context mget skipped: client.request unavailable for ${messageId}`);
-      return null;
-    }
-    try {
-      const resp = await feishuApiCall('channel.parentMessage.mget', () =>
-        this.client.request({
-          method: 'POST',
-          url: 'https://open.feishu.cn/open-apis/im/v1/messages/mget',
-          params: { user_id_type: 'open_id' },
-          data: { message_ids: [messageId] },
-        }),
-      );
-      const items = (resp as any)?.data?.items ?? (resp as any)?.data?.messages ?? [];
-      const item = Array.isArray(items)
-        ? items.find((candidate: any) => !candidate?.message_id || candidate.message_id === messageId) ?? items[0]
-        : null;
-      const parsed = this.messageItemText(item);
-      if (!parsed || needsCardContextFetch(parsed.text, parsed.messageType)) return null;
-      return parsed.text;
-    } catch (err) {
-      logSafeError(`[channel] Card context mget failed for ${messageId}:`, err);
-      return null;
-    }
   }
 
   private async processEnqueuedMessage(larkMessage: LarkMessage): Promise<void> {
@@ -1351,15 +1248,7 @@ export class LarkChannel {
   private async downloadImage(imageKey: string, messageId: string): Promise<string | undefined> {
     try {
       mkdirSync(appConfig.inboxDir, { recursive: true });
-      const resp = await feishuApiCall(
-        'channel.image.messageResource.get',
-        () =>
-          this.client.im.v1.messageResource.get({
-            path: { message_id: messageId, file_key: imageKey },
-            params: { type: 'image' },
-          } as any),
-        { timeoutMs: appConfig.downloadTimeoutMs },
-      );
+      const resp = await this.larkTransport.downloadResource(messageId, imageKey, 'image');
       if (!resp) return undefined;
       const filename = `${Date.now()}-${imageKey}.png`;
       const filePath = path.join(appConfig.inboxDir, filename);

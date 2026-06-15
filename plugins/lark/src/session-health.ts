@@ -1,7 +1,5 @@
-import * as Lark from '@larksuiteoapi/node-sdk';
-import { randomUUID } from 'node:crypto';
-import { feishuApiCall } from './feishu-retry.js';
 import type { CodexExecUsage } from './codex-exec.js';
+import type { LarkTransport } from './lark-transport.js';
 
 export type SessionHealthNudgeReason = 'turn_threshold' | 'prompt_bytes_threshold' | 'token_usage_threshold';
 
@@ -296,19 +294,13 @@ export function buildSessionHealthNudgeText(nudge: SessionHealthNudge): string {
 }
 
 export async function sendSessionHealthOwnerDm(
-  client: Lark.Client,
+  transport: LarkTransport,
   ownerOpenId: string,
   text: string,
 ): Promise<void> {
-  await feishuApiCall('session_health.owner_dm', () =>
-    client.im.v1.message.create({
-      params: { receive_id_type: 'open_id' },
-      data: {
-        receive_id: ownerOpenId,
-        msg_type: 'text',
-        content: JSON.stringify({ text }),
-        uuid: randomUUID(),
-      },
-    }),
-  );
+  await transport.sendMessage({
+    chatId: ownerOpenId,
+    input: { text },
+    receiveIdType: 'open_id',
+  });
 }

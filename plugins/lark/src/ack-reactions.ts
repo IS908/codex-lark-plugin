@@ -1,6 +1,5 @@
-import * as Lark from '@larksuiteoapi/node-sdk';
 import { appConfig } from './config.js';
-import { feishuApiCall } from './feishu-retry.js';
+import type { LarkTransport } from './lark-transport.js';
 
 export interface AckReactionDelete {
   messageId: string;
@@ -147,40 +146,36 @@ export class AckReactionTracker {
   }
 }
 
-export function revokeAckReaction(
-  client: Lark.Client,
+export function revokeAckReactionWithTransport(
+  transport: LarkTransport,
   tracker: AckReactionTracker | undefined,
   messageId: string | undefined,
   source: string,
 ): void {
   const reaction = tracker?.markSatisfied(messageId ?? '');
   if (!reaction) return;
-  deleteAckReaction(client, reaction, source);
+  deleteAckReactionWithTransport(transport, reaction, source);
 }
 
-export function revokeAllAckReactions(
-  client: Lark.Client,
+export function revokeAllAckReactionsWithTransport(
+  transport: LarkTransport,
   tracker: AckReactionTracker | undefined,
   source: string,
 ): void {
   const reactions = tracker?.drainActive() ?? [];
   for (const reaction of reactions) {
-    deleteAckReaction(client, reaction, source);
+    deleteAckReactionWithTransport(transport, reaction, source);
   }
 }
 
-export function deleteAckReaction(
-  client: Lark.Client,
+export function deleteAckReactionWithTransport(
+  transport: LarkTransport,
   reaction: AckReactionDelete,
   source: string,
 ): void {
-  feishuApiCall(`${source}.ackReaction.delete`, () =>
-    client.im.v1.messageReaction.delete({
-      path: { message_id: reaction.messageId, reaction_id: reaction.reactionId },
-    }),
-  ).catch((err) => {
+  transport.removeReaction(reaction.messageId, reaction.reactionId).catch((err) => {
     console.error(
-      `[ack-reactions] Failed to revoke ack ${reaction.reactionId} on ${reaction.messageId}:`,
+      `[ack-reactions] Failed to revoke ack ${reaction.reactionId} on ${reaction.messageId} (${source}):`,
       err?.message ?? String(err),
     );
   });

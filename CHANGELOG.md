@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-15
+
+### Added
+- Added a unified `LarkTransport` boundary for SDK-first Lark IM send/edit/reaction/download/fetch operations, with raw OpenAPI access contained inside the transport fallback.
+- Added transport smoke coverage for SDK sends, deterministic raw scheduler sends, edits, card updates, reactions, doc-comment writes, and quoted interactive-card fallback.
+
+### Changed
+- Production reply, edit, reaction, attachment download, doc-comment reply/create, Codex exec error reply, and fixed-message scheduler paths now call the transport boundary instead of scattered direct OpenAPI calls.
+- SDK runtime now swaps the channel to an SDK-backed transport after startup while preserving `LARK_CHANNEL_RUNTIME=legacy` rollback.
+- Quoted/root interactive-card context fetching now uses the same transport fallback for SDK and legacy paths, including cached `messages/mget` recovery when only `[Interactive Card]` or client-upgrade placeholders are available.
+- Scheduler fixed-message delivery keeps the existing one-shot Feishu write semantics while routing through transport with deterministic `uuid`.
+
 ## [1.3.0] - 2026-06-15
 
 ### Added
@@ -210,7 +222,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.1.2...v1.1.3

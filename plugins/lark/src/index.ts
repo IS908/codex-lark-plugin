@@ -15,7 +15,7 @@ import { debugLog } from './debug-log.js';
 import { deliverMessageViaCodexExec } from './codex-exec-delivery.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { TurnObligationTracker } from './turn-obligation.js';
-import { postDocCommentReply, splitDocCommentText } from './doc-comment-api.js';
+import { splitDocCommentText } from './doc-comment-api.js';
 import { buildChannelNotificationMeta } from './channel-notification.js';
 import { shouldSendCodexExecFailureReply } from './codex-exec-error.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
@@ -133,7 +133,7 @@ async function main() {
           }),
           notifyOwner: async (nudge) => {
             await sendSessionHealthOwnerDm(
-              channel.getClient(),
+              channel.getLarkTransport(),
               appConfig.ownerOpenId!,
               buildSessionHealthNudgeText(nudge),
             );
@@ -222,7 +222,8 @@ async function main() {
     channel.getBotMessageTracker(),
     channel.getLatestMessageTracker(),
     turnObligations,
-    profileDistiller
+    profileDistiller,
+    () => channel.getLarkTransport()
   );
 
   // 6. Set message handler — forwards Feishu messages to Codex via MCP
@@ -261,6 +262,7 @@ async function main() {
           sendReply: (request) => sendFeishuReply(
             {
               client: channel.getClient(),
+              transport: channel.getLarkTransport(),
               conversationBuffer: buffer,
               ackReactions: channel.getAckReactions(),
               botMessageTracker: channel.getBotMessageTracker(),
@@ -270,13 +272,13 @@ async function main() {
             request,
           ),
           sendDocCommentReply: async (request) => {
-            const resp = await postDocCommentReply(channel.getClient(), {
+            const resp = await channel.getLarkTransport().replyDocComment({
               docToken: request.doc_token,
               commentId: request.comment_id,
               fileType: request.file_type,
               content: request.content,
             });
-            return { replyId: resp?.data?.reply_id };
+            return { replyId: resp.replyId };
           },
           recordAssistantMessage: ({ chatId, text }) => {
             buffer.record(chatId, {
@@ -323,7 +325,7 @@ async function main() {
         const errorText = `Codex exec failed: ${errText.slice(0, 1500)}`;
         if (message.chatType === 'doc_comment' && message.docComment) {
           for (const chunk of splitDocCommentText(errorText)) {
-            await postDocCommentReply(channel.getClient(), {
+            await channel.getLarkTransport().replyDocComment({
               docToken: message.docComment.fileToken,
               commentId: message.docComment.commentId,
               fileType: message.docComment.fileType,
@@ -336,6 +338,7 @@ async function main() {
           await sendFeishuReply(
             {
               client: channel.getClient(),
+              transport: channel.getLarkTransport(),
               conversationBuffer: buffer,
               ackReactions: channel.getAckReactions(),
               botMessageTracker: channel.getBotMessageTracker(),
@@ -396,6 +399,7 @@ async function main() {
   const scheduler = new JobScheduler({
     server: server.server,
     client: channel.getClient(),
+    transport: channel.getLarkTransport(),
     identitySession,
     botMessageTracker: channel.getBotMessageTracker(),
   });
