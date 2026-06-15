@@ -20,7 +20,11 @@ import { debugLog } from './debug-log.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { BoundedCache } from './resource-governance.js';
 import { AckReactionTracker, deleteAckReactionWithTransport } from './ack-reactions.js';
-import { extractInteractiveCardText } from './interactive-card-text.js';
+import {
+  extractMessageAttachments,
+  extractMessageText,
+  resolveMentionPlaceholders,
+} from './message-content.js';
 import {
   createOpenApiLarkTransport,
   createSdkLarkTransport,
@@ -34,6 +38,8 @@ import {
   MemoryContextDeduper,
   type MemoryContextBlock,
 } from './memory-context-dedup.js';
+
+export { resolveMentionPlaceholders } from './message-content.js';
 
 /**
  * Build a Lark SDK logger that routes every level to stderr. The SDK's default
@@ -104,30 +110,6 @@ export interface LarkMessage {
     fileType: string;
     replyId?: string;
   };
-}
-
-/**
- * Resolve Feishu's @_user_N placeholders in a text body to `@<name>` using
- * the mentions array. mentions[N-1] corresponds to @_user_N (1-indexed).
- *
- * If the mention has no name (user privacy settings, masked) the placeholder
- * is kept verbatim — a synthetic alias would be misleading.
- * Out-of-range indices (defensive) are also kept verbatim.
- *
- * Does NOT touch @_all or any other Feishu-specific placeholder; only matches
- * /@_user_(\d+)/.
- */
-export function resolveMentionPlaceholders(
-  text: string,
-  mentions: Array<{ id: string; name: string }> | undefined,
-): string {
-  if (!text || !mentions || mentions.length === 0) return text;
-  return text.replace(/@_user_(\d+)/g, (match, n) => {
-    const idx = Number(n) - 1;
-    const m = mentions[idx];
-    if (!m || !m.name) return match;
-    return `@${m.name}`;
-  });
 }
 
 export type MessageHandler = (message: LarkMessage) => Promise<void>;
@@ -1394,64 +1376,10 @@ export class LarkChannel {
   }
 
   private extractText(rawContent: string, messageType: string): string {
-    try {
-      const parsed = JSON.parse(rawContent);
-      switch (messageType) {
-        case 'text':
-          return parsed.text ?? rawContent;
-        case 'post': {
-          // Rich text: extract plain text from all content nodes
-          const lines: string[] = [];
-          const content = parsed.content ?? parsed.zh_cn?.content ?? parsed.en_us?.content ?? [];
-          for (const line of content) {
-            const texts = (line as any[])
-              .filter((node: any) => node.tag === 'text' || node.tag === 'a')
-              .map((node: any) => node.text ?? node.href ?? '');
-            lines.push(texts.join(''));
-          }
-          return lines.join('\n') || rawContent;
-        }
-        case 'image':
-          return '[Image]';
-        case 'file':
-          return `[File: ${parsed.file_name ?? 'attachment'}]`;
-        case 'audio':
-          return '[Audio]';
-        case 'video':
-          return '[Video]';
-        case 'interactive':
-          return extractInteractiveCardText(rawContent) ?? '[Interactive Card]';
-        default:
-          return parsed.text ?? rawContent;
-      }
-    } catch {
-      if (messageType === 'interactive') return '[Interactive Card]';
-      return rawContent;
-    }
+    return extractMessageText(rawContent, messageType);
   }
 
   private extractAttachments(message: any): Array<{ fileKey: string; fileName: string; fileType: string }> {
-    const attachments: Array<{ fileKey: string; fileName: string; fileType: string }> = [];
-    try {
-      const parsed = JSON.parse(message.content ?? '{}');
-      const msgType = message.message_type ?? message.msg_type;
-
-      if (msgType === 'image' && parsed.image_key) {
-        attachments.push({ fileKey: parsed.image_key, fileName: 'image.png', fileType: 'image' });
-      } else if (msgType === 'file' && parsed.file_key) {
-        attachments.push({
-          fileKey: parsed.file_key,
-          fileName: parsed.file_name ?? 'file',
-          fileType: 'file',
-        });
-      } else if (msgType === 'audio' && parsed.file_key) {
-        attachments.push({ fileKey: parsed.file_key, fileName: 'audio', fileType: 'audio' });
-      } else if (msgType === 'video' && parsed.file_key) {
-        attachments.push({ fileKey: parsed.file_key, fileName: 'video', fileType: 'video' });
-      }
-    } catch {
-      // ignore parse errors
-    }
-    return attachments;
+    return extractMessageAttachments(message);
   }
 }

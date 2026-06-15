@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-06-15
+
+### Changed
+- Consolidated message text, mention, fetched-card normalization, and attachment parsing behind shared message-content helpers used by both inbound channel handling and Lark transport fetch paths.
+
 ## [1.5.3] - 2026-06-15
 
 ### Changed

@@ -364,4 +364,25 @@ assert.equal(cardContext, 'Deploy Card\nStatus green');
 assert.equal(isPlaceholderCardText('[Interactive Card]', 'interactive'), true);
 assert.equal(calls.some((call) => call.method === 'raw.request'), true);
 
+{
+  const sdkJsonTransport = createLarkTransport({
+    sdkChannel: {
+      fetchMessage: async (messageId: string) => {
+        calls.push({ method: 'sdk.fetchMessage.json', args: { messageId } });
+        return {
+          messageId,
+          messageType: 'interactive',
+          content: JSON.stringify({
+            header: { title: { tag: 'plain_text', content: 'SDK Card' } },
+            elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'From SDK JSON' } }],
+          }),
+        };
+      },
+    } as any,
+  });
+  const before = calls.length;
+  assert.equal(await sdkJsonTransport.fetchMessageText('om_sdk_json_card'), 'SDK Card\nFrom SDK JSON');
+  assert.deepEqual(calls.slice(before).map((call) => call.method), ['sdk.fetchMessage.json']);
+}
+
 console.log('lark-transport smoke: PASS');
