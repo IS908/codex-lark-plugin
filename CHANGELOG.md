@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.14] - 2026-06-16
+
+### Changed
+- Documented the doc-comment SDK decision: receive and selected-text context stay SDK-backed, while reply/create writes remain raw-only until SDK semantics preserve reply/comment ids and strict thread scope.
+- Added transport policy smoke coverage for the doc-comment SDK decision.
+
 ## [1.5.13] - 2026-06-16
 
 ### Fixed
