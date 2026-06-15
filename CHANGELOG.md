@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.11] - 2026-06-16
+
+### Changed
+- Added script-friendly shared smoke-test fixtures under `scripts/test-helpers/` for MCP tool handler capture, noop memory, mock Lark client, mock transport, and private-chat channel setup.
+- Migrated the tool-context and job-tool smoke tests to the shared fixtures while preserving their lightweight script style and behavior.
+
 ## [1.5.10] - 2026-06-16
 
 ### Changed

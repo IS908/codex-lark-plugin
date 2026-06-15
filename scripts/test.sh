@@ -105,6 +105,7 @@ node --import tsx scripts/reply-doc-comment-smoke.ts
 
 echo ""
 echo "=== Tool context/domain unit checks ==="
+node --import tsx scripts/test-helpers-smoke.ts
 node --import tsx scripts/tool-context-smoke.ts
 
 echo ""
