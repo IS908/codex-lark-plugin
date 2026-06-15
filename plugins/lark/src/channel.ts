@@ -43,6 +43,7 @@ import {
   routeReactionEvent,
   sdkReactionRouteEvent,
 } from './reaction-router.js';
+import { addQuotedContext } from './quoted-context-loader.js';
 
 export { resolveMentionPlaceholders } from './message-content.js';
 
@@ -120,10 +121,6 @@ export interface LarkMessage {
 export type MessageHandler = (message: LarkMessage) => Promise<void>;
 
 const DOC_COMMENT_BODY_CAP_BYTES = 8 * 1024;
-
-function isOpenMessageId(value: string | undefined): value is string {
-  return typeof value === 'string' && value.startsWith('om_');
-}
 
 export interface CommentEventDeps {
   botOpenId: string;
@@ -751,7 +748,7 @@ export class LarkChannel {
 
     await this.addSdkAckReaction(message, sdkChannel);
     await this.addSdkImageDownloads(message, sdkMessage.resources, sdkChannel);
-    await this.addSdkParentContext(message, sdkChannel);
+    await addQuotedContext(message, this.larkTransport);
 
     if (message.chatType === 'p2p' || message.chatType === 'group') {
       this.chatTypeCache.set(message.chatId, message.chatType);
@@ -809,26 +806,6 @@ export class LarkChannel {
       message.imagePath = downloadedPaths[0];
     } else if (downloadedPaths.length > 1) {
       message.imagePaths = downloadedPaths;
-    }
-  }
-
-  private async addSdkParentContext(
-    message: LarkMessage,
-    _sdkChannel?: Pick<SdkLarkChannel, 'fetchMessage'>,
-  ): Promise<void> {
-    const quotedMessageId =
-      message.parentId ||
-      (isOpenMessageId(message.rootMessageId) && message.rootMessageId !== message.messageId
-        ? message.rootMessageId
-        : undefined) ||
-      (isOpenMessageId(message.threadId) && message.threadId !== message.messageId ? message.threadId : undefined);
-    if (!quotedMessageId) return;
-
-    try {
-      const parentText = await this.larkTransport.fetchMessageText(quotedMessageId);
-      if (parentText) message.parentContent = parentText;
-    } catch {
-      // Parent message fetch failed; continue without it.
     }
   }
 
@@ -1027,23 +1004,7 @@ export class LarkChannel {
       imagePaths,
     };
 
-    // Fetch quoted context. Prefer an explicit parent reply; for root-only
-    // thread events, fall back to the root message when it is distinct from
-    // the current message. Keep OpenAPI thread ids (`omt_*`) separate from
-    // root open-message ids (`om_*`) because only `om_*` can be fetched as a
-    // message.
-    const quotedMessageId =
-      parentId ||
-      (isOpenMessageId(rootMessageId) && rootMessageId !== messageId ? rootMessageId : undefined) ||
-      (isOpenMessageId(threadId) && threadId !== messageId ? threadId : undefined);
-    if (quotedMessageId) {
-      try {
-      const parentText = await this.larkTransport.fetchMessageText(quotedMessageId);
-      if (parentText) larkMessage.parentContent = parentText;
-    } catch {
-      // Parent message fetch failed; continue without it
-    }
-    }
+    await addQuotedContext(larkMessage, this.larkTransport);
 
     // Cache chat type for later lookups (e.g. list_jobs visibility filter).
     if (chatType === 'p2p' || chatType === 'group') {
