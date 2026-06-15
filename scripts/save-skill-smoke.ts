@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -51,12 +51,31 @@ const fakeServer = {
 const originalOwner = appConfig.ownerOpenId;
 (appConfig as { ownerOpenId: string | null }).ownerOpenId = 'ou_owner';
 
-async function waitForAuditLog(path: string): Promise<string> {
+async function waitForAuditLog(path: string, expected: RegExp[] = []): Promise<string> {
+  let last = '';
   for (let i = 0; i < 20; i++) {
-    if (existsSync(path)) return readFileSync(path, 'utf-8');
+    if (existsSync(path)) {
+      last = readFileSync(path, 'utf-8');
+      if (expected.every((pattern) => pattern.test(last))) return last;
+    }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  return readFileSync(path, 'utf-8');
+  return last || readFileSync(path, 'utf-8');
+}
+
+{
+  const raceAuditLog = join(tmp, 'race-audit.log');
+  writeFileSync(raceAuditLog, '2026-06-15T00:00:00.000Z  save_skill          denied   caller=-\n');
+  const timer = setTimeout(() => {
+    appendFileSync(raceAuditLog, '2026-06-15T00:00:00.030Z  save_skill          ok       caller=ou_owner\n');
+  }, 30);
+  try {
+    const auditLog = await waitForAuditLog(raceAuditLog, [/ok/, /ou_owner/]);
+    assert.match(auditLog, /ok/);
+    assert.match(auditLog, /ou_owner/);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 try {
@@ -115,7 +134,7 @@ try {
     assert.equal(saved[0].name, 'release-checklist');
   }
 
-  const auditLog = await waitForAuditLog(process.env.LARK_AUDIT_LOG!);
+  const auditLog = await waitForAuditLog(process.env.LARK_AUDIT_LOG!, [/save_skill/, /denied/, /ok/, /ou_owner/]);
   assert.match(auditLog, /save_skill/);
   assert.match(auditLog, /denied/);
   assert.match(auditLog, /ok/);
