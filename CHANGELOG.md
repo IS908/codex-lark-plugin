@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.10] - 2026-06-16
+
+### Changed
+- Completed the #89 MCP tool-domain split by moving reply/defer/download, message mutation, memory write, and cronjob tool registrations into focused modules.
+- Reduced `src/tools.ts` to registration orchestration while preserving root compatibility exports and public MCP tool schemas.
+
 ## [1.5.9] - 2026-06-16
 
 ### Changed
