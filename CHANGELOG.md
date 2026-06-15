@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.6] - 2026-06-15
+
+### Changed
+- Extracted quoted parent/root context selection and best-effort fetch enrichment into a shared quoted-context loader used by both legacy and SDK message paths.
+
 ## [1.5.5] - 2026-06-15
 
 ### Changed
