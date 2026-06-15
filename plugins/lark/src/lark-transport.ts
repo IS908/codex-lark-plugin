@@ -4,6 +4,7 @@ import { feishuApiCall, type FeishuRetryOptions } from './feishu-retry.js';
 import { extractInteractiveCardText } from './interactive-card-text.js';
 import { buildCommentElements } from './doc-comment-api.js';
 import { appConfig } from './config.js';
+import { redactErrorForLog } from './safe-log.js';
 
 const CARD_CLIENT_PLACEHOLDER = '请升级至最新版本客户端，以查看内容';
 
@@ -41,6 +42,7 @@ export interface LarkTransport {
   sendMessage(request: LarkTransportSendRequest): Promise<LarkTransportSendResult>;
   editMessage(request: { messageId: string; text: string }): Promise<void>;
   updateCard(request: { messageId: string; card: object | string }): Promise<void>;
+  recallMessage(messageId: string): Promise<void>;
   addReaction(messageId: string, emojiType: string): Promise<string | undefined>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
   removeReactionByEmoji(messageId: string, emojiType: string): Promise<boolean>;
@@ -61,6 +63,7 @@ export interface SdkLarkTransportChannel {
   ) => Promise<{ messageId?: string; chunkIds?: string[] }>;
   editMessage?: (messageId: string, text: string) => Promise<void>;
   updateCard?: (messageId: string, card: object) => Promise<void>;
+  recallMessage?: (messageId: string) => Promise<void>;
   addReaction?: (messageId: string, emojiType: string) => Promise<string>;
   removeReaction?: (messageId: string, reactionId: string) => Promise<void>;
   removeReactionByEmoji?: (messageId: string, emojiType: string) => Promise<boolean>;
@@ -211,6 +214,40 @@ function rawMessageId(resp: any): string | undefined {
   return resp?.data?.message_id ?? resp?.message_id;
 }
 
+function valuePart(name: string, value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  return `${name}=${String(value)}`;
+}
+
+function safeJsonPart(name: string, value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  try {
+    return `${name}=${JSON.stringify(value)}`;
+  } catch {
+    return null;
+  }
+}
+
+function sdkSendFailureDiagnostic(err: unknown): string {
+  const direct = redactErrorForLog(err);
+  const raw = err as any;
+  const cause = redactErrorForLog(raw?.cause);
+  const directRecord = direct && typeof direct === 'object' ? (direct as any) : {};
+  const causeRecord = cause && typeof cause === 'object' ? (cause as any) : {};
+  const feishu = directRecord.feishu ?? causeRecord.feishu;
+  const parts = [
+    valuePart('name', directRecord.name ?? raw?.name),
+    valuePart('message', directRecord.message ?? raw?.message ?? String(err)),
+    valuePart('code', directRecord.code ?? raw?.code),
+    valuePart('status', directRecord.status ?? causeRecord.status),
+    valuePart('feishu_code', feishu?.code),
+    valuePart('feishu_msg', feishu?.msg),
+    safeJsonPart('context', raw?.context),
+    safeJsonPart('cause', cause),
+  ].filter((part): part is string => !!part);
+  return parts.join(' ');
+}
+
 class DefaultLarkTransport implements LarkTransport {
   private readonly sdkChannel?: SdkLarkTransportChannel;
   private readonly rawClient?: Lark.Client;
@@ -235,7 +272,14 @@ class DefaultLarkTransport implements LarkTransport {
               ...(request.replyInThread ? { replyInThread: true } : {}),
             }
           : undefined;
-      return await this.sdkChannel.send(request.chatId, request.input, opts);
+      try {
+        return await this.sdkChannel.send(request.chatId, request.input, opts);
+      } catch (err) {
+        console.error(
+          `[lark-transport] SDK send failed; falling back to raw OpenAPI ${sdkSendFailureDiagnostic(err)}`,
+        );
+        if (!this.rawClient) throw err;
+      }
     }
 
     const raw = this.requireRawClient();
@@ -299,6 +343,27 @@ class DefaultLarkTransport implements LarkTransport {
       raw.im.v1.message.patch({
         path: { message_id: request.messageId },
         data: { content },
+      }),
+      { retryTimeout: false },
+    );
+  }
+
+  async recallMessage(messageId: string): Promise<void> {
+    if (this.sdkChannel?.recallMessage) {
+      try {
+        await this.sdkChannel.recallMessage(messageId);
+        return;
+      } catch (err) {
+        console.error(
+          `[lark-transport] SDK recall failed; falling back to raw OpenAPI ${sdkSendFailureDiagnostic(err)}`,
+        );
+        if (!this.rawClient) throw err;
+      }
+    }
+    const raw = this.requireRawClient();
+    await feishuApiCall('lark_transport.message.delete', () =>
+      raw.im.v1.message.delete({
+        path: { message_id: messageId },
       }),
       { retryTimeout: false },
     );

@@ -29,6 +29,7 @@ function createTransportProxy(resolve: () => LarkTransport): LarkTransport {
     sendMessage: (request) => resolve().sendMessage(request),
     editMessage: (request) => resolve().editMessage(request),
     updateCard: (request) => resolve().updateCard(request),
+    recallMessage: (messageId) => resolve().recallMessage(messageId),
     addReaction: (messageId, emojiType) => resolve().addReaction(messageId, emojiType),
     removeReaction: (messageId, reactionId) => resolve().removeReaction(messageId, reactionId),
     removeReactionByEmoji: (messageId, emojiType) => resolve().removeReactionByEmoji(messageId, emojiType),
@@ -636,7 +637,85 @@ export function registerTools(
     }
   );
 
-  // ── 3. react ──
+  // ── 3. recall_message ──
+  server.registerTool(
+    'recall_message',
+    {
+      description:
+        'Recall a previously sent bot message. Only tracked bot messages sent by this plugin in the current chat/thread can be recalled; user messages and unknown message IDs are rejected.',
+      inputSchema: z.object({
+        message_id: z.string().describe('Tracked bot message ID to recall'),
+        chat_id: z.string().describe('Current channel chat_id'),
+        thread_id: z.string().optional().describe('Current channel thread_id, when present'),
+        reply_to: z
+          .string()
+          .optional()
+          .describe('Current inbound message_id. Used only to satisfy the current Lark turn after the recall succeeds.'),
+      }),
+    },
+    async ({ message_id, chat_id, thread_id, reply_to }) => {
+      const auditArgs = { message_id, chat_id, thread_id, reply_to };
+      const auth = resolveCaller('recall_message', chat_id, thread_id, auditArgs);
+      if ('error' in auth) return auth.error;
+      const { caller } = auth;
+      const tracked = botMessageTracker?.get(message_id);
+      if (!tracked) {
+        void audit('recall_message', caller, auditArgs, 'denied');
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: `recall_message denied: ${message_id} is not a tracked bot message.`,
+            },
+          ],
+        };
+      }
+      const trackedThread = tracked.threadId ?? '';
+      const requestedThread = thread_id ?? '';
+      if (tracked.chatId !== chat_id || trackedThread !== requestedThread) {
+        void audit('recall_message', caller, auditArgs, 'denied');
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `recall_message denied: ${message_id} belongs to chat=${tracked.chatId ?? '(unknown)'}` +
+                ` thread=${tracked.threadId ?? '(none)'}, does not belong to chat=${chat_id}` +
+                ` thread=${thread_id ?? '(none)'}.`,
+            },
+          ],
+        };
+      }
+
+      let turnMessageId: string | undefined;
+      try {
+        turnMessageId = resolveTurnMessageId({ reply_to, chat_id, thread_id });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: msg }], isError: true };
+      }
+
+      try {
+        await transport.recallMessage(message_id);
+      } catch (err) {
+        void audit('recall_message', caller, auditArgs, 'error');
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: msg }], isError: true };
+      }
+
+      void audit('recall_message', caller, auditArgs, 'ok');
+      satisfyTurn(turnMessageId, 'recall_message');
+      revokeAckReactionWithTransport(transport, ackReactions, turnMessageId, 'recall_message');
+
+      return {
+        content: [{ type: 'text' as const, text: `Recalled message ${message_id}` }],
+      };
+    },
+  );
+
+  // ── 4. react ──
   server.registerTool(
     'react',
     {

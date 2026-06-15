@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-06-15
+
+### Fixed
+- Resynchronized the packaged `plugins/lark/src` runtime source with the workspace `src` source and added a test gate so future wrapper-source drift fails before release.
+
 ## [1.5.0] - 2026-06-15
 
 ### Added

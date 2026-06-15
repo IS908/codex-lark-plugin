@@ -27,6 +27,11 @@ npm run --silent check:release-version
 echo "PASS"
 
 echo ""
+echo "=== Plugin source sync checks ==="
+npm run --silent check:plugin-src-sync
+echo "PASS"
+
+echo ""
 echo "=== Dry-run (module loading) ==="
 npm run --silent start -- --dry-run 1>/tmp/lark-test-stdout.txt 2>/tmp/lark-test-stderr.txt
 echo "PASS"
