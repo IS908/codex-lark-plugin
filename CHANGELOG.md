@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.9] - 2026-06-16
+
+### Changed
+- Introduced a shared `ToolContext` for MCP tool registration dependencies, caller resolution, profile-distillation dispatch, transport resolution, and turn-satisfaction helpers.
+- Split doc-comment and memory-transparency MCP tool registrations into focused domain modules while preserving public tool names, schemas, and behavior.
+
 ## [1.5.8] - 2026-06-15
 
 ### Changed
