@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { extractMessageText } from '../src/message-content.js';
 
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
@@ -43,8 +44,7 @@ const legacyCard = {
 };
 
 {
-  const channel = new LarkChannel();
-  const text = (channel as any).extractText(JSON.stringify(legacyCard), 'interactive');
+  const text = extractMessageText(JSON.stringify(legacyCard), 'interactive');
   assert.match(text, /Incident Report/);
   assert.match(text, /Status:\*\* mitigated|Status:\s*mitigated/);
   assert.match(text, /Owner: @oncall/);
@@ -55,11 +55,10 @@ const legacyCard = {
 }
 
 {
-  const channel = new LarkChannel();
-  const text = (channel as any).extractText(JSON.stringify({ config: {} }), 'interactive');
+  const text = extractMessageText(JSON.stringify({ config: {} }), 'interactive');
   assert.equal(text, '[Interactive Card]');
 
-  const malformed = (channel as any).extractText(
+  const malformed = extractMessageText(
     '{"title":{"content":"Safe"},"value":{"token":"secret_token_456"',
     'interactive',
   );
@@ -67,8 +66,7 @@ const legacyCard = {
 }
 
 {
-  const channel = new LarkChannel();
-  const text = (channel as any).extractText(
+  const text = extractMessageText(
     JSON.stringify({
       i18n_header: {
         en_us: { title: { tag: 'plain_text', content: 'Localized Header' } },
@@ -96,8 +94,7 @@ const legacyCard = {
 }
 
 {
-  const channel = new LarkChannel();
-  const text = (channel as any).extractText(
+  const text = extractMessageText(
     JSON.stringify({
       elements: [
         {
@@ -121,8 +118,7 @@ const legacyCard = {
 }
 
 {
-  const channel = new LarkChannel();
-  const text = (channel as any).extractText(
+  const text = extractMessageText(
     JSON.stringify({
       config: {
         summary: {
