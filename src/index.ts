@@ -208,6 +208,9 @@ async function main() {
     memoryStore,
     identitySession,
     profileDistiller,
+    larkTransport: () => channel.getLarkTransport(),
+    botMessageTracker: channel.getBotMessageTracker(),
+    turnObligations,
   });
 
   // 5. Register MCP tools (pass buffer so reply records assistant messages)

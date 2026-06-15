@@ -48,6 +48,9 @@ const rawClient = {
         patch: async (args: any) => {
           calls.push({ method: 'raw.message.patch', args });
         },
+        delete: async (args: any) => {
+          calls.push({ method: 'raw.message.delete', args });
+        },
         get: async (args: any) => {
           calls.push({ method: 'raw.message.get', args });
           return { data: { items: [] } };
@@ -105,6 +108,9 @@ const sdkChannel = {
   },
   updateCard: async (messageId: string, card: object) => {
     calls.push({ method: 'sdk.updateCard', args: { messageId, card } });
+  },
+  recallMessage: async (messageId: string) => {
+    calls.push({ method: 'sdk.recallMessage', args: { messageId } });
   },
   addReaction: async (messageId: string, emojiType: string) => {
     calls.push({ method: 'sdk.addReaction', args: { messageId, emojiType } });
@@ -299,6 +305,37 @@ assert.deepEqual(calls.pop(), {
   method: 'sdk.updateCard',
   args: { messageId: 'om_card_out', card: { type: 'template' } },
 });
+
+await transport.recallMessage('om_recall_sdk');
+assert.deepEqual(calls.pop(), {
+  method: 'sdk.recallMessage',
+  args: { messageId: 'om_recall_sdk' },
+});
+
+{
+  const failingRecallSdkChannel = {
+    rawClient,
+    recallMessage: async (messageId: string) => {
+      calls.push({ method: 'sdk.recallMessage.fail', args: { messageId } });
+      throw new Error('Internal Error');
+    },
+  };
+  const transportWithFallback = createLarkTransport({
+    sdkChannel: failingRecallSdkChannel as any,
+    rawClient: rawClient as any,
+  });
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    await transportWithFallback.recallMessage('om_recall_raw');
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(calls.slice(-2), [
+    { method: 'sdk.recallMessage.fail', args: { messageId: 'om_recall_raw' } },
+    { method: 'raw.message.delete', args: { path: { message_id: 'om_recall_raw' } } },
+  ]);
+}
 
 const reactionId = await transport.addReaction('om_msg', 'MeMeMe');
 assert.equal(reactionId, 'reaction_sdk');

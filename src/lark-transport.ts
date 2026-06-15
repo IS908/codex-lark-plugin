@@ -42,6 +42,7 @@ export interface LarkTransport {
   sendMessage(request: LarkTransportSendRequest): Promise<LarkTransportSendResult>;
   editMessage(request: { messageId: string; text: string }): Promise<void>;
   updateCard(request: { messageId: string; card: object | string }): Promise<void>;
+  recallMessage(messageId: string): Promise<void>;
   addReaction(messageId: string, emojiType: string): Promise<string | undefined>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
   removeReactionByEmoji(messageId: string, emojiType: string): Promise<boolean>;
@@ -62,6 +63,7 @@ export interface SdkLarkTransportChannel {
   ) => Promise<{ messageId?: string; chunkIds?: string[] }>;
   editMessage?: (messageId: string, text: string) => Promise<void>;
   updateCard?: (messageId: string, card: object) => Promise<void>;
+  recallMessage?: (messageId: string) => Promise<void>;
   addReaction?: (messageId: string, emojiType: string) => Promise<string>;
   removeReaction?: (messageId: string, reactionId: string) => Promise<void>;
   removeReactionByEmoji?: (messageId: string, emojiType: string) => Promise<boolean>;
@@ -341,6 +343,27 @@ class DefaultLarkTransport implements LarkTransport {
       raw.im.v1.message.patch({
         path: { message_id: request.messageId },
         data: { content },
+      }),
+      { retryTimeout: false },
+    );
+  }
+
+  async recallMessage(messageId: string): Promise<void> {
+    if (this.sdkChannel?.recallMessage) {
+      try {
+        await this.sdkChannel.recallMessage(messageId);
+        return;
+      } catch (err) {
+        console.error(
+          `[lark-transport] SDK recall failed; falling back to raw OpenAPI ${sdkSendFailureDiagnostic(err)}`,
+        );
+        if (!this.rawClient) throw err;
+      }
+    }
+    const raw = this.requireRawClient();
+    await feishuApiCall('lark_transport.message.delete', () =>
+      raw.im.v1.message.delete({
+        path: { message_id: messageId },
       }),
       { retryTimeout: false },
     );

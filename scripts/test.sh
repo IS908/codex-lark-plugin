@@ -107,6 +107,10 @@ echo "=== Reply raw-card unit checks ==="
 node --import tsx scripts/reply-card-smoke.ts
 
 echo ""
+echo "=== Recall message unit checks ==="
+node --import tsx scripts/recall-message-smoke.ts
+
+echo ""
 echo "=== Identity session unit checks ==="
 node --import tsx scripts/identity-smoke.ts
 

@@ -7,6 +7,7 @@ export type TurnSatisfactionSource =
   | 'reply'
   | 'react'
   | 'edit_message'
+  | 'recall_message'
   | 'download_attachment'
   | 'defer_tool'
   | 'exec_assistant_text';
