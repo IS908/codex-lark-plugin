@@ -80,7 +80,7 @@ the SDK's raw client escape hatch.
 | `defer_reply` | Keep local only. | No Lark send is needed; only turn obligation and ack cleanup matter. |
 | Image/file upload and follow-up sending | Use `channel.send({ image })` / `channel.send({ file })` with local paths or Buffers. | Preserve thread follow-up routing, failure logging, and bot tracking. |
 | Attachment download | Keep SDK `downloadResource()` plus local `writeSdkResource()` caps. | Byte/time caps remain local. |
-| Quoted interactive card context | Use SDK `fetchMessage()` first, then fallback through transport raw-client `messages/mget` when placeholder text is returned. | This is the first known inbound parity gap under SDK default. |
+| Quoted interactive card context | Use SDK `fetchMessage()` first, then fallback through transport raw-client `message.get` / `messages/mget` when SDK content is missing or placeholder-only. | Shipped as best-effort raw context through `LarkTransportCardContext.fetchMessageText()`; keep placeholder-only smoke coverage. |
 | Doc-comment mention handling | Keep SDK comment event and `channel.comments.fetch()`. | Preserve `doc:<file_token>` identity, selected text, document title, and raw-event fallback. |
 | Doc-comment reply/create | Use `channel.comments.reply()` where return shape is sufficient; otherwise use `rawClient` inside transport. | Current tools return ids and enforce token/thread/audit semantics; do not weaken those. |
 | Scheduler direct-message delivery | Route through SDK transport. | Preserve deterministic run behavior where possible; if SDK lacks uuid control, document the tradeoff or use raw client inside transport. |
@@ -91,8 +91,8 @@ the SDK's raw client escape hatch.
 
 ## Quoted Interactive Cards
 
-The quoted-card path is the clearest known inbound gap after making SDK runtime
-the default.
+The quoted-card path is now handled through the local transport boundary rather
+than separate legacy and SDK parsing branches.
 
 Legacy inbound handling fetches quoted parent/root messages via
 `client.im.v1.message.get`, extracts text by message type, and for interactive
@@ -102,24 +102,21 @@ upgrade-client message, or empty interactive text, legacy handling calls
 `fetchCachedCardContext()` and then `/open-apis/im/v1/messages/mget` as a second
 fetch path.
 
-The SDK inbound path currently selects the same quoted message id order
-(`parentId`, distinct `rootMessageId`, distinct open-message `threadId`), but it
-only calls `sdkChannel.fetchMessage(quotedMessageId)` and assigns
-`normalizeFetchedMessageText(parent.content)`. It does not currently run the
-legacy `needsCardContextFetch()` plus `messages/mget` fallback.
-
-Under the aggressive plan, fix this inside the unified SDK transport pass rather
-than as a long-lived separate migration track. If `fetchMessage()` returns only a
-placeholder, the transport should call a raw-client `messages/mget` fallback or a
-future SDK raw-message fetch surface.
-
-This is tracked in #76 as part of the one-shot SDK unification work.
+The SDK inbound path selects the same quoted message id order (`parentId`,
+distinct `rootMessageId`, distinct open-message `threadId`) and then calls the
+transport `fetchMessageText()` boundary. In the SDK-backed transport,
+`LarkTransportCardContext.fetchMessageText()` implements SDK fetch -> raw
+get/mget fallback as best-effort raw context: it tries SDK `fetchMessage()` first,
+uses raw `message.get` when SDK content is unavailable, and uses raw
+`messages/mget` to recover readable card text when SDK/raw get returns only a
+placeholder such as `[Interactive Card]`, a compact `<card>` shell, an
+upgrade-client message, or empty interactive text.
 
 ## Risk Classification
 
 | Risk | Severity | Reversibility | Fast-fix posture |
 | --- | --- | --- | --- |
-| Quoted interactive card readability regresses to placeholders | Medium | Easy | Add SDK fetch fallback to raw-client `messages/mget`. |
+| Quoted interactive card readability regresses to placeholders | Medium | Easy | Preserve SDK fetch -> raw get/mget fallback smoke coverage. |
 | Thread/root reply routing changes | High | Medium | Keep local routing decisions, add root-only/threaded smoke tests, rollback via legacy runtime if live trial fails. |
 | Scheduler permanent-failure auto-pause stops working | High | Medium | Map SDK/raw errors into existing permanent-failure logic before enabling scheduler transport. |
 | SDK fallback hides raw Feishu error codes | Medium | Medium | Wrap SDK errors into local error taxonomy with original cause attached. |
