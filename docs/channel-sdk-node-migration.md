@@ -81,8 +81,8 @@ the SDK's raw client escape hatch.
 | Image/file upload and follow-up sending | Use `channel.send({ image })` / `channel.send({ file })` with local paths or Buffers. | Preserve thread follow-up routing, failure logging, and bot tracking. |
 | Attachment download | Keep SDK `downloadResource()` plus local `writeSdkResource()` caps. | Byte/time caps remain local. |
 | Quoted interactive card context | Use SDK `fetchMessage()` first, then fallback through transport raw-client `message.get` / `messages/mget` when SDK content is missing or placeholder-only. | Shipped as best-effort raw context through `LarkTransportCardContext.fetchMessageText()`; keep placeholder-only smoke coverage. |
-| Doc-comment mention handling | Keep SDK comment event and `channel.comments.fetch()`. | Preserve `doc:<file_token>` identity, selected text, document title, and raw-event fallback. |
-| Doc-comment reply/create | Use `channel.comments.reply()` where return shape is sufficient; otherwise use `rawClient` inside transport. | Current tools return ids and enforce token/thread/audit semantics; do not weaken those. |
+| Doc-comment mention handling | Keep SDK comment event and SDK `channel.comments.resolveTarget()` / `fetch()` for selected-text context. | Preserve `doc:<file_token>` identity, selected text, document title, and raw-event fallback. |
+| Doc-comment reply/create | Keep raw Drive OpenAPI behind `LarkTransport` for now. | SDK `comments.reply()` returns no `reply_id` and may fall back to top-level comments; top-level create still needs raw `comment_id` semantics. |
 | Scheduler direct-message delivery | Route through SDK transport. | Preserve deterministic run behavior where possible; if SDK lacks uuid control, document the tradeoff or use raw client inside transport. |
 | Cron prompt injection | Keep MCP `notifications/Codex/channel`. | Not a Lark transport concern. |
 | Error taxonomy and retries | Map `LarkChannelError` and raw-client errors into local retry/permanent-failure decisions. | Scheduler auto-pause and reply failures depend on this. |

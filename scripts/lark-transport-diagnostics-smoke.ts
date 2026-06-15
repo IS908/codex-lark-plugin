@@ -71,5 +71,11 @@ for (const policy of SDK_FALLBACK_POLICIES) {
   assert.match(policyDoc, new RegExp(`\\b${policy.operation}\\b`));
   assert.match(policyDoc, new RegExp(policy.behavior));
 }
+assert.match(policyDoc, /Doc-comment SDK decision/i);
+assert.match(policyDoc, /receive.*SDK/is);
+assert.match(policyDoc, /selected-text.*fetch.*SDK/is);
+assert.match(policyDoc, /reply_id/is);
+assert.match(policyDoc, /top-level.*raw/is);
+assert.match(policyDoc, /raw-only/is);
 
 console.log('lark-transport-diagnostics smoke: PASS');
