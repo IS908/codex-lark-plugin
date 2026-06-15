@@ -38,6 +38,11 @@ import {
   MemoryContextDeduper,
   type MemoryContextBlock,
 } from './memory-context-dedup.js';
+import {
+  legacyReactionRouteEvent,
+  routeReactionEvent,
+  sdkReactionRouteEvent,
+} from './reaction-router.js';
 
 export { resolveMentionPlaceholders } from './message-content.js';
 
@@ -716,20 +721,13 @@ export class LarkChannel {
   async handleSdkReactionEvent(reaction: ReactionEvent): Promise<void> {
     if (reaction.action !== 'added') return;
 
-    const messageId = reaction.messageId;
-    const emojiType = reaction.emojiType ?? '';
-    const operatorId = reaction.operator.openId ?? '';
-    const trackedMessage = this.botMessageTracker.get(messageId);
-    if (!trackedMessage) return;
-
-    if (!passesWhitelist(operatorId, trackedMessage.chatId ?? '')) {
-      debugLog(`[sdk-channel] Reaction from ${operatorId} rejected by whitelist`);
-      return;
-    }
-
-    debugLog(
-      `[sdk-channel] Ignoring user reaction ${emojiType || '(unknown)'} on bot message ${messageId} from ${operatorId}`,
-    );
+    routeReactionEvent({
+      event: sdkReactionRouteEvent(reaction),
+      botMessageTracker: this.botMessageTracker,
+      passesWhitelist,
+      debugLog,
+      logPrefix: '[sdk-channel]',
+    });
   }
 
   setBotOpenId(openId: string | undefined): void {
@@ -1254,28 +1252,13 @@ export class LarkChannel {
    * user only clicked an emoji.
    */
   private async handleReactionEvent(data: any): Promise<void> {
-    const messageId = data?.message_id ?? '';
-    const emojiType = data?.reaction_type?.emoji_type ?? '';
-    const operatorType = data?.operator_type ?? '';
-    // app reactions: operator_type=app; user reactions: operator_type=user, user_id.open_id=ou_xxx
-    const operatorId = data?.user_id?.open_id ?? '';
-
-    // Ignore bot's own reactions (operator_type=app means the bot itself)
-    if (operatorType === 'app') return;
-
-    // Only process reactions on messages the bot sent.
-    const trackedMessage = this.botMessageTracker.get(messageId);
-    if (!trackedMessage) return;
-
-    // Whitelist filtering uses the tracked outbound chat when available.
-    if (!passesWhitelist(operatorId, trackedMessage.chatId ?? '')) {
-      debugLog(`[channel] Reaction from ${operatorId} rejected by whitelist`);
-      return;
-    }
-
-    debugLog(
-      `[channel] Ignoring user reaction ${emojiType || '(unknown)'} on bot message ${messageId} from ${operatorId}`,
-    );
+    routeReactionEvent({
+      event: legacyReactionRouteEvent(data),
+      botMessageTracker: this.botMessageTracker,
+      passesWhitelist,
+      debugLog,
+      logPrefix: '[channel]',
+    });
   }
 
   /**

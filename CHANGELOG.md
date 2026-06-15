@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-06-15
+
+### Changed
+- Extracted Lark reaction routing into a shared router used by both legacy WebSocket events and SDK reaction events, keeping `LarkChannel` as the orchestration facade while preserving passive reaction behavior.
+
 ## [1.5.4] - 2026-06-15
 
 ### Changed

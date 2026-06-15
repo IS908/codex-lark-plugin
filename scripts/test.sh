@@ -220,6 +220,10 @@ echo "=== Reaction event unit checks ==="
 node --import tsx scripts/reaction-event-smoke.ts
 
 echo ""
+echo "=== Reaction router unit checks ==="
+node --import tsx scripts/reaction-router-smoke.ts
+
+echo ""
 echo "=== Download attachment unit checks ==="
 node --import tsx scripts/download-attachment-smoke.ts
 

@@ -1,0 +1,72 @@
+export type ReactionRouteReason =
+  | 'bot-self'
+  | 'untracked-message'
+  | 'whitelist-denied'
+  | 'passive-feedback';
+
+export interface ReactionRouteDecision {
+  action: 'ignored';
+  reason: ReactionRouteReason;
+}
+
+export interface ReactionRouteEvent {
+  messageId: string;
+  emojiType?: string;
+  operatorId?: string;
+  isBotSelfReaction?: boolean;
+}
+
+export interface ReactionRouteOptions {
+  event: ReactionRouteEvent;
+  botMessageTracker: {
+    get: (messageId: string) => { chatId?: string } | undefined;
+  };
+  passesWhitelist: (senderId: string, chatId: string) => boolean;
+  debugLog: (line: string) => void;
+  logPrefix: string;
+}
+
+export function legacyReactionRouteEvent(data: any): ReactionRouteEvent {
+  return {
+    messageId: data?.message_id ?? '',
+    emojiType: data?.reaction_type?.emoji_type ?? '',
+    operatorId: data?.user_id?.open_id ?? '',
+    isBotSelfReaction: data?.operator_type === 'app',
+  };
+}
+
+export function sdkReactionRouteEvent(reaction: {
+  messageId?: string;
+  emojiType?: string;
+  operator?: { openId?: string };
+}): ReactionRouteEvent {
+  return {
+    messageId: reaction.messageId ?? '',
+    emojiType: reaction.emojiType ?? '',
+    operatorId: reaction.operator?.openId ?? '',
+    isBotSelfReaction: false,
+  };
+}
+
+export function routeReactionEvent(opts: ReactionRouteOptions): ReactionRouteDecision {
+  const { event, botMessageTracker, passesWhitelist, debugLog, logPrefix } = opts;
+
+  if (event.isBotSelfReaction) {
+    return { action: 'ignored', reason: 'bot-self' };
+  }
+
+  const trackedMessage = botMessageTracker.get(event.messageId);
+  if (!trackedMessage) {
+    return { action: 'ignored', reason: 'untracked-message' };
+  }
+
+  if (!passesWhitelist(event.operatorId ?? '', trackedMessage.chatId ?? '')) {
+    debugLog(`${logPrefix} Reaction from ${event.operatorId ?? ''} rejected by whitelist`);
+    return { action: 'ignored', reason: 'whitelist-denied' };
+  }
+
+  debugLog(
+    `${logPrefix} Ignoring user reaction ${event.emojiType || '(unknown)'} on bot message ${event.messageId} from ${event.operatorId ?? ''}`,
+  );
+  return { action: 'ignored', reason: 'passive-feedback' };
+}
