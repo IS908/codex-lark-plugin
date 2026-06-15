@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.12] - 2026-06-16
+
+### Fixed
+- Updated the channel SDK migration document to reflect the shipped quoted-card `fetchMessageText` SDK/raw get/mget fallback path.
+- Added doc smoke coverage to prevent stale quoted-card fallback migration wording from returning.
+
 ## [1.5.11] - 2026-06-16
 
 ### Changed
