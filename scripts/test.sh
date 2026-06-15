@@ -152,6 +152,10 @@ echo "=== Lark transport boundary checks ==="
 node --import tsx scripts/lark-transport-smoke.ts
 
 echo ""
+echo "=== Lark transport diagnostics checks ==="
+node --import tsx scripts/lark-transport-diagnostics-smoke.ts
+
+echo ""
 echo "=== SDK runtime adapter checks ==="
 node --import tsx scripts/sdk-runtime-smoke.ts
 
