@@ -22,6 +22,10 @@ import {
 } from './job-store.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { logSafeError } from './safe-log.js';
+import {
+  createOpenApiLarkTransport,
+  type LarkTransport,
+} from './lark-transport.js';
 
 /**
  * Prefix for synthetic `thread_id` values injected into cronjob channel
@@ -56,6 +60,7 @@ export function parseJobIdFromThreadId(threadId: string | undefined): string | n
 export interface SchedulerOptions {
   server: Server;
   client: Lark.Client;
+  transport?: LarkTransport;
   identitySession: IdentitySession;
   botMessageTracker?: BotMessageTracker;
 }
@@ -150,6 +155,7 @@ export class JobScheduler {
   private timer: NodeJS.Timeout | null = null;
   private server: Server;
   private client: Lark.Client;
+  private transport: LarkTransport;
   private identitySession: IdentitySession;
   private botMessageTracker?: BotMessageTracker;
   private running = false;
@@ -158,6 +164,7 @@ export class JobScheduler {
   constructor(opts: SchedulerOptions) {
     this.server = opts.server;
     this.client = opts.client;
+    this.transport = opts.transport ?? createOpenApiLarkTransport(opts.client);
     this.identitySession = opts.identitySession;
     this.botMessageTracker = opts.botMessageTracker;
   }
@@ -415,19 +422,18 @@ export class JobScheduler {
       .digest('hex')
       .slice(0, 32);
 
-    const resp: any = await feishuApiCall('scheduler.message.create', () =>
-      this.client.im.v1.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: {
-          receive_id: job.meta.target_chat_id,
+    const sent = await this.transport.sendMessage({
+      chatId: job.meta.target_chat_id,
+      input: {
+        raw: {
+          msgType,
           content: JSON.stringify(msgType === 'text' ? { text: content } : { content }),
-          msg_type: msgType,
-          uuid,
         },
-      }),
-      { attempts: 1, retryTimeout: false },
-    );
-    const messageId = resp?.data?.message_id;
+      },
+      uuid,
+      retry: { attempts: 1, retryTimeout: false },
+    });
+    const messageId = sent.messageId;
     if (messageId) {
       this.botMessageTracker?.add(messageId, { chatId: job.meta.target_chat_id });
     }

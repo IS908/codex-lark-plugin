@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AckReactionTracker, revokeAllAckReactions } from '../src/ack-reactions.js';
+import { AckReactionTracker, revokeAllAckReactionsWithTransport } from '../src/ack-reactions.js';
 import { LarkChannel } from '../src/channel.js';
 import { sendFeishuReply } from '../src/reply-sender.js';
 import { registerTools } from '../src/tools.js';
@@ -68,20 +68,13 @@ tracker.recordInbound('om_bulk_2');
 tracker.storeReaction('om_bulk_1', 'reaction_bulk_1');
 tracker.storeReaction('om_bulk_2', 'reaction_bulk_2');
 const bulkDeletes: any[] = [];
-const bulkClient = {
-  im: {
-    v1: {
-      messageReaction: {
-        delete: async (args: any) => {
-          bulkDeletes.push(args);
-          if (bulkDeletes.length === 1) throw new Error('simulated delete failure');
-          return {};
-        },
-      },
-    },
+const bulkTransport = {
+  removeReaction: async (messageId: string, reactionId: string) => {
+    bulkDeletes.push({ messageId, reactionId });
+    if (bulkDeletes.length === 1) throw new Error('simulated delete failure');
   },
 };
-revokeAllAckReactions(bulkClient as any, tracker, 'ack_smoke.bulk');
+revokeAllAckReactionsWithTransport(bulkTransport as any, tracker, 'ack_smoke.bulk');
 await flushMicrotasks();
 assert.equal(bulkDeletes.length, 2);
 assert.equal(tracker.activeCount, 0);

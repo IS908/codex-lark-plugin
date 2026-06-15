@@ -30,6 +30,7 @@ export async function startSdkChannelRuntime(
   options: SdkRuntimeOptions = {},
 ): Promise<SdkRuntimeChannel> {
   const sdkChannel = options.createChannel?.() ?? createSdkChannelScaffold();
+  channel.setSdkTransportChannel(sdkChannel as any);
 
   sdkChannel.on('message', async (message: NormalizedMessage) => {
     try {

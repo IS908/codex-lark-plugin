@@ -12,11 +12,35 @@ import { DOC_CHAT_ID_PREFIX, SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import { audit } from './audit-log.js';
 import { writeSdkResource } from './sdk-resource.js';
 import { sendFeishuReply } from './reply-sender.js';
-import { revokeAckReaction, type AckReactionTracker } from './ack-reactions.js';
+import { revokeAckReactionWithTransport, type AckReactionTracker } from './ack-reactions.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { assertSafeChatId } from './prompts.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { buildCommentElements } from './doc-comment-api.js';
+import {
+  createOpenApiLarkTransport,
+  type LarkTransport,
+} from './lark-transport.js';
+
+type LarkTransportProvider = LarkTransport | (() => LarkTransport);
+
+function createTransportProxy(resolve: () => LarkTransport): LarkTransport {
+  return {
+    sendMessage: (request) => resolve().sendMessage(request),
+    editMessage: (request) => resolve().editMessage(request),
+    updateCard: (request) => resolve().updateCard(request),
+    addReaction: (messageId, emojiType) => resolve().addReaction(messageId, emojiType),
+    removeReaction: (messageId, reactionId) => resolve().removeReaction(messageId, reactionId),
+    removeReactionByEmoji: (messageId, emojiType) => resolve().removeReactionByEmoji(messageId, emojiType),
+    downloadResource: (messageId, fileKey, resourceType) =>
+      resolve().downloadResource(messageId, fileKey, resourceType),
+    uploadImage: (data) => resolve().uploadImage(data),
+    uploadFile: (data, fileName) => resolve().uploadFile(data, fileName),
+    replyDocComment: (request) => resolve().replyDocComment(request),
+    createDocComment: (request) => resolve().createDocComment(request),
+    fetchMessageText: (messageId) => resolve().fetchMessageText(messageId),
+  };
+}
 import { registerLocalCliTools } from './local-cli-tools.js';
 import type { ProfileDistillationDispatcher } from './profile-distillation.js';
 import { logSafeError } from './safe-log.js';
@@ -58,7 +82,8 @@ interface DocCommentServer {
 
 export interface DocCommentToolsDeps {
   server: DocCommentServer;
-  client: DocCommentClient;
+  client?: DocCommentClient;
+  transport?: LarkTransportProvider;
   identitySession: IdentitySession;
   conversationBuffer?: ConversationBuffer;
 }
@@ -117,6 +142,9 @@ function validateDocCommentScope(
 
 export function registerDocCommentTools(deps: DocCommentToolsDeps): void {
   const { server, client, identitySession, conversationBuffer } = deps;
+  const transport = typeof deps.transport === 'function'
+    ? createTransportProxy(deps.transport)
+    : deps.transport;
   const fileTypeSchema = z.enum(['docx', 'doc', 'sheet', 'file', 'slides', 'bitable']);
 
   function recordAssistantComment(chatId: string, content: string): void {
@@ -164,15 +192,22 @@ export function registerDocCommentTools(deps: DocCommentToolsDeps): void {
       }
 
       try {
-        const resp = await feishuApiCall(
-          'reply_doc_comment.create',
-          () => client.drive.fileCommentReply.create({
-            path: { file_token: doc_token, comment_id },
-            params: { file_type, user_id_type: 'open_id' },
-            data: { content: { elements } },
-          }),
-          { retryTimeout: false },
-        );
+        const resp = transport
+          ? { data: { reply_id: (await transport.replyDocComment({
+              docToken: doc_token,
+              commentId: comment_id,
+              content,
+              fileType: file_type,
+            })).replyId } }
+          : await feishuApiCall(
+              'reply_doc_comment.create',
+              () => client!.drive.fileCommentReply.create({
+                path: { file_token: doc_token, comment_id },
+                params: { file_type, user_id_type: 'open_id' },
+                data: { content: { elements } },
+              }),
+              { retryTimeout: false },
+            );
         void audit('reply_doc_comment', auth.caller, auditArgs, 'ok');
         recordAssistantComment(chat_id, content);
         return {
@@ -224,15 +259,21 @@ export function registerDocCommentTools(deps: DocCommentToolsDeps): void {
       }
 
       try {
-        const resp = await feishuApiCall(
-          'create_doc_comment.create',
-          () => client.drive.fileComment.create({
-            path: { file_token: doc_token },
-            params: { file_type, user_id_type: 'open_id' },
-            data: { reply_list: { replies: [{ content: { elements } }] } },
-          }),
-          { retryTimeout: false },
-        );
+        const resp = transport
+          ? { data: { comment_id: (await transport.createDocComment({
+              docToken: doc_token,
+              content,
+              fileType: file_type,
+            })).commentId } }
+          : await feishuApiCall(
+              'create_doc_comment.create',
+              () => client!.drive.fileComment.create({
+                path: { file_token: doc_token },
+                params: { file_type, user_id_type: 'open_id' },
+                data: { reply_list: { replies: [{ content: { elements } }] } },
+              }),
+              { retryTimeout: false },
+            );
         void audit('create_doc_comment', auth.caller, auditArgs, 'ok');
         recordAssistantComment(chat_id, content);
         return {
@@ -305,8 +346,15 @@ export function registerTools(
   botMessageTracker?: BotMessageTracker,
   latestMessageTracker?: LatestMessageTracker,
   turnObligations?: TurnObligationTracker,
-  profileDistiller?: ProfileDistillationDispatcher
+  profileDistiller?: ProfileDistillationDispatcher,
+  larkTransport?: LarkTransportProvider
 ): void {
+  const fallbackTransport = createOpenApiLarkTransport(client);
+  const resolveTransport =
+    typeof larkTransport === 'function'
+      ? larkTransport
+      : () => larkTransport ?? fallbackTransport;
+  const transport = createTransportProxy(resolveTransport);
   /**
    * Resolve the true caller for a sensitive tool invocation via the server-side
    * IdentitySession. Returns either `{ caller }` on success or `{ error }` —
@@ -447,33 +495,7 @@ export function registerTools(
     turnObligations?.markSatisfied(messageId, source);
   }
 
-  const docCommentClient: DocCommentClient = {
-    drive: {
-      fileCommentReply: {
-        create: async (req) => {
-          const { file_token, comment_id } = req.path;
-          return (await client.request({
-            method: 'POST',
-            url: `https://open.feishu.cn/open-apis/drive/v1/files/${encodeURIComponent(file_token)}/comments/${encodeURIComponent(comment_id)}/replies`,
-            params: req.params,
-            data: req.data,
-          })) as { data?: { reply_id?: string } };
-        },
-      },
-      fileComment: {
-        create: async (req) => {
-          const { file_token } = req.path;
-          return (await client.request({
-            method: 'POST',
-            url: `https://open.feishu.cn/open-apis/drive/v1/files/${encodeURIComponent(file_token)}/comments`,
-            params: req.params,
-            data: req.data,
-          })) as { data?: { comment_id?: string } };
-        },
-      },
-    },
-  };
-  registerDocCommentTools({ server, client: docCommentClient, identitySession, conversationBuffer });
+  registerDocCommentTools({ server, transport, identitySession, conversationBuffer });
   registerLocalCliTools({ server, identitySession });
 
   // ── 1. reply ──
@@ -527,6 +549,7 @@ export function registerTools(
         result = await sendFeishuReply(
           {
             client,
+            transport,
             conversationBuffer,
             ackReactions,
             botMessageTracker,
@@ -594,31 +617,18 @@ export function registerTools(
         return { content: [{ type: 'text' as const, text: msg }], isError: true };
       }
       if (format === 'card_markdown') {
-        await feishuApiCall('edit_message.patch.card_markdown', () =>
-          client.im.v1.message.patch({
-            path: { message_id },
-            data: {
-              content: Lark.messageCard.defaultCard({
-                title: '',
-                content: text,
-              }),
-            },
+        await transport.updateCard({
+          messageId: message_id,
+          card: Lark.messageCard.defaultCard({
+            title: '',
+            content: text,
           }),
-          { retryTimeout: false },
-        );
+        });
       } else {
-        await feishuApiCall('edit_message.patch.text', () =>
-          client.im.v1.message.patch({
-            path: { message_id },
-            data: {
-              content: JSON.stringify({ text }),
-            },
-          }),
-          { retryTimeout: false },
-        );
+        await transport.editMessage({ messageId: message_id, text });
       }
       satisfyTurn(turnMessageId, 'edit_message');
-      revokeAckReaction(client, ackReactions, turnMessageId, 'edit_message');
+      revokeAckReactionWithTransport(transport, ackReactions, turnMessageId, 'edit_message');
 
       return {
         content: [{ type: 'text' as const, text: `Edited message ${message_id}` }],
@@ -637,16 +647,8 @@ export function registerTools(
       }),
     },
     async ({ message_id, emoji }) => {
-      await feishuApiCall('react.create', () =>
-        client.im.v1.messageReaction.create({
-          path: { message_id },
-          data: {
-            reaction_type: { emoji_type: emoji },
-          },
-        }),
-        { retryTimeout: false },
-      );
-      revokeAckReaction(client, ackReactions, message_id, 'react');
+      await transport.addReaction(message_id, emoji);
+      revokeAckReactionWithTransport(transport, ackReactions, message_id, 'react');
       satisfyTurn(message_id, 'react');
 
       return {
@@ -700,15 +702,7 @@ export function registerTools(
       try {
         // Always use messageResource.get for user-uploaded resources.
         // image.get only works for images the bot itself uploaded.
-        const data: unknown = await feishuApiCall(
-          'download_attachment.messageResource.get',
-          () =>
-            client.im.v1.messageResource.get({
-              path: { message_id, file_key },
-              params: { type: resourceType },
-            }),
-          { timeoutMs: appConfig.downloadTimeoutMs },
-        );
+        const data: unknown = await transport.downloadResource(message_id, file_key, resourceType);
         if (!data) {
           return {
             content: [
@@ -724,7 +718,7 @@ export function registerTools(
           maxBytes: appConfig.downloadMaxBytes,
           timeoutMs: appConfig.downloadTimeoutMs,
         });
-        revokeAckReaction(client, ackReactions, message_id, 'download_attachment');
+        revokeAckReactionWithTransport(transport, ackReactions, message_id, 'download_attachment');
         satisfyTurn(message_id, 'download_attachment');
         return { content: [{ type: 'text' as const, text: `Downloaded to ${filePath}` }] };
       } catch (err: any) {
@@ -788,7 +782,7 @@ export function registerTools(
         return { content: [{ type: 'text' as const, text: msg }], isError: true };
       }
       const marked = turnObligations?.markDeferred(messageId, 'defer_tool', marker, reason) ?? false;
-      revokeAckReaction(client, ackReactions, messageId, 'defer_reply');
+      revokeAckReactionWithTransport(transport, ackReactions, messageId, 'defer_reply');
       return {
         content: [
           {

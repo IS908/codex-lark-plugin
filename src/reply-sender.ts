@@ -1,21 +1,24 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { appConfig } from './config.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { BotMessageTracker, LatestMessageTracker } from './channel.js';
 import { buildCards, shouldUseCard } from './feishu-card.js';
 import { JOB_THREAD_PREFIX } from './scheduler.js';
-import { feishuApiCall } from './feishu-retry.js';
 import {
-  revokeAckReaction,
-  revokeAllAckReactions,
+  revokeAckReactionWithTransport,
+  revokeAllAckReactionsWithTransport,
   type AckReactionTracker,
 } from './ack-reactions.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { isFeishuOpenMessageId, isSyntheticSystemMessageId } from './codex-exec-error.js';
 import { logSafeError } from './safe-log.js';
+import {
+  createOpenApiLarkTransport,
+  type LarkTransport,
+  type LarkTransportInput,
+} from './lark-transport.js';
 
 function wrapFeishuApiError(err: any): Error | null {
   const apiError = err?.response?.data ?? err?.data;
@@ -41,6 +44,7 @@ export interface ReplyRequest {
 
 export interface ReplySenderDeps {
   client: Lark.Client;
+  transport?: LarkTransport;
   conversationBuffer?: ConversationBuffer;
   ackReactions?: AckReactionTracker;
   botMessageTracker?: BotMessageTracker;
@@ -77,6 +81,7 @@ export async function sendFeishuReply(
     latestMessageTracker,
     turnObligations,
   } = deps;
+  const transport = deps.transport ?? createOpenApiLarkTransport(client);
 
   // Auto-correct reply_to from the plugin's per-thread tracker when Codex
   // omits it. Works for both threaded and non-threaded (P2P) messages.
@@ -125,22 +130,24 @@ export async function sendFeishuReply(
   // attachments) must stay in the same thread as the first reply.
   const isSyntheticThread = !!thread_id && thread_id.startsWith(JOB_THREAD_PREFIX);
   const shouldStayInThread = !!thread_id && !isSyntheticThread && !!effectiveReplyTo;
-  async function sendFollowup(data: { content: string; msg_type: string }): Promise<any> {
-    const uuid = randomUUID();
-    if (shouldStayInThread) {
-      return feishuApiCall('reply.followup.message.reply', () =>
-        client.im.v1.message.reply({
-          path: { message_id: effectiveReplyTo! },
-          data: { ...data, reply_in_thread: true, uuid } as any,
-        }),
-      );
-    }
-    return feishuApiCall('reply.followup.message.create', () =>
-      client.im.v1.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: { receive_id: chat_id, ...data, uuid },
-      }),
-    );
+  async function sendTransportMessage(args: {
+    input: LarkTransportInput;
+    replyTo?: string;
+    replyInThread?: boolean;
+  }) {
+    return await transport.sendMessage({
+      chatId: chat_id,
+      input: args.input,
+      ...(args.replyTo ? { replyTo: args.replyTo } : {}),
+      ...(args.replyInThread ? { replyInThread: true } : {}),
+    });
+  }
+
+  async function sendFollowup(input: LarkTransportInput): Promise<any> {
+    return sendTransportMessage({
+      input,
+      ...(shouldStayInThread ? { replyTo: effectiveReplyTo!, replyInThread: true } : {}),
+    });
   }
 
   function trackBotMessage(messageId: string | undefined): void {
@@ -164,9 +171,9 @@ export async function sendFeishuReply(
 
     if (effectiveReplyTo) {
       turnObligations?.markSatisfied(effectiveReplyTo, 'reply');
-      revokeAckReaction(client, ackReactions, effectiveReplyTo, 'reply');
+      revokeAckReactionWithTransport(transport, ackReactions, effectiveReplyTo, 'reply');
     } else {
-      revokeAllAckReactions(client, ackReactions, 'reply.bulk');
+      revokeAllAckReactionsWithTransport(transport, ackReactions, 'reply.bulk');
     }
   }
 
@@ -185,29 +192,11 @@ export async function sendFeishuReply(
     }
     const content = JSON.stringify(cardObj);
     try {
-      let resp: any;
-      const uuid = randomUUID();
-      if (effectiveReplyTo) {
-        resp = await feishuApiCall('reply.raw_card.message.reply', () =>
-          client.im.v1.message.reply({
-            path: { message_id: effectiveReplyTo },
-            data: { content, msg_type: 'interactive', uuid },
-          }),
-        );
-      } else {
-        resp = await feishuApiCall('reply.raw_card.message.create', () =>
-          client.im.v1.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-              receive_id: chat_id,
-              content,
-              msg_type: 'interactive',
-              uuid,
-            },
-          }),
-        );
-      }
-      trackBotMessage(resp?.data?.message_id);
+      const resp = await sendTransportMessage({
+        input: { card: cardObj },
+        ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
+      });
+      trackBotMessage(resp?.messageId);
       recordAndRevokeAck(text || '[card]');
     } catch (err: any) {
       const wrapped = wrapFeishuApiError(err);
@@ -233,21 +222,14 @@ export async function sendFeishuReply(
     const cards = buildCards(text, { footer });
     sentCount = cards.length;
     for (let i = 0; i < cards.length; i++) {
-      const content = JSON.stringify(cards[i]);
       try {
-        let resp: any;
-        const uuid = randomUUID();
-        if (i === 0 && effectiveReplyTo) {
-          resp = await feishuApiCall('reply.card.message.reply', () =>
-            client.im.v1.message.reply({
-              path: { message_id: effectiveReplyTo },
-              data: { content, msg_type: 'interactive', uuid },
-            }),
-          );
-        } else {
-          resp = await sendFollowup({ content, msg_type: 'interactive' });
-        }
-        trackBotMessage(resp?.data?.message_id);
+        const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;
+        const resp = await sendTransportMessage({
+          input: { card: cards[i] },
+          ...(replyTo ? { replyTo } : {}),
+          ...(shouldStayInThread && i > 0 ? { replyInThread: true } : {}),
+        });
+        trackBotMessage(resp?.messageId);
         recordAndRevokeAck(text);
       } catch (err: any) {
         const wrapped = wrapFeishuApiError(err);
@@ -264,26 +246,13 @@ export async function sendFeishuReply(
     sentCount = chunks.length;
     for (let i = 0; i < chunks.length; i++) {
       try {
-        let resp: any;
-        const uuid = randomUUID();
-        if (effectiveReplyTo && i === 0) {
-          resp = await feishuApiCall('reply.text.message.reply', () =>
-            client.im.v1.message.reply({
-              path: { message_id: effectiveReplyTo },
-              data: {
-                content: JSON.stringify({ text: chunks[i] }),
-                msg_type: 'text',
-                uuid,
-              },
-            }),
-          );
-        } else {
-          resp = await sendFollowup({
-            content: JSON.stringify({ text: chunks[i] }),
-            msg_type: 'text',
-          });
-        }
-        trackBotMessage(resp?.data?.message_id);
+        const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;
+        const resp = await sendTransportMessage({
+          input: { text: chunks[i] },
+          ...(replyTo ? { replyTo } : {}),
+          ...(shouldStayInThread && i > 0 ? { replyInThread: true } : {}),
+        });
+        trackBotMessage(resp?.messageId);
         recordAndRevokeAck(text);
       } catch (err: any) {
         const wrapped = wrapFeishuApiError(err);
@@ -303,45 +272,18 @@ export async function sendFeishuReply(
       try {
         const fileData = await fs.readFile(file.path);
         if (file.type === 'image') {
-          const resp = await feishuApiCall('reply.image.create', () =>
-            client.im.v1.image.create({
-              data: {
-                image_type: 'message',
-                image: fileData as any,
-              },
-            }),
-            { retryTimeout: false },
-          );
-          const imageKey = (resp as any)?.data?.image_key ?? (resp as any)?.image_key;
+          const imageKey = await transport.uploadImage(fileData);
           if (imageKey) {
-            const sent = await sendFollowup({
-              content: JSON.stringify({ image_key: imageKey }),
-              msg_type: 'image',
-            });
-            trackBotMessage((sent as any)?.data?.message_id);
+            const sent = await sendFollowup({ imageKey });
+            trackBotMessage((sent as any)?.messageId);
             recordAndRevokeAck(text || '[image]');
           }
         } else {
-          const resp = await feishuApiCall('reply.file.create', () =>
-            client.im.v1.file.create({
-              data: {
-                file_type: 'stream',
-                file_name: path.basename(file.path),
-                file: fileData as any,
-              },
-            }),
-            { retryTimeout: false },
-          );
-          const fileKey = (resp as any)?.data?.file_key ?? (resp as any)?.file_key;
+          const fileName = path.basename(file.path);
+          const fileKey = await transport.uploadFile(fileData, fileName);
           if (fileKey) {
-            const sent = await sendFollowup({
-              content: JSON.stringify({
-                file_key: fileKey,
-                file_name: path.basename(file.path),
-              }),
-              msg_type: 'file',
-            });
-            trackBotMessage((sent as any)?.data?.message_id);
+            const sent = await sendFollowup({ fileKey, fileName });
+            trackBotMessage((sent as any)?.messageId);
             recordAndRevokeAck(text || '[file]');
           }
         }
