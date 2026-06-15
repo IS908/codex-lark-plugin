@@ -21,6 +21,7 @@ import { logSafeError } from './safe-log.js';
 import type { BotMessageTracker } from './channel.js';
 import type { LarkTransport } from './lark-transport.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
+import { validateTrackedBotMessageScope } from './message-mutation.js';
 
 export const CODEX_EXEC_ACTIONS_START = '<LARK_ACTIONS_JSON>';
 export const CODEX_EXEC_ACTIONS_END = '</LARK_ACTIONS_JSON>';
@@ -369,24 +370,19 @@ async function executeRecallMessage(
   const auditArgs = { message_id: action.message_id, chat_id: message.chatId, thread_id: message.threadId };
   if ('error' in auth) return auth.error;
   const { caller } = auth;
-  const tracked = deps.botMessageTracker?.get(action.message_id);
-  if (!tracked) {
+  const tracked = validateTrackedBotMessageScope({
+    toolName: 'recall_message',
+    messageId: action.message_id,
+    chatId: message.chatId,
+    threadId: message.threadId,
+    botMessageTracker: deps.botMessageTracker,
+  });
+  if (!tracked.ok) {
     void audit('recall_message', caller, auditArgs, 'denied');
     return {
       ok: false,
       action: 'recall_message',
-      message: `${action.message_id} is not a tracked bot message.`,
-    };
-  }
-  if (tracked.chatId !== message.chatId || (tracked.threadId ?? '') !== (message.threadId ?? '')) {
-    void audit('recall_message', caller, auditArgs, 'denied');
-    return {
-      ok: false,
-      action: 'recall_message',
-      message:
-        `${action.message_id} belongs to chat=${tracked.chatId ?? '(unknown)'}` +
-        ` thread=${tracked.threadId ?? '(none)'}, not chat=${message.chatId}` +
-        ` thread=${message.threadId ?? '(none)'}.`,
+      message: tracked.message,
     };
   }
 

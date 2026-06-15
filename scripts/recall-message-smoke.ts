@@ -12,7 +12,7 @@ import { TurnObligationTracker } from '../src/turn-obligation.js';
 import { registerTools } from '../src/tools.js';
 
 async function flushAsyncAudit(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
 const tmpDir = mkdtempSync(join(tmpdir(), 'recall-message-'));
