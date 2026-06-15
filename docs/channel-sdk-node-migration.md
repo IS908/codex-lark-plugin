@@ -1,6 +1,6 @@
-# channel SDK migration boundary
+# channel SDK unification plan
 
-This document records the current boundary for using the public
+This document records the current plan for using the public
 `@larksuite/channel` package in `codex-lark-plugin`.
 
 The plugin remains Codex only. This plan does not add Claude support, does not
@@ -9,25 +9,28 @@ as the caller identity trust anchor.
 
 ## Decision
 
-As of v1.3.0, keep a hybrid runtime:
+Be aggressive: make the channel SDK the unified Lark transport facade for both
+receive and send paths, and move quickly through one broad migration branch.
 
-- use `@larksuite/channel` as the default inbound live runtime for Lark message,
-  comment, reaction, reject, and error events;
-- use selected SDK helpers where parity is clear, such as receive-time ack
-  reactions, received-resource download, parent/root message fetch, and comment
-  context fetch;
-- keep primary outbound behavior on the explicit Feishu OpenAPI client from
-  `@larksuiteoapi/node-sdk` until each outbound operation has proven parity with
-  the local control plane.
+The migration target is not to move product ownership into the SDK. The target
+is narrower and more useful:
 
-Do not pursue a one-shot "all send and receive through the channel SDK" rewrite.
-The channel SDK exposes useful outbound APIs, but this plugin's send path also
-owns Codex-specific routing, reply obligations, ack cleanup, bot-message
-tracking, scheduled-job auto-pause, auditability, and local memory/job
-boundaries. Those concerns must stay local even when an SDK method is used as
-the transport.
+- all Lark I/O should enter through `@larksuite/channel` public methods where
+  they have parity;
+- operations not yet covered by public SDK methods should go through
+  `channel.rawClient` inside a small SDK transport adapter, not through scattered
+  direct `@larksuiteoapi/node-sdk` calls;
+- Codex-specific behavior stays local: identity, tools, memory, jobs, audit,
+  reply obligations, retry policy, prompt hardening, and rollback control.
+
+This is intentionally a fast trial/fix plan. Prefer a single end-to-end SDK
+transport pass with strong smoke coverage over a long sequence of tiny
+pre-migration adapter PRs. Keep rollback cheap, then repair parity gaps as they
+appear.
 
 ## Current Split
+
+As of v1.3.0:
 
 - SDK inbound runtime starts from `src/index.ts` via `startSdkChannelRuntime()`.
 - SDK event bridging lives in `src/sdk-channel-runtime.ts`.
@@ -40,35 +43,51 @@ the transport.
   scheduler direct messages still use the explicit OpenAPI client through
   `src/reply-sender.ts`, `src/tools.ts`, and `src/scheduler.ts`.
 - The lightweight `src/sdk-channel-outbound.ts` helpers are parity scaffolding,
-  not the production send path.
+  not the production send path yet.
+
+## Target Shape
+
+Create a single local `LarkTransport` boundary owned by this plugin:
+
+- inbound events: `@larksuite/channel` normalized events;
+- chat send/edit/reaction/upload/download/fetch: `@larksuite/channel` public
+  methods first;
+- doc comments and missing APIs: `channel.comments` first, then
+  `channel.rawClient` escape hatches inside the transport boundary;
+- local control plane: unchanged.
+
+The important rule is: call sites such as `reply`, `edit_message`, scheduler,
+doc-comment tools, and ack cleanup should talk to this local transport boundary.
+They should not know whether a particular operation used a public SDK method or
+the SDK's raw client escape hatch.
 
 ## Capability Matrix
 
-| Operation | Current owner | Channel SDK support | Recommendation |
-| --- | --- | --- | --- |
-| Inbound message/comment/reaction events | `@larksuite/channel` runtime plus local adapter | Supported | Keep SDK default. Keep mapping into `LarkMessage` local and identity-bound. |
-| P2P/group gating | Local adapter after SDK normalization | SDK has policy hooks, local semantics are stricter | Keep local allowlist and precise mention semantics as the source of truth. |
-| Server-derived identity | Local `IdentitySession` | Not an SDK responsibility | Keep local. SDK events only provide authenticated input identity. |
-| Normal chat reply: text | `sendFeishuReply()` via OpenAPI | `channel.send({ text })` supported | Candidate only behind an adapter that preserves `reply_to` auto-fill, chunking, ack revoke, buffer recording, bot tracking, and cron auto-pause. |
-| Markdown/card-rendered replies | Local `buildCards()` plus OpenAPI `interactive` messages | `send({ markdown })` and `send({ card })` supported | Keep local card builder until visual/card-split parity is proven. |
-| Raw Schema 2.0 card reply | OpenAPI `message.reply/create` with `msg_type=interactive` | `send({ card })` likely supports object cards | Candidate, but must preserve raw-card bypass semantics and reply-thread routing. |
-| Long text and card splitting | Local chunk/card splitting | SDK `send()` returns chunk ids, but local split policy differs | Keep local policy. SDK can be the transport only after exact count/order/track behavior is tested. |
-| Thread/root/reply routing | Local `reply_to`, `thread_id`, `latestMessageTracker`, `TurnObligationTracker` | `SendOptions.replyTo` and `replyInThread` supported | Keep local routing decisions. SDK transport is acceptable only after root-only and threaded reply parity tests. |
-| Message create vs reply fallback | Local `sendFollowup()` chooses reply/create | SDK has fallback behavior for some errors | Keep local intent explicit; do not let SDK fallback hide target routing changes without tests. |
-| Edit message | OpenAPI `message.patch` | `editMessage()` and `updateCard()` supported | Candidate for small PR. Must preserve `card_markdown` edit behavior and turn satisfaction. |
-| Add message reaction | OpenAPI `messageReaction.create`; SDK ack already uses `addReaction()` | `addReaction()` supported | Candidate for explicit `react` tool, but ack lifecycle must keep reaction ids for delete. |
-| Delete ack reaction | OpenAPI delete by reaction id | `removeReaction()` or `removeReactionByEmoji()` supported | Keep current id-based delete unless SDK id-based delete parity is wired and tested. |
-| `defer_reply` | Local turn-obligation and ack cleanup only | No Lark send needed | Keep local. It is not an SDK transport concern. |
-| Image/file upload and follow-up sending | OpenAPI upload plus follow-up message send | `send({ image })`, `send({ file })` supported with SSRF guard | Candidate only if local file path/Buffer behavior, thread follow-up routing, failure logging, and bot tracking stay identical. |
-| Attachment download | SDK helper in inbound path plus local byte/time caps | `downloadResource()` supported | Keep SDK helper, but local `writeSdkResource()` caps remain mandatory. |
-| Quoted interactive card context | Legacy OpenAPI `message.get` plus `messages/mget` fallback; SDK path currently only `fetchMessage()` | `fetchMessage()` supported, raw card parity unclear | Do not make SDK-only. Add fallback if `fetchMessage()` returns placeholders such as `[Interactive Card]`. |
-| Doc-comment mention handling | SDK event plus local fallback to raw event when available | `comment` event and `channel.comments.fetch()` supported | Keep hybrid. Preserve `doc:<file_token>` identity and selected-text context. |
-| Doc-comment reply/create | OpenAPI tools with local authorization and audit | `channel.comments.reply()` supports reply/top-level fallback; top-level create coverage is narrower | Candidate for reply only after token/thread authorization, audit args, whole-doc fallback, and error messages match. Keep create on OpenAPI unless SDK has exact top-level semantics. |
-| Scheduler direct-message delivery | OpenAPI `message.create` with deterministic uuid and retry policy | `send()` supported | Keep OpenAPI for now. Scheduler retry, permanent-target auto-pause, and run metadata are more important than transport unification. |
-| Cron prompt injection | MCP `notifications/Codex/channel` | Not SDK-owned | Keep local. |
-| Error taxonomy and retries | `feishuApiCall()` local wrapper | SDK exposes `LarkChannelError` stable codes | Do not replace wholesale. Map SDK errors into local retry/permanent-failure behavior first. |
-| SDK logging / MCP stdout safety | Local SDK logger wrappers | SDK accepts logger | Keep local stderr-only logger requirement. |
-| Marketplace/cache packaging | Codex plugin metadata and release workflow | Not SDK-owned | Keep local. |
+| Operation | One-shot SDK target | Known caveat |
+| --- | --- | --- |
+| Inbound message/comment/reaction events | Already SDK default. Keep mapping into local `LarkMessage`. | Local identity binding remains mandatory before any Codex turn. |
+| P2P/group gating | Keep local semantics after SDK normalization. | SDK policy hooks may prefilter later, but local allowlist and precise mention rules stay authoritative. |
+| Server-derived identity | Keep local `IdentitySession`. | SDK supplies authenticated event identity only; it must not own tool authorization. |
+| Normal chat reply: text | Use `channel.send({ text }, { replyTo, replyInThread })`. | Preserve `reply_to` auto-fill, text chunking, ack revoke, buffer recording, bot tracking, and cron auto-pause. |
+| Markdown/card-rendered replies | Keep local `buildCards()` policy, send cards through `channel.send({ card })`. | Visual parity and split ordering must be tested. |
+| Raw Schema 2.0 card reply | Send parsed card object through `channel.send({ card })`. | Preserve raw-card bypass semantics and reply-thread routing. |
+| Long text and card splitting | Keep local split policy, send every chunk/card through SDK transport. | Track `messageId` and `chunkIds` in `BotMessageTracker`. |
+| Thread/root/reply routing | Local code decides `replyTo` and `replyInThread`; SDK performs send. | Root-only and threaded reply smoke tests are required. |
+| Message create vs reply fallback | Use SDK send first; map SDK fallback/error results back to local status. | Do not hide target-routing changes behind SDK fallback behavior. |
+| Edit message | Use `editMessage()` for text and `updateCard()` for card edits. | Preserve current `card_markdown` edit behavior; use `rawClient` inside transport if needed. |
+| Add message reaction | Use `addReaction()`. | Explicit `react` tool and receive-time ack can share transport. |
+| Delete ack reaction | Use SDK `removeReaction()` by reaction id where possible. | If SDK delete semantics differ, use `rawClient` inside transport and keep id-based lifecycle. |
+| `defer_reply` | Keep local only. | No Lark send is needed; only turn obligation and ack cleanup matter. |
+| Image/file upload and follow-up sending | Use `channel.send({ image })` / `channel.send({ file })` with local paths or Buffers. | Preserve thread follow-up routing, failure logging, and bot tracking. |
+| Attachment download | Keep SDK `downloadResource()` plus local `writeSdkResource()` caps. | Byte/time caps remain local. |
+| Quoted interactive card context | Use SDK `fetchMessage()` first, then fallback through transport raw-client `messages/mget` when placeholder text is returned. | This is the first known inbound parity gap under SDK default. |
+| Doc-comment mention handling | Keep SDK comment event and `channel.comments.fetch()`. | Preserve `doc:<file_token>` identity, selected text, document title, and raw-event fallback. |
+| Doc-comment reply/create | Use `channel.comments.reply()` where return shape is sufficient; otherwise use `rawClient` inside transport. | Current tools return ids and enforce token/thread/audit semantics; do not weaken those. |
+| Scheduler direct-message delivery | Route through SDK transport. | Preserve deterministic run behavior where possible; if SDK lacks uuid control, document the tradeoff or use raw client inside transport. |
+| Cron prompt injection | Keep MCP `notifications/Codex/channel`. | Not a Lark transport concern. |
+| Error taxonomy and retries | Map `LarkChannelError` and raw-client errors into local retry/permanent-failure decisions. | Scheduler auto-pause and reply failures depend on this. |
+| SDK logging / MCP stdout safety | Keep injected stderr-only SDK logger. | Non-negotiable: stdout belongs to MCP JSON-RPC. |
+| Marketplace/cache packaging | Keep Codex plugin release flow. | Validate installed cache after migration. |
 
 ## Quoted Interactive Cards
 
@@ -89,43 +108,42 @@ only calls `sdkChannel.fetchMessage(quotedMessageId)` and assigns
 `normalizeFetchedMessageText(parent.content)`. It does not currently run the
 legacy `needsCardContextFetch()` plus `messages/mget` fallback.
 
-Therefore, if a quoted interactive card only appears as `[Interactive Card]`,
-the runtime probably only had placeholder text at that stage. Real visible card
-text depends on whether parent/root message fetch successfully returns the raw
-interactive card JSON needed for extraction. If `fetchMessage()` returns only a
-placeholder, SDK inbound must keep an OpenAPI `messages/mget` fallback or use a
+Under the aggressive plan, fix this inside the unified SDK transport pass rather
+than as a long-lived separate migration track. If `fetchMessage()` returns only a
+placeholder, the transport should call a raw-client `messages/mget` fallback or a
 future SDK raw-message fetch surface.
 
-The concrete SDK fallback parity fix is tracked in #76.
+This is tracked in #76 as part of the one-shot SDK unification work.
 
 ## Risk Classification
 
-| Risk | Severity | Reversibility | Notes |
+| Risk | Severity | Reversibility | Fast-fix posture |
 | --- | --- | --- | --- |
-| Quoted interactive card readability regresses to placeholders | Medium | Easy | Fixable with fallback. User-visible but not data-lossy. |
-| Thread/root reply routing changes | High | Medium | Can send replies into the wrong place. Requires strong smoke and manual tests. |
-| Scheduler permanent-failure auto-pause stops working | High | Medium | Can repeatedly fail scheduled jobs instead of pausing bad targets. |
-| SDK fallback hides raw Feishu error codes | Medium | Medium | Could weaken operator debugging and retry decisions. |
-| Doc-comment authorization or token binding changes | High | Medium | Sensitive because doc-comment tools are scoped to current `doc:<file_token>` turns. |
-| SDK logger writes to stdout | High | Easy | Would corrupt MCP stdio framing. Always inject stderr logger. |
-| Full outbound rewrite spans too many behaviors | High | Hard | Avoid. Use small transport-adapter PRs only after parity tests exist. |
+| Quoted interactive card readability regresses to placeholders | Medium | Easy | Add SDK fetch fallback to raw-client `messages/mget`. |
+| Thread/root reply routing changes | High | Medium | Keep local routing decisions, add root-only/threaded smoke tests, rollback via legacy runtime if live trial fails. |
+| Scheduler permanent-failure auto-pause stops working | High | Medium | Map SDK/raw errors into existing permanent-failure logic before enabling scheduler transport. |
+| SDK fallback hides raw Feishu error codes | Medium | Medium | Wrap SDK errors into local error taxonomy with original cause attached. |
+| Doc-comment authorization or token binding changes | High | Medium | Keep local tool auth and audit untouched; only swap transport under the boundary. |
+| SDK logger writes to stdout | High | Easy | Keep explicit stderr logger in every SDK constructor. |
+| SDK send lacks uuid/idempotency knobs for scheduler | Medium | Medium | Use rawClient inside transport for scheduler if deterministic uuid cannot be preserved. |
+| One broad PR creates noisy diff | Medium | Easy | Accept initially; rely on smoke tests and focused self-review by workflow area. |
 
-## Recommended Implementation Path
+## Implementation Path
 
-1. Keep SDK inbound as the default and keep `LARK_CHANNEL_RUNTIME=legacy` as the
-   rollback path.
-2. Fix SDK quoted interactive-card fallback first, because it is an inbound
-   parity issue in the default runtime.
-3. If outbound migration is still desired, create small opt-in adapter PRs in
-   this order:
-   - explicit `react` tool via SDK `addReaction()`;
-   - `edit_message` text-only via SDK `editMessage()`;
-   - plain text reply transport behind a feature flag, while preserving local
-     routing, ack, bot tracking, and reply obligation logic.
-4. Do not move scheduler delivery, doc-comment create/reply, file uploads, or
-   card-split replies until the smaller adapters prove parity.
-5. Do not remove OpenAPI/raw-client escape hatches while SDK parity for quoted
-   cards, doc comments, uploads, and error taxonomy is still partial.
+1. Introduce a local `LarkTransport` interface with SDK-backed implementation.
+2. Store the live SDK channel on startup and expose it to tools, reply sender,
+   scheduler, ack cleanup, and doc-comment helpers through that transport.
+3. Move chat reply, edit, reaction, ack delete, attachment upload/download,
+   parent/root fetch, doc-comment operations, and scheduler direct sends behind
+   the SDK transport boundary in one migration branch.
+4. Use public `@larksuite/channel` APIs first; use `channel.rawClient` only
+   inside the transport for missing parity such as `messages/mget`, deterministic
+   scheduler uuid, or doc-comment return ids.
+5. Keep `LARK_CHANNEL_RUNTIME=legacy` as the coarse rollback path until the
+   SDK-unified transport has passed internal manual testing.
+6. Run a fast trial loop: merge only after smoke/dry-run passes, deploy
+   internally, capture regressions as small fixes, and cut patch releases as
+   needed.
 
 ## Validation Checklist
 
@@ -143,15 +161,16 @@ The concrete SDK fallback parity fix is tracked in #76.
   - quoted parent interactive card;
   - quoted root interactive card;
   - placeholder-only quoted card fallback;
-  - doc-comment mention and reply;
+  - doc-comment mention and reply/create;
   - explicit `reply`, `edit_message`, `react`, and `defer_reply`;
-  - scheduled direct-message delivery and permanent-target auto-pause.
+  - image/file upload and download;
+  - scheduled direct-message delivery;
+  - permanent-target auto-pause;
+  - one Codex exec resumed session across multiple turns.
 
 ## Conclusion
 
-`@larksuite/channel` is suitable as the inbound runtime and as a transport
-candidate for narrow outbound operations. It should not become the single owner
-of all Lark send/receive behavior in one migration. The durable boundary is:
-SDK for normalized Lark transport where parity is proven; local plugin code for
-Codex identity, tools, memory, jobs, audit, reply obligations, retry policy, and
-rollback control.
+The working strategy is now aggressive SDK unification, not conservative
+coexistence. Use the channel SDK as the single Lark transport facade, keep local
+Codex ownership above that facade, and use raw-client escape hatches only inside
+the transport boundary when the public SDK surface lacks exact parity.
