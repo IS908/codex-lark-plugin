@@ -4,9 +4,16 @@ process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
 process.env.LARK_OWNER_OPEN_ID = 'ou_owner';
 
-const { registerDocCommentTools } = await import('../src/tools.js');
+const { registerDocCommentTools } = await import('../src/tools/doc-comments.js');
+const rootTools = await import('../src/tools.js');
 const { IdentitySession } = await import('../src/identity-session.js');
 const { ConversationBuffer } = await import('../src/memory/buffer.js');
+
+assert.equal(
+  rootTools.registerDocCommentTools,
+  registerDocCommentTools,
+  'root tools.js re-exports registerDocCommentTools for compatibility',
+);
 
 function makeHarness() {
   const session = new IdentitySession(() => 'ou_owner');

@@ -8,291 +8,29 @@ import type { MemoryStore } from './memory/file.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { BotMessageTracker, LatestMessageTracker, LarkChannel } from './channel.js';
 import type { IdentitySession } from './identity-session.js';
-import { DOC_CHAT_ID_PREFIX, SYSTEM_FLUSH_CALLER } from './identity-session.js';
+import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import { audit } from './audit-log.js';
 import { writeSdkResource } from './sdk-resource.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { revokeAckReactionWithTransport, type AckReactionTracker } from './ack-reactions.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { assertSafeChatId } from './prompts.js';
-import { feishuApiCall } from './feishu-retry.js';
-import { buildCommentElements } from './doc-comment-api.js';
-import {
-  createOpenApiLarkTransport,
-  type LarkTransport,
-} from './lark-transport.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
-
-type LarkTransportProvider = LarkTransport | (() => LarkTransport);
-
-function createTransportProxy(resolve: () => LarkTransport): LarkTransport {
-  return {
-    sendMessage: (request) => resolve().sendMessage(request),
-    editMessage: (request) => resolve().editMessage(request),
-    updateCard: (request) => resolve().updateCard(request),
-    recallMessage: (messageId) => resolve().recallMessage(messageId),
-    addReaction: (messageId, emojiType) => resolve().addReaction(messageId, emojiType),
-    removeReaction: (messageId, reactionId) => resolve().removeReaction(messageId, reactionId),
-    removeReactionByEmoji: (messageId, emojiType) => resolve().removeReactionByEmoji(messageId, emojiType),
-    downloadResource: (messageId, fileKey, resourceType) =>
-      resolve().downloadResource(messageId, fileKey, resourceType),
-    uploadImage: (data) => resolve().uploadImage(data),
-    uploadFile: (data, fileName) => resolve().uploadFile(data, fileName),
-    replyDocComment: (request) => resolve().replyDocComment(request),
-    createDocComment: (request) => resolve().createDocComment(request),
-    fetchMessageText: (messageId) => resolve().fetchMessageText(messageId),
-  };
-}
 import { registerLocalCliTools } from './local-cli-tools.js';
 import type { ProfileDistillationDispatcher } from './profile-distillation.js';
-import { logSafeError } from './safe-log.js';
 import {
   autoPauseJobForPermanentTargetError,
   isPermanentTargetError,
   parseJobThreadId,
 } from './scheduler.js';
-
-interface DocCommentClient {
-  drive: {
-    fileCommentReply: {
-      create: (req: {
-        path: { file_token: string; comment_id: string };
-        params: { file_type: string; user_id_type?: string };
-        data: { content: { elements: unknown[] } };
-      }) => Promise<{ data?: { reply_id?: string } }>;
-    };
-    fileComment: {
-      create: (req: {
-        path: { file_token: string };
-        params: { file_type: string; user_id_type?: string };
-        data: { reply_list: { replies: Array<{ content: { elements: unknown[] } }> } };
-      }) => Promise<{ data?: { comment_id?: string } }>;
-    };
-  };
-}
-
-interface DocCommentServer {
-  registerTool: (
-    name: string,
-    config: { description?: string; inputSchema: z.ZodTypeAny },
-    handler: (args: any) => Promise<{
-      isError?: boolean;
-      content: { type: 'text'; text: string }[];
-    }>,
-  ) => unknown;
-}
-
-export interface DocCommentToolsDeps {
-  server: DocCommentServer;
-  client?: DocCommentClient;
-  transport?: LarkTransportProvider;
-  identitySession: IdentitySession;
-  conversationBuffer?: ConversationBuffer;
-}
-
-function docCommentError(text: string): { isError: true; content: { type: 'text'; text: string }[] } {
-  return { isError: true, content: [{ type: 'text', text }] };
-}
-
-function resolveDocCommentCaller(
-  identitySession: IdentitySession,
-  toolName: string,
-  chatId: string | undefined,
-  threadId: string | undefined,
-  args: Record<string, unknown>,
-):
-  | { caller: string }
-  | { error: { isError: true; content: { type: 'text'; text: string }[] } } {
-  if (!chatId) {
-    void audit(toolName, null, args, 'denied');
-    return { error: docCommentError('chat_id is required for this tool') };
-  }
-  const caller = identitySession.getCaller(chatId, threadId);
-  if (!caller) {
-    void audit(toolName, null, args, 'denied');
-    return { error: docCommentError(`No active identity session for chat ${chatId}.`) };
-  }
-  return { caller };
-}
-
-function validateDocCommentScope(
-  toolName: string,
-  caller: string,
-  args: Record<string, unknown>,
-  chatId: string,
-  docToken: string,
-): { isError: true; content: { type: 'text'; text: string }[] } | null {
-  if (!appConfig.ownerOpenId || caller !== appConfig.ownerOpenId) {
-    void audit(toolName, caller, args, 'denied');
-    return docCommentError(`${toolName} is owner-only.`);
-  }
-  if (!chatId.startsWith(DOC_CHAT_ID_PREFIX)) {
-    void audit(toolName, caller, args, 'denied');
-    return docCommentError(
-      `${toolName} is only callable from doc-comment-triggered turns (chat_id must start with "doc:"). Got chat_id=${chatId}.`,
-    );
-  }
-  const expectedToken = chatId.slice(DOC_CHAT_ID_PREFIX.length);
-  if (docToken !== expectedToken) {
-    void audit(toolName, caller, args, 'denied');
-    return docCommentError(
-      `doc_token mismatch: the doc-comment notification was for ${expectedToken}, but ${toolName} was called with doc_token=${docToken}.`,
-    );
-  }
-  return null;
-}
-
-export function registerDocCommentTools(deps: DocCommentToolsDeps): void {
-  const { server, client, identitySession, conversationBuffer } = deps;
-  const transport = typeof deps.transport === 'function'
-    ? createTransportProxy(deps.transport)
-    : deps.transport;
-  const fileTypeSchema = z.enum(['docx', 'doc', 'sheet', 'file', 'slides', 'bitable']);
-
-  function recordAssistantComment(chatId: string, content: string): void {
-    conversationBuffer?.record(chatId, {
-      role: 'assistant',
-      senderId: 'bot',
-      text: content.slice(0, 500),
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  server.registerTool(
-    'reply_doc_comment',
-    {
-      description:
-        'Reply to a Feishu doc comment thread. Use only from doc-comment-triggered turns and pass chat_id, thread_id, doc_token, and comment_id from the current notification metadata.',
-      inputSchema: z.object({
-        chat_id: z.string().describe('Current doc-comment chat_id. Must start with "doc:".'),
-        thread_id: z.string().optional().describe('Current doc-comment thread_id, equal to comment_id.'),
-        doc_token: z.string().describe('Document token from the doc-comment notification.'),
-        comment_id: z.string().describe('Comment thread id to reply under.'),
-        content: z.string().describe('Plain text reply content, max 1000 characters.'),
-        file_type: fileTypeSchema,
-      }),
-    },
-    async ({ chat_id, thread_id, doc_token, comment_id, content, file_type }) => {
-      const auditArgs = { chat_id, thread_id, doc_token, comment_id, content, file_type };
-      const auth = resolveDocCommentCaller(identitySession, 'reply_doc_comment', chat_id, thread_id, auditArgs);
-      if ('error' in auth) return auth.error;
-      const scopeError = validateDocCommentScope('reply_doc_comment', auth.caller, auditArgs, chat_id, doc_token);
-      if (scopeError) return scopeError;
-      if (thread_id !== comment_id) {
-        void audit('reply_doc_comment', auth.caller, auditArgs, 'denied');
-        return docCommentError(
-          `comment_id mismatch: reply_doc_comment must target the current doc-comment thread_id=${thread_id}, but got comment_id=${comment_id}.`,
-        );
-      }
-
-      let elements: unknown[];
-      try {
-        elements = buildCommentElements(content);
-      } catch (err: any) {
-        void audit('reply_doc_comment', auth.caller, auditArgs, 'denied');
-        return docCommentError(err?.message ?? String(err));
-      }
-
-      try {
-        const resp = transport
-          ? { data: { reply_id: (await transport.replyDocComment({
-              docToken: doc_token,
-              commentId: comment_id,
-              content,
-              fileType: file_type,
-            })).replyId } }
-          : await feishuApiCall(
-              'reply_doc_comment.create',
-              () => client!.drive.fileCommentReply.create({
-                path: { file_token: doc_token, comment_id },
-                params: { file_type, user_id_type: 'open_id' },
-                data: { content: { elements } },
-              }),
-              { retryTimeout: false },
-            );
-        void audit('reply_doc_comment', auth.caller, auditArgs, 'ok');
-        recordAssistantComment(chat_id, content);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Reply posted. reply_id=${resp?.data?.reply_id ?? '<unknown>'}`,
-            },
-          ],
-        };
-      } catch (err: any) {
-        void audit('reply_doc_comment', auth.caller, auditArgs, 'error');
-        const code = err?.code ?? err?.response?.data?.code ?? err?.data?.code;
-        const hint =
-          code === 1069302
-            ? ' The document has collaborator comments disabled. Ask the doc owner to enable collaborator comments.'
-            : '';
-        return docCommentError(`Feishu API rejected the reply: ${err?.message ?? String(err)}.${hint}`.trim());
-      }
-    },
-  );
-
-  server.registerTool(
-    'create_doc_comment',
-    {
-      description:
-        'Create a new top-level Feishu doc comment in the triggering document. Use only from doc-comment-triggered turns.',
-      inputSchema: z.object({
-        chat_id: z.string().describe('Current doc-comment chat_id. Must start with "doc:".'),
-        thread_id: z.string().optional().describe('Current doc-comment thread_id used for identity binding.'),
-        doc_token: z.string().describe('Document token from the doc-comment notification.'),
-        content: z.string().describe('Plain text comment content, max 1000 characters.'),
-        file_type: fileTypeSchema,
-      }),
-    },
-    async ({ chat_id, thread_id, doc_token, content, file_type }) => {
-      const auditArgs = { chat_id, thread_id, doc_token, content, file_type };
-      const auth = resolveDocCommentCaller(identitySession, 'create_doc_comment', chat_id, thread_id, auditArgs);
-      if ('error' in auth) return auth.error;
-      const scopeError = validateDocCommentScope('create_doc_comment', auth.caller, auditArgs, chat_id, doc_token);
-      if (scopeError) return scopeError;
-
-      let elements: unknown[];
-      try {
-        elements = buildCommentElements(content);
-      } catch (err: any) {
-        void audit('create_doc_comment', auth.caller, auditArgs, 'denied');
-        return docCommentError(err?.message ?? String(err));
-      }
-
-      try {
-        const resp = transport
-          ? { data: { comment_id: (await transport.createDocComment({
-              docToken: doc_token,
-              content,
-              fileType: file_type,
-            })).commentId } }
-          : await feishuApiCall(
-              'create_doc_comment.create',
-              () => client!.drive.fileComment.create({
-                path: { file_token: doc_token },
-                params: { file_type, user_id_type: 'open_id' },
-                data: { reply_list: { replies: [{ content: { elements } }] } },
-              }),
-              { retryTimeout: false },
-            );
-        void audit('create_doc_comment', auth.caller, auditArgs, 'ok');
-        recordAssistantComment(chat_id, content);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Top-level comment posted. comment_id=${resp?.data?.comment_id ?? '<unknown>'}`,
-            },
-          ],
-        };
-      } catch (err: any) {
-        void audit('create_doc_comment', auth.caller, auditArgs, 'error');
-        return docCommentError(`Feishu API error: ${err?.message ?? String(err)}`);
-      }
-    },
-  );
-}
+import {
+  createToolContext,
+  type LarkTransportProvider,
+} from './tools/tool-context.js';
+import { registerDocCommentTools } from './tools/doc-comments.js';
+export type { DocCommentToolsDeps } from './tools/doc-comments.js';
+export { registerDocCommentTools } from './tools/doc-comments.js';
+import { registerTransparencyTools } from './tools/transparency.js';
 
 /**
  * Sanitize and length-cap a Feishu attachment filename for safe local
@@ -351,103 +89,27 @@ export function registerTools(
   profileDistiller?: ProfileDistillationDispatcher,
   larkTransport?: LarkTransportProvider
 ): void {
-  const fallbackTransport = createOpenApiLarkTransport(client);
-  const resolveTransport =
-    typeof larkTransport === 'function'
-      ? larkTransport
-      : () => larkTransport ?? fallbackTransport;
-  const transport = createTransportProxy(resolveTransport);
-  /**
-   * Resolve the true caller for a sensitive tool invocation via the server-side
-   * IdentitySession. Returns either `{ caller }` on success or `{ error }` —
-   * an MCP tool result to return directly — on failure. This deliberately
-   * ignores any Codex-declared identity parameters.
-   *
-   * Denials are audit-logged here so callers only need to log 'ok' in their
-   * success path.
-   */
-  function resolveCaller(
-    toolName: string,
-    chat_id: string | undefined,
-    thread_id: string | undefined,
-    args: Record<string, unknown>,
-  ):
-    | { caller: string }
-    | { error: { isError: true; content: { type: 'text'; text: string }[] } } {
-    if (!chat_id) {
-      void audit(toolName, null, args, 'denied');
-      return {
-        error: {
-          isError: true,
-          content: [{ type: 'text' as const, text: 'chat_id is required for this tool' }],
-        },
-      };
-    }
-    const caller = identitySession.getCaller(chat_id, thread_id);
-    if (!caller) {
-      void audit(toolName, null, args, 'denied');
-      return {
-        error: {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text: `No active identity session for chat ${chat_id}. This tool requires an inbound Feishu message to establish caller identity, or a terminal invocation with LARK_OWNER_OPEN_ID set.`,
-            },
-          ],
-        },
-      };
-    }
-    // SYSTEM_FLUSH_CALLER is bound by buffer.setFlushHandler (#66) to let
-    // save_memory persist chat-level distillations without a real user
-    // identity. It must NOT authorize anything else — a sentinel-attributed
-    // `create_job` would produce a job with `created_by=__system_flush__`
-    // that no real operator could update/delete (owner mismatch); a
-    // sentinel-attributed `forget_memory` couldn't address any user's
-    // profile. The save_memory handler itself further restricts the
-    // sentinel to type=chat|thread (rejecting type=profile).
-    //
-    // The sentinel binding can outlive the flush turn (sticky in
-    // IdentitySession until the next real user message overwrites it),
-    // so this guard is also defense against any later tool call that
-    // happens to land on the leftover entry.
-    if (caller === SYSTEM_FLUSH_CALLER && toolName !== 'save_memory') {
-      void audit(toolName, caller, args, 'denied');
-      return {
-        error: {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text: `${toolName} is not authorized for the system-flush caller. Only save_memory can authorize under this caller (and save_memory itself further restricts to type=chat|thread). The sentinel exists to let buffer flushes persist chat episodes without a real user — not to act on behalf of one.`,
-            },
-          ],
-        },
-      };
-    }
-    return { caller };
-  }
-
-  function triggerProfileDistillation(
-    caller: string,
-    chatId: string,
-    threadId: string | undefined,
-  ): void {
-    if (!profileDistiller) return;
-    void profileDistiller
-      .maybeDispatch({
-        userId: caller,
-        chatId,
-        ...(threadId ? { threadId } : {}),
-        chatType: channel.isPrivateChat(chatId) ? 'p2p' : 'group',
-      })
-      .then((result) => {
-        if (result.status === 'error') {
-          console.error(`[profile-distill] dispatch failed for ${caller}: ${result.error ?? 'unknown error'}`);
-        }
-      })
-      .catch((err) => logSafeError('[profile-distill] dispatch failed:', err));
-  }
+  const ctx = createToolContext({
+    server,
+    client,
+    memoryStore,
+    identitySession,
+    channel,
+    conversationBuffer,
+    ackReactions,
+    botMessageTracker,
+    latestMessageTracker,
+    turnObligations,
+    profileDistiller,
+    larkTransport,
+  });
+  const {
+    transport,
+    resolveCaller,
+    triggerProfileDistillation,
+    resolveTurnMessageId,
+    satisfyTurn,
+  } = ctx;
 
   async function maybeAutoPauseCronJobReplyFailure(
     thread_id: string | undefined,
@@ -469,32 +131,6 @@ export function registerTools(
         pauseErr,
       );
     }
-  }
-
-  function resolveTurnMessageId(args: {
-    reply_to?: string;
-    chat_id?: string;
-    thread_id?: string;
-    fallback_message_id?: string;
-  }): string | undefined {
-    if (args.reply_to) return args.reply_to;
-    const fallback = turnObligations?.resolveFallback(args.chat_id, args.thread_id);
-    if (fallback?.status === 'ambiguous') {
-      throw new Error(
-        `reply_to is required: ${fallback.count} pending Lark turns match chat=${args.chat_id} thread=${args.thread_id ?? '(none)'}.`,
-      );
-    }
-    if (fallback?.status === 'active' || fallback?.status === 'single-pending') {
-      return fallback.messageId;
-    }
-    if (args.chat_id && latestMessageTracker) {
-      return latestMessageTracker.getLatest(args.chat_id, args.thread_id)?.messageId;
-    }
-    return args.fallback_message_id;
-  }
-
-  function satisfyTurn(messageId: string | undefined, source: Parameters<TurnObligationTracker['markSatisfied']>[1]): void {
-    turnObligations?.markSatisfied(messageId, source);
   }
 
   registerDocCommentTools({ server, transport, identitySession, conversationBuffer });
@@ -1436,135 +1072,5 @@ export function registerTools(
     }
   );
 
-  // ── what_do_you_know ──
-  server.registerTool(
-    'what_do_you_know',
-    {
-      description:
-        "List what the bot has stored in the caller's profile. Output is filtered by current-chat rendering visibility (path B): in a private chat both public and private tiers are rendered; in a group chat only the public tier — because the reply is visible to the whole group. Each returned line has a short hash that forget_memory uses to target the exact line.",
-      inputSchema: z.object({
-        chat_id: z.string().describe('Chat ID where this call is acting from'),
-        thread_id: z
-          .string()
-          .optional()
-          .describe(
-            'Thread ID from the current notification\'s metadata. Required whenever present — the server resolves caller identity from (chat_id, thread_id); omitting it falls back to chat-level and will silently attribute the call to the wrong user in cronjob turns.'
-          ),
-      }),
-    },
-    async ({ chat_id, thread_id }) => {
-      const auditArgs = { chat_id, thread_id };
-      const auth = resolveCaller('what_do_you_know', chat_id, thread_id, auditArgs);
-      if ('error' in auth) return auth.error;
-      const { caller } = auth;
-
-      const isPrivate = channel.isPrivateChat(chat_id);
-      const pub = await memoryStore.listProfileLines(caller, 'public');
-      const priv = isPrivate ? await memoryStore.listProfileLines(caller, 'private') : [];
-
-      const renderSection = (tier: string, lines: { hash: string; text: string }[]) =>
-        lines.length === 0
-          ? `_${tier}: (empty)_`
-          : `**${tier}:**\n${lines.map((l) => `- [${l.hash}] ${l.text}`).join('\n')}`;
-
-      const parts = [renderSection('public', pub)];
-      if (isPrivate) parts.push(renderSection('private', priv));
-
-      const footer = isPrivate
-        ? '\n\n_Use `forget_memory(hash, tier)` to remove a line._'
-        : '\n\n_Private tier hidden in this group. Ask in private chat to see both tiers._';
-
-      void audit('what_do_you_know', caller, auditArgs, 'ok');
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `What I've stored about you:\n\n${parts.join('\n\n')}${footer}`,
-          },
-        ],
-      };
-    }
-  );
-
-  // ── forget_memory ──
-  server.registerTool(
-    'forget_memory',
-    {
-      description:
-        "Remove a specific line from the caller's profile. Always caller-scoped — you can only forget things about yourself. Optionally promotes the removed line into a persistent L2 rule so future distillations classify similar content as private.",
-      inputSchema: z.object({
-        chat_id: z.string().describe('Chat ID where this call is acting from'),
-        thread_id: z
-          .string()
-          .optional()
-          .describe(
-            'Thread ID from the current notification\'s metadata. Required whenever present — the server resolves caller identity from (chat_id, thread_id); omitting it falls back to chat-level and will silently attribute the call to the wrong user in cronjob turns.'
-          ),
-        hash: z.string().describe('Short 8-char line hash obtained from what_do_you_know'),
-        tier: z
-          .enum(['public', 'private'])
-          .default('public')
-          .describe('Which tier the line lives in. Default "public" since that is where misclassifications are externally visible.'),
-        promote_to_rule: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe(
-            "If true, also append the removed line's text to privacy-rules.md under '## Always private' so future distillations classify similar content as private. Use when the removal reflects a durable preference ('I never want anything like this public') rather than a one-off cleanup."
-          ),
-      }),
-    },
-    async ({ chat_id, thread_id, hash, tier, promote_to_rule }) => {
-      const auditArgs = { chat_id, thread_id, hash, tier, promote_to_rule };
-      const auth = resolveCaller('forget_memory', chat_id, thread_id, auditArgs);
-      if ('error' in auth) return auth.error;
-      const { caller } = auth;
-
-      const lines = await memoryStore.listProfileLines(caller, tier);
-      const target = lines.find((l) => l.hash === hash);
-      if (!target) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text: `No line with hash "${hash}" in ${tier} tier. Call what_do_you_know to list current lines.`,
-            },
-          ],
-        };
-      }
-
-      const removed = await memoryStore.removeProfileLine(caller, tier, hash);
-      if (!removed) {
-        return {
-          isError: true,
-          content: [{ type: 'text' as const, text: `Failed to remove line "${hash}".` }],
-        };
-      }
-
-      // Line removal above is the primary effect; rule promotion is
-      // a best-effort enhancement. If addL2Rule fails, don't undo the
-      // removal — just report the partial outcome so the user knows.
-      let tail = '';
-      if (promote_to_rule) {
-        try {
-          const { addL2Rule } = await import('./privacy-rules.js');
-          await addL2Rule(target.text, 'Always private');
-          tail = ' Also appended to privacy-rules.md under "Always private" — future distillations will classify similar content accordingly.';
-        } catch (err) {
-          tail = ` (Warning: removal succeeded but failed to append rule to privacy-rules.md: ${err instanceof Error ? err.message : String(err)}. You can add the rule manually.)`;
-        }
-      }
-
-      void audit('forget_memory', caller, auditArgs, 'ok');
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `Removed "${target.text}" from ${tier} profile.${tail}`,
-          },
-        ],
-      };
-    }
-  );
+  registerTransparencyTools(ctx);
 }
