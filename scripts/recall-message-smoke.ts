@@ -52,8 +52,12 @@ try {
   };
   const transport = {
     sendMessage: async () => ({ sentCount: 1, statusText: 'ok' }),
-    editMessage: async () => {},
-    updateCard: async () => {},
+    editMessage: async (request: { messageId: string; text: string }) => {
+      calls.push({ method: 'transport.editMessage', args: request });
+    },
+    updateCard: async (request: { messageId: string; card: object | string }) => {
+      calls.push({ method: 'transport.updateCard', args: request });
+    },
     addReaction: async () => 'reaction_1',
     removeReaction: async () => {},
     removeReactionByEmoji: async () => true,
@@ -71,6 +75,8 @@ try {
   identitySession.setCaller('oc_recall', 'thread_1', 'ou_caller');
   const botTracker = new BotMessageTracker(10);
   botTracker.add('om_bot_recall', { chatId: 'oc_recall', threadId: 'thread_1' });
+  botTracker.add('om_bot_edit', { chatId: 'oc_recall', threadId: 'thread_1' });
+  botTracker.add('om_bot_edit_card', { chatId: 'oc_recall', threadId: 'thread_1' });
   botTracker.add('om_bot_other_chat', { chatId: 'oc_other', threadId: 'thread_1' });
   const turnObligations = new TurnObligationTracker({ timeoutMs: 60_000 });
   turnObligations.begin({
@@ -80,9 +86,27 @@ try {
     caller: 'ou_caller',
     mode: 'notification',
   });
+  turnObligations.begin({
+    messageId: 'om_current_edit_turn',
+    chatId: 'oc_recall',
+    threadId: 'thread_1',
+    caller: 'ou_caller',
+    mode: 'notification',
+  });
+  turnObligations.begin({
+    messageId: 'om_current_card_edit_turn',
+    chatId: 'oc_recall',
+    threadId: 'thread_1',
+    caller: 'ou_caller',
+    mode: 'notification',
+  });
   const ackReactions = new AckReactionTracker({ maxTrackedMessages: 10 });
   ackReactions.recordInbound('om_current_turn');
   ackReactions.storeReaction('om_current_turn', 'reaction_current');
+  ackReactions.recordInbound('om_current_edit_turn');
+  ackReactions.storeReaction('om_current_edit_turn', 'reaction_edit');
+  ackReactions.recordInbound('om_current_card_edit_turn');
+  ackReactions.storeReaction('om_current_card_edit_turn', 'reaction_card_edit');
 
   registerTools(
     fakeServer as any,
@@ -101,6 +125,8 @@ try {
 
   const recall = handlers.get('recall_message');
   assert.ok(recall, 'recall_message tool should be registered');
+  const edit = handlers.get('edit_message');
+  assert.ok(edit, 'edit_message tool should be registered');
 
   const ok = await recall({
     chat_id: 'oc_recall',
@@ -112,7 +138,7 @@ try {
   assert.equal(ok.content[0].text, 'Recalled message om_bot_recall');
   assert.deepEqual(calls, [{ method: 'transport.recallMessage', args: { messageId: 'om_bot_recall' } }]);
   assert.equal(turnObligations.getStatus('om_current_turn'), 'satisfied');
-  assert.equal(ackReactions.activeCount, 0);
+  assert.equal(ackReactions.activeCount, 2);
 
   const unknown = await recall({
     chat_id: 'oc_recall',
@@ -131,9 +157,65 @@ try {
   assert.match(wrongScope.content[0].text, /does not belong to chat=oc_recall thread=thread_1/i);
   assert.equal(calls.length, 1);
 
+  const editUnknown = await edit({
+    chat_id: 'oc_recall',
+    thread_id: 'thread_1',
+    reply_to: 'om_current_edit_turn',
+    message_id: 'om_user_message',
+    text: 'edited',
+    format: 'text',
+  });
+  assert.equal(editUnknown.isError, true);
+  assert.match(editUnknown.content[0].text, /not a tracked bot message/i);
+  assert.equal(calls.length, 1);
+
+  const editWrongScope = await edit({
+    chat_id: 'oc_recall',
+    thread_id: 'thread_1',
+    reply_to: 'om_current_edit_turn',
+    message_id: 'om_bot_other_chat',
+    text: 'edited',
+    format: 'text',
+  });
+  assert.equal(editWrongScope.isError, true);
+  assert.match(editWrongScope.content[0].text, /does not belong to chat=oc_recall thread=thread_1/i);
+  assert.equal(calls.length, 1);
+
+  const editOk = await edit({
+    chat_id: 'oc_recall',
+    thread_id: 'thread_1',
+    reply_to: 'om_current_edit_turn',
+    message_id: 'om_bot_edit',
+    text: 'edited',
+    format: 'text',
+  });
+  assert.equal(editOk.isError, undefined);
+  assert.equal(editOk.content[0].text, 'Edited message om_bot_edit');
+  assert.deepEqual(calls[1], {
+    method: 'transport.editMessage',
+    args: { messageId: 'om_bot_edit', text: 'edited' },
+  });
+  assert.equal(turnObligations.getStatus('om_current_edit_turn'), 'satisfied');
+
+  const editCardOk = await edit({
+    chat_id: 'oc_recall',
+    thread_id: 'thread_1',
+    reply_to: 'om_current_card_edit_turn',
+    message_id: 'om_bot_edit_card',
+    text: 'card body',
+    format: 'card_markdown',
+  });
+  assert.equal(editCardOk.isError, undefined);
+  assert.equal(editCardOk.content[0].text, 'Edited message om_bot_edit_card');
+  assert.equal(calls[2].method, 'transport.updateCard');
+  assert.equal(calls[2].args.messageId, 'om_bot_edit_card');
+  assert.equal(turnObligations.getStatus('om_current_card_edit_turn'), 'satisfied');
+  assert.equal(ackReactions.activeCount, 0);
+
   await flushAsyncAudit();
   const audit = readFileSync(appConfig.auditLogPath, 'utf-8');
   assert.match(audit, /recall_message/);
+  assert.match(audit, /edit_message/);
   assert.match(audit, /ok/);
   assert.match(audit, /denied/);
 } finally {

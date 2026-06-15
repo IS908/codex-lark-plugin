@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-06-15
+
+### Fixed
+- Restricted `edit_message` to tracked bot messages in the current chat/thread and aligned its mutation guard with `recall_message`.
+
 ## [1.5.1] - 2026-06-15
 
 ### Fixed
