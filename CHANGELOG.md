@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.8] - 2026-06-15
+
+### Changed
+- Split `LarkTransport` internals into message, reaction, resource, doc-comment, and card-context modules while preserving the public transport facade.
+- Generalized SDK fallback diagnostics and documented transport fallback/fail-closed policy for SDK-backed operations.
+
 ## [1.5.7] - 2026-06-15
 
 ### Changed
