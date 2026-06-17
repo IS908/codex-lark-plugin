@@ -8,6 +8,11 @@ export interface BufferedMessage {
   senderId: string;
   text: string;
   timestamp: string;
+  messageId?: string;
+  threadId?: string;
+  messageType?: string;
+  timestampMs?: number;
+  messagePosition?: string;
 }
 
 type FlushHandler = (chatId: string, messages: BufferedMessage[]) => Promise<void>;

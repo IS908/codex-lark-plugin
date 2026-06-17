@@ -42,6 +42,7 @@ import {
 import { DisplayNameResolver } from './display-name-resolver.js';
 import { normalizeLegacyMessageEvent } from './inbound-message-normalizer.js';
 import type { LarkCachedMessageContext } from './lark-message-context.js';
+import { buildRecentThreadContext } from './recent-thread-context.js';
 
 export { resolveMentionPlaceholders } from './message-content.js';
 
@@ -888,6 +889,10 @@ export class LarkChannel {
       senderId,
       text: larkMessage.text,
       timestamp: new Date().toISOString(),
+      timestampMs: Date.now(),
+      messageId,
+      threadId,
+      messageType: larkMessage.messageType,
     });
 
     // Build memory-enriched context
@@ -914,8 +919,9 @@ export class LarkChannel {
   }
 
   private async enrichWithMemory(msg: LarkMessage): Promise<string> {
+    const recentThreadContext = this.buildRecentThreadContext(msg);
     if (!this.memoryStore) {
-      return enrichmentPrompt('', msg.parentContent, msg.senderId, msg.chatId, msg.text);
+      return enrichmentPrompt('', msg.parentContent, msg.senderId, msg.chatId, msg.text, recentThreadContext);
     }
 
     this.memoryDeduper.setWindowMs(appConfig.memoryDedupWindowMs);
@@ -1026,8 +1032,20 @@ export class LarkChannel {
       msg.parentContent,
       msg.senderId,
       msg.chatId,
-      msg.text
+      msg.text,
+      recentThreadContext,
     );
+  }
+
+  private buildRecentThreadContext(msg: LarkMessage): string | undefined {
+    if (!this.conversationBuffer) return undefined;
+    return buildRecentThreadContext({
+      chatId: msg.chatId,
+      threadId: msg.threadId,
+      currentMessageId: msg.messageId,
+      messages: this.conversationBuffer.getMessages(msg.chatId),
+      quotedContent: msg.parentContent,
+    });
   }
 
   /**

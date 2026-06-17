@@ -80,6 +80,10 @@ echo "=== Lark message context renderer checks ==="
 node --import tsx scripts/lark-message-context-smoke.ts
 
 echo ""
+echo "=== Recent thread context checks ==="
+node --import tsx scripts/recent-thread-context-smoke.ts
+
+echo ""
 echo "=== Quoted context loader unit checks ==="
 node --import tsx scripts/quoted-context-loader-smoke.ts
 
