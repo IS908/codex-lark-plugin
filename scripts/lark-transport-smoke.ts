@@ -20,6 +20,7 @@ const rawClient = {
         items: [
           {
             message_id: 'om_card',
+            parent_id: 'om_parent_text',
             msg_type: 'interactive',
             body: {
               content: JSON.stringify({
@@ -361,6 +362,13 @@ assert.equal(calls.at(-1)?.method, 'raw.request');
 
 const cardContext = await transport.fetchMessageText('om_card');
 assert.equal(cardContext, 'Deploy Card\nStatus green');
+const cardMessageContext = await transport.fetchMessageContext('om_card');
+assert.deepEqual(cardMessageContext, {
+  messageId: 'om_card',
+  text: 'Deploy Card\nStatus green',
+  msgType: 'interactive',
+  parentId: 'om_parent_text',
+});
 assert.equal(isPlaceholderCardText('[Interactive Card]', 'interactive'), true);
 assert.equal(calls.some((call) => call.method === 'raw.request'), true);
 
@@ -372,6 +380,7 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
         return {
           messageId,
           messageType: 'interactive',
+          parentId: 'om_sdk_parent',
           content: JSON.stringify({
             header: { title: { tag: 'plain_text', content: 'SDK Card' } },
             elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'From SDK JSON' } }],
@@ -382,6 +391,12 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
   });
   const before = calls.length;
   assert.equal(await sdkJsonTransport.fetchMessageText('om_sdk_json_card'), 'SDK Card\nFrom SDK JSON');
+  assert.deepEqual(await sdkJsonTransport.fetchMessageContext('om_sdk_json_card'), {
+    messageId: 'om_sdk_json_card',
+    text: 'SDK Card\nFrom SDK JSON',
+    msgType: 'interactive',
+    parentId: 'om_sdk_parent',
+  });
   assert.deepEqual(calls.slice(before).map((call) => call.method), ['sdk.fetchMessage.json']);
 }
 

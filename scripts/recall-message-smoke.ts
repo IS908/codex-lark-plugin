@@ -67,6 +67,7 @@ try {
     replyDocComment: async () => ({}),
     createDocComment: async () => ({}),
     fetchMessageText: async () => null,
+    fetchMessageContext: async () => null,
     recallMessage: async (messageId: string) => {
       calls.push({ method: 'transport.recallMessage', args: { messageId } });
     },
