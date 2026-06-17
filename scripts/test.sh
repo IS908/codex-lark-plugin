@@ -84,6 +84,10 @@ echo "=== Recent thread context checks ==="
 node --import tsx scripts/recent-thread-context-smoke.ts
 
 echo ""
+echo "=== Inbound turn pipeline checks ==="
+node --import tsx scripts/inbound-turn-pipeline-smoke.ts
+
+echo ""
 echo "=== Quoted context loader unit checks ==="
 node --import tsx scripts/quoted-context-loader-smoke.ts
 
@@ -106,6 +110,10 @@ node --import tsx scripts/comment-event-smoke.ts
 echo ""
 echo "=== Memory context dedup unit checks ==="
 node --import tsx scripts/memory-context-dedup-smoke.ts
+
+echo ""
+echo "=== Memory enricher unit checks ==="
+node --import tsx scripts/memory-enricher-smoke.ts
 
 echo ""
 echo "=== Doc comment tool unit checks ==="
