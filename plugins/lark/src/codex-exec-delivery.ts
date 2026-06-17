@@ -56,6 +56,83 @@ export interface DocCommentExecReplyRequest {
   content: string;
 }
 
+interface LifecycleGuardResult {
+  blocked: boolean;
+  text: string;
+  reason?: string;
+}
+
+const LIFECYCLE_PROMISE_PATTERNS: Array<{ reason: string; pattern: RegExp }> = [
+  {
+    reason: 'english-create-or-file-promise',
+    pattern: /\b(?:i\s*(?:am|'m)\s+|(?:i\s+will|i'll)\s+)(?:create|creating|open|opening|file|filing|submit|submitting|post|posting|add|adding)\b.{0,80}\b(?:issue|ticket|pull request|pr|comment|link|url)\b/i,
+  },
+  {
+    reason: 'english-reply-after-action-promise',
+    pattern: /\b(?:after|once)\s+(?:i\s+)?(?:create|created|open|opened|file|filed|submit|submitted|post|posted|add|added).{0,100}\b(?:reply|post|send|share|paste).{0,60}\b(?:link|url|it)\b/i,
+  },
+  {
+    reason: 'english-followup-link-promise',
+    pattern: /\b(?:i\s+will|i'll)\s+(?:reply|post|send|share|paste|follow\s+up).{0,80}\b(?:link|url|when\s+(?:it'?s|it\s+is)\s+(?:done|created|ready))\b/i,
+  },
+  {
+    reason: 'chinese-create-promise',
+    pattern: /(?:我(?:会|将|来|现在|这边)|现在|正在|马上|稍后|后续|一会儿).{0,24}(?:补提|创建|新建|提交|发起|开|提).{0,24}(?:issue|议题|工单|pr|pull request|链接|评论|comment)/i,
+  },
+  {
+    reason: 'chinese-reply-after-action-promise',
+    pattern: /(?:提好|创建好|建好|提交后|创建后|补提后).{0,30}(?:回贴|贴|回复|发|同步).{0,24}(?:链接|url)?/i,
+  },
+  {
+    reason: 'chinese-async-followup-promise',
+    pattern: /(?:稍后|后续|一会儿).{0,20}(?:继续|处理|回贴|回复|同步)/i,
+  },
+];
+
+const SAFE_NON_EXECUTION_PATTERNS = [
+  /\b(?:cannot|can't|unable to|not configured|not enabled|did not|do not|won't|will not|no automatic|not automatically).{0,120}\b(?:create|file|open|post|continue|follow up|issue|action|background)\b/i,
+  /(?:不能|无法|不会|未|没有).{0,40}(?:自动|后台|继续|创建|补提|执行|发起|回贴)/,
+];
+
+function normalizeLifecycleGuardText(text: string): string {
+  return text.normalize('NFKC').replace(/\s+/g, ' ').trim();
+}
+
+function isSafeNonExecutionReply(text: string): boolean {
+  return SAFE_NON_EXECUTION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function buildLifecycleGuardReply(reason: string): string {
+  return [
+    'No background follow-up was started.',
+    '',
+    `The Codex exec output was blocked because it promised a later external action (${reason}) without a structured action, defer/no-reply marker, or scheduled job. This Lark bridge runs one Codex exec turn and cannot continue working after posting the visible reply.`,
+    '',
+    'Please retry with an enabled structured action, create a job/defer intentionally, or ask for a draft instead of automatic execution.',
+  ].join('\n');
+}
+
+export function guardCodexExecLifecycleReply(
+  text: string,
+  opts: { allowFollowupPromise: boolean },
+): LifecycleGuardResult {
+  if (opts.allowFollowupPromise) return { blocked: false, text };
+
+  const normalized = normalizeLifecycleGuardText(text);
+  if (!normalized || isSafeNonExecutionReply(normalized)) {
+    return { blocked: false, text };
+  }
+
+  const match = LIFECYCLE_PROMISE_PATTERNS.find(({ pattern }) => pattern.test(normalized));
+  if (!match) return { blocked: false, text };
+
+  return {
+    blocked: true,
+    reason: match.reason,
+    text: buildLifecycleGuardReply(match.reason),
+  };
+}
+
 export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string): string {
   const isDocComment = message.chatType === 'doc_comment';
   const metaLines = [
@@ -93,6 +170,7 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',
     'If the user asks for a supported built-in Lark action, request it with the structured action block below instead of saying the MCP tool is unavailable.',
+    'This exec turn has no background continuation after the visible reply is posted. Do not promise to create, file, post, reply with a link, or continue later unless the same final output includes a structured action, a create_job action, or an intentional [LARK_DEFER]/[LARK_NO_REPLY] marker.',
     'Supported action block format (append at most one block at the very end, outside code fences):',
     `${CODEX_EXEC_ACTIONS_START}\n{"version":1,"actions":[{"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"private|public"},{"type":"create_job","job_type":"message|prompt","name":"...","schedule":"daily at 09:00","content":"...","prompt":"...","target_chat_id":"optional"},{"type":"create_github_issue","repo":"optional owner/repo","title":"...","body":"...","labels":["optional"]},{"type":"run_local_cli_tool","tool":"configured-name","args":["..."]},{"type":"recall_message","message_id":"tracked-bot-message-id"}]}\n${CODEX_EXEC_ACTIONS_END}`,
     'Do not put chat_id, thread_id, open_id, created_by, or caller in the action block; the parent Lark bridge derives identity from the current Feishu event.',
@@ -202,6 +280,15 @@ export async function deliverMessageViaCodexExec(
   }
   if (!text) {
     text = 'Codex exec returned an empty response.';
+  }
+  const lifecycleGuard = guardCodexExecLifecycleReply(text, {
+    allowFollowupPromise: parsedOutput.kind === 'actions' || parsedOutput.kind === 'defer',
+  });
+  if (lifecycleGuard.blocked) {
+    console.error(
+      `[codex-exec] Blocked follow-up promise for message ${message.messageId}: ${lifecycleGuard.reason}`,
+    );
+    text = lifecycleGuard.text;
   }
   opts.sessionHealth?.recordTurn({
     sessionKey,

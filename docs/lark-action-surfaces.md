@@ -37,5 +37,10 @@ parent-process bridge for actions that must run safely even when the child
 - External write actions such as `create_github_issue` must be opt-in and
   bounded by local configuration such as repo allowlists, explicit command
   selection, timeout, output caps, and audit logging.
+- Codex exec final answers have no background continuation after the visible
+  Feishu reply is posted. If the child output promises later external work
+  without a structured action, defer/no-reply marker, or scheduled job, delivery
+  rewrites the reply into a safe notice instead of implying that work will keep
+  running.
 - Capabilities should be added to exec actions only when there is a clear need
   for the parent-process bridge. Otherwise, prefer MCP tools.
