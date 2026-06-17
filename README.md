@@ -324,11 +324,16 @@ failure invalidates that scope so the next turn receives the full context.
 
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:
-`save_memory`, `create_job`, and `run_local_cli_tool`. The child returns a
-validated `LARK_ACTIONS_JSON` marker block; the parent strips the block from the
-visible reply, derives caller identity from the current Feishu event, executes
-the action locally, and rejects malformed blocks instead of recursively loading
-the Lark MCP server.
+`save_memory`, `create_job`, `create_github_issue`, `run_local_cli_tool`, and
+`recall_message`. The child returns a validated `LARK_ACTIONS_JSON` marker
+block; the parent strips the block from the visible reply, derives caller
+identity from the current Feishu event, executes the action locally, and rejects
+malformed blocks instead of recursively loading the Lark MCP server.
+
+`create_github_issue` is disabled by default. When enabled, it runs
+`gh issue create` with `spawn(..., { shell: false })`, requires a default repo
+or repo allowlist, writes the audit log, and returns the created issue URL to
+the same IM or doc-comment reply path.
 
 For SDK migration smoke commands, rollout controls, and rollback steps, see
 [SDK channel rollout](docs/sdk-channel-rollout.md).
@@ -477,6 +482,12 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 | `LARK_QUOTED_CARD_USER_FETCH_COMMAND` | `lark-cli` | Executable used for the quoted-card user fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS` | `10000` | Timeout for the quoted-card user fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES` | `262144` | Maximum stdout/stderr bytes captured from the quoted-card user fallback. |
+| `LARK_GITHUB_ISSUE_ACTION_ENABLED` | `false` | Enable the optional `create_github_issue` Codex exec action. |
+| `LARK_GITHUB_DEFAULT_REPO` | (empty) | Default `owner/repo` used when the action omits `repo`. |
+| `LARK_GITHUB_ALLOWED_REPOS` | (empty) | Comma-separated repo allowlist. When set, `create_github_issue` can only target these repos; when empty, only `LARK_GITHUB_DEFAULT_REPO` is accepted. |
+| `LARK_GITHUB_ISSUE_COMMAND` | `gh` | Executable used for GitHub issue creation. It is spawned directly, not through a shell. |
+| `LARK_GITHUB_ISSUE_TIMEOUT_MS` | `30000` | Timeout for GitHub issue creation. |
+| `LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES` | `65536` | Maximum stdout/stderr bytes captured from the GitHub issue command. |
 
 ### Optional -- Resource Governance
 

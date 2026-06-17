@@ -176,6 +176,77 @@ assert.deepEqual(docCommentReplies, [
   },
 ]);
 
+const docCommentIssueReplies: any[] = [];
+const docCommentIssueDispatches: any[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    messageId: 'rpl_doc_issue',
+    chatId: 'doc:dox_doc_issue',
+    chatType: 'doc_comment',
+    senderId: 'ou_owner',
+    senderName: 'Kevin',
+    text: '<doc_comment doc_token="dox_doc_issue" comment_id="cmt_doc_issue" file_type="docx"><body>@Codex 提个 issue</body></doc_comment>',
+    messageType: 'doc_comment',
+    threadId: 'cmt_doc_issue',
+    rawContent: '{}',
+    docComment: {
+      fileToken: 'dox_doc_issue',
+      commentId: 'cmt_doc_issue',
+      fileType: 'docx',
+    },
+  },
+  displayLabel: 'Kevin · Issue Doc',
+  useCodexSessions: false,
+  runCodexExec: async () =>
+    [
+      '<LARK_ACTIONS_JSON>',
+      JSON.stringify({
+        version: 1,
+        actions: [
+          {
+            type: 'create_github_issue',
+            title: 'Doc comment action gap',
+            body: 'Created from a doc comment turn.',
+            labels: ['bug'],
+          },
+        ],
+      }),
+      '</LARK_ACTIONS_JSON>',
+    ].join('\n'),
+  actionDispatcher: {
+    execute: async (request) => {
+      docCommentIssueDispatches.push(request);
+      return [
+        {
+          ok: true,
+          action: 'create_github_issue',
+          message: 'Created GitHub issue https://github.com/IS908/codex-lark-plugin/issues/999',
+        },
+      ];
+    },
+  },
+  sendReply: async () => {
+    throw new Error('doc_comment exec delivery must not use Feishu IM reply');
+  },
+  sendDocCommentReply: async (request) => {
+    docCommentIssueReplies.push(request);
+    return { replyId: 'rpl_doc_issue_codex' };
+  },
+});
+
+assert.equal(docCommentIssueDispatches.length, 1);
+assert.equal(docCommentIssueDispatches[0].actions[0].type, 'create_github_issue');
+assert.deepEqual(docCommentIssueReplies, [
+  {
+    chat_id: 'doc:dox_doc_issue',
+    thread_id: 'cmt_doc_issue',
+    doc_token: 'dox_doc_issue',
+    comment_id: 'cmt_doc_issue',
+    file_type: 'docx',
+    content: 'OK create_github_issue: Created GitHub issue https://github.com/IS908/codex-lark-plugin/issues/999',
+  },
+]);
+
 const longDocCommentReplies: any[] = [];
 const longDocAssistantRecords: any[] = [];
 await deliverMessageViaCodexExec({

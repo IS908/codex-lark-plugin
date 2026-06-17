@@ -20,7 +20,13 @@ const code = `
     quotedCardUserFetchEnabled: appConfig.quotedCardUserFetchEnabled,
     quotedCardUserFetchCommand: appConfig.quotedCardUserFetchCommand,
     quotedCardUserFetchTimeoutMs: appConfig.quotedCardUserFetchTimeoutMs,
-    quotedCardUserFetchMaxBytes: appConfig.quotedCardUserFetchMaxBytes
+    quotedCardUserFetchMaxBytes: appConfig.quotedCardUserFetchMaxBytes,
+    githubIssueActionEnabled: appConfig.githubIssueActionEnabled,
+    githubIssueDefaultRepo: appConfig.githubIssueDefaultRepo,
+    githubIssueAllowedRepos: appConfig.githubIssueAllowedRepos,
+    githubIssueCommand: appConfig.githubIssueCommand,
+    githubIssueTimeoutMs: appConfig.githubIssueTimeoutMs,
+    githubIssueMaxOutputBytes: appConfig.githubIssueMaxOutputBytes
   }));
 `;
 
@@ -64,6 +70,8 @@ expectFail({ LARK_CODEX_SESSION_RETENTION_DAYS: '0' }, /LARK_CODEX_SESSION_RETEN
 expectFail({ LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: '-1' }, /LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS.*non-negative/i);
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS: '0' }, /LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS.*positive/i);
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES: '0' }, /LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES.*positive/i);
+expectFail({ LARK_GITHUB_ISSUE_TIMEOUT_MS: '0' }, /LARK_GITHUB_ISSUE_TIMEOUT_MS.*positive/i);
+expectFail({ LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES: '0' }, /LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES.*positive/i);
 
 const zeroAllowed = expectOk({
   LARK_MEMORY_DEDUP_WINDOW_MS: '0',
@@ -83,6 +91,12 @@ assert.equal(defaultPaths.quotedCardUserFetchEnabled, true);
 assert.equal(defaultPaths.quotedCardUserFetchCommand, 'lark-cli');
 assert.equal(defaultPaths.quotedCardUserFetchTimeoutMs, 10_000);
 assert.equal(defaultPaths.quotedCardUserFetchMaxBytes, 256 * 1024);
+assert.equal(defaultPaths.githubIssueActionEnabled, false);
+assert.equal(defaultPaths.githubIssueDefaultRepo, null);
+assert.deepEqual(defaultPaths.githubIssueAllowedRepos, []);
+assert.equal(defaultPaths.githubIssueCommand, 'gh');
+assert.equal(defaultPaths.githubIssueTimeoutMs, 30_000);
+assert.equal(defaultPaths.githubIssueMaxOutputBytes, 64 * 1024);
 
 const retentionDryRun = expectOk({ LARK_CODEX_SESSION_RETENTION_DRY_RUN: 'true' });
 assert.equal(retentionDryRun.codexSessionRetentionDryRun, true);
@@ -98,6 +112,21 @@ const customUserFetch = expectOk({
 assert.equal(customUserFetch.quotedCardUserFetchCommand, '/usr/local/bin/lark-cli');
 assert.equal(customUserFetch.quotedCardUserFetchTimeoutMs, 2500);
 assert.equal(customUserFetch.quotedCardUserFetchMaxBytes, 1024);
+
+const customGithubIssueAction = expectOk({
+  LARK_GITHUB_ISSUE_ACTION_ENABLED: 'true',
+  LARK_GITHUB_DEFAULT_REPO: 'IS908/codex-lark-plugin',
+  LARK_GITHUB_ALLOWED_REPOS: 'IS908/codex-lark-plugin,Other/repo',
+  LARK_GITHUB_ISSUE_COMMAND: '/opt/homebrew/bin/gh',
+  LARK_GITHUB_ISSUE_TIMEOUT_MS: '4000',
+  LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES: '2048',
+});
+assert.equal(customGithubIssueAction.githubIssueActionEnabled, true);
+assert.equal(customGithubIssueAction.githubIssueDefaultRepo, 'IS908/codex-lark-plugin');
+assert.deepEqual(customGithubIssueAction.githubIssueAllowedRepos, ['IS908/codex-lark-plugin', 'Other/repo']);
+assert.equal(customGithubIssueAction.githubIssueCommand, '/opt/homebrew/bin/gh');
+assert.equal(customGithubIssueAction.githubIssueTimeoutMs, 4000);
+assert.equal(customGithubIssueAction.githubIssueMaxOutputBytes, 2048);
 
 const sdkRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'sdk' });
 assert.equal(sdkRuntime.channelRuntime, 'sdk');
