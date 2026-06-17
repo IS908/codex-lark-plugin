@@ -127,10 +127,9 @@ export class LarkTransportCardContext {
     try {
       const resp = await feishuApiCall('lark_transport.message.mget', () =>
         raw.request({
-          method: 'POST',
-          url: 'https://open.feishu.cn/open-apis/im/v1/messages/mget',
-          params: { user_id_type: 'open_id' },
-          data: { message_ids: [messageId] },
+          method: 'GET',
+          url: messageMgetUrl(messageId),
+          params: {},
         }),
       );
       const items = (resp as any)?.data?.items ?? (resp as any)?.data?.messages ?? [];
@@ -143,6 +142,13 @@ export class LarkTransportCardContext {
       return createUnresolvedContext(messageId, 'unknown', 'raw_mget', safeFetchDiagnostic(error));
     }
   }
+}
+
+function messageMgetUrl(messageId: string): string {
+  const query = new URLSearchParams();
+  query.set('card_msg_content_type', 'raw_card_content');
+  query.append('message_ids', messageId);
+  return `/open-apis/im/v1/messages/mget?${query.toString()}`;
 }
 
 function sdkMessageContext(messageId: string, message: any): LarkFetchedMessageContext {

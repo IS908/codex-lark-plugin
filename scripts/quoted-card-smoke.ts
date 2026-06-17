@@ -316,9 +316,13 @@ const legacyCard = {
   (channel as any).nameCache.set('ou_mget_card', 'Mget Tester');
   (channel as any).client = {
     request: async (args: any) => {
-      assert.equal(args.method, 'POST');
-      assert.match(args.url, /\/open-apis\/im\/v1\/messages\/mget$/);
-      assert.deepEqual(args.data, { message_ids: ['om_thread_root_card'] });
+      assert.equal(args.method, 'GET');
+      assert.match(
+        args.url,
+        /\/open-apis\/im\/v1\/messages\/mget\?card_msg_content_type=raw_card_content&message_ids=om_thread_root_card$/,
+      );
+      assert.deepEqual(args.params, {});
+      assert.equal(args.data, undefined);
       mgetCalls++;
       return {
         data: {

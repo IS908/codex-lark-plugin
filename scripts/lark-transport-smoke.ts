@@ -412,6 +412,13 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
     rawClient: {
       request: async (args: any) => {
         runtimeCalls.push({ method: 'raw.request.mget', args });
+        assert.equal(args.method, 'GET');
+        assert.match(
+          args.url,
+          /\/open-apis\/im\/v1\/messages\/mget\?card_msg_content_type=raw_card_content&message_ids=om_cli_card$/,
+        );
+        assert.deepEqual(args.params, {});
+        assert.equal(args.data, undefined);
         return {
           data: {
             messages: [
