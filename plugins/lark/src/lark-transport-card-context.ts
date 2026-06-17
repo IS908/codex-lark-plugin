@@ -9,68 +9,22 @@ import {
   messageItemText,
 } from './message-content.js';
 import type { SdkLarkTransportChannel } from './lark-transport.js';
+import type {
+  LarkCachedMessageContext,
+  LarkMessageContext,
+  LarkMessageFetchResult,
+  LarkMessageFetchStage,
+} from './lark-message-context.js';
 
-export type LarkMessageFetchStage = 'outbound_cache' | 'sdk_fetch' | 'raw_get' | 'raw_mget' | 'user_mget';
-export type LarkMessageFetchIdentity = 'cache' | 'bot' | 'user' | 'unknown';
-export type LarkMessageFetchResult =
-  | 'success'
-  | 'empty'
-  | '404'
-  | 'error'
-  | 'timeout'
-  | 'unavailable'
-  | 'placeholder'
-  | 'missing_content';
-export type LarkMessageHydrationReason = 'fetch_failed';
-
-export interface LarkFetchedMessageContext {
-  messageId: string;
-  text: string | null;
-  msgType: string;
-  chatId?: string;
-  parentId?: string;
-  replyTo?: string;
-  rootMessageId?: string;
-  threadId?: string;
-  timestampMs?: number;
-  timestamp?: string;
-  createTime?: string;
-  updateTime?: string;
-  messagePosition?: string;
-  sender?: {
-    id?: string;
-    idType?: string;
-    senderType?: string;
-  };
-  interactiveCard?: {
-    title?: string;
-    text: string;
-    rawContentShape: 'card_text' | 'feishu_card_json' | 'unknown';
-  };
-  fetchStage?: LarkMessageFetchStage;
-  fetchIdentity?: LarkMessageFetchIdentity;
-  fetchResult?: LarkMessageFetchResult;
-  diagnostic?: string;
-  hydrationErrorReason?: LarkMessageHydrationReason;
-}
-
-export interface LarkCachedQuotedMessageContext {
-  messageId?: string;
-  text: string;
-  msgType?: string;
-  chatId?: string;
-  parentId?: string;
-  replyTo?: string;
-  rootMessageId?: string;
-  threadId?: string;
-  timestampMs?: number;
-  timestamp?: string;
-  createTime?: string;
-  updateTime?: string;
-  messagePosition?: string;
-  sender?: LarkFetchedMessageContext['sender'];
-  interactiveCard?: LarkFetchedMessageContext['interactiveCard'];
-}
+export type LarkFetchedMessageContext = LarkMessageContext;
+export type LarkCachedQuotedMessageContext = LarkCachedMessageContext;
+export type {
+  LarkMessageContext,
+  LarkMessageFetchIdentity,
+  LarkMessageFetchResult,
+  LarkMessageFetchStage,
+  LarkMessageHydrationReason,
+} from './lark-message-context.js';
 
 export interface LarkOutboundMessageContextCache {
   get(messageId: string): { quotedContext?: LarkCachedQuotedMessageContext } | undefined;

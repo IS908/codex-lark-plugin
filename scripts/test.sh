@@ -76,6 +76,10 @@ echo "=== Quoted interactive card unit checks ==="
 node --import tsx scripts/quoted-card-smoke.ts
 
 echo ""
+echo "=== Lark message context renderer checks ==="
+node --import tsx scripts/lark-message-context-smoke.ts
+
+echo ""
 echo "=== Quoted context loader unit checks ==="
 node --import tsx scripts/quoted-context-loader-smoke.ts
 
