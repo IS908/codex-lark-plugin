@@ -1,4 +1,4 @@
-export type LarkMessageFetchStage = 'outbound_cache' | 'sdk_fetch' | 'raw_get' | 'raw_mget' | 'user_mget';
+export type LarkMessageFetchStage = 'outbound_cache' | 'sdk_fetch' | 'raw_get' | 'raw_mget' | 'bot_mget' | 'user_mget';
 export type LarkMessageFetchIdentity = 'cache' | 'bot' | 'user' | 'unknown';
 export type LarkMessageFetchResult =
   | 'success'
@@ -73,6 +73,7 @@ export function larkMessageSource(fetchStage: string | undefined): string {
     case 'sdk_fetch':
     case 'raw_get':
     case 'raw_mget':
+    case 'bot_mget':
       return 'feishu_api';
     case 'outbound_cache':
       return 'event';

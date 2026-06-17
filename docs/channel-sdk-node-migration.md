@@ -105,18 +105,18 @@ fetch path.
 The SDK inbound path selects the same quoted message id order (`parentId`,
 distinct `rootMessageId`, distinct open-message `threadId`) and then calls the
 transport `fetchMessageText()` boundary. In the SDK-backed transport,
-`LarkTransportCardContext.fetchMessageText()` implements SDK fetch -> raw
-get/mget fallback as best-effort raw context: it tries SDK `fetchMessage()` first,
-uses raw `message.get` when SDK content is unavailable, and uses raw
-`messages/mget` to recover readable card text when SDK/raw get returns only a
-placeholder such as `[Interactive Card]`, a compact `<card>` shell, an
-upgrade-client message, or empty interactive text.
+`LarkTransportCardContext.fetchMessageText()` now prioritizes event/cache
+context, then bot-identity `messages/mget` raw card content, then the optional
+user-identity `lark-cli im +messages-mget --as user` fallback. SDK
+`fetchMessage()` and raw `message.get` remain compatibility fallbacks when the
+raw-card mget paths are unavailable, but they no longer run before bot/user mget
+for quoted Interactive Card hydration.
 
 ## Risk Classification
 
 | Risk | Severity | Reversibility | Fast-fix posture |
 | --- | --- | --- | --- |
-| Quoted interactive card readability regresses to placeholders | Medium | Easy | Preserve SDK fetch -> raw get/mget fallback smoke coverage. |
+| Quoted interactive card readability regresses to placeholders | Medium | Easy | Preserve cache -> bot mget -> user mget fallback smoke coverage. |
 | Thread/root reply routing changes | High | Medium | Keep local routing decisions, add root-only/threaded smoke tests, rollback via legacy runtime if live trial fails. |
 | Scheduler permanent-failure auto-pause stops working | High | Medium | Map SDK/raw errors into existing permanent-failure logic before enabling scheduler transport. |
 | SDK fallback hides raw Feishu error codes | Medium | Medium | Wrap SDK errors into local error taxonomy with original cause attached. |

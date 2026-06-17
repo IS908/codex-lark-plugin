@@ -374,7 +374,7 @@ assert.deepEqual(cardMessageContext, {
     text: 'Deploy Card\nStatus green',
     rawContentShape: 'feishu_card_json',
   },
-  fetchStage: 'raw_mget',
+  fetchStage: 'bot_mget',
   fetchIdentity: 'bot',
   fetchResult: 'success',
 });
@@ -501,13 +501,11 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
       text: 'CLI Card\nFetched through runtime mget',
       rawContentShape: 'feishu_card_json',
     },
-    fetchStage: 'raw_mget',
+    fetchStage: 'bot_mget',
     fetchIdentity: 'bot',
     fetchResult: 'success',
   });
   assert.deepEqual(runtimeCalls.map((call) => call.method), [
-    'sdk.fetchMessage.placeholder',
-    'raw.message.get',
     'raw.request.mget',
   ]);
 }
@@ -556,7 +554,7 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
   assert.equal(compactContext?.interactiveCard?.title, 'CLI Compact Card');
   assert.equal(compactContext?.interactiveCard?.rawContentShape, 'card_text');
   assert.equal(compactContext?.interactiveCard?.text, 'CLI Compact Card\nCompact body from lark-cli');
-  assert.equal(compactContext?.fetchStage, 'raw_mget');
+  assert.equal(compactContext?.fetchStage, 'bot_mget');
   assert.equal(compactContext?.fetchIdentity, 'bot');
   assert.equal(compactContext?.fetchResult, 'success');
   assert.equal(typeof compactContext?.timestampMs, 'number');
@@ -631,8 +629,6 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
     fetchResult: 'success',
   });
   assert.deepEqual(userFallbackCalls.map((call) => call.method), [
-    'sdk.fetchMessage.placeholder',
-    'raw.message.get.empty',
     'raw.request.mget.placeholder',
     'user.fetchMessage',
   ]);
@@ -696,8 +692,6 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
     fetchResult: 'success',
   });
   assert.deepEqual(userAfterBot404Calls.map((call) => call.method), [
-    'sdk.fetchMessage.placeholder',
-    'raw.message.get.empty',
     'raw.request.mget.404',
     'user.fetchMessage',
   ]);
@@ -754,7 +748,7 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
   const failedContext = await failingMgetTransport.fetchMessageContext('om_failed_card');
   assert.equal(failedContext?.text, null);
   assert.equal(failedContext?.msgType, 'interactive');
-  assert.equal(failedContext?.fetchStage, 'raw_mget');
+  assert.equal(failedContext?.fetchStage, 'bot_mget');
   assert.equal(failedContext?.fetchIdentity, 'bot');
   assert.equal(failedContext?.fetchResult, '404');
   assert.match(failedContext?.diagnostic ?? '', /code=230001/);

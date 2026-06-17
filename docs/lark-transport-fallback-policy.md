@@ -16,7 +16,7 @@ OpenAPI.
 | `remove_reaction` | `fail-closed` | no | Reaction removal should preserve the SDK/raw ownership chosen for the stored reaction id. |
 | `remove_reaction_by_emoji` | `fail-closed` | no | There is no exact raw equivalent for removing by emoji without resolving reaction ids first. |
 | `download_resource` | `fail-closed` | no | Download byte/time caps are local, but SDK resource selection failures should surface instead of trying a different identity path. |
-| `fetch_message_text` | `best-effort-raw-context` | yes | Quoted-card readability is best effort: SDK fetch is tried first, then raw get/mget can recover placeholder card text. |
+| `fetch_message_text` | `best-effort-raw-context` | yes | Quoted-card readability is best effort: event/cache is used first, bot `messages/mget` raw card content second, and optional user `messages/mget` last. SDK/raw get remains a compatibility fallback only when mget paths are unavailable. |
 | `doc_comment` | `raw-only` | no | Doc-comment writes currently use raw Drive APIs behind the transport facade to preserve ids and exact thread semantics. |
 
 ## Doc-Comment SDK Decision
