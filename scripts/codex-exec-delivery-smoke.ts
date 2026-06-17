@@ -117,6 +117,7 @@ assert.match(execRequests[0].prompt, /chat_id: oc_group_001/);
 assert.match(execRequests[0].prompt, /thread_id: omt_thread_001/);
 assert.match(execRequests[0].prompt, /Kevin · Codex Test Group/);
 assert.match(execRequests[0].prompt, /@Codex ping/);
+assert.match(execRequests[0].prompt, /no background continuation after the visible reply is posted/);
 assert.deepEqual(execRequests[0].imagePaths, ['/tmp/lark-img-1.png', '/tmp/lark-img-2.png']);
 
 assert.deepEqual(replyRequests, [
@@ -127,6 +128,44 @@ assert.deepEqual(replyRequests, [
     thread_id: 'omt_thread_001',
   },
 ]);
+
+const lifecycleGuardReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_inbound_lifecycle_guard',
+    text: '[Current Message]\n@Codex 提个 issue',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () => 'I am creating the issue now and will reply with the link after it is done.',
+  sendReply: async (request) => {
+    lifecycleGuardReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(lifecycleGuardReplies.length, 1);
+assert.match(lifecycleGuardReplies[0].text, /No background follow-up was started/);
+assert.match(lifecycleGuardReplies[0].text, /without a structured action/);
+assert.doesNotMatch(lifecycleGuardReplies[0].text, /creating the issue now/i);
+
+const lifecycleSafeReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_inbound_lifecycle_safe',
+    text: '[Current Message]\n@Codex 提个 issue 草稿',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () => 'I cannot create the issue automatically. Here is a draft issue body.',
+  sendReply: async (request) => {
+    lifecycleSafeReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(lifecycleSafeReplies.length, 1);
+assert.equal(lifecycleSafeReplies[0].text, 'I cannot create the issue automatically. Here is a draft issue body.');
 
 const docCommentExecRequests: any[] = [];
 const docCommentReplies: any[] = [];
@@ -173,6 +212,52 @@ assert.deepEqual(docCommentReplies, [
     comment_id: 'cmt_doc_001',
     file_type: 'docx',
     content: 'doc comment answer',
+  },
+]);
+
+const docCommentLifecycleReplies: any[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    messageId: 'rpl_doc_lifecycle_guard',
+    chatId: 'doc:dox_doc_lifecycle',
+    chatType: 'doc_comment',
+    senderId: 'ou_owner',
+    senderName: 'Kevin',
+    text: '<doc_comment doc_token="dox_doc_lifecycle" comment_id="cmt_doc_lifecycle" file_type="docx"><body>@Codex 补提 issue</body></doc_comment>',
+    messageType: 'doc_comment',
+    threadId: 'cmt_doc_lifecycle',
+    rawContent: '{}',
+    docComment: {
+      fileToken: 'dox_doc_lifecycle',
+      commentId: 'cmt_doc_lifecycle',
+      fileType: 'docx',
+    },
+  },
+  displayLabel: 'Kevin · Issue Doc',
+  useCodexSessions: false,
+  runCodexExec: async () => '现在补提，提好后回贴链接。',
+  sendReply: async () => {
+    throw new Error('doc_comment exec delivery must not use Feishu IM reply');
+  },
+  sendDocCommentReply: async (request) => {
+    docCommentLifecycleReplies.push(request);
+    return { replyId: 'rpl_doc_lifecycle_codex' };
+  },
+});
+assert.deepEqual(docCommentLifecycleReplies, [
+  {
+    chat_id: 'doc:dox_doc_lifecycle',
+    thread_id: 'cmt_doc_lifecycle',
+    doc_token: 'dox_doc_lifecycle',
+    comment_id: 'cmt_doc_lifecycle',
+    file_type: 'docx',
+    content: [
+      'No background follow-up was started.',
+      '',
+      'The Codex exec output was blocked because it promised a later external action (chinese-create-promise) without a structured action, defer/no-reply marker, or scheduled job. This Lark bridge runs one Codex exec turn and cannot continue working after posting the visible reply.',
+      '',
+      'Please retry with an enabled structured action, create a job/defer intentionally, or ask for a draft instead of automatic execution.',
+    ].join('\n'),
   },
 ]);
 

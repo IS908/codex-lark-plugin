@@ -330,6 +330,14 @@ block; the parent strips the block from the visible reply, derives caller
 identity from the current Feishu event, executes the action locally, and rejects
 malformed blocks instead of recursively loading the Lark MCP server.
 
+Because exec delivery is a single-turn flow, the plugin also guards against
+misleading follow-up promises. A final answer must not claim that Codex will
+create, file, post, or reply later after the visible Feishu reply is sent unless
+the same output includes a structured action, `[LARK_DEFER]` /
+`[LARK_NO_REPLY]`, or a scheduled job action. If a risky follow-up promise is
+returned without such a mechanism, the bridge replaces it with a safe notice
+instead of implying that background work will continue.
+
 `create_github_issue` is disabled by default. When enabled, it runs
 `gh issue create` with `spawn(..., { shell: false })`, requires a default repo
 or repo allowlist, writes the audit log, and returns the created issue URL to
