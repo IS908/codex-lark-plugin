@@ -3,7 +3,9 @@ import { appConfig } from './config.js';
 import { feishuApiCall } from './feishu-retry.js';
 import {
   fetchedMessageContentText,
+  interactiveCardTextMetadata,
   isPlaceholderCardText,
+  messageItemRawContent,
   messageItemText,
 } from './message-content.js';
 import type { SdkLarkTransportChannel } from './lark-transport.js';
@@ -25,9 +27,26 @@ export interface LarkFetchedMessageContext {
   messageId: string;
   text: string | null;
   msgType: string;
+  chatId?: string;
   parentId?: string;
+  replyTo?: string;
   rootMessageId?: string;
   threadId?: string;
+  timestampMs?: number;
+  timestamp?: string;
+  createTime?: string;
+  updateTime?: string;
+  messagePosition?: string;
+  sender?: {
+    id?: string;
+    idType?: string;
+    senderType?: string;
+  };
+  interactiveCard?: {
+    title?: string;
+    text: string;
+    rawContentShape: 'card_text' | 'feishu_card_json' | 'unknown';
+  };
   fetchStage?: LarkMessageFetchStage;
   fetchIdentity?: LarkMessageFetchIdentity;
   fetchResult?: LarkMessageFetchResult;
@@ -39,9 +58,18 @@ export interface LarkCachedQuotedMessageContext {
   messageId?: string;
   text: string;
   msgType?: string;
+  chatId?: string;
   parentId?: string;
+  replyTo?: string;
   rootMessageId?: string;
   threadId?: string;
+  timestampMs?: number;
+  timestamp?: string;
+  createTime?: string;
+  updateTime?: string;
+  messagePosition?: string;
+  sender?: LarkFetchedMessageContext['sender'];
+  interactiveCard?: LarkFetchedMessageContext['interactiveCard'];
 }
 
 export interface LarkOutboundMessageContextCache {
@@ -224,9 +252,18 @@ export class LarkTransportCardContext {
       messageId: quotedContext.messageId ?? messageId,
       text: quotedContext.text,
       msgType,
+      chatId: quotedContext.chatId,
       parentId: quotedContext.parentId,
+      replyTo: quotedContext.replyTo,
       rootMessageId: quotedContext.rootMessageId,
       threadId: quotedContext.threadId,
+      timestampMs: quotedContext.timestampMs,
+      timestamp: quotedContext.timestamp,
+      createTime: quotedContext.createTime,
+      updateTime: quotedContext.updateTime,
+      messagePosition: quotedContext.messagePosition,
+      sender: quotedContext.sender,
+      interactiveCard: quotedContext.interactiveCard,
       fetchStage: 'outbound_cache',
       fetchIdentity: 'cache',
       fetchResult: 'success',
@@ -262,6 +299,43 @@ function messageMgetUrl(messageId: string): string {
   return `/open-apis/im/v1/messages/mget?${query.toString()}`;
 }
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  const text = String(value).trim();
+  return text || undefined;
+}
+
+function normalizeTimestampMs(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 10_000_000_000 ? Math.floor(value * 1000) : Math.floor(value);
+  }
+  const text = String(value).trim();
+  if (!text) return undefined;
+  if (/^\d+$/.test(text)) {
+    const numeric = Number(text);
+    if (Number.isFinite(numeric)) return text.length <= 10 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(text.includes('T') ? text : text.replace(' ', 'T'));
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeSender(sender: any): LarkFetchedMessageContext['sender'] | undefined {
+  if (!sender || typeof sender !== 'object') return undefined;
+  const id =
+    normalizeOptionalString(sender.id?.open_id) ??
+    normalizeOptionalString(sender.id?.app_id) ??
+    normalizeOptionalString(sender.id);
+  const idType = normalizeOptionalString(sender.id_type ?? sender.idType);
+  const senderType = normalizeOptionalString(sender.sender_type ?? sender.senderType);
+  if (!id && !idType && !senderType) return undefined;
+  return {
+    ...(id ? { id } : {}),
+    ...(idType ? { idType } : {}),
+    ...(senderType ? { senderType } : {}),
+  };
+}
+
 function sdkMessageContext(messageId: string, message: any): LarkFetchedMessageContext {
   const msgType = message.rawContentType ?? message.messageType ?? message.msg_type ?? message.message_type ?? 'text';
   const text = message.content ? fetchedMessageContentText(message.content, msgType) : null;
@@ -269,9 +343,20 @@ function sdkMessageContext(messageId: string, message: any): LarkFetchedMessageC
     messageId: message.messageId ?? message.message_id ?? messageId,
     text,
     msgType,
+    chatId: message.chatId ?? message.chat_id,
     parentId: message.parentId ?? message.parent_id,
+    replyTo: message.replyTo ?? message.reply_to ?? message.parentId ?? message.parent_id,
     rootMessageId: message.rootMessageId ?? message.root_id,
     threadId: message.threadId ?? message.thread_id,
+    timestampMs: normalizeTimestampMs(message.timestampMs ?? message.createTime ?? message.create_time ?? message.timestamp),
+    timestamp: message.timestamp,
+    createTime: message.createTime ?? message.create_time,
+    updateTime: message.updateTime ?? message.update_time,
+    messagePosition: message.messagePosition ?? message.message_position,
+    sender: normalizeSender(message.sender),
+    interactiveCard: message.content && text
+      ? interactiveCardTextMetadata(message.content, msgType, text)
+      : undefined,
   });
 }
 
@@ -283,14 +368,26 @@ function messageItemContext(
 ): LarkFetchedMessageContext | null {
   if (!item) return null;
   const text = messageItemText(item);
+  const rawContent = messageItemRawContent(item);
   const msgType = text?.messageType ?? item.msg_type ?? item.message_type ?? 'text';
   return markUnresolvedIfNeeded(normalizeContext({
     messageId: item.message_id ?? item.messageId ?? messageId,
     text: text?.text ?? null,
     msgType,
+    chatId: item.chat_id ?? item.chatId,
     parentId: item.parent_id ?? item.parentId,
+    replyTo: item.reply_to ?? item.replyTo ?? item.parent_id ?? item.parentId,
     rootMessageId: item.root_id ?? item.rootMessageId,
     threadId: item.thread_id ?? item.threadId,
+    timestampMs: normalizeTimestampMs(item.timestamp_ms ?? item.timestampMs ?? item.create_time ?? item.createTime ?? item.timestamp),
+    timestamp: item.timestamp,
+    createTime: item.create_time ?? item.createTime,
+    updateTime: item.update_time ?? item.updateTime,
+    messagePosition: normalizeOptionalString(item.message_position ?? item.messagePosition),
+    sender: normalizeSender(item.sender),
+    interactiveCard: rawContent && text?.text
+      ? interactiveCardTextMetadata(rawContent, msgType, text.text)
+      : undefined,
   }), fetchStage, text ? undefined : 'missing_message_content', {
     ...details,
     fetchResult: text ? undefined : 'missing_content',
@@ -306,9 +403,21 @@ function mergeContexts(
     messageId: content.messageId || base?.messageId || requestedMessageId,
     text: content.text,
     msgType: content.msgType || base?.msgType || 'unknown',
+    chatId: content.chatId ?? base?.chatId,
     parentId: content.parentId ?? base?.parentId,
+    replyTo: content.replyTo ?? base?.replyTo,
     rootMessageId: content.rootMessageId ?? base?.rootMessageId,
     threadId: content.threadId ?? base?.threadId,
+    timestampMs: content.timestampMs ?? base?.timestampMs,
+    timestamp: content.timestamp ?? base?.timestamp,
+    createTime: content.createTime ?? base?.createTime,
+    updateTime: content.updateTime ?? base?.updateTime,
+    messagePosition: content.messagePosition ?? base?.messagePosition,
+    sender: content.sender ?? base?.sender,
+    interactiveCard: content.interactiveCard ?? base?.interactiveCard,
+    fetchStage: content.fetchStage ?? base?.fetchStage,
+    fetchIdentity: content.fetchIdentity ?? base?.fetchIdentity,
+    fetchResult: content.fetchResult ?? base?.fetchResult,
   });
 }
 
@@ -318,9 +427,18 @@ function normalizeContext(context: LarkFetchedMessageContext): LarkFetchedMessag
     text: context.text,
     msgType: context.msgType,
   };
+  if (context.chatId) normalized.chatId = context.chatId;
   if (context.parentId) normalized.parentId = context.parentId;
+  if (context.replyTo) normalized.replyTo = context.replyTo;
   if (context.rootMessageId) normalized.rootMessageId = context.rootMessageId;
   if (context.threadId) normalized.threadId = context.threadId;
+  if (context.timestampMs !== undefined) normalized.timestampMs = context.timestampMs;
+  if (context.timestamp) normalized.timestamp = context.timestamp;
+  if (context.createTime) normalized.createTime = context.createTime;
+  if (context.updateTime) normalized.updateTime = context.updateTime;
+  if (context.messagePosition) normalized.messagePosition = context.messagePosition;
+  if (context.sender) normalized.sender = context.sender;
+  if (context.interactiveCard) normalized.interactiveCard = context.interactiveCard;
   if (context.fetchStage) normalized.fetchStage = context.fetchStage;
   if (context.fetchIdentity) normalized.fetchIdentity = context.fetchIdentity;
   if (context.fetchResult) normalized.fetchResult = context.fetchResult;
@@ -335,7 +453,14 @@ function markUnresolvedIfNeeded(
   diagnostic?: string,
   details: Pick<LarkFetchedMessageContext, 'fetchIdentity' | 'fetchResult'> = {},
 ): LarkFetchedMessageContext {
-  if (context.text && !isPlaceholderCardText(context.text, context.msgType)) return context;
+  if (context.text && !isPlaceholderCardText(context.text, context.msgType)) {
+    return normalizeContext({
+      ...context,
+      fetchStage,
+      fetchIdentity: details.fetchIdentity,
+      fetchResult: details.fetchResult ?? 'success',
+    });
+  }
   return normalizeContext({
     ...context,
     fetchStage,

@@ -215,6 +215,61 @@ assert.equal(
 {
   const message = {
     messageId: 'om_current',
+    parentId: 'om_cli_card',
+  };
+  const result = await addQuotedContext(message, {
+    fetchMessageText: async () => {
+      throw new Error('fetchMessageContext should be preferred');
+    },
+    fetchMessageContext: async () => ({
+      messageId: 'om_cli_card',
+      chatId: 'oc_card_context',
+      threadId: 'omt_card_thread',
+      replyTo: 'om_prior_prompt',
+      text: 'Release Card\nShip v1.6.0 with standardized context',
+      msgType: 'interactive',
+      fetchStage: 'user_mget',
+      fetchIdentity: 'user',
+      timestampMs: 1781707740000,
+      timestamp: '2026-06-17 22:49',
+      createTime: '2026-06-17 22:49',
+      sender: {
+        id: 'cli_app_id',
+        idType: 'app_id',
+        senderType: 'app',
+      },
+      interactiveCard: {
+        title: 'Release Card',
+        text: 'Release Card\nShip v1.6.0 with standardized context',
+        rawContentShape: 'card_text',
+      },
+    } as any),
+  });
+
+  assert.deepEqual(result, { quotedMessageId: 'om_cli_card', loaded: true });
+  assert.match(message.parentContent ?? '', /kind: lark_message/);
+  assert.match(message.parentContent ?? '', /role: assistant/);
+  assert.match(message.parentContent ?? '', /source: lark_cli/);
+  assert.match(message.parentContent ?? '', /identity: user/);
+  assert.match(message.parentContent ?? '', /message_id: om_cli_card/);
+  assert.match(message.parentContent ?? '', /chat_id: oc_card_context/);
+  assert.match(message.parentContent ?? '', /thread_id: omt_card_thread/);
+  assert.match(message.parentContent ?? '', /reply_to: om_prior_prompt/);
+  assert.match(message.parentContent ?? '', /msg_type: interactive_card/);
+  assert.match(message.parentContent ?? '', /timestamp_ms: 1781707740000/);
+  assert.match(message.parentContent ?? '', /timestamp: 2026-06-17 22:49/);
+  assert.match(message.parentContent ?? '', /create_time: 2026-06-17 22:49/);
+  assert.match(message.parentContent ?? '', /sender_type: app/);
+  assert.match(message.parentContent ?? '', /hydration_status: success/);
+  assert.match(message.parentContent ?? '', /interactive_card:/);
+  assert.match(message.parentContent ?? '', /title: Release Card/);
+  assert.match(message.parentContent ?? '', /raw_content_shape: card_text/);
+  assert.match(message.parentContent ?? '', /content:\nRelease Card\nShip v1\.6\.0 with standardized context/);
+}
+
+{
+  const message = {
+    messageId: 'om_current',
     parentId: 'om_card',
   };
   const fetched: string[] = [];

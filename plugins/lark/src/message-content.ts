@@ -83,13 +83,59 @@ function stripCompactCardTags(text: string): string {
     .trim();
 }
 
-function extractCompactCardText(text: string): string | null {
+export interface InteractiveCardTextMetadata {
+  title?: string;
+  text: string;
+  rawContentShape: 'card_text' | 'feishu_card_json' | 'unknown';
+}
+
+function extractCompactCardParts(text: string): { title?: string; body?: string; text: string } | null {
   const match = text.match(/<card\b([^>]*)>([\s\S]*?)<\/card>/i);
   if (!match) return null;
-  const title = compactCardAttribute(match[1] ?? '', 'title');
-  const body = stripCompactCardTags(match[2] ?? '');
+  const title = compactCardAttribute(match[1] ?? '', 'title') ?? undefined;
+  const body = stripCompactCardTags(match[2] ?? '') || undefined;
   const parts = [title, body].filter(Boolean);
-  return parts.length > 0 ? parts.join('\n') : null;
+  return parts.length > 0 ? { title, body, text: parts.join('\n') } : null;
+}
+
+function extractCompactCardText(text: string): string | null {
+  return extractCompactCardParts(text)?.text ?? null;
+}
+
+function firstContentLine(text: string): string | undefined {
+  return text.split('\n').map((line) => line.trim()).find(Boolean);
+}
+
+export function interactiveCardTextMetadata(
+  rawContent: string,
+  messageType: string,
+  visibleText: string,
+): InteractiveCardTextMetadata | undefined {
+  if (messageType !== 'interactive') return undefined;
+
+  const compact = extractCompactCardParts(rawContent);
+  if (compact) {
+    return {
+      ...(compact.title ? { title: compact.title } : {}),
+      text: compact.text,
+      rawContentShape: 'card_text',
+    };
+  }
+
+  const trimmed = rawContent.trim();
+  if (/^[{[]/.test(trimmed)) {
+    return {
+      ...(firstContentLine(visibleText) ? { title: firstContentLine(visibleText) } : {}),
+      text: visibleText,
+      rawContentShape: 'feishu_card_json',
+    };
+  }
+
+  return {
+    ...(firstContentLine(visibleText) ? { title: firstContentLine(visibleText) } : {}),
+    text: visibleText,
+    rawContentShape: 'unknown',
+  };
 }
 
 export function normalizeFetchedMessageText(text: string): string {

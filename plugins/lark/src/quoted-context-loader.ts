@@ -12,9 +12,26 @@ export interface FetchedQuotedMessage {
   messageId?: string;
   text?: string | null;
   msgType?: string;
+  chatId?: string;
   parentId?: string;
+  replyTo?: string;
   rootMessageId?: string;
   threadId?: string;
+  timestampMs?: number;
+  timestamp?: string;
+  createTime?: string;
+  updateTime?: string;
+  messagePosition?: string;
+  sender?: {
+    id?: string;
+    idType?: string;
+    senderType?: string;
+  };
+  interactiveCard?: {
+    title?: string;
+    text: string;
+    rawContentShape: 'card_text' | 'feishu_card_json' | 'unknown';
+  };
   fetchStage?: string;
   fetchIdentity?: string;
   fetchResult?: string;
@@ -98,7 +115,18 @@ export async function addQuotedContext(
       messageId: resolvedMessageId,
       msgType: fetched.msgType,
       text: fetched.text,
-      replyTo: nextMessageId && !visited.has(nextMessageId) ? nextMessageId : undefined,
+      chatId: fetched.chatId,
+      threadId: fetched.threadId,
+      timestampMs: fetched.timestampMs,
+      timestamp: fetched.timestamp,
+      createTime: fetched.createTime,
+      updateTime: fetched.updateTime,
+      messagePosition: fetched.messagePosition,
+      sender: fetched.sender,
+      fetchStage: fetched.fetchStage,
+      fetchIdentity: fetched.fetchIdentity,
+      interactiveCard: fetched.interactiveCard,
+      replyTo: nextMessageId && !visited.has(nextMessageId) ? nextMessageId : fetched.replyTo,
     });
 
     if (utf8Bytes(joinBlocks([...blocks, block])) > maxBytes) {
@@ -143,16 +171,47 @@ function formatSuccessBlock(input: {
   messageId: string;
   msgType?: string;
   text: string;
+  chatId?: string;
+  threadId?: string;
   replyTo?: string;
+  timestampMs?: number;
+  timestamp?: string;
+  createTime?: string;
+  updateTime?: string;
+  messagePosition?: string;
+  sender?: FetchedQuotedMessage['sender'];
+  fetchStage?: string;
+  fetchIdentity?: string;
+  interactiveCard?: FetchedQuotedMessage['interactiveCard'];
 }): string {
+  const normalizedMsgType = normalizeMsgType(input.msgType);
+  const interactiveCard = input.interactiveCard ?? fallbackInteractiveCard(input.text, normalizedMsgType);
   const lines = [
+    `kind: lark_message`,
+    `role: ${messageRole(input.sender, input.fetchIdentity)}`,
+    `source: ${messageSource(input.fetchStage)}`,
+    ...(input.fetchIdentity ? [`identity: ${input.fetchIdentity}`] : []),
     `message_id: ${input.messageId}`,
-    `msg_type: ${input.msgType || 'unknown'}`,
+    ...(input.chatId ? [`chat_id: ${input.chatId}`] : []),
+    ...(input.threadId ? [`thread_id: ${input.threadId}`] : []),
+    ...(input.replyTo ? [`reply_to: ${input.replyTo}`] : []),
+    `msg_type: ${normalizedMsgType}`,
+    ...(input.timestampMs !== undefined ? [`timestamp_ms: ${input.timestampMs}`] : []),
+    ...(input.timestamp ? [`timestamp: ${input.timestamp}`] : []),
+    ...(input.createTime ? [`create_time: ${input.createTime}`] : []),
+    ...(input.updateTime ? [`update_time: ${input.updateTime}`] : []),
+    ...(input.messagePosition ? [`message_position: ${input.messagePosition}`] : []),
+    ...(input.sender?.senderType ? [`sender_type: ${input.sender.senderType}`] : []),
+    ...(input.sender?.idType ? [`sender_id_type: ${input.sender.idType}`] : []),
     `hydration_status: success`,
+    ...(interactiveCard ? [
+      `interactive_card:`,
+      ...(interactiveCard.title ? [`title: ${interactiveCard.title}`] : []),
+      `raw_content_shape: ${interactiveCard.rawContentShape}`,
+    ] : []),
     `content:`,
     input.text,
   ];
-  if (input.replyTo) lines.push(`reply_to: ${input.replyTo}`);
   return lines.join('\n');
 }
 
@@ -165,9 +224,14 @@ function formatFailureBlock(input: {
   fetchResult?: string;
   diagnostic?: string;
 }): string {
+  const normalizedMsgType = normalizeMsgType(input.msgType);
   const lines = [
+    `kind: lark_message`,
+    `role: ${input.fetchIdentity === 'bot' ? 'assistant' : 'unknown'}`,
+    `source: ${messageSource(input.fetchStage)}`,
+    ...(input.fetchIdentity ? [`identity: ${input.fetchIdentity}`] : []),
     `message_id: ${input.messageId}`,
-    `msg_type: ${input.msgType || 'unknown'}`,
+    `msg_type: ${normalizedMsgType}`,
     `hydration_status: failed`,
     `reason: ${input.reason}`,
   ];
@@ -207,9 +271,53 @@ function normalizeMetadataValue(value: string | undefined): string | undefined {
   return normalized.length > 240 ? `${normalized.slice(0, 237)}...` : normalized;
 }
 
+function normalizeMsgType(value: string | undefined): string {
+  return value === 'interactive' ? 'interactive_card' : (value || 'unknown');
+}
+
+function messageSource(fetchStage: string | undefined): string {
+  switch (fetchStage) {
+    case 'user_mget':
+      return 'lark_cli';
+    case 'sdk_fetch':
+    case 'raw_get':
+    case 'raw_mget':
+      return 'feishu_api';
+    case 'outbound_cache':
+      return 'event';
+    default:
+      return 'unknown';
+  }
+}
+
+function messageRole(
+  sender: FetchedQuotedMessage['sender'],
+  fetchIdentity: string | undefined,
+): 'user' | 'assistant' | 'unknown' {
+  const senderType = sender?.senderType?.toLowerCase();
+  if (senderType === 'app' || senderType === 'bot') return 'assistant';
+  if (senderType === 'user') return 'user';
+  if (fetchIdentity === 'bot') return 'assistant';
+  return 'unknown';
+}
+
+function fallbackInteractiveCard(
+  text: string,
+  msgType: string,
+): FetchedQuotedMessage['interactiveCard'] | undefined {
+  if (msgType !== 'interactive_card') return undefined;
+  const title = text.split('\n').map((line) => line.trim()).find(Boolean);
+  return {
+    ...(title ? { title } : {}),
+    text,
+    rawContentShape: 'unknown',
+  };
+}
+
 function shouldAddQuotedCardRecoveryHint(
   msgType: string | undefined,
   reason: 'fetch_failed' | 'token_budget_exceeded',
 ): boolean {
-  return reason === 'fetch_failed' && msgType === 'interactive';
+  const normalized = normalizeMsgType(msgType);
+  return reason === 'fetch_failed' && normalized === 'interactive_card';
 }

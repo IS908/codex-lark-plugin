@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-17
+
+### Added
+- Standardized hydrated quoted/referenced Lark message context as a `lark_message` envelope with role, source, identity, message ids, chat/thread metadata, timestamps, sender type, hydration status, and interactive-card metadata.
+- Added compact `lark-cli` card text detection so `<card title="...">...</card>` hydration results are preserved as readable card text and marked with `raw_content_shape: card_text`; raw Feishu card JSON remains routed through the safe interactive-card text extractor and marked `feishu_card_json`.
+
+### Changed
+- Quoted Interactive Card prompt context now renders `interactive_card` consistently across outbound cache, SDK/raw Feishu API fetches, and optional `lark-cli` user fallback, while preserving existing explicit failure diagnostics and recovery hints.
+
 ## [1.5.20] - 2026-06-17
 
 ### Fixed
