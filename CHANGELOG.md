@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.20] - 2026-06-17
+
+### Fixed
+- Added a best-effort `lark-cli im +messages-mget --as user` fallback for quoted Interactive Card hydration when outbound cache and bot-identity SDK/raw fetches miss, covering P2P bot-card visibility gaps where user identity can still read the card.
+- Added explicit `user_mget` diagnostics for user-identity fallback empty, unavailable, timeout, and error cases so quoted-card hydration failures remain actionable instead of silently falling back to placeholder context.
+
 ## [1.5.19] - 2026-06-17
 
 ### Fixed

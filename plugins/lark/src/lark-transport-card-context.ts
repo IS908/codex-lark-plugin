@@ -8,13 +8,15 @@ import {
 } from './message-content.js';
 import type { SdkLarkTransportChannel } from './lark-transport.js';
 
-export type LarkMessageFetchStage = 'outbound_cache' | 'sdk_fetch' | 'raw_get' | 'raw_mget';
+export type LarkMessageFetchStage = 'outbound_cache' | 'sdk_fetch' | 'raw_get' | 'raw_mget' | 'user_mget';
 export type LarkMessageFetchIdentity = 'cache' | 'bot' | 'user' | 'unknown';
 export type LarkMessageFetchResult =
   | 'success'
   | 'empty'
   | '404'
   | 'error'
+  | 'timeout'
+  | 'unavailable'
   | 'placeholder'
   | 'missing_content';
 export type LarkMessageHydrationReason = 'fetch_failed';
@@ -46,20 +48,33 @@ export interface LarkOutboundMessageContextCache {
   get(messageId: string): { quotedContext?: LarkCachedQuotedMessageContext } | undefined;
 }
 
+export interface LarkUserMessageFetchResult {
+  item?: unknown;
+  diagnostic?: string;
+  fetchResult?: LarkMessageFetchResult;
+}
+
+export interface LarkUserMessageFetcher {
+  fetchMessage(messageId: string): Promise<LarkUserMessageFetchResult | null>;
+}
+
 export class LarkTransportCardContext {
   private readonly sdkChannel?: Pick<SdkLarkTransportChannel, 'fetchMessage'>;
   private readonly rawClient?: Lark.Client;
   private readonly outboundMessageContextCache?: LarkOutboundMessageContextCache;
+  private readonly userMessageFetcher?: LarkUserMessageFetcher;
   private readonly cardContextCache = new Map<string, { context: LarkFetchedMessageContext; expiresAt: number }>();
 
   constructor(opts: {
     sdkChannel?: Pick<SdkLarkTransportChannel, 'fetchMessage'>;
     rawClient?: Lark.Client;
     outboundMessageContextCache?: LarkOutboundMessageContextCache;
+    userMessageFetcher?: LarkUserMessageFetcher;
   }) {
     this.sdkChannel = opts.sdkChannel;
     this.rawClient = opts.rawClient;
     this.outboundMessageContextCache = opts.outboundMessageContextCache;
+    this.userMessageFetcher = opts.userMessageFetcher;
   }
 
   async fetchMessageText(messageId: string): Promise<string | null> {
@@ -97,6 +112,14 @@ export class LarkTransportCardContext {
     if (fallback) attempts.push(fallback);
     if (fallback?.text && !isPlaceholderCardText(fallback.text, fallback.msgType)) {
       const merged = mergeContexts(messageId, sdkContext ?? rawGetContext, fallback);
+      this.setCachedMessageContext(messageId, merged);
+      return merged;
+    }
+
+    const userContext = await this.fetchCardContextViaUser(messageId);
+    if (userContext) attempts.push(userContext);
+    if (userContext?.text && !isPlaceholderCardText(userContext.text, userContext.msgType)) {
+      const merged = mergeContexts(messageId, sdkContext ?? rawGetContext ?? fallback, userContext);
       this.setCachedMessageContext(messageId, merged);
       return merged;
     }
@@ -208,6 +231,27 @@ export class LarkTransportCardContext {
       fetchIdentity: 'cache',
       fetchResult: 'success',
     });
+  }
+
+  private async fetchCardContextViaUser(messageId: string): Promise<LarkFetchedMessageContext | null> {
+    const fetcher = this.userMessageFetcher;
+    if (!fetcher) return null;
+    try {
+      const result = await fetcher.fetchMessage(messageId);
+      if (!result) return null;
+      if (!result.item) {
+        return createUnresolvedContext(messageId, 'unknown', 'user_mget', result.diagnostic, {
+          fetchIdentity: 'user',
+          fetchResult: result.fetchResult ?? 'empty',
+        });
+      }
+      return messageItemContext(messageId, result.item, 'user_mget', { fetchIdentity: 'user' });
+    } catch (error) {
+      return createUnresolvedContext(messageId, 'unknown', 'user_mget', safeFetchDiagnostic(error), {
+        fetchIdentity: 'user',
+        fetchResult: fetchResultFromError(error),
+      });
+    }
   }
 }
 

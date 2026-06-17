@@ -161,6 +161,10 @@ echo "=== Lark transport boundary checks ==="
 node --import tsx scripts/lark-transport-smoke.ts
 
 echo ""
+echo "=== Lark user message fetch checks ==="
+node --import tsx scripts/lark-user-message-fetch-smoke.ts
+
+echo ""
 echo "=== Lark transport diagnostics checks ==="
 node --import tsx scripts/lark-transport-diagnostics-smoke.ts
 
