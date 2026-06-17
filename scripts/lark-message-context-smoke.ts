@@ -33,7 +33,7 @@ const rawBlock = formatLarkMessageContextBlock({
   messageId: 'om_raw',
   text: 'Raw message',
   msgType: 'text',
-  fetchStage: 'raw_mget',
+  fetchStage: 'bot_mget',
   fetchIdentity: 'bot',
   fetchResult: 'success',
   sender: {
@@ -44,6 +44,16 @@ const rawBlock = formatLarkMessageContextBlock({
 assert.match(rawBlock, /role: user/);
 assert.match(rawBlock, /source: feishu_api/);
 assert.match(rawBlock, /msg_type: text/);
+
+const legacyRawBlock = formatLarkMessageContextBlock({
+  messageId: 'om_legacy_raw',
+  text: 'Legacy raw mget message',
+  msgType: 'text',
+  fetchStage: 'raw_mget',
+  fetchIdentity: 'bot',
+  fetchResult: 'success',
+});
+assert.match(legacyRawBlock, /source: feishu_api/);
 
 const userBlock = formatLarkMessageContextBlock({
   messageId: 'om_user',

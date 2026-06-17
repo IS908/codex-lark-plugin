@@ -22,7 +22,7 @@ for (const pattern of [
 
 assert.doesNotMatch(migrationDoc, /does not currently run/i);
 assert.doesNotMatch(migrationDoc, /tracked in #76/i);
-assert.match(migrationDoc, /SDK fetch.*raw get\/mget fallback/is);
+assert.match(migrationDoc, /event\/cache.*bot-identity `messages\/mget`.*user-identity/is);
 assert.match(migrationDoc, /LarkTransportCardContext\.fetchMessageText/);
 assert.match(migrationDoc, /best-effort raw context/i);
 

@@ -76,34 +76,42 @@ export class LarkTransportCardContext {
 
     const attempts: LarkFetchedMessageContext[] = [];
 
-    const sdkContext = await this.fetchMessageContextViaSdk(messageId);
-    if (sdkContext) attempts.push(sdkContext);
-    if (sdkContext?.text && !isPlaceholderCardText(sdkContext.text, sdkContext.msgType)) {
-      this.setCachedMessageContext(messageId, sdkContext);
-      return sdkContext;
+    const botMgetContext = await this.fetchCardContextViaMget(messageId);
+    if (botMgetContext) attempts.push(botMgetContext);
+    if (botMgetContext?.text && !isPlaceholderCardText(botMgetContext.text, botMgetContext.msgType)) {
+      this.setCachedMessageContext(messageId, botMgetContext);
+      return botMgetContext;
     }
 
-    const rawGetContext = await this.fetchMessageContextViaRawGet(messageId);
-    if (rawGetContext) attempts.push(rawGetContext);
-    if (rawGetContext?.text && !isPlaceholderCardText(rawGetContext.text, rawGetContext.msgType)) {
-      this.setCachedMessageContext(messageId, rawGetContext);
-      return rawGetContext;
-    }
-
-    const fallback = await this.fetchCardContextViaMget(messageId);
-    if (fallback) attempts.push(fallback);
-    if (fallback?.text && !isPlaceholderCardText(fallback.text, fallback.msgType)) {
-      const merged = mergeContexts(messageId, sdkContext ?? rawGetContext, fallback);
-      this.setCachedMessageContext(messageId, merged);
-      return merged;
+    let triedSdkRawFallback = false;
+    if (!botMgetContext) {
+      triedSdkRawFallback = true;
+      const sdkRawContext = await this.fetchSdkRawGetFallback(messageId, attempts);
+      if (sdkRawContext) {
+        this.setCachedMessageContext(messageId, sdkRawContext);
+        return sdkRawContext;
+      }
     }
 
     const userContext = await this.fetchCardContextViaUser(messageId);
     if (userContext) attempts.push(userContext);
     if (userContext?.text && !isPlaceholderCardText(userContext.text, userContext.msgType)) {
-      const merged = mergeContexts(messageId, sdkContext ?? rawGetContext ?? fallback, userContext);
+      const merged = mergeContexts(messageId, botMgetContext, userContext);
       this.setCachedMessageContext(messageId, merged);
       return merged;
+    }
+
+    if (userContext) {
+      await this.addMetadataFallbackAttempts(messageId, attempts);
+      return unresolvedContextFromAttempts(messageId, attempts);
+    }
+
+    if (!triedSdkRawFallback) {
+      const sdkRawContext = await this.fetchSdkRawGetFallback(messageId, attempts);
+      if (sdkRawContext) {
+        this.setCachedMessageContext(messageId, sdkRawContext);
+        return sdkRawContext;
+      }
     }
 
     return unresolvedContextFromAttempts(messageId, attempts);
@@ -169,6 +177,40 @@ export class LarkTransportCardContext {
     }
   }
 
+  private async fetchSdkRawGetFallback(
+    messageId: string,
+    attempts: LarkFetchedMessageContext[],
+  ): Promise<LarkFetchedMessageContext | null> {
+    const sdkContext = await this.fetchMessageContextViaSdk(messageId);
+    if (sdkContext) attempts.push(sdkContext);
+    if (sdkContext?.text && !isPlaceholderCardText(sdkContext.text, sdkContext.msgType)) {
+      return sdkContext;
+    }
+
+    const rawGetContext = await this.fetchMessageContextViaRawGet(messageId);
+    if (rawGetContext) attempts.push(rawGetContext);
+    if (rawGetContext?.text && !isPlaceholderCardText(rawGetContext.text, rawGetContext.msgType)) {
+      return rawGetContext;
+    }
+
+    return null;
+  }
+
+  private async addMetadataFallbackAttempts(
+    messageId: string,
+    attempts: LarkFetchedMessageContext[],
+  ): Promise<void> {
+    const hasTypedMetadata = attempts.some((attempt) => attempt.msgType !== 'unknown');
+    if (hasTypedMetadata) return;
+
+    const sdkContext = await this.fetchMessageContextViaSdk(messageId);
+    if (sdkContext) attempts.push(sdkContext);
+    if (sdkContext?.msgType && sdkContext.msgType !== 'unknown') return;
+
+    const rawGetContext = await this.fetchMessageContextViaRawGet(messageId);
+    if (rawGetContext) attempts.push(rawGetContext);
+  }
+
   private async fetchCardContextViaMget(messageId: string): Promise<LarkFetchedMessageContext | null> {
     const raw = this.rawClient;
     if (!raw?.request) return null;
@@ -184,13 +226,13 @@ export class LarkTransportCardContext {
       const item = Array.isArray(items)
         ? items.find((candidate: any) => !candidate?.message_id || candidate.message_id === messageId) ?? items[0]
         : null;
-      if (!item) return createUnresolvedContext(messageId, 'unknown', 'raw_mget', 'empty_response', {
+      if (!item) return createUnresolvedContext(messageId, 'unknown', 'bot_mget', 'empty_response', {
         fetchIdentity: 'bot',
         fetchResult: 'empty',
       });
-      return messageItemContext(messageId, item, 'raw_mget', { fetchIdentity: 'bot' });
+      return messageItemContext(messageId, item, 'bot_mget', { fetchIdentity: 'bot' });
     } catch (error) {
-      return createUnresolvedContext(messageId, 'unknown', 'raw_mget', safeFetchDiagnostic(error), {
+      return createUnresolvedContext(messageId, 'unknown', 'bot_mget', safeFetchDiagnostic(error), {
         fetchIdentity: 'bot',
         fetchResult: fetchResultFromError(error),
       });
@@ -450,7 +492,11 @@ function unresolvedContextFromAttempts(
 ): LarkFetchedMessageContext | null {
   if (attempts.length === 0) return null;
   const metadata = attempts.find((attempt) => attempt.msgType !== 'unknown') ?? attempts[0];
-  const failedAttempt = [...attempts].reverse().find((attempt) => attempt.fetchStage) ?? metadata;
+  const failedAttempt =
+    [...attempts].reverse().find((attempt) => attempt.fetchStage === 'user_mget') ??
+    [...attempts].reverse().find((attempt) => attempt.fetchStage === 'bot_mget' || attempt.fetchStage === 'raw_mget') ??
+    [...attempts].reverse().find((attempt) => attempt.fetchStage) ??
+    metadata;
   return normalizeContext({
     messageId: metadata.messageId || requestedMessageId,
     text: null,
