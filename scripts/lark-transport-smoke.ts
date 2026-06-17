@@ -401,6 +401,33 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
 }
 
 {
+  const cachedTransport = createLarkTransport({
+    outboundMessageContextCache: {
+      get: (messageId: string) => messageId === 'om_cached_bot_card'
+        ? {
+            quotedContext: {
+              text: 'Cached Bot Card\nApprove deployment?',
+              msgType: 'interactive',
+              parentId: 'om_user_request',
+            },
+          }
+        : undefined,
+    },
+  } as any);
+
+  assert.deepEqual(await cachedTransport.fetchMessageContext('om_cached_bot_card'), {
+    messageId: 'om_cached_bot_card',
+    text: 'Cached Bot Card\nApprove deployment?',
+    msgType: 'interactive',
+    parentId: 'om_user_request',
+    fetchStage: 'outbound_cache',
+    fetchIdentity: 'cache',
+    fetchResult: 'success',
+  });
+  assert.equal(await cachedTransport.fetchMessageText('om_cached_bot_card'), 'Cached Bot Card\nApprove deployment?');
+}
+
+{
   const runtimeCalls: Array<{ method: string; args?: any }> = [];
   const runtimeMgetTransport = createLarkTransport({
     sdkChannel: {
@@ -468,6 +495,7 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
       request: async () => {
         const error: any = new Error('Feishu request failed');
         error.response = {
+          status: 404,
           data: {
             code: 230001,
             msg: 'invalid parameter',
@@ -484,7 +512,10 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
   assert.equal(failedContext?.text, null);
   assert.equal(failedContext?.msgType, 'interactive');
   assert.equal(failedContext?.fetchStage, 'raw_mget');
+  assert.equal(failedContext?.fetchIdentity, 'bot');
+  assert.equal(failedContext?.fetchResult, '404');
   assert.match(failedContext?.diagnostic ?? '', /code=230001/);
+  assert.match(failedContext?.diagnostic ?? '', /status=404/);
   assert.match(failedContext?.diagnostic ?? '', /log_id=202606170001/);
 }
 

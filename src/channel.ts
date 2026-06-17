@@ -425,6 +425,7 @@ export class BotMessageTracker {
       messageId,
       chatId: meta.chatId,
       threadId: meta.threadId,
+      quotedContext: meta.quotedContext,
       timestamp: Date.now(),
     });
     this.ids.push(messageId);
@@ -447,7 +448,16 @@ export interface TrackedBotMessage {
   messageId: string;
   chatId?: string;
   threadId?: string;
+  quotedContext?: TrackedBotMessageQuotedContext;
   timestamp: number;
+}
+
+export interface TrackedBotMessageQuotedContext {
+  text: string;
+  msgType: string;
+  parentId?: string;
+  rootMessageId?: string;
+  threadId?: string;
 }
 
 /**
@@ -533,7 +543,9 @@ export class LarkChannel {
       cache: this.nameCache,
       client: () => this.client as any,
     });
-    this.larkTransport = createOpenApiLarkTransport(this.client);
+    this.larkTransport = createOpenApiLarkTransport(this.client, {
+      outboundMessageContextCache: this.botMessageTracker,
+    });
     this.larkTransportRawClient = this.client;
   }
 
@@ -577,7 +589,9 @@ export class LarkChannel {
   }
 
   setSdkTransportChannel(sdkChannel: SdkLarkTransportChannel): void {
-    this.larkTransport = createSdkLarkTransport(sdkChannel, this.client);
+    this.larkTransport = createSdkLarkTransport(sdkChannel, this.client, {
+      outboundMessageContextCache: this.botMessageTracker,
+    });
     this.larkTransportRawClient = this.client;
     this.larkTransportRuntime = 'sdk';
   }
@@ -585,7 +599,9 @@ export class LarkChannel {
   private ensureOpenApiTransportCurrent(): void {
     if (this.larkTransportRuntime !== 'openapi') return;
     if (this.larkTransportRawClient === this.client) return;
-    this.larkTransport = createOpenApiLarkTransport(this.client);
+    this.larkTransport = createOpenApiLarkTransport(this.client, {
+      outboundMessageContextCache: this.botMessageTracker,
+    });
     this.larkTransportRawClient = this.client;
   }
 

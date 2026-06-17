@@ -16,6 +16,8 @@ export interface FetchedQuotedMessage {
   rootMessageId?: string;
   threadId?: string;
   fetchStage?: string;
+  fetchIdentity?: string;
+  fetchResult?: string;
   diagnostic?: string;
   hydrationErrorReason?: 'fetch_failed';
 }
@@ -78,6 +80,8 @@ export async function addQuotedContext(
         msgType: fetched?.msgType,
         reason: fetched?.hydrationErrorReason ?? 'fetch_failed',
         fetchStage: fetched?.fetchStage,
+        fetchIdentity: fetched?.fetchIdentity,
+        fetchResult: fetched?.fetchResult,
         diagnostic: fetched?.diagnostic,
       }));
       break;
@@ -157,6 +161,8 @@ function formatFailureBlock(input: {
   msgType: string | undefined;
   reason: 'fetch_failed' | 'token_budget_exceeded';
   fetchStage?: string;
+  fetchIdentity?: string;
+  fetchResult?: string;
   diagnostic?: string;
 }): string {
   const lines = [
@@ -166,9 +172,19 @@ function formatFailureBlock(input: {
     `reason: ${input.reason}`,
   ];
   const fetchStage = normalizeMetadataValue(input.fetchStage);
+  const fetchIdentity = normalizeMetadataValue(input.fetchIdentity);
+  const fetchResult = normalizeMetadataValue(input.fetchResult);
   const diagnostic = normalizeMetadataValue(input.diagnostic);
   if (fetchStage) lines.push(`fetch_stage: ${fetchStage}`);
+  if (fetchIdentity) lines.push(`fetch_identity: ${fetchIdentity}`);
+  if (fetchResult) lines.push(`fetch_result: ${fetchResult}`);
   if (diagnostic) lines.push(`diagnostic: ${diagnostic}`);
+  if (shouldAddQuotedCardRecoveryHint(input.msgType, input.reason)) {
+    lines.push(
+      `codex_recovery_hint: quoted interactive card context is unavailable through ${fetchIdentity || 'current'} identity; ` +
+      `if the answer depends on it, fetch message_id=${input.messageId} with Lark user-context tooling and parse the card content before answering.`
+    );
+  }
   return lines.join('\n');
 }
 
@@ -189,4 +205,11 @@ function normalizeMetadataValue(value: string | undefined): string | undefined {
   const normalized = value?.replace(/\s+/g, ' ').trim();
   if (!normalized) return undefined;
   return normalized.length > 240 ? `${normalized.slice(0, 237)}...` : normalized;
+}
+
+function shouldAddQuotedCardRecoveryHint(
+  msgType: string | undefined,
+  reason: 'fetch_failed' | 'token_budget_exceeded',
+): boolean {
+  return reason === 'fetch_failed' && msgType === 'interactive';
 }
