@@ -164,7 +164,9 @@ export class JobScheduler {
   constructor(opts: SchedulerOptions) {
     this.server = opts.server;
     this.client = opts.client;
-    this.transport = opts.transport ?? createOpenApiLarkTransport(opts.client);
+    this.transport = opts.transport ?? createOpenApiLarkTransport(opts.client, {
+      outboundMessageContextCache: opts.botMessageTracker,
+    });
     this.identitySession = opts.identitySession;
     this.botMessageTracker = opts.botMessageTracker;
   }

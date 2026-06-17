@@ -95,7 +95,9 @@ export function createTransportProxy(resolve: () => LarkTransport): LarkTranspor
 }
 
 export function createToolContext(args: CreateToolContextArgs): ToolContext {
-  const fallbackTransport = createOpenApiLarkTransport(args.client);
+  const fallbackTransport = createOpenApiLarkTransport(args.client, {
+    outboundMessageContextCache: args.botMessageTracker,
+  });
   const providedTransport = args.larkTransport;
   const resolveTransport: () => LarkTransport =
     typeof providedTransport === 'function'

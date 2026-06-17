@@ -3,6 +3,7 @@ import type { FeishuRetryOptions } from './feishu-retry.js';
 import {
   LarkTransportCardContext,
   type LarkFetchedMessageContext,
+  type LarkOutboundMessageContextCache,
 } from './lark-transport-card-context.js';
 import { formatSdkFallbackLog } from './lark-transport-diagnostics.js';
 import {
@@ -106,6 +107,7 @@ export interface SdkLarkTransportChannel {
 export interface LarkTransportOptions {
   sdkChannel?: SdkLarkTransportChannel;
   rawClient?: Lark.Client;
+  outboundMessageContextCache?: LarkOutboundMessageContextCache;
 }
 
 class DefaultLarkTransport implements LarkTransport {
@@ -119,6 +121,7 @@ class DefaultLarkTransport implements LarkTransport {
     this.cardContext = new LarkTransportCardContext({
       sdkChannel: this.sdkChannel,
       rawClient: this.rawClient,
+      outboundMessageContextCache: opts.outboundMessageContextCache,
     });
   }
 
@@ -244,13 +247,17 @@ export function createLarkTransport(opts: LarkTransportOptions): LarkTransport {
   return new DefaultLarkTransport(opts);
 }
 
-export function createOpenApiLarkTransport(client: Lark.Client): LarkTransport {
-  return createLarkTransport({ rawClient: client });
+export function createOpenApiLarkTransport(
+  client: Lark.Client,
+  opts: Pick<LarkTransportOptions, 'outboundMessageContextCache'> = {},
+): LarkTransport {
+  return createLarkTransport({ rawClient: client, ...opts });
 }
 
 export function createSdkLarkTransport(
   sdkChannel: SdkLarkTransportChannel,
   fallbackClient?: Lark.Client,
+  opts: Pick<LarkTransportOptions, 'outboundMessageContextCache'> = {},
 ): LarkTransport {
-  return createLarkTransport({ sdkChannel, rawClient: fallbackClient });
+  return createLarkTransport({ sdkChannel, rawClient: fallbackClient, ...opts });
 }

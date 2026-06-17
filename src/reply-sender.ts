@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { appConfig } from './config.js';
 import type { ConversationBuffer } from './memory/buffer.js';
-import type { BotMessageTracker, LatestMessageTracker } from './channel.js';
+import type { BotMessageTracker, LatestMessageTracker, TrackedBotMessageQuotedContext } from './channel.js';
 import { buildCards, shouldUseCard } from './feishu-card.js';
 import { JOB_THREAD_PREFIX } from './scheduler.js';
 import {
@@ -19,6 +19,10 @@ import {
   type LarkTransport,
   type LarkTransportInput,
 } from './lark-transport.js';
+import {
+  fetchedMessageContentText,
+  isPlaceholderCardText,
+} from './message-content.js';
 
 function wrapFeishuApiError(err: any): Error | null {
   const apiError = err?.response?.data ?? err?.data;
@@ -81,7 +85,9 @@ export async function sendFeishuReply(
     latestMessageTracker,
     turnObligations,
   } = deps;
-  const transport = deps.transport ?? createOpenApiLarkTransport(client);
+  const transport = deps.transport ?? createOpenApiLarkTransport(client, {
+    outboundMessageContextCache: botMessageTracker,
+  });
 
   // Auto-correct reply_to from the plugin's per-thread tracker when Codex
   // omits it. Works for both threaded and non-threaded (P2P) messages.
@@ -150,9 +156,12 @@ export async function sendFeishuReply(
     });
   }
 
-  function trackBotMessage(messageId: string | undefined): void {
+  function trackBotMessage(
+    messageId: string | undefined,
+    quotedContext?: TrackedBotMessageQuotedContext,
+  ): void {
     if (messageId && botMessageTracker) {
-      botMessageTracker.add(messageId, { chatId: chat_id, threadId: thread_id });
+      botMessageTracker.add(messageId, { chatId: chat_id, threadId: thread_id, quotedContext });
     }
   }
 
@@ -191,12 +200,13 @@ export async function sendFeishuReply(
       };
     }
     const content = JSON.stringify(cardObj);
+    const quotedContext = createQuotedContextFromCardContent(content, text);
     try {
       const resp = await sendTransportMessage({
         input: { card: cardObj },
         ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
       });
-      trackBotMessage(resp?.messageId);
+      trackBotMessage(resp?.messageId, quotedContext);
       recordAndRevokeAck(text || '[card]');
     } catch (err: any) {
       const wrapped = wrapFeishuApiError(err);
@@ -229,7 +239,10 @@ export async function sendFeishuReply(
           ...(replyTo ? { replyTo } : {}),
           ...(shouldStayInThread && i > 0 ? { replyInThread: true } : {}),
         });
-        trackBotMessage(resp?.messageId);
+        trackBotMessage(
+          resp?.messageId,
+          createQuotedContextFromCardContent(JSON.stringify(cards[i]), text),
+        );
         recordAndRevokeAck(text);
       } catch (err: any) {
         const wrapped = wrapFeishuApiError(err);
@@ -350,4 +363,27 @@ export function chunkText(text: string, limit: number): string[] {
   }
 
   return chunks;
+}
+
+function createQuotedContextFromCardContent(
+  content: string,
+  fallbackText: string | undefined,
+): TrackedBotMessageQuotedContext {
+  const extracted = fetchedMessageContentText(content, 'interactive');
+  const fallback = fallbackText?.trim();
+  const text = isPlaceholderCardText(extracted, 'interactive')
+    ? (fallback || content)
+    : extracted;
+  return {
+    text: capUtf8Text(text, 12_000),
+    msgType: 'interactive',
+  };
+}
+
+function capUtf8Text(text: string, maxBytes: number): string {
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.length <= maxBytes) return text;
+  let cut = maxBytes;
+  while (cut > 0 && (buf[cut] & 0xc0) === 0x80) cut--;
+  return `${buf.subarray(0, cut).toString('utf8')} ...[truncated]`;
 }

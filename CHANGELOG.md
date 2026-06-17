@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.19] - 2026-06-17
+
+### Fixed
+- Fixed quoted bot-authored Interactive Card context when bot/user fetch identities diverge by caching plugin-sent card context on the returned `message_id`, hydrating quoted cards from that cache before OpenAPI fetches, and surfacing `fetch_identity`/`fetch_result` plus a Codex recovery hint when bot-identity fetch still cannot access the quoted card.
+
 ## [1.5.18] - 2026-06-17
 
 ### Fixed

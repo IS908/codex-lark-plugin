@@ -100,12 +100,12 @@ const fakeServer = {
 
 async function run() {
   const client = mockLarkClient();
-  const botTrackerAdded: string[] = [];
+  const botTrackerAdded: Array<{ id: string; meta: any }> = [];
   const botTracker = {
     ids: new Set<string>(),
     maxSize: 500,
     set: new Set<string>(),
-    add(id: string) { botTrackerAdded.push(id); this.ids.add(id); },
+    add(id: string, meta: any = {}) { botTrackerAdded.push({ id, meta }); this.ids.add(id); },
     has(id: string) { return this.ids.has(id); },
   };
   const buffer = makeBuffer();
@@ -156,8 +156,14 @@ async function run() {
   const sentContent = JSON.parse(createCall.args.data.content);
   if (sentContent.type !== 'template') fail('Test 1: card content not passed through');
 
-  if (botTrackerAdded.length !== 1 || botTrackerAdded[0] !== 'mock_msg_001') {
+  if (botTrackerAdded.length !== 1 || botTrackerAdded[0].id !== 'mock_msg_001') {
     fail(`Test 1: botTracker not updated: ${JSON.stringify(botTrackerAdded)}`);
+  }
+  if (botTrackerAdded[0].meta.quotedContext?.msgType !== 'interactive') {
+    fail(`Test 1: botTracker missing interactive quoted context: ${JSON.stringify(botTrackerAdded[0])}`);
+  }
+  if (!botTrackerAdded[0].meta.quotedContext?.text?.includes('"template_id":"t1"')) {
+    fail(`Test 1: botTracker quoted context should preserve raw card JSON: ${JSON.stringify(botTrackerAdded[0])}`);
   }
 
   // ── Test 2: invalid card JSON → isError ──
@@ -288,6 +294,13 @@ async function run() {
   const generatedCard = JSON.parse(formatCardCall.args.data.content);
   if (generatedCard.header?.template !== 'red') {
     fail(`Test 9: expected red header template, got ${generatedCard.header?.template}`);
+  }
+  const formatCardTracked = botTrackerAdded.at(-1);
+  if (formatCardTracked?.meta.quotedContext?.msgType !== 'interactive') {
+    fail(`Test 9: generated card missing quoted context: ${JSON.stringify(formatCardTracked)}`);
+  }
+  if (!formatCardTracked?.meta.quotedContext?.text?.includes('short but explicitly carded')) {
+    fail(`Test 9: generated card quoted context missing original text: ${JSON.stringify(formatCardTracked)}`);
   }
 
   // ── Test 10: synthetic reply_to ids must not create any visible Feishu message ──

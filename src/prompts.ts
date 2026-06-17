@@ -24,6 +24,29 @@ export function untrustedDataBlock(label: string, content: string | null | undef
   ].join('\n');
 }
 
+function quotedInteractiveCardRecoveryNote(parentContent: string | undefined): string {
+  if (!parentContent) return '';
+  const messageIds: string[] = [];
+  for (const block of parentContent.split('\n---\n')) {
+    const header = block.split('\ncontent:\n', 1)[0] ?? '';
+    const messageId = header.match(/^message_id:\s*(om_[A-Za-z0-9_]+)\s*$/m)?.[1];
+    if (
+      messageId &&
+      /^msg_type:\s*interactive\s*$/m.test(header) &&
+      /^hydration_status:\s*failed\s*$/m.test(header) &&
+      /^reason:\s*fetch_failed\s*$/m.test(header)
+    ) {
+      messageIds.push(messageId);
+    }
+  }
+  if (messageIds.length === 0) return '';
+  return [
+    '[Quoted Message Recovery]',
+    `The current Lark turn quotes an Interactive Card whose body was not hydrated by the bot identity. If the user's request depends on the quoted card, fetch message_id=${messageIds.join(',')} with available Lark user-context tooling and parse the card content before answering.`,
+    '',
+  ].join('\n');
+}
+
 export function assertSafeChatId(value: string): string {
   if (/[\x00-\x1F\x7F]/.test(value)) {
     throw new Error('chat_id must not contain control characters.');
@@ -162,8 +185,9 @@ export function enrichmentPrompt(
   chatId: string,
   text: string
 ): string {
+  const recoveryNote = quotedInteractiveCardRecoveryNote(parentContent);
   const parentContext = parentContent
-    ? `\n[Quoted Message]\n${untrustedDataBlock('quoted-message', parentContent)}\n`
+    ? `\n[Quoted Message]\n${recoveryNote}${untrustedDataBlock('quoted-message', parentContent)}\n`
     : '';
 
   return `[Memory Context]\n${untrustedDataBlock('memory-context', memoryContext)}\n${parentContext}\n[Current Message]\nFrom: ${senderId} in ${chatId}\n${untrustedDataBlock('current-feishu-message', text)}`;
