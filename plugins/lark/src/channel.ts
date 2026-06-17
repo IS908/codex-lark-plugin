@@ -41,6 +41,7 @@ import {
 } from './inbound-attachment-downloader.js';
 import { DisplayNameResolver } from './display-name-resolver.js';
 import { normalizeLegacyMessageEvent } from './inbound-message-normalizer.js';
+import type { LarkCachedMessageContext } from './lark-message-context.js';
 
 export { resolveMentionPlaceholders } from './message-content.js';
 
@@ -452,13 +453,7 @@ export interface TrackedBotMessage {
   timestamp: number;
 }
 
-export interface TrackedBotMessageQuotedContext {
-  text: string;
-  msgType: string;
-  parentId?: string;
-  rootMessageId?: string;
-  threadId?: string;
-}
+export type TrackedBotMessageQuotedContext = LarkCachedMessageContext;
 
 /**
  * Records the latest inbound user message per (chatId, threadId) pair.

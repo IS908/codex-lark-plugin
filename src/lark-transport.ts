@@ -93,12 +93,30 @@ export interface SdkLarkTransportChannel {
   downloadResource?: (messageId: string, fileKey: string, resourceType: 'image' | 'file') => Promise<unknown>;
   fetchMessage?: (messageId: string) => Promise<{
     messageId?: string;
+    chatId?: string;
+    chat_id?: string;
     parentId?: string;
+    parent_id?: string;
+    replyTo?: string;
+    reply_to?: string;
     rootMessageId?: string;
+    root_id?: string;
     threadId?: string;
+    thread_id?: string;
+    timestampMs?: number;
+    timestamp?: string;
+    createTime?: string;
+    create_time?: string;
+    updateTime?: string;
+    update_time?: string;
+    messagePosition?: string;
+    message_position?: string;
+    sender?: unknown;
     content?: string;
     rawContentType?: string;
     messageType?: string;
+    msg_type?: string;
+    message_type?: string;
   } | undefined>;
   comments?: {
     resolveTarget?: (fileToken: string, fileType: string) => Promise<unknown | null>;
