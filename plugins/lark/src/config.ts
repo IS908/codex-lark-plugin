@@ -99,6 +99,12 @@ export const appConfig = {
   codexExecProfile: process.env.LARK_CODEX_EXEC_PROFILE || null,
   codexExecIgnoreUserConfig: optionalBoolean('LARK_CODEX_EXEC_IGNORE_USER_CONFIG', true),
   codexExecUseSessions: optionalBoolean('LARK_CODEX_EXEC_USE_SESSIONS', true),
+  codexSessionRetentionDays: optionalPositiveNumber('LARK_CODEX_SESSION_RETENTION_DAYS', 14),
+  codexSessionRetentionScanIntervalHours: optionalNonNegativeNumber(
+    'LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS',
+    24,
+  ),
+  codexSessionRetentionDryRun: optionalBoolean('LARK_CODEX_SESSION_RETENTION_DRY_RUN', false),
   sessionHealthEnabled: optionalBoolean('LARK_SESSION_HEALTH_ENABLED', false),
   sessionHealthTurnThreshold: optionalPositiveNumber('LARK_SESSION_HEALTH_TURN_THRESHOLD', 80),
   sessionHealthPromptBytesThreshold: optionalPositiveNumber(

@@ -13,7 +13,10 @@ const code = `
     memoryDedupWindowMs: appConfig.memoryDedupWindowMs,
     inboxMaxBytes: appConfig.inboxMaxBytes,
     codexExecCwd: appConfig.codexExecCwd,
-    channelRuntime: appConfig.channelRuntime
+    channelRuntime: appConfig.channelRuntime,
+    codexSessionRetentionDays: appConfig.codexSessionRetentionDays,
+    codexSessionRetentionScanIntervalHours: appConfig.codexSessionRetentionScanIntervalHours,
+    codexSessionRetentionDryRun: appConfig.codexSessionRetentionDryRun
   }));
 `;
 
@@ -53,6 +56,8 @@ expectFail({ LARK_TEXT_CHUNK_LIMIT: '-1' }, /LARK_TEXT_CHUNK_LIMIT.*positive/i);
 expectFail({ LARK_MIN_SEARCH_SCORE: 'not-a-number' }, /LARK_MIN_SEARCH_SCORE.*number/i);
 expectFail({ LARK_MEMORY_DEDUP_WINDOW_MS: '-1' }, /LARK_MEMORY_DEDUP_WINDOW_MS.*non-negative/i);
 expectFail({ LARK_CHANNEL_RUNTIME: 'claude' }, /LARK_CHANNEL_RUNTIME.*legacy, sdk/i);
+expectFail({ LARK_CODEX_SESSION_RETENTION_DAYS: '0' }, /LARK_CODEX_SESSION_RETENTION_DAYS.*positive/i);
+expectFail({ LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: '-1' }, /LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS.*non-negative/i);
 
 const zeroAllowed = expectOk({
   LARK_MEMORY_DEDUP_WINDOW_MS: '0',
@@ -65,6 +70,12 @@ const defaultPaths = expectOk({});
 assert.match(defaultPaths.codexExecCwd, /codex-exec-workdir$/);
 assert.doesNotMatch(defaultPaths.codexExecCwd, /codex-lark-plugin$/);
 assert.equal(defaultPaths.channelRuntime, 'sdk');
+assert.equal(defaultPaths.codexSessionRetentionDays, 14);
+assert.equal(defaultPaths.codexSessionRetentionScanIntervalHours, 24);
+assert.equal(defaultPaths.codexSessionRetentionDryRun, false);
+
+const retentionDryRun = expectOk({ LARK_CODEX_SESSION_RETENTION_DRY_RUN: 'true' });
+assert.equal(retentionDryRun.codexSessionRetentionDryRun, true);
 
 const sdkRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'sdk' });
 assert.equal(sdkRuntime.channelRuntime, 'sdk');

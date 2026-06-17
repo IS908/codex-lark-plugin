@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.16] - 2026-06-17
+
+### Added
+- Added configurable retention cleanup for Codex exec resume-pointer records under `~/.codex/channels/lark/codex-sessions/`, with a 14-day default TTL, dry-run logging, active/recent/abnormal skips, empty-directory pruning, and cleanup metrics.
+
 ## [1.5.15] - 2026-06-17
 
 ### Fixed
