@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.18] - 2026-06-17
+
+### Fixed
+- Changed quoted-card `messages/mget` hydration to match `lark-cli im +messages-mget`: `GET /open-apis/im/v1/messages/mget?card_msg_content_type=raw_card_content&message_ids=...`, avoiding the previous raw `POST` shape that returned 404 in runtime.
+
 ## [1.5.17] - 2026-06-17
 
 ### Fixed
