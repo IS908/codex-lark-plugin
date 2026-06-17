@@ -183,12 +183,16 @@ export function enrichmentPrompt(
   parentContent: string | undefined,
   senderId: string,
   chatId: string,
-  text: string
+  text: string,
+  recentThreadContext?: string,
 ): string {
   const recoveryNote = quotedInteractiveCardRecoveryNote(parentContent);
+  const recentContext = recentThreadContext
+    ? `\n[Recent Thread Context]\n${untrustedDataBlock('recent-thread-context', recentThreadContext)}\n`
+    : '';
   const parentContext = parentContent
     ? `\n[Quoted Message]\n${recoveryNote}${untrustedDataBlock('quoted-message', parentContent)}\n`
     : '';
 
-  return `[Memory Context]\n${untrustedDataBlock('memory-context', memoryContext)}\n${parentContext}\n[Current Message]\nFrom: ${senderId} in ${chatId}\n${untrustedDataBlock('current-feishu-message', text)}`;
+  return `[Memory Context]\n${untrustedDataBlock('memory-context', memoryContext)}\n${recentContext}${parentContext}\n[Current Message]\nFrom: ${senderId} in ${chatId}\n${untrustedDataBlock('current-feishu-message', text)}`;
 }

@@ -167,7 +167,7 @@ export async function sendFeishuReply(
 
   // Helper: record in buffer + revoke ack (shared by card & normal paths).
   let satisfactionRecorded = false;
-  function recordAndRevokeAck(replyText: string) {
+  function recordAndRevokeAck(replyText: string, messageId?: string) {
     if (satisfactionRecorded) return;
     satisfactionRecorded = true;
 
@@ -176,6 +176,10 @@ export async function sendFeishuReply(
       senderId: 'bot',
       text: replyText.slice(0, 500),
       timestamp: new Date().toISOString(),
+      timestampMs: Date.now(),
+      ...(messageId ? { messageId } : {}),
+      ...(thread_id ? { threadId: thread_id } : {}),
+      messageType: 'text',
     });
 
     if (effectiveReplyTo) {
@@ -207,7 +211,7 @@ export async function sendFeishuReply(
         ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
       });
       trackBotMessage(resp?.messageId, quotedContext);
-      recordAndRevokeAck(text || '[card]');
+      recordAndRevokeAck(text || '[card]', resp?.messageId);
     } catch (err: any) {
       const wrapped = wrapFeishuApiError(err);
       if (wrapped) throw wrapped;
@@ -243,7 +247,7 @@ export async function sendFeishuReply(
           resp?.messageId,
           createQuotedContextFromCardContent(JSON.stringify(cards[i]), text),
         );
-        recordAndRevokeAck(text);
+        recordAndRevokeAck(text, resp?.messageId);
       } catch (err: any) {
         const wrapped = wrapFeishuApiError(err);
         if (wrapped) throw wrapped;
@@ -266,7 +270,7 @@ export async function sendFeishuReply(
           ...(shouldStayInThread && i > 0 ? { replyInThread: true } : {}),
         });
         trackBotMessage(resp?.messageId);
-        recordAndRevokeAck(text);
+        recordAndRevokeAck(text, resp?.messageId);
       } catch (err: any) {
         const wrapped = wrapFeishuApiError(err);
         if (wrapped) throw wrapped;
@@ -289,7 +293,7 @@ export async function sendFeishuReply(
           if (imageKey) {
             const sent = await sendFollowup({ imageKey });
             trackBotMessage((sent as any)?.messageId);
-            recordAndRevokeAck(text || '[image]');
+            recordAndRevokeAck(text || '[image]', (sent as any)?.messageId);
           }
         } else {
           const fileName = path.basename(file.path);
@@ -297,7 +301,7 @@ export async function sendFeishuReply(
           if (fileKey) {
             const sent = await sendFollowup({ fileKey, fileName });
             trackBotMessage((sent as any)?.messageId);
-            recordAndRevokeAck(text || '[file]');
+            recordAndRevokeAck(text || '[file]', (sent as any)?.messageId);
           }
         }
       } catch (err) {

@@ -68,6 +68,14 @@ const cacheBlock = formatLarkMessageContextBlock({
 assert.match(cacheBlock, /source: event/);
 assert.match(cacheBlock, /identity: cache/);
 
+const emptyTextBlock = formatLarkMessageContextBlock({
+  messageId: 'om_empty',
+  text: '',
+  msgType: 'text',
+});
+assert.match(emptyTextBlock, /hydration_status: success/);
+assert.match(emptyTextBlock, /content:\n$/);
+
 const failedBlock = formatLarkMessageContextBlock({
   messageId: 'om_failed',
   text: null,

@@ -214,6 +214,7 @@ assert.equal(longDocCommentReplies.map((r) => r.content).join(' ').replace(/\s+/
 assert.deepEqual(longDocAssistantRecords, [
   {
     chatId: 'doc:dox_doc_long',
+    threadId: 'cmt_doc_long',
     text: `${'a'.repeat(1000)} ${'b'.repeat(1000)} ${'c'.repeat(300)}`,
   },
 ]);

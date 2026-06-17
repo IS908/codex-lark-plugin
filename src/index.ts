@@ -284,12 +284,15 @@ async function main() {
             });
             return { replyId: resp.replyId };
           },
-          recordAssistantMessage: ({ chatId, text }) => {
+          recordAssistantMessage: ({ chatId, threadId, text }) => {
             buffer.record(chatId, {
               role: 'assistant',
               senderId: 'bot',
               text: text.slice(0, 500),
               timestamp: new Date().toISOString(),
+              timestampMs: Date.now(),
+              ...(threadId ? { threadId } : {}),
+              messageType: 'text',
             });
           },
           sessionHealth: sessionHealthMonitor ?? undefined,

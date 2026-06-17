@@ -59,6 +59,7 @@ export interface FormatLarkMessageContextOptions {
   hydrationStatus?: 'success' | 'failed';
   failureReason?: LarkMessageEnvelopeFailureReason;
   includeRecoveryHint?: boolean;
+  current?: boolean;
 }
 
 export function normalizeLarkMessageType(value: string | undefined): string {
@@ -95,17 +96,21 @@ export function formatLarkMessageContextBlock(
   context: LarkMessageContext,
   options: FormatLarkMessageContextOptions = {},
 ): string {
-  const hydrationStatus = options.hydrationStatus ?? (context.text ? 'success' : 'failed');
+  const hydrationStatus = options.hydrationStatus ?? (context.text === null || context.text === undefined ? 'failed' : 'success');
   return hydrationStatus === 'success'
-    ? formatSuccessBlock(context)
+    ? formatSuccessBlock(context, options)
     : formatFailureBlock(context, options);
 }
 
-function formatSuccessBlock(context: LarkMessageContext): string {
+function formatSuccessBlock(
+  context: LarkMessageContext,
+  options: FormatLarkMessageContextOptions,
+): string {
   const normalizedMsgType = normalizeLarkMessageType(context.msgType);
   const interactiveCard = context.interactiveCard ?? fallbackInteractiveCard(context.text ?? '', normalizedMsgType);
   const lines = [
     `kind: lark_message`,
+    ...(options.current ? ['current: true'] : []),
     `role: ${larkMessageRole(context.sender, context.fetchIdentity)}`,
     `source: ${larkMessageSource(context.fetchStage)}`,
     ...(context.fetchIdentity ? [`identity: ${context.fetchIdentity}`] : []),

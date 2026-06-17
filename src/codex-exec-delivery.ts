@@ -29,7 +29,7 @@ export interface CodexExecDeliveryOptions {
   sessionHealth?: CodexExecSessionHealthRecorder;
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
   sendDocCommentReply?: (request: DocCommentExecReplyRequest) => Promise<{ replyId?: string }>;
-  recordAssistantMessage?: (message: { chatId: string; text: string }) => void;
+  recordAssistantMessage?: (message: { chatId: string; threadId?: string; text: string }) => void;
   turnObligations?: TurnObligationTracker;
   actionDispatcher?: CodexExecActionDispatcher;
 }
@@ -235,6 +235,7 @@ export async function deliverMessageViaCodexExec(
     }
     opts.recordAssistantMessage?.({
       chatId: message.chatId,
+      threadId: message.threadId,
       text,
     });
     return;
