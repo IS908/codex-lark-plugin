@@ -4,7 +4,9 @@ import {
   LarkTransportCardContext,
   type LarkFetchedMessageContext,
   type LarkOutboundMessageContextCache,
+  type LarkUserMessageFetcher,
 } from './lark-transport-card-context.js';
+import { createLarkCliUserMessageFetcher } from './lark-user-message-fetch.js';
 import { formatSdkFallbackLog } from './lark-transport-diagnostics.js';
 import {
   editMessageViaRaw,
@@ -108,6 +110,7 @@ export interface LarkTransportOptions {
   sdkChannel?: SdkLarkTransportChannel;
   rawClient?: Lark.Client;
   outboundMessageContextCache?: LarkOutboundMessageContextCache;
+  userMessageFetcher?: LarkUserMessageFetcher;
 }
 
 class DefaultLarkTransport implements LarkTransport {
@@ -122,6 +125,7 @@ class DefaultLarkTransport implements LarkTransport {
       sdkChannel: this.sdkChannel,
       rawClient: this.rawClient,
       outboundMessageContextCache: opts.outboundMessageContextCache,
+      userMessageFetcher: opts.userMessageFetcher,
     });
   }
 
@@ -249,15 +253,24 @@ export function createLarkTransport(opts: LarkTransportOptions): LarkTransport {
 
 export function createOpenApiLarkTransport(
   client: Lark.Client,
-  opts: Pick<LarkTransportOptions, 'outboundMessageContextCache'> = {},
+  opts: Pick<LarkTransportOptions, 'outboundMessageContextCache' | 'userMessageFetcher'> = {},
 ): LarkTransport {
-  return createLarkTransport({ rawClient: client, ...opts });
+  return createLarkTransport({
+    rawClient: client,
+    ...opts,
+    userMessageFetcher: opts.userMessageFetcher ?? createLarkCliUserMessageFetcher(),
+  });
 }
 
 export function createSdkLarkTransport(
   sdkChannel: SdkLarkTransportChannel,
   fallbackClient?: Lark.Client,
-  opts: Pick<LarkTransportOptions, 'outboundMessageContextCache'> = {},
+  opts: Pick<LarkTransportOptions, 'outboundMessageContextCache' | 'userMessageFetcher'> = {},
 ): LarkTransport {
-  return createLarkTransport({ sdkChannel, rawClient: fallbackClient, ...opts });
+  return createLarkTransport({
+    sdkChannel,
+    rawClient: fallbackClient,
+    ...opts,
+    userMessageFetcher: opts.userMessageFetcher ?? createLarkCliUserMessageFetcher(),
+  });
 }

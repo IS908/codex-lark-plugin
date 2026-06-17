@@ -487,6 +487,154 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
 }
 
 {
+  const userFallbackCalls: Array<{ method: string; args?: any }> = [];
+  const userFallbackTransport = createLarkTransport({
+    sdkChannel: {
+      fetchMessage: async (messageId: string) => {
+        userFallbackCalls.push({ method: 'sdk.fetchMessage.placeholder', args: { messageId } });
+        return { messageId, messageType: 'interactive', content: '[Interactive Card]' };
+      },
+    } as any,
+    rawClient: {
+      request: async (args: any) => {
+        userFallbackCalls.push({ method: 'raw.request.mget.placeholder', args });
+        return {
+          data: {
+            messages: [
+              {
+                message_id: 'om_user_fetch_card',
+                msg_type: 'interactive',
+                content: '[Interactive Card]',
+              },
+            ],
+          },
+        };
+      },
+      im: {
+        v1: {
+          message: {
+            get: async (args: any) => {
+              userFallbackCalls.push({ method: 'raw.message.get.empty', args });
+              return { data: { items: [] } };
+            },
+          },
+        },
+      },
+    } as any,
+    userMessageFetcher: {
+      fetchMessage: async (messageId: string) => {
+        userFallbackCalls.push({ method: 'user.fetchMessage', args: { messageId } });
+        return {
+          item: {
+            message_id: messageId,
+            msg_type: 'interactive',
+            content: JSON.stringify({
+              header: { title: { tag: 'plain_text', content: 'User Identity Card' } },
+              elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'Fetched through user identity' } }],
+            }),
+          },
+        };
+      },
+    },
+  } as any);
+
+  assert.deepEqual(await userFallbackTransport.fetchMessageContext('om_user_fetch_card'), {
+    messageId: 'om_user_fetch_card',
+    text: 'User Identity Card\nFetched through user identity',
+    msgType: 'interactive',
+  });
+  assert.deepEqual(userFallbackCalls.map((call) => call.method), [
+    'sdk.fetchMessage.placeholder',
+    'raw.message.get.empty',
+    'raw.request.mget.placeholder',
+    'user.fetchMessage',
+  ]);
+}
+
+{
+  const userAfterBot404Calls: Array<{ method: string; args?: any }> = [];
+  const userAfterBot404Transport = createLarkTransport({
+    sdkChannel: {
+      fetchMessage: async (messageId: string) => {
+        userAfterBot404Calls.push({ method: 'sdk.fetchMessage.placeholder', args: { messageId } });
+        return { messageId, messageType: 'interactive', content: '[Interactive Card]' };
+      },
+    } as any,
+    rawClient: {
+      request: async (args: any) => {
+        userAfterBot404Calls.push({ method: 'raw.request.mget.404', args });
+        const error: any = new Error('Request failed with status code 404');
+        error.response = { status: 404, data: { code: 230001, msg: 'not found' } };
+        throw error;
+      },
+      im: {
+        v1: {
+          message: {
+            get: async (args: any) => {
+              userAfterBot404Calls.push({ method: 'raw.message.get.empty', args });
+              return { data: { items: [] } };
+            },
+          },
+        },
+      },
+    } as any,
+    userMessageFetcher: {
+      fetchMessage: async (messageId: string) => {
+        userAfterBot404Calls.push({ method: 'user.fetchMessage', args: { messageId } });
+        return {
+          item: {
+            message_id: messageId,
+            msg_type: 'interactive',
+            content: JSON.stringify({
+              header: { title: { tag: 'plain_text', content: 'User Visible Card' } },
+              elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'Bot mget could not see this' } }],
+            }),
+          },
+        };
+      },
+    },
+  } as any);
+
+  assert.deepEqual(await userAfterBot404Transport.fetchMessageContext('om_user_after_bot_404'), {
+    messageId: 'om_user_after_bot_404',
+    text: 'User Visible Card\nBot mget could not see this',
+    msgType: 'interactive',
+  });
+  assert.deepEqual(userAfterBot404Calls.map((call) => call.method), [
+    'sdk.fetchMessage.placeholder',
+    'raw.message.get.empty',
+    'raw.request.mget.404',
+    'user.fetchMessage',
+  ]);
+}
+
+{
+  const userUnavailableTransport = createLarkTransport({
+    sdkChannel: {
+      fetchMessage: async (messageId: string) => ({ messageId, messageType: 'interactive', content: '[Interactive Card]' }),
+    } as any,
+    rawClient: {
+      request: async () => ({ data: { messages: [] } }),
+      im: { v1: { message: { get: async () => ({ data: { items: [] } }) } } },
+    } as any,
+    userMessageFetcher: {
+      fetchMessage: async () => ({
+        fetchResult: 'unavailable',
+        diagnostic: 'spawn_error=ENOENT',
+      }),
+    },
+  } as any);
+
+  const failedContext = await userUnavailableTransport.fetchMessageContext('om_user_fetch_unavailable');
+  assert.equal(failedContext?.text, null);
+  assert.equal(failedContext?.msgType, 'interactive');
+  assert.equal(failedContext?.fetchStage, 'user_mget');
+  assert.equal(failedContext?.fetchIdentity, 'user');
+  assert.equal(failedContext?.fetchResult, 'unavailable');
+  assert.equal(failedContext?.diagnostic, 'spawn_error=ENOENT');
+}
+
+{
   const failingMgetTransport = createLarkTransport({
     sdkChannel: {
       fetchMessage: async (messageId: string) => ({ messageId, messageType: 'interactive', content: '[Interactive Card]' }),

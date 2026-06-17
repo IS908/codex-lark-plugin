@@ -171,6 +171,10 @@ export const appConfig = {
   cardContextCacheTtlMs: optionalNonNegativeNumber('LARK_CARD_CONTEXT_CACHE_TTL_MS', 30 * 60 * 1000),
   quotedContextMaxDepth: optionalPositiveNumber('LARK_QUOTED_CONTEXT_MAX_DEPTH', 4),
   quotedContextMaxBytes: optionalPositiveNumber('LARK_QUOTED_CONTEXT_MAX_BYTES', 12_000),
+  quotedCardUserFetchEnabled: optionalBoolean('LARK_QUOTED_CARD_USER_FETCH_ENABLED', true),
+  quotedCardUserFetchCommand: optional('LARK_QUOTED_CARD_USER_FETCH_COMMAND', 'lark-cli'),
+  quotedCardUserFetchTimeoutMs: optionalPositiveNumber('LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS', 10_000),
+  quotedCardUserFetchMaxBytes: optionalPositiveNumber('LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES', 256 * 1024),
 
   // Paths
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),

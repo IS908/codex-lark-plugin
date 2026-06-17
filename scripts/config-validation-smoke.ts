@@ -16,7 +16,11 @@ const code = `
     channelRuntime: appConfig.channelRuntime,
     codexSessionRetentionDays: appConfig.codexSessionRetentionDays,
     codexSessionRetentionScanIntervalHours: appConfig.codexSessionRetentionScanIntervalHours,
-    codexSessionRetentionDryRun: appConfig.codexSessionRetentionDryRun
+    codexSessionRetentionDryRun: appConfig.codexSessionRetentionDryRun,
+    quotedCardUserFetchEnabled: appConfig.quotedCardUserFetchEnabled,
+    quotedCardUserFetchCommand: appConfig.quotedCardUserFetchCommand,
+    quotedCardUserFetchTimeoutMs: appConfig.quotedCardUserFetchTimeoutMs,
+    quotedCardUserFetchMaxBytes: appConfig.quotedCardUserFetchMaxBytes
   }));
 `;
 
@@ -58,6 +62,8 @@ expectFail({ LARK_MEMORY_DEDUP_WINDOW_MS: '-1' }, /LARK_MEMORY_DEDUP_WINDOW_MS.*
 expectFail({ LARK_CHANNEL_RUNTIME: 'claude' }, /LARK_CHANNEL_RUNTIME.*legacy, sdk/i);
 expectFail({ LARK_CODEX_SESSION_RETENTION_DAYS: '0' }, /LARK_CODEX_SESSION_RETENTION_DAYS.*positive/i);
 expectFail({ LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: '-1' }, /LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS.*non-negative/i);
+expectFail({ LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS: '0' }, /LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS.*positive/i);
+expectFail({ LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES: '0' }, /LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES.*positive/i);
 
 const zeroAllowed = expectOk({
   LARK_MEMORY_DEDUP_WINDOW_MS: '0',
@@ -73,9 +79,25 @@ assert.equal(defaultPaths.channelRuntime, 'sdk');
 assert.equal(defaultPaths.codexSessionRetentionDays, 14);
 assert.equal(defaultPaths.codexSessionRetentionScanIntervalHours, 24);
 assert.equal(defaultPaths.codexSessionRetentionDryRun, false);
+assert.equal(defaultPaths.quotedCardUserFetchEnabled, true);
+assert.equal(defaultPaths.quotedCardUserFetchCommand, 'lark-cli');
+assert.equal(defaultPaths.quotedCardUserFetchTimeoutMs, 10_000);
+assert.equal(defaultPaths.quotedCardUserFetchMaxBytes, 256 * 1024);
 
 const retentionDryRun = expectOk({ LARK_CODEX_SESSION_RETENTION_DRY_RUN: 'true' });
 assert.equal(retentionDryRun.codexSessionRetentionDryRun, true);
+
+const userFetchDisabled = expectOk({ LARK_QUOTED_CARD_USER_FETCH_ENABLED: 'false' });
+assert.equal(userFetchDisabled.quotedCardUserFetchEnabled, false);
+
+const customUserFetch = expectOk({
+  LARK_QUOTED_CARD_USER_FETCH_COMMAND: '/usr/local/bin/lark-cli',
+  LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS: '2500',
+  LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES: '1024',
+});
+assert.equal(customUserFetch.quotedCardUserFetchCommand, '/usr/local/bin/lark-cli');
+assert.equal(customUserFetch.quotedCardUserFetchTimeoutMs, 2500);
+assert.equal(customUserFetch.quotedCardUserFetchMaxBytes, 1024);
 
 const sdkRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'sdk' });
 assert.equal(sdkRuntime.channelRuntime, 'sdk');
