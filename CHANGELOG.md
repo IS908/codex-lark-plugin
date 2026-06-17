@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.17] - 2026-06-17
+
+### Fixed
+- Fixed quoted Interactive Card hydration fallback for Feishu `messages/mget` responses that expose message content at the top-level `content` field, and surfaced safe `fetch_stage`/diagnostic metadata when quoted-message hydration still fails.
+
 ## [1.5.16] - 2026-06-17
 
 ### Added

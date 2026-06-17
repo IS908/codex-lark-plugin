@@ -400,4 +400,85 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
   assert.deepEqual(calls.slice(before).map((call) => call.method), ['sdk.fetchMessage.json']);
 }
 
+{
+  const runtimeCalls: Array<{ method: string; args?: any }> = [];
+  const runtimeMgetTransport = createLarkTransport({
+    sdkChannel: {
+      fetchMessage: async (messageId: string) => {
+        runtimeCalls.push({ method: 'sdk.fetchMessage.placeholder', args: { messageId } });
+        return { messageId, messageType: 'interactive', content: '[Interactive Card]' };
+      },
+    } as any,
+    rawClient: {
+      request: async (args: any) => {
+        runtimeCalls.push({ method: 'raw.request.mget', args });
+        return {
+          data: {
+            messages: [
+              {
+                message_id: 'om_cli_card',
+                msg_type: 'interactive',
+                content: JSON.stringify({
+                  header: { title: { tag: 'plain_text', content: 'CLI Card' } },
+                  elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'Fetched through runtime mget' } }],
+                }),
+              },
+            ],
+          },
+        };
+      },
+      im: {
+        v1: {
+          message: {
+            get: async (args: any) => {
+              runtimeCalls.push({ method: 'raw.message.get', args });
+              return { data: { items: [] } };
+            },
+          },
+        },
+      },
+    } as any,
+  });
+
+  assert.deepEqual(await runtimeMgetTransport.fetchMessageContext('om_cli_card'), {
+    messageId: 'om_cli_card',
+    text: 'CLI Card\nFetched through runtime mget',
+    msgType: 'interactive',
+  });
+  assert.deepEqual(runtimeCalls.map((call) => call.method), [
+    'sdk.fetchMessage.placeholder',
+    'raw.message.get',
+    'raw.request.mget',
+  ]);
+}
+
+{
+  const failingMgetTransport = createLarkTransport({
+    sdkChannel: {
+      fetchMessage: async (messageId: string) => ({ messageId, messageType: 'interactive', content: '[Interactive Card]' }),
+    } as any,
+    rawClient: {
+      request: async () => {
+        const error: any = new Error('Feishu request failed');
+        error.response = {
+          data: {
+            code: 230001,
+            msg: 'invalid parameter',
+            error: { log_id: '202606170001' },
+          },
+        };
+        throw error;
+      },
+      im: { v1: { message: { get: async () => ({ data: { items: [] } }) } } },
+    } as any,
+  });
+
+  const failedContext = await failingMgetTransport.fetchMessageContext('om_failed_card');
+  assert.equal(failedContext?.text, null);
+  assert.equal(failedContext?.msgType, 'interactive');
+  assert.equal(failedContext?.fetchStage, 'raw_mget');
+  assert.match(failedContext?.diagnostic ?? '', /code=230001/);
+  assert.match(failedContext?.diagnostic ?? '', /log_id=202606170001/);
+}
+
 console.log('lark-transport smoke: PASS');

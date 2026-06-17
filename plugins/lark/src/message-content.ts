@@ -122,9 +122,27 @@ export function normalizeMessageMentions(item: any): MessageMention[] {
   }));
 }
 
+function normalizeRawContent(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+export function messageItemRawContent(item: any): string | null {
+  const body = item?.body;
+  if (body && typeof body === 'object' && 'content' in body) {
+    return normalizeRawContent(body.content);
+  }
+  if (item && typeof item === 'object' && 'content' in item) {
+    return normalizeRawContent(item.content);
+  }
+  return normalizeRawContent(body);
+}
+
 export function messageItemText(item: any): { text: string; messageType: string } | null {
-  const content = item?.body?.content;
-  if (!content) return null;
+  const content = messageItemRawContent(item);
+  if (content === null) return null;
   const messageType = item.msg_type ?? item.message_type ?? 'text';
   const text = resolveMentionPlaceholders(
     fetchedMessageContentText(content, messageType),
