@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import path from 'node:path';
 process.env.LARK_APP_ID = process.env.LARK_APP_ID || 'cli_test_app_id';
 process.env.LARK_APP_SECRET = process.env.LARK_APP_SECRET || 'test_app_secret';
 process.env.LARK_QUOTED_CARD_USER_FETCH_ENABLED = 'true';
-process.env.LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS = '500';
+process.env.LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS = '1000';
 
 const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-user-fetch-'));
 const fakeCli = path.join(tmpDir, 'fake-lark-cli');
@@ -23,6 +24,10 @@ fi
 if [ "$FAKE_LARK_CLI_MODE" = "fail" ]; then
   echo 'token=supersecret failure' >&2
   exit 7
+fi
+if [ "$FAKE_LARK_CLI_MODE" = "malformed" ]; then
+  printf '%s\\n' '{"messages":['
+  exit 0
 fi
 printf '%s\\n' '{"messages":[{"message_id":"om_cli_user_card","msg_type":"interactive","content":"{\\"header\\":{\\"title\\":{\\"tag\\":\\"plain_text\\",\\"content\\":\\"CLI User Card\\"}},\\"elements\\":[{\\"tag\\":\\"div\\",\\"text\\":{\\"tag\\":\\"plain_text\\",\\"content\\":\\"Fetched by fake user cli\\"}}]}"}],"total":1}'
 `);
@@ -57,8 +62,16 @@ assert.ok(fetcher, 'fetcher should be enabled');
   const elapsedMs = Date.now() - startedAt;
   assert.equal(result?.item, undefined);
   assert.equal(result?.fetchResult, 'timeout');
-  assert.equal(result?.diagnostic, 'timeout_ms=500');
-  assert.ok(elapsedMs < 1500, `timeout should return promptly, elapsed=${elapsedMs}ms`);
+  assert.equal(result?.diagnostic, 'timeout_ms=1000');
+  assert.ok(elapsedMs < 1800, `timeout should return promptly, elapsed=${elapsedMs}ms`);
+}
+
+{
+  process.env.FAKE_LARK_CLI_MODE = 'malformed';
+  const result = await fetcher.fetchMessage('om_cli_user_card');
+  assert.equal(result?.item, undefined);
+  assert.equal(result?.fetchResult, 'error');
+  assert.match(result?.diagnostic ?? '', /json_parse_error=/);
 }
 
 {
@@ -69,6 +82,32 @@ assert.ok(fetcher, 'fetcher should be enabled');
   assert.match(result?.diagnostic ?? '', /exit_code=7/);
   assert.doesNotMatch(result?.diagnostic ?? '', /supersecret/);
   assert.match(result?.diagnostic ?? '', /token=\[redacted\]/);
+}
+
+{
+  const unavailableCommand = path.join(tmpDir, 'missing-lark-cli');
+  const code = `
+    process.env.LARK_APP_ID = 'cli_test_app_id';
+    process.env.LARK_APP_SECRET = 'test_app_secret';
+    process.env.LARK_QUOTED_CARD_USER_FETCH_ENABLED = 'true';
+    process.env.LARK_QUOTED_CARD_USER_FETCH_COMMAND = ${JSON.stringify(unavailableCommand)};
+    const { createLarkCliUserMessageFetcher } = await import('./src/lark-user-message-fetch.js');
+    const result = await createLarkCliUserMessageFetcher().fetchMessage('om_missing_cli');
+    console.log(JSON.stringify(result));
+  `;
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: tmpDir,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.item, undefined);
+  assert.equal(parsed.fetchResult, 'unavailable');
+  assert.match(parsed.diagnostic, /spawn_error=ENOENT/);
 }
 
 console.log('lark-user-message-fetch smoke: PASS');
