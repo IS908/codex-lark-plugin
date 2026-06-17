@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-06-18
+
+### Added
+- Added recent Lark thread context rendering so prompts can include the nearby chat turns that led into the current message without duplicating quoted-message bodies.
+
+### Changed
+- Consolidated Lark message context schema and envelope rendering behind shared helpers used by quoted-message hydration, outbound cache context, and recent-thread context.
+- Split memory enrichment, doc-comment inbound handling, and inbound turn preparation out of `LarkChannel` to keep channel orchestration boundaries focused.
+
 ## [1.6.0] - 2026-06-17
 
 ### Added
