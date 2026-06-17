@@ -35,6 +35,7 @@ import { createCodexExecActionDispatcher } from './codex-exec-actions.js';
 import { ProfileDistillationManager } from './profile-distillation.js';
 import { validateSdkChannelScaffold } from './sdk-channel-scaffold.js';
 import { startSdkChannelRuntime } from './sdk-channel-runtime.js';
+import { startCodexSessionRetention } from './codex-session-retention.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
@@ -409,6 +410,7 @@ async function main() {
   await scheduler.start();
 
   runStartupResourceCleanup(memoryStore);
+  startCodexSessionRetention();
 
   console.error('[index] codex-lark-plugin started successfully');
 }

@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.5.15-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.5.16-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -409,8 +409,9 @@ such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 
 Session-health nudges are off by default and only run when
 `LARK_SESSION_HEALTH_ENABLED=true`, `LARK_OWNER_OPEN_ID` is set, and Codex exec
-session resume is enabled. The plugin does not clear, compact, or reset Codex
-sessions automatically.
+session resume is enabled. Session retention only prunes this plugin's
+`codex-sessions/` resume-pointer JSON files; it does not clear, compact, reset,
+or delete Codex CLI transcript/session data.
 
 When Codex exec JSONL exposes token/context usage, the monitor uses that real
 usage before falling back to the weaker heuristic of exec turn count and prompt
@@ -431,6 +432,20 @@ process restarts.
 | `LARK_SESSION_HEALTH_COOLDOWN_MS` | `1800000` | First nudge cooldown in milliseconds |
 | `LARK_SESSION_HEALTH_MAX_COOLDOWN_MS` | `21600000` | Maximum exponential cooldown in milliseconds |
 | `LARK_SESSION_HEALTH_MAX_NUDGES` | `3` | Maximum nudges per heuristic session episode |
+
+### Optional -- Codex Exec Session Retention
+
+The plugin stores one small resume pointer per Feishu `chat_id` / `thread_id`
+under `~/.codex/channels/lark/codex-sessions/`. Retention cleanup bounds that
+pointer directory; it does not delete Codex's own session transcripts. Records
+are eligible only after the TTL, and active, recently touched, malformed, or
+incomplete records are skipped. Set dry-run mode to preview candidates in logs.
+
+| Variable | Default | Description |
+|---|---|---|
+| `LARK_CODEX_SESSION_RETENTION_DAYS` | `14` | Keep Codex exec resume-pointer records newer than this many days |
+| `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` | `24` | Periodic cleanup interval. Set `0` to disable automatic cleanup. |
+| `LARK_CODEX_SESSION_RETENTION_DRY_RUN` | `false` | Preview eligible records and emit counts without deleting files |
 
 ### Optional -- Memory
 
@@ -516,7 +531,10 @@ Step 4: Advanced tuning (optional)
      LARK_LOG_MAX_BYTES, LARK_LOG_MAX_FILES, LARK_INBOX_MAX_AGE_HOURS,
      LARK_INBOX_MAX_BYTES, LARK_NAME_CACHE_SIZE,
      LARK_CHAT_TYPE_CACHE_SIZE, LARK_LATEST_MESSAGE_TRACKER_SIZE,
-     LARK_QUOTED_CONTEXT_MAX_DEPTH, LARK_QUOTED_CONTEXT_MAX_BYTES
+     LARK_QUOTED_CONTEXT_MAX_DEPTH, LARK_QUOTED_CONTEXT_MAX_BYTES,
+     LARK_CODEX_SESSION_RETENTION_DAYS,
+     LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS,
+     LARK_CODEX_SESSION_RETENTION_DRY_RUN
 
 Step 5: Write config
   -> ~/.codex/channels/lark/.env

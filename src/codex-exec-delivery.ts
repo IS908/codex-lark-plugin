@@ -118,6 +118,11 @@ function collectImagePaths(message: LarkMessage): string[] {
 }
 
 const defaultSessionStore = new FileCodexExecSessionStore(appConfig.codexExecSessionsDir);
+const activeCodexExecSessionKeys = new Set<string>();
+
+export function getActiveCodexExecSessionKeys(): ReadonlySet<string> {
+  return new Set(activeCodexExecSessionKeys);
+}
 
 export async function deliverMessageViaCodexExec(
   opts: CodexExecDeliveryOptions,
@@ -144,6 +149,7 @@ export async function deliverMessageViaCodexExec(
 
   let result;
   let usedResumeSessionId = request.resumeSessionId;
+  if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
   try {
     result = normalizeCodexExecResult(await runCodexExec(request));
   } catch (err) {
@@ -157,6 +163,8 @@ export async function deliverMessageViaCodexExec(
       await runCodexExec({ ...request, resumeSessionId: null }),
     );
     usedResumeSessionId = null;
+  } finally {
+    if (useCodexSessions) activeCodexExecSessionKeys.delete(sessionKey);
   }
 
   if (useCodexSessions && result.sessionId) {
