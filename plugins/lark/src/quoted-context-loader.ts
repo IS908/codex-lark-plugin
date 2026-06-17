@@ -15,6 +15,9 @@ export interface FetchedQuotedMessage {
   parentId?: string;
   rootMessageId?: string;
   threadId?: string;
+  fetchStage?: string;
+  diagnostic?: string;
+  hydrationErrorReason?: 'fetch_failed';
 }
 
 export interface QuotedContextTransport {
@@ -70,7 +73,13 @@ export async function addQuotedContext(
 
     const fetched = await fetchQuotedMessage(transport, currentMessageId);
     if (!fetched?.text || isPlaceholderCardText(fetched.text, fetched.msgType)) {
-      blocks.push(formatFailureBlock(currentMessageId, fetched?.msgType, 'fetch_failed'));
+      blocks.push(formatFailureBlock({
+        messageId: currentMessageId,
+        msgType: fetched?.msgType,
+        reason: fetched?.hydrationErrorReason ?? 'fetch_failed',
+        fetchStage: fetched?.fetchStage,
+        diagnostic: fetched?.diagnostic,
+      }));
       break;
     }
 
@@ -89,7 +98,11 @@ export async function addQuotedContext(
     });
 
     if (utf8Bytes(joinBlocks([...blocks, block])) > maxBytes) {
-      blocks.push(formatFailureBlock(resolvedMessageId, fetched.msgType, 'token_budget_exceeded'));
+      blocks.push(formatFailureBlock({
+        messageId: resolvedMessageId,
+        msgType: fetched.msgType,
+        reason: 'token_budget_exceeded',
+      }));
       break;
     }
 
@@ -139,17 +152,24 @@ function formatSuccessBlock(input: {
   return lines.join('\n');
 }
 
-function formatFailureBlock(
-  messageId: string,
-  msgType: string | undefined,
-  reason: 'fetch_failed' | 'token_budget_exceeded',
-): string {
-  return [
-    `message_id: ${messageId}`,
-    `msg_type: ${msgType || 'unknown'}`,
+function formatFailureBlock(input: {
+  messageId: string;
+  msgType: string | undefined;
+  reason: 'fetch_failed' | 'token_budget_exceeded';
+  fetchStage?: string;
+  diagnostic?: string;
+}): string {
+  const lines = [
+    `message_id: ${input.messageId}`,
+    `msg_type: ${input.msgType || 'unknown'}`,
     `hydration_status: failed`,
-    `reason: ${reason}`,
-  ].join('\n');
+    `reason: ${input.reason}`,
+  ];
+  const fetchStage = normalizeMetadataValue(input.fetchStage);
+  const diagnostic = normalizeMetadataValue(input.diagnostic);
+  if (fetchStage) lines.push(`fetch_stage: ${fetchStage}`);
+  if (diagnostic) lines.push(`diagnostic: ${diagnostic}`);
+  return lines.join('\n');
 }
 
 function joinBlocks(blocks: string[]): string {
@@ -163,4 +183,10 @@ function normalizePositiveInteger(value: number | undefined, fallback: number): 
 
 function utf8Bytes(value: string): number {
   return Buffer.byteLength(value, 'utf8');
+}
+
+function normalizeMetadataValue(value: string | undefined): string | undefined {
+  const normalized = value?.replace(/\s+/g, ' ').trim();
+  if (!normalized) return undefined;
+  return normalized.length > 240 ? `${normalized.slice(0, 237)}...` : normalized;
 }

@@ -99,6 +99,30 @@ assert.equal(
 {
   const message = {
     messageId: 'om_current',
+    parentId: 'om_failed_card',
+  };
+  const result = await addQuotedContext(message, {
+    fetchMessageText: async () => null,
+    fetchMessageContext: async () => ({
+      messageId: 'om_failed_card',
+      text: null,
+      msgType: 'interactive',
+      fetchStage: 'raw_mget',
+      diagnostic: 'code=230001 log_id=202606170001',
+    } as any),
+  });
+
+  assert.deepEqual(result, { quotedMessageId: 'om_failed_card', loaded: false });
+  assert.match(message.parentContent ?? '', /message_id: om_failed_card/);
+  assert.match(message.parentContent ?? '', /hydration_status: failed/);
+  assert.match(message.parentContent ?? '', /reason: fetch_failed/);
+  assert.match(message.parentContent ?? '', /fetch_stage: raw_mget/);
+  assert.match(message.parentContent ?? '', /diagnostic: code=230001 log_id=202606170001/);
+}
+
+{
+  const message = {
+    messageId: 'om_current',
     threadId: 'omt_thread',
   };
   let fetchCalled = false;

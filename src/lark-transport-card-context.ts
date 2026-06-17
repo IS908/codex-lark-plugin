@@ -8,6 +8,9 @@ import {
 } from './message-content.js';
 import type { SdkLarkTransportChannel } from './lark-transport.js';
 
+export type LarkMessageFetchStage = 'sdk_fetch' | 'raw_get' | 'raw_mget';
+export type LarkMessageHydrationReason = 'fetch_failed';
+
 export interface LarkFetchedMessageContext {
   messageId: string;
   text: string | null;
@@ -15,6 +18,9 @@ export interface LarkFetchedMessageContext {
   parentId?: string;
   rootMessageId?: string;
   threadId?: string;
+  fetchStage?: LarkMessageFetchStage;
+  diagnostic?: string;
+  hydrationErrorReason?: LarkMessageHydrationReason;
 }
 
 export class LarkTransportCardContext {
@@ -39,33 +45,31 @@ export class LarkTransportCardContext {
     const cached = this.getCachedMessageContext(messageId);
     if (cached) return cached;
 
+    const attempts: LarkFetchedMessageContext[] = [];
+
     const sdkContext = await this.fetchMessageContextViaSdk(messageId);
+    if (sdkContext) attempts.push(sdkContext);
     if (sdkContext?.text && !isPlaceholderCardText(sdkContext.text, sdkContext.msgType)) {
       this.setCachedMessageContext(messageId, sdkContext);
       return sdkContext;
     }
 
-    const rawGetContext = sdkContext ? null : await this.fetchMessageContextViaRawGet(messageId);
+    const rawGetContext = await this.fetchMessageContextViaRawGet(messageId);
+    if (rawGetContext) attempts.push(rawGetContext);
     if (rawGetContext?.text && !isPlaceholderCardText(rawGetContext.text, rawGetContext.msgType)) {
       this.setCachedMessageContext(messageId, rawGetContext);
       return rawGetContext;
     }
 
     const fallback = await this.fetchCardContextViaMget(messageId);
+    if (fallback) attempts.push(fallback);
     if (fallback?.text && !isPlaceholderCardText(fallback.text, fallback.msgType)) {
       const merged = mergeContexts(messageId, sdkContext ?? rawGetContext, fallback);
       this.setCachedMessageContext(messageId, merged);
       return merged;
     }
 
-    const placeholderContext = sdkContext ?? rawGetContext ?? fallback;
-    if (!placeholderContext) return null;
-    return {
-      ...placeholderContext,
-      text: placeholderContext.text && !isPlaceholderCardText(placeholderContext.text, placeholderContext.msgType)
-        ? placeholderContext.text
-        : null,
-    };
+    return unresolvedContextFromAttempts(messageId, attempts);
   }
 
   private getCachedMessageContext(messageId: string): LarkFetchedMessageContext | null {
@@ -94,9 +98,9 @@ export class LarkTransportCardContext {
     try {
       const message = await this.sdkChannel.fetchMessage(messageId);
       if (!message) return null;
-      return sdkMessageContext(messageId, message);
-    } catch {
-      return null;
+      return markUnresolvedIfNeeded(sdkMessageContext(messageId, message), 'sdk_fetch');
+    } catch (error) {
+      return createUnresolvedContext(messageId, 'unknown', 'sdk_fetch', safeFetchDiagnostic(error));
     }
   }
 
@@ -110,9 +114,10 @@ export class LarkTransportCardContext {
         }),
       );
       const item = (resp as any)?.data?.items?.[0];
-      return messageItemContext(messageId, item);
-    } catch {
-      return null;
+      if (!item) return createUnresolvedContext(messageId, 'unknown', 'raw_get', 'empty_response');
+      return messageItemContext(messageId, item, 'raw_get');
+    } catch (error) {
+      return createUnresolvedContext(messageId, 'unknown', 'raw_get', safeFetchDiagnostic(error));
     }
   }
 
@@ -132,9 +137,10 @@ export class LarkTransportCardContext {
       const item = Array.isArray(items)
         ? items.find((candidate: any) => !candidate?.message_id || candidate.message_id === messageId) ?? items[0]
         : null;
-      return messageItemContext(messageId, item);
-    } catch {
-      return null;
+      if (!item) return createUnresolvedContext(messageId, 'unknown', 'raw_mget', 'empty_response');
+      return messageItemContext(messageId, item, 'raw_mget');
+    } catch (error) {
+      return createUnresolvedContext(messageId, 'unknown', 'raw_mget', safeFetchDiagnostic(error));
     }
   }
 }
@@ -152,18 +158,22 @@ function sdkMessageContext(messageId: string, message: any): LarkFetchedMessageC
   });
 }
 
-function messageItemContext(messageId: string, item: any): LarkFetchedMessageContext | null {
+function messageItemContext(
+  messageId: string,
+  item: any,
+  fetchStage: LarkMessageFetchStage,
+): LarkFetchedMessageContext | null {
   if (!item) return null;
   const text = messageItemText(item);
   const msgType = text?.messageType ?? item.msg_type ?? item.message_type ?? 'text';
-  return normalizeContext({
+  return markUnresolvedIfNeeded(normalizeContext({
     messageId: item.message_id ?? item.messageId ?? messageId,
     text: text?.text ?? null,
     msgType,
     parentId: item.parent_id ?? item.parentId,
     rootMessageId: item.root_id ?? item.rootMessageId,
     threadId: item.thread_id ?? item.threadId,
-  });
+  }), fetchStage, text ? undefined : 'missing_message_content');
 }
 
 function mergeContexts(
@@ -190,5 +200,82 @@ function normalizeContext(context: LarkFetchedMessageContext): LarkFetchedMessag
   if (context.parentId) normalized.parentId = context.parentId;
   if (context.rootMessageId) normalized.rootMessageId = context.rootMessageId;
   if (context.threadId) normalized.threadId = context.threadId;
+  if (context.fetchStage) normalized.fetchStage = context.fetchStage;
+  if (context.diagnostic) normalized.diagnostic = context.diagnostic;
+  if (context.hydrationErrorReason) normalized.hydrationErrorReason = context.hydrationErrorReason;
   return normalized;
+}
+
+function markUnresolvedIfNeeded(
+  context: LarkFetchedMessageContext,
+  fetchStage: LarkMessageFetchStage,
+  diagnostic?: string,
+): LarkFetchedMessageContext {
+  if (context.text && !isPlaceholderCardText(context.text, context.msgType)) return context;
+  return normalizeContext({
+    ...context,
+    fetchStage,
+    diagnostic: diagnostic ?? (context.text ? 'placeholder_content' : undefined),
+    hydrationErrorReason: 'fetch_failed',
+  });
+}
+
+function createUnresolvedContext(
+  messageId: string,
+  msgType: string,
+  fetchStage: LarkMessageFetchStage,
+  diagnostic?: string,
+): LarkFetchedMessageContext {
+  return normalizeContext({
+    messageId,
+    text: null,
+    msgType,
+    fetchStage,
+    diagnostic,
+    hydrationErrorReason: 'fetch_failed',
+  });
+}
+
+function unresolvedContextFromAttempts(
+  requestedMessageId: string,
+  attempts: LarkFetchedMessageContext[],
+): LarkFetchedMessageContext | null {
+  if (attempts.length === 0) return null;
+  const metadata = attempts.find((attempt) => attempt.msgType !== 'unknown') ?? attempts[0];
+  const failedAttempt = [...attempts].reverse().find((attempt) => attempt.fetchStage) ?? metadata;
+  return normalizeContext({
+    messageId: metadata.messageId || requestedMessageId,
+    text: null,
+    msgType: metadata.msgType || failedAttempt.msgType || 'unknown',
+    parentId: metadata.parentId ?? failedAttempt.parentId,
+    rootMessageId: metadata.rootMessageId ?? failedAttempt.rootMessageId,
+    threadId: metadata.threadId ?? failedAttempt.threadId,
+    fetchStage: failedAttempt.fetchStage,
+    diagnostic: failedAttempt.diagnostic,
+    hydrationErrorReason: failedAttempt.hydrationErrorReason ?? 'fetch_failed',
+  });
+}
+
+function safeFetchDiagnostic(error: unknown): string | undefined {
+  const candidate = error as any;
+  const responseData = candidate?.response?.data ?? candidate?.data ?? candidate?.cause?.response?.data;
+  const code = responseData?.code ?? candidate?.code;
+  const status = candidate?.response?.status ?? candidate?.status ?? candidate?.cause?.response?.status;
+  const logId = responseData?.error?.log_id ?? responseData?.log_id ?? responseData?.LogId ?? candidate?.logId;
+  const message = responseData?.msg ?? responseData?.message ?? (error instanceof Error ? error.message : undefined);
+  const parts: string[] = [];
+  if (code !== undefined && code !== null) parts.push(`code=${code}`);
+  if (status !== undefined && status !== null) parts.push(`status=${status}`);
+  if (logId) parts.push(`log_id=${logId}`);
+  if (message) parts.push(`message=${message}`);
+  return sanitizeDiagnostic(parts.join(' '));
+}
+
+function sanitizeDiagnostic(value: string | undefined): string | undefined {
+  const sanitized = value
+    ?.replace(/\s+/g, ' ')
+    .replace(/((?:app|tenant)_access_token|authorization|secret|token)=\S+/gi, '$1=[redacted]')
+    .trim();
+  if (!sanitized) return undefined;
+  return sanitized.length > 240 ? `${sanitized.slice(0, 237)}...` : sanitized;
 }

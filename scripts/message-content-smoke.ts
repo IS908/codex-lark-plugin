@@ -86,6 +86,19 @@ const legacyCard = {
     mentions: [{ id: { open_id: 'ou_bob' }, name: 'Bob' }],
   };
   assert.deepEqual(messageItemText(item), { text: '@Bob approved', messageType: 'text' });
+
+  const mgetCliShapeItem = {
+    message_id: 'om_cli_card',
+    msg_type: 'interactive',
+    content: JSON.stringify({
+      header: { title: { tag: 'plain_text', content: 'CLI Card' } },
+      elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'Fetched through mget' } }],
+    }),
+  };
+  assert.deepEqual(messageItemText(mgetCliShapeItem), {
+    text: 'CLI Card\nFetched through mget',
+    messageType: 'interactive',
+  });
 }
 
 {
