@@ -32,7 +32,7 @@ function quotedInteractiveCardRecoveryNote(parentContent: string | undefined): s
     const messageId = header.match(/^message_id:\s*(om_[A-Za-z0-9_]+)\s*$/m)?.[1];
     if (
       messageId &&
-      /^msg_type:\s*interactive\s*$/m.test(header) &&
+      /^msg_type:\s*interactive(?:_card)?\s*$/m.test(header) &&
       /^hydration_status:\s*failed\s*$/m.test(header) &&
       /^reason:\s*fetch_failed\s*$/m.test(header)
     ) {

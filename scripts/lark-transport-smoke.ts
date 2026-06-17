@@ -368,6 +368,15 @@ assert.deepEqual(cardMessageContext, {
   text: 'Deploy Card\nStatus green',
   msgType: 'interactive',
   parentId: 'om_parent_text',
+  replyTo: 'om_parent_text',
+  interactiveCard: {
+    title: 'Deploy Card',
+    text: 'Deploy Card\nStatus green',
+    rawContentShape: 'feishu_card_json',
+  },
+  fetchStage: 'raw_mget',
+  fetchIdentity: 'bot',
+  fetchResult: 'success',
 });
 assert.equal(isPlaceholderCardText('[Interactive Card]', 'interactive'), true);
 assert.equal(calls.some((call) => call.method === 'raw.request'), true);
@@ -396,6 +405,15 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
     text: 'SDK Card\nFrom SDK JSON',
     msgType: 'interactive',
     parentId: 'om_sdk_parent',
+    replyTo: 'om_sdk_parent',
+    interactiveCard: {
+      title: 'SDK Card',
+      text: 'SDK Card\nFrom SDK JSON',
+      rawContentShape: 'feishu_card_json',
+    },
+    fetchStage: 'sdk_fetch',
+    fetchIdentity: 'bot',
+    fetchResult: 'success',
   });
   assert.deepEqual(calls.slice(before).map((call) => call.method), ['sdk.fetchMessage.json']);
 }
@@ -478,11 +496,72 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
     messageId: 'om_cli_card',
     text: 'CLI Card\nFetched through runtime mget',
     msgType: 'interactive',
+    interactiveCard: {
+      title: 'CLI Card',
+      text: 'CLI Card\nFetched through runtime mget',
+      rawContentShape: 'feishu_card_json',
+    },
+    fetchStage: 'raw_mget',
+    fetchIdentity: 'bot',
+    fetchResult: 'success',
   });
   assert.deepEqual(runtimeCalls.map((call) => call.method), [
     'sdk.fetchMessage.placeholder',
     'raw.message.get',
     'raw.request.mget',
+  ]);
+}
+
+{
+  const compactCalls: Array<{ method: string; args?: any }> = [];
+  const compactCardTransport = createLarkTransport({
+    rawClient: {
+      request: async (args: any) => {
+        compactCalls.push({ method: 'raw.request.mget.compact', args });
+        return {
+          data: {
+            messages: [
+              {
+                chat_id: 'oc_compact',
+                message_id: 'om_compact_card',
+                msg_type: 'interactive',
+                content: '<card title="CLI Compact Card">\nCompact body from lark-cli\n</card>',
+                create_time: '2026-06-17 22:49',
+                message_position: '120',
+                reply_to: 'om_previous_prompt',
+                sender: {
+                  id: 'cli_app_id',
+                  id_type: 'app_id',
+                  sender_type: 'app',
+                },
+              },
+            ],
+          },
+        };
+      },
+      im: { v1: { message: { get: async () => ({ data: { items: [] } }) } } },
+    } as any,
+  });
+
+  const compactContext = await compactCardTransport.fetchMessageContext('om_compact_card');
+  assert.equal(compactContext?.messageId, 'om_compact_card');
+  assert.equal(compactContext?.chatId, 'oc_compact');
+  assert.equal(compactContext?.replyTo, 'om_previous_prompt');
+  assert.equal(compactContext?.text, 'CLI Compact Card\nCompact body from lark-cli');
+  assert.equal(compactContext?.msgType, 'interactive');
+  assert.equal(compactContext?.createTime, '2026-06-17 22:49');
+  assert.equal(compactContext?.messagePosition, '120');
+  assert.equal(compactContext?.sender?.senderType, 'app');
+  assert.equal(compactContext?.sender?.idType, 'app_id');
+  assert.equal(compactContext?.interactiveCard?.title, 'CLI Compact Card');
+  assert.equal(compactContext?.interactiveCard?.rawContentShape, 'card_text');
+  assert.equal(compactContext?.interactiveCard?.text, 'CLI Compact Card\nCompact body from lark-cli');
+  assert.equal(compactContext?.fetchStage, 'raw_mget');
+  assert.equal(compactContext?.fetchIdentity, 'bot');
+  assert.equal(compactContext?.fetchResult, 'success');
+  assert.equal(typeof compactContext?.timestampMs, 'number');
+  assert.deepEqual(compactCalls.map((call) => call.method), [
+    'raw.request.mget.compact',
   ]);
 }
 
@@ -542,6 +621,14 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
     messageId: 'om_user_fetch_card',
     text: 'User Identity Card\nFetched through user identity',
     msgType: 'interactive',
+    interactiveCard: {
+      title: 'User Identity Card',
+      text: 'User Identity Card\nFetched through user identity',
+      rawContentShape: 'feishu_card_json',
+    },
+    fetchStage: 'user_mget',
+    fetchIdentity: 'user',
+    fetchResult: 'success',
   });
   assert.deepEqual(userFallbackCalls.map((call) => call.method), [
     'sdk.fetchMessage.placeholder',
@@ -599,6 +686,14 @@ assert.equal(calls.some((call) => call.method === 'raw.request'), true);
     messageId: 'om_user_after_bot_404',
     text: 'User Visible Card\nBot mget could not see this',
     msgType: 'interactive',
+    interactiveCard: {
+      title: 'User Visible Card',
+      text: 'User Visible Card\nBot mget could not see this',
+      rawContentShape: 'feishu_card_json',
+    },
+    fetchStage: 'user_mget',
+    fetchIdentity: 'user',
+    fetchResult: 'success',
   });
   assert.deepEqual(userAfterBot404Calls.map((call) => call.method), [
     'sdk.fetchMessage.placeholder',
