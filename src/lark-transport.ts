@@ -1,6 +1,9 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import type { FeishuRetryOptions } from './feishu-retry.js';
-import { LarkTransportCardContext } from './lark-transport-card-context.js';
+import {
+  LarkTransportCardContext,
+  type LarkFetchedMessageContext,
+} from './lark-transport-card-context.js';
 import { formatSdkFallbackLog } from './lark-transport-diagnostics.js';
 import {
   editMessageViaRaw,
@@ -68,6 +71,7 @@ export interface LarkTransport {
   replyDocComment(request: Required<Pick<LarkDocCommentRequest, 'docToken' | 'commentId' | 'content' | 'fileType'>>): Promise<{ replyId?: string }>;
   createDocComment(request: Omit<LarkDocCommentRequest, 'commentId'>): Promise<{ commentId?: string }>;
   fetchMessageText(messageId: string): Promise<string | null>;
+  fetchMessageContext(messageId: string): Promise<LarkFetchedMessageContext | null>;
 }
 
 export interface SdkLarkTransportChannel {
@@ -85,6 +89,10 @@ export interface SdkLarkTransportChannel {
   removeReactionByEmoji?: (messageId: string, emojiType: string) => Promise<boolean>;
   downloadResource?: (messageId: string, fileKey: string, resourceType: 'image' | 'file') => Promise<unknown>;
   fetchMessage?: (messageId: string) => Promise<{
+    messageId?: string;
+    parentId?: string;
+    rootMessageId?: string;
+    threadId?: string;
     content?: string;
     rawContentType?: string;
     messageType?: string;
@@ -218,6 +226,10 @@ class DefaultLarkTransport implements LarkTransport {
 
   async fetchMessageText(messageId: string): Promise<string | null> {
     return await this.cardContext.fetchMessageText(messageId);
+  }
+
+  async fetchMessageContext(messageId: string): Promise<LarkFetchedMessageContext | null> {
+    return await this.cardContext.fetchMessageContext(messageId);
   }
 
   private requireRawClient(): Lark.Client {

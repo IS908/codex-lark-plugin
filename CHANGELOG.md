@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.15] - 2026-06-17
+
+### Fixed
+- Hydrate quoted Lark messages as structured context with message id, type, status, recursive reply chain, depth/budget limits, deduplication, and explicit failure markers so quoted Interactive Card placeholders do not let memory context dominate the turn.
+
 ## [1.5.14] - 2026-06-16
 
 ### Changed

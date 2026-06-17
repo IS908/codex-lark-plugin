@@ -163,6 +163,8 @@ export const appConfig = {
   latestMessageTrackerSize: optionalNonNegativeNumber('LARK_LATEST_MESSAGE_TRACKER_SIZE', 1000),
   cardContextCacheSize: optionalNonNegativeNumber('LARK_CARD_CONTEXT_CACHE_SIZE', 200),
   cardContextCacheTtlMs: optionalNonNegativeNumber('LARK_CARD_CONTEXT_CACHE_TTL_MS', 30 * 60 * 1000),
+  quotedContextMaxDepth: optionalPositiveNumber('LARK_QUOTED_CONTEXT_MAX_DEPTH', 4),
+  quotedContextMaxBytes: optionalPositiveNumber('LARK_QUOTED_CONTEXT_MAX_BYTES', 12_000),
 
   // Paths
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),

@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.5.14-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.5.15-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -473,6 +473,8 @@ process restarts.
 | `LARK_LATEST_MESSAGE_TRACKER_SIZE` | `1000` | Maximum latest-inbound message tracker entries |
 | `LARK_CARD_CONTEXT_CACHE_SIZE` | `200` | Maximum cached fetched-card parent/root contexts |
 | `LARK_CARD_CONTEXT_CACHE_TTL_MS` | `1800000` | TTL for fetched interactive-card parent/root context cache |
+| `LARK_QUOTED_CONTEXT_MAX_DEPTH` | `4` | Maximum quoted/replied message chain depth hydrated before prompting Codex |
+| `LARK_QUOTED_CONTEXT_MAX_BYTES` | `12000` | UTF-8 byte budget for hydrated quoted-message context; oversized content is replaced with an explicit failure marker |
 
 ---
 
@@ -513,7 +515,8 @@ Step 4: Advanced tuning (optional)
      LARK_IDENTITY_SESSION_MAX_ENTRIES, LARK_DEBUG_LOG,
      LARK_LOG_MAX_BYTES, LARK_LOG_MAX_FILES, LARK_INBOX_MAX_AGE_HOURS,
      LARK_INBOX_MAX_BYTES, LARK_NAME_CACHE_SIZE,
-     LARK_CHAT_TYPE_CACHE_SIZE, LARK_LATEST_MESSAGE_TRACKER_SIZE
+     LARK_CHAT_TYPE_CACHE_SIZE, LARK_LATEST_MESSAGE_TRACKER_SIZE,
+     LARK_QUOTED_CONTEXT_MAX_DEPTH, LARK_QUOTED_CONTEXT_MAX_BYTES
 
 Step 5: Write config
   -> ~/.codex/channels/lark/.env

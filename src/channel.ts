@@ -750,7 +750,10 @@ export class LarkChannel {
 
     await this.addSdkAckReaction(message, sdkChannel);
     await addSdkImageDownloads(message, sdkMessage.resources, sdkChannel);
-    await addQuotedContext(message, this.larkTransport);
+    await addQuotedContext(message, this.larkTransport, {
+      maxDepth: appConfig.quotedContextMaxDepth,
+      maxBytes: appConfig.quotedContextMaxBytes,
+    });
 
     if (message.chatType === 'p2p' || message.chatType === 'group') {
       this.chatTypeCache.set(message.chatId, message.chatType);
@@ -845,7 +848,10 @@ export class LarkChannel {
       const chatName = await this.displayNameResolver.resolveChatName(chatId);
       larkMessage.chatName = chatName || undefined;
     }
-    await addQuotedContext(larkMessage, this.larkTransport);
+    await addQuotedContext(larkMessage, this.larkTransport, {
+      maxDepth: appConfig.quotedContextMaxDepth,
+      maxBytes: appConfig.quotedContextMaxBytes,
+    });
 
     // Cache chat type for later lookups (e.g. list_jobs visibility filter).
     if (larkMessage.chatType === 'p2p' || larkMessage.chatType === 'group') {

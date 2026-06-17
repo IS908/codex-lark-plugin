@@ -90,6 +90,7 @@ export function createTransportProxy(resolve: () => LarkTransport): LarkTranspor
     replyDocComment: (request) => resolve().replyDocComment(request),
     createDocComment: (request) => resolve().createDocComment(request),
     fetchMessageText: (messageId) => resolve().fetchMessageText(messageId),
+    fetchMessageContext: (messageId) => resolve().fetchMessageContext(messageId),
   };
 }
 

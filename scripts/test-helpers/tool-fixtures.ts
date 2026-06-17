@@ -92,6 +92,7 @@ export function createMockTransport(overrides: Partial<LarkTransport> = {}): Lar
     replyDocComment: async () => ({ replyId: 'reply_id' }),
     createDocComment: async () => ({ commentId: 'comment_id' }),
     fetchMessageText: async () => null,
+    fetchMessageContext: async () => null,
     ...overrides,
   };
 }
