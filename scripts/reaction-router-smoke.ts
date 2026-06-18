@@ -7,6 +7,7 @@ import {
 const trackedMessages = new Map<string, { chatId?: string }>([
   ['om_allowed', { chatId: 'oc_allowed' }],
   ['om_denied', { chatId: 'oc_denied' }],
+  ['om_missing_chat', {}],
 ]);
 const tracker = {
   get: (messageId: string) => trackedMessages.get(messageId),
@@ -45,17 +46,29 @@ assert.deepEqual(
   { action: 'ignored', reason: 'whitelist-denied' },
 );
 assert.deepEqual(
-  route({ messageId: 'om_allowed', emojiType: 'OK', operatorId: 'ou_allowed' }),
-  { action: 'ignored', reason: 'passive-feedback' },
+  route({ messageId: 'om_missing_chat', emojiType: 'OK', operatorId: 'ou_allowed' }),
+  { action: 'ignored', reason: 'missing-chat' },
 );
+const delivered = route({ messageId: 'om_allowed', emojiType: 'OK', operatorId: 'ou_allowed' });
+assert.equal(delivered.action, 'deliver');
+assert.equal(delivered.reason, 'user-reaction');
+if (delivered.action !== 'deliver') {
+  throw new Error('expected deliver action');
+}
+assert.deepEqual(delivered.event, {
+  messageId: 'om_allowed',
+  emojiType: 'OK',
+  operatorId: 'ou_allowed',
+});
+assert.deepEqual(delivered.trackedMessage, { chatId: 'oc_allowed' });
 
 assert.ok(
   logs.some((line) => line.includes('Reaction from ou_allowed rejected by whitelist')),
   'whitelist rejection should be logged',
 );
 assert.ok(
-  logs.some((line) => line.includes('Ignoring user reaction OK on bot message om_allowed')),
-  'allowed tracked reaction should reach passive-feedback log path',
+  logs.some((line) => line.includes('Routing user reaction OK on bot message om_allowed')),
+  'allowed tracked reaction should reach delivery log path',
 );
 
 console.log('reaction-router smoke: PASS');

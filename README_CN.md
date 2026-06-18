@@ -30,7 +30,7 @@
 - **Codex 会话连续性**：exec delivery 会为每个飞书 chat/thread 保存并恢复一个 Codex session，多轮对话可以复用 Codex 原生 session 上下文
 - 引用回复自动合并上下文，并可读取被引用交互卡片中的可见文本
 - 附件下载到本地收件箱
-- 用户对 bot 消息添加的 emoji reaction 视为被动反馈，不会触发额外文字回复
+- 用户对 bot 消息添加的 emoji reaction 会作为低噪声 reaction turn 送入 Codex；模型可对被动反馈返回 `[LARK_NO_REPLY]`，也可在确实需要跟进时回复
 
 ### 消息回复
 
@@ -93,7 +93,7 @@
 1. 前往[飞书开放平台](https://open.feishu.cn/)创建自建应用
 2. 启用「机器人」能力
 3. 添加以下权限：`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`、`im:message:send_as_bot`、`im:resource`、`im:message.reactions:write`、`docs:document.comment:read`、`docs:document.comment:create`、`drive:drive.metadata:readonly`
-4. 在「事件订阅」中启用 WebSocket 模式，并订阅 `im.message.receive_v1`、`drive.notice.comment_add_v1`
+4. 在「事件订阅」中启用 WebSocket 模式，并订阅 `im.message.receive_v1`、`im.message.reaction.created_v1`、`drive.notice.comment_add_v1`
 5. 获取 App ID 和 App Secret
 
 ### 第 2 步：安装插件
@@ -365,7 +365,7 @@ Feishu/Lark `open_id` 数组。每个工具必须且只能设置 `paramAllowlist
 |---|---|---|
 | `LARK_ACK_EMOJI` | `MeMeMe` | 收到消息时的 emoji 回应。留空可禁用 |
 | `LARK_DOC_COMMENT_ACK_EMOJI` | `THUMBSUP` | 收到文档评论 @bot 事件时保留的 emoji 回应。留空可禁用 |
-| `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | 用于被动 reaction 事件过滤的 bot 消息 ID 追踪上限（FIFO） |
+| `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | 用于 reaction 事件路由和 bot 消息修改保护的 bot 消息 ID 追踪上限（FIFO） |
 
 ### 可选 -- Feishu API 可靠性
 

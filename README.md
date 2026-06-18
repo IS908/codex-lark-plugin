@@ -31,7 +31,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **Image auto-download**: images are downloaded to a local inbox so Codex can see them directly
 - Quoted reply support with automatic parent message fetching, including readable visible text from quoted interactive cards
 - Attachment extraction (image, file, audio, video) with type-aware download
-- User emoji reactions on bot messages are treated as passive feedback and do not trigger noisy bot replies
+- User emoji reactions on bot messages are delivered to Codex as low-noise reaction turns, so the model can return `[LARK_NO_REPLY]` for passive feedback or respond when follow-up is actually needed
 
 ### Responding
 
@@ -109,6 +109,7 @@ Create a custom app at [Feishu Open Platform](https://open.feishu.cn/app) and en
 
 Enable the WebSocket mode under **Event Subscriptions** and subscribe to these events:
 - `im.message.receive_v1` -- receive messages
+- `im.message.reaction.created_v1` -- receive user emoji reactions on tracked bot replies
 - `drive.notice.comment_add_v1` -- receive doc-comment notifications when @-mentioned
 
 ### 2. Install the Plugin
@@ -399,7 +400,7 @@ such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 |---|---|---|
 | `LARK_ACK_EMOJI` | `MeMeMe` | Emoji reaction on message receive. Set to empty string to disable. |
 | `LARK_DOC_COMMENT_ACK_EMOJI` | `THUMBSUP` | Persistent emoji reaction on inbound doc-comment @mentions. Set to empty string to disable. |
-| `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | Max bot-sent message IDs tracked for passive reaction-event filtering (FIFO) |
+| `LARK_BOT_MESSAGE_TRACKER_SIZE` | `500` | Max bot-sent message IDs tracked for reaction-event routing and bot-message mutation guards (FIFO) |
 
 ### Optional -- Feishu API reliability
 
