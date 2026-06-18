@@ -38,6 +38,7 @@ src/privacy-rules.ts  – L1 hardcoded regex + keyword rules; L2 user-rules file
 
 **Data flow:** Feishu event → `LarkChannel.handleMessageEvent` → whitelist check → ack reaction (MeMeMe) → text extraction → image auto-download → enqueue per-chat → record in buffer → enrich with memory (profile + episodes + skills) → deliver by configured mode:
 - `exec` (default): run `codex exec` and reply directly through Feishu. The plugin stores one Codex session id per Feishu `chat_id` / `thread_id` under `~/.codex/channels/lark/codex-sessions/` and resumes it with `codex exec resume` for multi-turn continuity.
+  - Long-running visible turns can emit bounded progress updates through a parent-owned JSONL side channel (`LARK_EXEC_PROGRESS_*`): the child gets only a file path + per-turn token, while the parent validates token/schema, rejects identity fields, filters filler/duplicates, and sends accepted progress via the same IM/doc-comment reply path before the final answer.
 - `notification`: forward via `notifications/Codex/channel`; Codex calls `reply` tool; response sent back to Feishu.
 After either mode replies, the ack reaction is revoked.
 

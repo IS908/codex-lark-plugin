@@ -13,6 +13,12 @@ import type { TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import { shouldSendFeishuReplyForMessage } from './codex-exec-error.js';
 import {
+  buildCodexExecProgressPrompt,
+  createCodexExecProgressSink,
+  type CodexExecProgressLimits,
+  type CodexExecProgressPromptInfo,
+} from './codex-exec-progress.js';
+import {
   CODEX_EXEC_ACTIONS_END,
   CODEX_EXEC_ACTIONS_START,
   formatCodexExecActionResults,
@@ -33,6 +39,8 @@ export interface CodexExecDeliveryOptions {
   recordAssistantMessage?: (message: { chatId: string; threadId?: string; text: string }) => void;
   turnObligations?: TurnObligationTracker;
   actionDispatcher?: CodexExecActionDispatcher;
+  progressBaseDir?: string;
+  progressLimits?: Partial<CodexExecProgressLimits>;
 }
 
 export interface CodexExecSessionHealthRecorder {
@@ -66,6 +74,16 @@ const VISIBLE_SUCCESS_ACTIONS = new Set<CodexExecActionExecutionResult['action']
 
 function shouldShowActionSummary(results: CodexExecActionExecutionResult[]): boolean {
   return results.some((result) => !result.ok || VISIBLE_SUCCESS_ACTIONS.has(result.action));
+}
+
+function resolveProgressLimits(overrides: Partial<CodexExecProgressLimits> = {}): CodexExecProgressLimits {
+  return {
+    enabled: overrides.enabled ?? appConfig.codexExecProgressEnabled,
+    maxMessages: overrides.maxMessages ?? appConfig.codexExecProgressMaxMessages,
+    maxChars: overrides.maxChars ?? appConfig.codexExecProgressMaxChars,
+    minIntervalMs: overrides.minIntervalMs ?? appConfig.codexExecProgressMinIntervalMs,
+    pollIntervalMs: overrides.pollIntervalMs ?? appConfig.codexExecProgressPollIntervalMs,
+  };
 }
 
 interface LifecycleGuardResult {
@@ -145,7 +163,11 @@ export function guardCodexExecLifecycleReply(
   };
 }
 
-export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string): string {
+export function buildCodexExecPrompt(
+  message: LarkMessage,
+  displayLabel: string,
+  progressInfo: CodexExecProgressPromptInfo | null = null,
+): string {
   const isDocComment = message.chatType === 'doc_comment';
   const isReaction = message.messageType === 'reaction' && !!message.reaction;
   const metaLines = [
@@ -205,6 +227,7 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
     'If the user asks to create or file a GitHub issue, include a create_github_issue action block when you have enough title/body context. Do not say you created or will create an issue unless you include that action; if issue creation is not configured, provide an issue draft and say it cannot be created automatically.',
     'For ordinary replies, omit the action block.',
     'If this turn intentionally should not send a Feishu reply, put [LARK_DEFER] or [LARK_NO_REPLY] on its own line outside code fences, optionally followed by a short reason.',
+    ...buildCodexExecProgressPrompt(progressInfo),
     '',
     '[Feishu metadata]',
     metaLines.join('\n'),
@@ -240,8 +263,24 @@ export async function deliverMessageViaCodexExec(
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
   const sessionKey = buildCodexExecSessionKey(message.chatId, message.threadId);
   const existingSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
+  const progressLimits = resolveProgressLimits(opts.progressLimits);
+  const progressBaseDir = opts.progressBaseDir ?? appConfig.codexExecCwd;
+  const progressSink = await createCodexExecProgressSink({
+    baseDir: progressBaseDir,
+    limits: {
+      ...progressLimits,
+      enabled:
+        progressLimits.enabled &&
+        (shouldSendFeishuReplyForMessage(message) || (message.chatType === 'doc_comment' && !!message.docComment)),
+    },
+    caller: message.senderId,
+    messageId: message.messageId,
+    chatId: message.chatId,
+    ...(message.threadId ? { threadId: message.threadId } : {}),
+    send: (content) => sendCodexExecProgressMessage(opts, message, content),
+  });
   const request: CodexExecRequest = {
-    prompt: buildCodexExecPrompt(message, displayLabel),
+    prompt: buildCodexExecPrompt(message, displayLabel, progressSink?.promptInfo ?? null),
     imagePaths: collectImagePaths(message),
     command: appConfig.codexExecCommand,
     cwd: appConfig.codexExecCwd,
@@ -252,12 +291,22 @@ export async function deliverMessageViaCodexExec(
     ignoreUserConfig: appConfig.codexExecIgnoreUserConfig,
     skipGitRepoCheck: true,
     resumeSessionId: existingSession?.sessionId ?? null,
+    ...(progressSink
+      ? {
+          extraEnv: progressSink.extraEnv,
+          progress: {
+            filePath: progressSink.filePath,
+            token: progressSink.token,
+          },
+        }
+      : {}),
   };
 
   let result;
   let usedResumeSessionId = request.resumeSessionId;
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
   try {
+    progressSink?.start();
     result = normalizeCodexExecResult(await runCodexExec(request));
   } catch (err) {
     if (!request.resumeSessionId) throw err;
@@ -271,6 +320,7 @@ export async function deliverMessageViaCodexExec(
     );
     usedResumeSessionId = null;
   } finally {
+    await progressSink?.stop();
     if (useCodexSessions) activeCodexExecSessionKeys.delete(sessionKey);
   }
 
@@ -366,6 +416,38 @@ export async function deliverMessageViaCodexExec(
   await sendReply({
     chat_id: message.chatId,
     text,
+    reply_to: message.messageId,
+    thread_id: message.threadId,
+  });
+}
+
+async function sendCodexExecProgressMessage(
+  opts: CodexExecDeliveryOptions,
+  message: LarkMessage,
+  content: string,
+): Promise<void> {
+  if (message.chatType === 'doc_comment') {
+    if (!message.docComment || !opts.sendDocCommentReply) return;
+    await opts.sendDocCommentReply({
+      chat_id: message.chatId,
+      thread_id: message.threadId ?? message.docComment.commentId,
+      doc_token: message.docComment.fileToken,
+      comment_id: message.docComment.commentId,
+      file_type: message.docComment.fileType,
+      content,
+    });
+    opts.recordAssistantMessage?.({
+      chatId: message.chatId,
+      threadId: message.threadId,
+      text: content,
+    });
+    return;
+  }
+
+  if (!shouldSendFeishuReplyForMessage(message)) return;
+  await opts.sendReply({
+    chat_id: message.chatId,
+    text: content,
     reply_to: message.messageId,
     thread_id: message.threadId,
   });

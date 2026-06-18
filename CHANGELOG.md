@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- Added a bounded Codex exec progress side channel so long-running IM/doc-comment turns can emit validated milestone updates before the final reply, with token validation, identity-field rejection, low-signal filtering, rate/length/count limits, and safe fallback when progress setup is unavailable.
+
 ## [1.6.3] - 2026-06-18
 
 ### Changed

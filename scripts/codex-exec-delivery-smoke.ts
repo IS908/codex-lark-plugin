@@ -7,6 +7,9 @@
  * and the final answer is sent back through the normal Feishu reply path.
  */
 import assert from 'node:assert/strict';
+import { appendFile, mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
 import {
   buildCodexExecArgs,
@@ -358,6 +361,74 @@ assert.deepEqual(docCommentReplies, [
     comment_id: 'cmt_doc_001',
     file_type: 'docx',
     content: 'doc comment answer',
+  },
+]);
+
+const docCommentProgressReplies: any[] = [];
+const docCommentProgressRecords: any[] = [];
+const docCommentProgressBaseDir = await mkdtemp(join(tmpdir(), 'lark-doc-progress-smoke-'));
+await deliverMessageViaCodexExec({
+  message: {
+    messageId: 'rpl_doc_progress',
+    chatId: 'doc:dox_doc_progress',
+    chatType: 'doc_comment',
+    senderId: 'ou_owner',
+    senderName: 'Kevin',
+    text: '<doc_comment doc_token="dox_doc_progress" comment_id="cmt_doc_progress" file_type="docx"><body>@Codex long review</body></doc_comment>',
+    messageType: 'doc_comment',
+    threadId: 'cmt_doc_progress',
+    rawContent: '{}',
+    docComment: {
+      fileToken: 'dox_doc_progress',
+      commentId: 'cmt_doc_progress',
+      fileType: 'docx',
+    },
+  },
+  displayLabel: 'Kevin · Progress Doc',
+  useCodexSessions: false,
+  progressBaseDir: docCommentProgressBaseDir,
+  progressLimits: {
+    enabled: true,
+    maxMessages: 2,
+    maxChars: 300,
+    minIntervalMs: 0,
+    pollIntervalMs: 5,
+  },
+  runCodexExec: async (request) => {
+    const progress = (request as any).progress;
+    assert.ok(progress?.filePath, 'doc comment exec request should include progress.filePath');
+    await appendFile(
+      progress.filePath,
+      `${JSON.stringify({ version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', content: '文档上下文已收集，开始形成评审结论。' })}\n`,
+      'utf-8',
+    );
+    return 'doc final answer';
+  },
+  sendReply: async () => {
+    throw new Error('doc_comment progress delivery must not use Feishu IM reply');
+  },
+  sendDocCommentReply: async (request) => {
+    docCommentProgressReplies.push(request);
+    return { replyId: `rpl_doc_progress_${docCommentProgressReplies.length}` };
+  },
+  recordAssistantMessage: (message) => {
+    docCommentProgressRecords.push(message);
+  },
+});
+assert.deepEqual(
+  docCommentProgressReplies.map((request) => request.content),
+  ['文档上下文已收集，开始形成评审结论。', 'doc final answer'],
+);
+assert.deepEqual(docCommentProgressRecords, [
+  {
+    chatId: 'doc:dox_doc_progress',
+    threadId: 'cmt_doc_progress',
+    text: '文档上下文已收集，开始形成评审结论。',
+  },
+  {
+    chatId: 'doc:dox_doc_progress',
+    threadId: 'cmt_doc_progress',
+    text: 'doc final answer',
   },
 ]);
 
@@ -726,6 +797,107 @@ assert.equal(deferredReplies.length, 0);
 assert.equal(deferTracker.get('om_inbound_defer')?.status, 'deferred');
 assert.equal(deferTracker.get('om_inbound_defer')?.source, 'exec_assistant_text');
 deferTracker.clear();
+
+const progressReplies: ReplyRequest[] = [];
+const progressOrder: string[] = [];
+const progressBaseDir = await mkdtemp(join(tmpdir(), 'lark-progress-smoke-'));
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_inbound_progress',
+  },
+  displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+  useCodexSessions: false,
+  progressBaseDir,
+  progressLimits: {
+    enabled: true,
+    maxMessages: 3,
+    maxChars: 300,
+    minIntervalMs: 0,
+    pollIntervalMs: 5,
+  },
+  runCodexExec: async (request) => {
+    const progress = (request as any).progress;
+    assert.ok(progress?.filePath, 'codex exec request should include progress.filePath');
+    assert.ok(progress?.token, 'codex exec request should include progress.token');
+    assert.match(request.prompt, /Progress updates/);
+    await appendFile(
+      progress.filePath,
+      `${JSON.stringify({ version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', content: '依赖审计完成，开始完整测试。' })}\n`,
+      'utf-8',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await appendFile(
+      progress.filePath,
+      `${JSON.stringify({ version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', content: '完整测试通过，准备整理结果。' })}\n`,
+      'utf-8',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    return '最终结果。';
+  },
+  sendReply: async (request) => {
+    progressReplies.push(request);
+    progressOrder.push(request.text);
+    return { sentCount: 1 };
+  },
+});
+assert.deepEqual(progressOrder, [
+  '依赖审计完成，开始完整测试。',
+  '完整测试通过，准备整理结果。',
+  '最终结果。',
+]);
+assert.deepEqual(progressReplies.map((request) => request.reply_to), [
+  'om_inbound_progress',
+  'om_inbound_progress',
+  'om_inbound_progress',
+]);
+
+const filteredProgressReplies: ReplyRequest[] = [];
+const filteredProgressBaseDir = await mkdtemp(join(tmpdir(), 'lark-filtered-progress-smoke-'));
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_inbound_filtered_progress',
+  },
+  displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+  useCodexSessions: false,
+  progressBaseDir: filteredProgressBaseDir,
+  progressLimits: {
+    enabled: true,
+    maxMessages: 2,
+    maxChars: 300,
+    minIntervalMs: 0,
+    pollIntervalMs: 5,
+  },
+  runCodexExec: async (request) => {
+    const progress = (request as any).progress;
+    assert.ok(progress?.filePath, 'filtered progress request should include progress.filePath');
+    await appendFile(
+      progress.filePath,
+      [
+        { version: 1, token: 'wrong-token', type: 'emit_lark_message', mode: 'progress', content: 'wrong token should not send' },
+        { version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', chat_id: 'oc_hijack', content: 'identity fields should not send' },
+        { version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', content: '正在处理' },
+        { version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', content: '第一阶段完成，进入验证。' },
+        { version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', content: '第一阶段完成，进入验证。' },
+        { version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', content: '验证完成，准备最终回复。' },
+        { version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', content: '第三条不应发送。' },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join('\n') + '\n',
+      'utf-8',
+    );
+    return 'filtered final';
+  },
+  sendReply: async (request) => {
+    filteredProgressReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.deepEqual(
+  filteredProgressReplies.map((request) => request.text),
+  ['第一阶段完成，进入验证。', '验证完成，准备最终回复。', 'filtered final'],
+);
 
 const syntheticReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({

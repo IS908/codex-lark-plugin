@@ -17,6 +17,11 @@ export interface CodexExecRequest {
   ignoreUserConfig?: boolean;
   skipGitRepoCheck?: boolean;
   resumeSessionId?: string | null;
+  extraEnv?: Record<string, string | undefined>;
+  progress?: {
+    filePath: string;
+    token: string;
+  };
 }
 
 export interface CodexExecResult {
@@ -213,6 +218,7 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
         env: {
           ...process.env,
           NO_COLOR: '1',
+          ...request.extraEnv,
         },
       });
 
