@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-06-18
+
 ### Removed
 - Removed the built-in `create_github_issue` Codex exec action and `LARK_GITHUB_*` configuration surface from the core Lark bridge. GitHub issue creation should now be modeled as an explicitly configured `run_local_cli_tool` workflow when needed.
 
@@ -387,7 +389,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.4...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.4...v1.7.0
 [1.6.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.1...v1.6.2
