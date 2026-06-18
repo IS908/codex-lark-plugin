@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-06-18
+
 ### Added
 - Added a bounded Codex exec progress side channel so long-running IM/doc-comment turns can emit validated milestone updates before the final reply, with token validation, identity-field rejection, low-signal filtering, rate/length/count limits, and safe fallback when progress setup is unavailable.
 
@@ -382,7 +384,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.3...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.4...HEAD
+[1.6.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.0...v1.6.1
