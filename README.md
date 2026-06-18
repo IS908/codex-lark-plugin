@@ -322,6 +322,21 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_CODEX_EXEC_PROFILE` | (empty) | Optional Codex config profile for exec delivery; startup warns if the selected profile appears to include the Lark MCP server |
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | Pass `--ignore-user-config` to `codex exec` to avoid recursively loading the Lark MCP server |
 | `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | Resume one Codex exec session per Feishu `chat_id` / `thread_id`. This preserves multi-turn context inside the Codex CLI session store; it does not attach to an already-open interactive terminal TUI session. |
+| `LARK_EXEC_PROGRESS_ENABLED` | `true` | Enable the bounded Codex exec progress side channel for long-running visible turns |
+| `LARK_EXEC_PROGRESS_MAX_MESSAGES` | `3` | Maximum progress messages per Codex exec turn |
+| `LARK_EXEC_PROGRESS_MAX_CHARS` | `300` | Maximum characters per progress message |
+| `LARK_EXEC_PROGRESS_MIN_INTERVAL_MS` | `15000` | Minimum interval between progress messages in one turn |
+| `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS` | `250` | Parent watcher polling interval for progress JSONL |
+
+Exec delivery can expose a bounded progress side channel for long-running
+visible IM/doc-comment turns. The parent bridge creates a temporary JSONL file
+and passes its path plus a per-turn token to the child `codex exec` process.
+The child may append signed progress events; the parent validates the token and
+schema, rejects identity fields such as `chat_id`/`open_id`, drops duplicate or
+low-signal filler, enforces the configured count/length/rate limits, and sends
+accepted progress messages through the same IM or doc-comment reply path before
+the final answer. If the progress file cannot be created, the bridge disables
+progress for that turn and still delivers the final reply.
 
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:
