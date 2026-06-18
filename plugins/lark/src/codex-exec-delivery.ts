@@ -181,7 +181,7 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
     isDocComment
       ? 'Return only the plain text that should be posted as a Feishu document-comment reply. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.'
       : isReaction
-        ? 'Return [LARK_NO_REPLY] when the emoji is just acknowledgement, completion, thanks, approval, or passive feedback. Return visible message text only when the reaction clearly needs clarification, correction, or follow-up action.'
+        ? 'Treat the emoji as normal user input carried by the reacted bot reply. Interpret the emoji together with the target message content and prior session context, then decide whether to continue, retry an action, ask for clarification, send a visible reply, or return [LARK_NO_REPLY]. Do not classify DONE, OK, THUMBSUP, or similar emojis as passive by emoji type alone.'
         : 'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',

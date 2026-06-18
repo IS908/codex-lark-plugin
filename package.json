@@ -36,8 +36,8 @@
     "audit:deps": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
-    "@larksuite/channel": "^0.1.2",
-    "@larksuiteoapi/node-sdk": "^1.60.0",
+    "@larksuite/channel": "^0.2.0",
+    "@larksuiteoapi/node-sdk": "^1.67.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "cron-parser": "^5.5.0",
     "dotenv": "^16.4.7",
@@ -55,7 +55,7 @@
     "form-data": "4.0.6",
     "hono": "4.12.26",
     "ip-address": "10.2.0",
-    "protobufjs": "7.6.2",
+    "protobufjs": "7.6.4",
     "qs": "6.15.2",
     "ws": "8.21.0"
   },

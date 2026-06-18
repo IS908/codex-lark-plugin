@@ -173,6 +173,8 @@ await deliverMessageViaCodexExec({
 });
 assert.equal(reactionExecRequests.length, 1);
 assert.match(reactionExecRequests[0].prompt, /Handle this Feishu\/Lark emoji reaction/);
+assert.match(reactionExecRequests[0].prompt, /normal user input carried by the reacted bot reply/);
+assert.match(reactionExecRequests[0].prompt, /Do not classify DONE, OK, THUMBSUP/);
 assert.match(reactionExecRequests[0].prompt, /reaction_emoji: DONE/);
 assert.match(reactionExecRequests[0].prompt, /reaction_target_message_id: om_bot_reply_reacted/);
 assert.equal(reactionReplies.length, 0);

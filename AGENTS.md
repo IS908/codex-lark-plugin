@@ -41,7 +41,7 @@ src/privacy-rules.ts  – L1 hardcoded regex + keyword rules; L2 user-rules file
 - `notification`: forward via `notifications/Codex/channel`; Codex calls `reply` tool; response sent back to Feishu.
 After either mode replies, the ack reaction is revoked.
 
-**Reaction flow:** Feishu reaction event → `handleReactionEvent` / `handleSdkReactionEvent` → filter bot self, untracked messages, and whitelists → enqueue a low-noise `messageType="reaction"` turn for user reactions on tracked bot replies. Codex sees the emoji, reactor, and target bot message context, then decides whether to respond or return `[LARK_NO_REPLY]`. Bot self-reaction echoes and reactions on untracked messages are still dropped.
+**Reaction flow:** Feishu reaction event → `handleReactionEvent` / `handleSdkReactionEvent` → filter bot self, untracked messages, and whitelists → enqueue a normal `messageType="reaction"` turn for user reactions on tracked bot replies. Codex sees the emoji, reactor, and target bot message context, then decides whether to continue, retry, ask, respond, or return `[LARK_NO_REPLY]`. Bot self-reaction echoes and reactions on untracked messages are still dropped.
 
 **CronJob flow:** `JobScheduler.tick()` every 60s → read all job files → for each active job where `next_run_at <= now` → execute (message: direct Feishu API / prompt: inject via `notifications/Codex/channel` under a unique `thread_id` + bind session identity to `job.created_by`) → update `runtime` in job file. On startup, `recoverMissedJobs()` runs the same check once for crash recovery.
 
@@ -80,7 +80,7 @@ The `$lark:configure` skill (in `skills/configure/SKILL.md`) provides interactiv
 - **Channel protocol**: Messages are forwarded to Codex via `notifications/Codex/channel` (not `sendLoggingMessage`). Requires `experimental: { 'Codex/channel': {} }` capability.
 - **User display names**: Resolved via contact API → cached. Falls back to stable aliases (`user_` + last 7 chars of open_id). Memory keys always use raw open_id/chat_id.
 - **Group chat filtering**: Only messages with @bot mentions are processed (precise match via bot open_id fetched at startup). P2P messages are always processed.
-- **Reaction events**: If the Feishu app subscribes to `im.message.reaction.created_v1`, user reactions on tracked bot replies are forwarded as reaction turns. The reaction prompt tells Codex to return `[LARK_NO_REPLY]` for acknowledgement/completion emoji unless a visible follow-up is actually needed.
+- **Reaction events**: If the Feishu app subscribes to `im.message.reaction.created_v1`, user reactions on tracked bot replies are forwarded as normal interaction turns. The reaction prompt tells Codex to interpret the emoji with the reacted bot message instead of treating acknowledgement/completion emoji as passive by default.
 
 ## Debugging
 
