@@ -340,11 +340,18 @@ progress for that turn and still delivers the final reply.
 
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:
-`save_memory`, `create_job`, `create_github_issue`, `run_local_cli_tool`, and
-`recall_message`. The child returns a validated `LARK_ACTIONS_JSON` marker
-block; the parent strips the block from the visible reply, derives caller
-identity from the current Feishu event, executes the action locally, and rejects
-malformed blocks instead of recursively loading the Lark MCP server.
+`save_memory`, `create_job`, `run_local_cli_tool`, and `recall_message`. The
+child returns a validated `LARK_ACTIONS_JSON` marker block; the parent strips
+the block from the visible reply, derives caller identity from the current
+Feishu event, executes the action locally, and rejects malformed blocks instead
+of recursively loading the Lark MCP server.
+
+The bridge intentionally does not provide domain-specific built-ins such as
+GitHub issue creation. If you need that workflow, configure a trusted
+`run_local_cli_tool` entry that wraps `gh issue create` with an explicit
+allowlist, fixed arguments, timeouts, and output caps. Without such a local tool
+configuration, Codex should provide an issue draft rather than claiming the
+issue was created.
 
 Because exec delivery is a single-turn flow, the plugin also guards against
 misleading follow-up promises. A final answer must not claim that Codex will
@@ -353,11 +360,6 @@ the same output includes a structured action, `[LARK_DEFER]` /
 `[LARK_NO_REPLY]`, or a scheduled job action. If a risky follow-up promise is
 returned without such a mechanism, the bridge replaces it with a safe notice
 instead of implying that background work will continue.
-
-`create_github_issue` is disabled by default. When enabled, it runs
-`gh issue create` with `spawn(..., { shell: false })`, requires a default repo
-or repo allowlist, writes the audit log, and returns the created issue URL to
-the same IM or doc-comment reply path.
 
 For SDK migration smoke commands, rollout controls, and rollback steps, see
 [SDK channel rollout](docs/sdk-channel-rollout.md).
@@ -398,6 +400,14 @@ Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
       "allowedCallers": "lark_allowed_user_ids"
+    },
+    "github_issue_create": {
+      "command": "/opt/homebrew/bin/gh",
+      "fixedArgs": ["issue", "create", "--repo", "OWNER/REPO"],
+      "paramAllowlist": ["--title", "--body", "--label"],
+      "timeoutMs": 30000,
+      "maxOutputBytes": 65536,
+      "allowedCallers": "owners"
     }
   }
 }
@@ -506,12 +516,6 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 | `LARK_QUOTED_CARD_USER_FETCH_COMMAND` | `lark-cli` | Executable used for the quoted-card user fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS` | `10000` | Timeout for the quoted-card user fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES` | `262144` | Maximum stdout/stderr bytes captured from the quoted-card user fallback. |
-| `LARK_GITHUB_ISSUE_ACTION_ENABLED` | `false` | Enable the optional `create_github_issue` Codex exec action. |
-| `LARK_GITHUB_DEFAULT_REPO` | (empty) | Default `owner/repo` used when the action omits `repo`. |
-| `LARK_GITHUB_ALLOWED_REPOS` | (empty) | Comma-separated repo allowlist. When set, `create_github_issue` can only target these repos; when empty, only `LARK_GITHUB_DEFAULT_REPO` is accepted. |
-| `LARK_GITHUB_ISSUE_COMMAND` | `gh` | Executable used for GitHub issue creation. It is spawned directly, not through a shell. |
-| `LARK_GITHUB_ISSUE_TIMEOUT_MS` | `30000` | Timeout for GitHub issue creation. |
-| `LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES` | `65536` | Maximum stdout/stderr bytes captured from the GitHub issue command. |
 
 ### Optional -- Resource Governance
 

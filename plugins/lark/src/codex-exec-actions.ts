@@ -3,7 +3,6 @@ import { audit } from './audit-log.js';
 import type { LarkMessage } from './channel.js';
 import type { IdentitySession } from './identity-session.js';
 import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
-import { appConfig } from './config.js';
 import type { MemoryStore } from './memory/file.js';
 import { assertSafeChatId } from './prompts.js';
 import {
@@ -22,7 +21,6 @@ import type { BotMessageTracker } from './channel.js';
 import type { LarkTransport } from './lark-transport.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
-import { createGitHubIssueFromAction } from './github-issue-action.js';
 
 export const CODEX_EXEC_ACTIONS_START = '<LARK_ACTIONS_JSON>';
 export const CODEX_EXEC_ACTIONS_END = '</LARK_ACTIONS_JSON>';
@@ -58,20 +56,11 @@ const RecallMessageActionSchema = z.object({
   message_id: z.string().min(1),
 });
 
-const CreateGitHubIssueActionSchema = z.object({
-  type: z.literal('create_github_issue'),
-  repo: z.string().min(1).max(200).optional(),
-  title: z.string().min(1).max(300),
-  body: z.string().min(1).max(20_000),
-  labels: z.array(z.string().min(1).max(100).regex(/^[^\r\n]+$/)).max(10).optional(),
-});
-
 const CodexExecActionSchema = z.discriminatedUnion('type', [
   SaveMemoryActionSchema,
   CreateJobActionSchema,
   RunLocalCliToolActionSchema,
   RecallMessageActionSchema,
-  CreateGitHubIssueActionSchema,
 ]);
 
 const CodexExecActionEnvelopeSchema = z.object({
@@ -422,44 +411,6 @@ async function executeRecallMessage(
   return { ok: true, action: 'recall_message', message: `Recalled message ${action.message_id}.` };
 }
 
-async function executeCreateGitHubIssue(
-  action: z.infer<typeof CreateGitHubIssueActionSchema>,
-  message: LarkMessage,
-  deps: CreateCodexExecActionDispatcherOptions,
-): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'create_github_issue');
-  const auditArgs = {
-    repo: action.repo,
-    title: action.title,
-    labels: action.labels,
-    body_bytes: Buffer.byteLength(action.body, 'utf8'),
-    chat_id: message.chatId,
-    thread_id: message.threadId,
-  };
-  if ('error' in auth) return auth.error;
-  const { caller } = auth;
-
-  const result = await createGitHubIssueFromAction({
-    repo: action.repo,
-    title: action.title,
-    body: action.body,
-    labels: action.labels,
-  });
-
-  void audit('create_github_issue', caller, auditArgs, result.ok ? 'ok' : githubIssueFailureOutcome(result.message));
-  return {
-    ok: result.ok,
-    action: 'create_github_issue',
-    message: result.message,
-  };
-}
-
-function githubIssueFailureOutcome(message: string): 'denied' | 'error' {
-  return /disabled|requires repo|LARK_GITHUB_DEFAULT_REPO|LARK_GITHUB_ALLOWED_REPOS|invalid github repo|not in LARK_GITHUB_ALLOWED_REPOS|does not match LARK_GITHUB_DEFAULT_REPO/i.test(message)
-    ? 'denied'
-    : 'error';
-}
-
 export function formatCodexExecActionResults(results: CodexExecActionExecutionResult[]): string {
   return results
     .map((result) => `${result.ok ? 'OK' : 'ERROR'} ${result.action}: ${result.message}`)
@@ -479,8 +430,6 @@ export function createCodexExecActionDispatcher(
           results.push(await executeCreateJob(action, request.message, deps));
         } else if (action.type === 'recall_message') {
           results.push(await executeRecallMessage(action, request.message, deps));
-        } else if (action.type === 'create_github_issue') {
-          results.push(await executeCreateGitHubIssue(action, request.message, deps));
         } else {
           results.push(await executeRunLocalCliTool(action, request.message, deps));
         }
