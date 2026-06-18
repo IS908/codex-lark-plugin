@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-06-18
+
 ### Changed
 - Upgraded `@larksuite/channel` to `^0.2.0`, aligned the direct `@larksuiteoapi/node-sdk` dependency to `^1.67.0`, and raised the `protobufjs` override to `7.6.4` so root and wrapper dependency audits resolve without vulnerabilities.
 - Treat user emoji reactions on tracked bot messages as normal interaction turns, interpreting `DONE`/`OK`/`THUMBSUP` with the reacted bot message context instead of classifying them as passive acknowledgements by emoji type alone.
@@ -377,7 +379,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.3...HEAD
+[1.6.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.20...v1.6.0
