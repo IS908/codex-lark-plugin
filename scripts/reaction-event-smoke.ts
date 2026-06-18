@@ -56,7 +56,8 @@ try {
   assert.equal(reactionMessage.reaction.emojiType, 'OK');
   assert.equal(reactionMessage.reaction.targetMessageId, 'om_bot_reply_001');
   assert.match(reactionMessage.text, /User Kevin .*reacted to a previous bot reply with emoji OK/);
-  assert.match(reactionMessage.text, /\[LARK_NO_REPLY\]/);
+  assert.match(reactionMessage.text, /normal user interaction turn/);
+  assert.match(reactionMessage.text, /Do not classify OK, DONE, THUMBSUP/);
   assert.match(reactionMessage.text, /The issue has been created and linked/);
   assert.ok(
     logs.some((line) => line.includes('Routing user reaction OK on bot message om_bot_reply_001')),

@@ -31,7 +31,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **Image auto-download**: images are downloaded to a local inbox so Codex can see them directly
 - Quoted reply support with automatic parent message fetching, including readable visible text from quoted interactive cards
 - Attachment extraction (image, file, audio, video) with type-aware download
-- User emoji reactions on bot messages are delivered to Codex as low-noise reaction turns, so the model can return `[LARK_NO_REPLY]` for passive feedback or respond when follow-up is actually needed
+- User emoji reactions on bot messages are delivered to Codex as normal interaction turns with the reacted bot message as context, so the model can continue, retry, ask, reply, or return `[LARK_NO_REPLY]`
 
 ### Responding
 

@@ -593,9 +593,9 @@ export class LarkChannel {
   /**
    * Handle reaction events on bot messages.
    *
-   * User reactions on tracked bot replies are low-priority conversation turns:
-   * Codex sees the emoji and target bot message, then decides whether to return
-   * [LARK_NO_REPLY] or a visible follow-up. Bot self-reaction echoes and
+   * User reactions on tracked bot replies are normal interaction turns:
+   * Codex sees the emoji and target bot message, then decides whether to
+   * continue, retry, ask, reply, or return [LARK_NO_REPLY]. Bot self-reaction echoes and
    * reactions on untracked messages remain filtered before they reach Codex.
    */
   private async handleReactionEvent(data: any): Promise<void> {
@@ -632,7 +632,7 @@ export class LarkChannel {
       `chat_id: ${chatId}`,
       ...(trackedMessage.threadId ? [`thread_id: ${trackedMessage.threadId}`] : []),
       '',
-      'This is an emoji reaction, not a new text message. Decide whether it needs a visible response. For acknowledgement or completion reactions such as OK, DONE, THUMBSUP, HEART, LIKE, or MeMeMe, usually return [LARK_NO_REPLY]. Respond only when the emoji clearly asks for clarification, correction, or follow-up action.',
+      'This emoji reaction is a normal user interaction turn carried by the target bot reply. Interpret the emoji together with the target bot reply and prior context, then decide whether to continue, retry an action, ask for clarification, send a visible reply, or return [LARK_NO_REPLY]. Do not classify OK, DONE, THUMBSUP, HEART, LIKE, or MeMeMe as passive by emoji type alone.',
       ...(targetText
         ? [
             '',

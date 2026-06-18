@@ -30,7 +30,7 @@
 - **Codex 会话连续性**：exec delivery 会为每个飞书 chat/thread 保存并恢复一个 Codex session，多轮对话可以复用 Codex 原生 session 上下文
 - 引用回复自动合并上下文，并可读取被引用交互卡片中的可见文本
 - 附件下载到本地收件箱
-- 用户对 bot 消息添加的 emoji reaction 会作为低噪声 reaction turn 送入 Codex；模型可对被动反馈返回 `[LARK_NO_REPLY]`，也可在确实需要跟进时回复
+- 用户对 bot 消息添加的 emoji reaction 会作为正常交互 turn 送入 Codex，并携带被 reaction 的 bot 消息上下文；模型可继续流程、重试、追问、回复，或返回 `[LARK_NO_REPLY]`
 
 ### 消息回复
 
