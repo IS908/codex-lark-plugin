@@ -219,6 +219,100 @@ await deliverMessageViaCodexExec({
 assert.equal(lifecycleSafeReplies.length, 1);
 assert.equal(lifecycleSafeReplies[0].text, 'I cannot create the issue automatically. Here is a draft issue body.');
 
+const visibleIssueResultReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_issue_action_visible',
+    text: '[Current Message]\n@Codex 提个 issue',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () =>
+    [
+      'Issue created.',
+      '<LARK_ACTIONS_JSON>',
+      JSON.stringify({
+        version: 1,
+        actions: [
+          {
+            type: 'create_github_issue',
+            title: 'Visible result',
+            body: 'The created URL must be visible.',
+          },
+        ],
+      }),
+      '</LARK_ACTIONS_JSON>',
+    ].join('\n'),
+  actionDispatcher: {
+    execute: async () => [
+      {
+        ok: true,
+        action: 'create_github_issue',
+        message: 'Created GitHub issue https://github.com/IS908/codex-lark-plugin/issues/123',
+      },
+    ],
+  },
+  sendReply: async (request) => {
+    visibleIssueResultReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(visibleIssueResultReplies.length, 1);
+assert.equal(
+  visibleIssueResultReplies[0].text,
+  [
+    'Issue created.',
+    '',
+    '[Action results]',
+    'OK create_github_issue: Created GitHub issue https://github.com/IS908/codex-lark-plugin/issues/123',
+  ].join('\n'),
+);
+
+const silentMemoryReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_memory_action_silent',
+    text: '[Current Message]\n@Codex remember this',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () =>
+    [
+      'Noted.',
+      '<LARK_ACTIONS_JSON>',
+      JSON.stringify({
+        version: 1,
+        actions: [
+          {
+            type: 'save_memory',
+            memory_type: 'profile',
+            content: '- prefers visible issue links',
+            reason: 'User preference',
+            tier: 'private',
+          },
+        ],
+      }),
+      '</LARK_ACTIONS_JSON>',
+    ].join('\n'),
+  actionDispatcher: {
+    execute: async () => [
+      {
+        ok: true,
+        action: 'save_memory',
+        message: 'Saved private profile for ou_sender_001.',
+      },
+    ],
+  },
+  sendReply: async (request) => {
+    silentMemoryReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(silentMemoryReplies.length, 1);
+assert.equal(silentMemoryReplies[0].text, 'Noted.');
+
 const docCommentExecRequests: any[] = [];
 const docCommentReplies: any[] = [];
 await deliverMessageViaCodexExec({

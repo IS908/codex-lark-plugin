@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 - Upgraded `@larksuite/channel` to `^0.2.0`, aligned the direct `@larksuiteoapi/node-sdk` dependency to `^1.67.0`, and raised the `protobufjs` override to `7.6.4` so root and wrapper dependency audits resolve without vulnerabilities.
 - Treat user emoji reactions on tracked bot messages as normal interaction turns, interpreting `DONE`/`OK`/`THUMBSUP` with the reacted bot message context instead of classifying them as passive acknowledgements by emoji type alone.
+- Show successful visible side-effect action results, such as created GitHub issue URLs, even when Codex exec also returns normal reply text; successful `save_memory` actions remain silent when a reply is already present.
 
 ## [1.6.2] - 2026-06-18
 

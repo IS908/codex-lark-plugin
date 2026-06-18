@@ -17,6 +17,7 @@ import {
   CODEX_EXEC_ACTIONS_START,
   formatCodexExecActionResults,
   parseCodexExecActionOutput,
+  type CodexExecActionExecutionResult,
   type CodexExecActionDispatcher,
 } from './codex-exec-actions.js';
 
@@ -54,6 +55,17 @@ export interface DocCommentExecReplyRequest {
   comment_id: string;
   file_type: string;
   content: string;
+}
+
+const VISIBLE_SUCCESS_ACTIONS = new Set<CodexExecActionExecutionResult['action']>([
+  'create_github_issue',
+  'create_job',
+  'recall_message',
+  'run_local_cli_tool',
+]);
+
+function shouldShowActionSummary(results: CodexExecActionExecutionResult[]): boolean {
+  return results.some((result) => !result.ok || VISIBLE_SUCCESS_ACTIONS.has(result.action));
 }
 
 interface LifecycleGuardResult {
@@ -287,10 +299,9 @@ export async function deliverMessageViaCodexExec(
           },
         ];
     const actionSummary = formatCodexExecActionResults(actionResults);
-    const hasActionError = actionResults.some((actionResult) => !actionResult.ok);
     if (!text) {
       text = actionSummary;
-    } else if (hasActionError) {
+    } else if (shouldShowActionSummary(actionResults)) {
       text = `${text}\n\n[Action results]\n${actionSummary}`;
     }
   }
