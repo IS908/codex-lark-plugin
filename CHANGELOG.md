@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Removed
+- Removed the built-in `create_github_issue` Codex exec action and `LARK_GITHUB_*` configuration surface from the core Lark bridge. GitHub issue creation should now be modeled as an explicitly configured `run_local_cli_tool` workflow when needed.
+
 ## [1.6.4] - 2026-06-18
 
 ### Added

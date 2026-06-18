@@ -18,7 +18,6 @@ parent-process bridge for actions that must run safely even when the child
 | Defer/no visible reply | `defer_reply` | `[LARK_DEFER]` / `[LARK_NO_REPLY]` sentinel | no; exec uses output parsing |
 | Save memory | `save_memory` | `save_memory` | partial; both use server-derived caller identity and `MemoryStore` |
 | Create job | `create_job` | `create_job` | partial; both use server-derived caller identity and `job-store` |
-| Create GitHub issue | not supported | `create_github_issue` | exec-only; optional, disabled by default, repo allowlisted, and executed through `gh issue create` without a shell |
 | Run local CLI tool | `run_local_cli_tool` | `run_local_cli_tool` | yes; both call `runConfiguredLocalCliTool` |
 | Recall bot message | `recall_message` | `recall_message` | yes; both use the tracked bot-message scope guard |
 | Edit bot message | `edit_message` | not supported | MCP-only for now; uses the tracked bot-message scope guard |
@@ -34,9 +33,10 @@ parent-process bridge for actions that must run safely even when the child
 - Message mutations that target prior bot messages must validate that the
   target message id is tracked by `BotMessageTracker` and belongs to the current
   chat/thread before calling Lark transport APIs.
-- External write actions such as `create_github_issue` must be opt-in and
-  bounded by local configuration such as repo allowlists, explicit command
-  selection, timeout, output caps, and audit logging.
+- Domain-specific external write actions should not be added directly to the
+  core exec action schema. Use `run_local_cli_tool` for explicitly configured
+  host-local workflows, with allowlists, fixed arguments, timeouts, output caps,
+  and audit logging owned by the local tool config.
 - Codex exec final answers have no background continuation after the visible
   Feishu reply is posted. If the child output promises later external work
   without a structured action, defer/no-reply marker, or scheduled job, delivery

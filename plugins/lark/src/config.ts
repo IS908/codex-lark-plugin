@@ -180,12 +180,6 @@ export const appConfig = {
   quotedCardUserFetchCommand: optional('LARK_QUOTED_CARD_USER_FETCH_COMMAND', 'lark-cli'),
   quotedCardUserFetchTimeoutMs: optionalPositiveNumber('LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS', 10_000),
   quotedCardUserFetchMaxBytes: optionalPositiveNumber('LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES', 256 * 1024),
-  githubIssueActionEnabled: optionalBoolean('LARK_GITHUB_ISSUE_ACTION_ENABLED', false),
-  githubIssueDefaultRepo: process.env.LARK_GITHUB_DEFAULT_REPO || null,
-  githubIssueAllowedRepos: optionalList('LARK_GITHUB_ALLOWED_REPOS'),
-  githubIssueCommand: optional('LARK_GITHUB_ISSUE_COMMAND', 'gh'),
-  githubIssueTimeoutMs: optionalPositiveNumber('LARK_GITHUB_ISSUE_TIMEOUT_MS', 30_000),
-  githubIssueMaxOutputBytes: optionalPositiveNumber('LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES', 64 * 1024),
 
   // Paths
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),

@@ -121,6 +121,7 @@ assert.match(execRequests[0].prompt, /thread_id: omt_thread_001/);
 assert.match(execRequests[0].prompt, /Kevin · Codex Test Group/);
 assert.match(execRequests[0].prompt, /@Codex ping/);
 assert.match(execRequests[0].prompt, /no background continuation after the visible reply is posted/);
+assert.doesNotMatch(execRequests[0].prompt, /create_github_issue|LARK_GITHUB/i);
 assert.deepEqual(execRequests[0].imagePaths, ['/tmp/lark-img-1.png', '/tmp/lark-img-2.png']);
 
 assert.deepEqual(replyRequests, [
@@ -222,26 +223,25 @@ await deliverMessageViaCodexExec({
 assert.equal(lifecycleSafeReplies.length, 1);
 assert.equal(lifecycleSafeReplies[0].text, 'I cannot create the issue automatically. Here is a draft issue body.');
 
-const visibleIssueResultReplies: ReplyRequest[] = [];
+const visibleActionResultReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({
   message: {
     ...message,
-    messageId: 'om_issue_action_visible',
-    text: '[Current Message]\n@Codex 提个 issue',
+    messageId: 'om_recall_action_visible',
+    text: '[Current Message]\n@Codex 撤回上一条回复',
   },
   displayLabel: 'Kevin · Codex Test Group',
   useCodexSessions: false,
   runCodexExec: async () =>
     [
-      'Issue created.',
+      'Message recalled.',
       '<LARK_ACTIONS_JSON>',
       JSON.stringify({
         version: 1,
         actions: [
           {
-            type: 'create_github_issue',
-            title: 'Visible result',
-            body: 'The created URL must be visible.',
+            type: 'recall_message',
+            message_id: 'om_bot_reply_123',
           },
         ],
       }),
@@ -251,24 +251,24 @@ await deliverMessageViaCodexExec({
     execute: async () => [
       {
         ok: true,
-        action: 'create_github_issue',
-        message: 'Created GitHub issue https://github.com/IS908/codex-lark-plugin/issues/123',
+        action: 'recall_message',
+        message: 'Recalled message om_bot_reply_123.',
       },
     ],
   },
   sendReply: async (request) => {
-    visibleIssueResultReplies.push(request);
+    visibleActionResultReplies.push(request);
     return { sentCount: 1 };
   },
 });
-assert.equal(visibleIssueResultReplies.length, 1);
+assert.equal(visibleActionResultReplies.length, 1);
 assert.equal(
-  visibleIssueResultReplies[0].text,
+  visibleActionResultReplies[0].text,
   [
-    'Issue created.',
+    'Message recalled.',
     '',
     '[Action results]',
-    'OK create_github_issue: Created GitHub issue https://github.com/IS908/codex-lark-plugin/issues/123',
+    'OK recall_message: Recalled message om_bot_reply_123.',
   ].join('\n'),
 );
 
@@ -478,26 +478,26 @@ assert.deepEqual(docCommentLifecycleReplies, [
   },
 ]);
 
-const docCommentIssueReplies: any[] = [];
-const docCommentIssueDispatches: any[] = [];
+const docCommentActionReplies: any[] = [];
+const docCommentActionDispatches: any[] = [];
 await deliverMessageViaCodexExec({
   message: {
-    messageId: 'rpl_doc_issue',
-    chatId: 'doc:dox_doc_issue',
+    messageId: 'rpl_doc_action',
+    chatId: 'doc:dox_doc_action',
     chatType: 'doc_comment',
     senderId: 'ou_owner',
     senderName: 'Kevin',
-    text: '<doc_comment doc_token="dox_doc_issue" comment_id="cmt_doc_issue" file_type="docx"><body>@Codex 提个 issue</body></doc_comment>',
+    text: '<doc_comment doc_token="dox_doc_action" comment_id="cmt_doc_action" file_type="docx"><body>@Codex run local action</body></doc_comment>',
     messageType: 'doc_comment',
-    threadId: 'cmt_doc_issue',
+    threadId: 'cmt_doc_action',
     rawContent: '{}',
     docComment: {
-      fileToken: 'dox_doc_issue',
-      commentId: 'cmt_doc_issue',
+      fileToken: 'dox_doc_action',
+      commentId: 'cmt_doc_action',
       fileType: 'docx',
     },
   },
-  displayLabel: 'Kevin · Issue Doc',
+  displayLabel: 'Kevin · Action Doc',
   useCodexSessions: false,
   runCodexExec: async () =>
     [
@@ -506,10 +506,9 @@ await deliverMessageViaCodexExec({
         version: 1,
         actions: [
           {
-            type: 'create_github_issue',
-            title: 'Doc comment action gap',
-            body: 'Created from a doc comment turn.',
-            labels: ['bug'],
+            type: 'run_local_cli_tool',
+            tool: 'echo',
+            args: ['doc-action-ok'],
           },
         ],
       }),
@@ -517,12 +516,12 @@ await deliverMessageViaCodexExec({
     ].join('\n'),
   actionDispatcher: {
     execute: async (request) => {
-      docCommentIssueDispatches.push(request);
+      docCommentActionDispatches.push(request);
       return [
         {
           ok: true,
-          action: 'create_github_issue',
-          message: 'Created GitHub issue https://github.com/IS908/codex-lark-plugin/issues/999',
+          action: 'run_local_cli_tool',
+          message: 'doc-action-ok',
         },
       ];
     },
@@ -531,21 +530,21 @@ await deliverMessageViaCodexExec({
     throw new Error('doc_comment exec delivery must not use Feishu IM reply');
   },
   sendDocCommentReply: async (request) => {
-    docCommentIssueReplies.push(request);
-    return { replyId: 'rpl_doc_issue_codex' };
+    docCommentActionReplies.push(request);
+    return { replyId: 'rpl_doc_action_codex' };
   },
 });
 
-assert.equal(docCommentIssueDispatches.length, 1);
-assert.equal(docCommentIssueDispatches[0].actions[0].type, 'create_github_issue');
-assert.deepEqual(docCommentIssueReplies, [
+assert.equal(docCommentActionDispatches.length, 1);
+assert.equal(docCommentActionDispatches[0].actions[0].type, 'run_local_cli_tool');
+assert.deepEqual(docCommentActionReplies, [
   {
-    chat_id: 'doc:dox_doc_issue',
-    thread_id: 'cmt_doc_issue',
-    doc_token: 'dox_doc_issue',
-    comment_id: 'cmt_doc_issue',
+    chat_id: 'doc:dox_doc_action',
+    thread_id: 'cmt_doc_action',
+    doc_token: 'dox_doc_action',
+    comment_id: 'cmt_doc_action',
     file_type: 'docx',
-    content: 'OK create_github_issue: Created GitHub issue https://github.com/IS908/codex-lark-plugin/issues/999',
+    content: 'OK run_local_cli_tool: doc-action-ok',
   },
 ]);
 
