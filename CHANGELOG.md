@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-06-18
+
+### Added
+- Added an optional `create_github_issue` Codex exec action bridge with default-off configuration, repo policy checks, bounded `gh issue create` execution, audit logging, and same-turn IM/doc-comment result reporting.
+- Routed real user emoji reactions on tracked bot replies into Codex as low-noise `reaction` turns so Codex can decide whether to return `[LARK_NO_REPLY]` or send a visible follow-up.
+
+### Changed
+- Prioritized quoted interactive-card context hydration through event/outbound cache, bot `messages/mget`, then optional user `messages/mget`, while keeping legacy SDK/raw fetches as compatibility fallbacks.
+- Strengthened Codex exec prompts and delivery guards so chat/doc-comment final answers cannot imply post-reply background follow-up without a structured action, defer/no-reply marker, or scheduled job.
+
+### Fixed
+- Preserved bot self-reaction echo filtering while allowing user reactions such as `DONE` on bot replies to reach the runtime.
+- Raised dependency overrides/locks for `form-data` and `hono` so the release audit gate no longer reports high-severity advisories.
+
 ## [1.6.1] - 2026-06-18
 
 ### Added
@@ -358,7 +372,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.20...v1.6.0
+[1.5.20]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.19...v1.5.20
+[1.5.19]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.18...v1.5.19
+[1.5.18]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.17...v1.5.18
+[1.5.17]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.16...v1.5.17
+[1.5.16]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.15...v1.5.16
+[1.5.15]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.14...v1.5.15
+[1.5.14]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.13...v1.5.14
+[1.5.13]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.12...v1.5.13
+[1.5.12]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.11...v1.5.12
+[1.5.11]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.10...v1.5.11
+[1.5.10]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.9...v1.5.10
+[1.5.9]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.8...v1.5.9
+[1.5.8]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.7...v1.5.8
+[1.5.7]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.6...v1.5.7
+[1.5.6]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.5...v1.5.6
+[1.5.5]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.4...v1.5.5
+[1.5.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.3...v1.5.4
+[1.5.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.2...v1.5.3
+[1.5.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.3.0...v1.4.0
