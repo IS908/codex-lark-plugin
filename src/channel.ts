@@ -29,10 +29,11 @@ import {
 } from './memory-context-dedup.js';
 import {
   legacyReactionRouteEvent,
+  type ReactionRouteDecision,
   routeReactionEvent,
   sdkReactionRouteEvent,
 } from './reaction-router.js';
-import { DisplayNameResolver } from './display-name-resolver.js';
+import { DisplayNameResolver, generateUserAlias } from './display-name-resolver.js';
 import { normalizeLegacyMessageEvent } from './inbound-message-normalizer.js';
 import type { LarkCachedMessageContext } from './lark-message-context.js';
 import { enrichLarkMessageWithMemory } from './memory-enricher.js';
@@ -105,6 +106,14 @@ export interface LarkMessage {
     commentId: string;
     fileType: string;
     replyId?: string;
+  };
+  reaction?: {
+    emojiType: string;
+    operatorId: string;
+    targetMessageId: string;
+    source: 'legacy' | 'sdk';
+    targetMessageType?: string;
+    targetText?: string;
   };
 }
 
@@ -451,13 +460,16 @@ export class LarkChannel {
   async handleSdkReactionEvent(reaction: ReactionEvent): Promise<void> {
     if (reaction.action !== 'added') return;
 
-    routeReactionEvent({
-      event: sdkReactionRouteEvent(reaction),
+    const decision = routeReactionEvent({
+      event: sdkReactionRouteEvent(reaction, this.botOpenId),
       botMessageTracker: this.botMessageTracker,
       passesWhitelist,
       debugLog,
       logPrefix: '[sdk-channel]',
     });
+    if (decision.action === 'deliver') {
+      await this.enqueueReactionMessage(decision, 'sdk');
+    }
   }
 
   setBotOpenId(openId: string | undefined): void {
@@ -581,18 +593,84 @@ export class LarkChannel {
   /**
    * Handle reaction events on bot messages.
    *
-   * Reactions are passive UI feedback. Forwarding them into Codex as ordinary
-   * message turns makes the bot send confusing follow-up text even though the
-   * user only clicked an emoji.
+   * User reactions on tracked bot replies are low-priority conversation turns:
+   * Codex sees the emoji and target bot message, then decides whether to return
+   * [LARK_NO_REPLY] or a visible follow-up. Bot self-reaction echoes and
+   * reactions on untracked messages remain filtered before they reach Codex.
    */
   private async handleReactionEvent(data: any): Promise<void> {
-    routeReactionEvent({
+    const decision = routeReactionEvent({
       event: legacyReactionRouteEvent(data),
       botMessageTracker: this.botMessageTracker,
       passesWhitelist,
       debugLog,
       logPrefix: '[channel]',
     });
+    if (decision.action === 'deliver') {
+      await this.enqueueReactionMessage(decision, 'legacy');
+    }
+  }
+
+  private async enqueueReactionMessage(
+    decision: Extract<ReactionRouteDecision, { action: 'deliver' }>,
+    source: 'legacy' | 'sdk',
+  ): Promise<void> {
+    const { event, trackedMessage } = decision;
+    const chatId = trackedMessage.chatId;
+    if (!chatId) return;
+
+    const operatorId = event.operatorId ?? '';
+    const emojiType = event.emojiType || '(unknown)';
+    const senderName = operatorId ? (this.nameCache.get(operatorId) ?? generateUserAlias(operatorId)) : '';
+    const chatType = this.chatTypeCache.get(chatId) ?? 'group';
+    const targetText = capUtf8Text(trackedMessage.quotedContext?.text, SDK_COMMENT_CONTEXT_CAP_BYTES);
+    const targetMessageType = trackedMessage.quotedContext?.msgType;
+    const lines = [
+      '[Reaction Event]',
+      `User ${senderName || operatorId || '(unknown user)'} (${operatorId || 'unknown_open_id'}) reacted to a previous bot reply with emoji ${emojiType}.`,
+      `target_bot_message_id: ${event.messageId}`,
+      `chat_id: ${chatId}`,
+      ...(trackedMessage.threadId ? [`thread_id: ${trackedMessage.threadId}`] : []),
+      '',
+      'This is an emoji reaction, not a new text message. Decide whether it needs a visible response. For acknowledgement or completion reactions such as OK, DONE, THUMBSUP, HEART, LIKE, or MeMeMe, usually return [LARK_NO_REPLY]. Respond only when the emoji clearly asks for clarification, correction, or follow-up action.',
+      ...(targetText
+        ? [
+            '',
+            '[Target Bot Reply]',
+            ...(targetMessageType ? [`message_type: ${targetMessageType}`] : []),
+            targetText,
+          ]
+        : []),
+    ];
+
+    const reactionMessage: LarkMessage = {
+      messageId: event.messageId,
+      chatId,
+      chatType,
+      senderId: operatorId,
+      ...(senderName ? { senderName } : {}),
+      text: lines.join('\n'),
+      messageType: 'reaction',
+      parentId: event.messageId,
+      ...(trackedMessage.threadId ? { threadId: trackedMessage.threadId } : {}),
+      rawContent: JSON.stringify({
+        event_type: 'reaction',
+        source,
+        target_message_id: event.messageId,
+        emoji_type: emojiType,
+        operator_id: operatorId,
+      }),
+      reaction: {
+        emojiType,
+        operatorId,
+        targetMessageId: event.messageId,
+        source,
+        ...(targetMessageType ? { targetMessageType } : {}),
+        ...(targetText ? { targetText } : {}),
+      },
+    };
+
+    this.enqueueMessage(reactionMessage);
   }
 
   /**

@@ -2,11 +2,28 @@ export type ReactionRouteReason =
   | 'bot-self'
   | 'untracked-message'
   | 'whitelist-denied'
-  | 'passive-feedback';
+  | 'missing-chat'
+  | 'user-reaction';
 
-export interface ReactionRouteDecision {
-  action: 'ignored';
-  reason: ReactionRouteReason;
+export type ReactionRouteDecision =
+  | {
+      action: 'ignored';
+      reason: Exclude<ReactionRouteReason, 'user-reaction'>;
+    }
+  | {
+      action: 'deliver';
+      reason: 'user-reaction';
+      event: ReactionRouteEvent;
+      trackedMessage: ReactionTrackedMessage;
+    };
+
+export interface ReactionTrackedMessage {
+  chatId?: string;
+  threadId?: string;
+  quotedContext?: {
+    text?: string;
+    msgType?: string;
+  };
 }
 
 export interface ReactionRouteEvent {
@@ -19,7 +36,7 @@ export interface ReactionRouteEvent {
 export interface ReactionRouteOptions {
   event: ReactionRouteEvent;
   botMessageTracker: {
-    get: (messageId: string) => { chatId?: string } | undefined;
+    get: (messageId: string) => ReactionTrackedMessage | undefined;
   };
   passesWhitelist: (senderId: string, chatId: string) => boolean;
   debugLog: (line: string) => void;
@@ -39,12 +56,12 @@ export function sdkReactionRouteEvent(reaction: {
   messageId?: string;
   emojiType?: string;
   operator?: { openId?: string };
-}): ReactionRouteEvent {
+}, botOpenId?: string): ReactionRouteEvent {
   return {
     messageId: reaction.messageId ?? '',
     emojiType: reaction.emojiType ?? '',
     operatorId: reaction.operator?.openId ?? '',
-    isBotSelfReaction: false,
+    isBotSelfReaction: !!botOpenId && reaction.operator?.openId === botOpenId,
   };
 }
 
@@ -59,14 +76,18 @@ export function routeReactionEvent(opts: ReactionRouteOptions): ReactionRouteDec
   if (!trackedMessage) {
     return { action: 'ignored', reason: 'untracked-message' };
   }
+  if (!trackedMessage.chatId) {
+    debugLog(`${logPrefix} Reaction on bot message ${event.messageId} ignored because tracked chat_id is missing`);
+    return { action: 'ignored', reason: 'missing-chat' };
+  }
 
-  if (!passesWhitelist(event.operatorId ?? '', trackedMessage.chatId ?? '')) {
+  if (!passesWhitelist(event.operatorId ?? '', trackedMessage.chatId)) {
     debugLog(`${logPrefix} Reaction from ${event.operatorId ?? ''} rejected by whitelist`);
     return { action: 'ignored', reason: 'whitelist-denied' };
   }
 
   debugLog(
-    `${logPrefix} Ignoring user reaction ${event.emojiType || '(unknown)'} on bot message ${event.messageId} from ${event.operatorId ?? ''}`,
+    `${logPrefix} Routing user reaction ${event.emojiType || '(unknown)'} on bot message ${event.messageId} from ${event.operatorId ?? ''}`,
   );
-  return { action: 'ignored', reason: 'passive-feedback' };
+  return { action: 'deliver', reason: 'user-reaction', event, trackedMessage };
 }

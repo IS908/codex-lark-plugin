@@ -47,5 +47,32 @@ assert.equal(imMeta.root_message_id, 'om_root_001');
 assert.equal(imMeta.doc_token, undefined);
 assert.equal(imMeta.comment_id, undefined);
 assert.equal(imMeta.file_type, undefined);
+assert.equal(imMeta.message_type, 'text');
+
+const reactionMeta = buildChannelNotificationMeta({
+  messageId: 'om_bot_reply',
+  chatId: 'oc_001',
+  chatType: 'group',
+  senderId: 'ou_001',
+  text: '[Reaction Event]\nUser reacted with DONE',
+  messageType: 'reaction',
+  threadId: 'omt_001',
+  rawContent: '{}',
+  reaction: {
+    emojiType: 'DONE',
+    operatorId: 'ou_001',
+    targetMessageId: 'om_bot_reply',
+    source: 'sdk',
+    targetMessageType: 'text',
+    targetText: 'original bot reply',
+  },
+}, 'Kevin · Group');
+
+assert.equal(reactionMeta.message_type, 'reaction');
+assert.equal(reactionMeta.reaction_emoji, 'DONE');
+assert.equal(reactionMeta.reaction_operator_id, 'ou_001');
+assert.equal(reactionMeta.reaction_target_message_id, 'om_bot_reply');
+assert.equal(reactionMeta.reaction_source, 'sdk');
+assert.equal(reactionMeta.reaction_target_message_type, 'text');
 
 console.log('PASS');

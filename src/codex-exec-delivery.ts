@@ -135,10 +135,12 @@ export function guardCodexExecLifecycleReply(
 
 export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string): string {
   const isDocComment = message.chatType === 'doc_comment';
+  const isReaction = message.messageType === 'reaction' && !!message.reaction;
   const metaLines = [
     `message_id: ${message.messageId}`,
     `chat_id: ${message.chatId}`,
     `chat_type: ${message.chatType}`,
+    `message_type: ${message.messageType}`,
     `user_id: ${message.senderId}`,
     ...(message.threadId ? [`thread_id: ${message.threadId}`] : []),
     ...(message.rootMessageId ? [`root_message_id: ${message.rootMessageId}`] : []),
@@ -147,6 +149,14 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
           `doc_token: ${message.docComment.fileToken}`,
           `comment_id: ${message.docComment.commentId}`,
           `file_type: ${message.docComment.fileType}`,
+        ]
+      : []),
+    ...(message.reaction
+      ? [
+          `reaction_emoji: ${message.reaction.emojiType}`,
+          `reaction_operator_id: ${message.reaction.operatorId}`,
+          `reaction_target_message_id: ${message.reaction.targetMessageId}`,
+          `reaction_source: ${message.reaction.source}`,
         ]
       : []),
     ...(message.botMentioned ? ['bot_mentioned: true'] : []),
@@ -163,10 +173,16 @@ export function buildCodexExecPrompt(message: LarkMessage, displayLabel: string)
   ];
 
   return [
-    isDocComment ? 'Reply to this Feishu/Lark document comment.' : 'Reply to this Feishu/Lark message.',
+    isDocComment
+      ? 'Reply to this Feishu/Lark document comment.'
+      : isReaction
+        ? 'Handle this Feishu/Lark emoji reaction on a previous bot reply.'
+        : 'Reply to this Feishu/Lark message.',
     isDocComment
       ? 'Return only the plain text that should be posted as a Feishu document-comment reply. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.'
-      : 'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
+      : isReaction
+        ? 'Return [LARK_NO_REPLY] when the emoji is just acknowledgement, completion, thanks, approval, or passive feedback. Return visible message text only when the reaction clearly needs clarification, correction, or follow-up action.'
+        : 'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',
     'If the user asks for a supported built-in Lark action, request it with the structured action block below instead of saying the MCP tool is unavailable.',

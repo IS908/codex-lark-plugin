@@ -97,14 +97,38 @@ assert.equal(handled[1].chatId, 'doc:dox_sdk_live');
 assert.equal(handled[1].threadId, 'cmt_sdk_live');
 assert.equal(identitySession.getCaller('doc:dox_sdk_live', 'cmt_sdk_live'), 'ou_commenter');
 
-channel.getBotMessageTracker().add('om_bot_reply', { chatId: 'oc_sdk_p2p' });
+channel.getBotMessageTracker().add('om_bot_reply', {
+  chatId: 'oc_sdk_p2p',
+  quotedContext: {
+    text: 'Bot reply awaiting confirmation.',
+    msgType: 'text',
+  },
+});
 await handlers.get('reaction')!({
   messageId: 'om_bot_reply',
   operator: { openId: 'ou_sdk_sender' },
+  emojiType: 'DONE',
+  action: 'added',
+  actionTime: Date.now(),
+});
+for (let i = 0; i < 20 && handled.length < 3; i++) {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+}
+assert.equal(handled.length, 3, 'user reactions on bot messages should surface as reaction turns');
+assert.equal(handled[2].messageType, 'reaction');
+assert.equal(handled[2].messageId, 'om_bot_reply');
+assert.equal(handled[2].reaction.emojiType, 'DONE');
+assert.match(handled[2].text, /emoji DONE/);
+assert.match(handled[2].text, /Bot reply awaiting confirmation/);
+
+await handlers.get('reaction')!({
+  messageId: 'om_bot_reply',
+  operator: { openId: 'ou_bot' },
   emojiType: 'OK',
   action: 'added',
   actionTime: Date.now(),
 });
-assert.equal(handled.length, 2, 'reaction events must remain passive');
+await new Promise((resolve) => setTimeout(resolve, 10));
+assert.equal(handled.length, 3, 'bot self-reaction echoes should remain filtered');
 
 console.log('sdk-runtime smoke: PASS');

@@ -129,6 +129,56 @@ assert.deepEqual(replyRequests, [
   },
 ]);
 
+const reactionExecRequests: any[] = [];
+const reactionReplies: ReplyRequest[] = [];
+const reactionTracker = new TurnObligationTracker({ timeoutMs: 60_000 });
+reactionTracker.begin({
+  messageId: 'om_bot_reply_reacted',
+  chatId: 'oc_group_001',
+  threadId: 'omt_thread_001',
+  caller: 'ou_sender_001',
+  mode: 'exec',
+});
+await deliverMessageViaCodexExec({
+  message: {
+    messageId: 'om_bot_reply_reacted',
+    chatId: 'oc_group_001',
+    chatType: 'group',
+    senderId: 'ou_sender_001',
+    senderName: 'Kevin',
+    text: '[Reaction Event]\nUser Kevin reacted to a previous bot reply with emoji DONE.',
+    messageType: 'reaction',
+    threadId: 'omt_thread_001',
+    rawContent: '{}',
+    reaction: {
+      emojiType: 'DONE',
+      operatorId: 'ou_sender_001',
+      targetMessageId: 'om_bot_reply_reacted',
+      source: 'sdk',
+      targetMessageType: 'text',
+      targetText: 'Done, tracked in the issue.',
+    },
+  },
+  displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+  useCodexSessions: false,
+  turnObligations: reactionTracker,
+  runCodexExec: async (request) => {
+    reactionExecRequests.push(request);
+    return '[LARK_NO_REPLY] acknowledgement reaction only';
+  },
+  sendReply: async (request) => {
+    reactionReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(reactionExecRequests.length, 1);
+assert.match(reactionExecRequests[0].prompt, /Handle this Feishu\/Lark emoji reaction/);
+assert.match(reactionExecRequests[0].prompt, /reaction_emoji: DONE/);
+assert.match(reactionExecRequests[0].prompt, /reaction_target_message_id: om_bot_reply_reacted/);
+assert.equal(reactionReplies.length, 0);
+assert.equal(reactionTracker.get('om_bot_reply_reacted')?.status, 'deferred');
+reactionTracker.clear();
+
 const lifecycleGuardReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({
   message: {
