@@ -12,6 +12,9 @@ const code = `
     minSearchScore: appConfig.minSearchScore,
     memoryDedupWindowMs: appConfig.memoryDedupWindowMs,
     inboxMaxBytes: appConfig.inboxMaxBytes,
+    queueHandlerTimeoutMs: appConfig.queueHandlerTimeoutMs,
+    codexExecTimeoutMs: appConfig.codexExecTimeoutMs,
+    replyObligationTimeoutMs: appConfig.replyObligationTimeoutMs,
     codexExecCwd: appConfig.codexExecCwd,
     channelRuntime: appConfig.channelRuntime,
     codexSessionRetentionDays: appConfig.codexSessionRetentionDays,
@@ -85,6 +88,9 @@ assert.equal(defaultPaths.channelRuntime, 'sdk');
 assert.equal(defaultPaths.codexSessionRetentionDays, 14);
 assert.equal(defaultPaths.codexSessionRetentionScanIntervalHours, 24);
 assert.equal(defaultPaths.codexSessionRetentionDryRun, false);
+assert.equal(defaultPaths.codexExecTimeoutMs, 600_000);
+assert.equal(defaultPaths.queueHandlerTimeoutMs, 660_000);
+assert.equal(defaultPaths.replyObligationTimeoutMs, 660_000);
 assert.equal(defaultPaths.quotedCardUserFetchEnabled, true);
 assert.equal(defaultPaths.quotedCardUserFetchCommand, 'lark-cli');
 assert.equal(defaultPaths.quotedCardUserFetchTimeoutMs, 10_000);
@@ -116,5 +122,22 @@ assert.equal(sdkRuntime.channelRuntime, 'sdk');
 
 const legacyRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'legacy' });
 assert.equal(legacyRuntime.channelRuntime, 'legacy');
+
+const customExecTimeout = expectOk({ LARK_CODEX_EXEC_TIMEOUT_MS: '5000' });
+assert.equal(customExecTimeout.codexExecTimeoutMs, 5000);
+assert.equal(customExecTimeout.queueHandlerTimeoutMs, 65_000);
+assert.equal(customExecTimeout.replyObligationTimeoutMs, 65_000);
+
+const disabledQueueTimeout = expectOk({ LARK_QUEUE_HANDLER_TIMEOUT_MS: '0' });
+assert.equal(disabledQueueTimeout.queueHandlerTimeoutMs, 0);
+
+const raisedLegacyQueueTimeout = expectOk({ LARK_QUEUE_HANDLER_TIMEOUT_MS: '30000' });
+assert.equal(raisedLegacyQueueTimeout.queueHandlerTimeoutMs, 660_000);
+
+const raisedEqualExecQueueTimeout = expectOk({ LARK_QUEUE_HANDLER_TIMEOUT_MS: '600000' });
+assert.equal(raisedEqualExecQueueTimeout.queueHandlerTimeoutMs, 660_000);
+
+const explicitQueueTimeout = expectOk({ LARK_QUEUE_HANDLER_TIMEOUT_MS: '700000' });
+assert.equal(explicitQueueTimeout.queueHandlerTimeoutMs, 700_000);
 
 console.log('config-validation smoke: PASS');

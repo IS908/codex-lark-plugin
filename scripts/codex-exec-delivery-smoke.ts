@@ -19,6 +19,7 @@ import {
 import type { LarkMessage } from '../src/channel.js';
 import type { ReplyRequest } from '../src/reply-sender.js';
 import { TurnObligationTracker } from '../src/turn-obligation.js';
+import { formatCodexExecFailureReply } from '../src/codex-exec-error.js';
 
 const message: LarkMessage = {
   messageId: 'om_inbound_001',
@@ -767,6 +768,46 @@ assert.equal(fallbackRequests[1].resumeSessionId, null);
 assert.equal(
   sessionRecords.get('chat:oc_group_001:thread:omt_thread_001')?.sessionId,
   '0199a213-81c0-7800-8aa1-bbab2a035a54',
+);
+
+sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
+  key: 'chat:oc_group_001:thread:omt_thread_001',
+  sessionId: 'timeout-session',
+  chatId: 'oc_group_001',
+  threadId: 'omt_thread_001',
+  updatedAt: new Date(0).toISOString(),
+});
+const timeoutFallbackRequests: any[] = [];
+
+await assert.rejects(
+  deliverMessageViaCodexExec({
+    message: {
+      ...message,
+      messageId: 'om_inbound_resume_timeout',
+      text: '[Current Message]\nresume times out',
+    },
+    displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+    sessionStore,
+    runCodexExec: async (request) => {
+      timeoutFallbackRequests.push(request);
+      if (request.resumeSessionId === 'timeout-session') {
+        throw new Error('codex exec timed out after 600000ms');
+      }
+      return { text: 'unexpected fresh answer', sessionId: 'fresh-after-timeout' };
+    },
+    sendReply: async () => ({ sentCount: 1 }),
+  }),
+  /codex exec timed out after 600000ms/,
+);
+assert.equal(timeoutFallbackRequests.length, 1);
+assert.equal(timeoutFallbackRequests[0].resumeSessionId, 'timeout-session');
+assert.equal(
+  sessionRecords.get('chat:oc_group_001:thread:omt_thread_001')?.sessionId,
+  'timeout-session',
+);
+assert.equal(
+  formatCodexExecFailureReply(new Error('codex exec timed out after 600000ms')),
+  'Task timed out and this turn was stopped. Please narrow the task scope or try again later.',
 );
 
 const deferTracker = new TurnObligationTracker({ timeoutMs: 60_000 });

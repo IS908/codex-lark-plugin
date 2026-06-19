@@ -64,6 +64,16 @@ function optionalChoice<const T extends readonly string[]>(
   throw new Error(`Invalid ${key}: ${val}. Expected one of: ${choices.join(', ')}`);
 }
 
+const codexExecTimeoutMs = optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000);
+const codexExecReplyBufferMs = 60_000;
+
+function optionalQueueHandlerTimeoutMs(): number {
+  const minimumWithReplyBuffer = codexExecTimeoutMs + codexExecReplyBufferMs;
+  const parsed = optionalNonNegativeNumber('LARK_QUEUE_HANDLER_TIMEOUT_MS', minimumWithReplyBuffer);
+  if (parsed === 0) return 0;
+  return Math.max(parsed, minimumWithReplyBuffer);
+}
+
 export const appConfig = {
   // Required
   appId: required('LARK_APP_ID'),
@@ -76,7 +86,7 @@ export const appConfig = {
   ackEmoji: optional('LARK_ACK_EMOJI', 'MeMeMe'),
   docCommentAckEmoji: optionalAllowEmpty('LARK_DOC_COMMENT_ACK_EMOJI', 'THUMBSUP'),
   botMessageTrackerSize: optionalNonNegativeNumber('LARK_BOT_MESSAGE_TRACKER_SIZE', 500),
-  queueHandlerTimeoutMs: optionalNonNegativeNumber('LARK_QUEUE_HANDLER_TIMEOUT_MS', 30_000),
+  queueHandlerTimeoutMs: optionalQueueHandlerTimeoutMs(),
   codexDeliveryMode: optionalChoice(
     'LARK_CODEX_DELIVERY_MODE',
     'exec',
@@ -89,7 +99,7 @@ export const appConfig = {
   ),
   codexExecCommand: optional('LARK_CODEX_EXEC_COMMAND', 'codex'),
   codexExecCwd: optional('LARK_CODEX_EXEC_CWD', defaultCodexExecCwd),
-  codexExecTimeoutMs: optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000),
+  codexExecTimeoutMs,
   codexExecSandbox: optionalChoice(
     'LARK_CODEX_EXEC_SANDBOX',
     'workspace-write',
@@ -123,7 +133,7 @@ export const appConfig = {
   sessionHealthMaxNudges: optionalPositiveNumber('LARK_SESSION_HEALTH_MAX_NUDGES', 3),
   replyObligationTimeoutMs: optionalPositiveNumber(
     'LARK_REPLY_OBLIGATION_TIMEOUT_MS',
-    Math.max(60_000, optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000) + 60_000),
+    Math.max(60_000, codexExecTimeoutMs + codexExecReplyBufferMs),
   ),
   cronScanInterval: optionalPositiveNumber('LARK_CRON_SCAN_INTERVAL', 60),
   cronTimezone: optional('LARK_CRON_TIMEZONE', Intl.DateTimeFormat().resolvedOptions().timeZone),
