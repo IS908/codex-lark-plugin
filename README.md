@@ -310,7 +310,7 @@ failure invalidates that scope so the next turn receives the full context.
 | Variable | Default | Description |
 |---|---|---|
 | `LARK_TEXT_CHUNK_LIMIT` | `4000` | Maximum characters per message chunk |
-| `LARK_QUEUE_HANDLER_TIMEOUT_MS` | `30000` | Per-thread message handler timeout in milliseconds |
+| `LARK_QUEUE_HANDLER_TIMEOUT_MS` | `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` | Per-thread queue guardrail in milliseconds. `0` disables it; positive values below `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` are raised to that minimum so `codex exec` owns normal timeout failure replies. |
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | `max(60000, LARK_CODEX_EXEC_TIMEOUT_MS + 60000)` | Max wait for a visible reply/defer before logging a missed Lark turn |
 | `LARK_CODEX_DELIVERY_MODE` | `exec` | `exec` runs `codex exec` for each Feishu message and sends the final answer directly through Feishu. `notification` keeps the legacy `notifications/Codex/channel` path for compatible hosts. |
 | `LARK_CHANNEL_RUNTIME` | `sdk` | Channel runtime selector. `sdk` is the default live runtime during internal testing; set `legacy` to roll back to the pre-SDK WebSocket path without changing credentials, memory, or jobs. |

@@ -17,7 +17,7 @@ import { sendFeishuReply } from './reply-sender.js';
 import { TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import { buildChannelNotificationMeta } from './channel-notification.js';
-import { shouldSendCodexExecFailureReply } from './codex-exec-error.js';
+import { formatCodexExecFailureReply, shouldSendCodexExecFailureReply } from './codex-exec-error.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
 import { packageName, packageVersion } from './package-metadata.js';
 import {
@@ -329,7 +329,7 @@ async function main() {
       );
       console.error('[channel] Failed to deliver inbound to Codex:', redactErrorForLog(err));
       if (appConfig.codexDeliveryMode === 'exec') {
-        const errorText = `Codex exec failed: ${errText.slice(0, 1500)}`;
+        const errorText = formatCodexExecFailureReply(err);
         if (message.chatType === 'doc_comment' && message.docComment) {
           for (const chunk of splitDocCommentText(errorText)) {
             await channel.getLarkTransport().replyDocComment({

@@ -39,7 +39,7 @@ LARK_ALLOWED_CHAT_IDS:     (not set)
 
 === Messaging ===
 LARK_TEXT_CHUNK_LIMIT:              4000
-LARK_QUEUE_HANDLER_TIMEOUT_MS:      30000
+LARK_QUEUE_HANDLER_TIMEOUT_MS:      660000
 LARK_CODEX_DELIVERY_MODE:           exec
 LARK_CODEX_EXEC_COMMAND:            codex
 LARK_CODEX_EXEC_CWD:                plugin cwd
@@ -138,7 +138,7 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_MAX_SEARCH_RESULTS` — max episodes injected per message (default: 2)
 - `LARK_MIN_SEARCH_SCORE` — minimum relevance score for episode search (default: 0.3)
 - `LARK_TEXT_CHUNK_LIMIT` — max chars per reply chunk (default: 4000)
-- `LARK_QUEUE_HANDLER_TIMEOUT_MS` — per-message queue handler timeout (default: 30000)
+- `LARK_QUEUE_HANDLER_TIMEOUT_MS` — per-message queue guardrail timeout (default: `LARK_CODEX_EXEC_TIMEOUT_MS + 60000`; set `0` to disable; lower positive values are raised to the default)
 - `LARK_CODEX_DELIVERY_MODE` — `exec` or `notification` (default: `exec`)
 - `LARK_CODEX_EXEC_SANDBOX` — sandbox passed to `codex exec` (default: `workspace-write`)
 - `LARK_CODEX_EXEC_USE_SESSIONS` — resume one Codex session per Feishu chat/thread (default: true)
@@ -219,7 +219,7 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_ALLOWED_USER_IDS` | Filtering | No | (empty) |
 | `LARK_ALLOWED_CHAT_IDS` | Filtering | No | (empty) |
 | `LARK_TEXT_CHUNK_LIMIT` | Messaging | No | `4000` |
-| `LARK_QUEUE_HANDLER_TIMEOUT_MS` | Messaging | No | `30000` |
+| `LARK_QUEUE_HANDLER_TIMEOUT_MS` | Messaging | No | `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` |
 | `LARK_CODEX_DELIVERY_MODE` | Messaging | No | `exec` |
 | `LARK_CODEX_EXEC_COMMAND` | Messaging | No | `codex` |
 | `LARK_CODEX_EXEC_CWD` | Messaging | No | plugin cwd |

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- Ensured Codex exec timeouts are handled by the exec delivery layer, with a visible English timeout reply, no fresh-session fallback after timeout, and a queue guardrail that leaves a reply buffer.
+
 ## [1.7.0] - 2026-06-18
 
 ### Removed

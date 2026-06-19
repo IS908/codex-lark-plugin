@@ -1,7 +1,7 @@
 import { appConfig } from './config.js';
 import type { LarkMessage } from './channel.js';
 import type { CodexExecRequest, CodexExecRunner } from './codex-exec.js';
-import { normalizeCodexExecResult, runCodexExecCommand } from './codex-exec.js';
+import { isCodexExecTimeoutError, normalizeCodexExecResult, runCodexExecCommand } from './codex-exec.js';
 import {
   buildCodexExecSessionKey,
   FileCodexExecSessionStore,
@@ -308,7 +308,7 @@ export async function deliverMessageViaCodexExec(
     progressSink?.start();
     result = normalizeCodexExecResult(await runCodexExec(request));
   } catch (err) {
-    if (!request.resumeSessionId) throw err;
+    if (!request.resumeSessionId || isCodexExecTimeoutError(err)) throw err;
     console.error(
       `[codex-exec] Failed to resume session ${request.resumeSessionId} for ${sessionKey}; starting a new session: ${
         (err as Error).message

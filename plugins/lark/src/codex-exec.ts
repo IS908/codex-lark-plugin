@@ -42,6 +42,10 @@ export type CodexExecRunner = (request: CodexExecRequest) => Promise<string | Co
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const OUTPUT_CAP = 16 * 1024;
 
+export function isCodexExecTimeoutError(err: unknown): boolean {
+  return err instanceof Error && /\bcodex exec timed out after \d+ms\b/.test(err.message);
+}
+
 function appendCapped(current: string, chunk: Buffer): string {
   const next = current + chunk.toString('utf8');
   if (next.length <= OUTPUT_CAP) return next;
