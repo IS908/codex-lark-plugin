@@ -27,6 +27,18 @@ export interface CodexExecProgressSinkOptions {
   send: (content: string) => Promise<void>;
 }
 
+export interface CodexExecProgressCleanupOptions {
+  maxAgeMs?: number;
+  nowMs?: number;
+}
+
+export interface CodexExecProgressCleanupResult {
+  progressDir: string;
+  removed: number;
+  kept: number;
+  errors: number;
+}
+
 type ProgressRejectReason =
   | 'disabled'
   | 'invalid-json'
@@ -59,6 +71,13 @@ const LOW_SIGNAL_PATTERNS = [
   /(?:我)?(?:正在|继续|还在).{0,12}(?:处理|分析|思考|看|推进)/,
   /(?:请稍等|稍等|等一下|马上回来)/,
 ];
+
+export const CODEX_EXEC_PROGRESS_RETENTION_MS = 12 * 60 * 60 * 1000;
+export const CODEX_EXEC_PROGRESS_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
+function progressParentDir(baseDir: string): string {
+  return path.join(baseDir, '.lark-progress');
+}
 
 export class CodexExecProgressSink {
   readonly filePath: string;
@@ -98,8 +117,10 @@ export class CodexExecProgressSink {
   }
 
   async prepare(): Promise<void> {
-    await fs.mkdir(this.dir, { recursive: true });
-    await fs.writeFile(this.filePath, '', 'utf-8');
+    await fs.mkdir(this.dir, { recursive: true, mode: 0o700 });
+    await fs.chmod(this.dir, 0o700);
+    await fs.writeFile(this.filePath, '', { encoding: 'utf-8', mode: 0o600 });
+    await fs.chmod(this.filePath, 0o600);
   }
 
   start(): void {
@@ -251,9 +272,14 @@ export async function createCodexExecProgressSink(
 ): Promise<CodexExecProgressSink | null> {
   if (!options.limits.enabled) return null;
   try {
-    const parentDir = path.join(options.baseDir, '.lark-progress');
-    await fs.mkdir(parentDir, { recursive: true });
+    const parentDir = progressParentDir(options.baseDir);
+    await fs.mkdir(parentDir, { recursive: true, mode: 0o700 });
+    await fs.chmod(parentDir, 0o700);
+    await cleanupCodexExecProgressFiles(options.baseDir).catch((err) => {
+      logSafeError('[codex-exec-progress] cleanup before setup failed:', err);
+    });
     const dir = await fs.mkdtemp(path.join(parentDir, 'turn-'));
+    await fs.chmod(dir, 0o700);
     const sink = new CodexExecProgressSink(dir, options);
     await sink.prepare();
     return sink;
@@ -261,6 +287,62 @@ export async function createCodexExecProgressSink(
     logSafeError('[codex-exec-progress] disabled because progress file setup failed:', err);
     return null;
   }
+}
+
+export async function cleanupCodexExecProgressFiles(
+  baseDir: string,
+  options: CodexExecProgressCleanupOptions = {},
+): Promise<CodexExecProgressCleanupResult> {
+  const progressDir = progressParentDir(baseDir);
+  const maxAgeMs = options.maxAgeMs ?? CODEX_EXEC_PROGRESS_RETENTION_MS;
+  const nowMs = options.nowMs ?? Date.now();
+  const result: CodexExecProgressCleanupResult = { progressDir, removed: 0, kept: 0, errors: 0 };
+
+  let entries: Array<{ name: string }>;
+  try {
+    entries = await fs.readdir(progressDir, { withFileTypes: true });
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') return result;
+    result.errors += 1;
+    logSafeError('[codex-exec-progress] cleanup failed to read progress dir:', err);
+    return result;
+  }
+
+  for (const entry of entries) {
+    if (!entry.name.startsWith('turn-')) continue;
+    const entryPath = path.join(progressDir, entry.name);
+    try {
+      const entryStat = await fs.lstat(entryPath);
+      if (nowMs - entryStat.mtimeMs <= maxAgeMs) {
+        result.kept += 1;
+        continue;
+      }
+      await fs.rm(entryPath, { recursive: true, force: true });
+      result.removed += 1;
+    } catch (err) {
+      result.errors += 1;
+      logSafeError(`[codex-exec-progress] cleanup failed for ${entryPath}:`, err);
+    }
+  }
+
+  return result;
+}
+
+export function startCodexExecProgressRetention(
+  baseDir: string,
+  options: CodexExecProgressCleanupOptions & { intervalMs?: number } = {},
+): NodeJS.Timeout | null {
+  const intervalMs = options.intervalMs ?? CODEX_EXEC_PROGRESS_CLEANUP_INTERVAL_MS;
+  const cleanup = () => {
+    void cleanupCodexExecProgressFiles(baseDir, options).catch((err) => {
+      logSafeError('[codex-exec-progress] retention cleanup failed:', err);
+    });
+  };
+  cleanup();
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return null;
+  const timer = setInterval(cleanup, intervalMs);
+  timer.unref?.();
+  return timer;
 }
 
 export function buildCodexExecProgressPrompt(info: CodexExecProgressPromptInfo | null): string[] {
