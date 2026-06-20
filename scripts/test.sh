@@ -205,6 +205,10 @@ echo "=== Codex exec delivery unit checks ==="
 node --import tsx scripts/codex-exec-delivery-smoke.ts
 
 echo ""
+echo "=== Codex exec progress retention checks ==="
+node --import tsx scripts/codex-exec-progress-smoke.ts
+
+echo ""
 echo "=== Codex exec session store unit checks ==="
 node --import tsx scripts/codex-session-store-smoke.ts
 

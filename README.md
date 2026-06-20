@@ -337,6 +337,9 @@ low-signal filler, enforces the configured count/length/rate limits, and sends
 accepted progress messages through the same IM or doc-comment reply path before
 the final answer. If the progress file cannot be created, the bridge disables
 progress for that turn and still delivers the final reply.
+Progress directories are owner-only (`0700`) and JSONL files are owner-only
+read/write (`0600`). Stale `.lark-progress/turn-*` entries older than 12 hours
+are removed on startup and by a best-effort hourly cleanup.
 
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:

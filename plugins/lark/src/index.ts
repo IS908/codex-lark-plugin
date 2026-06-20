@@ -36,6 +36,7 @@ import { ProfileDistillationManager } from './profile-distillation.js';
 import { validateSdkChannelScaffold } from './sdk-channel-scaffold.js';
 import { startSdkChannelRuntime } from './sdk-channel-runtime.js';
 import { startCodexSessionRetention } from './codex-session-retention.js';
+import { startCodexExecProgressRetention } from './codex-exec-progress.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
@@ -414,6 +415,7 @@ async function main() {
 
   runStartupResourceCleanup(memoryStore);
   startCodexSessionRetention();
+  startCodexExecProgressRetention(appConfig.codexExecCwd);
 
   console.error('[index] codex-lark-plugin started successfully');
 }

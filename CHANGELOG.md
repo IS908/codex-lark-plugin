@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- Added owner-only file permissions and best-effort 12-hour retention cleanup for Codex exec progress side-channel files under `.lark-progress/turn-*`.
+
 ## [1.7.1] - 2026-06-19
 
 ### Fixed

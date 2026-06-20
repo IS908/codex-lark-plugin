@@ -317,6 +317,9 @@ exec delivery 可以为长时间运行的可见 IM / 文档评论 turn 暴露一
 `chat_id` / `open_id` 等身份字段，丢弃重复或低信息量的“正在处理”类 filler，并按配置限制
 条数、长度和发送频率；通过校验的过程消息会在最终回复前走同一个 IM 或文档评论回复路径。
 如果 progress 文件创建失败，本 turn 会自动关闭过程消息，但最终回复仍会正常发送。
+progress 目录会限制为当前本地用户可访问（`0700`），JSONL 文件为当前用户读写（`0600`）。
+超过 12 小时的 `.lark-progress/turn-*` 残留会在启动时清理，并由每小时一次的 best-effort
+清理继续回收。
 
 exec delivery 也内置父进程 action bridge，用于处理子 `codex exec` 进程不能安全调用当前 MCP server 的内置动作：`save_memory`、`create_job`、`run_local_cli_tool` 和 `recall_message`。子进程返回经过校验的 `LARK_ACTIONS_JSON` 标记块；父进程会从可见回复中剥离该块，使用当前飞书事件派生调用者身份，在本地执行动作，并拒绝格式错误的 action block，而不是递归加载 Lark MCP server。
 
