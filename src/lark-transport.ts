@@ -1,5 +1,9 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
-import type { FeishuRetryOptions } from './feishu-retry.js';
+import {
+  getFeishuApiCode,
+  isFeishuWithdrawnMessageError,
+  type FeishuRetryOptions,
+} from './feishu-retry.js';
 import {
   LarkTransportCardContext,
   type LarkFetchedMessageContext,
@@ -164,6 +168,12 @@ class DefaultLarkTransport implements LarkTransport {
       try {
         return await this.sdkChannel.send(request.chatId, request.input, opts);
       } catch (err) {
+        if (isFeishuWithdrawnMessageError(err)) {
+          console.error(
+            `[lark-transport] SDK send skipped: target message ${request.replyTo ?? '(none)'} was withdrawn; code=${getFeishuApiCode(err)}; raw OpenAPI fallback suppressed`,
+          );
+          throw err;
+        }
         console.error(formatSdkFallbackLog('send', err));
         if (!this.rawClient) throw err;
       }

@@ -31,7 +31,7 @@ const noopMemory = {
   saveSkill: async () => {},
 } as unknown as MemoryStore;
 
-function makeClient() {
+function makeClient(opts: { reply?: (args: any) => Promise<any> } = {}) {
   const calls: any[] = [];
   return {
     calls,
@@ -39,10 +39,10 @@ function makeClient() {
       im: {
         v1: {
           message: {
-            reply: async (args: any) => {
+            reply: opts.reply ?? (async (args: any) => {
               calls.push({ method: 'message.reply', args });
               return { data: { message_id: 'om_bot_reply' } };
-            },
+            }),
             create: async (args: any) => {
               calls.push({ method: 'message.create', args });
               return { data: { message_id: 'om_bot_create' } };
@@ -105,7 +105,50 @@ try {
     tracker.clear();
   }
 
-  // 3. Missing reply/defer is mechanically detectable.
+  // 3. Withdrawn Feishu reply targets are delivery skips, not Codex failures.
+  {
+    const tracker = new TurnObligationTracker({ timeoutMs: 60_000 });
+    begin(tracker, 'om_withdrawn_turn');
+    const diagnostics: string[] = [];
+    const { client, calls } = makeClient({
+      reply: async (args: any) => {
+        calls.push({ method: 'message.reply.withdrawn', args });
+        const err = new Error('The message was withdrawn.') as Error & {
+          response?: { data: { code: number; msg: string } };
+        };
+        err.response = { data: { code: 230011, msg: 'The message was withdrawn.' } };
+        throw err;
+      },
+    });
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      diagnostics.push(args.map(String).join(' '));
+    };
+    try {
+      const result = await sendFeishuReply(
+        { client: client as any, turnObligations: tracker },
+        { chat_id: 'oc_turn', text: 'hello', reply_to: 'om_withdrawn_turn' },
+      );
+      assert.equal(result.sentCount, 0);
+      assert.equal(result.isError, undefined);
+      assert.equal(result.skippedReason, 'withdrawn_message');
+      assert.match(result.statusText, /withdrawn/i);
+    } finally {
+      console.error = originalConsoleError;
+    }
+    assert.equal(calls.length, 1);
+    assert.equal(tracker.getStatus('om_withdrawn_turn'), 'deferred');
+    assert.equal(tracker.get('om_withdrawn_turn')?.marker, 'LARK_NO_REPLY');
+    assert.match(tracker.get('om_withdrawn_turn')?.reason ?? '', /withdrawn/i);
+    assert.ok(
+      diagnostics.some((line) => line.includes('[reply-sender] Skipping reply') && line.includes('230011')),
+      `missing withdrawn-message skip diagnostic: ${diagnostics.join('\n')}`,
+    );
+    tracker.requireSatisfiedOrDeferred('om_withdrawn_turn');
+    tracker.clear();
+  }
+
+  // 4. Missing reply/defer is mechanically detectable.
   {
     const tracker = new TurnObligationTracker({ timeoutMs: 60_000 });
     begin(tracker, 'om_missing_turn');
@@ -116,7 +159,7 @@ try {
     tracker.clear();
   }
 
-  // 4. Active queued turn wins over latest-inbound fallback for interleaved arrivals.
+  // 5. Active queued turn wins over latest-inbound fallback for interleaved arrivals.
   {
     const tracker = new TurnObligationTracker({ timeoutMs: 60_000 });
     const latest = new LatestMessageTracker(60_000, 10);
@@ -150,7 +193,7 @@ try {
     tracker.clear();
   }
 
-  // 5. Notification lifecycle with multiple pending turns refuses to guess.
+  // 6. Notification lifecycle with multiple pending turns refuses to guess.
   {
     const tracker = new TurnObligationTracker({ timeoutMs: 60_000 });
     const latest = new LatestMessageTracker(60_000, 10);
@@ -185,7 +228,7 @@ try {
     tracker.clear();
   }
 
-  // 6. Notification lifecycle with one pending turn can still auto-fill safely.
+  // 7. Notification lifecycle with one pending turn can still auto-fill safely.
   {
     const tracker = new TurnObligationTracker({ timeoutMs: 60_000 });
     tracker.begin({
@@ -208,7 +251,7 @@ try {
     tracker.clear();
   }
 
-  // 7. Assistant-text defer satisfies only when parsed by the exec path caller.
+  // 8. Assistant-text defer satisfies only when parsed by the exec path caller.
   {
     const tracker = new TurnObligationTracker({ timeoutMs: 60_000 });
     begin(tracker, 'om_defer_turn');
@@ -218,7 +261,7 @@ try {
     tracker.clear();
   }
 
-  // 8. Code-block spoofing does not satisfy.
+  // 9. Code-block spoofing does not satisfy.
   {
     const tracker = new TurnObligationTracker({ timeoutMs: 60_000 });
     begin(tracker, 'om_spoof_turn');
@@ -230,7 +273,7 @@ try {
     tracker.clear();
   }
 
-  // 9. Tool-result defer is accepted only through the dedicated Lark tool.
+  // 10. Tool-result defer is accepted only through the dedicated Lark tool.
   {
     const tracker = new TurnObligationTracker({ timeoutMs: 60_000 });
     const ackTracker = new AckReactionTracker({ maxTrackedMessages: 10 });
@@ -276,7 +319,7 @@ try {
     tracker.clear();
   }
 
-  // 10. Watchdog marks unanswered turns for audit/debugging.
+  // 11. Watchdog marks unanswered turns for audit/debugging.
   {
     const tracker = new TurnObligationTracker({ timeoutMs: 5 });
     begin(tracker, 'om_timeout_turn');

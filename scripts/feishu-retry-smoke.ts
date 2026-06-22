@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { isRetryableFeishuError, withFeishuRetry, withTimeout } from '../src/feishu-retry.js';
+import {
+  isFeishuWithdrawnMessageError,
+  isRetryableFeishuError,
+  withFeishuRetry,
+  withTimeout,
+} from '../src/feishu-retry.js';
 
 function transientError(code = 'ECONNRESET'): Error {
   const err = new Error(code) as Error & { code?: string };
@@ -32,6 +37,16 @@ assert.equal(
 assert.equal(
   isRetryableFeishuError({ response: { data: { code: 99990001, msg: 'business error' } } }),
   false,
+);
+assert.equal(
+  isRetryableFeishuError({ response: { status: 500, data: { code: 230011, msg: 'The message was withdrawn.' } } }),
+  false,
+);
+assert.equal(
+  isFeishuWithdrawnMessageError({
+    cause: { response: { data: { code: 230011, msg: 'The message was withdrawn.' } } },
+  }),
+  true,
 );
 
 let attempts = 0;

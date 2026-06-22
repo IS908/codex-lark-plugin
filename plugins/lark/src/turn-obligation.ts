@@ -10,6 +10,7 @@ export type TurnSatisfactionSource =
   | 'recall_message'
   | 'download_attachment'
   | 'defer_tool'
+  | 'delivery_skip'
   | 'exec_assistant_text';
 
 export interface TurnObligation {

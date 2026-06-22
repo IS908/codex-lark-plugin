@@ -18,8 +18,10 @@ const RETRYABLE_NETWORK_ERRORS = new Set([
 ]);
 
 const RETRYABLE_HTTP_CODES = new Set([408, 429, 500, 502, 503, 504]);
+export const FEISHU_WITHDRAWN_MESSAGE_CODE = 230011;
 const PERMANENT_FEISHU_CODES = new Set([
   230001, // parameter error
+  FEISHU_WITHDRAWN_MESSAGE_CODE, // message was withdrawn; reply target can no longer accept delivery
   99991668, // invalid file_key/resource
   99991672, // permission denied
 ]);
@@ -79,17 +81,40 @@ function asFeishuBusinessError(result: unknown): Error | null {
   return err;
 }
 
+export function getFeishuApiCode(err: unknown): number | null {
+  const seen = new Set<unknown>();
+  let current: any = err;
+  for (let depth = 0; current && depth < 6; depth++) {
+    if (seen.has(current)) return null;
+    seen.add(current);
+
+    const rawApiCode = current?.response?.data?.code ?? current?.data?.code ?? current?.code;
+    const apiCode = Number(rawApiCode);
+    if (Number.isFinite(apiCode) && apiCode !== 0) return apiCode;
+
+    const match = errorMessage(current).match(/Feishu API \[(\d+)\]/);
+    if (match) return Number(match[1]);
+
+    current = current?.cause;
+  }
+  return null;
+}
+
+export function isFeishuWithdrawnMessageError(err: unknown): boolean {
+  return getFeishuApiCode(err) === FEISHU_WITHDRAWN_MESSAGE_CODE;
+}
+
 export function isRetryableFeishuError(err: any): boolean {
   if (err?.code && RETRYABLE_NETWORK_ERRORS.has(err.code)) return true;
   if (err?.cause?.code && RETRYABLE_NETWORK_ERRORS.has(err.cause.code)) return true;
 
+  const apiCode = getFeishuApiCode(err);
+  if (apiCode !== null && PERMANENT_FEISHU_CODES.has(apiCode)) return false;
+
   const status = err?.response?.status ?? err?.status;
   if (status && RETRYABLE_HTTP_CODES.has(status)) return true;
 
-  const rawApiCode = err?.response?.data?.code ?? err?.data?.code;
-  const apiCode = Number(rawApiCode);
-  if (Number.isFinite(apiCode)) {
-    if (PERMANENT_FEISHU_CODES.has(apiCode)) return false;
+  if (apiCode !== null) {
     return false;
   }
 

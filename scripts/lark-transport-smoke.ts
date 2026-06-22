@@ -224,6 +224,56 @@ const transport = createLarkTransport({
 }
 
 {
+  const diagnostics: string[] = [];
+  const failingSdkChannel = {
+    rawClient,
+    send: async (to: string, input: any, opts?: any) => {
+      calls.push({ method: 'sdk.send.withdrawn', args: { to, input, opts } });
+      const err = new Error('The message was withdrawn.') as Error & {
+        response?: { status: number; data: { code: number; msg: string } };
+      };
+      err.response = {
+        status: 500,
+        data: { code: 230011, msg: 'The message was withdrawn.' },
+      };
+      throw err;
+    },
+  };
+  const transportWithFallback = createLarkTransport({
+    sdkChannel: failingSdkChannel as any,
+    rawClient: rawClient as any,
+  });
+  const before = calls.length;
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    diagnostics.push(args.map(String).join(' '));
+  };
+  try {
+    await assert.rejects(
+      transportWithFallback.sendMessage({
+        chatId: 'oc_chat',
+        input: { text: 'withdrawn target' },
+        replyTo: 'om_withdrawn',
+      }),
+      /withdrawn/i,
+    );
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.deepEqual(calls.slice(before).map((call) => call.method), ['sdk.send.withdrawn']);
+  assert.ok(
+    diagnostics.some(
+      (line) =>
+        line.includes('[lark-transport] SDK send skipped') &&
+        line.includes('code=230011') &&
+        line.includes('raw OpenAPI fallback suppressed'),
+    ),
+    `missing withdrawn-message skip diagnostic: ${diagnostics.join('\n')}`,
+  );
+}
+
+{
   const failingSdkChannel = {
     rawClient,
     send: async (to: string, input: any, opts?: any) => {
