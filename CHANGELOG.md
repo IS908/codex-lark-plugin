@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-06-22
+
+### Fixed
+- Treated Feishu `230011` withdrawn-message reply failures as non-retryable delivery skips, suppressing raw OpenAPI fallback and closing the active turn as no-reply instead of surfacing a misleading Codex delivery failure.
+
 ## [1.7.2] - 2026-06-20
 
 ### Added
@@ -399,7 +404,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.2...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.3...HEAD
+[1.7.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.6.4...v1.7.0
