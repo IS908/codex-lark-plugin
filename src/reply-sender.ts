@@ -23,15 +23,21 @@ import {
   fetchedMessageContentText,
   isPlaceholderCardText,
 } from './message-content.js';
+import {
+  getFeishuApiCode,
+  isFeishuWithdrawnMessageError,
+} from './feishu-retry.js';
 
 function wrapFeishuApiError(err: any): Error | null {
   const apiError = err?.response?.data ?? err?.data;
   if (!apiError?.code || !apiError?.msg) return null;
-  console.error(`[reply-sender] Feishu API error [${apiError.code}]: ${apiError.msg}`);
   const wrapped = new Error(`Feishu API [${apiError.code}]: ${apiError.msg}`);
   (wrapped as Error & { response?: unknown }).response = err?.response;
   (wrapped as Error & { data?: unknown }).data = apiError;
   (wrapped as Error & { cause?: unknown }).cause = err;
+  if (!isFeishuWithdrawnMessageError(wrapped)) {
+    console.error(`[reply-sender] Feishu API error [${apiError.code}]: ${apiError.msg}`);
+  }
   return wrapped;
 }
 
@@ -61,6 +67,7 @@ export interface ReplySendResult {
   statusText: string;
   isError?: boolean;
   errorText?: string;
+  skippedReason?: 'withdrawn_message';
 }
 
 export async function sendFeishuReply(
@@ -190,6 +197,37 @@ export async function sendFeishuReply(
     }
   }
 
+  let deliveredCount = 0;
+  function skipWithdrawnReply(err: unknown): ReplySendResult {
+    const code = getFeishuApiCode(err);
+    const target = effectiveReplyTo ?? '(none)';
+    const reason = 'Target Feishu message was withdrawn before reply delivery.';
+    console.error(
+      `[reply-sender] Skipping reply because target message ${target} was withdrawn; code=${code ?? 'unknown'}`,
+    );
+    if (effectiveReplyTo) {
+      turnObligations?.markDeferred(effectiveReplyTo, 'delivery_skip', 'LARK_NO_REPLY', reason);
+      revokeAckReactionWithTransport(transport, ackReactions, effectiveReplyTo, 'reply.withdrawn');
+    } else {
+      revokeAllAckReactionsWithTransport(transport, ackReactions, 'reply.withdrawn.bulk');
+    }
+    return {
+      sentCount: deliveredCount,
+      statusText: `Skipped reply because target message ${target} was withdrawn.`,
+      skippedReason: 'withdrawn_message',
+    };
+  }
+
+  function handleSendFailure(err: any): ReplySendResult | null {
+    const wrapped = wrapFeishuApiError(err);
+    const candidate = wrapped ?? err;
+    if (isFeishuWithdrawnMessageError(candidate)) {
+      return skipWithdrawnReply(candidate);
+    }
+    if (wrapped) throw wrapped;
+    return null;
+  }
+
   // Raw card JSON path — bypass buildCards entirely.
   if (card) {
     let cardObj: object;
@@ -211,10 +249,11 @@ export async function sendFeishuReply(
         ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
       });
       trackBotMessage(resp?.messageId, quotedContext);
+      deliveredCount++;
       recordAndRevokeAck(text || '[card]', resp?.messageId);
     } catch (err: any) {
-      const wrapped = wrapFeishuApiError(err);
-      if (wrapped) throw wrapped;
+      const skipped = handleSendFailure(err);
+      if (skipped) return skipped;
       throw err;
     }
 
@@ -247,10 +286,11 @@ export async function sendFeishuReply(
           resp?.messageId,
           createQuotedContextFromCardContent(JSON.stringify(cards[i]), text),
         );
+        deliveredCount++;
         recordAndRevokeAck(text, resp?.messageId);
       } catch (err: any) {
-        const wrapped = wrapFeishuApiError(err);
-        if (wrapped) throw wrapped;
+        const skipped = handleSendFailure(err);
+        if (skipped) return skipped;
         console.error(
           `[reply-sender] send card failed:`,
           err?.message ?? String(err)
@@ -270,10 +310,11 @@ export async function sendFeishuReply(
           ...(shouldStayInThread && i > 0 ? { replyInThread: true } : {}),
         });
         trackBotMessage(resp?.messageId);
+        deliveredCount++;
         recordAndRevokeAck(text, resp?.messageId);
       } catch (err: any) {
-        const wrapped = wrapFeishuApiError(err);
-        if (wrapped) throw wrapped;
+        const skipped = handleSendFailure(err);
+        if (skipped) return skipped;
         console.error(
           `[reply-sender] send message failed:`,
           err?.message ?? String(err)
