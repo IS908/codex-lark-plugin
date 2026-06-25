@@ -122,6 +122,8 @@ assert.match(execRequests[0].prompt, /thread_id: omt_thread_001/);
 assert.match(execRequests[0].prompt, /Kevin · Codex Test Group/);
 assert.match(execRequests[0].prompt, /@Codex ping/);
 assert.match(execRequests[0].prompt, /no background continuation after the visible reply is posted/);
+assert.match(execRequests[0].prompt, /For create_job\.schedule, use only supported recurring formats/);
+assert.match(execRequests[0].prompt, /Do not use one-off or natural-language aliases/);
 assert.doesNotMatch(execRequests[0].prompt, /create_github_issue|LARK_GITHUB/i);
 assert.deepEqual(execRequests[0].imagePaths, ['/tmp/lark-img-1.png', '/tmp/lark-img-2.png']);
 

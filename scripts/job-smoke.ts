@@ -64,6 +64,22 @@ try {
   // expected
 }
 
+// 10b. Unsupported natural-language one-off aliases get actionable errors.
+for (const unsupported of ['once', 'now', 'later', 'tomorrow at 09:00', '2026-06-26 09:00']) {
+  try {
+    expandSchedule(unsupported);
+    fail(`10b: unsupported schedule ${unsupported} should throw`);
+  } catch (err: any) {
+    const message = String(err?.message ?? err);
+    if (!message.includes('unsupported schedule')) {
+      fail(`10b: expected unsupported schedule error for ${unsupported}, got ${message}`);
+    }
+    if (!message.includes('daily at 09:00')) {
+      fail(`10b: expected supported format hint for ${unsupported}, got ${message}`);
+    }
+  }
+}
+
 // 11. computeNextRun — returns a valid ISO date
 const next = computeNextRun('* * * * *');
 const d = new Date(next);
