@@ -61,7 +61,18 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
   CreateJobActionSchema,
   RunLocalCliToolActionSchema,
   RecallMessageActionSchema,
-]);
+]).superRefine((action, ctx) => {
+  if (action.type !== 'create_job') return;
+  try {
+    expandSchedule(action.schedule);
+  } catch (err) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['schedule'],
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
 
 const CodexExecActionEnvelopeSchema = z.object({
   version: z.literal(1),

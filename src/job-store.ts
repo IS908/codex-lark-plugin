@@ -63,6 +63,19 @@ const DAY_MAP: Record<string, string> = {
   thursday: '4', friday: '5', saturday: '6',
 };
 
+export const SUPPORTED_SCHEDULE_FORMAT_HINT =
+  'Use a supported recurring format such as "daily at 09:00", "weekdays at 09:00", ' +
+  '"weekly on mon at 09:00", "every 5m", "every 2h", or a 5-field cron expression like "0 9 * * *".';
+
+function assertNotUnsupportedOneOffSchedule(trimmed: string): void {
+  const oneOffAlias = /^(once|now|later)$/i;
+  const relativeOneOff = /^(today|tomorrow)\s+at\s+\d{1,2}:\d{2}$/i;
+  const absoluteTimestamp = /^\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}$/;
+  if (oneOffAlias.test(trimmed) || relativeOneOff.test(trimmed) || absoluteTimestamp.test(trimmed)) {
+    throw new Error(`unsupported schedule "${trimmed}": one-off schedules are not supported yet. ${SUPPORTED_SCHEDULE_FORMAT_HINT}`);
+  }
+}
+
 /**
  * Expand a human-friendly schedule alias to a standard 5-field cron expression.
  * If the input is already a valid cron expression, returns it as-is.
@@ -73,6 +86,7 @@ export function expandSchedule(input: string): { cron: string; human: string } {
   if (!trimmed) {
     throw new Error('schedule is required');
   }
+  assertNotUnsupportedOneOffSchedule(trimmed);
   let result: { cron: string; human: string } | null = null;
 
   // every Nm

@@ -69,6 +69,46 @@ try {
   assert.equal(invalid.kind, 'invalid_actions');
   assert.match(invalid.error, /version/i);
 
+  const missingScheduleParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [
+        {
+          type: 'create_job',
+          name: 'Missing schedule',
+          job_type: 'message',
+          content: 'standup reminder',
+        },
+      ],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(missingScheduleParsed.kind, 'invalid_actions');
+  assert.match(missingScheduleParsed.error, /actions\.0\.schedule/i);
+
+  for (const schedule of ['once', 'now', 'later']) {
+    const unsupportedScheduleParsed = parseCodexExecActionOutput([
+      '<LARK_ACTIONS_JSON>',
+      JSON.stringify({
+        version: 1,
+        actions: [
+          {
+            type: 'create_job',
+            name: `Unsupported ${schedule}`,
+            job_type: 'message',
+            schedule,
+            content: 'standup reminder',
+          },
+        ],
+      }),
+      '</LARK_ACTIONS_JSON>',
+    ].join('\n'));
+    assert.equal(unsupportedScheduleParsed.kind, 'invalid_actions');
+    assert.match(unsupportedScheduleParsed.error, /unsupported schedule/i);
+    assert.match(unsupportedScheduleParsed.error, /daily at 09:00/i);
+  }
+
   const recallParsed = parseCodexExecActionOutput([
     '<LARK_ACTIONS_JSON>',
     JSON.stringify({
