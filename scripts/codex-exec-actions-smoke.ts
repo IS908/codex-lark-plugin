@@ -183,10 +183,65 @@ try {
 
   assert.equal(results.length, 3);
   assert.ok(results.every((result: any) => result.ok), JSON.stringify(results));
+  assert.match(results[1].message, /job_id: exec-action-job/i);
   const privateProfile = readFileSync(join(memoriesDir, 'profiles', 'ou_user', 'private.md'), 'utf-8');
   assert.match(privateProfile, /prefers concise updates/);
   assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), true);
   assert.match(results[2].message, /hello-from-action/);
+
+  const jobManagementParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [
+        { type: 'list_jobs', status: 'all' },
+        { type: 'update_job', name: 'Exec Action Job', content: 'updated reminder', schedule: 'weekdays at 10:00' },
+        { type: 'disable_job', job_id: 'exec-action-job' },
+        {
+          type: 'upsert_job',
+          name: 'Exec Action Job',
+          job_type: 'message',
+          schedule: 'daily at 11:00',
+          content: 'upserted reminder',
+          target_chat_id: 'oc_exec',
+        },
+        { type: 'delete_job', job_id: 'exec-action-job' },
+      ],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(jobManagementParsed.kind, 'actions');
+  if (jobManagementParsed.kind !== 'actions') {
+    throw new Error(`expected job management actions, got ${JSON.stringify(jobManagementParsed)}`);
+  }
+  assert.deepEqual(
+    jobManagementParsed.actions.map((action: any) => action.type),
+    ['list_jobs', 'update_job', 'disable_job', 'upsert_job', 'delete_job'],
+  );
+  const jobManagementResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_jobs',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'manage the reminder',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: jobManagementParsed.actions,
+  });
+  assert.equal(jobManagementResults.length, 5);
+  assert.ok(jobManagementResults.every((result: any) => result.ok), JSON.stringify(jobManagementResults));
+  assert.match(jobManagementResults[0].message, /exec-action-job/);
+  assert.match(jobManagementResults[0].message, /standup reminder/);
+  assert.match(jobManagementResults[1].message, /Updated job "exec-action-job"/);
+  assert.match(jobManagementResults[1].message, /weekdays at 10:00/);
+  assert.match(jobManagementResults[2].message, /Status: paused/i);
+  assert.match(jobManagementResults[3].message, /Upserted job "exec-action-job"/);
+  assert.match(jobManagementResults[3].message, /daily at 11:00/);
+  assert.match(jobManagementResults[4].message, /Deleted job "exec-action-job"/);
+  assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), false);
 
   const recallCalls: string[] = [];
   const botTracker = new BotMessageTracker(10);

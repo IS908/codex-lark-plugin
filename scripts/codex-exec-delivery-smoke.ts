@@ -122,7 +122,7 @@ assert.match(execRequests[0].prompt, /thread_id: omt_thread_001/);
 assert.match(execRequests[0].prompt, /Kevin · Codex Test Group/);
 assert.match(execRequests[0].prompt, /@Codex ping/);
 assert.match(execRequests[0].prompt, /no background continuation after the visible reply is posted/);
-assert.match(execRequests[0].prompt, /For create_job\.schedule, use only supported recurring formats/);
+assert.match(execRequests[0].prompt, /For cronjob schedule fields, use only supported recurring formats/);
 assert.match(execRequests[0].prompt, /Do not use one-off or natural-language aliases/);
 assert.doesNotMatch(execRequests[0].prompt, /create_github_issue|LARK_GITHUB/i);
 assert.deepEqual(execRequests[0].imagePaths, ['/tmp/lark-img-1.png', '/tmp/lark-img-2.png']);
@@ -272,6 +272,56 @@ assert.equal(
     '',
     '[Action results]',
     'OK recall_message: Recalled message om_bot_reply_123.',
+  ].join('\n'),
+);
+
+const visibleJobActionResultReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_job_action_visible',
+    text: '[Current Message]\n@Codex update that reminder',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () =>
+    [
+      'Reminder updated.',
+      '<LARK_ACTIONS_JSON>',
+      JSON.stringify({
+        version: 1,
+        actions: [
+          {
+            type: 'update_job',
+            job_id: 'mrvl-covered-call',
+            content: 'updated covered call reminder',
+          },
+        ],
+      }),
+      '</LARK_ACTIONS_JSON>',
+    ].join('\n'),
+  actionDispatcher: {
+    execute: async () => [
+      {
+        ok: true,
+        action: 'update_job',
+        message: 'Updated job "mrvl-covered-call" (job_id: mrvl-covered-call).',
+      },
+    ],
+  },
+  sendReply: async (request) => {
+    visibleJobActionResultReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(visibleJobActionResultReplies.length, 1);
+assert.equal(
+  visibleJobActionResultReplies[0].text,
+  [
+    'Reminder updated.',
+    '',
+    '[Action results]',
+    'OK update_job: Updated job "mrvl-covered-call" (job_id: mrvl-covered-call).',
   ].join('\n'),
 );
 

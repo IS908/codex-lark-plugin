@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.5] - 2026-06-29
+
+### Added
+- Added Codex exec action bridge support for `list_jobs`, `update_job`, `disable_job`, `delete_job`, and `upsert_job`, with stable `job_id` reporting so existing reminders can be modified instead of recreated.
+
 ## [1.7.4] - 2026-06-25
 
 ### Fixed
