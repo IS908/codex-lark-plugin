@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.7.4-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.7.5-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -343,11 +343,14 @@ are removed on startup and by a best-effort hourly cleanup.
 
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:
-`save_memory`, `create_job`, `run_local_cli_tool`, and `recall_message`. The
+`save_memory`, `create_job`, `list_jobs`, `update_job`, `disable_job`,
+`delete_job`, `upsert_job`, `run_local_cli_tool`, and `recall_message`. The
 child returns a validated `LARK_ACTIONS_JSON` marker block; the parent strips
 the block from the visible reply, derives caller identity from the current
 Feishu event, executes the action locally, and rejects malformed blocks instead
-of recursively loading the Lark MCP server.
+of recursively loading the Lark MCP server. `create_job` and `list_jobs` expose
+stable `job_id` values so later turns can update, pause, replace, or delete the
+exact reminder instead of recreating a duplicate name.
 
 The bridge intentionally does not provide domain-specific built-ins such as
 GitHub issue creation. If you need that workflow, configure a trusted

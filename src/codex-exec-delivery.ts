@@ -67,6 +67,11 @@ export interface DocCommentExecReplyRequest {
 
 const VISIBLE_SUCCESS_ACTIONS = new Set<CodexExecActionExecutionResult['action']>([
   'create_job',
+  'list_jobs',
+  'update_job',
+  'disable_job',
+  'delete_job',
+  'upsert_job',
   'recall_message',
   'run_local_cli_tool',
 ]);
@@ -219,10 +224,11 @@ export function buildCodexExecPrompt(
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',
     'If the user asks for a supported built-in Lark action, request it with the structured action block below instead of saying the MCP tool is unavailable.',
-    'This exec turn has no background continuation after the visible reply is posted. Do not promise to create, file, post, reply with a link, or continue later unless the same final output includes a structured action, a create_job action, or an intentional [LARK_DEFER]/[LARK_NO_REPLY] marker.',
+    'This exec turn has no background continuation after the visible reply is posted. Do not promise to create, file, post, reply with a link, or continue later unless the same final output includes a structured action, a cronjob action, or an intentional [LARK_DEFER]/[LARK_NO_REPLY] marker.',
     'Supported action block format (append at most one block at the very end, outside code fences):',
-    `${CODEX_EXEC_ACTIONS_START}\n{"version":1,"actions":[{"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"private|public"},{"type":"create_job","job_type":"message|prompt","name":"...","schedule":"daily at 09:00","content":"...","prompt":"...","target_chat_id":"optional"},{"type":"run_local_cli_tool","tool":"configured-name","args":["..."]},{"type":"recall_message","message_id":"tracked-bot-message-id"}]}\n${CODEX_EXEC_ACTIONS_END}`,
-    'For create_job.schedule, use only supported recurring formats: "daily at 09:00", "weekdays at 09:00", "weekly on mon at 09:00", "every 5m", "every 2h", or a 5-field cron expression such as "0 9 * * *". Do not use one-off or natural-language aliases such as "once", "now", "later", "tomorrow at 09:00", or "YYYY-MM-DD HH:mm".',
+    `${CODEX_EXEC_ACTIONS_START}\n{"version":1,"actions":[{"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"private|public"},{"type":"create_job","job_type":"message|prompt","name":"...","schedule":"daily at 09:00","content":"...","prompt":"...","target_chat_id":"optional"},{"type":"list_jobs","status":"active|paused|all"},{"type":"update_job","job_id":"stable-job-id","name":"unique existing name","new_name":"optional new display name","status":"active|paused","schedule":"weekdays at 09:00","content":"...","prompt":"...","model":"optional"},{"type":"disable_job","job_id":"stable-job-id","name":"unique existing name"},{"type":"delete_job","job_id":"stable-job-id","name":"unique existing name"},{"type":"upsert_job","job_type":"message|prompt","name":"...","schedule":"daily at 09:00","content":"...","prompt":"...","target_chat_id":"optional"},{"type":"run_local_cli_tool","tool":"configured-name","args":["..."]},{"type":"recall_message","message_id":"tracked-bot-message-id"}]}\n${CODEX_EXEC_ACTIONS_END}`,
+    'For cronjob schedule fields, use only supported recurring formats: "daily at 09:00", "weekdays at 09:00", "weekly on mon at 09:00", "every 5m", "every 2h", or a 5-field cron expression such as "0 9 * * *". Do not use one-off or natural-language aliases such as "once", "now", "later", "tomorrow at 09:00", or "YYYY-MM-DD HH:mm".',
+    'For existing cronjobs, prefer the stable job_id returned by create_job/list_jobs; use name only when it is unique. If create_job reports that a job already exists, use list_jobs plus update_job, disable_job, delete_job, or upsert_job instead of retrying create_job with the same name.',
     'Do not put chat_id, thread_id, open_id, created_by, or caller in the action block; the parent Lark bridge derives identity from the current Feishu event.',
     'For domain-specific external work, use run_local_cli_tool only when a matching local allowlisted tool is already configured; otherwise provide a draft or explain that the external action is not configured.',
     'For ordinary replies, omit the action block.',
