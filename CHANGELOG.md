@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.6] - 2026-07-02
+
+### Changed
+- Changed default Feishu replies to send Markdown/text as normal copyable text messages; generated cards now require explicit `format="card"` or a raw `card` payload.
+
 ## [1.7.5] - 2026-06-29
 
 ### Added

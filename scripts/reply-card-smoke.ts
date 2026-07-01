@@ -279,48 +279,80 @@ async function run() {
   );
   if (!normalCreate) fail('Test 8: plain text path should use msg_type=text');
 
-  // ── Test 9: explicit format=card uses generated card theme ──
+  // ── Test 9: markdown-rich text defaults to plain text, not generated cards ──
+  apiCalls.length = 0;
+  botTrackerAdded.length = 0;
+
+  const markdownReport = [
+    '# Weekly report',
+    '',
+    '- shipped the bridge fix',
+    '- verified the release',
+    '',
+    '```ts',
+    'const ok = true;',
+    '```',
+  ].join('\n');
+  const r9 = await replyHandler({
+    chat_id: 'chat_markdown_default',
+    text: markdownReport,
+  });
+
+  if (r9.isError) fail(`Test 9: unexpected error: ${r9.content[0].text}`);
+  const markdownTextCall = apiCalls.find(
+    (c) => c.method === 'message.create' && c.args.data.msg_type === 'text'
+  );
+  if (!markdownTextCall) fail('Test 9: markdown-rich default reply should use msg_type=text');
+  const markdownCardCall = apiCalls.find(
+    (c) => c.method === 'message.create' && c.args.data.msg_type === 'interactive'
+  );
+  if (markdownCardCall) fail('Test 9: markdown-rich default reply should not auto-render as card');
+  if (botTrackerAdded[0]?.meta?.quotedContext) {
+    fail(`Test 9: text reply should not track card quoted context: ${JSON.stringify(botTrackerAdded[0])}`);
+  }
+
+  // ── Test 10: explicit format=card uses generated card theme ──
   apiCalls.length = 0;
 
-  const r9 = await replyHandler({
+  const r10 = await replyHandler({
     chat_id: 'chat_001',
     text: 'short but explicitly carded',
     format: 'card',
   });
 
-  if (r9.isError) fail(`Test 9: unexpected error: ${r9.content[0].text}`);
+  if (r10.isError) fail(`Test 10: unexpected error: ${r10.content[0].text}`);
   const formatCardCall = apiCalls.find((c) => c.method === 'message.create');
-  if (!formatCardCall) fail('Test 9: message.create not called');
+  if (!formatCardCall) fail('Test 10: message.create not called');
   const generatedCard = JSON.parse(formatCardCall.args.data.content);
   if (generatedCard.header?.template !== 'red') {
-    fail(`Test 9: expected red header template, got ${generatedCard.header?.template}`);
+    fail(`Test 10: expected red header template, got ${generatedCard.header?.template}`);
   }
   const formatCardTracked = botTrackerAdded.at(-1);
   if (formatCardTracked?.meta.quotedContext?.msgType !== 'interactive') {
-    fail(`Test 9: generated card missing quoted context: ${JSON.stringify(formatCardTracked)}`);
+    fail(`Test 10: generated card missing quoted context: ${JSON.stringify(formatCardTracked)}`);
   }
   if (!formatCardTracked?.meta.quotedContext?.text?.includes('short but explicitly carded')) {
-    fail(`Test 9: generated card quoted context missing original text: ${JSON.stringify(formatCardTracked)}`);
+    fail(`Test 10: generated card quoted context missing original text: ${JSON.stringify(formatCardTracked)}`);
   }
 
-  // ── Test 10: synthetic reply_to ids must not create any visible Feishu message ──
+  // ── Test 11: synthetic reply_to ids must not create any visible Feishu message ──
   apiCalls.length = 0;
   botTrackerAdded.length = 0;
   buffer.recorded.length = 0;
 
-  const r10 = await replyHandler({
+  const r11 = await replyHandler({
     chat_id: 'chat_001',
     text: 'synthetic id fallback',
     reply_to: 'flush-1780923345577',
   });
 
-  if (r10.isError) fail(`Test 10: unexpected error: ${r10.content[0].text}`);
-  if (!r10.content[0].text.includes('Skipped reply for synthetic system message')) {
-    fail(`Test 10: wrong status text: ${r10.content[0].text}`);
+  if (r11.isError) fail(`Test 11: unexpected error: ${r11.content[0].text}`);
+  if (!r11.content[0].text.includes('Skipped reply for synthetic system message')) {
+    fail(`Test 11: wrong status text: ${r11.content[0].text}`);
   }
-  if (apiCalls.length !== 0) fail(`Test 10: synthetic reply_to should not call Feishu APIs: ${JSON.stringify(apiCalls)}`);
-  if (botTrackerAdded.length !== 0) fail('Test 10: synthetic reply should not track a bot message');
-  if (buffer.recorded.length !== 0) fail('Test 10: synthetic reply should not record assistant text');
+  if (apiCalls.length !== 0) fail(`Test 11: synthetic reply_to should not call Feishu APIs: ${JSON.stringify(apiCalls)}`);
+  if (botTrackerAdded.length !== 0) fail('Test 11: synthetic reply should not track a bot message');
+  if (buffer.recorded.length !== 0) fail('Test 11: synthetic reply should not record assistant text');
 
   console.log('PASS');
 }
