@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.7] - 2026-07-02
+
+### Fixed
+- Restored bridge-layer rich Markdown auto-rendering to Feishu Schema 2.0 interactive cards for headings, fenced code blocks, Markdown tables, multi-item lists, and structured analysis, while keeping simple replies as text and allowing `format="text"` to force plain text.
+- Converted Markdown tables into v2 card table elements and added generated-card delivery fallback to the original text reply when card construction or delivery fails before any card is sent.
+
 ## [1.7.6] - 2026-07-02
 
 ### Changed

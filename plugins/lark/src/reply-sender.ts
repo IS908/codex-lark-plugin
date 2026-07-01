@@ -4,7 +4,7 @@ import path from 'node:path';
 import { appConfig } from './config.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { BotMessageTracker, LatestMessageTracker, TrackedBotMessageQuotedContext } from './channel.js';
-import { buildCards } from './feishu-card.js';
+import { buildCards, shouldUseCard } from './feishu-card.js';
 import { JOB_THREAD_PREFIX } from './scheduler.js';
 import {
   revokeAckReactionWithTransport,
@@ -228,6 +228,15 @@ export async function sendFeishuReply(
     return null;
   }
 
+  function normalizeSendFailure(err: any): { skipped?: ReplySendResult; error: any } {
+    const wrapped = wrapFeishuApiError(err);
+    const candidate = wrapped ?? err;
+    if (isFeishuWithdrawnMessageError(candidate)) {
+      return { skipped: skipWithdrawnReply(candidate), error: candidate };
+    }
+    return { error: candidate };
+  }
+
   // Raw card JSON path — bypass buildCards entirely.
   if (card) {
     let cardObj: object;
@@ -265,42 +274,15 @@ export async function sendFeishuReply(
     };
   }
 
-  // Cards are opt-in. Markdown-rich and long replies default to text so users
-  // can read and copy the original Markdown directly in Feishu/Lark.
-  const useCard = format === 'card';
+  // Short/simple replies stay as copyable text. Rich Markdown that Feishu text
+  // messages cannot render well is upgraded to Schema 2.0 cards unless the
+  // caller explicitly forces format="text".
+  const useCard = format === 'card' || (format !== 'text' && shouldUseCard(text));
 
   let sentCount = 0;
 
-  if (useCard) {
-    const cards = buildCards(text, { footer });
-    sentCount = cards.length;
-    for (let i = 0; i < cards.length; i++) {
-      try {
-        const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;
-        const resp = await sendTransportMessage({
-          input: { card: cards[i] },
-          ...(replyTo ? { replyTo } : {}),
-          ...(shouldStayInThread && i > 0 ? { replyInThread: true } : {}),
-        });
-        trackBotMessage(
-          resp?.messageId,
-          createQuotedContextFromCardContent(JSON.stringify(cards[i]), text),
-        );
-        deliveredCount++;
-        recordAndRevokeAck(text, resp?.messageId);
-      } catch (err: any) {
-        const skipped = handleSendFailure(err);
-        if (skipped) return skipped;
-        console.error(
-          `[reply-sender] send card failed:`,
-          err?.message ?? String(err)
-        );
-        throw err;
-      }
-    }
-  } else {
+  async function sendTextChunks(): Promise<number | ReplySendResult> {
     const chunks = chunkText(text, appConfig.textChunkLimit);
-    sentCount = chunks.length;
     for (let i = 0; i < chunks.length; i++) {
       try {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;
@@ -322,6 +304,51 @@ export async function sendFeishuReply(
         throw err;
       }
     }
+    return chunks.length;
+  }
+
+  if (useCard) {
+    const deliveredBeforeCard = deliveredCount;
+    try {
+      const cards = buildCards(text, { footer });
+      sentCount = cards.length;
+      for (let i = 0; i < cards.length; i++) {
+        const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;
+        const resp = await sendTransportMessage({
+          input: { card: cards[i] },
+          ...(replyTo ? { replyTo } : {}),
+          ...(shouldStayInThread && i > 0 ? { replyInThread: true } : {}),
+        });
+        trackBotMessage(
+          resp?.messageId,
+          createQuotedContextFromCardContent(JSON.stringify(cards[i]), text),
+        );
+        deliveredCount++;
+        recordAndRevokeAck(text, resp?.messageId);
+      }
+    } catch (err: any) {
+      const failure = normalizeSendFailure(err);
+      if (failure.skipped) return failure.skipped;
+      if (deliveredCount === deliveredBeforeCard) {
+        console.error(
+          `[reply-sender] generated card build/delivery failed; falling back to text:`,
+          failure.error?.message ?? String(failure.error),
+        );
+        const textResult = await sendTextChunks();
+        if (typeof textResult !== 'number') return textResult;
+        sentCount = textResult;
+      } else {
+        console.error(
+          `[reply-sender] send card failed after partial delivery:`,
+          failure.error?.message ?? String(failure.error),
+        );
+        throw failure.error;
+      }
+    }
+  } else {
+    const textResult = await sendTextChunks();
+    if (typeof textResult !== 'number') return textResult;
+    sentCount = textResult;
   }
 
   // Upload and send attachments if any.

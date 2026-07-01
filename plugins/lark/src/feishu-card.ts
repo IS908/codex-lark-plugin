@@ -18,23 +18,37 @@ const CARD_MD_LIMIT = 4000;
 const CARD_SIZE_LIMIT = 25 * 1024;
 // Per-card element count safety limit
 const CARD_ELEMENT_LIMIT = 45;
+const TABLE_MAX_COLUMNS = 10;
+const TABLE_MAX_ROWS = 30;
+const TABLE_CELL_LIMIT = 160;
+const TABLE_HEADER_LIMIT = 64;
 
-/** Markdown-feature patterns used by the explicit card builder smoke coverage. */
-const MD_PATTERNS: RegExp[] = [
-  /^#{1,6}\s+/m, // headings
-  /```[\s\S]*```/, // fenced code block
-  /^\|.+\|$/m, // table row
-  /^\s*[-*+]\s+/m, // bulleted list
-  /\*\*[^*]+\*\*/, // bold
-];
+const HEADING_RE = /^#{1,6}\s+\S/m;
+const CODE_FENCE_RE = /^\s*```/m;
+const LIST_ITEM_RE = /^\s*(?:[-*+]\s+|\d+[.)]\s+)\S/m;
+const STRUCTURED_SECTION_RE = /^\s*(?:#{1,6}\s+|\*\*)?(建议|推荐|风险|操作|触发条件|适用场景|下一步|结论|Action|Actions|Risk|Risks|Recommendation|Recommendations|Next steps?)(?:\*\*)?\s*(?:[:：]|$)/gim;
 
 /**
- * Decide whether a reply text should render as a Feishu card.
- * Triggers on markdown features or length > 500 chars.
+ * Decide whether a reply text needs Feishu's richer v2 card renderer.
+ *
+ * Keep this bridge-layer policy conservative: short confirmations and normal
+ * prose stay copyable text, while formatting that Feishu text messages cannot
+ * render well is upgraded automatically unless the caller forces format="text".
  */
+export function needsCard(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (HEADING_RE.test(trimmed)) return true;
+  if (CODE_FENCE_RE.test(trimmed)) return true;
+  if (hasMarkdownTable(trimmed)) return true;
+  if (countListItems(trimmed) >= 2) return true;
+  if (hasStructuredSections(trimmed)) return true;
+  return false;
+}
+
+/** Backward-compatible alias for older call sites and smoke checks. */
 export function shouldUseCard(text: string): boolean {
-  if (text.length > 500) return true;
-  return MD_PATTERNS.some((re) => re.test(text));
+  return needsCard(text);
 }
 
 /**
@@ -78,14 +92,19 @@ export function buildCards(
     ) {
       flush();
     }
-    // Hard-truncate a single oversized element to stay within size budget
+    // Hard-truncate a single oversized element to stay within size budget.
     if (elJson.length > CARD_SIZE_LIMIT) {
-      const content =
-        typeof el.content === 'string'
-          ? el.content.slice(0, CARD_SIZE_LIMIT - 200) + '\n...'
-          : '...';
-      batch.push({ ...el, content });
-      batchSize += CARD_SIZE_LIMIT - 200;
+      if (typeof el.content === 'string') {
+        const content = el.content.slice(0, CARD_SIZE_LIMIT - 200) + '\n...';
+        batch.push({ ...el, content });
+        batchSize += CARD_SIZE_LIMIT - 200;
+      } else {
+        batch.push({
+          tag: 'markdown',
+          content: '_Table omitted because it exceeded the Feishu card size limit._',
+        });
+        batchSize += 96;
+      }
     } else {
       batch.push(el);
       batchSize += elJson.length;
@@ -169,6 +188,37 @@ function optimizeMarkdownStyle(text: string, cardVersion = 2): string {
   } catch {
     return text;
   }
+}
+
+// ─── Card Upgrade Detection ──────────────────────────────────
+
+function stripFencedCodeBlocks(text: string): string {
+  return text.replace(/```[\s\S]*?```/g, '');
+}
+
+function countListItems(text: string): number {
+  return stripFencedCodeBlocks(text)
+    .split('\n')
+    .filter((line) => LIST_ITEM_RE.test(line))
+    .length;
+}
+
+function hasStructuredSections(text: string): boolean {
+  const names = new Set<string>();
+  for (const match of stripFencedCodeBlocks(text).matchAll(STRUCTURED_SECTION_RE)) {
+    names.add(match[1].toLowerCase());
+  }
+  return names.size >= 2;
+}
+
+function hasMarkdownTable(text: string): boolean {
+  const lines = stripFencedCodeBlocks(text).split('\n');
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (isMarkdownTableRow(lines[i]) && isMarkdownTableSeparator(lines[i + 1])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ─── Title Extraction ─────────────────────────────────────────
@@ -315,21 +365,21 @@ interface CardContentResult {
  * Build content elements for a single card:
  * - Extracts title
  * - Optimizes markdown
- * - Splits into ≤ CARD_MD_LIMIT chunks (code-block-safe)
+ * - Converts Markdown tables into v2 card table elements
+ * - Splits markdown into ≤ CARD_MD_LIMIT chunks (code-block-safe)
  * - Returns at least one element
  */
 function buildCardContent(text: string): CardContentResult {
   const { title, body } = extractTitleAndBody(text);
   const rawContent = body || text.trim();
-  const contentToRender = optimizeMarkdownStyle(rawContent, 2);
   const elements: Element[] = [];
 
-  if (contentToRender.length > CARD_MD_LIMIT) {
-    for (const chunk of splitCodeBlockSafe(contentToRender, CARD_MD_LIMIT)) {
-      elements.push({ tag: 'markdown', content: chunk });
+  for (const segment of splitMarkdownAndTables(rawContent)) {
+    if (segment.type === 'table') {
+      elements.push(segment.element);
+      continue;
     }
-  } else if (contentToRender) {
-    elements.push({ tag: 'markdown', content: contentToRender });
+    appendMarkdownElements(elements, segment.content);
   }
 
   if (elements.length === 0) {
@@ -337,6 +387,134 @@ function buildCardContent(text: string): CardContentResult {
   }
 
   return { title, elements };
+}
+
+type CardSegment =
+  | { type: 'markdown'; content: string }
+  | { type: 'table'; element: Element };
+
+function splitMarkdownAndTables(text: string): CardSegment[] {
+  const lines = text.split('\n');
+  const segments: CardSegment[] = [];
+  let markdownLines: string[] = [];
+  let inFence = false;
+
+  const flushMarkdown = () => {
+    const content = markdownLines.join('\n').trim();
+    if (content) segments.push({ type: 'markdown', content });
+    markdownLines = [];
+  };
+
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i];
+    if (/^\s*```/.test(line.trim())) {
+      inFence = !inFence;
+      markdownLines.push(line);
+      i++;
+      continue;
+    }
+
+    if (
+      !inFence &&
+      i < lines.length - 1 &&
+      isMarkdownTableRow(lines[i]) &&
+      isMarkdownTableSeparator(lines[i + 1])
+    ) {
+      const tableLines = [lines[i], lines[i + 1]];
+      let j = i + 2;
+      while (j < lines.length && isMarkdownTableRow(lines[j])) {
+        tableLines.push(lines[j]);
+        j++;
+      }
+
+      const tableElement = markdownTableToElement(tableLines);
+      if (tableElement) {
+        flushMarkdown();
+        segments.push({ type: 'table', element: tableElement });
+      } else {
+        markdownLines.push(...tableLines);
+      }
+      i = j;
+      continue;
+    }
+
+    markdownLines.push(line);
+    i++;
+  }
+
+  flushMarkdown();
+  return segments;
+}
+
+function appendMarkdownElements(elements: Element[], rawMarkdown: string): void {
+  const contentToRender = optimizeMarkdownStyle(rawMarkdown, 2).trim();
+  if (!contentToRender) return;
+  if (contentToRender.length > CARD_MD_LIMIT) {
+    for (const chunk of splitCodeBlockSafe(contentToRender, CARD_MD_LIMIT)) {
+      elements.push({ tag: 'markdown', content: chunk });
+    }
+    return;
+  }
+  elements.push({ tag: 'markdown', content: contentToRender });
+}
+
+function isMarkdownTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith('|') && trimmed.endsWith('|') && splitMarkdownTableRow(trimmed).length >= 2;
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  if (!isMarkdownTableRow(line)) return false;
+  const cells = splitMarkdownTableRow(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+function truncateCell(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  return value.slice(0, Math.max(0, limit - 3)) + '...';
+}
+
+function markdownTableToElement(lines: string[]): Element | null {
+  const headers = splitMarkdownTableRow(lines[0]).slice(0, TABLE_MAX_COLUMNS);
+  if (headers.length < 2 || !isMarkdownTableSeparator(lines[1])) return null;
+
+  const columns = headers.map((header, index) => ({
+    name: `col_${index}`,
+    display_name: truncateCell(header || `Column ${index + 1}`, TABLE_HEADER_LIMIT),
+    data_type: 'text',
+    horizontal_align: 'left',
+  }));
+
+  const rows = lines
+    .slice(2, TABLE_MAX_ROWS + 2)
+    .map((line) => splitMarkdownTableRow(line))
+    .filter((cells) => cells.some((cell) => cell.trim()))
+    .map((cells) => {
+      const row: Record<string, string> = {};
+      columns.forEach((column, index) => {
+        row[column.name] = truncateCell(cells[index] ?? '', TABLE_CELL_LIMIT);
+      });
+      return row;
+    });
+
+  if (rows.length === 0) return null;
+
+  return {
+    tag: 'table',
+    page_size: Math.min(rows.length, 10),
+    row_height: 'low',
+    columns,
+    rows,
+  };
 }
 
 /**
