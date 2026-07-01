@@ -19,7 +19,7 @@ const CARD_SIZE_LIMIT = 25 * 1024;
 // Per-card element count safety limit
 const CARD_ELEMENT_LIMIT = 45;
 
-/** Markdown-feature heuristic patterns. Any match triggers card rendering. */
+/** Markdown-feature patterns used by the explicit card builder smoke coverage. */
 const MD_PATTERNS: RegExp[] = [
   /^#{1,6}\s+/m, // headings
   /```[\s\S]*```/, // fenced code block

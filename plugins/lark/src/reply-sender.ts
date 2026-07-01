@@ -4,7 +4,7 @@ import path from 'node:path';
 import { appConfig } from './config.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { BotMessageTracker, LatestMessageTracker, TrackedBotMessageQuotedContext } from './channel.js';
-import { buildCards, shouldUseCard } from './feishu-card.js';
+import { buildCards } from './feishu-card.js';
 import { JOB_THREAD_PREFIX } from './scheduler.js';
 import {
   revokeAckReactionWithTransport,
@@ -265,9 +265,9 @@ export async function sendFeishuReply(
     };
   }
 
-  // Dispatch: card path vs plain-text path.
-  const useCard =
-    format === 'card' || (format !== 'text' && shouldUseCard(text));
+  // Cards are opt-in. Markdown-rich and long replies default to text so users
+  // can read and copy the original Markdown directly in Feishu/Lark.
+  const useCard = format === 'card';
 
   let sentCount = 0;
 

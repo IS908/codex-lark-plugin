@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.7.5-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.7.6-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -35,7 +35,7 @@
 ### 消息回复
 
 - 文字、图片（不超过 10 MB）、文件（不超过 30 MB）
-- **卡片渲染**：默认优先纯文本。请慎用飞书卡片，仅在结构化摘要、表格、代码块、密集列表或多段内容明显更易扫读时使用。长文本或富 markdown 内容可自动渲染为淡红色飞书卡片；可通过 `format='card'` 强制卡片，`format='text'` 强制纯文本，可选 `footer` 底部小字脚注
+- **卡片渲染**：默认发送可复制的 Markdown/文本消息。仅在结构化摘要、表格、代码块、密集列表或多段内容明显更易扫读时显式使用飞书卡片：传 `format='card'` 或 raw `card` payload。生成卡片时可选 `footer` 底部小字脚注
 - 编辑已发送的消息
 - 回复已有飞书文档评论线程，或在当前文档中新建顶级评论
 - 文档评论 @bot 事件会收到可配置的持久 emoji 确认回应（默认 `THUMBSUP`）

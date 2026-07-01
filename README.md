@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.7.5-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.7.6-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -36,7 +36,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 ### Responding
 
 - Text replies with automatic chunking for long messages (configurable limit)
-- **Card rendering**: plain text is preferred. Use Feishu cards sparingly for structured summaries, tables, code blocks, dense lists, or multi-section content that is harder to scan as text. Long or markdown-rich replies may auto-render as pale-red cards; pass `format='card'` to force card, `format='text'` to force plain. Optional `footer` footnote supported
+- **Card rendering**: Markdown/text replies are the default and are sent as copyable text messages. Use Feishu cards only as explicit opt-in for structured summaries, tables, code blocks, dense lists, or multi-section content that is harder to scan as text: pass `format='card'` or a raw `card` payload. Optional `footer` footnote supported for generated cards
 - **Ack reaction**: bot automatically reacts with an emoji (default: MeMeMe) on receive, removes it after replying
 - **Doc-comment ack reaction**: inbound doc-comment @mentions receive a persistent configurable emoji reaction (default: THUMBSUP)
 - Image and file uploads (images up to 10 MB, files up to 30 MB)

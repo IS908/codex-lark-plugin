@@ -80,7 +80,7 @@ export function registerReplyTools(ctx: ToolContext): void {
     'reply',
     {
       description:
-        'Send a reply to a Feishu chat. Prefer plain text. Use Feishu cards sparingly, only when structure clearly improves readability. Long or markdown-rich content may auto-render as a card; pass "card" param with raw Schema 2.0 JSON only for pre-built cards.',
+        'Send a reply to a Feishu chat. Markdown/text is the default and stays a normal copyable text message. Use Feishu cards only as explicit opt-in when structure clearly improves readability; pass format="card" for generated cards or the "card" param with raw Schema 2.0 JSON for pre-built cards.',
       inputSchema: z.object({
         chat_id: z.string().describe('The chat ID to reply in'),
         text: z.string().describe('The text content to send (ignored when card is provided)'),
@@ -101,7 +101,7 @@ export function registerReplyTools(ctx: ToolContext): void {
           .enum(['text', 'card'])
           .optional()
           .describe(
-            'Output format. Prefer "text" unless a card makes structured content significantly easier to scan. Omit for heuristic auto-detection; set to "card" only for structured summaries, tables, code blocks, dense lists, or multi-section content.'
+            'Output format. Omit or set "text" for normal Markdown/text messages. Set to "card" only as explicit opt-in for structured summaries, tables, code blocks, dense lists, or multi-section content.'
           ),
         footer: z
           .string()
