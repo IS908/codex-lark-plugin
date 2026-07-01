@@ -2,7 +2,7 @@
  * Card builder smoke test — runs as part of `npm test`.
  * Exits non-zero if any assertion fails.
  */
-import { shouldUseCard, buildCards } from '../src/feishu-card.js';
+import { needsCard, shouldUseCard, buildCards } from '../src/feishu-card.js';
 
 function fail(msg: string): never {
   console.error(`FAIL: ${msg}`);
@@ -10,17 +10,23 @@ function fail(msg: string): never {
 }
 
 // 1. Short plain text should NOT trigger card
-if (shouldUseCard('hello')) fail('short text triggered card');
+if (needsCard('hello')) fail('short text triggered card');
+if (shouldUseCard('hello')) fail('shouldUseCard alias triggered short text');
 
-// 2. Markdown-feature text SHOULD trigger card
-if (!shouldUseCard('# heading\nbody')) fail('heading did not trigger card');
-if (!shouldUseCard('a ```code``` b')) fail('code block did not trigger card');
-if (!shouldUseCard('| a | b |\n|---|---|')) fail('table did not trigger card');
-if (!shouldUseCard('- item 1\n- item 2')) fail('list did not trigger card');
-if (!shouldUseCard('say **hi** now')) fail('bold did not trigger card');
+// 2. Rich Markdown text SHOULD trigger card
+if (!needsCard('# heading\nbody')) fail('heading did not trigger card');
+if (!needsCard('a\n\n```ts\nconst ok = true;\n```')) fail('code block did not trigger card');
+if (!needsCard('```ts\nconst ok = true;')) fail('unclosed code fence did not trigger card');
+if (!needsCard('| a | b |\n|---|---|')) fail('table did not trigger card');
+if (needsCard('- only one item')) fail('single bullet should not trigger card');
+if (!needsCard('- item 1\n- item 2')) fail('multi bullet list did not trigger card');
+if (!needsCard('1. first\n2. second')) fail('numbered list did not trigger card');
 
-// 3. Long text (>500) SHOULD trigger card
-if (!shouldUseCard('a'.repeat(501))) fail('long text did not trigger card');
+// 3. Long structured analysis SHOULD trigger card, plain long text should not
+if (needsCard('a'.repeat(501))) fail('plain long text triggered card');
+if (!needsCard('建议：先分批执行。\n\n风险：波动较大。\n\n操作：挂限价。\n\n触发条件：突破后复核。')) {
+  fail('structured analysis did not trigger card');
+}
 
 // 4. buildCards returns at least one card for any input
 const c1 = buildCards('# Hi\nbody');
@@ -79,6 +85,28 @@ if (!c7[0] || !c7[0].body || !Array.isArray(c7[0].body.elements)) {
 const c8: any = buildCards('# Theme\nbody');
 if (c8.some((card: any) => card.header?.template !== 'red')) {
   fail(`cards should use red header template: ${JSON.stringify(c8.map((card: any) => card.header?.template))}`);
+}
+
+// 13. Markdown tables are rendered as v2 card table elements, not only markdown.
+const c9: any = buildCards([
+  '# MNTN / ZS report',
+  '',
+  'Summary before table.',
+  '',
+  '| Ticker | Action | Risk |',
+  '| --- | --- | --- |',
+  '| MNTN | Watch | High |',
+  '| ZS | Buy | Medium |',
+  '',
+  'Next steps after table.',
+].join('\n'));
+const tableElements = c9.flatMap((card: any) => card.body.elements).filter((el: any) => el.tag === 'table');
+if (tableElements.length !== 1) fail(`expected one table element, got ${tableElements.length}`);
+if (!Array.isArray(tableElements[0].columns) || tableElements[0].columns.length !== 3) {
+  fail(`table columns not rendered: ${JSON.stringify(tableElements[0])}`);
+}
+if (!Array.isArray(tableElements[0].rows) || tableElements[0].rows.length !== 2) {
+  fail(`table rows not rendered: ${JSON.stringify(tableElements[0])}`);
 }
 
 console.log('PASS');

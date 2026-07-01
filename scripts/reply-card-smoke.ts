@@ -23,6 +23,7 @@ async function flushMicrotasks(): Promise<void> {
 
 /** Capture calls to the mock Lark client */
 const apiCalls: { method: string; args: any }[] = [];
+let failInteractiveSends = false;
 
 function mockLarkClient() {
   return {
@@ -30,10 +31,16 @@ function mockLarkClient() {
       v1: {
         message: {
           create: async (args: any) => {
+            if (failInteractiveSends && args?.data?.msg_type === 'interactive') {
+              throw new Error('mock interactive send failure');
+            }
             apiCalls.push({ method: 'message.create', args });
             return { data: { message_id: 'mock_msg_001' } };
           },
           reply: async (args: any) => {
+            if (failInteractiveSends && args?.data?.msg_type === 'interactive') {
+              throw new Error('mock interactive reply failure');
+            }
             apiCalls.push({ method: 'message.reply', args });
             return { data: { message_id: 'mock_msg_002' } };
           },
@@ -279,7 +286,7 @@ async function run() {
   );
   if (!normalCreate) fail('Test 8: plain text path should use msg_type=text');
 
-  // ── Test 9: markdown-rich text defaults to plain text, not generated cards ──
+  // ── Test 9: markdown-rich text defaults to generated v2 interactive cards ──
   apiCalls.length = 0;
   botTrackerAdded.length = 0;
 
@@ -299,60 +306,110 @@ async function run() {
   });
 
   if (r9.isError) fail(`Test 9: unexpected error: ${r9.content[0].text}`);
-  const markdownTextCall = apiCalls.find(
-    (c) => c.method === 'message.create' && c.args.data.msg_type === 'text'
-  );
-  if (!markdownTextCall) fail('Test 9: markdown-rich default reply should use msg_type=text');
   const markdownCardCall = apiCalls.find(
     (c) => c.method === 'message.create' && c.args.data.msg_type === 'interactive'
   );
-  if (markdownCardCall) fail('Test 9: markdown-rich default reply should not auto-render as card');
-  if (botTrackerAdded[0]?.meta?.quotedContext) {
-    fail(`Test 9: text reply should not track card quoted context: ${JSON.stringify(botTrackerAdded[0])}`);
+  if (!markdownCardCall) fail('Test 9: markdown-rich default reply should use msg_type=interactive');
+  const markdownGeneratedCard = JSON.parse(markdownCardCall.args.data.content);
+  if (markdownGeneratedCard.schema !== '2.0') fail('Test 9: generated card should use Schema 2.0');
+  if (botTrackerAdded[0]?.meta?.quotedContext?.msgType !== 'interactive') {
+    fail(`Test 9: generated card should track interactive quoted context: ${JSON.stringify(botTrackerAdded[0])}`);
   }
 
-  // ── Test 10: explicit format=card uses generated card theme ──
+  // ── Test 10: explicit format=text forces rich Markdown through plain text ──
   apiCalls.length = 0;
+  botTrackerAdded.length = 0;
 
   const r10 = await replyHandler({
+    chat_id: 'chat_markdown_forced_text',
+    text: markdownReport,
+    format: 'text',
+  });
+
+  if (r10.isError) fail(`Test 10: unexpected error: ${r10.content[0].text}`);
+  const forcedTextCall = apiCalls.find(
+    (c) => c.method === 'message.create' && c.args.data.msg_type === 'text'
+  );
+  if (!forcedTextCall) fail('Test 10: format=text should use msg_type=text');
+  const forcedCardCall = apiCalls.find(
+    (c) => c.method === 'message.create' && c.args.data.msg_type === 'interactive'
+  );
+  if (forcedCardCall) fail('Test 10: format=text should not send interactive cards');
+  if (botTrackerAdded[0]?.meta?.quotedContext) {
+    fail(`Test 10: forced text reply should not track card quoted context: ${JSON.stringify(botTrackerAdded[0])}`);
+  }
+
+  // ── Test 11: explicit format=card uses generated card theme ──
+  apiCalls.length = 0;
+  botTrackerAdded.length = 0;
+
+  const r11 = await replyHandler({
     chat_id: 'chat_001',
     text: 'short but explicitly carded',
     format: 'card',
   });
 
-  if (r10.isError) fail(`Test 10: unexpected error: ${r10.content[0].text}`);
+  if (r11.isError) fail(`Test 11: unexpected error: ${r11.content[0].text}`);
   const formatCardCall = apiCalls.find((c) => c.method === 'message.create');
-  if (!formatCardCall) fail('Test 10: message.create not called');
+  if (!formatCardCall) fail('Test 11: message.create not called');
   const generatedCard = JSON.parse(formatCardCall.args.data.content);
   if (generatedCard.header?.template !== 'red') {
-    fail(`Test 10: expected red header template, got ${generatedCard.header?.template}`);
+    fail(`Test 11: expected red header template, got ${generatedCard.header?.template}`);
   }
   const formatCardTracked = botTrackerAdded.at(-1);
   if (formatCardTracked?.meta.quotedContext?.msgType !== 'interactive') {
-    fail(`Test 10: generated card missing quoted context: ${JSON.stringify(formatCardTracked)}`);
+    fail(`Test 11: generated card missing quoted context: ${JSON.stringify(formatCardTracked)}`);
   }
   if (!formatCardTracked?.meta.quotedContext?.text?.includes('short but explicitly carded')) {
-    fail(`Test 10: generated card quoted context missing original text: ${JSON.stringify(formatCardTracked)}`);
+    fail(`Test 11: generated card quoted context missing original text: ${JSON.stringify(formatCardTracked)}`);
   }
 
-  // ── Test 11: synthetic reply_to ids must not create any visible Feishu message ──
+  // ── Test 12: generated-card send failures fall back to original text ──
+  apiCalls.length = 0;
+  botTrackerAdded.length = 0;
+  failInteractiveSends = true;
+
+  const r12 = await replyHandler({
+    chat_id: 'chat_card_fallback',
+    text: markdownReport,
+  });
+  failInteractiveSends = false;
+
+  if (r12.isError) fail(`Test 12: unexpected error: ${r12.content[0].text}`);
+  const fallbackInteractive = apiCalls.find(
+    (c) => c.method === 'message.create' && c.args.data.msg_type === 'interactive'
+  );
+  if (fallbackInteractive) fail('Test 12: failed interactive send should not be recorded as delivered');
+  const fallbackText = apiCalls.find(
+    (c) => c.method === 'message.create' && c.args.data.msg_type === 'text'
+  );
+  if (!fallbackText) fail('Test 12: generated-card failure should fall back to text');
+  const fallbackContent = JSON.parse(fallbackText.args.data.content);
+  if (!fallbackContent.text.includes('# Weekly report')) {
+    fail(`Test 12: fallback text should preserve original markdown: ${JSON.stringify(fallbackContent)}`);
+  }
+  if (botTrackerAdded[0]?.meta?.quotedContext) {
+    fail(`Test 12: fallback text should not track card quoted context: ${JSON.stringify(botTrackerAdded[0])}`);
+  }
+
+  // ── Test 13: synthetic reply_to ids must not create any visible Feishu message ──
   apiCalls.length = 0;
   botTrackerAdded.length = 0;
   buffer.recorded.length = 0;
 
-  const r11 = await replyHandler({
+  const r13 = await replyHandler({
     chat_id: 'chat_001',
     text: 'synthetic id fallback',
     reply_to: 'flush-1780923345577',
   });
 
-  if (r11.isError) fail(`Test 11: unexpected error: ${r11.content[0].text}`);
-  if (!r11.content[0].text.includes('Skipped reply for synthetic system message')) {
-    fail(`Test 11: wrong status text: ${r11.content[0].text}`);
+  if (r13.isError) fail(`Test 13: unexpected error: ${r13.content[0].text}`);
+  if (!r13.content[0].text.includes('Skipped reply for synthetic system message')) {
+    fail(`Test 13: wrong status text: ${r13.content[0].text}`);
   }
-  if (apiCalls.length !== 0) fail(`Test 11: synthetic reply_to should not call Feishu APIs: ${JSON.stringify(apiCalls)}`);
-  if (botTrackerAdded.length !== 0) fail('Test 11: synthetic reply should not track a bot message');
-  if (buffer.recorded.length !== 0) fail('Test 11: synthetic reply should not record assistant text');
+  if (apiCalls.length !== 0) fail(`Test 13: synthetic reply_to should not call Feishu APIs: ${JSON.stringify(apiCalls)}`);
+  if (botTrackerAdded.length !== 0) fail('Test 13: synthetic reply should not track a bot message');
+  if (buffer.recorded.length !== 0) fail('Test 13: synthetic reply should not record assistant text');
 
   console.log('PASS');
 }
