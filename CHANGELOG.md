@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-07-03
+
+### Fixed
+- Changed the disabled default self-review and low-risk auto-fix cronjob presets to `weekly on fri at 18:00`, while keeping both jobs paused until the maintainer explicitly enables them.
+
 ## [1.8.0] - 2026-07-03
 
 ### Added
