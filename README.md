@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.8.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.8.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -366,10 +366,10 @@ created.
 
 `create_default_review_jobs` creates two built-in prompt cronjobs:
 `plugin-self-review` and `plugin-low-risk-auto-fix`. Both are created with
-`status=paused`; they do not run until the user explicitly resumes them. The
-self-review preset creates issue proposals and reports to Feishu. The low-risk
-auto-fix preset is constrained to low-risk docs/tests/metadata work and must
-never merge PRs or create releases.
+`weekly on fri at 18:00` schedules and `status=paused`; they do not run until
+the user explicitly resumes them. The self-review preset creates issue
+proposals and reports to Feishu. The low-risk auto-fix preset is constrained to
+low-risk docs/tests/metadata work and must never merge PRs or create releases.
 
 Because exec delivery is a single-turn flow, the plugin also guards against
 misleading follow-up promises. A final answer must not claim that Codex will

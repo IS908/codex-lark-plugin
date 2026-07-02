@@ -220,6 +220,18 @@ try {
     const lowRiskFix = readJob('plugin-low-risk-auto-fix');
     if (selfReview.meta.status !== 'paused') fail(`7: self-review should be paused, got ${selfReview.meta.status}`);
     if (lowRiskFix.meta.status !== 'paused') fail(`7: low-risk fix should be paused, got ${lowRiskFix.meta.status}`);
+    if (selfReview.meta.schedule_human !== 'weekly on fri at 18:00') {
+      fail(`7: self-review should default to weekly on fri at 18:00, got ${selfReview.meta.schedule_human}`);
+    }
+    if (lowRiskFix.meta.schedule_human !== 'weekly on fri at 18:00') {
+      fail(`7: low-risk fix should default to weekly on fri at 18:00, got ${lowRiskFix.meta.schedule_human}`);
+    }
+    if (selfReview.meta.schedule !== '0 18 * * 5') {
+      fail(`7: self-review cron should be 0 18 * * 5, got ${selfReview.meta.schedule}`);
+    }
+    if (lowRiskFix.meta.schedule !== '0 18 * * 5') {
+      fail(`7: low-risk fix cron should be 0 18 * * 5, got ${lowRiskFix.meta.schedule}`);
+    }
     if (!selfReview.meta.prompt?.includes('create_issue_proposal')) fail(`7: self-review prompt should mention create_issue_proposal`);
     if (!lowRiskFix.meta.prompt?.includes('low-risk')) fail(`7: low-risk fix prompt should constrain low-risk behavior`);
     if (!r.content[0].text.includes('disabled by default')) fail(`7: response should state disabled by default: ${r.content[0].text}`);
