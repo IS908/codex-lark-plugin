@@ -95,6 +95,7 @@ try {
   const updateJob = getTool('update_job');
   const createJob = getTool('create_job');
   const listJobs = getTool('list_jobs');
+  const createDefaultReviewJobs = getTool('create_default_review_jobs');
 
   // 1. Missing job returns an MCP error.
   {
@@ -204,10 +205,30 @@ try {
     }
     passed++;
   }
+
+  // 7. create_default_review_jobs creates paused self-review/self-repair presets only.
+  {
+    const r = await createDefaultReviewJobs({
+      target_repo: 'IS908/codex-lark-plugin',
+      target_chat_id: 'chat_target',
+      timezone: 'Asia/Shanghai',
+      chat_id: 'chat_owner',
+      thread_id: 'thread_owner',
+    });
+    if (r.isError) fail(`7: create_default_review_jobs should succeed, got ${JSON.stringify(r)}`);
+    const selfReview = readJob('plugin-self-review');
+    const lowRiskFix = readJob('plugin-low-risk-auto-fix');
+    if (selfReview.meta.status !== 'paused') fail(`7: self-review should be paused, got ${selfReview.meta.status}`);
+    if (lowRiskFix.meta.status !== 'paused') fail(`7: low-risk fix should be paused, got ${lowRiskFix.meta.status}`);
+    if (!selfReview.meta.prompt?.includes('create_issue_proposal')) fail(`7: self-review prompt should mention create_issue_proposal`);
+    if (!lowRiskFix.meta.prompt?.includes('low-risk')) fail(`7: low-risk fix prompt should constrain low-risk behavior`);
+    if (!r.content[0].text.includes('disabled by default')) fail(`7: response should state disabled by default: ${r.content[0].text}`);
+    passed++;
+  }
 } finally {
   (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
   (appConfig as { cronTimezone: string }).cronTimezone = originalCronTimezone;
   rmSync(jobsDir, { recursive: true, force: true });
 }
 
-console.log(`job-tools smoke: ${passed}/6 PASS`);
+console.log(`job-tools smoke: ${passed}/7 PASS`);

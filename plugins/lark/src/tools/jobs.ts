@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { appConfig } from '../config.js';
 import { audit } from '../audit-log.js';
 import { assertSafeChatId } from '../prompts.js';
+import { createDefaultReviewJobs } from '../default-review-jobs.js';
 import {
   sanitizeJobId,
   expandSchedule,
@@ -21,6 +22,68 @@ import type { ToolContext } from './tool-context.js';
 
 export function registerJobTools(ctx: ToolContext): void {
   const { server, channel, resolveCaller } = ctx;
+
+  server.registerTool(
+    'create_default_review_jobs',
+    {
+      description:
+        'Create built-in self-review and low-risk auto-fix cronjob presets as paused jobs. They are disabled by default and only run after the owner explicitly resumes them.',
+      inputSchema: z.object({
+        target_repo: z.string().describe('GitHub repository in owner/name form'),
+        target_chat_id: z.string().describe('Feishu chat that receives review reports'),
+        timezone: z
+          .string()
+          .optional()
+          .describe('IANA timezone for the preset jobs. Defaults to LARK_CRON_TIMEZONE.'),
+        chat_id: z.string().describe('Current channel chat_id for server-side caller resolution'),
+        thread_id: z.string().optional().describe('Current channel thread_id when present'),
+      }),
+    },
+    async ({ target_repo, target_chat_id, timezone, chat_id, thread_id }) => {
+      const auditArgs = { target_repo, target_chat_id, timezone, chat_id, thread_id };
+      const auth = resolveCaller('create_default_review_jobs', chat_id, thread_id, auditArgs);
+      if ('error' in auth) return auth.error;
+      const { caller } = auth;
+
+      try {
+        assertSafeChatId(target_chat_id);
+      } catch (err: any) {
+        return {
+          content: [{ type: 'text' as const, text: `Invalid target_chat_id: ${err?.message ?? target_chat_id}` }],
+          isError: true,
+        };
+      }
+
+      try {
+        const result = await createDefaultReviewJobs({
+          targetRepo: target_repo,
+          targetChatId: target_chat_id,
+          originChatId: chat_id,
+          createdBy: caller,
+          timezone,
+        });
+        void audit('create_default_review_jobs', caller, auditArgs, 'ok');
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: [
+                `Created default review jobs: ${result.created.length ? result.created.join(', ') : 'none'}.`,
+                result.skipped.length ? `Skipped existing jobs: ${result.skipped.join(', ')}.` : '',
+                'These jobs are disabled by default (status=paused). Resume them explicitly before they run.',
+              ].filter(Boolean).join('\n'),
+            },
+          ],
+        };
+      } catch (err: any) {
+        void audit('create_default_review_jobs', caller, auditArgs, 'error');
+        return {
+          content: [{ type: 'text' as const, text: `Failed to create default review jobs: ${err?.message ?? String(err)}` }],
+          isError: true,
+        };
+      }
+    },
+  );
 
   server.registerTool(
     'create_job',

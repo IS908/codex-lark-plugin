@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.7.10-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.8.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -344,7 +344,9 @@ are removed on startup and by a best-effort hourly cleanup.
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:
 `save_memory`, `create_job`, `list_jobs`, `update_job`, `disable_job`,
-`delete_job`, `upsert_job`, `run_local_cli_tool`, and `recall_message`. The
+`delete_job`, `upsert_job`, `create_default_review_jobs`,
+`create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`,
+`create_issue_from_proposal`, `run_local_cli_tool`, and `recall_message`. The
 child returns a validated `LARK_ACTIONS_JSON` marker block; the parent strips
 the block from the visible reply, derives caller identity from the current
 Feishu event, executes the action locally, and rejects malformed blocks instead
@@ -352,12 +354,22 @@ of recursively loading the Lark MCP server. `create_job` and `list_jobs` expose
 stable `job_id` values so later turns can update, pause, replace, or delete the
 exact reminder instead of recreating a duplicate name.
 
-The bridge intentionally does not provide domain-specific built-ins such as
-GitHub issue creation. If you need that workflow, configure a trusted
-`run_local_cli_tool` entry that wraps `gh issue create` with an explicit
+Periodic review workflows should use issue proposals before writing to GitHub:
+`create_issue_proposal` stores a durable pending proposal under the local Lark
+channel home, the Feishu report asks the maintainer whether to file it, and
+`create_issue_from_proposal` may file it only after explicit human approval.
+The final GitHub write still goes through a trusted `run_local_cli_tool` entry
+such as `gh_issue_create`, wrapping `gh issue create` with an explicit
 allowlist, fixed arguments, timeouts, and output caps. Without such a local tool
-configuration, Codex should provide an issue draft rather than claiming the
-issue was created.
+configuration, proposals stay local and Codex should not claim an issue was
+created.
+
+`create_default_review_jobs` creates two built-in prompt cronjobs:
+`plugin-self-review` and `plugin-low-risk-auto-fix`. Both are created with
+`status=paused`; they do not run until the user explicitly resumes them. The
+self-review preset creates issue proposals and reports to Feishu. The low-risk
+auto-fix preset is constrained to low-risk docs/tests/metadata work and must
+never merge PRs or create releases.
 
 Because exec delivery is a single-turn flow, the plugin also guards against
 misleading follow-up promises. A final answer must not claim that Codex will
@@ -407,10 +419,10 @@ Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
       "maxOutputBytes": 65536,
       "allowedCallers": "lark_allowed_user_ids"
     },
-    "github_issue_create": {
+    "gh_issue_create": {
       "command": "/opt/homebrew/bin/gh",
-      "fixedArgs": ["issue", "create", "--repo", "OWNER/REPO"],
-      "paramAllowlist": ["--title", "--body", "--label"],
+      "fixedArgs": ["issue", "create"],
+      "paramAllowlist": ["--repo", "--title", "--body", "--label"],
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
       "allowedCallers": "owners"
@@ -424,6 +436,10 @@ an explicit array of Feishu/Lark `open_id` values. Tool configs must set exactly
 one of `paramAllowlist` or `paramBlocklist`. Commands must be absolute paths.
 Environment keys in `envAllowlist` and `env` must use shell-compatible names
 such as `LARK_APP_ID` or `CUSTOM_SAFE`.
+
+`create_issue_from_proposal` defaults to the `gh_issue_create` tool and passes
+`--repo=<owner/name>`, `--title=<proposal title>`, and `--body=<proposal body>`.
+Include `--repo` in `paramAllowlist` when enabling that workflow.
 
 ### Optional -- Acknowledgement
 
@@ -635,9 +651,14 @@ The plugin registers the following MCP tools for Codex to use:
 | `save_memory` | Save a memory entry (profile / chat episode / thread episode) for cross-session recall. Profile writes target the resolved caller (server-derived, v0.9.0+) and go into the chosen `tier` (`public` or `private`, default `private`, v0.10.0+). Requires `chat_id`. |
 | `save_skill` | Save a reusable procedure as a globally searchable skill. Owner-only because skills are visible across users/chats; requires `chat_id` and optional `thread_id` for server-derived caller identity. |
 | `create_job` | Create a scheduled cronjob (message or prompt type). Creator derived from session; requires `chat_id` (used to populate `origin_chat_id`). Optional `timezone` stores an explicit IANA timezone in the job file. |
+| `create_default_review_jobs` | Create paused self-review and low-risk auto-fix cronjob presets. They are disabled by default and only run after an explicit `update_job status=active`. |
 | `list_jobs` | List cronjobs visible in the current chat. Filter follows rendering-visibility: private → caller's own jobs, group → jobs with `target_chat_id == currentChat` (prompts redacted for non-owners). Requires `chat_id`; renders each job's own timezone plus UTC. |
 | `update_job` | Update a cronjob (schedule, timezone, content, pause/resume). Owner-only. Requires `chat_id`. |
 | `delete_job` | Delete a cronjob. Owner-only. Requires `chat_id`. |
+| `create_issue_proposal` | Create a durable pending GitHub issue proposal without filing it. Used by periodic review jobs before asking for maintainer approval. |
+| `list_issue_proposals` | List visible issue proposals. Private chats show caller-created proposals; group chats show proposals targeting the group. |
+| `reject_issue_proposal` | Reject a pending issue proposal. Only the proposal creator or configured owner can mutate it. |
+| `create_issue_from_proposal` | After explicit maintainer approval, file a proposal through an allowlisted local CLI tool (`gh_issue_create` by default) and mark it `created` with the issue URL. |
 | `what_do_you_know` | List what the bot has stored in the caller's profile. Filtered by rendering visibility (both tiers in p2p, public only in groups). Each line carries an 8-char hash for use with `forget_memory`. (v0.11.0+) |
 | `forget_memory` | Remove a specific line from the caller's profile by hash. Caller-scoped and idempotent. Optional `promote_to_rule` promotes the removal into a durable `## Always private` rule in `privacy-rules.md`. (v0.11.0+) |
 | `run_local_cli_tool` | Run a configured allowlisted local CLI capability on the plugin host. Caller identity is server-derived from `chat_id` / `thread_id`; parameters and environment are filtered by `local-cli-tools.json`. (v1.1.0+) |

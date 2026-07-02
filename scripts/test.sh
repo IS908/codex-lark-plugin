@@ -137,8 +137,16 @@ echo "=== Job store unit checks ==="
 node --import tsx scripts/job-smoke.ts
 
 echo ""
+echo "=== Issue proposal store unit checks ==="
+node --import tsx scripts/issue-proposal-store-smoke.ts
+
+echo ""
 echo "=== Job tool unit checks ==="
 node --import tsx scripts/job-tools-smoke.ts
+
+echo ""
+echo "=== Issue proposal tool unit checks ==="
+node --import tsx scripts/issue-proposal-tools-smoke.ts
 
 echo ""
 echo "=== Save skill tool unit checks ==="

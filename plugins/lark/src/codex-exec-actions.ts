@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
 import type { LarkMessage } from './channel.js';
 import type { IdentitySession } from './identity-session.js';
@@ -28,6 +29,19 @@ import type { BotMessageTracker } from './channel.js';
 import type { LarkTransport } from './lark-transport.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
+import { createDefaultReviewJobs } from './default-review-jobs.js';
+import {
+  createIssueProposal,
+  extractGithubIssueUrl,
+  formatIssueProposalForList,
+  formatIssueProposalIssueBody,
+  listIssueProposals,
+  markIssueProposalApproved,
+  markIssueProposalCreated,
+  readIssueProposal,
+  rejectIssueProposal,
+  type IssueProposalFile,
+} from './issue-proposal-store.js';
 
 export const CODEX_EXEC_ACTIONS_START = '<LARK_ACTIONS_JSON>';
 export const CODEX_EXEC_ACTIONS_END = '</LARK_ACTIONS_JSON>';
@@ -98,10 +112,50 @@ const UpsertJobActionSchema = z.object({
   status: z.enum(['active', 'paused']).optional(),
 });
 
+const CreateDefaultReviewJobsActionSchema = z.object({
+  type: z.literal('create_default_review_jobs'),
+  target_repo: z.string().min(1),
+  target_chat_id: z.string().min(1).optional(),
+  timezone: z.string().min(1).optional(),
+});
+
 const RunLocalCliToolActionSchema = z.object({
   type: z.literal('run_local_cli_tool'),
   tool: z.string().min(1),
   args: z.array(z.string()).optional(),
+});
+
+const IssueProposalPrioritySchema = z.enum(['P0', 'P1', 'P2', 'P3']);
+const IssueProposalAutomationLevelSchema = z.enum(['discovery-only', 'low-risk-auto-pr-eligible']);
+const IssueProposalStatusSchema = z.enum(['pending', 'approved', 'created', 'rejected', 'all']);
+
+const CreateIssueProposalActionSchema = z.object({
+  type: z.literal('create_issue_proposal'),
+  title: z.string().min(1),
+  body: z.string().min(1),
+  evidence: z.array(z.string()).optional(),
+  impact: z.string().optional(),
+  priority: IssueProposalPrioritySchema.optional(),
+  automation_level: IssueProposalAutomationLevelSchema.optional(),
+  target_repo: z.string().min(1),
+  target_chat_id: z.string().min(1).optional(),
+});
+
+const ListIssueProposalsActionSchema = z.object({
+  type: z.literal('list_issue_proposals'),
+  status: IssueProposalStatusSchema.optional(),
+});
+
+const RejectIssueProposalActionSchema = z.object({
+  type: z.literal('reject_issue_proposal'),
+  id: z.string().min(1),
+  reason: z.string().optional(),
+});
+
+const CreateIssueFromProposalActionSchema = z.object({
+  type: z.literal('create_issue_from_proposal'),
+  id: z.string().min(1),
+  tool: z.string().min(1).optional(),
 });
 
 const RecallMessageActionSchema = z.object({
@@ -117,7 +171,12 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
   DisableJobActionSchema,
   DeleteJobActionSchema,
   UpsertJobActionSchema,
+  CreateDefaultReviewJobsActionSchema,
   RunLocalCliToolActionSchema,
+  CreateIssueProposalActionSchema,
+  ListIssueProposalsActionSchema,
+  RejectIssueProposalActionSchema,
+  CreateIssueFromProposalActionSchema,
   RecallMessageActionSchema,
 ]).superRefine((action, ctx) => {
   if (
@@ -139,7 +198,7 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
         ? action.schedule
         : undefined;
   const timezone =
-    action.type === 'create_job' || action.type === 'upsert_job' || action.type === 'update_job'
+    action.type === 'create_job' || action.type === 'upsert_job' || action.type === 'update_job' || action.type === 'create_default_review_jobs'
       ? action.timezone
       : undefined;
   let normalizedTimezone: string | undefined;
@@ -862,6 +921,228 @@ async function executeRunLocalCliTool(
   return { ok: result.ok, action: 'run_local_cli_tool', message: result.message };
 }
 
+async function executeCreateDefaultReviewJobs(
+  action: z.infer<typeof CreateDefaultReviewJobsActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'create_default_review_jobs');
+  const targetChatId = action.target_chat_id ?? message.chatId;
+  const auditArgs = {
+    target_repo: action.target_repo,
+    target_chat_id: targetChatId,
+    timezone: action.timezone,
+    chat_id: message.chatId,
+    thread_id: message.threadId,
+  };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+  try {
+    assertSafeChatId(targetChatId);
+  } catch (err: any) {
+    return { ok: false, action: 'create_default_review_jobs', message: `Invalid target_chat_id: ${err?.message ?? targetChatId}` };
+  }
+  try {
+    const result = await createDefaultReviewJobs({
+      targetRepo: action.target_repo,
+      targetChatId,
+      originChatId: message.chatId,
+      createdBy: caller,
+      timezone: action.timezone,
+    });
+    void audit('create_default_review_jobs', caller, auditArgs, 'ok');
+    return {
+      ok: true,
+      action: 'create_default_review_jobs',
+      message: [
+        `Created default review jobs: ${result.created.length ? result.created.join(', ') : 'none'}.`,
+        result.skipped.length ? `Skipped existing jobs: ${result.skipped.join(', ')}.` : '',
+        'These jobs are disabled by default (status=paused). Resume them explicitly before they run.',
+      ].filter(Boolean).join('\n'),
+    };
+  } catch (err: any) {
+    void audit('create_default_review_jobs', caller, auditArgs, 'error');
+    return {
+      ok: false,
+      action: 'create_default_review_jobs',
+      message: `Failed to create default review jobs: ${err?.message ?? String(err)}`,
+    };
+  }
+}
+
+function canMutateIssueProposal(proposal: IssueProposalFile, caller: string): boolean {
+  return proposal.meta.created_by === caller || (!!appConfig.ownerOpenId && appConfig.ownerOpenId === caller);
+}
+
+function issueProposalLocalCliArgs(proposal: IssueProposalFile): string[] {
+  return [
+    `--repo=${proposal.meta.target_repo}`,
+    `--title=${proposal.meta.title}`,
+    `--body=${formatIssueProposalIssueBody(proposal)}`,
+  ];
+}
+
+async function executeCreateIssueProposal(
+  action: z.infer<typeof CreateIssueProposalActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'create_issue_proposal');
+  const auditArgs = {
+    title: action.title,
+    priority: action.priority,
+    automation_level: action.automation_level,
+    target_repo: action.target_repo,
+    target_chat_id: action.target_chat_id,
+    chat_id: message.chatId,
+    thread_id: message.threadId,
+  };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+
+  try {
+    const proposal = await createIssueProposal({
+      title: action.title,
+      body: action.body,
+      evidence: action.evidence,
+      impact: action.impact,
+      priority: action.priority,
+      automationLevel: action.automation_level,
+      targetRepo: action.target_repo,
+      targetChatId: action.target_chat_id ?? message.chatId,
+      originChatId: message.chatId,
+      createdBy: caller,
+    });
+    void audit('create_issue_proposal', caller, auditArgs, 'ok');
+    return {
+      ok: true,
+      action: 'create_issue_proposal',
+      message: `Created issue proposal "${proposal.meta.id}". Wait for explicit maintainer approval before filing a GitHub issue.`,
+    };
+  } catch (err: any) {
+    void audit('create_issue_proposal', caller, auditArgs, 'error');
+    return {
+      ok: false,
+      action: 'create_issue_proposal',
+      message: `Failed to create issue proposal: ${err?.message ?? String(err)}`,
+    };
+  }
+}
+
+async function executeListIssueProposals(
+  action: z.infer<typeof ListIssueProposalsActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'list_issue_proposals');
+  const status = action.status ?? 'pending';
+  const auditArgs = { status, chat_id: message.chatId, thread_id: message.threadId };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+  const proposals = await listIssueProposals({
+    status,
+    ...(message.chatType === 'p2p' ? { createdBy: caller } : { targetChatId: message.chatId }),
+  });
+  void audit('list_issue_proposals', caller, auditArgs, 'ok');
+  return {
+    ok: true,
+    action: 'list_issue_proposals',
+    message: proposals.length ? proposals.map(formatIssueProposalForList).join('\n\n') : 'No issue proposals found.',
+  };
+}
+
+async function executeRejectIssueProposal(
+  action: z.infer<typeof RejectIssueProposalActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'reject_issue_proposal');
+  const auditArgs = { id: action.id, reason: action.reason, chat_id: message.chatId, thread_id: message.threadId };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+  const proposal = await readIssueProposal(action.id);
+  if (!proposal) return { ok: false, action: 'reject_issue_proposal', message: `Issue proposal "${action.id}" not found.` };
+  if (!canMutateIssueProposal(proposal, caller)) {
+    void audit('reject_issue_proposal', caller, auditArgs, 'denied');
+    return { ok: false, action: 'reject_issue_proposal', message: `You are not authorized to reject issue proposal "${action.id}".` };
+  }
+  const rejected = await rejectIssueProposal(action.id, { rejectedBy: caller, reason: action.reason });
+  void audit('reject_issue_proposal', caller, auditArgs, 'ok');
+  return { ok: true, action: 'reject_issue_proposal', message: `Rejected issue proposal "${rejected?.meta.id ?? action.id}".` };
+}
+
+async function executeCreateIssueFromProposal(
+  action: z.infer<typeof CreateIssueFromProposalActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'create_issue_from_proposal');
+  const tool = action.tool ?? 'gh_issue_create';
+  const auditArgs = { id: action.id, tool, chat_id: message.chatId, thread_id: message.threadId };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+  const proposal = await readIssueProposal(action.id);
+  if (!proposal) return { ok: false, action: 'create_issue_from_proposal', message: `Issue proposal "${action.id}" not found.` };
+  if (!canMutateIssueProposal(proposal, caller)) {
+    void audit('create_issue_from_proposal', caller, auditArgs, 'denied');
+    return { ok: false, action: 'create_issue_from_proposal', message: `You are not authorized to create an issue from proposal "${action.id}".` };
+  }
+  if (proposal.meta.status === 'created' && proposal.meta.github_issue_url) {
+    return {
+      ok: true,
+      action: 'create_issue_from_proposal',
+      message: `Issue already created for proposal ${proposal.meta.id}: ${proposal.meta.github_issue_url}`,
+    };
+  }
+  if (proposal.meta.status === 'rejected') {
+    return {
+      ok: false,
+      action: 'create_issue_from_proposal',
+      message: `Issue proposal "${proposal.meta.id}" was rejected and cannot be filed.`,
+    };
+  }
+
+  const approved = await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller });
+  if (!approved) return { ok: false, action: 'create_issue_from_proposal', message: `Issue proposal "${proposal.meta.id}" not found.` };
+
+  const result = await runConfiguredLocalCliTool({
+    identitySession: deps.identitySession,
+    tool,
+    args: issueProposalLocalCliArgs(approved),
+    chat_id: message.chatId,
+    thread_id: message.threadId,
+    configPath: deps.localCliToolsConfigPath,
+  });
+  if (!result.ok) {
+    await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller, lastError: result.message });
+    return {
+      ok: false,
+      action: 'create_issue_from_proposal',
+      message: `Failed to create GitHub issue for proposal "${proposal.meta.id}": ${result.message}`,
+    };
+  }
+
+  const issueUrl = extractGithubIssueUrl(result.message);
+  if (!issueUrl) {
+    await markIssueProposalApproved(proposal.meta.id, {
+      approvedBy: caller,
+      lastError: 'Local CLI completed but did not return a GitHub issue URL.',
+    });
+    return {
+      ok: false,
+      action: 'create_issue_from_proposal',
+      message: `Local CLI completed but did not return a GitHub issue URL for proposal "${proposal.meta.id}".`,
+    };
+  }
+  const created = await markIssueProposalCreated(proposal.meta.id, { approvedBy: caller, githubIssueUrl: issueUrl });
+  void audit('create_issue_from_proposal', caller, auditArgs, 'ok');
+  return {
+    ok: true,
+    action: 'create_issue_from_proposal',
+    message: `Created GitHub issue for proposal "${proposal.meta.id}": ${created?.meta.github_issue_url ?? issueUrl}`,
+  };
+}
+
 function resolveRecallTransport(
   transport: CreateCodexExecActionDispatcherOptions['larkTransport'],
 ): Pick<LarkTransport, 'recallMessage'> | undefined {
@@ -946,6 +1227,16 @@ export function createCodexExecActionDispatcher(
           results.push(await executeDeleteJob(action, request.message, deps));
         } else if (action.type === 'upsert_job') {
           results.push(await executeUpsertJob(action, request.message, deps));
+        } else if (action.type === 'create_default_review_jobs') {
+          results.push(await executeCreateDefaultReviewJobs(action, request.message, deps));
+        } else if (action.type === 'create_issue_proposal') {
+          results.push(await executeCreateIssueProposal(action, request.message, deps));
+        } else if (action.type === 'list_issue_proposals') {
+          results.push(await executeListIssueProposals(action, request.message, deps));
+        } else if (action.type === 'reject_issue_proposal') {
+          results.push(await executeRejectIssueProposal(action, request.message, deps));
+        } else if (action.type === 'create_issue_from_proposal') {
+          results.push(await executeCreateIssueFromProposal(action, request.message, deps));
         } else if (action.type === 'recall_message') {
           results.push(await executeRecallMessage(action, request.message, deps));
         } else {

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-07-03
+
+### Added
+- Added a durable issue-proposal workflow for periodic Codex reviews: review jobs can create/list/reject local proposals, then file GitHub issues only after explicit maintainer approval through an allowlisted `gh_issue_create` local CLI tool.
+- Added Codex exec action bridge support for issue proposals and for creating disabled-by-default self-review / low-risk auto-fix cronjob presets.
+- Added `create_default_review_jobs`, which preconfigures `plugin-self-review` and `plugin-low-risk-auto-fix` as paused jobs so users must explicitly enable them before any self-review or self-fix automation runs.
+
 ## [1.7.10] - 2026-07-02
 
 ### Fixed

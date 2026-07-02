@@ -18,6 +18,8 @@ parent-process bridge for actions that must run safely even when the child
 | Defer/no visible reply | `defer_reply` | `[LARK_DEFER]` / `[LARK_NO_REPLY]` sentinel | no; exec uses output parsing |
 | Save memory | `save_memory` | `save_memory` | partial; both use server-derived caller identity and `MemoryStore` |
 | Create job | `create_job` | `create_job` | partial; both use server-derived caller identity and `job-store` |
+| Create default review jobs | `create_default_review_jobs` | `create_default_review_jobs` | yes; both create paused job presets through `default-review-jobs` |
+| Issue proposal lifecycle | `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`, `create_issue_from_proposal` | same action names | partial; both use `issue-proposal-store`, and final GitHub creation still goes through `runConfiguredLocalCliTool` |
 | Run local CLI tool | `run_local_cli_tool` | `run_local_cli_tool` | yes; both call `runConfiguredLocalCliTool` |
 | Recall bot message | `recall_message` | `recall_message` | yes; both use the tracked bot-message scope guard |
 | Edit bot message | `edit_message` | not supported | MCP-only for now; uses the tracked bot-message scope guard |
@@ -37,6 +39,12 @@ parent-process bridge for actions that must run safely even when the child
   core exec action schema. Use `run_local_cli_tool` for explicitly configured
   host-local workflows, with allowlists, fixed arguments, timeouts, output caps,
   and audit logging owned by the local tool config.
+- Issue proposal actions are the narrow exception for periodic review UX: they
+  persist local proposal state and require explicit human approval before the
+  final GitHub write. The write itself still goes through an allowlisted local
+  CLI tool such as `gh_issue_create`.
+- `create_default_review_jobs` must only create paused presets. Users must
+  explicitly resume those jobs before self-review or low-risk auto-fix runs.
 - Codex exec final answers have no background continuation after the visible
   Feishu reply is posted. If the child output promises later external work
   without a structured action, defer/no-reply marker, or scheduled job, delivery
