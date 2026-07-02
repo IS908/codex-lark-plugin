@@ -3,7 +3,7 @@
  *
  * Converts plain markdown text into Feishu CardKit Schema 2.0 card JSON.
  * - Optimizes markdown for Feishu's card renderer
- * - Extracts card title from the first heading
+ * - Keeps generated cards body-only so they read like rich Markdown messages
  * - Splits long text safely around fenced code blocks
  * - Splits oversized cards into multiple cards
  *
@@ -60,7 +60,7 @@ export function buildCards(
   text: string,
   opts?: { footer?: string }
 ): object[] {
-  const { title, elements } = buildCardContent(text);
+  const { elements } = buildCardContent(text);
 
   // Append footer element if provided
   if (opts?.footer) {
@@ -78,7 +78,7 @@ export function buildCards(
 
   const flush = () => {
     if (batch.length === 0) return;
-    cards.push(buildSchema2Card(batch, title));
+    cards.push(buildSchema2Card(batch));
     batch = [];
     batchSize = 0;
   };
@@ -113,9 +113,7 @@ export function buildCards(
   flush();
 
   if (cards.length === 0) {
-    cards.push(
-      buildSchema2Card([{ tag: 'markdown', content: '...' }], title)
-    );
+    cards.push(buildSchema2Card([{ tag: 'markdown', content: '...' }]));
   }
 
   return cards;
@@ -221,42 +219,6 @@ function hasMarkdownTable(text: string): boolean {
   return false;
 }
 
-// ─── Title Extraction ─────────────────────────────────────────
-
-/**
- * Extract a card title from the first heading (H1/H2/H3) of `text`.
- * If no heading is present, fall back to the first non-empty line,
- * stripped of markdown punctuation and truncated to 40 chars.
- */
-function extractTitleAndBody(text: string): { title: string; body: string } {
-  const lines = text.split('\n');
-  let title = '';
-  let bodyStartIdx = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    if (/^#{1,3}\s+/.test(lines[i])) {
-      title = lines[i].replace(/^#+\s*/, '').trim();
-      bodyStartIdx = i + 1;
-    }
-    break;
-  }
-
-  const body = lines.slice(bodyStartIdx).join('\n').trim();
-
-  if (!title) {
-    const firstLine = (lines.find((l) => l.trim()) || '')
-      .replace(/[*_`#\[\]]/g, '')
-      .trim();
-    title =
-      firstLine.length > 40
-        ? firstLine.slice(0, 37) + '...'
-        : firstLine || 'Reply';
-  }
-
-  return { title, body };
-}
-
 // ─── Code-Block-Safe Splitting ───────────────────────────────
 
 interface CodeBlockRange {
@@ -357,21 +319,18 @@ function splitCodeBlockSafe(text: string, maxLen: number): string[] {
 type Element = Record<string, unknown>;
 
 interface CardContentResult {
-  title: string;
   elements: Element[];
 }
 
 /**
  * Build content elements for a single card:
- * - Extracts title
  * - Optimizes markdown
  * - Converts Markdown tables into v2 card table elements
  * - Splits markdown into ≤ CARD_MD_LIMIT chunks (code-block-safe)
  * - Returns at least one element
  */
 function buildCardContent(text: string): CardContentResult {
-  const { title, body } = extractTitleAndBody(text);
-  const rawContent = body || text.trim();
+  const rawContent = text.trim();
   const elements: Element[] = [];
 
   for (const segment of splitMarkdownAndTables(rawContent)) {
@@ -386,7 +345,7 @@ function buildCardContent(text: string): CardContentResult {
     elements.push({ tag: 'markdown', content: text.trim() || '...' });
   }
 
-  return { title, elements };
+  return { elements };
 }
 
 type CardSegment =
@@ -483,15 +442,26 @@ function truncateCell(value: string, limit: number): string {
   return value.slice(0, Math.max(0, limit - 3)) + '...';
 }
 
+function cleanTableCell(value: string): string {
+  return value
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function markdownTableToElement(lines: string[]): Element | null {
   const headers = splitMarkdownTableRow(lines[0]).slice(0, TABLE_MAX_COLUMNS);
   if (headers.length < 2 || !isMarkdownTableSeparator(lines[1])) return null;
 
   const columns = headers.map((header, index) => ({
-    name: `col_${index}`,
-    display_name: truncateCell(header || `Column ${index + 1}`, TABLE_HEADER_LIMIT),
+    name: `c${index}`,
+    display_name: truncateCell(cleanTableCell(header) || `Column ${index + 1}`, TABLE_HEADER_LIMIT),
     data_type: 'text',
     horizontal_align: 'left',
+    width: 'auto',
   }));
 
   const rows = lines
@@ -501,7 +471,7 @@ function markdownTableToElement(lines: string[]): Element | null {
     .map((cells) => {
       const row: Record<string, string> = {};
       columns.forEach((column, index) => {
-        row[column.name] = truncateCell(cells[index] ?? '', TABLE_CELL_LIMIT);
+        row[column.name] = truncateCell(cleanTableCell(cells[index] ?? ''), TABLE_CELL_LIMIT);
       });
       return row;
     });
@@ -510,28 +480,30 @@ function markdownTableToElement(lines: string[]): Element | null {
 
   return {
     tag: 'table',
-    page_size: Math.min(rows.length, 10),
+    page_size: 10,
     row_height: 'low',
+    header_style: {
+      text_align: 'left',
+      text_size: 'normal_v2',
+      background_style: 'grey',
+      text_color: 'default',
+      bold: true,
+      lines: 1,
+    },
     columns,
     rows,
   };
 }
 
 /**
- * Assemble a Schema 2.0 (CardKit) card JSON object.
- * Header uses fixed `red` template; title shown in both header and
- * `config.summary` (drives the chat-list preview).
+ * Assemble an aitask-style body-only Schema 2.0 (CardKit) card JSON object.
+ * No header/template is generated; rich text lives directly in body.elements.
  */
-function buildSchema2Card(elements: Element[], title: string): object {
+function buildSchema2Card(elements: Element[]): object {
   return {
     schema: '2.0',
     config: {
-      wide_screen_mode: true,
-      summary: { content: title },
-    },
-    header: {
-      title: { tag: 'plain_text', content: title },
-      template: 'red',
+      width_mode: 'fill',
     },
     body: { elements },
   };

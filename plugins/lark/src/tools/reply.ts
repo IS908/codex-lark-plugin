@@ -80,7 +80,7 @@ export function registerReplyTools(ctx: ToolContext): void {
     'reply',
     {
       description:
-        'Send a reply to a Feishu chat. Simple replies are sent as normal copyable text. Rich Markdown with headings, fenced code, tables, multi-item lists, or structured sections is automatically rendered as a Feishu Schema 2.0 interactive card. Pass format="text" only when the user explicitly wants plain text; pass format="card" to force a generated card; pass the "card" param for raw pre-built Schema 2.0 JSON.',
+        'Send a reply to a Feishu chat. Simple replies are sent as normal copyable text. Rich Markdown with headings, fenced code, tables, multi-item lists, or structured sections is automatically rendered as a body-only Feishu Schema 2.0 interactive card. Pass format="text" only when the user explicitly wants plain text; pass format="card" to force a generated card; pass the "card" param for raw pre-built Schema 2.0 JSON.',
       inputSchema: z.object({
         chat_id: z.string().describe('The chat ID to reply in'),
         text: z.string().describe('The text content to send (ignored when card is provided)'),
@@ -101,7 +101,7 @@ export function registerReplyTools(ctx: ToolContext): void {
           .enum(['text', 'card'])
           .optional()
           .describe(
-            'Output format. Omit for automatic routing: simple content sends text, rich Markdown sends a generated Schema 2.0 card. Set "text" to force plain text, or "card" to force a generated card.'
+            'Output format. Omit for automatic routing: simple content sends text, rich Markdown sends a generated body-only Schema 2.0 card. Set "text" to force plain text, or "card" to force a generated card.'
           ),
         footer: z
           .string()
