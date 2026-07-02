@@ -38,6 +38,7 @@ export const JOB_THREAD_PREFIX = 'job-';
 export interface ParsedJobThreadId {
   jobId: string;
   createdAtHash?: string;
+  runId?: string;
 }
 
 export function jobCreatedAtHash(createdAt: string): string {
@@ -48,7 +49,7 @@ export function parseJobThreadId(threadId: string | undefined): ParsedJobThreadI
   if (!threadId?.startsWith(JOB_THREAD_PREFIX)) return null;
   const rest = threadId.slice(JOB_THREAD_PREFIX.length);
   const current = rest.match(/^(.+)-([a-f0-9]{12})-(\d{10,})$/);
-  if (current) return { jobId: current[1], createdAtHash: current[2] };
+  if (current) return { jobId: current[1], createdAtHash: current[2], runId: current[3] };
   const legacy = rest.match(/^(.+)-(\d{10,})$/);
   return legacy ? { jobId: legacy[1] } : null;
 }
@@ -128,6 +129,56 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+interface JobExecutionOutcome {
+  runStatus: 'started' | 'success' | 'failed';
+  outputStatus: 'empty' | 'generated';
+  deliveryStatus: 'pending' | 'sent' | 'failed';
+  report: string | null;
+  reportType: string | null;
+  deliveryError: string | null;
+  lastError: string | null;
+  autoPause: boolean;
+  completed: boolean;
+}
+
+interface CronJobReportDeliveryFailure extends Error {
+  cronJobReport?: {
+    report: string;
+    reportType: string;
+    deliveryError: string;
+  };
+}
+
+function outputStatusFor(text: string | null | undefined): 'empty' | 'generated' {
+  return text?.trim() ? 'generated' : 'empty';
+}
+
+function buildCronJobErrorReport(job: JobFile, reason: string): string {
+  return [
+    `CronJob "${job.meta.name}" failed before a complete report could be delivered.`,
+    '',
+    `Job ID: ${job.meta.id}`,
+    `Reason: ${reason}`,
+  ].join('\n');
+}
+
+function buildCronJobReportDeliveryFailure(
+  report: string,
+  deliveryErr: unknown,
+): CronJobReportDeliveryFailure {
+  const deliveryError = deliveryErr instanceof Error ? deliveryErr.message : String(deliveryErr);
+  const err = new Error(`CronJob error report delivery failed: ${deliveryError}`) as CronJobReportDeliveryFailure & {
+    cause?: unknown;
+  };
+  err.cause = deliveryErr;
+  err.cronJobReport = {
+    report,
+    reportType: 'error_report',
+    deliveryError,
+  };
+  return err;
+}
+
 export async function autoPauseJobForPermanentTargetError(
   jobId: string,
   reason: string,
@@ -146,6 +197,59 @@ export async function autoPauseJobForPermanentTargetError(
   });
   if (replaced) {
     console.error(`[scheduler] Job ${jobId} was replaced before reply-failure auto-pause; skipping stale pause`);
+    return false;
+  }
+  return updated !== null;
+}
+
+export async function recordCronJobReportDelivery(
+  threadId: string | undefined,
+  input: {
+    runStatus: 'success' | 'failed';
+    deliveryStatus: 'sent' | 'failed';
+    report: string;
+    reportType?: string;
+    runError?: string | null;
+    deliveryError?: string | null;
+  },
+): Promise<boolean> {
+  const parsed = parseJobThreadId(threadId);
+  if (!parsed?.createdAtHash || !parsed.runId) return false;
+
+  let replaced = false;
+  let staleRun = false;
+  const updated = await mutateJob(parsed.jobId, (job) => {
+    if (jobCreatedAtHash(job.meta.created_at) !== parsed.createdAtHash) {
+      replaced = true;
+      return false;
+    }
+    if (job.runtime.run_id && job.runtime.run_id !== parsed.runId) {
+      staleRun = true;
+      return false;
+    }
+    job.runtime.run_id = parsed.runId;
+    job.runtime.run_status = input.runStatus;
+    job.runtime.output_status = outputStatusFor(input.report);
+    job.runtime.delivery_status = input.deliveryStatus;
+    job.runtime.report = input.report;
+    job.runtime.report_type = input.reportType ?? (input.runStatus === 'success' ? 'job_result' : 'error_report');
+    job.runtime.delivery_error =
+      input.deliveryStatus === 'sent'
+        ? null
+        : input.deliveryError ?? input.runError ?? 'CronJob report delivery failed.';
+    job.runtime.last_error = input.runStatus === 'success'
+      ? null
+      : job.runtime.last_error?.includes('auto-paused')
+        ? job.runtime.last_error
+        : input.runError ?? job.runtime.delivery_error ?? 'CronJob run failed.';
+  });
+
+  if (replaced) {
+    console.error(`[scheduler] Cronjob report delivery for ${parsed.jobId} ignored because the job was replaced`);
+    return false;
+  }
+  if (staleRun) {
+    console.error(`[scheduler] Cronjob report delivery for ${parsed.jobId} ignored because run ${parsed.runId} is stale`);
     return false;
   }
   return updated !== null;
@@ -271,6 +375,8 @@ export class JobScheduler {
    */
   private async executeJob(job: JobFile): Promise<void> {
     const startTime = Date.now();
+    const startedAt = new Date(startTime);
+    const runId = String(startTime);
     const runKey = this.computeRunKey(job, new Date(startTime));
     let lastErr: any = null;
 
@@ -283,17 +389,32 @@ export class JobScheduler {
       }
 
       try {
+        let outcome: JobExecutionOutcome;
         if (job.meta.type === 'message') {
           await this.executeMessageJob(job, runKey);
+          const report = job.meta.content ?? '';
+          outcome = {
+            runStatus: 'success',
+            outputStatus: outputStatusFor(report),
+            deliveryStatus: 'sent',
+            report,
+            reportType: 'job_result',
+            deliveryError: null,
+            lastError: null,
+            autoPause: false,
+            completed: true,
+          };
         } else if (job.meta.type === 'prompt') {
-          await this.executePromptJob(job);
+          outcome = await this.executePromptJob(job, runId);
+        } else {
+          throw new Error(`unsupported job type: ${(job.meta as { type?: unknown }).type}`);
         }
 
         const updated = await this.persistJobRuntime(job, {
-          startedAt: new Date(startTime),
+          startedAt,
           incrementRunCount: true,
-          lastError: null,
-          autoPause: false,
+          runId,
+          outcome,
         });
 
         if (!updated) {
@@ -302,10 +423,14 @@ export class JobScheduler {
           );
           return;
         }
-        if (attempt > 0) {
-          console.error(`[scheduler] Job ${job.meta.id} succeeded on retry #${attempt} (run #${job.runtime.run_count})`);
+        const persistedRunStatus = updated.runtime.run_status ?? outcome.runStatus;
+        const persistedCompleted = updated.runtime.delivery_status !== 'pending' && persistedRunStatus !== 'started';
+        if (persistedRunStatus === 'failed') {
+          console.error(`[scheduler] Job ${job.meta.id} recorded failed run (run #${updated.runtime.run_count}): ${updated.runtime.last_error}`);
+        } else if (attempt > 0) {
+          console.error(`[scheduler] Job ${job.meta.id} ${persistedCompleted ? 'succeeded' : 'started'} on retry #${attempt} (run #${updated.runtime.run_count})`);
         } else {
-          console.error(`[scheduler] Job ${job.meta.id} executed successfully (run #${job.runtime.run_count})`);
+          console.error(`[scheduler] Job ${job.meta.id} ${persistedCompleted ? 'executed successfully' : 'started'} (run #${updated.runtime.run_count})`);
         }
 
         return;
@@ -329,11 +454,22 @@ export class JobScheduler {
     const autoPause = isPermanentTargetError(lastErr);
     const lastError =
       `${lastErr?.message ?? String(lastErr)}${autoPause ? ' (auto-paused: permanent target error)' : ''}`;
+    const cronJobReport = (lastErr as CronJobReportDeliveryFailure | null)?.cronJobReport;
     const updated = await this.persistJobRuntime(job, {
-      startedAt: new Date(startTime),
+      startedAt,
       incrementRunCount: false,
-      lastError,
-      autoPause,
+      runId,
+      outcome: {
+        runStatus: 'failed',
+        outputStatus: cronJobReport ? 'generated' : outputStatusFor(job.meta.type === 'message' ? job.meta.content : null),
+        deliveryStatus: 'failed',
+        report: cronJobReport?.report ?? (job.meta.type === 'message' ? job.meta.content ?? null : null),
+        reportType: cronJobReport?.reportType ?? 'error_report',
+        deliveryError: cronJobReport?.deliveryError ?? lastError,
+        lastError,
+        autoPause,
+        completed: true,
+      },
     });
 
     const retryNote = isRetryableError(lastErr)
@@ -385,8 +521,8 @@ export class JobScheduler {
     result: {
       startedAt: Date;
       incrementRunCount: boolean;
-      lastError: string | null;
-      autoPause: boolean;
+      runId: string;
+      outcome: JobExecutionOutcome;
     },
   ): Promise<JobFile | null> {
     let replaced = false;
@@ -398,8 +534,21 @@ export class JobScheduler {
       latest.runtime.last_run_at = result.startedAt.toISOString();
       latest.runtime.next_run_at = computeNextRun(latest.meta.schedule);
       if (result.incrementRunCount) latest.runtime.run_count += 1;
-      latest.runtime.last_error = result.lastError;
-      if (result.autoPause) latest.meta.status = 'paused';
+      const alreadyRecordedDelivery =
+        !result.outcome.completed &&
+        latest.runtime.run_id === result.runId &&
+        (latest.runtime.delivery_status === 'sent' || latest.runtime.delivery_status === 'failed');
+      if (!alreadyRecordedDelivery) {
+        latest.runtime.last_error = result.outcome.lastError;
+        latest.runtime.run_id = result.runId;
+        latest.runtime.run_status = result.outcome.runStatus;
+        latest.runtime.output_status = result.outcome.outputStatus;
+        latest.runtime.delivery_status = result.outcome.deliveryStatus;
+        latest.runtime.report = result.outcome.report;
+        latest.runtime.report_type = result.outcome.reportType;
+        latest.runtime.delivery_error = result.outcome.deliveryError;
+      }
+      if (result.outcome.autoPause) latest.meta.status = 'paused';
     });
 
     if (replaced) {
@@ -447,8 +596,8 @@ export class JobScheduler {
    * Each execution runs under a unique thread_id so its IdentitySession entry
    * does not clobber concurrent inbound human messages in the same chat.
    */
-  private async executePromptJob(job: JobFile): Promise<void> {
-    const jobThreadId = `${JOB_THREAD_PREFIX}${job.meta.id}-${jobCreatedAtHash(job.meta.created_at)}-${Date.now()}`;
+  private async executePromptJob(job: JobFile, runId: string): Promise<JobExecutionOutcome> {
+    const jobThreadId = `${JOB_THREAD_PREFIX}${job.meta.id}-${jobCreatedAtHash(job.meta.created_at)}-${runId}`;
 
     // Bind the job owner as caller so tools invoked from this Codex turn
     // (e.g. save_memory, list_jobs) resolve to the job creator, not to any
@@ -479,11 +628,85 @@ export class JobScheduler {
       });
     } catch (err: any) {
       this.identitySession.endChannelTurn(job.meta.target_chat_id, jobThreadId);
-      const wrapped = new Error(
-        `[LARK_DEFER] CronJob prompt delivery failed before Codex accepted the turn: ${err?.message ?? err}`,
-      );
-      (wrapped as Error & { cause?: unknown }).cause = err;
-      throw wrapped;
+      const lastError = `[LARK_DEFER] CronJob prompt delivery failed before Codex accepted the turn: ${err?.message ?? err}`;
+      const report = buildCronJobErrorReport(job, lastError);
+      try {
+        await this.transport.sendMessage({
+          chatId: job.meta.target_chat_id,
+          input: { text: report },
+          retry: { attempts: 1, retryTimeout: false },
+        });
+        return {
+          runStatus: 'failed',
+          outputStatus: 'generated',
+          deliveryStatus: 'sent',
+          report,
+          reportType: 'error_report',
+          deliveryError: null,
+          lastError,
+          autoPause: false,
+          completed: true,
+        };
+      } catch (deliveryErr: any) {
+        throw buildCronJobReportDeliveryFailure(report, deliveryErr);
+      }
     }
+
+    this.schedulePromptRunWatchdog(job, runId);
+    return {
+      runStatus: 'started',
+      outputStatus: 'empty',
+      deliveryStatus: 'pending',
+      report: null,
+      reportType: null,
+      deliveryError: null,
+      lastError: null,
+      autoPause: false,
+      completed: false,
+    };
+  }
+
+  private schedulePromptRunWatchdog(job: JobFile, runId: string): void {
+    const timeout = setTimeout(() => {
+      this.failPendingPromptRun(job, runId).catch((err) => {
+        logSafeError(`[scheduler] Prompt job ${job.meta.id} watchdog failed:`, err);
+      });
+    }, appConfig.replyObligationTimeoutMs);
+    timeout.unref?.();
+  }
+
+  private async failPendingPromptRun(job: JobFile, runId: string): Promise<void> {
+    const latest = await readJob(job.meta.id);
+    if (!latest) return;
+    if (latest.meta.created_at !== job.meta.created_at) return;
+    if (latest.runtime.run_id !== runId || latest.runtime.delivery_status !== 'pending') return;
+
+    const report = buildCronJobErrorReport(
+      latest,
+      `CronJob did not produce a Feishu reply within ${appConfig.replyObligationTimeoutMs}ms.`,
+    );
+    let deliveryStatus: 'sent' | 'failed' = 'sent';
+    let deliveryError: string | null = null;
+    try {
+      await this.transport.sendMessage({
+        chatId: latest.meta.target_chat_id,
+        input: { text: report },
+      });
+    } catch (err: any) {
+      deliveryStatus = 'failed';
+      deliveryError = err?.message ?? String(err);
+    }
+
+    await mutateJob(latest.meta.id, (current) => {
+      if (current.meta.created_at !== latest.meta.created_at) return false;
+      if (current.runtime.run_id !== runId || current.runtime.delivery_status !== 'pending') return false;
+      current.runtime.run_status = 'failed';
+      current.runtime.output_status = 'generated';
+      current.runtime.delivery_status = deliveryStatus;
+      current.runtime.report = report;
+      current.runtime.report_type = 'error_report';
+      current.runtime.delivery_error = deliveryError;
+      current.runtime.last_error = deliveryError ?? 'CronJob prompt run timed out before producing a report.';
+    });
   }
 }

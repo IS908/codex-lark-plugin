@@ -37,6 +37,20 @@ export interface JobRuntime {
   next_run_at: string;
   run_count: number;
   last_error: string | null;
+  /** Latest scheduler run id, derived from the scheduler fire timestamp. */
+  run_id?: string | null;
+  /** Latest run lifecycle status. */
+  run_status?: 'started' | 'success' | 'failed' | null;
+  /** Whether the latest run produced user-visible output/report text. */
+  output_status?: 'empty' | 'generated' | null;
+  /** Latest Feishu delivery status for the generated output/report. */
+  delivery_status?: 'pending' | 'sent' | 'failed' | null;
+  /** Latest report or error-report payload for operator debugging. */
+  report?: string | null;
+  /** Latest report category, e.g. job_result or error_report. */
+  report_type?: string | null;
+  /** Latest delivery error, kept separate from execution last_error. */
+  delivery_error?: string | null;
 }
 
 export interface JobFile {
