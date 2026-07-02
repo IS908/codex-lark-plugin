@@ -59,7 +59,9 @@ function makeJob(overrides: Partial<JobFile['meta']> = {}, runtime: Partial<JobF
 
 const jobsDir = mkdtempSync(join(tmpdir(), 'job-tools-smoke-'));
 const originalJobsDir = appConfig.jobsDir;
+const originalCronTimezone = appConfig.cronTimezone;
 (appConfig as { jobsDir: string }).jobsDir = jobsDir;
+(appConfig as { cronTimezone: string }).cronTimezone = 'Asia/Shanghai';
 
 function pathFor(id: string): string {
   return join(jobsDir, `${id}.json`);
@@ -91,6 +93,8 @@ try {
     undefined,
   );
   const updateJob = getTool('update_job');
+  const createJob = getTool('create_job');
+  const listJobs = getTool('list_jobs');
 
   // 1. Missing job returns an MCP error.
   {
@@ -154,9 +158,56 @@ try {
     }
     passed++;
   }
+
+  // 5. Job listings render next/last run in the configured cron timezone and keep UTC.
+  {
+    const job = makeJob(
+      { id: 'timezone-display', status: 'active', schedule_human: 'daily at 09:00', schedule: '0 9 * * *' },
+      {
+        next_run_at: '2026-07-03T01:00:00.000Z',
+        last_run_at: '2026-07-02T01:00:00.000Z',
+      },
+    );
+    writeJob(job);
+    const r = await listJobs({ status: 'all', chat_id: 'chat_owner', thread_id: 'thread_owner' });
+    if (r.isError) fail(`5: list_jobs should succeed, got ${JSON.stringify(r)}`);
+    const text = r.content[0].text;
+    if (!text.includes('Timezone: Asia/Shanghai')) fail(`5: missing configured timezone: ${text}`);
+    if (!text.includes('Next: 2026-07-03 09:00:00 (Asia/Shanghai; UTC 2026-07-03T01:00:00.000Z)')) {
+      fail(`5: next_run_at should include cron timezone wall time and UTC, got ${text}`);
+    }
+    if (!text.includes('Last: 2026-07-02 09:00:00 (Asia/Shanghai; UTC 2026-07-02T01:00:00.000Z)')) {
+      fail(`5: last_run_at should include cron timezone wall time and UTC, got ${text}`);
+    }
+    passed++;
+  }
+
+  // 6. create_job persists an explicit per-job timezone in the job file.
+  {
+    const r = await createJob({
+      name: 'Per Job Timezone',
+      type: 'message',
+      schedule: 'daily at 09:00',
+      content: 'hello',
+      target_chat_id: 'chat_target',
+      timezone: 'Asia/Tokyo',
+      chat_id: 'chat_owner',
+      thread_id: 'thread_owner',
+    });
+    if (r.isError) fail(`6: create_job should accept timezone, got ${JSON.stringify(r)}`);
+    const persisted = readJob('per-job-timezone');
+    if ((persisted.meta as any).timezone !== 'Asia/Tokyo') {
+      fail(`6: expected persisted timezone Asia/Tokyo, got ${JSON.stringify(persisted.meta)}`);
+    }
+    if (!r.content[0].text.includes('Asia/Tokyo; UTC ')) {
+      fail(`6: expected create_job response to render per-job timezone, got ${r.content[0].text}`);
+    }
+    passed++;
+  }
 } finally {
   (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
+  (appConfig as { cronTimezone: string }).cronTimezone = originalCronTimezone;
   rmSync(jobsDir, { recursive: true, force: true });
 }
 
-console.log(`job-tools smoke: ${passed}/4 PASS`);
+console.log(`job-tools smoke: ${passed}/6 PASS`);

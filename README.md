@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.7.9-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.7.10-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -448,7 +448,7 @@ such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 | Variable | Default | Description |
 |---|---|---|
 | `LARK_CRON_SCAN_INTERVAL` | `60` | CronJob scheduler scan interval in seconds |
-| `LARK_CRON_TIMEZONE` | system timezone | IANA timezone for cron schedule evaluation (e.g. `Asia/Shanghai`, `UTC`). Affects how hours in cron expressions map to wall-clock time. |
+| `LARK_CRON_TIMEZONE` | system timezone | Default IANA timezone for new cronjobs (e.g. `Asia/Shanghai`, `UTC`). Each job stores its own `meta.timezone`; changing this env var later does not silently retime existing jobs. |
 
 ### Optional -- Codex Exec Session Health
 
@@ -565,7 +565,7 @@ Step 2: Filtering (optional)
   -> LARK_ALLOWED_USER_IDS, LARK_ALLOWED_CHAT_IDS
 
 Step 3: CronJob (optional)
-  -> LARK_CRON_TIMEZONE
+  -> LARK_CRON_TIMEZONE (default timezone for newly created jobs)
 
 Step 4: Advanced tuning (optional)
   -> LARK_INACTIVITY_HOURS, LARK_MAX_SEARCH_RESULTS, LARK_MIN_SEARCH_SCORE,
@@ -634,9 +634,9 @@ The plugin registers the following MCP tools for Codex to use:
 | `create_doc_comment` | Create a new top-level comment in the triggering Feishu document. Owner-only and scoped to the current `doc:<file_token>` turn. |
 | `save_memory` | Save a memory entry (profile / chat episode / thread episode) for cross-session recall. Profile writes target the resolved caller (server-derived, v0.9.0+) and go into the chosen `tier` (`public` or `private`, default `private`, v0.10.0+). Requires `chat_id`. |
 | `save_skill` | Save a reusable procedure as a globally searchable skill. Owner-only because skills are visible across users/chats; requires `chat_id` and optional `thread_id` for server-derived caller identity. |
-| `create_job` | Create a scheduled cronjob (message or prompt type). Creator derived from session; requires `chat_id` (used to populate `origin_chat_id`). |
-| `list_jobs` | List cronjobs visible in the current chat. Filter follows rendering-visibility: private → caller's own jobs, group → jobs with `target_chat_id == currentChat` (prompts redacted for non-owners). Requires `chat_id`. |
-| `update_job` | Update a cronjob (schedule, content, pause/resume). Owner-only. Requires `chat_id`. |
+| `create_job` | Create a scheduled cronjob (message or prompt type). Creator derived from session; requires `chat_id` (used to populate `origin_chat_id`). Optional `timezone` stores an explicit IANA timezone in the job file. |
+| `list_jobs` | List cronjobs visible in the current chat. Filter follows rendering-visibility: private → caller's own jobs, group → jobs with `target_chat_id == currentChat` (prompts redacted for non-owners). Requires `chat_id`; renders each job's own timezone plus UTC. |
+| `update_job` | Update a cronjob (schedule, timezone, content, pause/resume). Owner-only. Requires `chat_id`. |
 | `delete_job` | Delete a cronjob. Owner-only. Requires `chat_id`. |
 | `what_do_you_know` | List what the bot has stored in the caller's profile. Filtered by rendering visibility (both tiers in p2p, public only in groups). Each line carries an 8-char hash for use with `forget_memory`. (v0.11.0+) |
 | `forget_memory` | Remove a specific line from the caller's profile by hash. Caller-scoped and idempotent. Optional `promote_to_rule` promotes the removal into a durable `## Always private` rule in `privacy-rules.md`. (v0.11.0+) |

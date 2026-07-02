@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.10] - 2026-07-02
+
+### Fixed
+- Added an explicit per-job `meta.timezone` field for cronjobs, with legacy-job backfill from `LARK_CRON_TIMEZONE`, so changing the global default no longer silently retimes existing jobs.
+- Evaluated scheduler `next_run_at` and missed-run recovery using each job's stored timezone, while keeping persisted timestamps in UTC ISO format.
+- Updated job creation, update, listing, and Codex exec action bridge responses to accept/render IANA timezones and show both wall-clock time and UTC.
+
 ## [1.7.9] - 2026-07-02
 
 ### Fixed
