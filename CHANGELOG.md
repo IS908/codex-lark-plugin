@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.8] - 2026-07-02
+
+### Fixed
+- Changed generated rich Markdown Feishu cards to aitask-style body-only Schema 2.0 cards with `config.width_mode="fill"` and no generated `header`/`template`, so automatic rich replies render like Markdown content instead of traditional app cards.
+- Aligned Markdown table card elements with aitask by using stable `c0`/`c1` column keys, auto-width text columns, and the same compact gray header style.
+
 ## [1.7.7] - 2026-07-02
 
 ### Fixed

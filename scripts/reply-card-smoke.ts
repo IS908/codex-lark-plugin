@@ -312,6 +312,15 @@ async function run() {
   if (!markdownCardCall) fail('Test 9: markdown-rich default reply should use msg_type=interactive');
   const markdownGeneratedCard = JSON.parse(markdownCardCall.args.data.content);
   if (markdownGeneratedCard.schema !== '2.0') fail('Test 9: generated card should use Schema 2.0');
+  if (markdownGeneratedCard.config?.width_mode !== 'fill') {
+    fail(`Test 9: generated card should use fill width_mode: ${JSON.stringify(markdownGeneratedCard.config)}`);
+  }
+  if (markdownGeneratedCard.header !== undefined) {
+    fail(`Test 9: generated card should be body-only, got header: ${JSON.stringify(markdownGeneratedCard.header)}`);
+  }
+  if (!Array.isArray(markdownGeneratedCard.body?.elements)) {
+    fail(`Test 9: generated card missing body.elements: ${JSON.stringify(markdownGeneratedCard)}`);
+  }
   if (botTrackerAdded[0]?.meta?.quotedContext?.msgType !== 'interactive') {
     fail(`Test 9: generated card should track interactive quoted context: ${JSON.stringify(botTrackerAdded[0])}`);
   }
@@ -339,7 +348,7 @@ async function run() {
     fail(`Test 10: forced text reply should not track card quoted context: ${JSON.stringify(botTrackerAdded[0])}`);
   }
 
-  // ── Test 11: explicit format=card uses generated card theme ──
+  // ── Test 11: explicit format=card uses generated body-only card ──
   apiCalls.length = 0;
   botTrackerAdded.length = 0;
 
@@ -353,8 +362,14 @@ async function run() {
   const formatCardCall = apiCalls.find((c) => c.method === 'message.create');
   if (!formatCardCall) fail('Test 11: message.create not called');
   const generatedCard = JSON.parse(formatCardCall.args.data.content);
-  if (generatedCard.header?.template !== 'red') {
-    fail(`Test 11: expected red header template, got ${generatedCard.header?.template}`);
+  if (generatedCard.header !== undefined) {
+    fail(`Test 11: generated card should not include header: ${JSON.stringify(generatedCard.header)}`);
+  }
+  if (generatedCard.config?.width_mode !== 'fill') {
+    fail(`Test 11: generated card should use fill width_mode: ${JSON.stringify(generatedCard.config)}`);
+  }
+  if (!String(generatedCard.body?.elements?.[0]?.content ?? '').includes('short but explicitly carded')) {
+    fail(`Test 11: generated card body missing original text: ${JSON.stringify(generatedCard.body?.elements)}`);
   }
   const formatCardTracked = botTrackerAdded.at(-1);
   if (formatCardTracked?.meta.quotedContext?.msgType !== 'interactive') {
