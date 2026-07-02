@@ -195,6 +195,7 @@ export const appConfig = {
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),
   inboxDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'inbox'),
   jobsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'jobs'),
+  issueProposalsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'issue-proposals'),
   codexExecSessionsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'codex-sessions'),
   localCliToolsConfigPath: optional(
     'LARK_LOCAL_CLI_TOOLS_CONFIG',

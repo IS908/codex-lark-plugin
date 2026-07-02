@@ -13,6 +13,7 @@ const { IdentitySession } = await import('../src/identity-session.js');
 const { BotMessageTracker } = await import('../src/channel.js');
 const { TurnObligationTracker } = await import('../src/turn-obligation.js');
 const { MemoryStore } = await import('../src/memory/file.js');
+const { readIssueProposal } = await import('../src/issue-proposal-store.js');
 const {
   createCodexExecActionDispatcher,
   parseCodexExecActionOutput,
@@ -20,12 +21,27 @@ const {
 
 const root = mkdtempSync(join(tmpdir(), 'codex-exec-actions-'));
 const oldJobsDir = (appConfig as any).jobsDir;
+const oldIssueProposalsDir = (appConfig as any).issueProposalsDir;
 try {
   const jobsDir = join(root, 'jobs');
+  const issueProposalsDir = join(root, 'issue-proposals');
   const memoriesDir = join(root, 'memories');
   const localCliConfigPath = join(root, 'local-cli-tools.json');
+  const fakeIssueCreateScript = join(root, 'fake-gh-issue-create.js');
   (appConfig as any).jobsDir = jobsDir;
+  (appConfig as any).issueProposalsDir = issueProposalsDir;
   await mkdir(jobsDir, { recursive: true });
+  writeFileSync(
+    fakeIssueCreateScript,
+    [
+      'const args = process.argv.slice(2);',
+      'if (!args.some((arg) => arg.startsWith("--repo="))) process.exit(2);',
+      'if (!args.some((arg) => arg.startsWith("--title="))) process.exit(3);',
+      'if (!args.some((arg) => arg.includes("Authorization Required"))) process.exit(4);',
+      'console.log("https://github.com/IS908/codex-lark-plugin/issues/654");',
+    ].join('\n'),
+    'utf-8',
+  );
   writeFileSync(
     localCliConfigPath,
     JSON.stringify({
@@ -39,6 +55,16 @@ try {
           allowedCallers: 'public',
           timeoutMs: 5000,
           maxOutputBytes: 1024,
+        },
+        gh_issue_create: {
+          command: process.execPath,
+          fixedArgs: [fakeIssueCreateScript],
+          paramAllowlist: ['--repo', '--title', '--body'],
+          envAllowlist: [],
+          inheritEnv: false,
+          allowedCallers: 'public',
+          timeoutMs: 5000,
+          maxOutputBytes: 4096,
         },
       },
     }),
@@ -121,6 +147,34 @@ try {
   assert.equal(recallParsed.kind, 'actions');
   assert.equal(recallParsed.actions[0].type, 'recall_message');
 
+  const proposalParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [
+        {
+          type: 'create_issue_proposal',
+          title: 'Periodic review found missing Feishu delivery',
+          body: 'A cronjob generated a report but did not deliver it to Feishu.',
+          evidence: ['run_status=success', 'delivery_status=failed'],
+          impact: 'Users cannot see scheduled reports.',
+          priority: 'P1',
+          automation_level: 'discovery-only',
+          target_repo: 'IS908/codex-lark-plugin',
+          target_chat_id: 'oc_exec',
+        },
+        { type: 'list_issue_proposals', status: 'pending' },
+      ],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(proposalParsed.kind, 'actions');
+  if (proposalParsed.kind !== 'actions') throw new Error('proposalParsed should be actions');
+  assert.deepEqual(
+    proposalParsed.actions.map((action: any) => action.type),
+    ['create_issue_proposal', 'list_issue_proposals'],
+  );
+
   const unsupportedIssueParsed = parseCodexExecActionOutput([
     '<LARK_ACTIONS_JSON>',
     JSON.stringify({
@@ -191,6 +245,47 @@ try {
   assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), true);
   assert.match(results[2].message, /hello-from-action/);
 
+  const proposalResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_proposal',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'create issue proposal',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: proposalParsed.actions,
+  });
+  assert.equal(proposalResults.length, 2);
+  assert.ok(proposalResults.every((result: any) => result.ok), JSON.stringify(proposalResults));
+  const proposalId = proposalResults[0].message.match(/proposal-[a-zA-Z0-9-]+/)?.[0];
+  assert.ok(proposalId, proposalResults[0].message);
+  assert.match(proposalResults[1].message, new RegExp(proposalId));
+  const proposalFile = await readIssueProposal(proposalId);
+  assert.equal(proposalFile?.meta.status, 'pending');
+
+  const createIssueResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_create_issue',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'approve issue proposal',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'create_issue_from_proposal', id: proposalId }],
+  });
+  assert.equal(createIssueResults.length, 1);
+  assert.equal(createIssueResults[0].ok, true, JSON.stringify(createIssueResults));
+  assert.match(createIssueResults[0].message, /https:\/\/github\.com\/IS908\/codex-lark-plugin\/issues\/654/);
+  const createdProposal = await readIssueProposal(proposalId);
+  assert.equal(createdProposal?.meta.status, 'created');
+  assert.equal(createdProposal?.meta.github_issue_number, 654);
+
   const jobManagementParsed = parseCodexExecActionOutput([
     '<LARK_ACTIONS_JSON>',
     JSON.stringify({
@@ -220,6 +315,38 @@ try {
     jobManagementParsed.actions.map((action: any) => action.type),
     ['list_jobs', 'update_job', 'disable_job', 'upsert_job', 'delete_job'],
   );
+  const defaultReviewJobsParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [
+        { type: 'create_default_review_jobs', target_repo: 'IS908/codex-lark-plugin', target_chat_id: 'oc_exec' },
+      ],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(defaultReviewJobsParsed.kind, 'actions');
+  if (defaultReviewJobsParsed.kind !== 'actions') {
+    throw new Error(`expected default review job action, got ${JSON.stringify(defaultReviewJobsParsed)}`);
+  }
+  const defaultReviewJobResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_default_review_jobs',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'create default review jobs',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: defaultReviewJobsParsed.actions,
+  });
+  assert.equal(defaultReviewJobResults.length, 1);
+  assert.equal(defaultReviewJobResults[0].ok, true, JSON.stringify(defaultReviewJobResults));
+  assert.match(defaultReviewJobResults[0].message, /disabled by default/i);
+  assert.equal(JSON.parse(readFileSync(join(jobsDir, 'plugin-self-review.json'), 'utf-8')).meta.status, 'paused');
+  assert.equal(JSON.parse(readFileSync(join(jobsDir, 'plugin-low-risk-auto-fix.json'), 'utf-8')).meta.status, 'paused');
   const jobManagementResults = await dispatcher.execute({
     message: {
       messageId: 'om_exec_jobs',
@@ -325,6 +452,7 @@ try {
   );
 } finally {
   (appConfig as any).jobsDir = oldJobsDir;
+  (appConfig as any).issueProposalsDir = oldIssueProposalsDir;
   rmSync(root, { recursive: true, force: true });
 }
 
