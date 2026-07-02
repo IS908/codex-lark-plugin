@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
+process.env.LARK_CRON_TIMEZONE = 'Asia/Shanghai';
 
 const { appConfig } = await import('../src/config.js');
 const { IdentitySession } = await import('../src/identity-session.js');
@@ -184,6 +185,7 @@ try {
   assert.equal(results.length, 3);
   assert.ok(results.every((result: any) => result.ok), JSON.stringify(results));
   assert.match(results[1].message, /job_id: exec-action-job/i);
+  assert.match(results[1].message, /Next run: .*Asia\/Shanghai; UTC /);
   const privateProfile = readFileSync(join(memoriesDir, 'profiles', 'ou_user', 'private.md'), 'utf-8');
   assert.match(privateProfile, /prefers concise updates/);
   assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), true);
@@ -237,9 +239,11 @@ try {
   assert.match(jobManagementResults[0].message, /standup reminder/);
   assert.match(jobManagementResults[1].message, /Updated job "exec-action-job"/);
   assert.match(jobManagementResults[1].message, /weekdays at 10:00/);
+  assert.match(jobManagementResults[1].message, /Next run: .*Asia\/Shanghai; UTC /);
   assert.match(jobManagementResults[2].message, /Status: paused/i);
   assert.match(jobManagementResults[3].message, /Upserted job "exec-action-job"/);
   assert.match(jobManagementResults[3].message, /daily at 11:00/);
+  assert.match(jobManagementResults[3].message, /Next run: .*Asia\/Shanghai; UTC /);
   assert.match(jobManagementResults[4].message, /Deleted job "exec-action-job"/);
   assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), false);
 

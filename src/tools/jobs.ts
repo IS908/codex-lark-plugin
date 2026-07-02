@@ -6,6 +6,9 @@ import {
   sanitizeJobId,
   expandSchedule,
   computeNextRun,
+  formatCronDateTime,
+  jobTimezone,
+  normalizeJobTimezone,
   readJob,
   writeJob,
   mutateJob,
@@ -32,6 +35,10 @@ export function registerJobTools(ctx: ToolContext): void {
           .describe(
             'Cron expression or alias: "0 9 * * 1-5", "every 30m", "daily at 09:00", "weekdays at 09:00", "weekly on mon at 09:00"'
           ),
+        timezone: z
+          .string()
+          .optional()
+          .describe('IANA timezone for this job, e.g. "Asia/Shanghai", "Asia/Tokyo", or "UTC". Defaults to LARK_CRON_TIMEZONE.'),
         prompt: z
           .string()
           .optional()
@@ -58,8 +65,8 @@ export function registerJobTools(ctx: ToolContext): void {
           ),
       }),
     },
-    async ({ name, type, schedule, prompt, content, target_chat_id, model, chat_id, thread_id }) => {
-      const auditArgs = { name, type, schedule, target_chat_id, model, chat_id, thread_id };
+    async ({ name, type, schedule, timezone, prompt, content, target_chat_id, model, chat_id, thread_id }) => {
+      const auditArgs = { name, type, schedule, timezone, target_chat_id, model, chat_id, thread_id };
       const auth = resolveCaller('create_job', chat_id, thread_id, auditArgs);
       if ('error' in auth) return auth.error;
       const { caller } = auth;
@@ -92,8 +99,10 @@ export function registerJobTools(ctx: ToolContext): void {
 
       let cron: string;
       let scheduleHuman: string;
+      let jobTz: string;
       try {
-        const expanded = expandSchedule(schedule);
+        jobTz = normalizeJobTimezone(timezone);
+        const expanded = expandSchedule(schedule, jobTz);
         cron = expanded.cron;
         scheduleHuman = expanded.human;
       } catch (err: any) {
@@ -118,7 +127,7 @@ export function registerJobTools(ctx: ToolContext): void {
         };
       }
 
-      const nextRunAt = computeNextRun(cron);
+      const nextRunAt = computeNextRun(cron, jobTz);
 
       const job: JobFile = {
         meta: {
@@ -127,6 +136,7 @@ export function registerJobTools(ctx: ToolContext): void {
           type,
           schedule: cron,
           schedule_human: scheduleHuman,
+          timezone: jobTz,
           ...(type === 'prompt' ? { prompt } : { content, msg_type: 'text' }),
           target_chat_id,
           ...(model ? { model } : {}),
@@ -157,7 +167,7 @@ export function registerJobTools(ctx: ToolContext): void {
         content: [
           {
             type: 'text' as const,
-            text: `Created job "${id}" (${scheduleHuman}, tz=${appConfig.cronTimezone}). Next run: ${nextRunAt}`,
+            text: `Created job "${id}" (${scheduleHuman}, tz=${jobTz}). Next run: ${formatCronDateTime(nextRunAt, jobTz)}`,
           },
         ],
       };
@@ -208,9 +218,8 @@ export function registerJobTools(ctx: ToolContext): void {
 
       const lines = visible.map((j) => {
         const statusIcon = j.meta.status === 'active' ? '✅' : '⏸️';
-        const lastRun = j.runtime.last_run_at
-          ? new Date(j.runtime.last_run_at).toLocaleString()
-          : 'never';
+        const tz = jobTimezone(j.meta);
+        const lastRun = formatCronDateTime(j.runtime.last_run_at, tz);
         const error = j.runtime.last_error ? ` ⚠️ ${j.runtime.last_error}` : '';
         const isOwner = j.meta.created_by === caller;
         const runState =
@@ -219,10 +228,10 @@ export function registerJobTools(ctx: ToolContext): void {
             : '';
 
         if (!isPrivate && !isOwner) {
-          return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   By: ${j.meta.created_by} | Next: ${j.runtime.next_run_at}`;
+          return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   By: ${j.meta.created_by} | TZ: ${tz} | Next: ${formatCronDateTime(j.runtime.next_run_at, tz)}`;
         }
         const modelNote = j.meta.model ? ` | Model: ${j.meta.model}` : '';
-        return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   Next: ${j.runtime.next_run_at} | Last: ${lastRun} | Runs: ${j.runtime.run_count}${modelNote}${runState}${error}`;
+        return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   TZ: ${tz} | Next: ${formatCronDateTime(j.runtime.next_run_at, tz)} | Last: ${lastRun} | Runs: ${j.runtime.run_count}${modelNote}${runState}${error}`;
       });
 
       void audit('list_jobs', caller, auditArgs, 'ok');
@@ -246,6 +255,10 @@ export function registerJobTools(ctx: ToolContext): void {
         id: z.string().describe('Job ID'),
         status: z.enum(['active', 'paused']).optional().describe('Set status'),
         schedule: z.string().optional().describe('New cron expression or alias'),
+        timezone: z
+          .string()
+          .optional()
+          .describe('New IANA timezone for this job. Recomputes next_run_at even if schedule is unchanged.'),
         prompt: z.string().optional().describe('New prompt (type=prompt)'),
         content: z.string().optional().describe('New content (type=message)'),
         name: z.string().optional().describe('New display name'),
@@ -262,8 +275,8 @@ export function registerJobTools(ctx: ToolContext): void {
           ),
       }),
     },
-    async ({ id, status, schedule, prompt, content, name, model, chat_id, thread_id }) => {
-      const auditArgs = { id, status, schedule, name, model, chat_id, thread_id };
+    async ({ id, status, schedule, timezone, prompt, content, name, model, chat_id, thread_id }) => {
+      const auditArgs = { id, status, schedule, timezone, name, model, chat_id, thread_id };
       const auth = resolveCaller('update_job', chat_id, thread_id, auditArgs);
       if ('error' in auth) return auth.error;
       const { caller } = auth;
@@ -289,9 +302,23 @@ export function registerJobTools(ctx: ToolContext): void {
       }
 
       let expandedSchedule: { cron: string; human: string } | null = null;
+      let requestedTimezone: string | null = null;
+      try {
+        requestedTimezone = timezone === undefined ? null : normalizeJobTimezone(timezone);
+      } catch (err: any) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Invalid timezone: ${err?.message ?? timezone}`,
+            },
+          ],
+          isError: true,
+        };
+      }
       if (schedule !== undefined) {
         try {
-          expandedSchedule = expandSchedule(schedule);
+          expandedSchedule = expandSchedule(schedule, requestedTimezone ?? jobTimezone(job.meta));
         } catch (err: any) {
           return {
             content: [
@@ -316,15 +343,19 @@ export function registerJobTools(ctx: ToolContext): void {
         if (prompt !== undefined) latest.meta.prompt = prompt;
         if (content !== undefined) latest.meta.content = content;
         if (model !== undefined) latest.meta.model = model || undefined;
+        if (requestedTimezone) latest.meta.timezone = requestedTimezone;
         if (expandedSchedule) {
           latest.meta.schedule = expandedSchedule.cron;
           latest.meta.schedule_human = expandedSchedule.human;
-          latest.runtime.next_run_at = computeNextRun(expandedSchedule.cron);
+          latest.runtime.next_run_at = computeNextRun(expandedSchedule.cron, jobTimezone(latest.meta));
+        }
+        if (requestedTimezone && !expandedSchedule) {
+          latest.runtime.next_run_at = computeNextRun(latest.meta.schedule, requestedTimezone);
         }
         if (status !== undefined) {
           latest.meta.status = status;
-          if (status === 'active' && !schedule) {
-            latest.runtime.next_run_at = computeNextRun(latest.meta.schedule);
+          if (status === 'active' && !schedule && !requestedTimezone) {
+            latest.runtime.next_run_at = computeNextRun(latest.meta.schedule, jobTimezone(latest.meta));
           }
         }
       });
@@ -354,7 +385,7 @@ export function registerJobTools(ctx: ToolContext): void {
         content: [
           {
             type: 'text' as const,
-            text: `Updated job "${id}". Status: ${updated.meta.status}, Next run: ${updated.runtime.next_run_at} (tz=${appConfig.cronTimezone})`,
+            text: `Updated job "${id}". Status: ${updated.meta.status}, TZ: ${jobTimezone(updated.meta)}, Next run: ${formatCronDateTime(updated.runtime.next_run_at, jobTimezone(updated.meta))}`,
           },
         ],
       };

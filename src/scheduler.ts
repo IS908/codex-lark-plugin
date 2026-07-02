@@ -18,6 +18,7 @@ import {
   mutateJob,
   computeNextRun,
   computeLatestDueRun,
+  jobTimezone,
   type JobFile,
 } from './job-store.js';
 import { feishuApiCall } from './feishu-retry.js';
@@ -492,7 +493,7 @@ export class JobScheduler {
       return fallback;
     }
     try {
-      return computeLatestDueRun(job.meta.schedule, now);
+      return computeLatestDueRun(job.meta.schedule, now, jobTimezone(job.meta));
     } catch {
       return fallback;
     }
@@ -532,7 +533,7 @@ export class JobScheduler {
         return false;
       }
       latest.runtime.last_run_at = result.startedAt.toISOString();
-      latest.runtime.next_run_at = computeNextRun(latest.meta.schedule);
+      latest.runtime.next_run_at = computeNextRun(latest.meta.schedule, jobTimezone(latest.meta));
       if (result.incrementRunCount) latest.runtime.run_count += 1;
       const alreadyRecordedDelivery =
         !result.outcome.completed &&

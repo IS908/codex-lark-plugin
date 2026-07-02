@@ -27,6 +27,7 @@ function fail(msg: string): never {
 let passed = 0;
 const tmpJobsDir = mkdtempSync(path.join(tmpdir(), 'scheduler-smoke-jobs-'));
 const originalJobsDir = appConfig.jobsDir;
+const originalCronTimezone = appConfig.cronTimezone;
 (appConfig as { jobsDir: string }).jobsDir = tmpJobsDir;
 
 function makeJob(overrides: { meta?: Partial<JobFile['meta']>; runtime?: Partial<JobFile['runtime']> } = {}): JobFile {
@@ -464,7 +465,44 @@ function readJobFixture(id: string): JobFile {
   passed++;
 }
 
-// 11. Prompt started-state persistence must not overwrite an already delivered report.
+// 11. Scheduler uses the job's explicit timezone when advancing next_run_at.
+{
+  const id = 'per-job-timezone-next-run';
+  const job = makeJob({
+    meta: {
+      id,
+      schedule: '0 9 * * *',
+      schedule_human: 'daily at 09:00',
+      timezone: 'Asia/Shanghai',
+    } as any,
+    runtime: { next_run_at: '2026-07-01T01:00:00.000Z' },
+  });
+  writeJobFixture(job);
+  const scheduler = new JobScheduler({
+    server: { notification: async () => {} } as any,
+    client: { im: { v1: { message: { create: async () => ({ data: { message_id: 'om_ok' } }) } } } } as any,
+    identitySession: new IdentitySession(() => null),
+  });
+  const originalNow = Date.now;
+  (appConfig as { cronTimezone: string }).cronTimezone = 'UTC';
+  Date.now = () => new Date('2026-07-02T00:30:00.000Z').getTime();
+  try {
+    await (scheduler as any).executeJob(job);
+  } finally {
+    Date.now = originalNow;
+    (appConfig as { cronTimezone: string }).cronTimezone = originalCronTimezone;
+  }
+  const persisted = readJobFixture(id);
+  if ((persisted.meta as any).timezone !== 'Asia/Shanghai') {
+    fail(`11: expected job timezone to persist, got ${JSON.stringify(persisted.meta)}`);
+  }
+  if (persisted.runtime.next_run_at !== '2026-07-02T01:00:00.000Z') {
+    fail(`11: expected next_run_at to use Asia/Shanghai 09:00, got ${persisted.runtime.next_run_at}`);
+  }
+  passed++;
+}
+
+// 12. Prompt started-state persistence must not overwrite an already delivered report.
 {
   const id = 'prompt-reply-before-start-persist';
   const createdAt = '2026-06-07T02:30:00.000Z';
@@ -497,18 +535,18 @@ function readJobFixture(id: string): JobFile {
   await (scheduler as any).executeJob(job);
   const persisted = readJobFixture(id);
   if (persisted.runtime.run_status !== 'success') {
-    fail(`11: expected delivered run_status=success to be preserved, got ${persisted.runtime.run_status}`);
+    fail(`12: expected delivered run_status=success to be preserved, got ${persisted.runtime.run_status}`);
   }
   if (persisted.runtime.delivery_status !== 'sent') {
-    fail(`11: expected delivered status=sent to be preserved, got ${persisted.runtime.delivery_status}`);
+    fail(`12: expected delivered status=sent to be preserved, got ${persisted.runtime.delivery_status}`);
   }
   if (persisted.runtime.report !== report) {
-    fail(`11: expected delivered report to be preserved, got ${persisted.runtime.report}`);
+    fail(`12: expected delivered report to be preserved, got ${persisted.runtime.report}`);
   }
   passed++;
 }
 
-// 12. Pausing a job during a transient retry window cancels the next send.
+// 13. Pausing a job during a transient retry window cancels the next send.
 {
   const id = 'pause-before-retry';
   const job = makeJob({ meta: { id } });
@@ -544,12 +582,12 @@ function readJobFixture(id: string): JobFile {
   } finally {
     globalThis.setTimeout = realSetTimeout;
   }
-  if (calls !== 1) fail(`12: expected paused job to cancel retry after 1 call, got ${calls}`);
-  if (readJobFixture(id).meta.status !== 'paused') fail('12: expected job to remain paused');
+  if (calls !== 1) fail(`13: expected paused job to cancel retry after 1 call, got ${calls}`);
+  if (readJobFixture(id).meta.status !== 'paused') fail('13: expected job to remain paused');
   passed++;
 }
 
-// 13. Prompt notification delivery failures persist an explicit defer signal.
+// 14. Prompt notification delivery failures persist an explicit defer signal.
 {
   const id = 'prompt-delivery-failure';
   const job = makeJob({
@@ -582,37 +620,37 @@ function readJobFixture(id: string): JobFile {
   await (scheduler as any).executeJob(job);
   const persisted = readJobFixture(id);
   if (persisted.meta.status !== 'active') {
-    fail(`13: prompt delivery failure should stay active, got ${persisted.meta.status}`);
+    fail(`14: prompt delivery failure should stay active, got ${persisted.meta.status}`);
   }
   if (!persisted.runtime.last_error?.includes('[LARK_DEFER]')) {
-    fail(`13: expected defer signal in last_error, got ${persisted.runtime.last_error}`);
+    fail(`14: expected defer signal in last_error, got ${persisted.runtime.last_error}`);
   }
   if (createdMessages.length !== 1) {
-    fail(`13: expected one error report message, got ${createdMessages.length}`);
+    fail(`14: expected one error report message, got ${createdMessages.length}`);
   }
   const sentContent = JSON.parse(createdMessages[0].data.content);
   if (!sentContent.text?.includes('CronJob "daily ping" failed before a complete report could be delivered.')) {
-    fail(`13: error report was not sent through Feishu payload: ${createdMessages[0].data.content}`);
+    fail(`14: error report was not sent through Feishu payload: ${createdMessages[0].data.content}`);
   }
   if (persisted.runtime.run_status !== 'failed') {
-    fail(`13: expected failed run_status, got ${persisted.runtime.run_status}`);
+    fail(`14: expected failed run_status, got ${persisted.runtime.run_status}`);
   }
   if (persisted.runtime.output_status !== 'generated') {
-    fail(`13: expected generated error report output, got ${persisted.runtime.output_status}`);
+    fail(`14: expected generated error report output, got ${persisted.runtime.output_status}`);
   }
   if (persisted.runtime.delivery_status !== 'sent') {
-    fail(`13: expected sent error report delivery, got ${persisted.runtime.delivery_status}`);
+    fail(`14: expected sent error report delivery, got ${persisted.runtime.delivery_status}`);
   }
   if (persisted.runtime.report_type !== 'error_report') {
-    fail(`13: expected error_report type, got ${persisted.runtime.report_type}`);
+    fail(`14: expected error_report type, got ${persisted.runtime.report_type}`);
   }
   if (!persisted.runtime.report?.includes('CronJob prompt delivery failed')) {
-    fail(`13: expected persisted error report body, got ${persisted.runtime.report}`);
+    fail(`14: expected persisted error report body, got ${persisted.runtime.report}`);
   }
   passed++;
 }
 
-// 14. Prompt error-report Feishu delivery failures use scheduler-level retry.
+// 15. Prompt error-report Feishu delivery failures use scheduler-level retry.
 {
   const id = 'prompt-error-report-retry';
   const job = makeJob({
@@ -663,18 +701,18 @@ function readJobFixture(id: string): JobFile {
   }
   const persisted = readJobFixture(id);
   if (notificationCalls !== 2 || createCalls !== 2) {
-    fail(`14: expected notification + error report retry, got notification=${notificationCalls} create=${createCalls}`);
+    fail(`15: expected notification + error report retry, got notification=${notificationCalls} create=${createCalls}`);
   }
   if (persisted.runtime.delivery_status !== 'sent') {
-    fail(`14: expected retried error report delivery_status=sent, got ${persisted.runtime.delivery_status}`);
+    fail(`15: expected retried error report delivery_status=sent, got ${persisted.runtime.delivery_status}`);
   }
   if (persisted.runtime.report_type !== 'error_report') {
-    fail(`14: expected error_report after retry, got ${persisted.runtime.report_type}`);
+    fail(`15: expected error_report after retry, got ${persisted.runtime.report_type}`);
   }
   passed++;
 }
 
-// 15. Pending prompt jobs send a Feishu error report when no Codex reply arrives.
+// 16. Pending prompt jobs send a Feishu error report when no Codex reply arrives.
 {
   const id = 'prompt-watchdog-error-report';
   const runId = '1760000000000';
@@ -717,19 +755,19 @@ function readJobFixture(id: string): JobFile {
   await (scheduler as any).failPendingPromptRun(job, runId);
   const persisted = readJobFixture(id);
   if (createdMessages.length !== 1) {
-    fail(`15: expected watchdog to send one Feishu error report, got ${createdMessages.length}`);
+    fail(`16: expected watchdog to send one Feishu error report, got ${createdMessages.length}`);
   }
   const sentContent = JSON.parse(createdMessages[0].data.content);
   if (!sentContent.text?.includes('did not produce a Feishu reply')) {
-    fail(`15: watchdog error report payload missing timeout reason: ${createdMessages[0].data.content}`);
+    fail(`16: watchdog error report payload missing timeout reason: ${createdMessages[0].data.content}`);
   }
   if (persisted.runtime.run_status !== 'failed' || persisted.runtime.delivery_status !== 'sent') {
-    fail(`15: expected failed/sent watchdog state, got ${JSON.stringify(persisted.runtime)}`);
+    fail(`16: expected failed/sent watchdog state, got ${JSON.stringify(persisted.runtime)}`);
   }
   passed++;
 }
 
-// 16. A stale execution must not update a job that was deleted/recreated with the same id.
+// 17. A stale execution must not update a job that was deleted/recreated with the same id.
 {
   const id = 'recreated-same-id';
   const oldJob = makeJob({
@@ -778,6 +816,7 @@ function readJobFixture(id: string): JobFile {
 }
 
 (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
+(appConfig as { cronTimezone: string }).cronTimezone = originalCronTimezone;
 rmSync(tmpJobsDir, { recursive: true, force: true });
 
-console.log(`scheduler smoke: ${passed}/16 PASS`);
+console.log(`scheduler smoke: ${passed}/17 PASS`);

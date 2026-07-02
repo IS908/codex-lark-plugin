@@ -18,6 +18,8 @@ export interface JobMeta {
   type: 'prompt' | 'message';
   schedule: string;
   schedule_human: string;
+  /** IANA timezone used to evaluate this job's cron expression. */
+  timezone?: string;
   prompt?: string;
   content?: string;
   msg_type?: string;
@@ -95,7 +97,22 @@ function assertNotUnsupportedOneOffSchedule(trimmed: string): void {
  * If the input is already a valid cron expression, returns it as-is.
  * Returns { cron, human } where human is the display label.
  */
-export function expandSchedule(input: string): { cron: string; human: string } {
+export function normalizeJobTimezone(input?: string | null): string {
+  const timezone = (input ?? appConfig.cronTimezone).trim();
+  if (!timezone) throw new Error('timezone is required');
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date());
+  } catch {
+    throw new Error(`invalid timezone "${timezone}". Use an IANA timezone such as "Asia/Shanghai", "Asia/Tokyo", or "UTC".`);
+  }
+  return timezone;
+}
+
+export function jobTimezone(job: Pick<JobMeta, 'timezone'>): string {
+  return normalizeJobTimezone(job.timezone);
+}
+
+export function expandSchedule(input: string, timezone = appConfig.cronTimezone): { cron: string; human: string } {
   const trimmed = input.trim().toLowerCase();
   if (!trimmed) {
     throw new Error('schedule is required');
@@ -171,18 +188,19 @@ export function expandSchedule(input: string): { cron: string; human: string } {
   // only fail later when computeNextRun() calls .next() on the expression,
   // but create_job always calls computeNextRun after expandSchedule, so both
   // classes of error surface at create_job time (not at scheduler-tick time).
-  CronExpressionParser.parse(result.cron, { tz: appConfig.cronTimezone });
+  CronExpressionParser.parse(result.cron, { tz: normalizeJobTimezone(timezone) });
 
   return result;
 }
 
 /**
  * Compute the next run time from a cron expression.
- * Uses the configured timezone (LARK_CRON_TIMEZONE) so cron hours
- * always match the user's local wall-clock time.
+ * Uses the supplied IANA timezone, defaulting to LARK_CRON_TIMEZONE.
+ * Job callers should pass meta.timezone so cron hours match that job's
+ * persisted wall-clock semantics.
  */
-export function computeNextRun(cronExpr: string): string {
-  const expr = CronExpressionParser.parse(cronExpr, { tz: appConfig.cronTimezone });
+export function computeNextRun(cronExpr: string, timezone = appConfig.cronTimezone): string {
+  const expr = CronExpressionParser.parse(cronExpr, { tz: normalizeJobTimezone(timezone) });
   return expr.next().toISOString()!;
 }
 
@@ -193,13 +211,49 @@ export function computeNextRun(cronExpr: string): string {
  * the daemon was offline. Adding 1ms makes exact-boundary timestamps inclusive
  * because cron-parser's `prev()` is exclusive of `currentDate`.
  */
-export function computeLatestDueRun(cronExpr: string, now: Date = new Date()): string {
+export function computeLatestDueRun(
+  cronExpr: string,
+  now: Date = new Date(),
+  timezone = appConfig.cronTimezone,
+): string {
   const inclusiveNow = new Date(now.getTime() + 1);
   const expr = CronExpressionParser.parse(cronExpr, {
-    tz: appConfig.cronTimezone,
+    tz: normalizeJobTimezone(timezone),
     currentDate: inclusiveNow,
   });
   return expr.prev().toISOString()!;
+}
+
+export function formatCronDateTime(
+  isoTimestamp: string | null | undefined,
+  timezone = appConfig.cronTimezone,
+  empty = 'never',
+): string {
+  if (!isoTimestamp) return empty;
+  const date = new Date(isoTimestamp);
+  if (!Number.isFinite(date.getTime())) return isoTimestamp;
+  const tz = normalizeJobTimezone(timezone);
+
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+    const byType = new Map(parts.map((part) => [part.type, part.value]));
+    const wallTime = [
+      `${byType.get('year')}-${byType.get('month')}-${byType.get('day')}`,
+      `${byType.get('hour')}:${byType.get('minute')}:${byType.get('second')}`,
+    ].join(' ');
+    return `${wallTime} (${tz}; UTC ${date.toISOString()})`;
+  } catch {
+    return `${date.toISOString()} (tz=${tz})`;
+  }
 }
 
 // ─── CRUD ───────────────────────────────────────────────────
@@ -278,6 +332,7 @@ export function backfillJob(job: JobFile): JobFile {
   }
 
   if (!job.meta.origin_chat_id) job.meta.origin_chat_id = job.meta.target_chat_id;
+  if (!job.meta.timezone) job.meta.timezone = appConfig.cronTimezone;
 
   // Legacy jobs may have empty created_by (the old create_job defaulted to '').
   // Without a valid owner, update_job / delete_job would permanently reject

@@ -9,9 +9,12 @@ import {
   computeNextRun,
   deleteJob as deleteJobFile,
   expandSchedule,
+  formatCronDateTime,
+  jobTimezone,
   jobExists,
   listAllJobs,
   mutateJob,
+  normalizeJobTimezone,
   readJob,
   sanitizeJobId,
   writeJob,
@@ -43,6 +46,7 @@ const CreateJobActionSchema = z.object({
   name: z.string().min(1),
   job_type: z.enum(['prompt', 'message']),
   schedule: z.string().min(1),
+  timezone: z.string().min(1).optional(),
   prompt: z.string().optional(),
   content: z.string().optional(),
   target_chat_id: z.string().optional(),
@@ -65,6 +69,7 @@ const UpdateJobActionSchema = z.object({
   new_name: z.string().min(1).optional(),
   status: z.enum(['active', 'paused']).optional(),
   schedule: z.string().min(1).optional(),
+  timezone: z.string().min(1).optional(),
   prompt: z.string().optional(),
   content: z.string().optional(),
   model: z.string().optional(),
@@ -85,6 +90,7 @@ const UpsertJobActionSchema = z.object({
   name: z.string().min(1),
   job_type: z.enum(['prompt', 'message']),
   schedule: z.string().min(1),
+  timezone: z.string().min(1).optional(),
   prompt: z.string().optional(),
   content: z.string().optional(),
   target_chat_id: z.string().optional(),
@@ -132,9 +138,26 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
       : action.type === 'update_job'
         ? action.schedule
         : undefined;
+  const timezone =
+    action.type === 'create_job' || action.type === 'upsert_job' || action.type === 'update_job'
+      ? action.timezone
+      : undefined;
+  let normalizedTimezone: string | undefined;
+  if (timezone !== undefined) {
+    try {
+      normalizedTimezone = normalizeJobTimezone(timezone);
+    } catch (err) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['timezone'],
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+  }
   if (schedule === undefined) return;
   try {
-    expandSchedule(schedule);
+    expandSchedule(schedule, normalizedTimezone);
   } catch (err) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -292,7 +315,8 @@ function jobVisibleToCaller(job: JobFile, message: LarkMessage, caller: string):
 
 function formatJobForActionList(job: JobFile, caller: string): string {
   const modelNote = job.meta.model ? ` | model: ${job.meta.model}` : '';
-  const lastRun = job.runtime.last_run_at ?? 'never';
+  const tz = jobTimezone(job.meta);
+  const lastRun = formatCronDateTime(job.runtime.last_run_at, tz);
   const lastError = job.runtime.last_error ? ` | last_error: ${job.runtime.last_error}` : '';
   const bodyValue = job.meta.type === 'prompt' ? job.meta.prompt : job.meta.content;
   const bodyLabel = job.meta.type === 'prompt' ? 'prompt' : 'content';
@@ -307,8 +331,9 @@ function formatJobForActionList(job: JobFile, caller: string): string {
     `type: ${job.meta.type}`,
     `status: ${job.meta.status}`,
     `schedule: ${job.meta.schedule_human} (${job.meta.schedule})`,
+    `timezone: ${tz}`,
     `target_chat_id: ${job.meta.target_chat_id}`,
-    `next_run_at: ${job.runtime.next_run_at}`,
+    `next_run_at: ${formatCronDateTime(job.runtime.next_run_at, tz)}`,
     `last_run_at: ${lastRun}`,
     `run_count: ${job.runtime.run_count}${modelNote}${lastError}`,
     body,
@@ -432,6 +457,7 @@ async function executeCreateJob(
     name: action.name,
     type: action.job_type,
     schedule: action.schedule,
+    timezone: action.timezone,
     target_chat_id: targetChatId,
     model: action.model,
     chat_id: message.chatId,
@@ -452,8 +478,10 @@ async function executeCreateJob(
 
   let cron: string;
   let scheduleHuman: string;
+  let jobTz: string;
   try {
-    const expanded = expandSchedule(action.schedule);
+    jobTz = normalizeJobTimezone(action.timezone);
+    const expanded = expandSchedule(action.schedule, jobTz);
     cron = expanded.cron;
     scheduleHuman = expanded.human;
   } catch (err: any) {
@@ -465,7 +493,7 @@ async function executeCreateJob(
     return { ok: false, action: 'create_job', message: `Job "${id}" already exists.` };
   }
 
-  const nextRunAt = computeNextRun(cron);
+  const nextRunAt = computeNextRun(cron, jobTz);
   const job: JobFile = {
     meta: {
       id,
@@ -473,6 +501,7 @@ async function executeCreateJob(
       type: action.job_type,
       schedule: cron,
       schedule_human: scheduleHuman,
+      timezone: jobTz,
       ...(action.job_type === 'prompt' ? { prompt: action.prompt } : { content: action.content, msg_type: 'text' }),
       target_chat_id: targetChatId,
       ...(action.model ? { model: action.model } : {}),
@@ -494,7 +523,7 @@ async function executeCreateJob(
   return {
     ok: true,
     action: 'create_job',
-    message: `Created job "${id}" (job_id: ${id}, ${scheduleHuman}). Next run: ${nextRunAt}`,
+    message: `Created job "${id}" (job_id: ${id}, ${scheduleHuman}, tz=${jobTz}). Next run: ${formatCronDateTime(nextRunAt, jobTz)}`,
   };
 }
 
@@ -537,6 +566,7 @@ async function executeUpdateJob(
     new_name: action.new_name,
     status: action.status,
     schedule: action.schedule,
+    timezone: action.timezone,
     model: action.model,
     chat_id: message.chatId,
     thread_id: message.threadId,
@@ -550,9 +580,19 @@ async function executeUpdateJob(
   if (ownerError) return ownerError;
 
   let expandedSchedule: { cron: string; human: string } | null = null;
+  let requestedTimezone: string | null = null;
+  try {
+    requestedTimezone = action.timezone === undefined ? null : normalizeJobTimezone(action.timezone);
+  } catch (err: any) {
+    return {
+      ok: false,
+      action: 'update_job',
+      message: `Invalid timezone: ${err?.message ?? action.timezone}`,
+    };
+  }
   if (action.schedule !== undefined) {
     try {
-      expandedSchedule = expandSchedule(action.schedule);
+      expandedSchedule = expandSchedule(action.schedule, requestedTimezone ?? jobTimezone(resolved.job.meta));
     } catch (err: any) {
       return {
         ok: false,
@@ -573,15 +613,19 @@ async function executeUpdateJob(
     if (action.prompt !== undefined) latest.meta.prompt = action.prompt;
     if (action.content !== undefined) latest.meta.content = action.content;
     if (action.model !== undefined) latest.meta.model = action.model || undefined;
+    if (requestedTimezone) latest.meta.timezone = requestedTimezone;
     if (expandedSchedule) {
       latest.meta.schedule = expandedSchedule.cron;
       latest.meta.schedule_human = expandedSchedule.human;
-      latest.runtime.next_run_at = computeNextRun(expandedSchedule.cron);
+      latest.runtime.next_run_at = computeNextRun(expandedSchedule.cron, jobTimezone(latest.meta));
+    }
+    if (requestedTimezone && !expandedSchedule) {
+      latest.runtime.next_run_at = computeNextRun(latest.meta.schedule, requestedTimezone);
     }
     if (action.status !== undefined) {
       latest.meta.status = action.status;
-      if (action.status === 'active' && !expandedSchedule) {
-        latest.runtime.next_run_at = computeNextRun(latest.meta.schedule);
+      if (action.status === 'active' && !expandedSchedule && !requestedTimezone) {
+        latest.runtime.next_run_at = computeNextRun(latest.meta.schedule, jobTimezone(latest.meta));
       }
     }
   });
@@ -600,7 +644,7 @@ async function executeUpdateJob(
   return {
     ok: true,
     action: 'update_job',
-    message: `Updated job "${updated.meta.id}" (job_id: ${updated.meta.id}). Status: ${updated.meta.status}, Schedule: ${updated.meta.schedule_human}, Next run: ${updated.runtime.next_run_at}`,
+    message: `Updated job "${updated.meta.id}" (job_id: ${updated.meta.id}). Status: ${updated.meta.status}, Schedule: ${updated.meta.schedule_human}, TZ: ${jobTimezone(updated.meta)}, Next run: ${formatCronDateTime(updated.runtime.next_run_at, jobTimezone(updated.meta))}`,
   };
 }
 
@@ -642,7 +686,7 @@ async function executeDisableJob(
   return {
     ok: true,
     action: 'disable_job',
-    message: `Updated job "${updated.meta.id}" (job_id: ${updated.meta.id}). Status: ${updated.meta.status}, Next run: ${updated.runtime.next_run_at}`,
+    message: `Updated job "${updated.meta.id}" (job_id: ${updated.meta.id}). Status: ${updated.meta.status}, Next run: ${formatCronDateTime(updated.runtime.next_run_at, jobTimezone(updated.meta))}`,
   };
 }
 
@@ -679,6 +723,7 @@ async function executeUpsertJob(
     name: action.name,
     type: action.job_type,
     schedule: action.schedule,
+    timezone: action.timezone,
     target_chat_id: targetChatId,
     model: action.model,
     status: action.status,
@@ -702,8 +747,10 @@ async function executeUpsertJob(
 
   let cron: string;
   let scheduleHuman: string;
+  let jobTz: string;
   try {
-    const expanded = expandSchedule(action.schedule);
+    jobTz = normalizeJobTimezone(action.timezone);
+    const expanded = expandSchedule(action.schedule, jobTz);
     cron = expanded.cron;
     scheduleHuman = expanded.human;
   } catch (err: any) {
@@ -725,6 +772,7 @@ async function executeUpsertJob(
       latest.meta.type = action.job_type;
       latest.meta.schedule = cron;
       latest.meta.schedule_human = scheduleHuman;
+      latest.meta.timezone = jobTz;
       latest.meta.target_chat_id = targetChatId;
       latest.meta.model = action.model || undefined;
       latest.meta.status = action.status ?? 'active';
@@ -737,7 +785,7 @@ async function executeUpsertJob(
         latest.meta.msg_type = 'text';
         delete latest.meta.prompt;
       }
-      latest.runtime.next_run_at = computeNextRun(cron);
+      latest.runtime.next_run_at = computeNextRun(cron, jobTz);
       latest.runtime.last_error = null;
     });
 
@@ -755,7 +803,7 @@ async function executeUpsertJob(
     return {
       ok: true,
       action: 'upsert_job',
-      message: `Upserted job "${updated.meta.id}" (job_id: ${updated.meta.id}, ${scheduleHuman}). Status: ${updated.meta.status}, Next run: ${updated.runtime.next_run_at}`,
+      message: `Upserted job "${updated.meta.id}" (job_id: ${updated.meta.id}, ${scheduleHuman}, tz=${jobTz}). Status: ${updated.meta.status}, Next run: ${formatCronDateTime(updated.runtime.next_run_at, jobTz)}`,
     };
   }
 
@@ -764,7 +812,7 @@ async function executeUpsertJob(
   }
 
   const id = sanitizeJobId(action.name);
-  const nextRunAt = computeNextRun(cron);
+  const nextRunAt = computeNextRun(cron, jobTz);
   const job: JobFile = {
     meta: {
       id,
@@ -772,6 +820,7 @@ async function executeUpsertJob(
       type: action.job_type,
       schedule: cron,
       schedule_human: scheduleHuman,
+      timezone: jobTz,
       ...(action.job_type === 'prompt' ? { prompt: action.prompt } : { content: action.content, msg_type: 'text' }),
       target_chat_id: targetChatId,
       ...(action.model ? { model: action.model } : {}),
@@ -793,7 +842,7 @@ async function executeUpsertJob(
   return {
     ok: true,
     action: 'upsert_job',
-    message: `Upserted job "${id}" (job_id: ${id}, ${scheduleHuman}). Status: ${job.meta.status}, Next run: ${nextRunAt}`,
+    message: `Upserted job "${id}" (job_id: ${id}, ${scheduleHuman}, tz=${jobTz}). Status: ${job.meta.status}, Next run: ${formatCronDateTime(nextRunAt, jobTz)}`,
   };
 }
 
