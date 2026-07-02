@@ -140,6 +140,13 @@ export function registerJobTools(ctx: ToolContext): void {
           next_run_at: nextRunAt,
           run_count: 0,
           last_error: null,
+          run_id: null,
+          run_status: null,
+          output_status: null,
+          delivery_status: null,
+          report: null,
+          report_type: null,
+          delivery_error: null,
         },
       };
 
@@ -206,12 +213,16 @@ export function registerJobTools(ctx: ToolContext): void {
           : 'never';
         const error = j.runtime.last_error ? ` ⚠️ ${j.runtime.last_error}` : '';
         const isOwner = j.meta.created_by === caller;
+        const runState =
+          j.runtime.run_status || j.runtime.output_status || j.runtime.delivery_status
+            ? ` | Run: ${j.runtime.run_status ?? '-'} / Output: ${j.runtime.output_status ?? '-'} / Delivery: ${j.runtime.delivery_status ?? '-'}`
+            : '';
 
         if (!isPrivate && !isOwner) {
           return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   By: ${j.meta.created_by} | Next: ${j.runtime.next_run_at}`;
         }
         const modelNote = j.meta.model ? ` | Model: ${j.meta.model}` : '';
-        return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   Next: ${j.runtime.next_run_at} | Last: ${lastRun} | Runs: ${j.runtime.run_count}${modelNote}${error}`;
+        return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   Next: ${j.runtime.next_run_at} | Last: ${lastRun} | Runs: ${j.runtime.run_count}${modelNote}${runState}${error}`;
       });
 
       void audit('list_jobs', caller, auditArgs, 'ok');

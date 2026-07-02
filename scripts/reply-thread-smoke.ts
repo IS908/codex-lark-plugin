@@ -521,4 +521,176 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   passed++;
 }
 
-console.log(`reply-thread smoke: ${passed}/10 PASS`);
+// ── 11. Successful cronjob replies send full report and persist delivery state ──
+{
+  const originalJobsDir = appConfig.jobsDir;
+  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-delivery-state-'));
+  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
+  try {
+    const jobId = 'reply-delivery-state';
+    const createdAt = '2026-06-07T00:00:00.000Z';
+    const runId = '1760000000000';
+    writeFileSync(
+      join(jobsDir, `${jobId}.json`),
+      JSON.stringify(
+        {
+          meta: {
+            id: jobId,
+            name: 'Reply Delivery State',
+            type: 'prompt',
+            schedule: '* * * * *',
+            schedule_human: 'every 1m',
+            prompt: 'reply',
+            target_chat_id: 'chat_grp',
+            origin_chat_id: 'chat_grp',
+            status: 'active',
+            created_by: 'ou_caller',
+            created_at: createdAt,
+          },
+          runtime: {
+            last_run_at: '2026-06-07T00:01:00.000Z',
+            next_run_at: '2099-01-01T00:00:00.000Z',
+            run_count: 1,
+            last_error: null,
+            run_id: runId,
+            run_status: 'started',
+            output_status: 'empty',
+            delivery_status: 'pending',
+            report: null,
+            report_type: null,
+            delivery_error: null,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const { reply } = await setup();
+    const report = '# Daily report\n\n- shipped\n- verified';
+    const result = await reply({
+      chat_id: 'chat_grp',
+      text: report,
+      thread_id: `${JOB_THREAD_PREFIX}${jobId}-${jobCreatedAtHash(createdAt)}-${runId}`,
+      format: 'text',
+    });
+    if (result.isError) fail(`11: expected successful reply, got ${JSON.stringify(result)}`);
+
+    const createCalls = apiCalls.filter((c) => c.method === 'message.create');
+    if (createCalls.length !== 1) fail(`11: expected one message.create, got ${createCalls.length}`);
+    const sentContent = JSON.parse(createCalls[0].args.data.content);
+    if (sentContent.text !== report) {
+      fail(`11: expected complete report sent through Feishu payload, got ${createCalls[0].args.data.content}`);
+    }
+
+    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
+    if (persisted.runtime.run_status !== 'success') {
+      fail(`11: expected run_status=success, got ${persisted.runtime.run_status}`);
+    }
+    if (persisted.runtime.output_status !== 'generated') {
+      fail(`11: expected output_status=generated, got ${persisted.runtime.output_status}`);
+    }
+    if (persisted.runtime.delivery_status !== 'sent') {
+      fail(`11: expected delivery_status=sent, got ${persisted.runtime.delivery_status}`);
+    }
+    if (persisted.runtime.report !== report) {
+      fail(`11: expected persisted report body, got ${persisted.runtime.report}`);
+    }
+    if (persisted.runtime.report_type !== 'job_result') {
+      fail(`11: expected report_type=job_result, got ${persisted.runtime.report_type}`);
+    }
+    if (persisted.runtime.delivery_error !== null || persisted.runtime.last_error !== null) {
+      fail(`11: expected no delivery errors, got ${JSON.stringify(persisted.runtime)}`);
+    }
+  } finally {
+    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
+    rmSync(jobsDir, { recursive: true, force: true });
+  }
+  passed++;
+}
+
+// ── 12. Empty cronjob replies send a visible failure report instead of blank output ──
+{
+  const originalJobsDir = appConfig.jobsDir;
+  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-empty-report-'));
+  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
+  try {
+    const jobId = 'reply-empty-report';
+    const createdAt = '2026-06-07T00:00:00.000Z';
+    const runId = '1760000000001';
+    writeFileSync(
+      join(jobsDir, `${jobId}.json`),
+      JSON.stringify(
+        {
+          meta: {
+            id: jobId,
+            name: 'Reply Empty Report',
+            type: 'prompt',
+            schedule: '* * * * *',
+            schedule_human: 'every 1m',
+            prompt: 'reply',
+            target_chat_id: 'chat_grp',
+            origin_chat_id: 'chat_grp',
+            status: 'active',
+            created_by: 'ou_caller',
+            created_at: createdAt,
+          },
+          runtime: {
+            last_run_at: '2026-06-07T00:01:00.000Z',
+            next_run_at: '2099-01-01T00:00:00.000Z',
+            run_count: 1,
+            last_error: null,
+            run_id: runId,
+            run_status: 'started',
+            output_status: 'empty',
+            delivery_status: 'pending',
+            report: null,
+            report_type: null,
+            delivery_error: null,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const { reply } = await setup();
+    const result = await reply({
+      chat_id: 'chat_grp',
+      text: '   ',
+      thread_id: `${JOB_THREAD_PREFIX}${jobId}-${jobCreatedAtHash(createdAt)}-${runId}`,
+      format: 'text',
+    });
+    if (result.isError) fail(`12: expected visible error report delivery, got ${JSON.stringify(result)}`);
+
+    const createCalls = apiCalls.filter((c) => c.method === 'message.create');
+    if (createCalls.length !== 1) fail(`12: expected one message.create, got ${createCalls.length}`);
+    const sentContent = JSON.parse(createCalls[0].args.data.content);
+    if (!sentContent.text?.includes('CronJob produced an empty report.')) {
+      fail(`12: expected empty-output failure report sent through Feishu, got ${createCalls[0].args.data.content}`);
+    }
+
+    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
+    if (persisted.runtime.run_status !== 'failed') {
+      fail(`12: expected run_status=failed for empty report, got ${persisted.runtime.run_status}`);
+    }
+    if (persisted.runtime.output_status !== 'generated') {
+      fail(`12: expected generated error report output, got ${persisted.runtime.output_status}`);
+    }
+    if (persisted.runtime.delivery_status !== 'sent') {
+      fail(`12: expected delivered failure report, got ${persisted.runtime.delivery_status}`);
+    }
+    if (persisted.runtime.report_type !== 'error_report') {
+      fail(`12: expected error_report, got ${persisted.runtime.report_type}`);
+    }
+    if (!persisted.runtime.last_error?.includes('empty report')) {
+      fail(`12: expected empty report last_error, got ${persisted.runtime.last_error}`);
+    }
+  } finally {
+    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
+    rmSync(jobsDir, { recursive: true, force: true });
+  }
+  passed++;
+}
+
+console.log(`reply-thread smoke: ${passed}/12 PASS`);

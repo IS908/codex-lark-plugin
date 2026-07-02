@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.9] - 2026-07-02
+
+### Fixed
+- Added durable cronjob run/output/delivery status fields so report-like scheduled jobs expose whether the latest run started, generated output, and was delivered through Feishu.
+- Ensured prompt cronjob reports are user-visible through the Feishu channel: successful reports are recorded only after `reply` delivery succeeds, notification failures send an error report to the target chat, and pending prompt runs emit a Feishu error report if Codex never replies.
+- Routed transient error-report delivery failures back through the scheduler retry loop instead of silently marking the report failed on disk.
+
 ## [1.7.8] - 2026-07-02
 
 ### Fixed
