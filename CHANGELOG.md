@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.9.5] - 2026-07-04
+
+### Fixed
+- Synced runtime configuration defaults across `.env.example`, README docs, and the configure skill, and added a config-surface smoke test to catch future drift from runtime `LARK_*` settings.
+
 ## [1.9.4] - 2026-07-04
 
 ### Fixed
