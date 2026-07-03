@@ -176,7 +176,7 @@ export function registerIssueProposalTools(ctx: ToolContext): void {
         body: z.string().describe('Proposed GitHub issue body or finding summary'),
         evidence: z.array(z.string()).optional().describe('Evidence lines supporting the finding'),
         impact: z.string().optional().describe('User impact or maintenance risk'),
-        priority: PrioritySchema.optional().describe('Suggested priority'),
+        priority: PrioritySchema.optional().describe('Suggested priority: P0, P1, P2, or P3'),
         automation_level: AutomationLevelSchema.optional().describe('Whether this is discovery-only or low-risk auto-PR eligible'),
         target_repo: z.string().describe('GitHub repository in owner/name form'),
         target_chat_id: z.string().optional().describe('Feishu chat that should see this proposal. Defaults to current chat_id.'),

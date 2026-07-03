@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-07-04
+
+### Fixed
+- Exposed `P0` consistently in the issue-proposal action prompt and MCP tool field description, matching the stored proposal schema.
+
 ## [1.9.2] - 2026-07-04
 
 ### Fixed
