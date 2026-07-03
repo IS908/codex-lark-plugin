@@ -41,6 +41,10 @@ echo "=== Dry-run without Lark credentials checks ==="
 node --import tsx scripts/dry-run-no-credentials-smoke.ts
 
 echo ""
+echo "=== Startup dependency install guard ==="
+node --import tsx scripts/startup-no-install-smoke.ts
+
+echo ""
 echo "=== MCP stdout clean ==="
 if [ -s /tmp/lark-test-stdout.txt ]; then
   echo "FAIL: stdout is not empty"
