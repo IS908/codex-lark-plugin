@@ -15,6 +15,7 @@ export function isSyntheticSystemMessageId(messageId: string | undefined | null)
 export function shouldSendFeishuReplyForMessage(
   message: Pick<LarkMessage, 'chatType' | 'messageId'>,
 ): boolean {
+  if (message.chatType === 'cronjob') return true;
   return (message.chatType === 'p2p' || message.chatType === 'group') && isFeishuOpenMessageId(message.messageId);
 }
 

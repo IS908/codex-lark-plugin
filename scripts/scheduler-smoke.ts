@@ -546,6 +546,60 @@ function readJobFixture(id: string): JobFile {
   passed++;
 }
 
+// 12b. Prompt jobs can complete through a reliable exec runner instead of pending notification delivery.
+{
+  const id = 'prompt-runner-completes';
+  const createdAt = '2026-06-07T02:45:00.000Z';
+  const job = makeJob({
+    meta: {
+      id,
+      type: 'prompt',
+      prompt: 'reply pong',
+      content: undefined,
+      msg_type: undefined,
+      created_at: createdAt,
+    } as Partial<JobFile['meta']>,
+  });
+  writeJobFixture(job);
+  let runnerCalls = 0;
+  let notificationCalls = 0;
+  const scheduler = new JobScheduler({
+    server: {
+      notification: async () => {
+        notificationCalls++;
+      },
+    } as any,
+    client: { im: { v1: { message: { create: async () => ({ data: { message_id: 'om_ok' } }) } } } } as any,
+    identitySession: new IdentitySession(() => null),
+    promptRunner: async (input: any) => {
+      runnerCalls++;
+      const expectedPrefix = `${JOB_THREAD_PREFIX}${id}-${jobCreatedAtHash(createdAt)}-`;
+      if (input.job.meta.id !== id) fail(`12b: runner received wrong job id ${input.job.meta.id}`);
+      if (!input.jobThreadId.startsWith(expectedPrefix)) {
+        fail(`12b: runner thread_id should start with ${expectedPrefix}, got ${input.jobThreadId}`);
+      }
+      if (!input.promptContent.includes('reply pong')) {
+        fail(`12b: runner prompt should contain job prompt, got ${input.promptContent}`);
+      }
+      return { report: 'pong' };
+    },
+  } as any);
+  await (scheduler as any).executeJob(job);
+  const persisted = readJobFixture(id);
+  if (runnerCalls !== 1) fail(`12b: expected prompt runner once, got ${runnerCalls}`);
+  if (notificationCalls !== 0) fail(`12b: expected no channel notification fallback, got ${notificationCalls}`);
+  if (persisted.runtime.run_status !== 'success') {
+    fail(`12b: expected success run_status, got ${persisted.runtime.run_status}`);
+  }
+  if (persisted.runtime.delivery_status !== 'sent') {
+    fail(`12b: expected sent delivery_status, got ${persisted.runtime.delivery_status}`);
+  }
+  if (persisted.runtime.report !== 'pong') {
+    fail(`12b: expected persisted report pong, got ${persisted.runtime.report}`);
+  }
+  passed++;
+}
+
 // 13. Pausing a job during a transient retry window cancels the next send.
 {
   const id = 'pause-before-retry';
@@ -819,4 +873,4 @@ function readJobFixture(id: string): JobFile {
 (appConfig as { cronTimezone: string }).cronTimezone = originalCronTimezone;
 rmSync(tmpJobsDir, { recursive: true, force: true });
 
-console.log(`scheduler smoke: ${passed}/17 PASS`);
+console.log(`scheduler smoke: ${passed}/18 PASS`);

@@ -84,7 +84,7 @@ the SDK's raw client escape hatch.
 | Doc-comment mention handling | Keep SDK comment event and SDK `channel.comments.resolveTarget()` / `fetch()` for selected-text context. | Preserve `doc:<file_token>` identity, selected text, document title, and raw-event fallback. |
 | Doc-comment reply/create | Keep raw Drive OpenAPI behind `LarkTransport` for now. | SDK `comments.reply()` returns no `reply_id` and may fall back to top-level comments; top-level create still needs raw `comment_id` semantics. |
 | Scheduler direct-message delivery | Route through SDK transport. | Preserve deterministic run behavior where possible; if SDK lacks uuid control, document the tradeoff or use raw client inside transport. |
-| Cron prompt injection | Keep MCP `notifications/Codex/channel`. | Not a Lark transport concern. |
+| Cron prompt execution | In `exec` mode, route through the scheduler prompt runner and the same `codex exec` delivery path as chat messages; keep MCP `notifications/Codex/channel` only as the legacy `notification` mode fallback. | Prevents prompt cronjobs from timing out after the host acknowledges a notification without starting a real Codex exec turn. |
 | Error taxonomy and retries | Map `LarkChannelError` and raw-client errors into local retry/permanent-failure decisions. | Scheduler auto-pause and reply failures depend on this. |
 | SDK logging / MCP stdout safety | Keep injected stderr-only SDK logger. | Non-negotiable: stdout belongs to MCP JSON-RPC. |
 | Marketplace/cache packaging | Keep Codex plugin release flow. | Validate installed cache after migration. |

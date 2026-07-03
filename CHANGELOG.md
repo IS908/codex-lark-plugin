@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-07-03
+
+### Fixed
+- Routed prompt cronjobs through the same `codex exec` delivery path as chat messages in `exec` mode, so scheduled prompt reports start real Codex turns and persist success/failure instead of waiting for the watchdog timeout after a channel notification is only acknowledged.
+
 ## [1.8.2] - 2026-07-03
 
 ### Changed

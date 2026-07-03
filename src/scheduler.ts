@@ -29,8 +29,8 @@ import {
 } from './lark-transport.js';
 
 /**
- * Prefix for synthetic `thread_id` values injected into cronjob channel
- * notifications. Used only for IdentitySession isolation per cronjob run —
+ * Prefix for synthetic `thread_id` values used by cronjob prompt executions.
+ * Used only for IdentitySession isolation per cronjob run —
  * NOT a real Feishu thread. Consumers that route messages to Feishu threads
  * (e.g. the `reply` tool) must exclude thread_ids with this prefix.
  */
@@ -65,7 +65,21 @@ export interface SchedulerOptions {
   transport?: LarkTransport;
   identitySession: IdentitySession;
   botMessageTracker?: BotMessageTracker;
+  promptRunner?: PromptJobRunner;
 }
+
+export interface PromptJobRunnerInput {
+  job: JobFile;
+  jobThreadId: string;
+  runId: string;
+  promptContent: string;
+}
+
+export interface PromptJobRunnerResult {
+  report: string;
+}
+
+export type PromptJobRunner = (input: PromptJobRunnerInput) => Promise<PromptJobRunnerResult>;
 
 // ─── Retry Logic ────────────────────────────────────────────
 
@@ -263,6 +277,7 @@ export class JobScheduler {
   private transport: LarkTransport;
   private identitySession: IdentitySession;
   private botMessageTracker?: BotMessageTracker;
+  private promptRunner?: PromptJobRunner;
   private running = false;
   private ticking = false;
 
@@ -274,6 +289,7 @@ export class JobScheduler {
     });
     this.identitySession = opts.identitySession;
     this.botMessageTracker = opts.botMessageTracker;
+    this.promptRunner = opts.promptRunner;
   }
 
   /**
@@ -592,10 +608,12 @@ export class JobScheduler {
   }
 
   /**
-   * prompt type: inject prompt into Codex's channel via MCP notification.
+   * prompt type: run Codex under a synthetic per-run thread.
    *
    * Each execution runs under a unique thread_id so its IdentitySession entry
    * does not clobber concurrent inbound human messages in the same chat.
+   * Exec mode uses `promptRunner`; notification mode keeps the legacy MCP
+   * channel notification fallback.
    */
   private async executePromptJob(job: JobFile, runId: string): Promise<JobExecutionOutcome> {
     const jobThreadId = `${JOB_THREAD_PREFIX}${job.meta.id}-${jobCreatedAtHash(job.meta.created_at)}-${runId}`;
@@ -611,6 +629,56 @@ export class JobScheduler {
       job.meta.target_chat_id,
       job.meta.prompt ?? ''
     );
+
+    if (this.promptRunner) {
+      try {
+        const result = await this.promptRunner({
+          job,
+          jobThreadId,
+          runId,
+          promptContent,
+        });
+        if (!result.report.trim()) {
+          throw new Error('CronJob prompt produced no visible report.');
+        }
+        return {
+          runStatus: 'success',
+          outputStatus: 'generated',
+          deliveryStatus: 'sent',
+          report: result.report,
+          reportType: 'job_result',
+          deliveryError: null,
+          lastError: null,
+          autoPause: false,
+          completed: true,
+        };
+      } catch (err: any) {
+        const lastError = `[LARK_DEFER] CronJob prompt execution failed before a complete report could be delivered: ${err?.message ?? err}`;
+        const report = buildCronJobErrorReport(job, lastError);
+        try {
+          await this.transport.sendMessage({
+            chatId: job.meta.target_chat_id,
+            input: { text: report },
+            retry: { attempts: 1, retryTimeout: false },
+          });
+          return {
+            runStatus: 'failed',
+            outputStatus: 'generated',
+            deliveryStatus: 'sent',
+            report,
+            reportType: 'error_report',
+            deliveryError: null,
+            lastError,
+            autoPause: false,
+            completed: true,
+          };
+        } catch (deliveryErr: any) {
+          throw buildCronJobReportDeliveryFailure(report, deliveryErr);
+        }
+      } finally {
+        this.identitySession.endChannelTurn(job.meta.target_chat_id, jobThreadId);
+      }
+    }
 
     try {
       await this.server.notification({
