@@ -35,6 +35,10 @@ export interface IssueProposalMeta {
   github_issue_url?: string;
   github_issue_number?: number;
   created_issue_at?: string;
+  github_pr_url?: string;
+  github_pr_number?: number;
+  created_pr_at?: string;
+  pr_last_error?: string;
   last_error?: string;
 }
 
@@ -72,6 +76,19 @@ export interface MarkIssueProposalCreatedInput {
   approvedBy: string;
   githubIssueUrl: string;
   githubIssueNumber?: number;
+  now?: Date;
+}
+
+export interface MarkIssueProposalPullRequestCreatedInput {
+  approvedBy: string;
+  githubPullRequestUrl: string;
+  githubPullRequestNumber?: number;
+  now?: Date;
+}
+
+export interface MarkIssueProposalPullRequestErrorInput {
+  approvedBy: string;
+  lastError: string;
   now?: Date;
 }
 
@@ -130,6 +147,11 @@ function assertNonEmpty(value: string, field: string): string {
 
 function githubIssueNumberFromUrl(url: string): number | undefined {
   const match = url.match(/\/issues\/(\d+)(?:$|[?#])/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function githubPullRequestNumberFromUrl(url: string): number | undefined {
+  const match = url.match(/\/pull\/(\d+)(?:$|[?#])/);
   return match ? Number(match[1]) : undefined;
 }
 
@@ -249,6 +271,43 @@ export async function markIssueProposalCreated(
   return proposal;
 }
 
+export async function markIssueProposalPullRequestCreated(
+  id: string,
+  input: MarkIssueProposalPullRequestCreatedInput,
+): Promise<IssueProposalFile | null> {
+  const proposal = await readIssueProposal(id);
+  if (!proposal) return null;
+  if (proposal.meta.status === 'rejected') return proposal;
+  if (proposal.meta.github_pr_url) return proposal;
+
+  const now = input.now ?? new Date();
+  proposal.meta.approved_by = proposal.meta.approved_by ?? input.approvedBy;
+  proposal.meta.approved_at = proposal.meta.approved_at ?? now.toISOString();
+  proposal.meta.github_pr_url = assertNonEmpty(input.githubPullRequestUrl, 'githubPullRequestUrl');
+  proposal.meta.github_pr_number =
+    input.githubPullRequestNumber ?? githubPullRequestNumberFromUrl(input.githubPullRequestUrl);
+  proposal.meta.created_pr_at = now.toISOString();
+  proposal.meta.pr_last_error = undefined;
+  await writeIssueProposal(proposal);
+  return proposal;
+}
+
+export async function markIssueProposalPullRequestError(
+  id: string,
+  input: MarkIssueProposalPullRequestErrorInput,
+): Promise<IssueProposalFile | null> {
+  const proposal = await readIssueProposal(id);
+  if (!proposal) return null;
+  if (proposal.meta.status === 'rejected') return proposal;
+
+  const now = input.now ?? new Date();
+  proposal.meta.approved_by = proposal.meta.approved_by ?? input.approvedBy;
+  proposal.meta.approved_at = proposal.meta.approved_at ?? now.toISOString();
+  proposal.meta.pr_last_error = assertNonEmpty(input.lastError, 'lastError');
+  await writeIssueProposal(proposal);
+  return proposal;
+}
+
 export async function rejectIssueProposal(
   id: string,
   input: RejectIssueProposalInput,
@@ -273,7 +332,9 @@ export function formatIssueProposalForList(proposal: IssueProposalFile): string 
   ];
   if (proposal.meta.impact) lines.push(`   Impact: ${proposal.meta.impact}`);
   if (proposal.meta.github_issue_url) lines.push(`   Issue: ${proposal.meta.github_issue_url}`);
+  if (proposal.meta.github_pr_url) lines.push(`   PR: ${proposal.meta.github_pr_url}`);
   if (proposal.meta.last_error) lines.push(`   Last error: ${proposal.meta.last_error}`);
+  if (proposal.meta.pr_last_error) lines.push(`   PR last error: ${proposal.meta.pr_last_error}`);
   if (proposal.meta.rejection_reason) lines.push(`   Rejected: ${proposal.meta.rejection_reason}`);
   return lines.join('\n');
 }
@@ -308,6 +369,40 @@ export function formatIssueProposalIssueBody(proposal: IssueProposalFile): strin
   return sections.join('\n');
 }
 
+export function formatIssueProposalPullRequestBody(proposal: IssueProposalFile): string {
+  const sections = [
+    `<!-- issue-proposal-id: ${proposal.meta.id} -->`,
+    '## Linked Discovery Issue',
+    proposal.meta.github_issue_url ?? 'A GitHub issue must be created before opening a low-risk PR.',
+    '',
+    '## Summary',
+    proposal.meta.body,
+  ];
+
+  if (proposal.meta.evidence.length) {
+    sections.push('', '## Evidence', ...proposal.meta.evidence.map((item) => `- ${item}`));
+  }
+
+  if (proposal.meta.impact) {
+    sections.push('', '## Impact', proposal.meta.impact);
+  }
+
+  sections.push(
+    '',
+    '## Verification',
+    'The local low-risk PR wrapper must include concrete verification results before opening the PR.',
+    '',
+    '## Automation Boundary',
+    'This PR was opened from a low-risk proposal. It must not be merged or released automatically; a maintainer must explicitly review and authorize merge or release.',
+  );
+
+  return sections.join('\n');
+}
+
 export function extractGithubIssueUrl(text: string): string | null {
   return text.match(/https:\/\/github\.com\/[^\s"'<>]+\/issues\/\d+/)?.[0] ?? null;
+}
+
+export function extractGithubPullRequestUrl(text: string): string | null {
+  return text.match(/https:\/\/github\.com\/[^\s"'<>]+\/pull\/\d+/)?.[0] ?? null;
 }

@@ -26,7 +26,9 @@ const dir = mkdtempSync(join(tmpdir(), 'issue-proposal-tools-smoke-'));
 const proposalsDir = join(dir, 'proposals');
 const cliConfigPath = join(dir, 'local-cli-tools.json');
 const cliScriptPath = join(dir, 'fake-gh-issue-create.js');
+const cliPrScriptPath = join(dir, 'fake-gh-pr-create.js');
 const cliCallsPath = join(dir, 'calls.json');
+const cliPrCallsPath = join(dir, 'pr-calls.json');
 const originalProposalsDir = (appConfig as { issueProposalsDir?: string }).issueProposalsDir;
 const originalCliConfigPath = appConfig.localCliToolsConfigPath;
 const originalOwner = appConfig.ownerOpenId;
@@ -47,6 +49,17 @@ writeFileSync(
   ].join('\n'),
 );
 writeFileSync(
+  cliPrScriptPath,
+  [
+    'const fs = require("node:fs");',
+    'const callsPath = process.env.PR_CALLS_PATH;',
+    'const calls = fs.existsSync(callsPath) ? JSON.parse(fs.readFileSync(callsPath, "utf8")) : [];',
+    'calls.push(process.argv.slice(2));',
+    'fs.writeFileSync(callsPath, JSON.stringify(calls, null, 2));',
+    'console.log("https://github.com/IS908/codex-lark-plugin/pull/654");',
+  ].join('\n'),
+);
+writeFileSync(
   cliConfigPath,
   JSON.stringify(
     {
@@ -57,6 +70,17 @@ writeFileSync(
           paramAllowlist: ['--repo', '--title', '--body'],
           envAllowlist: [],
           env: { CALLS_PATH: cliCallsPath },
+          inheritEnv: false,
+          timeoutMs: 5000,
+          maxOutputBytes: 4096,
+          allowedCallers: 'owners',
+        },
+        gh_low_risk_pr_create: {
+          command: process.execPath,
+          fixedArgs: [cliPrScriptPath],
+          paramAllowlist: ['--repo', '--proposal-id', '--issue', '--title', '--body'],
+          envAllowlist: [],
+          env: { PR_CALLS_PATH: cliPrCallsPath },
           inheritEnv: false,
           timeoutMs: 5000,
           maxOutputBytes: 4096,
@@ -86,6 +110,7 @@ try {
   const createProposal = getTool('create_issue_proposal');
   const listProposals = getTool('list_issue_proposals');
   const createIssue = getTool('create_issue_from_proposal');
+  const createPr = getTool('create_low_risk_pr_from_proposal');
   const rejectProposal = getTool('reject_issue_proposal');
 
   const created = await createProposal({
@@ -142,6 +167,59 @@ try {
   if (callsAfterDuplicate.length !== 1) fail(`5: duplicate create should not call CLI again, got ${callsAfterDuplicate.length}`);
   passed++;
 
+  const discoveryOnlyPr = await createPr({ id, chat_id: 'chat_owner', thread_id: 'thread_owner' });
+  if (!discoveryOnlyPr.isError) fail(`6: discovery-only proposal should not create PR, got ${JSON.stringify(discoveryOnlyPr)}`);
+  passed++;
+
+  const lowRisk = await createProposal({
+    title: 'Docs mention stale version badge',
+    body: 'README version badge can drift from package metadata.',
+    evidence: ['README.md badge differs from package.json'],
+    priority: 'P3',
+    automation_level: 'low-risk-auto-pr-eligible',
+    target_repo: 'IS908/codex-lark-plugin',
+    target_chat_id: 'chat_owner',
+    chat_id: 'chat_owner',
+    thread_id: 'thread_owner',
+  });
+  const lowRiskId = lowRisk.content[0].text.match(/proposal-[a-zA-Z0-9-]+/)?.[0];
+  if (!lowRiskId) fail(`7: missing low-risk proposal id ${JSON.stringify(lowRisk)}`);
+  const lowRiskBeforeIssue = await createPr({ id: lowRiskId, chat_id: 'chat_owner', thread_id: 'thread_owner' });
+  if (!lowRiskBeforeIssue.isError) fail(`7: PR creation should require a linked issue, got ${JSON.stringify(lowRiskBeforeIssue)}`);
+  const lowRiskIssue = await createIssue({ id: lowRiskId, chat_id: 'chat_owner', thread_id: 'thread_owner' });
+  if (lowRiskIssue.isError) fail(`7: create low-risk issue failed ${JSON.stringify(lowRiskIssue)}`);
+  passed++;
+
+  const pr = await createPr({ id: lowRiskId, chat_id: 'chat_owner', thread_id: 'thread_owner' });
+  if (pr.isError) fail(`8: create_low_risk_pr_from_proposal failed ${JSON.stringify(pr)}`);
+  const prText = pr.content[0].text;
+  if (!prText.includes('https://github.com/IS908/codex-lark-plugin/pull/654')) {
+    fail(`8: create PR response missing PR URL: ${prText}`);
+  }
+  const lowRiskPersisted = await readIssueProposal(lowRiskId);
+  if (lowRiskPersisted?.meta.github_pr_number !== 654) {
+    fail(`8: expected PR number 654, got ${lowRiskPersisted?.meta.github_pr_number}`);
+  }
+  const prCalls = JSON.parse(readFileSync(cliPrCallsPath, 'utf-8')) as string[][];
+  if (prCalls.length !== 1) fail(`8: expected one PR CLI call, got ${prCalls.length}`);
+  if (!prCalls[0].some((arg) => arg === `--proposal-id=${lowRiskId}`)) fail(`8: proposal id arg missing ${JSON.stringify(prCalls[0])}`);
+  if (!prCalls[0].some((arg) => arg === '--issue=https://github.com/IS908/codex-lark-plugin/issues/321')) {
+    fail(`8: linked issue arg missing ${JSON.stringify(prCalls[0])}`);
+  }
+  if (!prCalls[0].some((arg) => arg.startsWith('--title=[auto-review] Docs mention stale version badge'))) {
+    fail(`8: auto-review title missing ${JSON.stringify(prCalls[0])}`);
+  }
+  if (!prCalls[0].some((arg) => arg.includes('must not be merged or released automatically'))) {
+    fail(`8: PR body missing safety boundary ${JSON.stringify(prCalls[0])}`);
+  }
+  passed++;
+
+  const duplicatePr = await createPr({ id: lowRiskId, chat_id: 'chat_owner', thread_id: 'thread_owner' });
+  if (duplicatePr.isError) fail(`9: idempotent PR create should succeed ${JSON.stringify(duplicatePr)}`);
+  const prCallsAfterDuplicate = JSON.parse(readFileSync(cliPrCallsPath, 'utf-8')) as string[][];
+  if (prCallsAfterDuplicate.length !== 1) fail(`9: duplicate PR create should not call CLI again, got ${prCallsAfterDuplicate.length}`);
+  passed++;
+
   const rejected = await createProposal({
     title: 'Duplicate noisy finding',
     body: 'This should be rejected.',
@@ -150,16 +228,16 @@ try {
     thread_id: 'thread_owner',
   });
   const rejectedId = rejected.content[0].text.match(/proposal-[a-zA-Z0-9-]+/)?.[0];
-  if (!rejectedId) fail(`6: missing rejected proposal id ${JSON.stringify(rejected)}`);
+  if (!rejectedId) fail(`10: missing rejected proposal id ${JSON.stringify(rejected)}`);
   const rejectedResult = await rejectProposal({
     id: rejectedId,
     reason: 'Duplicate of an existing issue.',
     chat_id: 'chat_owner',
     thread_id: 'thread_owner',
   });
-  if (rejectedResult.isError) fail(`6: reject_issue_proposal failed ${JSON.stringify(rejectedResult)}`);
+  if (rejectedResult.isError) fail(`10: reject_issue_proposal failed ${JSON.stringify(rejectedResult)}`);
   const rejectedPersisted = await readIssueProposal(rejectedId);
-  if (rejectedPersisted?.meta.status !== 'rejected') fail(`6: expected rejected, got ${rejectedPersisted?.meta.status}`);
+  if (rejectedPersisted?.meta.status !== 'rejected') fail(`10: expected rejected, got ${rejectedPersisted?.meta.status}`);
   passed++;
 } finally {
   if (originalProposalsDir === undefined) {
@@ -172,4 +250,4 @@ try {
   rmSync(dir, { recursive: true, force: true });
 }
 
-console.log(`issue-proposal-tools smoke: ${passed}/6 PASS`);
+console.log(`issue-proposal-tools smoke: ${passed}/10 PASS`);

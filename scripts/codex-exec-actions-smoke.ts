@@ -28,6 +28,7 @@ try {
   const memoriesDir = join(root, 'memories');
   const localCliConfigPath = join(root, 'local-cli-tools.json');
   const fakeIssueCreateScript = join(root, 'fake-gh-issue-create.js');
+  const fakePrCreateScript = join(root, 'fake-gh-pr-create.js');
   (appConfig as any).jobsDir = jobsDir;
   (appConfig as any).issueProposalsDir = issueProposalsDir;
   await mkdir(jobsDir, { recursive: true });
@@ -39,6 +40,19 @@ try {
       'if (!args.some((arg) => arg.startsWith("--title="))) process.exit(3);',
       'if (!args.some((arg) => arg.includes("Authorization Required"))) process.exit(4);',
       'console.log("https://github.com/IS908/codex-lark-plugin/issues/654");',
+    ].join('\n'),
+    'utf-8',
+  );
+  writeFileSync(
+    fakePrCreateScript,
+    [
+      'const args = process.argv.slice(2);',
+      'if (!args.some((arg) => arg.startsWith("--repo="))) process.exit(2);',
+      'if (!args.some((arg) => arg.startsWith("--proposal-id="))) process.exit(3);',
+      'if (!args.some((arg) => arg.startsWith("--issue=https://github.com/IS908/codex-lark-plugin/issues/654"))) process.exit(4);',
+      'if (!args.some((arg) => arg.startsWith("--title=[auto-review]"))) process.exit(5);',
+      'if (!args.some((arg) => arg.includes("must not be merged or released automatically"))) process.exit(6);',
+      'console.log("https://github.com/IS908/codex-lark-plugin/pull/777");',
     ].join('\n'),
     'utf-8',
   );
@@ -60,6 +74,16 @@ try {
           command: process.execPath,
           fixedArgs: [fakeIssueCreateScript],
           paramAllowlist: ['--repo', '--title', '--body'],
+          envAllowlist: [],
+          inheritEnv: false,
+          allowedCallers: 'public',
+          timeoutMs: 5000,
+          maxOutputBytes: 4096,
+        },
+        gh_low_risk_pr_create: {
+          command: process.execPath,
+          fixedArgs: [fakePrCreateScript],
+          paramAllowlist: ['--repo', '--proposal-id', '--issue', '--title', '--body'],
           envAllowlist: [],
           inheritEnv: false,
           allowedCallers: 'public',
@@ -193,6 +217,18 @@ try {
   assert.equal(unsupportedIssueParsed.kind, 'invalid_actions');
   assert.match(unsupportedIssueParsed.error, /create_github_issue|Invalid discriminator/i);
 
+  const createPrParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [{ type: 'create_low_risk_pr_from_proposal', id: 'proposal-abc123' }],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(createPrParsed.kind, 'actions');
+  if (createPrParsed.kind !== 'actions') throw new Error('createPrParsed should be actions');
+  assert.equal(createPrParsed.actions[0].type, 'create_low_risk_pr_from_proposal');
+
   const identitySession = new IdentitySession(() => 'ou_owner');
   identitySession.setCaller('oc_exec', 'thread_exec', 'ou_user');
   const dispatcher = createCodexExecActionDispatcher({
@@ -285,6 +321,81 @@ try {
   const createdProposal = await readIssueProposal(proposalId);
   assert.equal(createdProposal?.meta.status, 'created');
   assert.equal(createdProposal?.meta.github_issue_number, 654);
+
+  const lowRiskProposalResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_low_risk_proposal',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'create low-risk issue proposal',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [
+      {
+        type: 'create_issue_proposal',
+        title: 'Docs badge drift can be fixed automatically',
+        body: 'README badge drift is low-risk metadata work.',
+        evidence: ['README.md badge differs from package.json'],
+        priority: 'P3',
+        automation_level: 'low-risk-auto-pr-eligible',
+        target_repo: 'IS908/codex-lark-plugin',
+        target_chat_id: 'oc_exec',
+      },
+    ],
+  });
+  assert.equal(lowRiskProposalResults.length, 1);
+  assert.equal(lowRiskProposalResults[0].ok, true, JSON.stringify(lowRiskProposalResults));
+  const lowRiskProposalId = lowRiskProposalResults[0].message.match(/proposal-[a-zA-Z0-9-]+/)?.[0];
+  assert.ok(lowRiskProposalId, lowRiskProposalResults[0].message);
+  const lowRiskPrBeforeIssue = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_low_risk_pr_before_issue',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'open pr too early',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'create_low_risk_pr_from_proposal', id: lowRiskProposalId }],
+  });
+  assert.equal(lowRiskPrBeforeIssue[0].ok, false);
+  assert.match(lowRiskPrBeforeIssue[0].message, /created GitHub issue/i);
+  const lowRiskIssueResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_low_risk_issue',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'approve low-risk issue',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'create_issue_from_proposal', id: lowRiskProposalId }],
+  });
+  assert.equal(lowRiskIssueResults[0].ok, true, JSON.stringify(lowRiskIssueResults));
+  const lowRiskPrResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_low_risk_pr',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'open low-risk pr',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'create_low_risk_pr_from_proposal', id: lowRiskProposalId }],
+  });
+  assert.equal(lowRiskPrResults[0].ok, true, JSON.stringify(lowRiskPrResults));
+  assert.match(lowRiskPrResults[0].message, /https:\/\/github\.com\/IS908\/codex-lark-plugin\/pull\/777/);
+  const prCreatedProposal = await readIssueProposal(lowRiskProposalId);
+  assert.equal(prCreatedProposal?.meta.github_pr_number, 777);
 
   const jobManagementParsed = parseCodexExecActionOutput([
     '<LARK_ACTIONS_JSON>',
