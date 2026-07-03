@@ -116,6 +116,7 @@ await deliverMessageViaCodexExec({
 
 assert.equal(execRequests.length, 1);
 assert.match(execRequests[0].prompt, /Reply to this Feishu\/Lark message/);
+assert.match(execRequests[0].prompt, /"priority":"P0\|P1\|P2\|P3"/);
 assert.match(execRequests[0].prompt, /message_id: om_inbound_001/);
 assert.match(execRequests[0].prompt, /chat_id: oc_group_001/);
 assert.match(execRequests[0].prompt, /thread_id: omt_thread_001/);

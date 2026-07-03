@@ -182,7 +182,7 @@ try {
           body: 'A cronjob generated a report but did not deliver it to Feishu.',
           evidence: ['run_status=success', 'delivery_status=failed'],
           impact: 'Users cannot see scheduled reports.',
-          priority: 'P1',
+          priority: 'P0',
           automation_level: 'discovery-only',
           target_repo: 'IS908/codex-lark-plugin',
           target_chat_id: 'oc_exec',
@@ -301,6 +301,7 @@ try {
   assert.match(proposalResults[1].message, new RegExp(proposalId));
   const proposalFile = await readIssueProposal(proposalId);
   assert.equal(proposalFile?.meta.status, 'pending');
+  assert.equal(proposalFile?.meta.priority, 'P0');
 
   const createIssueResults = await dispatcher.execute({
     message: {
