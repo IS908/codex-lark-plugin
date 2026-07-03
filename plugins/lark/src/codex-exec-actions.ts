@@ -33,11 +33,15 @@ import { createDefaultReviewJobs } from './default-review-jobs.js';
 import {
   createIssueProposal,
   extractGithubIssueUrl,
+  extractGithubPullRequestUrl,
   formatIssueProposalForList,
   formatIssueProposalIssueBody,
+  formatIssueProposalPullRequestBody,
   listIssueProposals,
   markIssueProposalApproved,
   markIssueProposalCreated,
+  markIssueProposalPullRequestCreated,
+  markIssueProposalPullRequestError,
   readIssueProposal,
   rejectIssueProposal,
   type IssueProposalFile,
@@ -158,6 +162,12 @@ const CreateIssueFromProposalActionSchema = z.object({
   tool: z.string().min(1).optional(),
 });
 
+const CreateLowRiskPrFromProposalActionSchema = z.object({
+  type: z.literal('create_low_risk_pr_from_proposal'),
+  id: z.string().min(1),
+  tool: z.string().min(1).optional(),
+});
+
 const RecallMessageActionSchema = z.object({
   type: z.literal('recall_message'),
   message_id: z.string().min(1),
@@ -177,6 +187,7 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
   ListIssueProposalsActionSchema,
   RejectIssueProposalActionSchema,
   CreateIssueFromProposalActionSchema,
+  CreateLowRiskPrFromProposalActionSchema,
   RecallMessageActionSchema,
 ]).superRefine((action, ctx) => {
   if (
@@ -982,6 +993,21 @@ function issueProposalLocalCliArgs(proposal: IssueProposalFile): string[] {
   ];
 }
 
+function lowRiskPullRequestTitle(proposal: IssueProposalFile): string {
+  const title = proposal.meta.title.trim();
+  return title.startsWith('[auto-review]') ? title : `[auto-review] ${title}`;
+}
+
+function issueProposalPullRequestLocalCliArgs(proposal: IssueProposalFile): string[] {
+  return [
+    `--repo=${proposal.meta.target_repo}`,
+    `--proposal-id=${proposal.meta.id}`,
+    `--issue=${proposal.meta.github_issue_url ?? ''}`,
+    `--title=${lowRiskPullRequestTitle(proposal)}`,
+    `--body=${formatIssueProposalPullRequestBody(proposal)}`,
+  ];
+}
+
 async function executeCreateIssueProposal(
   action: z.infer<typeof CreateIssueProposalActionSchema>,
   message: LarkMessage,
@@ -1143,6 +1169,91 @@ async function executeCreateIssueFromProposal(
   };
 }
 
+async function executeCreateLowRiskPrFromProposal(
+  action: z.infer<typeof CreateLowRiskPrFromProposalActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'create_low_risk_pr_from_proposal');
+  const tool = action.tool ?? 'gh_low_risk_pr_create';
+  const auditArgs = { id: action.id, tool, chat_id: message.chatId, thread_id: message.threadId };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+  const proposal = await readIssueProposal(action.id);
+  if (!proposal) return { ok: false, action: 'create_low_risk_pr_from_proposal', message: `Issue proposal "${action.id}" not found.` };
+  if (!canMutateIssueProposal(proposal, caller)) {
+    void audit('create_low_risk_pr_from_proposal', caller, auditArgs, 'denied');
+    return { ok: false, action: 'create_low_risk_pr_from_proposal', message: `You are not authorized to create a PR from proposal "${action.id}".` };
+  }
+  if (proposal.meta.github_pr_url) {
+    return {
+      ok: true,
+      action: 'create_low_risk_pr_from_proposal',
+      message: `Low-risk PR already created for proposal ${proposal.meta.id}: ${proposal.meta.github_pr_url}`,
+    };
+  }
+  if (proposal.meta.status === 'rejected') {
+    return {
+      ok: false,
+      action: 'create_low_risk_pr_from_proposal',
+      message: `Issue proposal "${proposal.meta.id}" was rejected and cannot open a PR.`,
+    };
+  }
+  if (proposal.meta.automation_level !== 'low-risk-auto-pr-eligible') {
+    return {
+      ok: false,
+      action: 'create_low_risk_pr_from_proposal',
+      message: `Issue proposal "${proposal.meta.id}" is ${proposal.meta.automation_level}; only low-risk-auto-pr-eligible proposals can open automatic PRs.`,
+    };
+  }
+  if (proposal.meta.status !== 'created' || !proposal.meta.github_issue_url) {
+    return {
+      ok: false,
+      action: 'create_low_risk_pr_from_proposal',
+      message: `Issue proposal "${proposal.meta.id}" must have a created GitHub issue before opening a low-risk PR.`,
+    };
+  }
+
+  const result = await runConfiguredLocalCliTool({
+    identitySession: deps.identitySession,
+    tool,
+    args: issueProposalPullRequestLocalCliArgs(proposal),
+    chat_id: message.chatId,
+    thread_id: message.threadId,
+    configPath: deps.localCliToolsConfigPath,
+  });
+  if (!result.ok) {
+    await markIssueProposalPullRequestError(proposal.meta.id, { approvedBy: caller, lastError: result.message });
+    return {
+      ok: false,
+      action: 'create_low_risk_pr_from_proposal',
+      message: `Failed to create low-risk PR for proposal "${proposal.meta.id}": ${result.message}`,
+    };
+  }
+
+  const pullRequestUrl = extractGithubPullRequestUrl(result.message);
+  if (!pullRequestUrl) {
+    const lastError = 'Local CLI completed but did not return a GitHub pull request URL.';
+    await markIssueProposalPullRequestError(proposal.meta.id, { approvedBy: caller, lastError });
+    return {
+      ok: false,
+      action: 'create_low_risk_pr_from_proposal',
+      message: `${lastError} Proposal: "${proposal.meta.id}".`,
+    };
+  }
+
+  const updated = await markIssueProposalPullRequestCreated(proposal.meta.id, {
+    approvedBy: caller,
+    githubPullRequestUrl: pullRequestUrl,
+  });
+  void audit('create_low_risk_pr_from_proposal', caller, auditArgs, 'ok');
+  return {
+    ok: true,
+    action: 'create_low_risk_pr_from_proposal',
+    message: `Created low-risk PR for proposal "${proposal.meta.id}": ${updated?.meta.github_pr_url ?? pullRequestUrl}`,
+  };
+}
+
 function resolveRecallTransport(
   transport: CreateCodexExecActionDispatcherOptions['larkTransport'],
 ): Pick<LarkTransport, 'recallMessage'> | undefined {
@@ -1237,6 +1348,8 @@ export function createCodexExecActionDispatcher(
           results.push(await executeRejectIssueProposal(action, request.message, deps));
         } else if (action.type === 'create_issue_from_proposal') {
           results.push(await executeCreateIssueFromProposal(action, request.message, deps));
+        } else if (action.type === 'create_low_risk_pr_from_proposal') {
+          results.push(await executeCreateLowRiskPrFromProposal(action, request.message, deps));
         } else if (action.type === 'recall_message') {
           results.push(await executeRecallMessage(action, request.message, deps));
         } else {

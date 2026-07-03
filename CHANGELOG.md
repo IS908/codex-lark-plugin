@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-03
+
+### Added
+- Added a guarded low-risk PR proposal path for periodic review workflows: eligible issue proposals can call an allowlisted `gh_low_risk_pr_create` local CLI wrapper through `create_low_risk_pr_from_proposal`, record the PR URL, and still never merge or release automatically.
+
 ## [1.8.3] - 2026-07-03
 
 ### Fixed

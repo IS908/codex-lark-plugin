@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.8.3-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.9.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -56,7 +56,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 ### Privacy & Security (v0.9.0+)
 
-- **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `run_local_cli_tool`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
+- **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`, `create_issue_from_proposal`, `create_low_risk_pr_from_proposal`, `run_local_cli_tool`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
 - **Doc-comment binding**: doc-comment tools only run from `doc:<file_token>` turns, require the current `thread_id`, and reject prompt-injected `doc_token` mismatches so comments cannot be posted into a different document
 - **Memory transparency (v0.11.0+)**: `what_do_you_know` lists what the bot has stored about the caller (filtered by current-chat visibility); `forget_memory` removes a specific line by hash. Optional `promote_to_rule` feeds corrections into `privacy-rules.md` — a self-learning loop that makes future misclassifications less likely
 - **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/audit.log` records every sensitive-tool invocation (timestamp / tool / caller / outcome / redacted args) so the operator can retrospectively inspect what was accessed on their machine
@@ -346,8 +346,9 @@ that cannot safely call this MCP server from the child `codex exec` process:
 `save_memory`, `create_job`, `list_jobs`, `update_job`, `disable_job`,
 `delete_job`, `upsert_job`, `create_default_review_jobs`,
 `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`,
-`create_issue_from_proposal`, `run_local_cli_tool`, and `recall_message`. The
-child returns a validated `LARK_ACTIONS_JSON` marker block; the parent strips
+`create_issue_from_proposal`, `create_low_risk_pr_from_proposal`,
+`run_local_cli_tool`, and `recall_message`. The child returns a validated
+`LARK_ACTIONS_JSON` marker block; the parent strips
 the block from the visible reply, derives caller identity from the current
 Feishu event, executes the action locally, and rejects malformed blocks instead
 of recursively loading the Lark MCP server. `create_job` and `list_jobs` expose
@@ -358,11 +359,13 @@ Periodic review workflows should use issue proposals before writing to GitHub:
 `create_issue_proposal` stores a durable pending proposal under the local Lark
 channel home, the Feishu report asks the maintainer whether to file it, and
 `create_issue_from_proposal` may file it only after explicit human approval.
-The final GitHub write still goes through a trusted `run_local_cli_tool` entry
-such as `gh_issue_create`, wrapping `gh issue create` with an explicit
-allowlist, fixed arguments, timeouts, and output caps. Without such a local tool
-configuration, proposals stay local and Codex should not claim an issue was
-created.
+Low-risk proposals whose GitHub issue already exists may then use
+`create_low_risk_pr_from_proposal` to call a trusted `gh_low_risk_pr_create`
+wrapper. The final GitHub writes still go through trusted `run_local_cli_tool`
+entries such as `gh_issue_create` or `gh_low_risk_pr_create`, with explicit
+allowlists, fixed arguments, timeouts, and output caps. Without such local tool
+configuration, proposals stay local and Codex should not claim an issue or PR
+was created.
 
 `create_default_review_jobs` creates two built-in prompt cronjobs:
 `plugin-self-review` and `plugin-low-risk-auto-fix`. Both are created with
@@ -428,6 +431,14 @@ Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
       "allowedCallers": "owners"
+    },
+    "gh_low_risk_pr_create": {
+      "command": "/Users/you/bin/create-low-risk-pr",
+      "fixedArgs": [],
+      "paramAllowlist": ["--repo", "--proposal-id", "--issue", "--title", "--body"],
+      "timeoutMs": 120000,
+      "maxOutputBytes": 65536,
+      "allowedCallers": "owners"
     }
   }
 }
@@ -442,6 +453,10 @@ such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 `create_issue_from_proposal` defaults to the `gh_issue_create` tool and passes
 `--repo=<owner/name>`, `--title=<proposal title>`, and `--body=<proposal body>`.
 Include `--repo` in `paramAllowlist` when enabling that workflow.
+`create_low_risk_pr_from_proposal` defaults to `gh_low_risk_pr_create` and
+passes `--repo`, `--proposal-id`, `--issue`, `--title`, and `--body`. That local
+wrapper must enforce the low-risk file policy, run verification, create a PR
+whose title starts with `[auto-review]`, and must not merge or release.
 
 ### Optional -- Acknowledgement
 
@@ -661,6 +676,7 @@ The plugin registers the following MCP tools for Codex to use:
 | `list_issue_proposals` | List visible issue proposals. Private chats show caller-created proposals; group chats show proposals targeting the group. |
 | `reject_issue_proposal` | Reject a pending issue proposal. Only the proposal creator or configured owner can mutate it. |
 | `create_issue_from_proposal` | After explicit maintainer approval, file a proposal through an allowlisted local CLI tool (`gh_issue_create` by default) and mark it `created` with the issue URL. |
+| `create_low_risk_pr_from_proposal` | After a low-risk eligible proposal has a GitHub issue, open a PR through an allowlisted local CLI tool (`gh_low_risk_pr_create` by default). The plugin never merges or releases it automatically. |
 | `what_do_you_know` | List what the bot has stored in the caller's profile. Filtered by rendering visibility (both tiers in p2p, public only in groups). Each line carries an 8-char hash for use with `forget_memory`. (v0.11.0+) |
 | `forget_memory` | Remove a specific line from the caller's profile by hash. Caller-scoped and idempotent. Optional `promote_to_rule` promotes the removal into a durable `## Always private` rule in `privacy-rules.md`. (v0.11.0+) |
 | `run_local_cli_tool` | Run a configured allowlisted local CLI capability on the plugin host. Caller identity is server-derived from `chat_id` / `thread_id`; parameters and environment are filtered by `local-cli-tools.json`. (v1.1.0+) |

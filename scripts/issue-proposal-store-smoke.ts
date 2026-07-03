@@ -11,8 +11,10 @@ import { appConfig } from '../src/config.js';
 import {
   createIssueProposal,
   formatIssueProposalForList,
+  formatIssueProposalPullRequestBody,
   listIssueProposals,
   markIssueProposalCreated,
+  markIssueProposalPullRequestCreated,
   readIssueProposal,
   rejectIssueProposal,
 } from '../src/issue-proposal-store.js';
@@ -86,6 +88,30 @@ try {
   }
   passed++;
 
+  const prBody = formatIssueProposalPullRequestBody(marked);
+  if (!prBody.includes('issue-proposal-id: proposal-20260702100000-cron-report-did-not-reach-feishu')) {
+    fail(`6: PR body missing proposal marker: ${prBody}`);
+  }
+  if (!prBody.includes('https://github.com/IS908/codex-lark-plugin/issues/999')) {
+    fail(`6: PR body missing linked issue: ${prBody}`);
+  }
+  if (!prBody.includes('must not be merged or released automatically')) {
+    fail(`6: PR body missing automation boundary: ${prBody}`);
+  }
+  const prMarked = await markIssueProposalPullRequestCreated(created.meta.id, {
+    approvedBy: 'ou_owner',
+    githubPullRequestUrl: 'https://github.com/IS908/codex-lark-plugin/pull/1001',
+    now: new Date('2026-07-02T10:07:00.000Z'),
+  });
+  if (!prMarked) fail('6: mark PR created returned null');
+  if (prMarked.meta.github_pr_url !== 'https://github.com/IS908/codex-lark-plugin/pull/1001') {
+    fail(`6: PR url missing ${JSON.stringify(prMarked.meta)}`);
+  }
+  if (prMarked.meta.github_pr_number !== 1001) {
+    fail(`6: expected PR number 1001, got ${prMarked.meta.github_pr_number}`);
+  }
+  passed++;
+
   const duplicateTitle = await createIssueProposal({
     title: 'Cron report did not reach Feishu',
     body: 'Same title and timestamp should not overwrite the first proposal.',
@@ -98,11 +124,11 @@ try {
     now: new Date('2026-07-02T10:00:00.000Z'),
   });
   if (duplicateTitle.meta.id !== 'proposal-20260702100000-cron-report-did-not-reach-feishu-2') {
-    fail(`6: duplicate id should get suffix, got ${duplicateTitle.meta.id}`);
+    fail(`7: duplicate id should get suffix, got ${duplicateTitle.meta.id}`);
   }
   const originalAfterDuplicate = await readIssueProposal(created.meta.id);
   if (originalAfterDuplicate?.meta.github_issue_number !== 999) {
-    fail('6: duplicate proposal overwrote the original');
+    fail('7: duplicate proposal overwrote the original');
   }
   passed++;
 
@@ -122,14 +148,15 @@ try {
     reason: 'Duplicate of #999.',
     now: new Date('2026-07-02T11:05:00.000Z'),
   });
-  if (!rejectedResult || rejectedResult.meta.status !== 'rejected') fail('7: reject did not persist status');
-  if (rejectedResult.meta.rejection_reason !== 'Duplicate of #999.') fail('7: reject did not persist reason');
+  if (!rejectedResult || rejectedResult.meta.status !== 'rejected') fail('8: reject did not persist status');
+  if (rejectedResult.meta.rejection_reason !== 'Duplicate of #999.') fail('8: reject did not persist reason');
   passed++;
 
-  const summary = formatIssueProposalForList(marked);
-  if (!summary.includes('proposal-20260702100000-cron-report-did-not-reach-feishu')) fail(`8: summary missing id: ${summary}`);
-  if (!summary.includes('created')) fail(`8: summary missing status: ${summary}`);
-  if (!summary.includes('https://github.com/IS908/codex-lark-plugin/issues/999')) fail(`8: summary missing issue URL: ${summary}`);
+  const summary = formatIssueProposalForList(prMarked);
+  if (!summary.includes('proposal-20260702100000-cron-report-did-not-reach-feishu')) fail(`9: summary missing id: ${summary}`);
+  if (!summary.includes('created')) fail(`9: summary missing status: ${summary}`);
+  if (!summary.includes('https://github.com/IS908/codex-lark-plugin/issues/999')) fail(`9: summary missing issue URL: ${summary}`);
+  if (!summary.includes('https://github.com/IS908/codex-lark-plugin/pull/1001')) fail(`9: summary missing PR URL: ${summary}`);
   passed++;
 } finally {
   if (originalDir === undefined) {
@@ -140,4 +167,4 @@ try {
   rmSync(dir, { recursive: true, force: true });
 }
 
-console.log(`issue-proposal-store smoke: ${passed}/8 PASS`);
+console.log(`issue-proposal-store smoke: ${passed}/9 PASS`);

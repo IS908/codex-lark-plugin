@@ -22,7 +22,7 @@ npm start -- --dry-run # Validate config and module loading without connecting
 src/index.ts        – Entry point: wires MCP server, LarkChannel, memory, and buffer together
 src/config.ts       – Loads config from ~/.codex/channels/lark/.env (dotenv)
 src/channel.ts      – LarkChannel: Feishu WebSocket client, message parsing, memory enrichment pipeline
-src/tools.ts        – Registers core MCP tools: reply_doc_comment, create_doc_comment, reply, edit_message, react, download_attachment, defer_reply, save_memory, save_skill, create_job, list_jobs, update_job, delete_job, what_do_you_know, forget_memory
+src/tools.ts        – Registers core MCP tools: reply_doc_comment, create_doc_comment, reply, edit_message, react, download_attachment, defer_reply, save_memory, save_skill, create_job, create_default_review_jobs, list_jobs, update_job, delete_job, create_issue_proposal, list_issue_proposals, reject_issue_proposal, create_issue_from_proposal, create_low_risk_pr_from_proposal, what_do_you_know, forget_memory
 src/local-cli-tools.ts – Registers optional `run_local_cli_tool` from the local allowlist config
 src/audit-log.ts    – Append-only audit log for sensitive tool invocations
 src/feishu-card.ts  – Card builder: markdown optimization, Schema 2.0 card assembly
