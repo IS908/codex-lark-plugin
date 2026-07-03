@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-07-04
+
+### Fixed
+- Removed startup-time `npm install` lifecycle hooks from the root and plugin package manifests, so MCP startup no longer performs dependency installation work on every launch.
+
 ## [1.9.1] - 2026-07-04
 
 ### Fixed
