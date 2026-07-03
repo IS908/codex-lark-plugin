@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-07-03
+
+### Changed
+- Moved the disabled default `plugin-self-review` cronjob preset one hour earlier to `weekly on fri at 17:00`; the low-risk auto-fix preset remains `weekly on fri at 18:00`.
+
 ## [1.8.1] - 2026-07-03
 
 ### Fixed
