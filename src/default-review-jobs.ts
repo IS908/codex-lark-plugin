@@ -88,7 +88,7 @@ export async function createDefaultReviewJobs(input: CreateDefaultReviewJobsInpu
     {
       id: DEFAULT_SELF_REVIEW_JOB_ID,
       name: 'Plugin Self Review',
-      schedule: 'weekly on fri at 18:00',
+      schedule: 'weekly on fri at 17:00',
       prompt: selfReviewPrompt(input.targetRepo),
     },
     {

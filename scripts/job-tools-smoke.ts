@@ -220,14 +220,14 @@ try {
     const lowRiskFix = readJob('plugin-low-risk-auto-fix');
     if (selfReview.meta.status !== 'paused') fail(`7: self-review should be paused, got ${selfReview.meta.status}`);
     if (lowRiskFix.meta.status !== 'paused') fail(`7: low-risk fix should be paused, got ${lowRiskFix.meta.status}`);
-    if (selfReview.meta.schedule_human !== 'weekly on fri at 18:00') {
-      fail(`7: self-review should default to weekly on fri at 18:00, got ${selfReview.meta.schedule_human}`);
+    if (selfReview.meta.schedule_human !== 'weekly on fri at 17:00') {
+      fail(`7: self-review should default to weekly on fri at 17:00, got ${selfReview.meta.schedule_human}`);
     }
     if (lowRiskFix.meta.schedule_human !== 'weekly on fri at 18:00') {
       fail(`7: low-risk fix should default to weekly on fri at 18:00, got ${lowRiskFix.meta.schedule_human}`);
     }
-    if (selfReview.meta.schedule !== '0 18 * * 5') {
-      fail(`7: self-review cron should be 0 18 * * 5, got ${selfReview.meta.schedule}`);
+    if (selfReview.meta.schedule !== '0 17 * * 5') {
+      fail(`7: self-review cron should be 0 17 * * 5, got ${selfReview.meta.schedule}`);
     }
     if (lowRiskFix.meta.schedule !== '0 18 * * 5') {
       fail(`7: low-risk fix cron should be 0 18 * * 5, got ${lowRiskFix.meta.schedule}`);
