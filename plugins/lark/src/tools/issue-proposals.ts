@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { appConfig } from '../config.js';
 import { audit } from '../audit-log.js';
 import { runConfiguredLocalCliTool } from '../local-cli-tools.js';
+import { createGithubIssueFromProposal } from '../github-issue-creator.js';
 import {
   createIssueProposal,
   extractGithubIssueUrl,
@@ -64,8 +65,10 @@ async function createIssueViaLocalCli(
   caller: string,
   chatId: string,
   threadId: string | undefined,
-  tool: string,
+  tool: string | undefined,
 ): Promise<ToolResult> {
+  const auditArgs = { id: proposal.meta.id, tool: tool ?? 'builtin-gh-http', chat_id: chatId, thread_id: threadId };
+
   if (proposal.meta.status === 'created' && proposal.meta.github_issue_url) {
     return textResult(`Issue already created for proposal ${proposal.meta.id}: ${proposal.meta.github_issue_url}`);
   }
@@ -76,33 +79,35 @@ async function createIssueViaLocalCli(
   const approved = await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller });
   if (!approved) return textResult(`Issue proposal "${proposal.meta.id}" not found.`, true);
 
-  const result = await runConfiguredLocalCliTool({
-    identitySession: ctx.identitySession,
-    tool,
-    args: localCliArgsForProposal(approved),
-    chat_id: chatId,
-    thread_id: threadId,
-  });
+  const result = tool
+    ? await runConfiguredLocalCliTool({
+      identitySession: ctx.identitySession,
+      tool,
+      args: localCliArgsForProposal(approved),
+      chat_id: chatId,
+      thread_id: threadId,
+    })
+    : await createGithubIssueFromProposal(approved);
 
   if (!result.ok) {
     await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller, lastError: result.message });
     return textResult(`Failed to create GitHub issue for proposal "${proposal.meta.id}": ${result.message}`, true);
   }
 
-  const issueUrl = extractGithubIssueUrl(result.message);
+  const issueUrl = (result as { issueUrl?: string }).issueUrl ?? extractGithubIssueUrl(result.message);
   if (!issueUrl) {
     await markIssueProposalApproved(proposal.meta.id, {
       approvedBy: caller,
-      lastError: 'Local CLI completed but did not return a GitHub issue URL.',
+      lastError: 'Issue creation completed but did not return a GitHub issue URL.',
     });
-    return textResult(`Local CLI completed but did not return a GitHub issue URL for proposal "${proposal.meta.id}".`, true);
+    return textResult(`Issue creation completed but did not return a GitHub issue URL for proposal "${proposal.meta.id}".`, true);
   }
 
   const created = await markIssueProposalCreated(proposal.meta.id, {
     approvedBy: caller,
     githubIssueUrl: issueUrl,
   });
-  void audit('create_issue_from_proposal', caller, { id: proposal.meta.id, tool, chat_id: chatId, thread_id: threadId }, 'ok');
+  void audit('create_issue_from_proposal', caller, auditArgs, 'ok');
   return textResult(`Created GitHub issue for proposal "${proposal.meta.id}": ${created?.meta.github_issue_url ?? issueUrl}`);
 }
 
@@ -272,15 +277,15 @@ export function registerIssueProposalTools(ctx: ToolContext): void {
     'create_issue_from_proposal',
     {
       description:
-        'Create a GitHub issue from a previously stored proposal after explicit maintainer authorization. Uses the allowlisted local CLI tool gh_issue_create by default.',
+        'Create a GitHub issue from a previously stored proposal after explicit maintainer authorization. Defaults to built-in gh issue create with HTTP API fallback; tool is an advanced local CLI override.',
       inputSchema: z.object({
         id: z.string().describe('Issue proposal id'),
-        tool: z.string().optional().default('gh_issue_create').describe('Configured local CLI tool name'),
+        tool: z.string().optional().describe('Advanced configured local CLI tool override'),
         chat_id: z.string().describe('Current channel chat_id for server-side caller resolution'),
         thread_id: z.string().optional().describe('Current channel thread_id when present'),
       }),
     },
-    async ({ id, tool = 'gh_issue_create', chat_id, thread_id }) => {
+    async ({ id, tool, chat_id, thread_id }) => {
       const auditArgs = { id, tool, chat_id, thread_id };
       const auth = resolveCaller('create_issue_from_proposal', chat_id, thread_id, auditArgs);
       if ('error' in auth) return auth.error;

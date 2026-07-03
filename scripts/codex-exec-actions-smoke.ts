@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,16 +22,35 @@ const {
 const root = mkdtempSync(join(tmpdir(), 'codex-exec-actions-'));
 const oldJobsDir = (appConfig as any).jobsDir;
 const oldIssueProposalsDir = (appConfig as any).issueProposalsDir;
+const oldGithubIssueGhCommand = (appConfig as any).githubIssueGhCommand;
+const oldGithubIssueTimeoutMs = (appConfig as any).githubIssueTimeoutMs;
 try {
   const jobsDir = join(root, 'jobs');
   const issueProposalsDir = join(root, 'issue-proposals');
   const memoriesDir = join(root, 'memories');
   const localCliConfigPath = join(root, 'local-cli-tools.json');
+  const fakeGhScript = join(root, 'fake-gh.js');
   const fakeIssueCreateScript = join(root, 'fake-gh-issue-create.js');
   const fakePrCreateScript = join(root, 'fake-gh-pr-create.js');
   (appConfig as any).jobsDir = jobsDir;
   (appConfig as any).issueProposalsDir = issueProposalsDir;
+  (appConfig as any).githubIssueGhCommand = fakeGhScript;
+  (appConfig as any).githubIssueTimeoutMs = 5000;
   await mkdir(jobsDir, { recursive: true });
+  writeFileSync(
+    fakeGhScript,
+    [
+      '#!/usr/bin/env node',
+      'const args = process.argv.slice(2);',
+      'if (args[0] !== "issue" || args[1] !== "create") process.exit(2);',
+      'if (!args.includes("--repo")) process.exit(3);',
+      'if (!args.includes("--title")) process.exit(4);',
+      'if (!args.includes("--body")) process.exit(5);',
+      'console.log("https://github.com/IS908/codex-lark-plugin/issues/654");',
+    ].join('\n'),
+    'utf-8',
+  );
+  chmodSync(fakeGhScript, 0o755);
   writeFileSync(
     fakeIssueCreateScript,
     [
@@ -565,6 +584,8 @@ try {
 } finally {
   (appConfig as any).jobsDir = oldJobsDir;
   (appConfig as any).issueProposalsDir = oldIssueProposalsDir;
+  (appConfig as any).githubIssueGhCommand = oldGithubIssueGhCommand;
+  (appConfig as any).githubIssueTimeoutMs = oldGithubIssueTimeoutMs;
   rmSync(root, { recursive: true, force: true });
 }
 

@@ -1,7 +1,7 @@
 /**
  * Issue proposal MCP tool smoke tests.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerTools } from '../src/tools.js';
@@ -25,17 +25,42 @@ let passed = 0;
 const dir = mkdtempSync(join(tmpdir(), 'issue-proposal-tools-smoke-'));
 const proposalsDir = join(dir, 'proposals');
 const cliConfigPath = join(dir, 'local-cli-tools.json');
+const ghScriptPath = join(dir, 'fake-gh.js');
 const cliScriptPath = join(dir, 'fake-gh-issue-create.js');
 const cliPrScriptPath = join(dir, 'fake-gh-pr-create.js');
+const ghCallsPath = join(dir, 'gh-calls.json');
 const cliCallsPath = join(dir, 'calls.json');
 const cliPrCallsPath = join(dir, 'pr-calls.json');
 const originalProposalsDir = (appConfig as { issueProposalsDir?: string }).issueProposalsDir;
 const originalCliConfigPath = appConfig.localCliToolsConfigPath;
 const originalOwner = appConfig.ownerOpenId;
+const originalGithubIssueGhCommand = (appConfig as any).githubIssueGhCommand;
+const originalGithubIssueTimeoutMs = (appConfig as any).githubIssueTimeoutMs;
 
 (appConfig as { issueProposalsDir: string }).issueProposalsDir = proposalsDir;
 (appConfig as { localCliToolsConfigPath: string }).localCliToolsConfigPath = cliConfigPath;
 (appConfig as { ownerOpenId: string }).ownerOpenId = 'ou_owner';
+(appConfig as any).githubIssueGhCommand = ghScriptPath;
+(appConfig as any).githubIssueTimeoutMs = 5000;
+
+writeFileSync(
+  ghScriptPath,
+  [
+    '#!/usr/bin/env node',
+    'const fs = require("node:fs");',
+    `const callsPath = ${JSON.stringify(ghCallsPath)};`,
+    'const calls = fs.existsSync(callsPath) ? JSON.parse(fs.readFileSync(callsPath, "utf8")) : [];',
+    'calls.push(process.argv.slice(2));',
+    'fs.writeFileSync(callsPath, JSON.stringify(calls, null, 2));',
+    'const args = process.argv.slice(2);',
+    'if (args[0] !== "issue" || args[1] !== "create") process.exit(2);',
+    'if (!args.includes("--repo") || !args.includes("IS908/codex-lark-plugin")) process.exit(3);',
+    'if (!args.includes("--title")) process.exit(4);',
+    'if (!args.includes("--body")) process.exit(5);',
+    'console.log("https://github.com/IS908/codex-lark-plugin/issues/432");',
+  ].join('\n'),
+);
+chmodSync(ghScriptPath, 0o755);
 
 writeFileSync(
   cliScriptPath,
@@ -148,23 +173,26 @@ try {
   const issue = await createIssue({ id, chat_id: 'chat_owner', thread_id: 'thread_owner' });
   if (issue.isError) fail(`4: create_issue_from_proposal failed ${JSON.stringify(issue)}`);
   const issueText = issue.content[0].text;
-  if (!issueText.includes('https://github.com/IS908/codex-lark-plugin/issues/321')) {
+  if (!issueText.includes('https://github.com/IS908/codex-lark-plugin/issues/432')) {
     fail(`4: create response missing issue URL: ${issueText}`);
   }
   const persisted = await readIssueProposal(id);
   if (persisted?.meta.status !== 'created') fail(`4: expected created, got ${persisted?.meta.status}`);
-  if (persisted?.meta.github_issue_number !== 321) fail(`4: expected issue number 321, got ${persisted?.meta.github_issue_number}`);
-  const calls = JSON.parse(readFileSync(cliCallsPath, 'utf-8')) as string[][];
-  if (calls.length !== 1) fail(`4: expected one CLI call, got ${calls.length}`);
-  if (!calls[0].some((arg) => arg === '--repo=IS908/codex-lark-plugin')) fail(`4: repo arg missing ${JSON.stringify(calls[0])}`);
-  if (!calls[0].some((arg) => arg.startsWith('--title=Scheduled review'))) fail(`4: title arg missing ${JSON.stringify(calls[0])}`);
-  if (!calls[0].some((arg) => arg.includes('Authorization Required'))) fail(`4: body arg missing authorization section ${JSON.stringify(calls[0])}`);
+  if (persisted?.meta.github_issue_number !== 432) fail(`4: expected issue number 432, got ${persisted?.meta.github_issue_number}`);
+  const ghCalls = JSON.parse(readFileSync(ghCallsPath, 'utf-8')) as string[][];
+  if (ghCalls.length !== 1) fail(`4: expected one gh call, got ${ghCalls.length}`);
+  if (ghCalls[0][0] !== 'issue' || ghCalls[0][1] !== 'create') fail(`4: gh subcommand missing ${JSON.stringify(ghCalls[0])}`);
+  if (!ghCalls[0].includes('--repo') || !ghCalls[0].includes('IS908/codex-lark-plugin')) fail(`4: repo arg missing ${JSON.stringify(ghCalls[0])}`);
+  if (!ghCalls[0].includes('--title')) fail(`4: title flag missing ${JSON.stringify(ghCalls[0])}`);
+  if (!ghCalls[0].some((arg) => arg.startsWith('Scheduled review'))) fail(`4: title value missing ${JSON.stringify(ghCalls[0])}`);
+  if (!ghCalls[0].includes('--body')) fail(`4: body flag missing ${JSON.stringify(ghCalls[0])}`);
+  if (!ghCalls[0].some((arg) => arg.includes('Authorization Required'))) fail(`4: body value missing authorization section ${JSON.stringify(ghCalls[0])}`);
   passed++;
 
   const duplicate = await createIssue({ id, chat_id: 'chat_owner', thread_id: 'thread_owner' });
   if (duplicate.isError) fail(`5: idempotent create should succeed ${JSON.stringify(duplicate)}`);
-  const callsAfterDuplicate = JSON.parse(readFileSync(cliCallsPath, 'utf-8')) as string[][];
-  if (callsAfterDuplicate.length !== 1) fail(`5: duplicate create should not call CLI again, got ${callsAfterDuplicate.length}`);
+  const ghCallsAfterDuplicate = JSON.parse(readFileSync(ghCallsPath, 'utf-8')) as string[][];
+  if (ghCallsAfterDuplicate.length !== 1) fail(`5: duplicate create should not call gh again, got ${ghCallsAfterDuplicate.length}`);
   passed++;
 
   const discoveryOnlyPr = await createPr({ id, chat_id: 'chat_owner', thread_id: 'thread_owner' });
@@ -203,7 +231,7 @@ try {
   const prCalls = JSON.parse(readFileSync(cliPrCallsPath, 'utf-8')) as string[][];
   if (prCalls.length !== 1) fail(`8: expected one PR CLI call, got ${prCalls.length}`);
   if (!prCalls[0].some((arg) => arg === `--proposal-id=${lowRiskId}`)) fail(`8: proposal id arg missing ${JSON.stringify(prCalls[0])}`);
-  if (!prCalls[0].some((arg) => arg === '--issue=https://github.com/IS908/codex-lark-plugin/issues/321')) {
+  if (!prCalls[0].some((arg) => arg === '--issue=https://github.com/IS908/codex-lark-plugin/issues/432')) {
     fail(`8: linked issue arg missing ${JSON.stringify(prCalls[0])}`);
   }
   if (!prCalls[0].some((arg) => arg.startsWith('--title=[auto-review] Docs mention stale version badge'))) {
@@ -247,6 +275,8 @@ try {
   }
   (appConfig as { localCliToolsConfigPath: string }).localCliToolsConfigPath = originalCliConfigPath;
   (appConfig as { ownerOpenId: string | null }).ownerOpenId = originalOwner;
+  (appConfig as any).githubIssueGhCommand = originalGithubIssueGhCommand;
+  (appConfig as any).githubIssueTimeoutMs = originalGithubIssueTimeoutMs;
   rmSync(dir, { recursive: true, force: true });
 }
 

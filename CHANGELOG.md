@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.9.4] - 2026-07-04
+
+### Fixed
+- Changed approved issue-proposal filing to use built-in `gh issue create` first, with GitHub HTTP API fallback when a token is configured, while retaining explicit local CLI tool overrides for advanced setups.
+
 ## [1.9.3] - 2026-07-04
 
 ### Fixed

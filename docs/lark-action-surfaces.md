@@ -41,8 +41,10 @@ parent-process bridge for actions that must run safely even when the child
   and audit logging owned by the local tool config.
 - Issue proposal actions are the narrow exception for periodic review UX: they
   persist local proposal state and require explicit human approval before the
-  final GitHub write. Issue creation goes through an allowlisted local CLI tool
-  such as `gh_issue_create`; low-risk PR creation is only allowed after the
+  final GitHub write. Issue creation uses the built-in `gh issue create` path
+  first, falls back to the GitHub HTTP API when a token is configured, and only
+  uses an allowlisted local CLI tool such as `gh_issue_create` when explicitly
+  requested as an override. Low-risk PR creation is only allowed after the
   proposal is marked `low-risk-auto-pr-eligible` and its GitHub issue exists,
   then goes through a separate allowlisted wrapper such as
   `gh_low_risk_pr_create`. Neither path may merge or release automatically.

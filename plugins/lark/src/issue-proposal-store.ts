@@ -400,7 +400,7 @@ export function formatIssueProposalPullRequestBody(proposal: IssueProposalFile):
 }
 
 export function extractGithubIssueUrl(text: string): string | null {
-  return text.match(/https:\/\/github\.com\/[^\s"'<>]+\/issues\/\d+/)?.[0] ?? null;
+  return text.match(/https:\/\/[^\s"'<>]+\/[^\s"'<>]+\/[^\s"'<>]+\/issues\/\d+/)?.[0] ?? null;
 }
 
 export function extractGithubPullRequestUrl(text: string): string | null {
