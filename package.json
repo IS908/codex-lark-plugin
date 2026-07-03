@@ -1,6 +1,6 @@
 {
   "name": "codex-lark-plugin",
-  "version": "1.9.4",
+  "version": "1.9.5",
   "description": "Codex channel plugin for Feishu/Lark — chat with Codex through Feishu with local-file memory and scheduled jobs",
   "keywords": [
     "codex",
