@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.9.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.9.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -124,7 +124,7 @@ npm install
 npm start -- --dry-run
 ```
 
-dry-run 仍需要在 `~/.codex/channels/lark/.env` 或 shell 环境中配置 `LARK_APP_ID` 和 `LARK_APP_SECRET`。
+dry-run 可在没有真实 Lark 凭证时验证本地模块 wiring；真实启动仍需要在 `~/.codex/channels/lark/.env` 或 shell 环境中配置 `LARK_APP_ID` 和 `LARK_APP_SECRET`。
 
 可选：安装 [lark-cli](https://github.com/larksuite/cli) 以获取完整飞书 API 能力（日历、文档、表格、任务、通讯录等）：
 

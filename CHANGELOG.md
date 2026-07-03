@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-07-04
+
+### Fixed
+- Allowed `npm start -- --dry-run` to validate local startup wiring without real Lark app credentials, while keeping live startup strict about missing `LARK_APP_ID` / `LARK_APP_SECRET`.
+
 ## [1.9.0] - 2026-07-03
 
 ### Added
