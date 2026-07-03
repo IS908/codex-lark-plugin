@@ -149,6 +149,10 @@ echo "=== Issue proposal store unit checks ==="
 node --import tsx scripts/issue-proposal-store-smoke.ts
 
 echo ""
+echo "=== GitHub issue creator unit checks ==="
+node --import tsx scripts/github-issue-creator-smoke.ts
+
+echo ""
 echo "=== Job tool unit checks ==="
 node --import tsx scripts/job-tools-smoke.ts
 

@@ -23,6 +23,7 @@ import {
 } from './job-store.js';
 import { findLarkDeferSentinel } from './turn-obligation.js';
 import { runConfiguredLocalCliTool } from './local-cli-tools.js';
+import { createGithubIssueFromProposal } from './github-issue-creator.js';
 import type { ProfileDistillationDispatcher } from './profile-distillation.js';
 import { logSafeError } from './safe-log.js';
 import type { BotMessageTracker } from './channel.js';
@@ -1103,8 +1104,8 @@ async function executeCreateIssueFromProposal(
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
   const auth = currentCaller(deps.identitySession, message, 'create_issue_from_proposal');
-  const tool = action.tool ?? 'gh_issue_create';
-  const auditArgs = { id: action.id, tool, chat_id: message.chatId, thread_id: message.threadId };
+  const tool = action.tool;
+  const auditArgs = { id: action.id, tool: tool ?? 'builtin-gh-http', chat_id: message.chatId, thread_id: message.threadId };
   if ('error' in auth) return auth.error;
   const { caller } = auth;
   const proposal = await readIssueProposal(action.id);
@@ -1131,14 +1132,16 @@ async function executeCreateIssueFromProposal(
   const approved = await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller });
   if (!approved) return { ok: false, action: 'create_issue_from_proposal', message: `Issue proposal "${proposal.meta.id}" not found.` };
 
-  const result = await runConfiguredLocalCliTool({
-    identitySession: deps.identitySession,
-    tool,
-    args: issueProposalLocalCliArgs(approved),
-    chat_id: message.chatId,
-    thread_id: message.threadId,
-    configPath: deps.localCliToolsConfigPath,
-  });
+  const result = tool
+    ? await runConfiguredLocalCliTool({
+      identitySession: deps.identitySession,
+      tool,
+      args: issueProposalLocalCliArgs(approved),
+      chat_id: message.chatId,
+      thread_id: message.threadId,
+      configPath: deps.localCliToolsConfigPath,
+    })
+    : await createGithubIssueFromProposal(approved);
   if (!result.ok) {
     await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller, lastError: result.message });
     return {
@@ -1148,16 +1151,16 @@ async function executeCreateIssueFromProposal(
     };
   }
 
-  const issueUrl = extractGithubIssueUrl(result.message);
+  const issueUrl = (result as { issueUrl?: string }).issueUrl ?? extractGithubIssueUrl(result.message);
   if (!issueUrl) {
     await markIssueProposalApproved(proposal.meta.id, {
       approvedBy: caller,
-      lastError: 'Local CLI completed but did not return a GitHub issue URL.',
+      lastError: 'Issue creation completed but did not return a GitHub issue URL.',
     });
     return {
       ok: false,
       action: 'create_issue_from_proposal',
-      message: `Local CLI completed but did not return a GitHub issue URL for proposal "${proposal.meta.id}".`,
+      message: `Issue creation completed but did not return a GitHub issue URL for proposal "${proposal.meta.id}".`,
     };
   }
   const created = await markIssueProposalCreated(proposal.meta.id, { approvedBy: caller, githubIssueUrl: issueUrl });
