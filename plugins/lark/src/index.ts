@@ -3,7 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import path from 'node:path';
 import os from 'node:os';
 import { appConfig } from './config.js';
-import { LarkChannel } from './channel.js';
+import { LarkChannel, type LarkMessage } from './channel.js';
 import { registerTools } from './tools.js';
 import { ConversationBuffer } from './memory/buffer.js';
 import { buildFlushPrompt } from './memory/distiller.js';
@@ -168,7 +168,7 @@ async function main() {
     // Chat episodes are stored by (chatId, threadId?), NOT by caller, so a
     // sentinel caller doesn't change WHERE the data goes — only WHAT the
     // audit log records. Mirrors scheduler.executePromptJob's pattern of
-    // binding job.meta.created_by before the cronjob notification.
+    // binding job.meta.created_by before cronjob execution.
     identitySession.setCaller(chatId, undefined, SYSTEM_FLUSH_CALLER);
 
     // Forward flush prompt through the normal message handler
@@ -410,6 +410,59 @@ async function main() {
     transport: channel.getLarkTransport(),
     identitySession,
     botMessageTracker: channel.getBotMessageTracker(),
+    ...(appConfig.codexDeliveryMode === 'exec'
+      ? {
+          promptRunner: async ({ job, jobThreadId, promptContent }) => {
+            let deliveredReport = '';
+            const message: LarkMessage = {
+              messageId: jobThreadId,
+              chatId: job.meta.target_chat_id,
+              chatType: 'cronjob',
+              senderId: job.meta.created_by,
+              senderName: `CronJob ${job.meta.name}`,
+              text: promptContent,
+              messageType: 'cronjob',
+              rawContent: promptContent,
+              threadId: jobThreadId,
+            };
+            await deliverMessageViaCodexExec({
+              message,
+              displayLabel: `CronJob · ${job.meta.name}`,
+              sendReply: async (request) => {
+                const result = await sendFeishuReply(
+                  {
+                    client: channel.getClient(),
+                    transport: channel.getLarkTransport(),
+                    conversationBuffer: buffer,
+                    botMessageTracker: channel.getBotMessageTracker(),
+                    latestMessageTracker: channel.getLatestMessageTracker(),
+                    turnObligations,
+                  },
+                  { ...request, reply_to: undefined },
+                );
+                if (result.isError) throw new Error(result.errorText ?? result.statusText);
+                if (result.sentCount > 0) deliveredReport = request.text;
+                return result;
+              },
+              recordAssistantMessage: ({ chatId, threadId, text }) => {
+                buffer.record(chatId, {
+                  role: 'assistant',
+                  senderId: 'bot',
+                  text: text.slice(0, 500),
+                  timestamp: new Date().toISOString(),
+                  timestampMs: Date.now(),
+                  ...(threadId ? { threadId } : {}),
+                  messageType: 'text',
+                });
+              },
+              sessionHealth: sessionHealthMonitor ?? undefined,
+              actionDispatcher: codexExecActionDispatcher,
+              progressLimits: { enabled: false },
+            });
+            return { report: deliveredReport };
+          },
+        }
+      : {}),
   });
   await scheduler.start();
 

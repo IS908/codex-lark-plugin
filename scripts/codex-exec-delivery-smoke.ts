@@ -136,6 +136,36 @@ assert.deepEqual(replyRequests, [
   },
 ]);
 
+const cronReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    messageId: 'job-daily-report-abc123def456-1760000000000',
+    chatId: 'oc_cron_target',
+    chatType: 'cronjob',
+    senderId: 'ou_owner',
+    senderName: 'CronJob Daily Report',
+    text: 'Run the daily report.',
+    messageType: 'cronjob',
+    rawContent: 'Run the daily report.',
+    threadId: 'job-daily-report-abc123def456-1760000000000',
+  },
+  displayLabel: 'CronJob · Daily Report',
+  useCodexSessions: false,
+  runCodexExec: async () => 'cron report',
+  sendReply: async (request) => {
+    cronReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+
+assert.deepEqual(cronReplies, [
+  {
+    chat_id: 'oc_cron_target',
+    text: 'cron report',
+    thread_id: 'job-daily-report-abc123def456-1760000000000',
+  },
+]);
+
 const reactionExecRequests: any[] = [];
 const reactionReplies: ReplyRequest[] = [];
 const reactionTracker = new TurnObligationTracker({ timeoutMs: 60_000 });

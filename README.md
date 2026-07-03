@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.8.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.8.3-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -72,7 +72,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 ### Scheduled Jobs (CronJob)
 
-- **Two job types**: `message` (send fixed content, deterministic) and `prompt` (Codex executes and replies, best-effort)
+- **Two job types**: `message` sends fixed content deterministically; `prompt` runs through the same `codex exec` delivery path as chat messages in `exec` mode, with the legacy `notifications/Codex/channel` path kept only for `notification` mode
 - Standard cron expressions + simplified aliases (`every 30m`, `daily at 09:00`, `weekdays at 17:00`)
 - Create and manage jobs through Feishu chat or the `$lark:jobs` skill
 - Crash recovery: missed jobs are executed once on restart

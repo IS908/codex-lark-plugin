@@ -11,7 +11,7 @@ import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { untrustedDataBlock } from './prompts.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
-import { shouldSendFeishuReplyForMessage } from './codex-exec-error.js';
+import { isFeishuOpenMessageId, shouldSendFeishuReplyForMessage } from './codex-exec-error.js';
 import {
   buildCodexExecProgressPrompt,
   createCodexExecProgressSink,
@@ -429,7 +429,7 @@ export async function deliverMessageViaCodexExec(
   await sendReply({
     chat_id: message.chatId,
     text,
-    reply_to: message.messageId,
+    ...(isFeishuOpenMessageId(message.messageId) ? { reply_to: message.messageId } : {}),
     thread_id: message.threadId,
   });
 }
@@ -461,7 +461,7 @@ async function sendCodexExecProgressMessage(
   await opts.sendReply({
     chat_id: message.chatId,
     text: content,
-    reply_to: message.messageId,
+    ...(isFeishuOpenMessageId(message.messageId) ? { reply_to: message.messageId } : {}),
     thread_id: message.threadId,
   });
 }
