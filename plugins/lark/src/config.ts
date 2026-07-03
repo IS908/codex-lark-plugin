@@ -7,9 +7,13 @@ config({ path: envPath });
 
 const channelHome = path.join(os.homedir(), '.codex', 'channels', 'lark');
 const defaultCodexExecCwd = path.join(channelHome, 'codex-exec-workdir');
+const isDryRun = process.argv.includes('--dry-run');
 
 function required(key: string): string {
   const val = process.env[key];
+  if (!val && isDryRun && (key === 'LARK_APP_ID' || key === 'LARK_APP_SECRET')) {
+    return `dry_run_${key.toLowerCase()}`;
+  }
   if (!val) throw new Error(`Missing required env var: ${key}`);
   return val;
 }

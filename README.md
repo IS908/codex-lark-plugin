@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.9.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.9.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -141,7 +141,7 @@ directly for a local smoke test:
 npm start -- --dry-run
 ```
 
-The dry-run still requires `LARK_APP_ID` and `LARK_APP_SECRET` in `~/.codex/channels/lark/.env` or the shell environment.
+Dry-run validates local wiring without real Lark credentials; live startup still requires `LARK_APP_ID` and `LARK_APP_SECRET` in `~/.codex/channels/lark/.env` or the shell environment.
 
 Optionally, install [lark-cli](https://github.com/larksuite/cli) for full Feishu API access (calendar, docs, sheets, tasks, contacts, etc.):
 

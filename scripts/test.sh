@@ -37,6 +37,10 @@ npm run --silent start -- --dry-run 1>/tmp/lark-test-stdout.txt 2>/tmp/lark-test
 echo "PASS"
 
 echo ""
+echo "=== Dry-run without Lark credentials checks ==="
+node --import tsx scripts/dry-run-no-credentials-smoke.ts
+
+echo ""
 echo "=== MCP stdout clean ==="
 if [ -s /tmp/lark-test-stdout.txt ]; then
   echo "FAIL: stdout is not empty"
