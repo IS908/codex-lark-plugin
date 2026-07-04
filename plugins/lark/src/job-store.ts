@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CronExpressionParser } from 'cron-parser';
 import { appConfig } from './config.js';
+import type { CronJobDiagnosticSnapshot } from './cronjob-diagnostics.js';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -53,6 +54,8 @@ export interface JobRuntime {
   report_type?: string | null;
   /** Latest delivery error, kept separate from execution last_error. */
   delivery_error?: string | null;
+  /** Latest structured cronjob execution diagnostics. */
+  diagnostics?: CronJobDiagnosticSnapshot | null;
 }
 
 export interface JobFile {

@@ -27,6 +27,11 @@ import {
   createOpenApiLarkTransport,
   type LarkTransport,
 } from './lark-transport.js';
+import {
+  CronJobRunDiagnostics,
+  formatCronJobDiagnostics,
+  type CronJobDiagnosticSnapshot,
+} from './cronjob-diagnostics.js';
 
 /**
  * Prefix for synthetic `thread_id` values used by cronjob prompt executions.
@@ -73,6 +78,7 @@ export interface PromptJobRunnerInput {
   jobThreadId: string;
   runId: string;
   promptContent: string;
+  diagnostics: CronJobRunDiagnostics;
 }
 
 export interface PromptJobRunnerResult {
@@ -154,6 +160,7 @@ interface JobExecutionOutcome {
   lastError: string | null;
   autoPause: boolean;
   completed: boolean;
+  diagnostics?: CronJobDiagnosticSnapshot | null;
 }
 
 interface CronJobReportDeliveryFailure extends Error {
@@ -161,6 +168,7 @@ interface CronJobReportDeliveryFailure extends Error {
     report: string;
     reportType: string;
     deliveryError: string;
+    diagnostics?: CronJobDiagnosticSnapshot | null;
   };
 }
 
@@ -168,18 +176,25 @@ function outputStatusFor(text: string | null | undefined): 'empty' | 'generated'
   return text?.trim() ? 'generated' : 'empty';
 }
 
-function buildCronJobErrorReport(job: JobFile, reason: string): string {
-  return [
+function buildCronJobErrorReport(
+  job: JobFile,
+  reason: string,
+  diagnostics?: CronJobDiagnosticSnapshot | null,
+): string {
+  const base = [
     `CronJob "${job.meta.name}" failed before a complete report could be delivered.`,
     '',
     `Job ID: ${job.meta.id}`,
     `Reason: ${reason}`,
-  ].join('\n');
+  ];
+  const diagnosticText = formatCronJobDiagnostics(diagnostics);
+  return diagnosticText ? [...base, '', diagnosticText].join('\n') : base.join('\n');
 }
 
 function buildCronJobReportDeliveryFailure(
   report: string,
   deliveryErr: unknown,
+  diagnostics?: CronJobDiagnosticSnapshot | null,
 ): CronJobReportDeliveryFailure {
   const deliveryError = deliveryErr instanceof Error ? deliveryErr.message : String(deliveryErr);
   const err = new Error(`CronJob error report delivery failed: ${deliveryError}`) as CronJobReportDeliveryFailure & {
@@ -190,8 +205,27 @@ function buildCronJobReportDeliveryFailure(
     report,
     reportType: 'error_report',
     deliveryError,
+    diagnostics,
   };
   return err;
+}
+
+function finalizeStoredDiagnostics(
+  diagnostics: CronJobDiagnosticSnapshot | null | undefined,
+  status: 'success' | 'failed',
+  opts: { currentStage?: string } = {},
+): CronJobDiagnosticSnapshot | null {
+  if (!diagnostics) return null;
+  const endedAt = new Date();
+  const startedMs = new Date(diagnostics.started_at).getTime();
+  const durationMs = Number.isFinite(startedMs) ? Math.max(0, endedAt.getTime() - startedMs) : diagnostics.duration_ms;
+  return {
+    ...diagnostics,
+    status,
+    ended_at: endedAt.toISOString(),
+    ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
+    ...(opts.currentStage && !diagnostics.current_stage ? { current_stage: opts.currentStage } : {}),
+  };
 }
 
 export async function autoPauseJobForPermanentTargetError(
@@ -257,6 +291,11 @@ export async function recordCronJobReportDelivery(
       : job.runtime.last_error?.includes('auto-paused')
         ? job.runtime.last_error
         : input.runError ?? job.runtime.delivery_error ?? 'CronJob run failed.';
+    job.runtime.diagnostics = finalizeStoredDiagnostics(
+      job.runtime.diagnostics,
+      input.runStatus,
+      input.runStatus === 'failed' ? { currentStage: 'await_lark_reply' } : {},
+    );
   });
 
   if (replaced) {
@@ -486,6 +525,7 @@ export class JobScheduler {
         lastError,
         autoPause,
         completed: true,
+        diagnostics: cronJobReport?.diagnostics ?? null,
       },
     });
 
@@ -564,6 +604,7 @@ export class JobScheduler {
         latest.runtime.report = result.outcome.report;
         latest.runtime.report_type = result.outcome.reportType;
         latest.runtime.delivery_error = result.outcome.deliveryError;
+        latest.runtime.diagnostics = result.outcome.diagnostics ?? null;
       }
       if (result.outcome.autoPause) latest.meta.status = 'paused';
     });
@@ -616,6 +657,11 @@ export class JobScheduler {
    * channel notification fallback.
    */
   private async executePromptJob(job: JobFile, runId: string): Promise<JobExecutionOutcome> {
+    const diagnostics = new CronJobRunDiagnostics({
+      job,
+      runId,
+      timeoutMs: appConfig.codexExecTimeoutMs,
+    });
     const jobThreadId = `${JOB_THREAD_PREFIX}${job.meta.id}-${jobCreatedAtHash(job.meta.created_at)}-${runId}`;
 
     // Bind the job owner as caller so tools invoked from this Codex turn
@@ -624,23 +670,29 @@ export class JobScheduler {
     this.identitySession.setCaller(job.meta.target_chat_id, jobThreadId, job.meta.created_by);
     this.identitySession.beginChannelTurn(job.meta.target_chat_id, jobThreadId, appConfig.replyObligationTimeoutMs);
 
+    diagnostics.startStage('prepare_prompt');
     const promptContent = cronJobPrompt(
       job.meta.name,
       job.meta.target_chat_id,
       job.meta.prompt ?? ''
     );
+    diagnostics.completeStage('prepare_prompt');
 
     if (this.promptRunner) {
       try {
+        diagnostics.startStage('codex_exec');
         const result = await this.promptRunner({
           job,
           jobThreadId,
           runId,
           promptContent,
+          diagnostics,
         });
+        diagnostics.completeStage('codex_exec');
         if (!result.report.trim()) {
           throw new Error('CronJob prompt produced no visible report.');
         }
+        const snapshot = diagnostics.logSnapshot('success');
         return {
           runStatus: 'success',
           outputStatus: 'generated',
@@ -651,16 +703,22 @@ export class JobScheduler {
           lastError: null,
           autoPause: false,
           completed: true,
+          diagnostics: snapshot,
         };
       } catch (err: any) {
+        diagnostics.failStage(undefined, err);
+        const reportSnapshot = diagnostics.snapshot('failed');
         const lastError = `[LARK_DEFER] CronJob prompt execution failed before a complete report could be delivered: ${err?.message ?? err}`;
-        const report = buildCronJobErrorReport(job, lastError);
+        const report = buildCronJobErrorReport(job, lastError, reportSnapshot);
         try {
+          diagnostics.startStage('send_lark_error_report');
           await this.transport.sendMessage({
             chatId: job.meta.target_chat_id,
             input: { text: report },
             retry: { attempts: 1, retryTimeout: false },
           });
+          diagnostics.completeStage('send_lark_error_report');
+          const finalSnapshot = diagnostics.logSnapshot('failed', err);
           return {
             runStatus: 'failed',
             outputStatus: 'generated',
@@ -671,9 +729,11 @@ export class JobScheduler {
             lastError,
             autoPause: false,
             completed: true,
+            diagnostics: finalSnapshot,
           };
         } catch (deliveryErr: any) {
-          throw buildCronJobReportDeliveryFailure(report, deliveryErr);
+          diagnostics.failStage('send_lark_error_report', deliveryErr);
+          throw buildCronJobReportDeliveryFailure(report, deliveryErr, diagnostics.logSnapshot('failed', deliveryErr));
         }
       } finally {
         this.identitySession.endChannelTurn(job.meta.target_chat_id, jobThreadId);
@@ -681,6 +741,7 @@ export class JobScheduler {
     }
 
     try {
+      diagnostics.startStage('send_channel_notification');
       await this.server.notification({
         method: 'notifications/Codex/channel',
         params: {
@@ -695,16 +756,22 @@ export class JobScheduler {
           },
         },
       });
+      diagnostics.completeStage('send_channel_notification');
     } catch (err: any) {
       this.identitySession.endChannelTurn(job.meta.target_chat_id, jobThreadId);
+      diagnostics.failStage('send_channel_notification', err);
+      const reportSnapshot = diagnostics.snapshot('failed');
       const lastError = `[LARK_DEFER] CronJob prompt delivery failed before Codex accepted the turn: ${err?.message ?? err}`;
-      const report = buildCronJobErrorReport(job, lastError);
+      const report = buildCronJobErrorReport(job, lastError, reportSnapshot);
       try {
+        diagnostics.startStage('send_lark_error_report');
         await this.transport.sendMessage({
           chatId: job.meta.target_chat_id,
           input: { text: report },
           retry: { attempts: 1, retryTimeout: false },
         });
+        diagnostics.completeStage('send_lark_error_report');
+        const finalSnapshot = diagnostics.logSnapshot('failed', err);
         return {
           runStatus: 'failed',
           outputStatus: 'generated',
@@ -715,13 +782,16 @@ export class JobScheduler {
           lastError,
           autoPause: false,
           completed: true,
+          diagnostics: finalSnapshot,
         };
       } catch (deliveryErr: any) {
-        throw buildCronJobReportDeliveryFailure(report, deliveryErr);
+        diagnostics.failStage('send_lark_error_report', deliveryErr);
+        throw buildCronJobReportDeliveryFailure(report, deliveryErr, diagnostics.logSnapshot('failed', deliveryErr));
       }
     }
 
     this.schedulePromptRunWatchdog(job, runId);
+    const snapshot = diagnostics.snapshot();
     return {
       runStatus: 'started',
       outputStatus: 'empty',
@@ -732,6 +802,7 @@ export class JobScheduler {
       lastError: null,
       autoPause: false,
       completed: false,
+      diagnostics: snapshot,
     };
   }
 
@@ -750,9 +821,13 @@ export class JobScheduler {
     if (latest.meta.created_at !== job.meta.created_at) return;
     if (latest.runtime.run_id !== runId || latest.runtime.delivery_status !== 'pending') return;
 
+    const diagnostics = finalizeStoredDiagnostics(latest.runtime.diagnostics, 'failed', {
+      currentStage: 'await_lark_reply',
+    });
     const report = buildCronJobErrorReport(
       latest,
       `CronJob did not produce a Feishu reply within ${appConfig.replyObligationTimeoutMs}ms.`,
+      diagnostics,
     );
     let deliveryStatus: 'sent' | 'failed' = 'sent';
     let deliveryError: string | null = null;
@@ -776,6 +851,7 @@ export class JobScheduler {
       current.runtime.report_type = 'error_report';
       current.runtime.delivery_error = deliveryError;
       current.runtime.last_error = deliveryError ?? 'CronJob prompt run timed out before producing a report.';
+      current.runtime.diagnostics = diagnostics;
     });
   }
 }

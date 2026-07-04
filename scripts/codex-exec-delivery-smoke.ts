@@ -975,6 +975,50 @@ assert.deepEqual(progressReplies.map((request) => request.reply_to), [
   'om_inbound_progress',
 ]);
 
+const diagnosticOnlyProgressReplies: ReplyRequest[] = [];
+const diagnosticOnlyProgressEvents: string[] = [];
+const diagnosticOnlyProgressBaseDir = await mkdtemp(join(tmpdir(), 'lark-diagnostic-progress-smoke-'));
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_inbound_diagnostic_progress',
+  },
+  displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+  useCodexSessions: false,
+  progressBaseDir: diagnosticOnlyProgressBaseDir,
+  progressVisible: false,
+  onProgress: (event) => {
+    diagnosticOnlyProgressEvents.push(event.content);
+  },
+  progressLimits: {
+    enabled: true,
+    maxMessages: 2,
+    maxChars: 300,
+    minIntervalMs: 0,
+    pollIntervalMs: 5,
+  },
+  runCodexExec: async (request) => {
+    const progress = (request as any).progress;
+    assert.ok(progress?.filePath, 'diagnostic progress request should include progress.filePath');
+    await appendFile(
+      progress.filePath,
+      `${JSON.stringify({ version: 1, token: progress.token, type: 'emit_lark_message', mode: 'progress', content: 'stage=fetch_quotes quotes loaded.' })}\n`,
+      'utf-8',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    return 'diagnostic final';
+  },
+  sendReply: async (request) => {
+    diagnosticOnlyProgressReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.deepEqual(diagnosticOnlyProgressEvents, ['stage=fetch_quotes quotes loaded.']);
+assert.deepEqual(
+  diagnosticOnlyProgressReplies.map((request) => request.text),
+  ['diagnostic final'],
+);
+
 const filteredProgressReplies: ReplyRequest[] = [];
 const filteredProgressBaseDir = await mkdtemp(join(tmpdir(), 'lark-filtered-progress-smoke-'));
 await deliverMessageViaCodexExec({

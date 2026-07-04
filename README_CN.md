@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.9.5-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.9.6-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -69,6 +69,7 @@
 ### 定时任务（CronJob）
 
 - **两种任务类型**：`message` 确定性发送固定内容；`prompt` 在 `exec` 模式下复用普通聊天同一条 `codex exec` 交付路径，`notification` 模式才保留旧的 `notifications/Codex/channel` 兼容路径
+- Prompt job 失败时会包含结构化 run 诊断：run 元数据、可观测阶段耗时、仅用于诊断的 progress，以及可用时脱敏后的 `codex exec` stdout/stderr tail
 - 标准 cron 表达式 + 简化别名（`every 30m`、`daily at 09:00`、`weekdays at 17:00`）
 - 通过飞书聊天或 `$lark:jobs` skill 创建和管理任务
 - 崩溃恢复：重启后自动补执行错过的任务

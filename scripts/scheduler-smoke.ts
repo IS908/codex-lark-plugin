@@ -600,6 +600,79 @@ function readJobFixture(id: string): JobFile {
   passed++;
 }
 
+// 12c. Prompt exec timeouts include structured diagnostics and redacted tails.
+{
+  const id = 'prompt-timeout-diagnostics';
+  const createdAt = '2026-06-07T02:50:00.000Z';
+  const job = makeJob({
+    meta: {
+      id,
+      type: 'prompt',
+      prompt: 'build weekly report',
+      content: undefined,
+      msg_type: undefined,
+      created_at: createdAt,
+    } as Partial<JobFile['meta']>,
+  });
+  writeJobFixture(job);
+  const createdMessages: any[] = [];
+  const scheduler = new JobScheduler({
+    server: { notification: async () => {} } as any,
+    client: {
+      im: {
+        v1: {
+          message: {
+            create: async (args: any) => {
+              createdMessages.push(args);
+              return { data: { message_id: 'om_timeout_diagnostics' } };
+            },
+          },
+        },
+      },
+    } as any,
+    identitySession: new IdentitySession(() => null),
+    promptRunner: async (input: any) => {
+      input.diagnostics.recordProgress('stage=fetch_quotes token=supersecret', Date.now(), 38);
+      const err = new Error('codex exec timed out after 600000ms') as Error & {
+        stdoutTail?: string;
+        stderrTail?: string;
+      };
+      err.stdoutTail = 'latest stdout token=supersecret';
+      err.stderrTail = 'latest stderr authorization=supersecret';
+      throw err;
+    },
+  } as any);
+  await (scheduler as any).executeJob(job);
+  if (createdMessages.length !== 1) {
+    fail(`12c: expected one timeout diagnostic report, got ${createdMessages.length}`);
+  }
+  const sentContent = JSON.parse(createdMessages[0].data.content);
+  const text = sentContent.text ?? '';
+  if (!text.includes('Diagnostics:')) fail(`12c: report missing diagnostics: ${text}`);
+  if (!text.includes('current_stage: fetch_quotes')) fail(`12c: report missing current stage: ${text}`);
+  if (!text.includes('last_progress: stage=fetch_quotes token=[redacted]')) {
+    fail(`12c: report missing redacted progress: ${text}`);
+  }
+  if (!text.includes('stdout_tail: latest stdout token=[redacted]')) {
+    fail(`12c: report missing redacted stdout tail: ${text}`);
+  }
+  if (!text.includes('stderr_tail: latest stderr authorization=[redacted]')) {
+    fail(`12c: report missing redacted stderr tail: ${text}`);
+  }
+  if (text.includes('supersecret')) fail(`12c: report leaked sensitive text: ${text}`);
+  const persisted = readJobFixture(id);
+  if (persisted.runtime.run_status !== 'failed') {
+    fail(`12c: expected failed run_status, got ${persisted.runtime.run_status}`);
+  }
+  if (persisted.runtime.diagnostics?.current_stage !== 'fetch_quotes') {
+    fail(`12c: persisted diagnostics missing current stage: ${JSON.stringify(persisted.runtime.diagnostics)}`);
+  }
+  if (!persisted.runtime.diagnostics?.stages.some((stage) => stage.name === 'send_lark_error_report' && stage.status === 'success')) {
+    fail(`12c: persisted diagnostics missing send_lark_error_report success: ${JSON.stringify(persisted.runtime.diagnostics)}`);
+  }
+  passed++;
+}
+
 // 13. Pausing a job during a transient retry window cancels the next send.
 {
   const id = 'pause-before-retry';
@@ -873,4 +946,4 @@ function readJobFixture(id: string): JobFile {
 (appConfig as { cronTimezone: string }).cronTimezone = originalCronTimezone;
 rmSync(tmpJobsDir, { recursive: true, force: true });
 
-console.log(`scheduler smoke: ${passed}/18 PASS`);
+console.log(`scheduler smoke: ${passed}/19 PASS`);
