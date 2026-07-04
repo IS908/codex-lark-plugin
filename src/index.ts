@@ -412,7 +412,7 @@ async function main() {
     botMessageTracker: channel.getBotMessageTracker(),
     ...(appConfig.codexDeliveryMode === 'exec'
       ? {
-          promptRunner: async ({ job, jobThreadId, promptContent }) => {
+          promptRunner: async ({ job, jobThreadId, promptContent, diagnostics }) => {
             let deliveredReport = '';
             const message: LarkMessage = {
               messageId: jobThreadId,
@@ -429,20 +429,27 @@ async function main() {
               message,
               displayLabel: `CronJob · ${job.meta.name}`,
               sendReply: async (request) => {
-                const result = await sendFeishuReply(
-                  {
-                    client: channel.getClient(),
-                    transport: channel.getLarkTransport(),
-                    conversationBuffer: buffer,
-                    botMessageTracker: channel.getBotMessageTracker(),
-                    latestMessageTracker: channel.getLatestMessageTracker(),
-                    turnObligations,
-                  },
-                  { ...request, reply_to: undefined },
-                );
-                if (result.isError) throw new Error(result.errorText ?? result.statusText);
-                if (result.sentCount > 0) deliveredReport = request.text;
-                return result;
+                diagnostics.startStage('send_lark');
+                try {
+                  const result = await sendFeishuReply(
+                    {
+                      client: channel.getClient(),
+                      transport: channel.getLarkTransport(),
+                      conversationBuffer: buffer,
+                      botMessageTracker: channel.getBotMessageTracker(),
+                      latestMessageTracker: channel.getLatestMessageTracker(),
+                      turnObligations,
+                    },
+                    { ...request, reply_to: undefined },
+                  );
+                  if (result.isError) throw new Error(result.errorText ?? result.statusText);
+                  if (result.sentCount > 0) deliveredReport = request.text;
+                  diagnostics.completeStage('send_lark');
+                  return result;
+                } catch (err) {
+                  diagnostics.failStage('send_lark', err);
+                  throw err;
+                }
               },
               recordAssistantMessage: ({ chatId, threadId, text }) => {
                 buffer.record(chatId, {
@@ -457,7 +464,10 @@ async function main() {
               },
               sessionHealth: sessionHealthMonitor ?? undefined,
               actionDispatcher: codexExecActionDispatcher,
-              progressLimits: { enabled: false },
+              progressVisible: false,
+              onProgress: (event) => {
+                diagnostics.recordProgress(event.content, event.timestampMs, event.bytes);
+              },
             });
             return { report: deliveredReport };
           },

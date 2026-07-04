@@ -24,7 +24,15 @@ export interface CodexExecProgressSinkOptions {
   messageId: string;
   chatId: string;
   threadId?: string;
-  send: (content: string) => Promise<void>;
+  send?: (content: string) => Promise<void>;
+  onProgress?: (event: CodexExecProgressEvent) => void;
+}
+
+export interface CodexExecProgressEvent {
+  content: string;
+  timestampMs: number;
+  bytes: number;
+  visible: boolean;
 }
 
 export interface CodexExecProgressCleanupOptions {
@@ -239,15 +247,29 @@ export class CodexExecProgressSink {
     }
 
     const content = truncateProgressText(normalized, this.options.limits.maxChars);
+    const bytes = Buffer.byteLength(content, 'utf8');
+    this.options.onProgress?.({
+      content,
+      timestampMs: now,
+      bytes,
+      visible: !!this.options.send,
+    });
+    if (!this.options.send) {
+      this.sentCount += 1;
+      this.lastSentAt = now;
+      this.lastNormalized = normalized.toLowerCase();
+      void audit('codex_exec_progress', this.options.caller, this.auditArgs({ bytes, visible: false }), 'ok');
+      return;
+    }
     try {
       await this.options.send(content);
       this.sentCount += 1;
       this.lastSentAt = now;
       this.lastNormalized = normalized.toLowerCase();
-      void audit('codex_exec_progress', this.options.caller, this.auditArgs({ bytes: Buffer.byteLength(content, 'utf8') }), 'ok');
+      void audit('codex_exec_progress', this.options.caller, this.auditArgs({ bytes, visible: true }), 'ok');
     } catch (err) {
       logSafeError('[codex-exec-progress] send failed:', err);
-      void audit('codex_exec_progress', this.options.caller, this.auditArgs({ bytes: Buffer.byteLength(content, 'utf8') }), 'error');
+      void audit('codex_exec_progress', this.options.caller, this.auditArgs({ bytes, visible: true }), 'error');
     }
   }
 
@@ -354,6 +376,7 @@ export function buildCodexExecProgressPrompt(info: CodexExecProgressPromptInfo |
     `- You may emit at most ${info.maxMessages} progress messages; each must be ${info.maxChars} characters or fewer.`,
     `- Wait at least ${Math.ceil(info.minIntervalMs / 1000)} seconds between progress messages.`,
     '- Emit only user-visible milestone facts, blockers, or handoff status. Do not emit thinking, generic "working on it" updates, internal reasoning, or repeated filler.',
+    '- For cronjob/report tasks, emit milestone progress when starting or completing external data fetches, report generation, and final delivery preparation so timeout diagnostics can identify the stuck stage.',
     '- Do not include chat_id, thread_id, open_id, user_id, caller, or created_by; the parent Lark bridge derives identity.',
     `- JSONL schema: {"version":1,"token":"${info.token}","type":"emit_lark_message","mode":"progress","content":"Stage completed; starting verification."}`,
   ];

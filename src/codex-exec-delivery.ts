@@ -16,6 +16,7 @@ import {
   buildCodexExecProgressPrompt,
   createCodexExecProgressSink,
   type CodexExecProgressLimits,
+  type CodexExecProgressEvent,
   type CodexExecProgressPromptInfo,
 } from './codex-exec-progress.js';
 import {
@@ -41,6 +42,8 @@ export interface CodexExecDeliveryOptions {
   actionDispatcher?: CodexExecActionDispatcher;
   progressBaseDir?: string;
   progressLimits?: Partial<CodexExecProgressLimits>;
+  progressVisible?: boolean;
+  onProgress?: (event: CodexExecProgressEvent) => void;
 }
 
 export interface CodexExecSessionHealthRecorder {
@@ -291,7 +294,10 @@ export async function deliverMessageViaCodexExec(
     messageId: message.messageId,
     chatId: message.chatId,
     ...(message.threadId ? { threadId: message.threadId } : {}),
-    send: (content) => sendCodexExecProgressMessage(opts, message, content),
+    ...(opts.progressVisible === false
+      ? {}
+      : { send: (content: string) => sendCodexExecProgressMessage(opts, message, content) }),
+    ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
   });
   const request: CodexExecRequest = {
     prompt: buildCodexExecPrompt(message, displayLabel, progressSink?.promptInfo ?? null),

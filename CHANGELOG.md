@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.9.6] - 2026-07-04
+
+### Added
+- Added structured diagnostics for prompt cronjob Codex exec runs, including run metadata, observable stage timings, diagnostic-only progress snapshots, redacted stdout/stderr tails on exec failures, and persisted runtime diagnostics for timeout triage.
+
 ## [1.9.5] - 2026-07-04
 
 ### Fixed

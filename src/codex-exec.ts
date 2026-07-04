@@ -41,9 +41,48 @@ export type CodexExecRunner = (request: CodexExecRequest) => Promise<string | Co
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const OUTPUT_CAP = 16 * 1024;
+const ERROR_TAIL_CAP = 4 * 1024;
 
 export function isCodexExecTimeoutError(err: unknown): boolean {
-  return err instanceof Error && /\bcodex exec timed out after \d+ms\b/.test(err.message);
+  return (
+    err instanceof CodexExecTimeoutError ||
+    (err instanceof Error && /\bcodex exec timed out after \d+ms\b/.test(err.message))
+  );
+}
+
+function tailText(text: string, maxLen = ERROR_TAIL_CAP): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(text.length - maxLen);
+}
+
+export class CodexExecTimeoutError extends Error {
+  readonly timeoutMs: number;
+  readonly stdoutTail: string;
+  readonly stderrTail: string;
+
+  constructor(timeoutMs: number, stdout: string, stderr: string) {
+    super(`codex exec timed out after ${timeoutMs}ms`);
+    this.name = 'CodexExecTimeoutError';
+    this.timeoutMs = timeoutMs;
+    this.stdoutTail = tailText(stdout);
+    this.stderrTail = tailText(stderr);
+  }
+}
+
+export class CodexExecProcessError extends Error {
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdoutTail: string;
+  readonly stderrTail: string;
+
+  constructor(exitCode: number | null, signal: NodeJS.Signals | null, stdout: string, stderr: string, detail: string) {
+    super(`codex exec failed with exit ${exitCode}: ${truncate(detail, 2000)}`);
+    this.name = 'CodexExecProcessError';
+    this.exitCode = exitCode;
+    this.signal = signal;
+    this.stdoutTail = tailText(stdout);
+    this.stderrTail = tailText(stderr);
+  }
 }
 
 function appendCapped(current: string, chunk: Buffer): string {
@@ -252,12 +291,12 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
       child.on('close', (code, signal) => {
         clearTimeout(timer);
         if (timedOut) {
-          reject(new Error(`codex exec timed out after ${timeoutMs}ms`));
+          reject(new CodexExecTimeoutError(timeoutMs, stdout, stderr));
           return;
         }
         if (code !== 0) {
           const detail = stderr.trim() || stdout.trim() || `signal=${signal ?? 'none'}`;
-          reject(new Error(`codex exec failed with exit ${code}: ${truncate(detail, 2000)}`));
+          reject(new CodexExecProcessError(code, signal, stdout, stderr, detail));
           return;
         }
         resolve();
