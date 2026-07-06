@@ -73,7 +73,7 @@ function begin(tracker: TurnObligationTracker, messageId = 'om_turn'): void {
     messageId,
     chatId: 'oc_turn',
     caller: 'ou_turn',
-    mode: 'notification',
+    mode: 'exec',
   });
 }
 
@@ -167,13 +167,13 @@ try {
       messageId: 'om_active_a',
       chatId: 'oc_interleaved',
       caller: 'ou_turn',
-      mode: 'notification',
+      mode: 'exec',
     });
     tracker.begin({
       messageId: 'om_latest_b',
       chatId: 'oc_interleaved',
       caller: 'ou_turn',
-      mode: 'notification',
+      mode: 'exec',
     });
     tracker.setActive('oc_interleaved', undefined, 'om_active_a');
     latest.record('oc_interleaved', { messageId: 'om_latest_b', timestamp: Date.now() });
@@ -201,13 +201,13 @@ try {
       messageId: 'om_notify_a',
       chatId: 'oc_notify',
       caller: 'ou_turn',
-      mode: 'notification',
+      mode: 'exec',
     });
     tracker.begin({
       messageId: 'om_notify_b',
       chatId: 'oc_notify',
       caller: 'ou_turn',
-      mode: 'notification',
+      mode: 'exec',
     });
     latest.record('oc_notify', { messageId: 'om_notify_b', timestamp: Date.now() });
     const { client, calls } = makeClient();
@@ -235,7 +235,7 @@ try {
       messageId: 'om_single_pending',
       chatId: 'oc_single_pending',
       caller: 'ou_turn',
-      mode: 'notification',
+      mode: 'exec',
     });
     const { client, calls } = makeClient();
     await sendFeishuReply(
@@ -281,7 +281,7 @@ try {
       messageId: 'om_defer_tool',
       chatId: 'oc_defer_tool',
       caller: 'ou_defer_tool',
-      mode: 'notification',
+      mode: 'exec',
     });
     ackTracker.recordInbound('om_defer_tool');
     ackTracker.storeReaction('om_defer_tool', 'reaction_defer_tool');

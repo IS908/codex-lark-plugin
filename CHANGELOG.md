@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.12.5] - 2026-07-06
+
+### Changed
+- Removed the legacy `LARK_CODEX_DELIVERY_MODE=notification` delivery path. Chat, doc-comment, reaction, and cron prompt turns now always use codex exec delivery.
+- Kept stale `LARK_CODEX_DELIVERY_MODE=exec` as a harmless no-op for upgrade compatibility, while `LARK_CODEX_DELIVERY_MODE=notification` now fails config validation and points operators to package downgrade rollback.
+- Updated scheduler prompt-job execution so missing prompt runners produce explicit Feishu error reports instead of falling back to MCP channel notifications.
+
+### Removed
+- Removed the `notifications/Codex/channel` delivery branch, channel notification metadata builder, and notification delivery smoke coverage.
+
 ## [1.12.4] - 2026-07-06
 
 ### Changed

@@ -1,7 +1,7 @@
 import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
 
-export type TurnObligationMode = 'exec' | 'notification';
+export type TurnObligationMode = 'exec';
 export type TurnObligationStatus = 'pending' | 'satisfied' | 'deferred' | 'unanswered';
 export type TurnSatisfactionSource =
   | 'reply'

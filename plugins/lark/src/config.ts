@@ -80,6 +80,18 @@ function rejectRemovedChannelRuntime(): void {
 
 rejectRemovedChannelRuntime();
 
+function rejectRemovedCodexDeliveryMode(): void {
+  const key = 'LARK_' + 'CODEX_DELIVERY_MODE';
+  const value = process.env[key]?.trim();
+  if (!value || value === 'exec') return;
+  if (value === 'notification') {
+    throw new Error(`${key}=notification has been removed. Codex exec delivery is always used; roll back by installing v1.12.4 or earlier.`);
+  }
+  throw new Error(`Invalid ${key}: ${value}. ${key} is no longer supported; leave it unset or use exec.`);
+}
+
+rejectRemovedCodexDeliveryMode();
+
 const codexExecTimeoutMs = optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000);
 const codexExecReplyBufferMs = 60_000;
 
@@ -103,11 +115,6 @@ export const appConfig = {
   docCommentAckEmoji: optionalAllowEmpty('LARK_DOC_COMMENT_ACK_EMOJI', 'THUMBSUP'),
   botMessageTrackerSize: optionalNonNegativeNumber('LARK_BOT_MESSAGE_TRACKER_SIZE', 500),
   queueHandlerTimeoutMs: optionalQueueHandlerTimeoutMs(),
-  codexDeliveryMode: optionalChoice(
-    'LARK_CODEX_DELIVERY_MODE',
-    'exec',
-    ['exec', 'notification'] as const,
-  ),
   codexExecCommand: optional('LARK_CODEX_EXEC_COMMAND', 'codex'),
   codexExecCwd: optional('LARK_CODEX_EXEC_CWD', defaultCodexExecCwd),
   codexExecTimeoutMs,

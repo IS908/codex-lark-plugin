@@ -15,11 +15,11 @@
  * __terminal__ from a Feishu-triggered turn, escalating to operator
  * privileges. Defense in depth:
  *   1. MCP server instructions (index.ts) tell Codex to use the chat_id
- *      from notification metadata verbatim and never substitute sentinels.
+ *      from channel metadata verbatim and never substitute sentinels.
  *   2. Phase 3 adds audit logging so any such attempt leaves a trail.
  *   3. Active channel turns block the __terminal__ fallback server-side until
- *      the turn ends (exec mode) or its TTL expires (notification/cron mode).
- * The sentinel is not exposed in any notification metadata, so Codex would
+ *      the turn ends or its TTL expires for synthetic cron/system turns.
+ * The sentinel is not exposed in any channel metadata, so Codex would
  * need to invent the string on its own — practical risk is low.
  */
 

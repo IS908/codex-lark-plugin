@@ -16,7 +16,6 @@ import { deliverMessageViaCodexExec } from './codex-exec-delivery.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
-import { buildChannelNotificationMeta } from './channel-notification.js';
 import { formatCodexExecFailureReply, shouldSendCodexExecFailureReply } from './codex-exec-error.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
 import { packageName, packageVersion } from './package-metadata.js';
@@ -89,9 +88,6 @@ async function main() {
     {
       capabilities: {
         logging: {},
-        experimental: {
-          'Codex/channel': {},
-        },
       },
       instructions: mcpServerInstructions,
     }
@@ -264,76 +260,59 @@ async function main() {
         chatId: message.chatId,
         ...(message.threadId ? { threadId: message.threadId } : {}),
         caller: message.senderId,
-        mode: appConfig.codexDeliveryMode,
+        mode: 'exec',
       });
       turnObligations.setActive(message.chatId, message.threadId, message.messageId);
     }
 
     try {
-      if (appConfig.codexDeliveryMode === 'exec') {
-        debugLog(
-          `[channel] Delivering message ${message.messageId} via codex exec`
-        );
-        await deliverMessageViaCodexExec({
-          message,
-          displayLabel,
-          sendReply: (request) => sendFeishuReply(
-            {
-              client: channel.getClient(),
-              transport: channel.getLarkTransport(),
-              conversationBuffer: buffer,
-              ackReactions: channel.getAckReactions(),
-              botMessageTracker: channel.getBotMessageTracker(),
-              latestMessageTracker: channel.getLatestMessageTracker(),
-              turnObligations,
-            },
-            request,
-          ),
-          sendDocCommentReply: async (request) => {
-            const resp = await channel.getLarkTransport().replyDocComment({
-              docToken: request.doc_token,
-              commentId: request.comment_id,
-              fileType: request.file_type,
-              content: request.content,
-            });
-            return { replyId: resp.replyId };
-          },
-          recordAssistantMessage: ({ chatId, threadId, text }) => {
-            buffer.record(chatId, {
-              role: 'assistant',
-              senderId: 'bot',
-              text: text.slice(0, 500),
-              timestamp: new Date().toISOString(),
-              timestampMs: Date.now(),
-              ...(threadId ? { threadId } : {}),
-              messageType: 'text',
-            });
-          },
-          sessionHealth: sessionHealthMonitor ?? undefined,
-          turnObligations,
-          actionDispatcher: codexExecActionDispatcher,
-        });
-        if (hasReplyObligation) {
-          turnObligations.requireSatisfiedOrDeferred(message.messageId);
-        }
-        debugLog(
-          `[channel] codex exec delivery completed for message ${message.messageId}`
-        );
-        return;
-      }
-
       debugLog(
-        `[channel] Sending notifications/Codex/channel for message ${message.messageId}`
+        `[channel] Delivering message ${message.messageId} via codex exec`
       );
-      await server.server.notification({
-        method: 'notifications/Codex/channel',
-        params: {
-          content: message.text,
-          meta: buildChannelNotificationMeta(message, displayLabel),
+      await deliverMessageViaCodexExec({
+        message,
+        displayLabel,
+        sendReply: (request) => sendFeishuReply(
+          {
+            client: channel.getClient(),
+            transport: channel.getLarkTransport(),
+            conversationBuffer: buffer,
+            ackReactions: channel.getAckReactions(),
+            botMessageTracker: channel.getBotMessageTracker(),
+            latestMessageTracker: channel.getLatestMessageTracker(),
+            turnObligations,
+          },
+          request,
+        ),
+        sendDocCommentReply: async (request) => {
+          const resp = await channel.getLarkTransport().replyDocComment({
+            docToken: request.doc_token,
+            commentId: request.comment_id,
+            fileType: request.file_type,
+            content: request.content,
+          });
+          return { replyId: resp.replyId };
         },
+        recordAssistantMessage: ({ chatId, threadId, text }) => {
+          buffer.record(chatId, {
+            role: 'assistant',
+            senderId: 'bot',
+            text: text.slice(0, 500),
+            timestamp: new Date().toISOString(),
+            timestampMs: Date.now(),
+            ...(threadId ? { threadId } : {}),
+            messageType: 'text',
+          });
+        },
+        sessionHealth: sessionHealthMonitor ?? undefined,
+        turnObligations,
+        actionDispatcher: codexExecActionDispatcher,
       });
+      if (hasReplyObligation) {
+        turnObligations.requireSatisfiedOrDeferred(message.messageId);
+      }
       debugLog(
-        `[channel] notifications/Codex/channel returned for message ${message.messageId}`
+        `[channel] codex exec delivery completed for message ${message.messageId}`
       );
     } catch (err) {
       const errText = err instanceof Error ? err.message : String(err);
@@ -342,49 +321,45 @@ async function main() {
         `[channel] Failed to deliver inbound to Codex for message ${message.messageId}: ${errText}`
       );
       console.error('[channel] Failed to deliver inbound to Codex:', redactErrorForLog(err));
-      if (appConfig.codexDeliveryMode === 'exec') {
-        const errorText = formatCodexExecFailureReply(err);
-        if (message.chatType === 'doc_comment' && message.docComment) {
-          for (const chunk of splitDocCommentText(errorText)) {
-            await channel.getLarkTransport().replyDocComment({
-              docToken: message.docComment.fileToken,
-              commentId: message.docComment.commentId,
-              fileType: message.docComment.fileType,
-              content: chunk,
-            }).catch((replyErr) => {
-              logSafeError('[channel] Failed to send codex exec doc-comment error reply:', replyErr);
-            });
-          }
-        } else if (shouldSendCodexExecFailureReply(message)) {
-          await sendFeishuReply(
-            {
-              client: channel.getClient(),
-              transport: channel.getLarkTransport(),
-              conversationBuffer: buffer,
-              ackReactions: channel.getAckReactions(),
-              botMessageTracker: channel.getBotMessageTracker(),
-              latestMessageTracker: channel.getLatestMessageTracker(),
-              turnObligations,
-            },
-            {
-              chat_id: message.chatId,
-              text: errorText,
-              reply_to: message.messageId,
-              thread_id: message.threadId,
-            },
-          ).catch((replyErr) => {
-            console.error('[channel] Failed to send codex exec error reply:', redactErrorForLog(replyErr));
+      const errorText = formatCodexExecFailureReply(err);
+      if (message.chatType === 'doc_comment' && message.docComment) {
+        for (const chunk of splitDocCommentText(errorText)) {
+          await channel.getLarkTransport().replyDocComment({
+            docToken: message.docComment.fileToken,
+            commentId: message.docComment.commentId,
+            fileType: message.docComment.fileType,
+            content: chunk,
+          }).catch((replyErr) => {
+            logSafeError('[channel] Failed to send codex exec doc-comment error reply:', replyErr);
           });
-        } else {
-          console.error(
-            `[channel] Suppressed codex exec error reply for non-user-visible or synthetic message ${message.messageId} (${message.chatType}): ${errorText}`,
-          );
         }
+      } else if (shouldSendCodexExecFailureReply(message)) {
+        await sendFeishuReply(
+          {
+            client: channel.getClient(),
+            transport: channel.getLarkTransport(),
+            conversationBuffer: buffer,
+            ackReactions: channel.getAckReactions(),
+            botMessageTracker: channel.getBotMessageTracker(),
+            latestMessageTracker: channel.getLatestMessageTracker(),
+            turnObligations,
+          },
+          {
+            chat_id: message.chatId,
+            text: errorText,
+            reply_to: message.messageId,
+            thread_id: message.threadId,
+          },
+        ).catch((replyErr) => {
+          console.error('[channel] Failed to send codex exec error reply:', redactErrorForLog(replyErr));
+        });
+      } else {
+        console.error(
+          `[channel] Suppressed codex exec error reply for non-user-visible or synthetic message ${message.messageId} (${message.chatType}): ${errorText}`,
+        );
       }
     } finally {
-      if (appConfig.codexDeliveryMode === 'exec') {
-        identitySession.endChannelTurn(message.chatId, message.threadId);
-      }
+      identitySession.endChannelTurn(message.chatId, message.threadId);
       if (hasReplyObligation) {
         turnObligations.clearActive(message.chatId, message.threadId, message.messageId);
       }
@@ -414,74 +389,69 @@ async function main() {
 
   // 10. Start cronjob scheduler
   const scheduler = new JobScheduler({
-    server: server.server,
     client: channel.getClient(),
     transport: channel.getLarkTransport(),
     identitySession,
     botMessageTracker: channel.getBotMessageTracker(),
-    ...(appConfig.codexDeliveryMode === 'exec'
-      ? {
-          promptRunner: async ({ job, jobThreadId, promptContent, diagnostics }) => {
-            let deliveredReport = '';
-            const message: LarkMessage = {
-              messageId: jobThreadId,
-              chatId: job.meta.target_chat_id,
-              chatType: 'cronjob',
-              senderId: job.meta.created_by,
-              senderName: `CronJob ${job.meta.name}`,
-              text: promptContent,
-              messageType: 'cronjob',
-              rawContent: promptContent,
-              threadId: jobThreadId,
-            };
-            await deliverMessageViaCodexExec({
-              message,
-              displayLabel: `CronJob · ${job.meta.name}`,
-              sendReply: async (request) => {
-                diagnostics.startStage('send_lark');
-                try {
-                  const result = await sendFeishuReply(
-                    {
-                      client: channel.getClient(),
-                      transport: channel.getLarkTransport(),
-                      conversationBuffer: buffer,
-                      botMessageTracker: channel.getBotMessageTracker(),
-                      latestMessageTracker: channel.getLatestMessageTracker(),
-                      turnObligations,
-                    },
-                    { ...request, reply_to: undefined },
-                  );
-                  if (result.isError) throw new Error(result.errorText ?? result.statusText);
-                  if (result.sentCount > 0) deliveredReport = request.text;
-                  diagnostics.completeStage('send_lark');
-                  return result;
-                } catch (err) {
-                  diagnostics.failStage('send_lark', err);
-                  throw err;
-                }
+    promptRunner: async ({ job, jobThreadId, promptContent, diagnostics }) => {
+      let deliveredReport = '';
+      const message: LarkMessage = {
+        messageId: jobThreadId,
+        chatId: job.meta.target_chat_id,
+        chatType: 'cronjob',
+        senderId: job.meta.created_by,
+        senderName: `CronJob ${job.meta.name}`,
+        text: promptContent,
+        messageType: 'cronjob',
+        rawContent: promptContent,
+        threadId: jobThreadId,
+      };
+      await deliverMessageViaCodexExec({
+        message,
+        displayLabel: `CronJob · ${job.meta.name}`,
+        sendReply: async (request) => {
+          diagnostics.startStage('send_lark');
+          try {
+            const result = await sendFeishuReply(
+              {
+                client: channel.getClient(),
+                transport: channel.getLarkTransport(),
+                conversationBuffer: buffer,
+                botMessageTracker: channel.getBotMessageTracker(),
+                latestMessageTracker: channel.getLatestMessageTracker(),
+                turnObligations,
               },
-              recordAssistantMessage: ({ chatId, threadId, text }) => {
-                buffer.record(chatId, {
-                  role: 'assistant',
-                  senderId: 'bot',
-                  text: text.slice(0, 500),
-                  timestamp: new Date().toISOString(),
-                  timestampMs: Date.now(),
-                  ...(threadId ? { threadId } : {}),
-                  messageType: 'text',
-                });
-              },
-              sessionHealth: sessionHealthMonitor ?? undefined,
-              actionDispatcher: codexExecActionDispatcher,
-              progressVisible: false,
-              onProgress: (event) => {
-                diagnostics.recordProgress(event.content, event.timestampMs, event.bytes);
-              },
-            });
-            return { report: deliveredReport };
-          },
-        }
-      : {}),
+              { ...request, reply_to: undefined },
+            );
+            if (result.isError) throw new Error(result.errorText ?? result.statusText);
+            if (result.sentCount > 0) deliveredReport = request.text;
+            diagnostics.completeStage('send_lark');
+            return result;
+          } catch (err) {
+            diagnostics.failStage('send_lark', err);
+            throw err;
+          }
+        },
+        recordAssistantMessage: ({ chatId, threadId, text }) => {
+          buffer.record(chatId, {
+            role: 'assistant',
+            senderId: 'bot',
+            text: text.slice(0, 500),
+            timestamp: new Date().toISOString(),
+            timestampMs: Date.now(),
+            ...(threadId ? { threadId } : {}),
+            messageType: 'text',
+          });
+        },
+        sessionHealth: sessionHealthMonitor ?? undefined,
+        actionDispatcher: codexExecActionDispatcher,
+        progressVisible: false,
+        onProgress: (event) => {
+          diagnostics.recordProgress(event.content, event.timestampMs, event.bytes);
+        },
+      });
+      return { report: deliveredReport };
+    },
   });
   await scheduler.start();
 

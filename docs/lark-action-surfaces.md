@@ -2,7 +2,7 @@
 
 This plugin exposes Lark operations through two different surfaces:
 
-- MCP tools in notification mode.
+- MCP tools exposed by the plugin server.
 - Structured side-channel action requests in Codex exec mode.
 
 The surfaces are intentionally not identical. MCP tools are interactive tool

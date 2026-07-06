@@ -6,7 +6,6 @@
  * On startup, recovers missed jobs (at most one execution per job).
  */
 import * as Lark from '@larksuiteoapi/node-sdk';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { createHash } from 'node:crypto';
 import { appConfig } from './config.js';
 import { cronJobPrompt } from './prompts.js';
@@ -65,7 +64,6 @@ export function parseJobIdFromThreadId(threadId: string | undefined): string | n
 }
 
 export interface SchedulerOptions {
-  server: Server;
   client: Lark.Client;
   transport?: LarkTransport;
   identitySession: IdentitySession;
@@ -311,7 +309,6 @@ export async function recordCronJobReportDelivery(
 
 export class JobScheduler {
   private timer: NodeJS.Timeout | null = null;
-  private server: Server;
   private client: Lark.Client;
   private transport: LarkTransport;
   private identitySession: IdentitySession;
@@ -321,7 +318,6 @@ export class JobScheduler {
   private ticking = false;
 
   constructor(opts: SchedulerOptions) {
-    this.server = opts.server;
     this.client = opts.client;
     this.transport = opts.transport ?? createOpenApiLarkTransport(opts.client, {
       outboundMessageContextCache: opts.botMessageTracker,
@@ -653,8 +649,7 @@ export class JobScheduler {
    *
    * Each execution runs under a unique thread_id so its IdentitySession entry
    * does not clobber concurrent inbound human messages in the same chat.
-   * Exec mode uses `promptRunner`; notification mode keeps the legacy MCP
-   * channel notification fallback.
+   * Prompt jobs use the same codex exec delivery path as live chat turns.
    */
   private async executePromptJob(job: JobFile, runId: string): Promise<JobExecutionOutcome> {
     const diagnostics = new CronJobRunDiagnostics({
@@ -678,90 +673,39 @@ export class JobScheduler {
     );
     diagnostics.completeStage('prepare_prompt');
 
-    if (this.promptRunner) {
-      try {
-        diagnostics.startStage('codex_exec');
-        const result = await this.promptRunner({
-          job,
-          jobThreadId,
-          runId,
-          promptContent,
-          diagnostics,
-        });
-        diagnostics.completeStage('codex_exec');
-        if (!result.report.trim()) {
-          throw new Error('CronJob prompt produced no visible report.');
-        }
-        const snapshot = diagnostics.logSnapshot('success');
-        return {
-          runStatus: 'success',
-          outputStatus: 'generated',
-          deliveryStatus: 'sent',
-          report: result.report,
-          reportType: 'job_result',
-          deliveryError: null,
-          lastError: null,
-          autoPause: false,
-          completed: true,
-          diagnostics: snapshot,
-        };
-      } catch (err: any) {
-        diagnostics.failStage(undefined, err);
-        const reportSnapshot = diagnostics.snapshot('failed');
-        const lastError = `[LARK_DEFER] CronJob prompt execution failed before a complete report could be delivered: ${err?.message ?? err}`;
-        const report = buildCronJobErrorReport(job, lastError, reportSnapshot);
-        try {
-          diagnostics.startStage('send_lark_error_report');
-          await this.transport.sendMessage({
-            chatId: job.meta.target_chat_id,
-            input: { text: report },
-            retry: { attempts: 1, retryTimeout: false },
-          });
-          diagnostics.completeStage('send_lark_error_report');
-          const finalSnapshot = diagnostics.logSnapshot('failed', err);
-          return {
-            runStatus: 'failed',
-            outputStatus: 'generated',
-            deliveryStatus: 'sent',
-            report,
-            reportType: 'error_report',
-            deliveryError: null,
-            lastError,
-            autoPause: false,
-            completed: true,
-            diagnostics: finalSnapshot,
-          };
-        } catch (deliveryErr: any) {
-          diagnostics.failStage('send_lark_error_report', deliveryErr);
-          throw buildCronJobReportDeliveryFailure(report, deliveryErr, diagnostics.logSnapshot('failed', deliveryErr));
-        }
-      } finally {
-        this.identitySession.endChannelTurn(job.meta.target_chat_id, jobThreadId);
-      }
-    }
-
     try {
-      diagnostics.startStage('send_channel_notification');
-      await this.server.notification({
-        method: 'notifications/Codex/channel',
-        params: {
-          content: promptContent,
-          meta: {
-            chat_id: job.meta.target_chat_id,
-            thread_id: jobThreadId,
-            source: 'cronjob',
-            job_id: job.meta.id,
-            job_name: job.meta.name,
-            ...(job.meta.model ? { model: job.meta.model } : {}),
-          },
-        },
+      diagnostics.startStage('codex_exec');
+      if (!this.promptRunner) {
+        throw new Error('CronJob prompt runner is not configured.');
+      }
+      const result = await this.promptRunner({
+        job,
+        jobThreadId,
+        runId,
+        promptContent,
+        diagnostics,
       });
-      diagnostics.completeStage('send_channel_notification');
+      diagnostics.completeStage('codex_exec');
+      if (!result.report.trim()) {
+        throw new Error('CronJob prompt produced no visible report.');
+      }
+      const snapshot = diagnostics.logSnapshot('success');
+      return {
+        runStatus: 'success',
+        outputStatus: 'generated',
+        deliveryStatus: 'sent',
+        report: result.report,
+        reportType: 'job_result',
+        deliveryError: null,
+        lastError: null,
+        autoPause: false,
+        completed: true,
+        diagnostics: snapshot,
+      };
     } catch (err: any) {
-      this.identitySession.endChannelTurn(job.meta.target_chat_id, jobThreadId);
-      diagnostics.failStage('send_channel_notification', err);
+      diagnostics.failStage(undefined, err);
       const reportSnapshot = diagnostics.snapshot('failed');
-      const lastError = `[LARK_DEFER] CronJob prompt delivery failed before Codex accepted the turn: ${err?.message ?? err}`;
+      const lastError = `[LARK_DEFER] CronJob prompt execution failed before a complete report could be delivered: ${err?.message ?? err}`;
       const report = buildCronJobErrorReport(job, lastError, reportSnapshot);
       try {
         diagnostics.startStage('send_lark_error_report');
@@ -788,70 +732,8 @@ export class JobScheduler {
         diagnostics.failStage('send_lark_error_report', deliveryErr);
         throw buildCronJobReportDeliveryFailure(report, deliveryErr, diagnostics.logSnapshot('failed', deliveryErr));
       }
+    } finally {
+      this.identitySession.endChannelTurn(job.meta.target_chat_id, jobThreadId);
     }
-
-    this.schedulePromptRunWatchdog(job, runId);
-    const snapshot = diagnostics.snapshot();
-    return {
-      runStatus: 'started',
-      outputStatus: 'empty',
-      deliveryStatus: 'pending',
-      report: null,
-      reportType: null,
-      deliveryError: null,
-      lastError: null,
-      autoPause: false,
-      completed: false,
-      diagnostics: snapshot,
-    };
-  }
-
-  private schedulePromptRunWatchdog(job: JobFile, runId: string): void {
-    const timeout = setTimeout(() => {
-      this.failPendingPromptRun(job, runId).catch((err) => {
-        logSafeError(`[scheduler] Prompt job ${job.meta.id} watchdog failed:`, err);
-      });
-    }, appConfig.replyObligationTimeoutMs);
-    timeout.unref?.();
-  }
-
-  private async failPendingPromptRun(job: JobFile, runId: string): Promise<void> {
-    const latest = await readJob(job.meta.id);
-    if (!latest) return;
-    if (latest.meta.created_at !== job.meta.created_at) return;
-    if (latest.runtime.run_id !== runId || latest.runtime.delivery_status !== 'pending') return;
-
-    const diagnostics = finalizeStoredDiagnostics(latest.runtime.diagnostics, 'failed', {
-      currentStage: 'await_lark_reply',
-    });
-    const report = buildCronJobErrorReport(
-      latest,
-      `CronJob did not produce a Feishu reply within ${appConfig.replyObligationTimeoutMs}ms.`,
-      diagnostics,
-    );
-    let deliveryStatus: 'sent' | 'failed' = 'sent';
-    let deliveryError: string | null = null;
-    try {
-      await this.transport.sendMessage({
-        chatId: latest.meta.target_chat_id,
-        input: { text: report },
-      });
-    } catch (err: any) {
-      deliveryStatus = 'failed';
-      deliveryError = err?.message ?? String(err);
-    }
-
-    await mutateJob(latest.meta.id, (current) => {
-      if (current.meta.created_at !== latest.meta.created_at) return false;
-      if (current.runtime.run_id !== runId || current.runtime.delivery_status !== 'pending') return false;
-      current.runtime.run_status = 'failed';
-      current.runtime.output_status = 'generated';
-      current.runtime.delivery_status = deliveryStatus;
-      current.runtime.report = report;
-      current.runtime.report_type = 'error_report';
-      current.runtime.delivery_error = deliveryError;
-      current.runtime.last_error = deliveryError ?? 'CronJob prompt run timed out before producing a report.';
-      current.runtime.diagnostics = diagnostics;
-    });
   }
 }

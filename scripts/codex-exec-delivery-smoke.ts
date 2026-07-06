@@ -1,8 +1,7 @@
 /**
  * Codex exec delivery smoke test.
  *
- * Verifies the exec path used when Codex no longer consumes
- * notifications/Codex/channel: inbound Feishu messages are converted into
+ * Verifies the exec delivery path: inbound Feishu messages are converted into
  * `codex exec` prompts, one Codex session is resumed per Feishu chat/thread,
  * and the final answer is sent back through the normal Feishu reply path.
  */

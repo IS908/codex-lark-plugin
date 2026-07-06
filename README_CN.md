@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.12.4-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.12.5-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -68,7 +68,7 @@
 
 ### 定时任务（CronJob）
 
-- **两种任务类型**：`message` 确定性发送固定内容；`prompt` 在 `exec` 模式下复用普通聊天同一条 `codex exec` 交付路径，`notification` 模式才保留旧的 `notifications/Codex/channel` 兼容路径
+- **两种任务类型**：`message` 确定性发送固定内容；`prompt` 复用普通聊天同一条 `codex exec` 交付路径
 - Prompt job 失败时会包含结构化 run 诊断：run 元数据、可观测阶段耗时、仅用于诊断的 progress，以及可用时脱敏后的 `codex exec` stdout/stderr tail
 - 标准 cron 表达式 + 简化别名（`every 30m`、`daily at 09:00`、`weekdays at 17:00`）
 - 通过飞书聊天或 `$lark:jobs` skill 创建和管理任务
@@ -296,7 +296,6 @@ git push origin v1.0.0
 | `LARK_TEXT_CHUNK_LIMIT` | `4000` | 单条消息最大字符数 |
 | `LARK_QUEUE_HANDLER_TIMEOUT_MS` | `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` | 每个 thread 的队列兜底超时时间（毫秒）。`0` 表示关闭兜底；小于 `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` 的正数会自动抬高到该下限，确保常规 exec 超时由 `codex exec` 层负责并能发送失败回复。 |
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | `max(60000, LARK_CODEX_EXEC_TIMEOUT_MS + 60000)` | 可见回复或 defer 前的最长等待时间，超时后记录未满足的 Lark turn |
-| `LARK_CODEX_DELIVERY_MODE` | `exec` | `exec` 表示每条飞书消息运行一次 `codex exec`，并把最终回答直接发回飞书；`notification` 保留旧的 `notifications/Codex/channel` 路径，仅用于兼容支持该协议的 host |
 | `LARK_CODEX_EXEC_COMMAND` | `codex` | exec delivery 使用的 Codex CLI 命令 |
 | `LARK_CODEX_EXEC_CWD` | `~/.codex/channels/lark/codex-exec-workdir` | `codex exec` 的工作目录；保持目录内没有 `.mcp.json`，避免递归加载当前 Lark MCP server |
 | `LARK_CODEX_EXEC_TIMEOUT_MS` | `600000` | 单次 `codex exec` 超时时间 |
