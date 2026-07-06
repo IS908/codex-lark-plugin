@@ -1105,7 +1105,7 @@ async function executeCreateIssueFromProposal(
 ): Promise<CodexExecActionExecutionResult> {
   const auth = currentCaller(deps.identitySession, message, 'create_issue_from_proposal');
   const tool = action.tool;
-  const auditArgs = { id: action.id, tool: tool ?? 'builtin-gh-http', chat_id: message.chatId, thread_id: message.threadId };
+  const auditArgs = { id: action.id, tool: tool ?? '<builtin>', chat_id: message.chatId, thread_id: message.threadId };
   if ('error' in auth) return auth.error;
   const { caller } = auth;
   const proposal = await readIssueProposal(action.id);
@@ -1144,6 +1144,7 @@ async function executeCreateIssueFromProposal(
     : await createGithubIssueFromProposal(approved);
   if (!result.ok) {
     await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller, lastError: result.message });
+    void audit('create_issue_from_proposal', caller, auditArgs, 'error');
     return {
       ok: false,
       action: 'create_issue_from_proposal',

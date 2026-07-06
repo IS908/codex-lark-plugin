@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.9.7] - 2026-07-06
+
+### Changed
+- Removed built-in `gh` CLI compatibility from approved issue proposal filing; the built-in path now uses token-backed GitHub HTTP only, while host-local issue creation commands must be explicitly configured through `local-cli-tools.json`.
+- Clarified issue proposal action prompts, docs, `.env.example`, and configure skill text so `tool` overrides are configured local tool names, not raw executable names.
+
+### Fixed
+- Added regression coverage to reject raw `tool: "gh"` issue filing overrides and to keep failed proposal filing attempts auditable.
+
 ## [1.9.6] - 2026-07-04
 
 ### Added

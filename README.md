@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.9.6-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.9.7-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -362,12 +362,12 @@ channel home, the Feishu report asks the maintainer whether to file it, and
 `create_issue_from_proposal` may file it only after explicit human approval.
 Low-risk proposals whose GitHub issue already exists may then use
 `create_low_risk_pr_from_proposal` to call a trusted `gh_low_risk_pr_create`
-wrapper. Issue creation first tries the standard GitHub CLI command
-`gh issue create --repo <owner/name> --title <title> --body <body>` and then
-falls back to the GitHub HTTP API when a token is configured. Advanced
+wrapper. Issue creation uses the plugin's built-in proposal filing path by
+default; that path uses the configured GitHub token and HTTP API. Advanced
 operators can still pass a configured local CLI tool override such as
-`gh_issue_create`. PR creation remains intentionally wrapper-based so local
-policy can enforce low-risk scope, verification, and no auto-merge/release.
+`external_issue_create`. Raw executable names such as `gh` are not accepted as
+tool overrides. PR creation remains intentionally wrapper-based so local policy
+can enforce low-risk scope, verification, and no auto-merge/release.
 
 `create_default_review_jobs` creates two built-in prompt cronjobs:
 `plugin-self-review` and `plugin-low-risk-auto-fix`. Both are created with
@@ -426,9 +426,9 @@ Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
       "maxOutputBytes": 65536,
       "allowedCallers": "lark_allowed_user_ids"
     },
-    "gh_issue_create": {
-      "command": "/opt/homebrew/bin/gh",
-      "fixedArgs": ["issue", "create"],
+    "external_issue_create": {
+      "command": "/Users/you/bin/create-issue",
+      "fixedArgs": [],
       "paramAllowlist": ["--repo", "--title", "--body", "--label"],
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
@@ -452,12 +452,12 @@ one of `paramAllowlist` or `paramBlocklist`. Commands must be absolute paths.
 Environment keys in `envAllowlist` and `env` must use shell-compatible names
 such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 
-`create_issue_from_proposal` defaults to the built-in GitHub issue creator:
-`gh issue create --repo <owner/name> --title <proposal title>
---body <proposal body>`, followed by HTTP API fallback when
-`LARK_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` is available. Passing the
-optional `tool` argument keeps the advanced local CLI override path; include
-`--repo`, `--title`, and `--body` in that tool's `paramAllowlist`.
+`create_issue_from_proposal` defaults to the built-in GitHub proposal filing
+path, which requires `LARK_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`. Passing
+the optional `tool` argument keeps the advanced local CLI override path; the
+value must name a configured `local-cli-tools.json` tool, not a raw executable
+name. Include `--repo`, `--title`, and `--body` in that tool's
+`paramAllowlist`.
 `create_low_risk_pr_from_proposal` defaults to `gh_low_risk_pr_create` and
 passes `--repo`, `--proposal-id`, `--issue`, `--title`, and `--body`. That local
 wrapper must enforce the low-risk file policy, run verification, create a PR
@@ -556,11 +556,9 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 | `LARK_PRIVACY_RULES_FILE` | `~/.codex/channels/lark/privacy-rules.md` | Override the path to the L2 user rules file. The distiller injects this file's contents into its classification prompt. |
 | `LARK_AUDIT_LOG` | `~/.codex/channels/lark/audit.log` | Override the path to the append-only audit log. Every sensitive-tool invocation is recorded (best-effort; log failures never propagate). (v0.11.0+) |
 | `LARK_LOCAL_CLI_TOOLS_CONFIG` | `~/.codex/channels/lark/local-cli-tools.json` | Allowlist config for `run_local_cli_tool` host-local CLI execution. (v1.1.0+) |
-| `LARK_GITHUB_ISSUE_GH_COMMAND` | `gh` | Executable used by `create_issue_from_proposal` before HTTP fallback. |
-| `LARK_GITHUB_ISSUE_TIMEOUT_MS` | `30000` | Timeout for both `gh issue create` and GitHub HTTP issue creation. |
-| `LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES` | `65536` | Maximum stdout/stderr bytes captured from `gh issue create`. |
-| `LARK_GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub API base URL for HTTP fallback. |
-| `LARK_GITHUB_TOKEN` | (empty) | Optional HTTP fallback token. If unset, `GH_TOKEN` or `GITHUB_TOKEN` is used. |
+| `LARK_GITHUB_ISSUE_TIMEOUT_MS` | `30000` | Timeout for built-in GitHub HTTP issue creation. |
+| `LARK_GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub API base URL for built-in proposal filing. |
+| `LARK_GITHUB_TOKEN` | (empty) | Token for built-in GitHub HTTP issue creation. If unset, `GH_TOKEN` or `GITHUB_TOKEN` is used. |
 | `LARK_QUOTED_CARD_USER_FETCH_ENABLED` | `true` | When bot SDK/raw fetches cannot hydrate a quoted Interactive Card, try `lark-cli im +messages-mget --as user` as a best-effort user-identity fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_COMMAND` | `lark-cli` | Executable used for the quoted-card user fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS` | `10000` | Timeout for the quoted-card user fallback. |
@@ -685,7 +683,7 @@ The plugin registers the following MCP tools for Codex to use:
 | `create_issue_proposal` | Create a durable pending GitHub issue proposal without filing it. Used by periodic review jobs before asking for maintainer approval. |
 | `list_issue_proposals` | List visible issue proposals. Private chats show caller-created proposals; group chats show proposals targeting the group. |
 | `reject_issue_proposal` | Reject a pending issue proposal. Only the proposal creator or configured owner can mutate it. |
-| `create_issue_from_proposal` | After explicit maintainer approval, file a proposal through built-in `gh issue create` with HTTP API fallback; optional `tool` keeps an advanced local CLI override. |
+| `create_issue_from_proposal` | After explicit maintainer approval, file a proposal through the built-in GitHub HTTP path; optional `tool` must name a configured local CLI override. |
 | `create_low_risk_pr_from_proposal` | After a low-risk eligible proposal has a GitHub issue, open a PR through an allowlisted local CLI tool (`gh_low_risk_pr_create` by default). The plugin never merges or releases it automatically. |
 | `what_do_you_know` | List what the bot has stored in the caller's profile. Filtered by rendering visibility (both tiers in p2p, public only in groups). Each line carries an 8-char hash for use with `forget_memory`. (v0.11.0+) |
 | `forget_memory` | Remove a specific line from the caller's profile by hash. Caller-scoped and idempotent. Optional `promote_to_rule` promotes the removal into a durable `## Always private` rule in `privacy-rules.md`. (v0.11.0+) |
