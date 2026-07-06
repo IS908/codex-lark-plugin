@@ -15,6 +15,15 @@ import { appendRotatingLine } from './resource-governance.js';
 
 export type AuditOutcome = 'ok' | 'denied' | 'error';
 
+interface AuditLogRecord {
+  at: string;
+  kind: 'audit';
+  tool: string;
+  outcome: AuditOutcome;
+  caller: string | null;
+  args: Record<string, unknown>;
+}
+
 /** Best-effort append. Never throws. */
 export async function audit(
   tool: string,
@@ -26,20 +35,22 @@ export async function audit(
   // (circular refs, bigint, etc.), and a logging side-effect must never
   // affect the calling tool's behavior.
   try {
-    let argsStr: string;
+    let argsForLog: Record<string, unknown>;
     try {
-      argsStr = JSON.stringify(redact(args));
+      argsForLog = redact(args);
+      JSON.stringify(argsForLog);
     } catch {
-      argsStr = '<unserializable>';
+      argsForLog = { serialization_error: '<unserializable>' };
     }
-    const line =
-      [
-        new Date().toISOString(),
-        tool.padEnd(18),
-        outcome.padEnd(7),
-        `caller=${caller ?? '-'}`,
-        `args=${argsStr}`,
-      ].join('  ') + '\n';
+    const record: AuditLogRecord = {
+      at: new Date().toISOString(),
+      kind: 'audit',
+      tool,
+      outcome,
+      caller,
+      args: argsForLog,
+    };
+    const line = `${JSON.stringify(record)}\n`;
 
     await appendRotatingLine(appConfig.auditLogPath, line, {
       maxBytes: appConfig.logMaxBytes,
