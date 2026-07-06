@@ -1404,8 +1404,8 @@ async function downloadQuotedMessageFirstImage(
       },
     };
   }
-  const fetchMessageContext = transport.fetchMessageContext;
-  const downloadResource = transport.downloadResource;
+  const fetchMessageContext = transport.fetchMessageContext.bind(transport);
+  const downloadResource = transport.downloadResource.bind(transport);
 
   let fetched;
   try {

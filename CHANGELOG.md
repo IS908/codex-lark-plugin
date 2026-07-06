@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-07-06
+
+### Fixed
+- Bound quoted-message fetch/download transport methods before invoking them so `send_message` with `quoted_message:first_image` keeps the `LarkTransport` instance context.
+
 ## [1.10.1] - 2026-07-06
 
 ### Added

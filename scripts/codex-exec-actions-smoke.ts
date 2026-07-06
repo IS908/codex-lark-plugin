@@ -343,6 +343,42 @@ try {
   writeFileSync(currentImagePath, 'fake image bytes', 'utf-8');
   writeFileSync(localFilePath, 'report bytes', 'utf-8');
   const sendReplyRequests: any[] = [];
+  class ThisBoundQuotedTransport {
+    private readonly contexts = new Map<string, any>([
+      ['om_quoted_image', {
+        messageId: 'om_quoted_image',
+        text: '[Image]',
+        msgType: 'image',
+        attachments: [{ fileKey: 'img_quoted', fileName: 'quoted.png', fileType: 'image' }],
+      }],
+      ['om_quoted_text', {
+        messageId: 'om_quoted_text',
+        text: 'quoted text only',
+        msgType: 'text',
+        attachments: [],
+      }],
+    ]);
+
+    private readonly downloadMarker = 'quoted image bytes';
+
+    async recallMessage(): Promise<void> {}
+
+    async fetchMessageContext(messageId: string): Promise<any> {
+      return this.contexts.get(messageId) ?? {
+        messageId,
+        text: 'quoted text only',
+        msgType: 'text',
+        attachments: [],
+      };
+    }
+
+    async downloadResource(messageId: string, fileKey: string, resourceType: 'image' | 'file'): Promise<Buffer> {
+      assert.equal(messageId, 'om_quoted_image');
+      assert.equal(fileKey, 'img_quoted');
+      assert.equal(resourceType, 'image');
+      return Buffer.from(this.downloadMarker);
+    }
+  }
   const dispatcher = createCodexExecActionDispatcher({
     memoryStore: new MemoryStore(memoriesDir),
     identitySession,
@@ -367,31 +403,7 @@ try {
         statusText: `Sent ${textSentCount + fileSentCount} message(s)`,
       };
     },
-    larkTransport: {
-      recallMessage: async () => {},
-      fetchMessageContext: async (messageId: string) => {
-        if (messageId === 'om_quoted_image') {
-          return {
-            messageId,
-            text: '[Image]',
-            msgType: 'image',
-            attachments: [{ fileKey: 'img_quoted', fileName: 'quoted.png', fileType: 'image' }],
-          };
-        }
-        return {
-          messageId,
-          text: 'quoted text only',
-          msgType: 'text',
-          attachments: [],
-        };
-      },
-      downloadResource: async (messageId: string, fileKey: string, resourceType: 'image' | 'file') => {
-        assert.equal(messageId, 'om_quoted_image');
-        assert.equal(fileKey, 'img_quoted');
-        assert.equal(resourceType, 'image');
-        return Buffer.from('quoted image bytes');
-      },
-    },
+    larkTransport: new ThisBoundQuotedTransport(),
   });
 
   const results = await dispatcher.execute({
