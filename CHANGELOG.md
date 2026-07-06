@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-07-06
+
+### Added
+- Added ordered `kind=rich` `send_message` payloads for `codex exec`, supporting text plus image parts with Feishu post delivery and ordered split fallback.
+- Documented the outbound message support matrix and unsupported fallback behavior for text, rich post, image, file, audio/video, and interactive card forms.
+
+### Changed
+- Expanded exec media reply validation so rich payloads verify that all referenced image parts were delivered.
+- Tightened `send_message` payload parsing so unsupported media kinds are rejected instead of silently degrading.
+
 ## [1.9.8] - 2026-07-06
 
 ### Added

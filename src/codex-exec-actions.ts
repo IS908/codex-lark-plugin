@@ -4,7 +4,7 @@ import path from 'node:path';
 import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
 import type { LarkMessage } from './channel.js';
-import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
+import type { ReplyRequest, ReplyRichPart, ReplySendResult } from './reply-sender.js';
 import type { IdentitySession } from './identity-session.js';
 import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import type { MemoryStore } from './memory/file.js';
@@ -133,12 +133,45 @@ const RunLocalCliToolActionSchema = z.object({
   args: z.array(z.string()).optional(),
 });
 
-const SendMessagePayloadSchema = z.object({
-  kind: z.enum(['image', 'file']),
-  source: z.enum(['local_path', 'current_message:first_image']),
+const SendMessageImageSourceSchema = z.enum(['local_path', 'current_message:first_image']);
+
+const SendMessageImagePayloadSchema = z.object({
+  kind: z.literal('image'),
+  source: SendMessageImageSourceSchema,
   path: z.string().min(1).optional(),
   text: z.string().optional(),
 });
+
+const SendMessageFilePayloadSchema = z.object({
+  kind: z.literal('file'),
+  source: SendMessageImageSourceSchema,
+  path: z.string().min(1).optional(),
+  text: z.string().optional(),
+});
+
+const SendMessageRichPartSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('text'),
+    text: z.string(),
+  }),
+  z.object({
+    type: z.literal('image'),
+    source: SendMessageImageSourceSchema,
+    path: z.string().min(1).optional(),
+    alt: z.string().optional(),
+  }),
+]);
+
+const SendMessageRichPayloadSchema = z.object({
+  kind: z.literal('rich'),
+  parts: z.array(SendMessageRichPartSchema).min(1),
+});
+
+const SendMessagePayloadSchema = z.discriminatedUnion('kind', [
+  SendMessageImagePayloadSchema,
+  SendMessageFilePayloadSchema,
+  SendMessageRichPayloadSchema,
+]);
 
 const SendMessageActionSchema = z.object({
   type: z.literal('send_message'),
@@ -221,18 +254,29 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
   }
 
   if (action.type === 'send_message') {
-    if (action.message.source === 'local_path' && !action.message.path) {
+    if (action.message.kind !== 'rich' && action.message.source === 'local_path' && !action.message.path) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['message', 'path'],
         message: 'path is required when source is local_path',
       });
     }
-    if (action.message.kind === 'file' && action.message.source === 'current_message:first_image') {
+    if (action.message.kind !== 'rich' && action.message.kind === 'file' && action.message.source === 'current_message:first_image') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['message', 'source'],
         message: 'current_message:first_image is only valid for image messages',
+      });
+    }
+    if (action.message.kind === 'rich') {
+      action.message.parts.forEach((part, index) => {
+        if (part.type === 'image' && part.source === 'local_path' && !part.path) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['message', 'parts', index, 'path'],
+            message: 'path is required when image source is local_path',
+          });
+        }
       });
     }
   }
@@ -1309,6 +1353,67 @@ function firstCurrentMessageImagePath(message: LarkMessage): string | null {
   return message.imagePath ?? message.imagePaths?.[0] ?? null;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function resolveSendMessageImagePath(
+  source: 'local_path' | 'current_message:first_image',
+  rawPath: string | undefined,
+  message: LarkMessage,
+): Promise<{ ok: true; path: string } | { ok: false; result: CodexExecActionExecutionResult }> {
+  let filePath: string;
+  if (source === 'current_message:first_image') {
+    const currentImagePath = firstCurrentMessageImagePath(message);
+    if (!currentImagePath) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          action: 'send_message',
+          message: 'No current-message image is available for source current_message:first_image.',
+        },
+      };
+    }
+    filePath = currentImagePath;
+  } else {
+    filePath = resolveSendMessageLocalPath(rawPath!);
+  }
+
+  try {
+    await fs.access(filePath);
+  } catch {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        action: 'send_message',
+        message: `Local image file is not readable: ${filePath}`,
+      },
+    };
+  }
+  return { ok: true, path: filePath };
+}
+
+async function resolveSendMessageRichParts(
+  action: z.infer<typeof SendMessageRichPayloadSchema>,
+  message: LarkMessage,
+): Promise<{ ok: true; parts: ReplyRichPart[]; imageCount: number } | { ok: false; result: CodexExecActionExecutionResult }> {
+  const parts: ReplyRichPart[] = [];
+  let imageCount = 0;
+  for (const part of action.parts) {
+    if (part.type === 'text') {
+      parts.push({ type: 'text', text: part.text });
+      continue;
+    }
+    const resolved = await resolveSendMessageImagePath(part.source, part.path, message);
+    if (!resolved.ok) return resolved;
+    parts.push({ type: 'image', path: resolved.path, ...(part.alt ? { alt: part.alt } : {}) });
+    imageCount++;
+  }
+  return { ok: true, parts, imageCount };
+}
+
 async function executeSendMessage(
   action: z.infer<typeof SendMessageActionSchema>,
   message: LarkMessage,
@@ -1326,6 +1431,53 @@ async function executeSendMessage(
       ok: false,
       action: 'send_message',
       message: 'send_message is not supported for Feishu document comments.',
+    };
+  }
+
+  if (action.message.kind === 'rich') {
+    const resolved = await resolveSendMessageRichParts(action.message, message);
+    if (!resolved.ok) return resolved.result;
+    let result: ReplySendResult;
+    try {
+      result = await deps.sendReply({
+        chat_id: message.chatId,
+        text: '',
+        reply_to: message.messageId,
+        ...(action.reply_in_thread === false ? {} : message.threadId ? { thread_id: message.threadId } : {}),
+        richParts: resolved.parts,
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        action: 'send_message',
+        message: `send_message delivery failed: ${errorMessage(err)}`,
+      };
+    }
+    if (result.isError) {
+      return {
+        ok: false,
+        action: 'send_message',
+        message: result.errorText ?? result.statusText,
+      };
+    }
+    if (result.sentCount < 1) {
+      return {
+        ok: false,
+        action: 'send_message',
+        message: `Rich message was not delivered: ${result.statusText}`,
+      };
+    }
+    if (resolved.imageCount > 0 && (result.fileSentCount ?? 0) < resolved.imageCount) {
+      return {
+        ok: false,
+        action: 'send_message',
+        message: `Not all rich message images were delivered: ${result.statusText}`,
+      };
+    }
+    return {
+      ok: true,
+      action: 'send_message',
+      message: `Sent rich message via ${result.richDeliveryMode ?? 'reply'} (${result.statusText}).`,
     };
   }
 
@@ -1354,13 +1506,22 @@ async function executeSendMessage(
     };
   }
 
-  const result = await deps.sendReply({
-    chat_id: message.chatId,
-    text: action.message.text ?? '',
-    reply_to: message.messageId,
-    ...(action.reply_in_thread === false ? {} : message.threadId ? { thread_id: message.threadId } : {}),
-    files: [{ path: filePath, type: action.message.kind }],
-  });
+  let result: ReplySendResult;
+  try {
+    result = await deps.sendReply({
+      chat_id: message.chatId,
+      text: action.message.text ?? '',
+      reply_to: message.messageId,
+      ...(action.reply_in_thread === false ? {} : message.threadId ? { thread_id: message.threadId } : {}),
+      files: [{ path: filePath, type: action.message.kind }],
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      action: 'send_message',
+      message: `send_message delivery failed: ${errorMessage(err)}`,
+    };
+  }
   if (result.isError) {
     return {
       ok: false,

@@ -275,6 +275,30 @@ try {
   if (sendMessageParsed.kind !== 'actions') throw new Error('sendMessageParsed should be actions');
   assert.equal(sendMessageParsed.actions[0].type, 'send_message');
 
+  const richSendMessageParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [
+        {
+          type: 'send_message',
+          message: {
+            kind: 'rich',
+            parts: [
+              { type: 'text', text: 'Before\n' },
+              { type: 'image', source: 'local_path', path: './diagram.png', alt: 'diagram' },
+              { type: 'text', text: '\nAfter' },
+            ],
+          },
+        },
+      ],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(richSendMessageParsed.kind, 'actions');
+  if (richSendMessageParsed.kind !== 'actions') throw new Error('richSendMessageParsed should be actions');
+  assert.equal(richSendMessageParsed.actions[0].type, 'send_message');
+
   const invalidSendMessageParsed = parseCodexExecActionOutput([
     '<LARK_ACTIONS_JSON>',
     JSON.stringify({
@@ -285,6 +309,28 @@ try {
   ].join('\n'));
   assert.equal(invalidSendMessageParsed.kind, 'invalid_actions');
   assert.match(invalidSendMessageParsed.error, /path is required/i);
+
+  const invalidRichSendMessageParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [{ type: 'send_message', message: { kind: 'rich', parts: [{ type: 'image', source: 'local_path' }] } }],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(invalidRichSendMessageParsed.kind, 'invalid_actions');
+  assert.match(invalidRichSendMessageParsed.error, /path is required/i);
+
+  const unsupportedSendMessageKindParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [{ type: 'send_message', message: { kind: 'audio', source: 'local_path', path: './clip.mp3' } }],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(unsupportedSendMessageKindParsed.kind, 'invalid_actions');
+  assert.match(unsupportedSendMessageKindParsed.error, /image|file|rich|Invalid discriminator/i);
 
   const identitySession = new IdentitySession(() => 'ou_owner');
   identitySession.setCaller('oc_exec', 'thread_exec', 'ou_user');
@@ -299,6 +345,16 @@ try {
     localCliToolsConfigPath: localCliConfigPath,
     sendReply: async (request: any) => {
       sendReplyRequests.push(request);
+      if (request.richParts) {
+        const fileSentCount = request.richParts.filter((part: any) => part.type === 'image').length;
+        const failed = request.richParts.some((part: any) => part.type === 'text' && part.text === 'partial-rich-failure');
+        return {
+          sentCount: 1,
+          fileSentCount: failed ? 0 : fileSentCount,
+          richDeliveryMode: 'rich_post',
+          statusText: 'Sent 1 rich post message',
+        };
+      }
       const fileSentCount = request.text === 'caption-only-failure' ? 0 : request.files?.length ?? 0;
       const textSentCount = request.text ? 1 : 0;
       return {
@@ -411,6 +467,65 @@ try {
   });
   assert.equal(fileUploadFailureResults[0].ok, false);
   assert.match(fileUploadFailureResults[0].message, /Media was not delivered/i);
+
+  const richActionResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_media_rich',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'send rich message',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [
+      {
+        type: 'send_message',
+        message: {
+          kind: 'rich',
+          parts: [
+            { type: 'text', text: 'Before\n' },
+            { type: 'image', source: 'local_path', path: localFilePath, alt: 'report' },
+            { type: 'text', text: '\nAfter' },
+          ],
+        },
+      },
+    ],
+  });
+  assert.equal(richActionResults[0].ok, true, JSON.stringify(richActionResults));
+  assert.deepEqual(sendReplyRequests.at(-1).richParts, [
+    { type: 'text', text: 'Before\n' },
+    { type: 'image', path: localFilePath, alt: 'report' },
+    { type: 'text', text: '\nAfter' },
+  ]);
+
+  const richImageFailureResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_media_rich_failure',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'send rich message',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [
+      {
+        type: 'send_message',
+        message: {
+          kind: 'rich',
+          parts: [
+            { type: 'text', text: 'partial-rich-failure' },
+            { type: 'image', source: 'local_path', path: localFilePath },
+          ],
+        },
+      },
+    ],
+  });
+  assert.equal(richImageFailureResults[0].ok, false);
+  assert.match(richImageFailureResults[0].message, /Not all rich message images/i);
 
   const missingImageActionResults = await dispatcher.execute({
     message: {

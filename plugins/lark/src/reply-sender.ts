@@ -50,7 +50,12 @@ export interface ReplyRequest {
   format?: 'text' | 'card';
   footer?: string;
   files?: Array<{ path: string; type: 'image' | 'file' }>;
+  richParts?: ReplyRichPart[];
 }
+
+export type ReplyRichPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; path: string; alt?: string };
 
 export interface ReplySenderDeps {
   client: Lark.Client;
@@ -66,9 +71,62 @@ export interface ReplySendResult {
   sentCount: number;
   statusText: string;
   fileSentCount?: number;
+  richDeliveryMode?: 'rich_post' | 'split';
   isError?: boolean;
   errorText?: string;
   skippedReason?: 'withdrawn_message';
+}
+
+type UploadedRichPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; imageKey: string; alt?: string };
+
+function summarizeRichParts(parts: ReplyRichPart[]): string {
+  const text = parts
+    .map((part) => part.type === 'text' ? part.text : part.alt ? `[image: ${part.alt}]` : '[image]')
+    .join('')
+    .trim();
+  return text || '[rich message]';
+}
+
+function buildPostContent(parts: UploadedRichPart[]): object {
+  const content: Array<Array<Record<string, string>>> = [];
+  let line: Array<Record<string, string>> = [];
+
+  function flushLine() {
+    if (line.length > 0) {
+      content.push(line);
+      line = [];
+    }
+  }
+
+  for (const part of parts) {
+    if (part.type === 'image') {
+      flushLine();
+      content.push([{ tag: 'img', image_key: part.imageKey }]);
+      continue;
+    }
+
+    const lines = part.text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0) flushLine();
+      if (lines[i]) {
+        line.push({ tag: 'text', text: lines[i] });
+      }
+    }
+  }
+  flushLine();
+
+  return {
+    zh_cn: {
+      title: '',
+      content: content.length > 0 ? content : [[{ tag: 'text', text: '' }]],
+    },
+  };
+}
+
+function messageFromError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export async function sendFeishuReply(
@@ -84,6 +142,7 @@ export async function sendFeishuReply(
     format,
     footer,
     files,
+    richParts,
   } = request;
   const {
     client,
@@ -238,6 +297,120 @@ export async function sendFeishuReply(
     return { error: candidate };
   }
 
+  let sentCount = 0;
+  let fileSentCount = 0;
+
+  async function sendRichPartsAsSplit(parts: ReplyRichPart[], replyText: string): Promise<ReplySendResult> {
+    let deliveredAny = false;
+    try {
+      for (const part of parts) {
+        if (part.type === 'text') {
+          if (!part.text) continue;
+          const chunks = chunkText(part.text, appConfig.textChunkLimit);
+          for (const chunk of chunks) {
+            const replyTo = effectiveReplyTo && (!deliveredAny || shouldStayInThread) ? effectiveReplyTo : undefined;
+            const resp = await sendTransportMessage({
+              input: { text: chunk },
+              ...(replyTo ? { replyTo } : {}),
+              ...(shouldStayInThread && deliveredAny ? { replyInThread: true } : {}),
+            });
+            trackBotMessage(resp?.messageId);
+            sentCount++;
+            deliveredCount++;
+            deliveredAny = true;
+            recordAndRevokeAck(replyText, resp?.messageId);
+          }
+          continue;
+        }
+
+        const fileData = await fs.readFile(part.path);
+        const imageKey = await transport.uploadImage(fileData);
+        if (!imageKey) throw new Error(`Image upload returned no image_key for ${part.path}`);
+        const resp = await sendTransportMessage({
+          input: { imageKey },
+          ...(shouldStayInThread ? { replyTo: effectiveReplyTo!, replyInThread: true } : {}),
+        });
+        trackBotMessage(resp?.messageId);
+        sentCount++;
+        deliveredCount++;
+        fileSentCount++;
+        deliveredAny = true;
+        recordAndRevokeAck(replyText, resp?.messageId);
+      }
+    } catch (err) {
+      const failure = normalizeSendFailure(err);
+      if (failure.skipped) return failure.skipped;
+      logSafeError('[reply-sender] rich split delivery failed:', failure.error);
+      return {
+        sentCount,
+        statusText: `Failed during rich split delivery after ${sentCount} message(s)`,
+        fileSentCount,
+        richDeliveryMode: 'split',
+        isError: true,
+        errorText: messageFromError(failure.error),
+      };
+    }
+
+    if (sentCount > 0) recordAndRevokeAck(replyText);
+    return {
+      sentCount,
+      statusText: `Sent ${sentCount} split message(s)`,
+      fileSentCount,
+      richDeliveryMode: 'split',
+    };
+  }
+
+  if (richParts?.length) {
+    const replyText = summarizeRichParts(richParts);
+    const imageCount = richParts.filter((part) => part.type === 'image').length;
+    const hasText = richParts.some((part) => part.type === 'text' && part.text.trim());
+    const hasImage = imageCount > 0;
+    if (!hasText || !hasImage) {
+      return sendRichPartsAsSplit(richParts, replyText);
+    }
+
+    try {
+      const uploadedParts: UploadedRichPart[] = [];
+      for (const part of richParts) {
+        if (part.type === 'text') {
+          uploadedParts.push(part);
+          continue;
+        }
+        const fileData = await fs.readFile(part.path);
+        const imageKey = await transport.uploadImage(fileData);
+        if (!imageKey) throw new Error(`Image upload returned no image_key for ${part.path}`);
+        uploadedParts.push({ type: 'image', imageKey, alt: part.alt });
+      }
+      const postContent = buildPostContent(uploadedParts);
+      const resp = await sendTransportMessage({
+        input: { raw: { msgType: 'post', content: JSON.stringify(postContent) } },
+        ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
+      });
+      trackBotMessage(resp?.messageId);
+      sentCount = 1;
+      deliveredCount++;
+      fileSentCount = imageCount;
+      recordAndRevokeAck(replyText, resp?.messageId);
+      recordAndRevokeAck(replyText);
+      return {
+        sentCount,
+        statusText: 'Sent 1 rich post message',
+        fileSentCount,
+        richDeliveryMode: 'rich_post',
+      };
+    } catch (err) {
+      const failure = normalizeSendFailure(err);
+      if (failure.skipped) return failure.skipped;
+      console.error(
+        '[reply-sender] rich post delivery failed; falling back to ordered split:',
+        messageFromError(failure.error),
+      );
+      sentCount = 0;
+      fileSentCount = 0;
+      return sendRichPartsAsSplit(richParts, replyText);
+    }
+  }
+
   // Raw card JSON path — bypass buildCards entirely.
   if (card) {
     let cardObj: object;
@@ -279,9 +452,6 @@ export async function sendFeishuReply(
   // messages cannot render well is upgraded to Schema 2.0 cards unless the
   // caller explicitly forces format="text".
   const useCard = format === 'card' || (format !== 'text' && shouldUseCard(text));
-
-  let sentCount = 0;
-  let fileSentCount = 0;
 
   async function sendTextChunks(): Promise<number | ReplySendResult> {
     if (!text) return 0;
