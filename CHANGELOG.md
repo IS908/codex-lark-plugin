@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-07-06
+
+### Added
+- Added optional local `codex exec --json` tool execution tracing with `LARK_CODEX_EXEC_TOOL_TRACE`, `LARK_CODEX_EXEC_TOOL_TRACE_MODE`, and `LARK_CODEX_EXEC_TRACE_LOG`.
+- Added sanitized compact/full/hidden trace modes for tool events without rendering tool traces into Feishu replies.
+
 ## [1.10.2] - 2026-07-06
 
 ### Fixed

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createCodexExecToolTraceWriter } from './codex-exec-trace.js';
 
 export type CodexExecSandbox = 'read-only' | 'workspace-write' | 'danger-full-access';
 
@@ -251,6 +252,7 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   let sessionId: string | null = null;
   let usage: CodexExecUsage | null = null;
   let timedOut = false;
+  const toolTrace = createCodexExecToolTraceWriter();
 
   try {
     await fs.mkdir(cwd, { recursive: true });
@@ -279,6 +281,7 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
         for (const line of lines) {
           sessionId ??= extractSessionIdFromJsonLine(line);
           usage = mergeUsage(usage, extractUsageFromJsonLine(line));
+          toolTrace?.recordLine(line);
         }
       });
       child.stderr.on('data', (chunk: Buffer) => {
@@ -307,9 +310,18 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
 
     sessionId ??= extractCodexExecSessionId(stdoutLineBuffer);
     usage = mergeUsage(usage, extractCodexExecUsage(stdoutLineBuffer));
+    for (const line of stdoutLineBuffer.split(/\r?\n/)) {
+      if (line.trim()) toolTrace?.recordLine(line);
+    }
+    stdoutLineBuffer = '';
+    await toolTrace?.flush();
     const answer = await fs.readFile(outputFile, 'utf8');
     return { text: answer.trim(), sessionId, ...(usage ? { usage } : {}) };
   } finally {
+    for (const line of stdoutLineBuffer.split(/\r?\n/)) {
+      if (line.trim()) toolTrace?.recordLine(line);
+    }
+    await toolTrace?.flush();
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }

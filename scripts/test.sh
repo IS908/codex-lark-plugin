@@ -229,6 +229,10 @@ echo "=== Codex exec delivery unit checks ==="
 node --import tsx scripts/codex-exec-delivery-smoke.ts
 
 echo ""
+echo "=== Codex exec tool trace unit checks ==="
+node --import tsx scripts/codex-exec-trace-smoke.ts
+
+echo ""
 echo "=== Codex exec progress retention checks ==="
 node --import tsx scripts/codex-exec-progress-smoke.ts
 

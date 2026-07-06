@@ -61,6 +61,9 @@ LARK_EXEC_PROGRESS_MAX_MESSAGES:    3
 LARK_EXEC_PROGRESS_MAX_CHARS:       300
 LARK_EXEC_PROGRESS_MIN_INTERVAL_MS: 15000
 LARK_EXEC_PROGRESS_POLL_INTERVAL_MS: 250
+LARK_CODEX_EXEC_TOOL_TRACE:         false
+LARK_CODEX_EXEC_TOOL_TRACE_MODE:    compact
+LARK_CODEX_EXEC_TRACE_LOG:          ~/.codex/channels/lark/trace.log
 LARK_CODEX_SESSION_RETENTION_DAYS:  14
 LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: 24
 LARK_CODEX_SESSION_RETENTION_DRY_RUN: false
@@ -186,6 +189,9 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_EXEC_PROGRESS_MAX_CHARS` — max chars per progress message (default: 300)
 - `LARK_EXEC_PROGRESS_MIN_INTERVAL_MS` — minimum interval between progress messages in one turn (default: 15000)
 - `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS` — parent watcher polling interval for progress JSONL (default: 250)
+- `LARK_CODEX_EXEC_TOOL_TRACE` — write local codex exec tool-call trace lines to trace.log; never renders tool traces into Feishu replies (default: false)
+- `LARK_CODEX_EXEC_TOOL_TRACE_MODE` — `compact`, `full`, or `hidden`; `hidden` keeps local compact tracing and no visible Feishu tool trace (default: compact)
+- `LARK_CODEX_EXEC_TRACE_LOG` — local codex exec tool trace log path (default: `~/.codex/channels/lark/trace.log`)
 - `LARK_CODEX_SESSION_RETENTION_DAYS` — keep Codex exec resume-pointer records newer than this many days (default: 14)
 - `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` — periodic cleanup interval; set `0` to disable automatic cleanup (default: 24)
 - `LARK_CODEX_SESSION_RETENTION_DRY_RUN` — preview session cleanup candidates without deleting records (default: false)
@@ -263,6 +269,8 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_CODEX_EXEC_USE_SESSIONS`, `LARK_EXEC_PROGRESS_ENABLED`,
    `LARK_EXEC_PROGRESS_MAX_MESSAGES`, `LARK_EXEC_PROGRESS_MAX_CHARS`,
    `LARK_EXEC_PROGRESS_MIN_INTERVAL_MS`, `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS`,
+   `LARK_CODEX_EXEC_TOOL_TRACE`, `LARK_CODEX_EXEC_TOOL_TRACE_MODE`,
+   `LARK_CODEX_EXEC_TRACE_LOG`,
    `LARK_CODEX_SESSION_RETENTION_DAYS`,
    `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS`,
    `LARK_CODEX_SESSION_RETENTION_DRY_RUN`, `LARK_SESSION_HEALTH_ENABLED`,
@@ -324,6 +332,9 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_EXEC_PROGRESS_MAX_CHARS` | Messaging | No | `300` |
 | `LARK_EXEC_PROGRESS_MIN_INTERVAL_MS` | Messaging | No | `15000` |
 | `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS` | Messaging | No | `250` |
+| `LARK_CODEX_EXEC_TOOL_TRACE` | Messaging | No | `false` |
+| `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | Messaging | No | `compact` |
+| `LARK_CODEX_EXEC_TRACE_LOG` | Messaging | No | `~/.codex/channels/lark/trace.log` |
 | `LARK_CODEX_SESSION_RETENTION_DAYS` | Messaging | No | `14` |
 | `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` | Messaging | No | `24` |
 | `LARK_CODEX_SESSION_RETENTION_DRY_RUN` | Messaging | No | `false` |

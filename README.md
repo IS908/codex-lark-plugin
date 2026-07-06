@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.10.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.11.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -328,6 +328,9 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_EXEC_PROGRESS_MAX_CHARS` | `300` | Maximum characters per progress message |
 | `LARK_EXEC_PROGRESS_MIN_INTERVAL_MS` | `15000` | Minimum interval between progress messages in one turn |
 | `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS` | `250` | Parent watcher polling interval for progress JSONL |
+| `LARK_CODEX_EXEC_TOOL_TRACE` | `false` | Enable local `codex exec --json` tool execution tracing to `trace.log`. This never renders tool traces into Feishu replies. |
+| `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | `compact` | Trace mode: `compact` writes sanitized summaries; `full` writes sanitized/truncated event JSON; `hidden` is a compatibility alias that keeps local compact tracing while never showing tool traces in Feishu. |
+| `LARK_CODEX_EXEC_TRACE_LOG` | `~/.codex/channels/lark/trace.log` | Override the local codex exec tool trace log path |
 
 Exec delivery can expose a bounded progress side channel for long-running
 visible IM/doc-comment turns. The parent bridge creates a temporary JSONL file
@@ -338,6 +341,13 @@ low-signal filler, enforces the configured count/length/rate limits, and sends
 accepted progress messages through the same IM or doc-comment reply path before
 the final answer. If the progress file cannot be created, the bridge disables
 progress for that turn and still delivers the final reply.
+
+When `LARK_CODEX_EXEC_TOOL_TRACE=true`, the parent bridge also scans
+`codex exec --json` stdout for tool execution events and appends sanitized JSONL
+records to `LARK_CODEX_EXEC_TRACE_LOG`. This is local-only troubleshooting data:
+Feishu still receives only the final answer or bounded progress messages.
+`compact` mode records tool name, argument summary, status, duration, and error
+summary; `full` mode records the event shape with redaction/truncation.
 Progress directories are owner-only (`0700`) and JSONL files are owner-only
 read/write (`0600`). Stale `.lark-progress/turn-*` entries older than 12 hours
 are removed on startup and by a best-effort hourly cleanup.
@@ -625,7 +635,8 @@ Step 4: Advanced tuning (optional)
      LARK_FEISHU_API_RETRY_BASE_DELAY_MS,
      LARK_DOWNLOAD_MAX_BYTES, LARK_DOWNLOAD_TIMEOUT_MS,
      LARK_IDENTITY_SESSION_MAX_ENTRIES, LARK_DEBUG_LOG,
-     LARK_LOG_MAX_BYTES, LARK_LOG_MAX_FILES, LARK_INBOX_MAX_AGE_HOURS,
+     LARK_LOG_MAX_BYTES, LARK_LOG_MAX_FILES, LARK_CODEX_EXEC_TRACE_LOG,
+     LARK_INBOX_MAX_AGE_HOURS,
      LARK_INBOX_MAX_BYTES, LARK_NAME_CACHE_SIZE,
      LARK_CHAT_TYPE_CACHE_SIZE, LARK_LATEST_MESSAGE_TRACKER_SIZE,
      LARK_QUOTED_CONTEXT_MAX_DEPTH, LARK_QUOTED_CONTEXT_MAX_BYTES,

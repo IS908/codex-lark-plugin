@@ -118,6 +118,12 @@ export const appConfig = {
   codexExecProgressMaxChars: optionalPositiveNumber('LARK_EXEC_PROGRESS_MAX_CHARS', 300),
   codexExecProgressMinIntervalMs: optionalNonNegativeNumber('LARK_EXEC_PROGRESS_MIN_INTERVAL_MS', 15_000),
   codexExecProgressPollIntervalMs: optionalPositiveNumber('LARK_EXEC_PROGRESS_POLL_INTERVAL_MS', 250),
+  codexExecToolTraceEnabled: optionalBoolean('LARK_CODEX_EXEC_TOOL_TRACE', false),
+  codexExecToolTraceMode: optionalChoice(
+    'LARK_CODEX_EXEC_TOOL_TRACE_MODE',
+    'compact',
+    ['compact', 'full', 'hidden'] as const,
+  ),
   codexSessionRetentionDays: optionalPositiveNumber('LARK_CODEX_SESSION_RETENTION_DAYS', 14),
   codexSessionRetentionScanIntervalHours: optionalNonNegativeNumber(
     'LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS',
@@ -210,6 +216,10 @@ export const appConfig = {
   githubIssueToken: process.env.LARK_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN || null,
   debugLogPath: optional('LARK_DEBUG_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'debug.log')),
   auditLogPath: optional('LARK_AUDIT_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'audit.log')),
+  codexExecTraceLogPath: optional(
+    'LARK_CODEX_EXEC_TRACE_LOG',
+    path.join(os.homedir(), '.codex', 'channels', 'lark', 'trace.log'),
+  ),
 } as const;
 
 export type AppConfig = typeof appConfig;
