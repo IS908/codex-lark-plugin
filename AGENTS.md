@@ -43,10 +43,11 @@ src/privacy-rules.ts  – L1 hardcoded regex + keyword rules; L2 user-rules file
 After either mode replies, the ack reaction is revoked.
 
 **Exec media action:** `send_message` is available only in the parent-owned
-Codex exec action bridge, not as an MCP tool. The first slice supports image/file
-attachments from local paths and `current_message:first_image`, then routes
-through `sendFeishuReply` so thread routing and plugin runtime identity stay
-centralized.
+Codex exec action bridge, not as an MCP tool. It supports image/file attachments
+from local paths and `current_message:first_image`, plus ordered `kind=rich`
+text+image parts that prefer one Feishu post and fall back to ordered split
+messages. All variants route through `sendFeishuReply` so thread routing and
+plugin runtime identity stay centralized.
 
 **Reaction flow:** Feishu reaction event → `handleReactionEvent` / `handleSdkReactionEvent` → filter bot self, untracked messages, and whitelists → enqueue a normal `messageType="reaction"` turn for user reactions on tracked bot replies. Codex sees the emoji, reactor, and target bot message context, then decides whether to continue, retry, ask, respond, or return `[LARK_NO_REPLY]`. Bot self-reaction echoes and reactions on untracked messages are still dropped.
 

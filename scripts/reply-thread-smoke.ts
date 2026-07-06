@@ -24,7 +24,7 @@ function fail(msg: string): never {
 let passed = 0;
 const apiCalls: { method: string; args: any }[] = [];
 
-function mockClient(opts: { failReply?: unknown } = {}) {
+function mockClient(opts: { failReply?: unknown; failPost?: unknown } = {}) {
   return {
     im: {
       v1: {
@@ -34,6 +34,7 @@ function mockClient(opts: { failReply?: unknown } = {}) {
             return { data: { message_id: `created_${apiCalls.length}` } };
           },
           reply: async (args: any) => {
+            if (opts.failPost && args?.data?.msg_type === 'post') throw opts.failPost;
             if (opts.failReply) throw opts.failReply;
             apiCalls.push({ method: 'message.reply', args });
             return { data: { message_id: `replied_${apiCalls.length}` } };
@@ -232,6 +233,67 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
       fail(`3: chunk ${i} missing reply_in_thread=true`);
     }
   }
+  passed++;
+}
+
+// ── 3b. Thread + rich text/image: prefer a single post reply ──
+{
+  apiCalls.length = 0;
+  const result = await sendFeishuReply({ client: mockClient() as any }, {
+    chat_id: 'chat_grp',
+    text: '',
+    reply_to: 'om_rich_success',
+    thread_id: 'thread_abc',
+    richParts: [
+      { type: 'text', text: 'Before\n' },
+      { type: 'image', path: imgPath, alt: 'diagram' },
+      { type: 'text', text: '\nAfter' },
+    ],
+  });
+  const replyCalls = apiCalls.filter((c) => c.method === 'message.reply');
+  const createCalls = apiCalls.filter((c) => c.method === 'message.create');
+  if (createCalls.length !== 0) fail(`3b: expected 0 create calls, got ${createCalls.length}`);
+  if (replyCalls.length !== 1) fail(`3b: expected 1 rich post reply, got ${replyCalls.length}`);
+  if (replyCalls[0].args.data.msg_type !== 'post') {
+    fail(`3b: expected post msg_type, got ${replyCalls[0].args.data.msg_type}`);
+  }
+  const content = JSON.parse(replyCalls[0].args.data.content);
+  if (content.zh_cn.content[1][0].tag !== 'img') fail(`3b: expected second rich block to be image: ${replyCalls[0].args.data.content}`);
+  if (result.richDeliveryMode !== 'rich_post') fail(`3b: expected rich_post mode, got ${result.richDeliveryMode}`);
+  if (result.fileSentCount !== 1) fail(`3b: expected fileSentCount=1, got ${result.fileSentCount}`);
+  passed++;
+}
+
+// ── 3c. Thread + rich post failure: fall back to ordered split messages ──
+{
+  apiCalls.length = 0;
+  const result = await sendFeishuReply({ client: mockClient({ failPost: new Error('post unsupported') }) as any }, {
+    chat_id: 'chat_grp',
+    text: '',
+    reply_to: 'om_rich_fallback',
+    thread_id: 'thread_abc',
+    richParts: [
+      { type: 'text', text: 'Before' },
+      { type: 'image', path: imgPath, alt: 'diagram' },
+    ],
+  });
+  const replyCalls = apiCalls.filter((c) => c.method === 'message.reply');
+  if (replyCalls.length !== 2) fail(`3c: expected 2 split replies, got ${replyCalls.length}`);
+  if (replyCalls[0].args.data.msg_type !== 'text') {
+    fail(`3c: first split message should be text, got ${replyCalls[0].args.data.msg_type}`);
+  }
+  if ('reply_in_thread' in replyCalls[0].args.data) {
+    fail(`3c: first split text should be the quote reply, got ${JSON.stringify(replyCalls[0].args.data)}`);
+  }
+  if (replyCalls[1].args.data.msg_type !== 'image') {
+    fail(`3c: second split message should be image, got ${replyCalls[1].args.data.msg_type}`);
+  }
+  if (replyCalls[1].args.data.reply_in_thread !== true) {
+    fail(`3c: split image should stay in thread, got ${JSON.stringify(replyCalls[1].args.data)}`);
+  }
+  if (result.richDeliveryMode !== 'split') fail(`3c: expected split mode, got ${result.richDeliveryMode}`);
+  if (result.sentCount !== 2) fail(`3c: expected sentCount=2, got ${result.sentCount}`);
+  if (result.fileSentCount !== 1) fail(`3c: expected fileSentCount=1, got ${result.fileSentCount}`);
   passed++;
 }
 
@@ -715,4 +777,4 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   passed++;
 }
 
-console.log(`reply-thread smoke: ${passed}/13 PASS`);
+console.log(`reply-thread smoke: ${passed}/15 PASS`);
