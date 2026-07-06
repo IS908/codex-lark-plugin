@@ -14,6 +14,7 @@ const { BotMessageTracker } = await import('../src/channel.js');
 const { TurnObligationTracker } = await import('../src/turn-obligation.js');
 const { MemoryStore } = await import('../src/memory/file.js');
 const { readIssueProposal } = await import('../src/issue-proposal-store.js');
+const { createInitialJobRuntime } = await import('../src/job-store.js');
 const {
   createCodexExecActionDispatcher,
   parseCodexExecActionEnvelope,
@@ -33,6 +34,14 @@ function parseActionEnvelopeForTest(parsed: unknown): any {
     replyText: envelope.envelope.reply?.trim() || '',
     actions: envelope.envelope.actions,
   };
+}
+
+function assertInitialRuntimeShape(job: any): void {
+  const expected = createInitialJobRuntime(job.runtime.next_run_at);
+  assert.deepEqual(Object.keys(job.runtime).sort(), Object.keys(expected).sort());
+  for (const key of Object.keys(expected)) {
+    assert.equal(job.runtime[key], (expected as any)[key], `runtime.${key}`);
+  }
 }
 
 const root = mkdtempSync(join(tmpdir(), 'codex-exec-actions-'));
@@ -412,6 +421,7 @@ try {
   const privateProfile = readFileSync(join(memoriesDir, 'profiles', 'ou_user', 'private.md'), 'utf-8');
   assert.match(privateProfile, /prefers concise updates/);
   assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), true);
+  assertInitialRuntimeShape(JSON.parse(readFileSync(join(jobsDir, 'exec-action-job.json'), 'utf-8')));
   assert.match(results[2].message, /hello-from-action/);
 
   const imageActionResults = await dispatcher.execute({
@@ -823,6 +833,31 @@ try {
   assert.match(jobManagementResults[3].message, /Next run: .*Asia\/Shanghai; UTC /);
   assert.match(jobManagementResults[4].message, /Deleted job "exec-action-job"/);
   assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), false);
+
+  const upsertNewResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_upsert_new',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'upsert a new reminder',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [
+      {
+        type: 'upsert_job',
+        name: 'Exec Upsert New Job',
+        job_type: 'message',
+        schedule: 'daily at 12:00',
+        content: 'new upsert reminder',
+        target_chat_id: 'oc_exec',
+      },
+    ],
+  });
+  assert.equal(upsertNewResults[0].ok, true, JSON.stringify(upsertNewResults));
+  assertInitialRuntimeShape(JSON.parse(readFileSync(join(jobsDir, 'exec-upsert-new-job.json'), 'utf-8')));
 
   const recallCalls: string[] = [];
   const botTracker = new BotMessageTracker(10);

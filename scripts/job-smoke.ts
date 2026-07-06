@@ -7,6 +7,7 @@ import {
   expandSchedule,
   computeNextRun,
   computeLatestDueRun,
+  createInitialJobRuntime,
   backfillJob,
   readJob,
   listAllJobs,
@@ -226,6 +227,12 @@ function makeLegacyJob(overrides: Partial<JobFile['meta']> = {}): JobFile {
 // 25. backfill: origin_chat_id defaults to target_chat_id when empty
 const b1 = backfillJob(makeLegacyJob());
 if (b1.meta.origin_chat_id !== 'oc_legacy_chat') fail(`backfill origin_chat_id: got "${b1.meta.origin_chat_id}"`);
+const b1ExpectedRuntime = createInitialJobRuntime(b1.runtime.next_run_at);
+for (const key of Object.keys(b1ExpectedRuntime) as Array<keyof typeof b1ExpectedRuntime>) {
+  if (b1.runtime[key] !== b1ExpectedRuntime[key]) {
+    fail(`backfill runtime.${String(key)}: expected ${String(b1ExpectedRuntime[key])}, got ${String(b1.runtime[key])}`);
+  }
+}
 
 // 26. backfill: does not overwrite existing origin_chat_id
 const b2 = backfillJob(makeLegacyJob({ origin_chat_id: 'oc_already_set' }));

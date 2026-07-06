@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { registerTools } from '../src/tools.js';
 import { IdentitySession } from '../src/identity-session.js';
 import { appConfig } from '../src/config.js';
-import type { JobFile } from '../src/job-store.js';
+import { createInitialJobRuntime, type JobFile } from '../src/job-store.js';
 import type { LarkChannel } from '../src/channel.js';
 import {
   createMockLarkClient,
@@ -73,6 +73,20 @@ function writeJob(job: JobFile): void {
 
 function readJob(id: string): JobFile {
   return JSON.parse(readFileSync(pathFor(id), 'utf-8')) as JobFile;
+}
+
+function assertInitialRuntimeShape(job: JobFile, label: string): void {
+  const expected = createInitialJobRuntime(job.runtime.next_run_at);
+  const actualKeys = Object.keys(job.runtime).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
+    fail(`${label}: expected runtime keys ${expectedKeys.join(',')}, got ${actualKeys.join(',')}`);
+  }
+  for (const key of Object.keys(expected) as Array<keyof typeof expected>) {
+    if (job.runtime[key] !== expected[key]) {
+      fail(`${label}: runtime.${String(key)} expected ${String(expected[key])}, got ${String(job.runtime[key])}`);
+    }
+  }
 }
 
 try {
@@ -203,6 +217,7 @@ try {
     if (!r.content[0].text.includes('Asia/Tokyo; UTC ')) {
       fail(`6: expected create_job response to render per-job timezone, got ${r.content[0].text}`);
     }
+    assertInitialRuntimeShape(persisted, '6');
     passed++;
   }
 
@@ -234,6 +249,8 @@ try {
     }
     if (!selfReview.meta.prompt?.includes('create_issue_proposal')) fail(`7: self-review prompt should mention create_issue_proposal`);
     if (!lowRiskFix.meta.prompt?.includes('low-risk')) fail(`7: low-risk fix prompt should constrain low-risk behavior`);
+    assertInitialRuntimeShape(selfReview, '7 self-review');
+    assertInitialRuntimeShape(lowRiskFix, '7 low-risk fix');
     if (!r.content[0].text.includes('disabled by default')) fail(`7: response should state disabled by default: ${r.content[0].text}`);
     passed++;
   }
