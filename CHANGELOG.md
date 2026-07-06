@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-06
+
+### Added
+- Added a low-priority Lark/Feishu reply presentation guideline so longer replies prefer lightweight Markdown structure while preserving short replies, code, logs, JSON, diffs, command output, action blocks, and explicit user formatting.
+
 ## [1.13.1] - 2026-07-06
 
 ### Fixed

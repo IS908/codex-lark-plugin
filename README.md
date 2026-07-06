@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.13.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.14.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -36,6 +36,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 ### Responding
 
 - Text replies with automatic chunking for long messages (configurable limit)
+- Long Lark/Feishu replies are guided toward lightweight Markdown structure when it improves scanability, while short replies, code, logs, JSON, diffs, command output, action blocks, and explicit user-requested formats stay unchanged
 - **Card rendering**: simple replies stay as copyable text, while rich Markdown with headings, fenced code, tables, multi-item lists, or structured sections is automatically rendered as a body-only Feishu Schema 2.0 interactive card with no generated header/template. Pass `format='text'` to force plain text, `format='card'` to force a generated card, or a raw `card` payload for pre-built cards. Optional `footer` footnote supported for generated cards
 - **Ack reaction**: bot automatically reacts with an emoji (default: MeMeMe) on receive, removes it after replying
 - **Doc-comment ack reaction**: inbound doc-comment @mentions receive a persistent configurable emoji reaction (default: THUMBSUP)

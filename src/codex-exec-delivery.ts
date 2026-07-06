@@ -8,7 +8,7 @@ import {
   type CodexExecSessionStore,
 } from './codex-session-store.js';
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
-import { untrustedDataBlock } from './prompts.js';
+import { larkReplyPresentationGuideline, untrustedDataBlock } from './prompts.js';
 import { findLarkDeferSentinel, type TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import { isFeishuOpenMessageId, shouldSendFeishuReplyForMessage } from './codex-exec-error.js';
@@ -253,6 +253,7 @@ export function buildCodexExecPrompt(
       : isReaction
         ? 'Treat the emoji as normal user input carried by the reacted bot reply. Interpret the emoji together with the target message content and prior session context, then decide whether to continue, retry an action, ask for clarification, send a visible reply, or return [LARK_NO_REPLY]. Do not classify DONE, OK, THUMBSUP, or similar emojis as passive by emoji type alone.'
         : 'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
+    larkReplyPresentationGuideline,
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',
     'If the user asks for a supported built-in Lark action, request it through the structured Lark action mechanism instead of saying the MCP tool is unavailable.',
