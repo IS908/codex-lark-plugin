@@ -9,7 +9,7 @@ import {
 } from './codex-session-store.js';
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { untrustedDataBlock } from './prompts.js';
-import type { TurnObligationTracker } from './turn-obligation.js';
+import { findLarkDeferSentinel, type TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import { isFeishuOpenMessageId, shouldSendFeishuReplyForMessage } from './codex-exec-error.js';
 import {
@@ -20,13 +20,16 @@ import {
   type CodexExecProgressPromptInfo,
 } from './codex-exec-progress.js';
 import {
-  CODEX_EXEC_ACTIONS_END,
-  CODEX_EXEC_ACTIONS_START,
   formatCodexExecActionResults,
-  parseCodexExecActionOutput,
   type CodexExecActionExecutionResult,
   type CodexExecActionDispatcher,
+  type CodexExecAction,
 } from './codex-exec-actions.js';
+import {
+  buildCodexExecActionChannelPrompt,
+  createCodexExecActionChannel,
+  type CodexExecActionChannelPromptInfo,
+} from './codex-exec-action-channel.js';
 
 export interface CodexExecDeliveryOptions {
   message: LarkMessage;
@@ -44,6 +47,7 @@ export interface CodexExecDeliveryOptions {
   progressLimits?: Partial<CodexExecProgressLimits>;
   progressVisible?: boolean;
   onProgress?: (event: CodexExecProgressEvent) => void;
+  actionBaseDir?: string;
 }
 
 export interface CodexExecSessionHealthRecorder {
@@ -188,6 +192,7 @@ export function buildCodexExecPrompt(
   message: LarkMessage,
   displayLabel: string,
   progressInfo: CodexExecProgressPromptInfo | null = null,
+  actionInfo: CodexExecActionChannelPromptInfo | null = null,
 ): string {
   const isDocComment = message.chatType === 'doc_comment';
   const isReaction = message.messageType === 'reaction' && !!message.reaction;
@@ -240,18 +245,17 @@ export function buildCodexExecPrompt(
         : 'Return only the message text that should be sent back to Feishu. Do not include tool-call instructions, transport metadata, or commentary about this wrapper.',
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',
-    'If the user asks for a supported built-in Lark action, request it with the structured action block below instead of saying the MCP tool is unavailable.',
-    'This exec turn has no background continuation after the visible reply is posted. Do not promise to create, file, post, reply with a link, or continue later unless the same final output includes a structured action, a cronjob action, or an intentional [LARK_DEFER]/[LARK_NO_REPLY] marker.',
-    'Supported action block format (append at most one block at the very end, outside code fences):',
-    `${CODEX_EXEC_ACTIONS_START}\n{"version":1,"actions":[{"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"private|public"},{"type":"create_job","job_type":"message|prompt","name":"...","schedule":"daily at 09:00","timezone":"optional IANA timezone","content":"...","prompt":"...","target_chat_id":"optional"},{"type":"list_jobs","status":"active|paused|all"},{"type":"update_job","job_id":"stable-job-id","name":"unique existing name","new_name":"optional new display name","status":"active|paused","schedule":"weekdays at 09:00","timezone":"optional IANA timezone","content":"...","prompt":"...","model":"optional"},{"type":"disable_job","job_id":"stable-job-id","name":"unique existing name"},{"type":"delete_job","job_id":"stable-job-id","name":"unique existing name"},{"type":"upsert_job","job_type":"message|prompt","name":"...","schedule":"daily at 09:00","timezone":"optional IANA timezone","content":"...","prompt":"...","target_chat_id":"optional"},{"type":"create_default_review_jobs","target_repo":"owner/repo","target_chat_id":"optional","timezone":"optional IANA timezone"},{"type":"create_issue_proposal","title":"...","body":"...","evidence":["..."],"impact":"...","priority":"P0|P1|P2|P3","automation_level":"discovery-only|low-risk-auto-pr-eligible","target_repo":"owner/repo","target_chat_id":"optional"},{"type":"list_issue_proposals","status":"pending|approved|created|rejected|all"},{"type":"reject_issue_proposal","id":"proposal-id","reason":"optional"},{"type":"create_issue_from_proposal","id":"proposal-id","tool":"optional configured local-cli-tools.json tool name override; omit for built-in proposal filing"},{"type":"create_low_risk_pr_from_proposal","id":"proposal-id","tool":"optional configured local CLI tool, default gh_low_risk_pr_create"},{"type":"run_local_cli_tool","tool":"configured-name","args":["..."]},{"type":"send_message","message":{"kind":"image|file","source":"local_path|current_message:first_image|quoted_message:first_image","path":"required for local_path","text":"optional caption"},"reply_in_thread":true},{"type":"send_message","message":{"kind":"rich","parts":[{"type":"text","text":"..."},{"type":"image","source":"local_path|current_message:first_image|quoted_message:first_image","path":"required for local_path","alt":"optional"}]},"reply_in_thread":true},{"type":"recall_message","message_id":"tracked-bot-message-id"}]}\n${CODEX_EXEC_ACTIONS_END}`,
+    'If the user asks for a supported built-in Lark action, request it through the structured Lark action mechanism instead of saying the MCP tool is unavailable.',
+    'This exec turn has no background continuation after the visible reply is posted. Do not promise to create, file, post, reply with a link, or continue later unless the same turn writes a structured side-channel action, creates a cronjob action, or intentionally returns [LARK_DEFER]/[LARK_NO_REPLY].',
+    ...buildCodexExecActionChannelPrompt(actionInfo),
     'For cronjob schedule fields, use only supported recurring formats: "daily at 09:00", "weekdays at 09:00", "weekly on mon at 09:00", "every 5m", "every 2h", or a 5-field cron expression such as "0 9 * * *". Do not use one-off or natural-language aliases such as "once", "now", "later", "tomorrow at 09:00", or "YYYY-MM-DD HH:mm". Use timezone for an IANA timezone such as "Asia/Shanghai", "Asia/Tokyo", or "UTC"; if omitted, the plugin stores the current LARK_CRON_TIMEZONE default into the job file.',
     'For existing cronjobs, prefer the stable job_id returned by create_job/list_jobs; use name only when it is unique. If create_job reports that a job already exists, use list_jobs plus update_job, disable_job, delete_job, or upsert_job instead of retrying create_job with the same name.',
     'create_default_review_jobs only creates paused self-review and low-risk auto-fix presets; tell the user they must explicitly resume the jobs before any automation runs.',
     'For periodic review findings, prefer create_issue_proposal first; only use create_issue_from_proposal after the maintainer explicitly approves filing that proposal. Use create_low_risk_pr_from_proposal only for proposals marked low-risk-auto-pr-eligible after their GitHub issue exists. Never imply merge or release will happen automatically.',
     'Use send_message when the user asks Codex to send back an image, file, or ordered text+image rich message through Feishu. For a single image/file, use message.kind=image|file with source=local_path, source=current_message:first_image, or source=quoted_message:first_image. File messages only support local_path. For mixed text and images, use message.kind=rich with ordered parts; the parent bridge prefers one Feishu post and falls back to split messages while preserving order and thread context. Do not use send_message for document comments, audio, video, or interactive cards yet.',
-    'Do not put chat_id, thread_id, open_id, created_by, or caller in the action block; the parent Lark bridge derives identity from the current Feishu event.',
+    'Do not put chat_id, thread_id, open_id, created_by, or caller in the action request; the parent Lark bridge derives identity from the current Feishu event.',
     'For domain-specific external work such as filing an issue in an external tracker immediately, use run_local_cli_tool only when a matching local allowlisted tool is already configured; otherwise provide a draft or explain that the external action is not configured. Do not create a proposal when the user asked for a direct external write unless they explicitly accept a proposal/review workflow.',
-    'For ordinary replies, omit the action block.',
+    'For ordinary replies, do not write an action request.',
     'If this turn intentionally should not send a Feishu reply, put [LARK_DEFER] or [LARK_NO_REPLY] on its own line outside code fences, optionally followed by a short reason.',
     ...buildCodexExecProgressPrompt(progressInfo),
     '',
@@ -291,6 +295,17 @@ export async function deliverMessageViaCodexExec(
   const existingSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
   const progressBaseDir = opts.progressBaseDir ?? appConfig.codexExecCwd;
+  const actionBaseDir = opts.actionBaseDir ?? appConfig.codexExecCwd;
+  const actionChannel = await createCodexExecActionChannel({
+    baseDir: actionBaseDir,
+    caller: message.senderId,
+    messageId: message.messageId,
+    chatId: message.chatId,
+    ...(message.threadId ? { threadId: message.threadId } : {}),
+  });
+  if (!actionChannel) {
+    throw new Error('Codex exec action side channel setup failed.');
+  }
   const progressSink = await createCodexExecProgressSink({
     baseDir: progressBaseDir,
     limits: {
@@ -309,7 +324,12 @@ export async function deliverMessageViaCodexExec(
     ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
   });
   const request: CodexExecRequest = {
-    prompt: buildCodexExecPrompt(message, displayLabel, progressSink?.promptInfo ?? null),
+    prompt: buildCodexExecPrompt(
+      message,
+      displayLabel,
+      progressSink?.promptInfo ?? null,
+      actionChannel?.promptInfo ?? null,
+    ),
     imagePaths: collectImagePaths(message),
     command: appConfig.codexExecCommand,
     cwd: appConfig.codexExecCwd,
@@ -320,13 +340,28 @@ export async function deliverMessageViaCodexExec(
     ignoreUserConfig: appConfig.codexExecIgnoreUserConfig,
     skipGitRepoCheck: true,
     resumeSessionId: existingSession?.sessionId ?? null,
-    ...(progressSink
+    ...(progressSink || actionChannel
       ? {
-          extraEnv: progressSink.extraEnv,
-          progress: {
-            filePath: progressSink.filePath,
-            token: progressSink.token,
+          extraEnv: {
+            ...(progressSink?.extraEnv ?? {}),
+            ...(actionChannel?.extraEnv ?? {}),
           },
+          ...(progressSink
+            ? {
+                progress: {
+                  filePath: progressSink.filePath,
+                  token: progressSink.token,
+                },
+              }
+            : {}),
+          ...(actionChannel
+            ? {
+                actions: {
+                  filePath: actionChannel.filePath,
+                  token: actionChannel.token,
+                },
+              }
+            : {}),
         }
       : {}),
   };
@@ -338,15 +373,24 @@ export async function deliverMessageViaCodexExec(
     progressSink?.start();
     result = normalizeCodexExecResult(await runCodexExec(request));
   } catch (err) {
-    if (!request.resumeSessionId || isCodexExecTimeoutError(err)) throw err;
+    if (!request.resumeSessionId || isCodexExecTimeoutError(err)) {
+      await actionChannel.cleanup();
+      throw err;
+    }
     console.error(
       `[codex-exec] Failed to resume session ${request.resumeSessionId} for ${sessionKey}; starting a new session: ${
         (err as Error).message
       }`,
     );
-    result = normalizeCodexExecResult(
-      await runCodexExec({ ...request, resumeSessionId: null }),
-    );
+    await actionChannel?.reset();
+    try {
+      result = normalizeCodexExecResult(
+        await runCodexExec({ ...request, resumeSessionId: null }),
+      );
+    } catch (retryErr) {
+      await actionChannel.cleanup();
+      throw retryErr;
+    }
     usedResumeSessionId = null;
   } finally {
     await progressSink?.stop();
@@ -363,25 +407,26 @@ export async function deliverMessageViaCodexExec(
     });
   }
 
-  const parsedOutput = parseCodexExecActionOutput(result.text);
-  let text = parsedOutput.replyText.trim();
+  let sideChannelActions: CodexExecAction[] = [];
+  try {
+    sideChannelActions = (await actionChannel.read()).actions;
+  } catch (err) {
+    (err as { stdoutTail?: string }).stdoutTail ??= result.text;
+    throw err;
+  } finally {
+    await actionChannel.cleanup();
+  }
+
+  const deferredByText = !!findLarkDeferSentinel(result.text);
+  let text = result.text.trim();
   let suppressVisibleReply = false;
-  if (parsedOutput.kind === 'invalid_actions') {
-    if (message.chatType === 'cronjob') {
-      const err = new Error(`CronJob output contained an invalid Lark action block: ${parsedOutput.error}`) as Error & {
-        stdoutTail?: string;
-      };
-      err.stdoutTail = result.text;
-      throw err;
-    }
-    text = `Invalid Lark action block: ${parsedOutput.error}`;
-  } else if (parsedOutput.kind === 'actions' && parsedOutput.actions.length > 0) {
+  if (sideChannelActions.length > 0) {
     const actionResults = opts.actionDispatcher
-      ? await opts.actionDispatcher.execute({ message, actions: parsedOutput.actions })
+      ? await opts.actionDispatcher.execute({ message, actions: sideChannelActions })
       : [
           {
             ok: false,
-            action: 'save_memory' as const,
+            action: 'action_channel' as const,
             message: 'Lark exec action dispatcher is not configured.',
           },
         ];
@@ -400,7 +445,7 @@ export async function deliverMessageViaCodexExec(
     text = 'Codex exec returned an empty response.';
   }
   const lifecycleGuard = guardCodexExecLifecycleReply(text, {
-    allowFollowupPromise: parsedOutput.kind === 'actions' || parsedOutput.kind === 'defer',
+    allowFollowupPromise: sideChannelActions.length > 0 || deferredByText,
   });
   if (lifecycleGuard.blocked) {
     console.error(

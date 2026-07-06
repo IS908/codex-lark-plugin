@@ -23,6 +23,10 @@ export interface CodexExecRequest {
     filePath: string;
     token: string;
   };
+  actions?: {
+    filePath: string;
+    token: string;
+  };
 }
 
 export interface CodexExecResult {

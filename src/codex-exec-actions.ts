@@ -25,7 +25,6 @@ import {
   writeJob,
   type JobFile,
 } from './job-store.js';
-import { findLarkDeferSentinel } from './turn-obligation.js';
 import { runConfiguredLocalCliTool } from './local-cli-tools.js';
 import { createGithubIssueFromProposal } from './github-issue-creator.js';
 import type { ProfileDistillationDispatcher } from './profile-distillation.js';
@@ -52,9 +51,6 @@ import {
   rejectIssueProposal,
   type IssueProposalFile,
 } from './issue-proposal-store.js';
-
-export const CODEX_EXEC_ACTIONS_START = '<LARK_ACTIONS_JSON>';
-export const CODEX_EXEC_ACTIONS_END = '</LARK_ACTIONS_JSON>';
 
 const SaveMemoryActionSchema = z.object({
   type: z.literal('save_memory'),
@@ -332,15 +328,18 @@ export type CodexExecAction = z.infer<typeof CodexExecActionSchema>;
 
 export interface CodexExecActionExecutionResult {
   ok: boolean;
-  action: CodexExecAction['type'];
+  action: CodexExecAction['type'] | 'action_channel';
   message: string;
 }
 
-export type CodexExecParsedOutput =
-  | { kind: 'reply'; replyText: string; actions: [] }
-  | { kind: 'defer'; replyText: string; actions: [] }
-  | { kind: 'actions'; replyText: string; actions: CodexExecAction[] }
-  | { kind: 'invalid_actions'; replyText: string; actions: []; error: string };
+export interface CodexExecActionEnvelope {
+  reply?: string;
+  actions: CodexExecAction[];
+}
+
+export type CodexExecActionEnvelopeParseResult =
+  | { ok: true; envelope: CodexExecActionEnvelope }
+  | { ok: false; error: string };
 
 export interface CodexExecActionDispatchRequest {
   message: LarkMessage;
@@ -349,12 +348,6 @@ export interface CodexExecActionDispatchRequest {
 
 export interface CodexExecActionDispatcher {
   execute(request: CodexExecActionDispatchRequest): Promise<CodexExecActionExecutionResult[]>;
-}
-
-interface TopLevelMarkerLine {
-  marker: typeof CODEX_EXEC_ACTIONS_START | typeof CODEX_EXEC_ACTIONS_END;
-  offset: number;
-  nextOffset: number;
 }
 
 type CodexExecActionTransport =
@@ -378,100 +371,17 @@ function formatZodError(err: z.ZodError): string {
     .join('; ');
 }
 
-function collectTopLevelActionMarkerLines(text: string): TopLevelMarkerLine[] {
-  const markers: TopLevelMarkerLine[] = [];
-  let offset = 0;
-  let fenceMarker: '```' | '~~~' | null = null;
-
-  while (offset <= text.length) {
-    const newline = text.indexOf('\n', offset);
-    const lineEnd = newline === -1 ? text.length : newline;
-    const nextOffset = newline === -1 ? text.length : newline + 1;
-    const rawLine = text.slice(offset, lineEnd);
-    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
-    const trimmed = line.trim();
-    const fence = trimmed.startsWith('```') ? '```' : trimmed.startsWith('~~~') ? '~~~' : null;
-
-    if (fence) {
-      fenceMarker = fenceMarker === fence ? null : fenceMarker ?? fence;
-    } else if (!fenceMarker && (trimmed === CODEX_EXEC_ACTIONS_START || trimmed === CODEX_EXEC_ACTIONS_END)) {
-      markers.push({
-        marker: trimmed,
-        offset,
-        nextOffset,
-      });
-    }
-
-    if (newline === -1) break;
-    offset = nextOffset;
-  }
-
-  return markers;
-}
-
-function findFinalActionBlock(text: string): { start: TopLevelMarkerLine; end: TopLevelMarkerLine } | null {
-  const markers = collectTopLevelActionMarkerLines(text);
-  for (let i = markers.length - 1; i >= 0; i -= 1) {
-    const marker = markers[i]!;
-    if (marker.marker !== CODEX_EXEC_ACTIONS_END) continue;
-    if (text.slice(marker.nextOffset).trim()) return null;
-
-    for (let j = i - 1; j >= 0; j -= 1) {
-      const start = markers[j]!;
-      if (start.marker === CODEX_EXEC_ACTIONS_END) return null;
-      if (start.marker === CODEX_EXEC_ACTIONS_START) return { start, end: marker };
-    }
-    return null;
-  }
-  return null;
-}
-
-export function parseCodexExecActionOutput(text: string): CodexExecParsedOutput {
-  const actionBlock = findFinalActionBlock(text);
-  if (!actionBlock) {
-    return findLarkDeferSentinel(text)
-      ? { kind: 'defer', replyText: text.trim(), actions: [] }
-      : { kind: 'reply', replyText: text.trim(), actions: [] };
-  }
-
-  const earlierStart = collectTopLevelActionMarkerLines(text.slice(0, actionBlock.start.offset))
-    .some((marker) => marker.marker === CODEX_EXEC_ACTIONS_START);
-  if (earlierStart) {
-    return {
-      kind: 'invalid_actions',
-      replyText: text.slice(0, actionBlock.start.offset).trim(),
-      actions: [],
-      error: 'multiple Lark action blocks are not allowed',
-    };
-  }
-
-  const rawJson = text.slice(actionBlock.start.nextOffset, actionBlock.end.offset).trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawJson);
-  } catch (err) {
-    return {
-      kind: 'invalid_actions',
-      replyText: text.slice(0, actionBlock.start.offset).trim(),
-      actions: [],
-      error: `invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
+export function parseCodexExecActionEnvelope(parsed: unknown): CodexExecActionEnvelopeParseResult {
   const envelope = CodexExecActionEnvelopeSchema.safeParse(parsed);
   if (!envelope.success) {
-    return {
-      kind: 'invalid_actions',
-      replyText: text.slice(0, actionBlock.start.offset).trim(),
-      actions: [],
-      error: formatZodError(envelope.error),
-    };
+    return { ok: false, error: formatZodError(envelope.error) };
   }
-
   return {
-    kind: 'actions',
-    replyText: text.slice(0, actionBlock.start.offset).trim() || envelope.data.reply?.trim() || '',
-    actions: envelope.data.actions,
+    ok: true,
+    envelope: {
+      ...(envelope.data.reply !== undefined ? { reply: envelope.data.reply } : {}),
+      actions: envelope.data.actions,
+    },
   };
 }
 

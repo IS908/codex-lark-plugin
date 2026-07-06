@@ -16,8 +16,24 @@ const { MemoryStore } = await import('../src/memory/file.js');
 const { readIssueProposal } = await import('../src/issue-proposal-store.js');
 const {
   createCodexExecActionDispatcher,
-  parseCodexExecActionOutput,
+  parseCodexExecActionEnvelope,
 } = await import('../src/codex-exec-actions.js');
+
+function parseActionEnvelopeForTest(parsed: unknown): any {
+  const envelope = parseCodexExecActionEnvelope(parsed);
+  if (!envelope.ok) {
+    return {
+      kind: 'invalid_actions',
+      actions: [],
+      error: envelope.error,
+    };
+  }
+  return {
+    kind: 'actions',
+    replyText: envelope.envelope.reply?.trim() || '',
+    actions: envelope.envelope.actions,
+  };
+}
 
 const root = mkdtempSync(join(tmpdir(), 'codex-exec-actions-'));
 const oldJobsDir = (appConfig as any).jobsDir;
@@ -110,142 +126,83 @@ try {
     'utf-8',
   );
 
-  const parsed = parseCodexExecActionOutput([
-    'Done.',
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [
-        {
-          type: 'save_memory',
-          memory_type: 'profile',
-          content: '- prefers concise updates',
-          reason: 'Useful durable user preference',
-          tier: 'private',
-        },
-      ],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const parsed = parseActionEnvelopeForTest({
+    version: 1,
+    reply: 'Done.',
+    actions: [
+      {
+        type: 'save_memory',
+        memory_type: 'profile',
+        content: '- prefers concise updates',
+        reason: 'Useful durable user preference',
+        tier: 'private',
+      },
+    ],
+  });
   assert.equal(parsed.kind, 'actions');
   assert.equal(parsed.replyText, 'Done.');
   assert.equal(parsed.actions.length, 1);
 
-  const invalid = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    '{"version":2,"actions":[]}',
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const invalid = parseActionEnvelopeForTest({ version: 2, actions: [] });
   assert.equal(invalid.kind, 'invalid_actions');
   assert.match(invalid.error, /version/i);
 
-  const markerExplanation = [
-    'The action protocol uses this marker when a real structured action is needed:',
-    '<LARK_ACTIONS_JSON>',
-    '{"version":1,"actions":[]}',
-    'Do not emit a partial control block in ordinary prose.',
-  ].join('\n');
-  const markerExplanationParsed = parseCodexExecActionOutput(markerExplanation);
-  assert.equal(markerExplanationParsed.kind, 'reply');
-  assert.equal(markerExplanationParsed.replyText, markerExplanation);
-
-  const fencedMarker = [
-    'Example:',
-    '```json',
-    '<LARK_ACTIONS_JSON>',
-    '{"version":1,"actions":[{"type":"list_jobs"}]}',
-    '</LARK_ACTIONS_JSON>',
-    '```',
-  ].join('\n');
-  const fencedMarkerParsed = parseCodexExecActionOutput(fencedMarker);
-  assert.equal(fencedMarkerParsed.kind, 'reply');
-  assert.equal(fencedMarkerParsed.replyText, fencedMarker);
-
-  const inlineMarkerParsed = parseCodexExecActionOutput(
-    'Mentioning <LARK_ACTIONS_JSON> inline is normal text, not a control block.',
-  );
-  assert.equal(inlineMarkerParsed.kind, 'reply');
-
-  const trailingTextActionParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({ version: 1, actions: [{ type: 'list_jobs' }] }),
-    '</LARK_ACTIONS_JSON>',
-    'Trailing visible text keeps the whole output as a normal reply.',
-  ].join('\n'));
-  assert.equal(trailingTextActionParsed.kind, 'reply');
-
-  const missingScheduleParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [
-        {
-          type: 'create_job',
-          name: 'Missing schedule',
-          job_type: 'message',
-          content: 'standup reminder',
-        },
-      ],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const missingScheduleParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [
+      {
+        type: 'create_job',
+        name: 'Missing schedule',
+        job_type: 'message',
+        content: 'standup reminder',
+      },
+    ],
+  });
   assert.equal(missingScheduleParsed.kind, 'invalid_actions');
   assert.match(missingScheduleParsed.error, /actions\.0\.schedule/i);
 
   for (const schedule of ['once', 'now', 'later']) {
-    const unsupportedScheduleParsed = parseCodexExecActionOutput([
-      '<LARK_ACTIONS_JSON>',
-      JSON.stringify({
-        version: 1,
-        actions: [
-          {
-            type: 'create_job',
-            name: `Unsupported ${schedule}`,
-            job_type: 'message',
-            schedule,
-            content: 'standup reminder',
-          },
-        ],
-      }),
-      '</LARK_ACTIONS_JSON>',
-    ].join('\n'));
+    const unsupportedScheduleParsed = parseActionEnvelopeForTest({
+      version: 1,
+      actions: [
+        {
+          type: 'create_job',
+          name: `Unsupported ${schedule}`,
+          job_type: 'message',
+          schedule,
+          content: 'standup reminder',
+        },
+      ],
+    });
     assert.equal(unsupportedScheduleParsed.kind, 'invalid_actions');
     assert.match(unsupportedScheduleParsed.error, /unsupported schedule/i);
     assert.match(unsupportedScheduleParsed.error, /daily at 09:00/i);
   }
 
-  const recallParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [{ type: 'recall_message', message_id: 'om_bot_recall_action' }],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const recallParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'recall_message', message_id: 'om_bot_recall_action' }],
+  });
   assert.equal(recallParsed.kind, 'actions');
   assert.equal(recallParsed.actions[0].type, 'recall_message');
 
-  const proposalParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [
-        {
-          type: 'create_issue_proposal',
-          title: 'Periodic review found missing Feishu delivery',
-          body: 'A cronjob generated a report but did not deliver it to Feishu.',
-          evidence: ['run_status=success', 'delivery_status=failed'],
-          impact: 'Users cannot see scheduled reports.',
-          priority: 'P0',
-          automation_level: 'discovery-only',
-          target_repo: 'IS908/codex-lark-plugin',
-          target_chat_id: 'oc_exec',
-        },
-        { type: 'list_issue_proposals', status: 'pending' },
-      ],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const proposalParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [
+      {
+        type: 'create_issue_proposal',
+        title: 'Periodic review found missing Feishu delivery',
+        body: 'A cronjob generated a report but did not deliver it to Feishu.',
+        evidence: ['run_status=success', 'delivery_status=failed'],
+        impact: 'Users cannot see scheduled reports.',
+        priority: 'P0',
+        automation_level: 'discovery-only',
+        target_repo: 'IS908/codex-lark-plugin',
+        target_chat_id: 'oc_exec',
+      },
+      { type: 'list_issue_proposals', status: 'pending' },
+    ],
+  });
   assert.equal(proposalParsed.kind, 'actions');
   if (proposalParsed.kind !== 'actions') throw new Error('proposalParsed should be actions');
   assert.deepEqual(
@@ -253,125 +210,93 @@ try {
     ['create_issue_proposal', 'list_issue_proposals'],
   );
 
-  const directIssueParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [
-        {
-          type: 'create_issue',
-          title: 'Direct issue filing should not need a second approval',
-          body: 'The user explicitly asked to file this GitHub issue.',
-          evidence: ['explicit user request'],
-          priority: 'P1',
-          automation_level: 'discovery-only',
-          target_repo: 'IS908/codex-lark-plugin',
-          target_chat_id: 'oc_exec',
-          tool: 'gh',
-        },
-      ],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const directIssueParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [
+      {
+        type: 'create_issue',
+        title: 'Direct issue filing should not need a second approval',
+        body: 'The user explicitly asked to file this GitHub issue.',
+        evidence: ['explicit user request'],
+        priority: 'P1',
+        automation_level: 'discovery-only',
+        target_repo: 'IS908/codex-lark-plugin',
+        target_chat_id: 'oc_exec',
+        tool: 'gh',
+      },
+    ],
+  });
   assert.equal(directIssueParsed.kind, 'invalid_actions');
   assert.match(directIssueParsed.error, /create_issue|Invalid discriminator/i);
 
-  const unsupportedIssueParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [
-        {
-          type: 'create_github_issue',
-          title: 'Bridge should create issues',
-          body: 'Issue body',
-          labels: ['bug'],
-        },
-      ],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const unsupportedIssueParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [
+      {
+        type: 'create_github_issue',
+        title: 'Bridge should create issues',
+        body: 'Issue body',
+        labels: ['bug'],
+      },
+    ],
+  });
   assert.equal(unsupportedIssueParsed.kind, 'invalid_actions');
   assert.match(unsupportedIssueParsed.error, /create_github_issue|Invalid discriminator/i);
 
-  const createPrParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [{ type: 'create_low_risk_pr_from_proposal', id: 'proposal-abc123' }],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const createPrParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'create_low_risk_pr_from_proposal', id: 'proposal-abc123' }],
+  });
   assert.equal(createPrParsed.kind, 'actions');
   if (createPrParsed.kind !== 'actions') throw new Error('createPrParsed should be actions');
   assert.equal(createPrParsed.actions[0].type, 'create_low_risk_pr_from_proposal');
 
-  const sendMessageParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [{ type: 'send_message', message: { kind: 'image', source: 'current_message:first_image' } }],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const sendMessageParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'send_message', message: { kind: 'image', source: 'current_message:first_image' } }],
+  });
   assert.equal(sendMessageParsed.kind, 'actions');
   if (sendMessageParsed.kind !== 'actions') throw new Error('sendMessageParsed should be actions');
   assert.equal(sendMessageParsed.actions[0].type, 'send_message');
 
-  const richSendMessageParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [
-        {
-          type: 'send_message',
-          message: {
-            kind: 'rich',
-            parts: [
-              { type: 'text', text: 'Before\n' },
-              { type: 'image', source: 'local_path', path: './diagram.png', alt: 'diagram' },
-              { type: 'text', text: '\nAfter' },
-            ],
-          },
+  const richSendMessageParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [
+      {
+        type: 'send_message',
+        message: {
+          kind: 'rich',
+          parts: [
+            { type: 'text', text: 'Before\n' },
+            { type: 'image', source: 'local_path', path: './diagram.png', alt: 'diagram' },
+            { type: 'text', text: '\nAfter' },
+          ],
         },
-      ],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+      },
+    ],
+  });
   assert.equal(richSendMessageParsed.kind, 'actions');
   if (richSendMessageParsed.kind !== 'actions') throw new Error('richSendMessageParsed should be actions');
   assert.equal(richSendMessageParsed.actions[0].type, 'send_message');
 
-  const invalidSendMessageParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [{ type: 'send_message', message: { kind: 'file', source: 'local_path' } }],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const invalidSendMessageParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'send_message', message: { kind: 'file', source: 'local_path' } }],
+  });
   assert.equal(invalidSendMessageParsed.kind, 'invalid_actions');
   assert.match(invalidSendMessageParsed.error, /path is required/i);
 
-  const invalidRichSendMessageParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [{ type: 'send_message', message: { kind: 'rich', parts: [{ type: 'image', source: 'local_path' }] } }],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const invalidRichSendMessageParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'send_message', message: { kind: 'rich', parts: [{ type: 'image', source: 'local_path' }] } }],
+  });
   assert.equal(invalidRichSendMessageParsed.kind, 'invalid_actions');
   assert.match(invalidRichSendMessageParsed.error, /path is required/i);
 
-  const unsupportedSendMessageKindParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [{ type: 'send_message', message: { kind: 'audio', source: 'local_path', path: './clip.mp3' } }],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const unsupportedSendMessageKindParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'send_message', message: { kind: 'audio', source: 'local_path', path: './clip.mp3' } }],
+  });
   assert.equal(unsupportedSendMessageKindParsed.kind, 'invalid_actions');
   assert.match(unsupportedSendMessageKindParsed.error, /image|file|rich|Invalid discriminator/i);
 
@@ -819,27 +744,23 @@ try {
   const prCreatedProposal = await readIssueProposal(lowRiskProposalId);
   assert.equal(prCreatedProposal?.meta.github_pr_number, 777);
 
-  const jobManagementParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [
-        { type: 'list_jobs', status: 'all' },
-        { type: 'update_job', name: 'Exec Action Job', content: 'updated reminder', schedule: 'weekdays at 10:00' },
-        { type: 'disable_job', job_id: 'exec-action-job' },
-        {
-          type: 'upsert_job',
-          name: 'Exec Action Job',
-          job_type: 'message',
-          schedule: 'daily at 11:00',
-          content: 'upserted reminder',
-          target_chat_id: 'oc_exec',
-        },
-        { type: 'delete_job', job_id: 'exec-action-job' },
-      ],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const jobManagementParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [
+      { type: 'list_jobs', status: 'all' },
+      { type: 'update_job', name: 'Exec Action Job', content: 'updated reminder', schedule: 'weekdays at 10:00' },
+      { type: 'disable_job', job_id: 'exec-action-job' },
+      {
+        type: 'upsert_job',
+        name: 'Exec Action Job',
+        job_type: 'message',
+        schedule: 'daily at 11:00',
+        content: 'upserted reminder',
+        target_chat_id: 'oc_exec',
+      },
+      { type: 'delete_job', job_id: 'exec-action-job' },
+    ],
+  });
   assert.equal(jobManagementParsed.kind, 'actions');
   if (jobManagementParsed.kind !== 'actions') {
     throw new Error(`expected job management actions, got ${JSON.stringify(jobManagementParsed)}`);
@@ -848,16 +769,12 @@ try {
     jobManagementParsed.actions.map((action: any) => action.type),
     ['list_jobs', 'update_job', 'disable_job', 'upsert_job', 'delete_job'],
   );
-  const defaultReviewJobsParsed = parseCodexExecActionOutput([
-    '<LARK_ACTIONS_JSON>',
-    JSON.stringify({
-      version: 1,
-      actions: [
-        { type: 'create_default_review_jobs', target_repo: 'IS908/codex-lark-plugin', target_chat_id: 'oc_exec' },
-      ],
-    }),
-    '</LARK_ACTIONS_JSON>',
-  ].join('\n'));
+  const defaultReviewJobsParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [
+      { type: 'create_default_review_jobs', target_repo: 'IS908/codex-lark-plugin', target_chat_id: 'oc_exec' },
+    ],
+  });
   assert.equal(defaultReviewJobsParsed.kind, 'actions');
   if (defaultReviewJobsParsed.kind !== 'actions') {
     throw new Error(`expected default review job action, got ${JSON.stringify(defaultReviewJobsParsed)}`);

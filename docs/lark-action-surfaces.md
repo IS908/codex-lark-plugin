@@ -3,7 +3,7 @@
 This plugin exposes Lark operations through two different surfaces:
 
 - MCP tools in notification mode.
-- Structured action blocks in Codex exec mode.
+- Structured side-channel action requests in Codex exec mode.
 
 The surfaces are intentionally not identical. MCP tools are interactive tool
 calls made by Codex through the MCP server. Codex exec actions are a small
@@ -58,9 +58,9 @@ parent-process bridge for actions that must run safely even when the child
   explicitly resume those jobs before self-review or low-risk auto-fix runs.
 - Codex exec final answers have no background continuation after the visible
   Feishu reply is posted. If the child output promises later external work
-  without a structured action, defer/no-reply marker, or scheduled job, delivery
-  rewrites the reply into a safe notice instead of implying that work will keep
-  running.
+  without a structured side-channel action, defer/no-reply marker, or scheduled
+  job, delivery rewrites the reply into a safe notice instead of implying that
+  work will keep running.
 - Capabilities should be added to exec actions only when there is a clear need
   for the parent-process bridge. Otherwise, prefer MCP tools.
 
