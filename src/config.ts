@@ -219,15 +219,11 @@ export const appConfig = {
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),
   inboxDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'inbox'),
   jobsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'jobs'),
-  issueProposalsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'issue-proposals'),
   codexExecSessionsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'codex-sessions'),
   localCliToolsConfigPath: optional(
     'LARK_LOCAL_CLI_TOOLS_CONFIG',
     path.join(os.homedir(), '.codex', 'channels', 'lark', 'local-cli-tools.json'),
   ),
-  githubIssueTimeoutMs: optionalPositiveNumber('LARK_GITHUB_ISSUE_TIMEOUT_MS', 30_000),
-  githubIssueApiBaseUrl: optional('LARK_GITHUB_API_BASE_URL', 'https://api.github.com'),
-  githubIssueToken: process.env.LARK_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN || null,
   debugLogPath: optional('LARK_DEBUG_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'debug.log')),
   auditLogPath: optional('LARK_AUDIT_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'audit.log')),
   codexExecTraceLogPath: optional(

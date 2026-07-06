@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-07-07
+
+### Removed
+- Removed provider-specific GitHub issue/proposal/low-risk PR MCP tools and codex exec actions from the core Lark plugin boundary.
+- Removed the built-in `plugin-self-review` and `plugin-low-risk-auto-fix` preset job creator; external project-governance workflows should be configured through user skills, custom MCP tools, or allowlisted `run_local_cli_tool` wrappers.
+- Removed `LARK_GITHUB_*` configuration fields and obsolete issue-proposal smoke coverage.
+
 ## [1.15.0] - 2026-07-07
 
 ### Added

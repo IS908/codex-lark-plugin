@@ -25,12 +25,12 @@ assert.match(doc, /Rollback is package downgrade to v1\.12\.4 or earlier/);
 assert.match(doc, /notifications\/Codex\/channel.*parallel delivery mode/is);
 assert.match(doc, /createInitialJobRuntime\(\)/);
 assert.match(doc, /job-service/);
-assert.match(doc, /issue-proposal-service/);
 assert.match(doc, /job-lifecycle-parity-smoke/);
-assert.match(doc, /issue-proposal-lifecycle-parity-smoke/);
+assert.match(doc, /provider-specific action removal/);
+assert.match(doc, /run_local_cli_tool/);
 assert.match(doc, /job doctor/);
 assert.match(doc, /profile doctor/);
 assert.match(doc, /rollback path based on reinstalling a previous plugin release/);
-assert.match(doc, /Already complete for job lifecycle and issue-proposal lifecycle parity/);
+assert.match(doc, /Already complete for job lifecycle parity and provider-specific action removal/);
 
 console.log('transition-compatibility-doc smoke: PASS');

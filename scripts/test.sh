@@ -139,28 +139,12 @@ echo "=== Job store unit checks ==="
 node --import tsx scripts/job-smoke.ts
 
 echo ""
-echo "=== Issue proposal store unit checks ==="
-node --import tsx scripts/issue-proposal-store-smoke.ts
-
-echo ""
-echo "=== GitHub issue creator unit checks ==="
-node --import tsx scripts/github-issue-creator-smoke.ts
-
-echo ""
 echo "=== Job tool unit checks ==="
 node --import tsx scripts/job-tools-smoke.ts
 
 echo ""
 echo "=== Job lifecycle parity checks ==="
 node --import tsx scripts/job-lifecycle-parity-smoke.ts
-
-echo ""
-echo "=== Issue proposal tool unit checks ==="
-node --import tsx scripts/issue-proposal-tools-smoke.ts
-
-echo ""
-echo "=== Issue proposal lifecycle parity checks ==="
-node --import tsx scripts/issue-proposal-lifecycle-parity-smoke.ts
 
 echo ""
 echo "=== Save skill tool unit checks ==="
