@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.9.7-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.9.8-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -348,13 +348,17 @@ that cannot safely call this MCP server from the child `codex exec` process:
 `delete_job`, `upsert_job`, `create_default_review_jobs`,
 `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`,
 `create_issue_from_proposal`, `create_low_risk_pr_from_proposal`,
-`run_local_cli_tool`, and `recall_message`. The child returns a validated
+`run_local_cli_tool`, `send_message`, and `recall_message`. The child returns a validated
 `LARK_ACTIONS_JSON` marker block; the parent strips
 the block from the visible reply, derives caller identity from the current
 Feishu event, executes the action locally, and rejects malformed blocks instead
 of recursively loading the Lark MCP server. `create_job` and `list_jobs` expose
 stable `job_id` values so later turns can update, pause, replace, or delete the
 exact reminder instead of recreating a duplicate name.
+`send_message` is the first exec-mode media action: it can send image/file
+attachments through the plugin runtime identity using either a local path or the
+current inbound message's first downloaded image. Rich mixed text+image posts,
+audio/video, and interactive cards remain separate follow-up design work.
 
 Periodic review workflows should use issue proposals before writing to GitHub:
 `create_issue_proposal` stores a durable pending proposal under the local Lark

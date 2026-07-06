@@ -42,6 +42,12 @@ src/privacy-rules.ts  – L1 hardcoded regex + keyword rules; L2 user-rules file
 - `notification`: forward via `notifications/Codex/channel`; Codex calls `reply` tool; response sent back to Feishu.
 After either mode replies, the ack reaction is revoked.
 
+**Exec media action:** `send_message` is available only in the parent-owned
+Codex exec action bridge, not as an MCP tool. The first slice supports image/file
+attachments from local paths and `current_message:first_image`, then routes
+through `sendFeishuReply` so thread routing and plugin runtime identity stay
+centralized.
+
 **Reaction flow:** Feishu reaction event → `handleReactionEvent` / `handleSdkReactionEvent` → filter bot self, untracked messages, and whitelists → enqueue a normal `messageType="reaction"` turn for user reactions on tracked bot replies. Codex sees the emoji, reactor, and target bot message context, then decides whether to continue, retry, ask, respond, or return `[LARK_NO_REPLY]`. Bot self-reaction echoes and reactions on untracked messages are still dropped.
 
 **CronJob flow:** `JobScheduler.tick()` every 60s → read all job files → for each active job where `next_run_at <= now` → execute (message: direct Feishu API / prompt: in `exec` mode, run through the same `codex exec` delivery path as chat messages under a unique `thread_id` + bind session identity to `job.created_by`; in `notification` mode, fall back to `notifications/Codex/channel`) → update `runtime` in job file. On startup, `recoverMissedJobs()` runs the same check once for crash recovery.

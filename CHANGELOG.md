@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.9.8] - 2026-07-06
+
+### Added
+- Added the first `codex exec` structured `send_message` media action for plugin-owned image/file replies, supporting local paths and the current inbound message's first downloaded image.
+
+### Fixed
+- Avoid sending an empty text message before media-only image/file replies, and count uploaded attachment messages in reply results.
+
 ## [1.9.7] - 2026-07-06
 
 ### Changed

@@ -65,6 +65,7 @@ export interface ReplySenderDeps {
 export interface ReplySendResult {
   sentCount: number;
   statusText: string;
+  fileSentCount?: number;
   isError?: boolean;
   errorText?: string;
   skippedReason?: 'withdrawn_message';
@@ -280,8 +281,10 @@ export async function sendFeishuReply(
   const useCard = format === 'card' || (format !== 'text' && shouldUseCard(text));
 
   let sentCount = 0;
+  let fileSentCount = 0;
 
   async function sendTextChunks(): Promise<number | ReplySendResult> {
+    if (!text) return 0;
     const chunks = chunkText(text, appConfig.textChunkLimit);
     for (let i = 0; i < chunks.length; i++) {
       try {
@@ -361,6 +364,9 @@ export async function sendFeishuReply(
           if (imageKey) {
             const sent = await sendFollowup({ imageKey });
             trackBotMessage((sent as any)?.messageId);
+            sentCount++;
+            deliveredCount++;
+            fileSentCount++;
             recordAndRevokeAck(text || '[image]', (sent as any)?.messageId);
           }
         } else {
@@ -369,6 +375,9 @@ export async function sendFeishuReply(
           if (fileKey) {
             const sent = await sendFollowup({ fileKey, fileName });
             trackBotMessage((sent as any)?.messageId);
+            sentCount++;
+            deliveredCount++;
+            fileSentCount++;
             recordAndRevokeAck(text || '[file]', (sent as any)?.messageId);
           }
         }
@@ -383,6 +392,7 @@ export async function sendFeishuReply(
   return {
     sentCount,
     statusText: `Sent ${sentCount} message(s)`,
+    fileSentCount,
   };
 }
 
