@@ -169,6 +169,10 @@ echo "=== Issue proposal tool unit checks ==="
 node --import tsx scripts/issue-proposal-tools-smoke.ts
 
 echo ""
+echo "=== Issue proposal lifecycle parity checks ==="
+node --import tsx scripts/issue-proposal-lifecycle-parity-smoke.ts
+
+echo ""
 echo "=== Save skill tool unit checks ==="
 node --import tsx scripts/save-skill-smoke.ts
 
