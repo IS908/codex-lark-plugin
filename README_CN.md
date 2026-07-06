@@ -350,8 +350,9 @@ docs/tests/metadata 等低风险工作，不能自动 merge PR，也不能自动
 
 因为 exec delivery 是单轮流程，插件也会拦截容易误导的“回复后继续办事”承诺。最终回答不能声称 Codex 会在可见飞书回复发出后继续创建、提交、回贴链接或稍后处理，除非同一份输出里包含 structured action、`[LARK_DEFER]` / `[LARK_NO_REPLY]`，或 `create_job` 这类调度动作。如果没有这些机制却返回了高风险后续承诺，bridge 会把它替换成安全说明，避免让用户误以为后台还会继续执行。
 
-SDK 迁移 smoke 命令、rollout 控制和 rollback 步骤见
-[SDK channel rollout](docs/sdk-channel-rollout.md)。
+SDK 迁移 smoke 命令、rollout 控制、rollback 步骤和兼容路径移除门槛见
+[SDK channel rollout](docs/sdk-channel-rollout.md) 与
+[transition compatibility matrix](docs/transition-compatibility.md)。
 
 ### 可选 -- 本地 CLI 工具
 

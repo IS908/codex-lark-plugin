@@ -217,6 +217,10 @@ echo "=== SDK rollout docs checks ==="
 node --import tsx scripts/sdk-rollout-doc-smoke.ts
 
 echo ""
+echo "=== Transition compatibility docs checks ==="
+node --import tsx scripts/transition-compatibility-doc-smoke.ts
+
+echo ""
 echo "=== Resource governance unit checks ==="
 node --import tsx scripts/resource-governance-smoke.ts
 
