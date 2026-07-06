@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-07-06
+
+### Added
+- Added `quoted_message:first_image` as a `send_message` image source for single-image and rich text+image exec replies.
+
+### Fixed
+- Preserved quoted message image attachment metadata during message hydration so exec media actions can download and re-upload quoted images with the plugin runtime identity.
+
 ## [1.10.0] - 2026-07-06
 
 ### Added

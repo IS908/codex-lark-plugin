@@ -25,11 +25,13 @@ const oldIssueProposalsDir = (appConfig as any).issueProposalsDir;
 const oldGithubIssueTimeoutMs = (appConfig as any).githubIssueTimeoutMs;
 const oldGithubIssueApiBaseUrl = (appConfig as any).githubIssueApiBaseUrl;
 const oldGithubIssueToken = (appConfig as any).githubIssueToken;
+const oldInboxDir = (appConfig as any).inboxDir;
 const oldFetch = globalThis.fetch;
 try {
   const jobsDir = join(root, 'jobs');
   const issueProposalsDir = join(root, 'issue-proposals');
   const memoriesDir = join(root, 'memories');
+  const inboxDir = join(root, 'inbox');
   const localCliConfigPath = join(root, 'local-cli-tools.json');
   const fakeIssueCreateScript = join(root, 'fake-gh-issue-create.js');
   const fakePrCreateScript = join(root, 'fake-gh-pr-create.js');
@@ -38,11 +40,13 @@ try {
   (appConfig as any).githubIssueTimeoutMs = 5000;
   (appConfig as any).githubIssueApiBaseUrl = 'https://api.test.github.local';
   (appConfig as any).githubIssueToken = 'test-token';
+  (appConfig as any).inboxDir = inboxDir;
   globalThis.fetch = (async () => new Response(
     JSON.stringify({ html_url: 'https://github.com/IS908/codex-lark-plugin/issues/654' }),
     { status: 201, headers: { 'content-type': 'application/json' } },
   )) as typeof fetch;
   await mkdir(jobsDir, { recursive: true });
+  await mkdir(inboxDir, { recursive: true });
   writeFileSync(
     fakeIssueCreateScript,
     [
@@ -363,6 +367,31 @@ try {
         statusText: `Sent ${textSentCount + fileSentCount} message(s)`,
       };
     },
+    larkTransport: {
+      recallMessage: async () => {},
+      fetchMessageContext: async (messageId: string) => {
+        if (messageId === 'om_quoted_image') {
+          return {
+            messageId,
+            text: '[Image]',
+            msgType: 'image',
+            attachments: [{ fileKey: 'img_quoted', fileName: 'quoted.png', fileType: 'image' }],
+          };
+        }
+        return {
+          messageId,
+          text: 'quoted text only',
+          msgType: 'text',
+          attachments: [],
+        };
+      },
+      downloadResource: async (messageId: string, fileKey: string, resourceType: 'image' | 'file') => {
+        assert.equal(messageId, 'om_quoted_image');
+        assert.equal(fileKey, 'img_quoted');
+        assert.equal(resourceType, 'image');
+        return Buffer.from('quoted image bytes');
+      },
+    },
   });
 
   const results = await dispatcher.execute({
@@ -429,6 +458,27 @@ try {
   assert.equal(sendReplyRequests.at(-1).reply_to, 'om_exec_media_image');
   assert.equal(sendReplyRequests.at(-1).thread_id, 'thread_exec');
   assert.deepEqual(sendReplyRequests.at(-1).files, [{ path: currentImagePath, type: 'image' }]);
+
+  const quotedImageActionResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_quoted_media_image',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'send quoted image',
+      messageType: 'text',
+      rawContent: '{}',
+      parentId: 'om_quoted_image',
+    },
+    actions: [{ type: 'send_message', message: { kind: 'image', source: 'quoted_message:first_image' } }],
+  });
+  assert.equal(quotedImageActionResults[0].ok, true, JSON.stringify(quotedImageActionResults));
+  const quotedImageFile = sendReplyRequests.at(-1).files[0].path;
+  assert.equal(sendReplyRequests.at(-1).reply_to, 'om_exec_quoted_media_image');
+  assert.equal(sendReplyRequests.at(-1).files[0].type, 'image');
+  assert.equal(existsSync(quotedImageFile), true);
+  assert.match(readFileSync(quotedImageFile, 'utf-8'), /quoted image bytes/);
 
   const fileActionResults = await dispatcher.execute({
     message: {
@@ -542,6 +592,23 @@ try {
   });
   assert.equal(missingImageActionResults[0].ok, false);
   assert.match(missingImageActionResults[0].message, /No current-message image/i);
+
+  const missingQuotedImageActionResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_quoted_media_missing',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'send quoted image',
+      messageType: 'text',
+      rawContent: '{}',
+      parentId: 'om_quoted_text',
+    },
+    actions: [{ type: 'send_message', message: { kind: 'image', source: 'quoted_message:first_image' } }],
+  });
+  assert.equal(missingQuotedImageActionResults[0].ok, false);
+  assert.match(missingQuotedImageActionResults[0].message, /no downloadable image/i);
 
   const proposalResults = await dispatcher.execute({
     message: {
@@ -810,7 +877,7 @@ try {
       recallMessage: async (messageId: string) => {
         recallCalls.push(messageId);
       },
-    } as any,
+    },
   });
   const recallResults = await recallDispatcher.execute({
     message: {
@@ -871,6 +938,7 @@ try {
   (appConfig as any).githubIssueTimeoutMs = oldGithubIssueTimeoutMs;
   (appConfig as any).githubIssueApiBaseUrl = oldGithubIssueApiBaseUrl;
   (appConfig as any).githubIssueToken = oldGithubIssueToken;
+  (appConfig as any).inboxDir = oldInboxDir;
   globalThis.fetch = oldFetch;
   rmSync(root, { recursive: true, force: true });
 }

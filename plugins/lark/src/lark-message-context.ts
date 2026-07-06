@@ -24,6 +24,12 @@ export interface LarkInteractiveCardContext {
   rawContentShape: 'card_text' | 'feishu_card_json' | 'unknown';
 }
 
+export interface LarkMessageAttachmentContext {
+  fileKey: string;
+  fileName: string;
+  fileType: string;
+}
+
 export interface LarkMessageContext {
   messageId: string;
   text: string | null;
@@ -39,6 +45,7 @@ export interface LarkMessageContext {
   updateTime?: string;
   messagePosition?: string;
   sender?: LarkMessageSenderContext;
+  attachments?: LarkMessageAttachmentContext[];
   interactiveCard?: LarkInteractiveCardContext;
   fetchStage?: LarkMessageFetchStage;
   fetchIdentity?: LarkMessageFetchIdentity;

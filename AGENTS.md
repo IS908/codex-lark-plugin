@@ -44,7 +44,8 @@ After either mode replies, the ack reaction is revoked.
 
 **Exec media action:** `send_message` is available only in the parent-owned
 Codex exec action bridge, not as an MCP tool. It supports image/file attachments
-from local paths and `current_message:first_image`, plus ordered `kind=rich`
+from local paths, `current_message:first_image`, and `quoted_message:first_image`,
+plus ordered `kind=rich`
 text+image parts that prefer one Feishu post and fall back to ordered split
 messages. All variants route through `sendFeishuReply` so thread routing and
 plugin runtime identity stay centralized.
