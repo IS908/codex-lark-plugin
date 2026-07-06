@@ -11,21 +11,20 @@ import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import type { MemoryStore } from './memory/file.js';
 import { assertSafeChatId } from './prompts.js';
 import {
-  computeNextRun,
-  createInitialJobRuntime,
-  deleteJob as deleteJobFile,
   expandSchedule,
   formatCronDateTime,
   jobTimezone,
-  jobExists,
-  listAllJobs,
-  mutateJob,
   normalizeJobTimezone,
-  readJob,
-  sanitizeJobId,
-  writeJob,
   type JobFile,
 } from './job-store.js';
+import {
+  canReadJobBody,
+  createJob,
+  deleteJob,
+  listVisibleJobs,
+  updateJob,
+  upsertJob,
+} from './job-service.js';
 import { runConfiguredLocalCliTool } from './local-cli-tools.js';
 import { createGithubIssueFromProposal } from './github-issue-creator.js';
 import type { ProfileDistillationDispatcher } from './profile-distillation.js';
@@ -405,18 +404,8 @@ function currentCaller(
   return { caller };
 }
 
-type JobReferenceAction =
-  | z.infer<typeof UpdateJobActionSchema>
-  | z.infer<typeof DisableJobActionSchema>
-  | z.infer<typeof DeleteJobActionSchema>;
-
 function isPrivateJobListing(message: LarkMessage): boolean {
   return message.chatType === 'p2p';
-}
-
-function jobVisibleToCaller(job: JobFile, message: LarkMessage, caller: string): boolean {
-  if (isPrivateJobListing(message)) return job.meta.created_by === caller;
-  return job.meta.target_chat_id === message.chatId;
 }
 
 function formatJobForActionList(job: JobFile, caller: string): string {
@@ -426,9 +415,8 @@ function formatJobForActionList(job: JobFile, caller: string): string {
   const lastError = job.runtime.last_error ? ` | last_error: ${job.runtime.last_error}` : '';
   const bodyValue = job.meta.type === 'prompt' ? job.meta.prompt : job.meta.content;
   const bodyLabel = job.meta.type === 'prompt' ? 'prompt' : 'content';
-  const canSeeBody = job.meta.created_by === caller || job.meta.type === 'message';
   const body = bodyValue
-    ? `${bodyLabel}: ${canSeeBody ? bodyValue : '<redacted>'}`
+    ? `${bodyLabel}: ${canReadJobBody(job, caller) ? bodyValue : '<redacted>'}`
     : `${bodyLabel}: <empty>`;
 
   return [
@@ -444,42 +432,6 @@ function formatJobForActionList(job: JobFile, caller: string): string {
     `run_count: ${job.runtime.run_count}${modelNote}${lastError}`,
     body,
   ].join('\n');
-}
-
-async function resolveJobReference(
-  action: JobReferenceAction,
-): Promise<{ job: JobFile } | { error: string }> {
-  if (action.job_id) {
-    const job = await readJob(action.job_id);
-    return job ? { job } : { error: `Job "${action.job_id}" not found.` };
-  }
-
-  const name = action.name!;
-  const jobs = await listAllJobs();
-  const byName = jobs.filter((job) => job.meta.name === name);
-  if (byName.length === 1) return { job: byName[0] };
-  if (byName.length > 1) {
-    return { error: `Multiple jobs are named "${name}". Use the stable job_id instead.` };
-  }
-
-  const fallbackId = sanitizeJobId(name);
-  const fallback = await readJob(fallbackId);
-  return fallback ? { job: fallback } : { error: `Job "${name}" not found.` };
-}
-
-function requireJobOwner(
-  actionType: CodexExecAction['type'],
-  job: JobFile,
-  caller: string,
-  auditArgs: Record<string, unknown>,
-): CodexExecActionExecutionResult | null {
-  if (job.meta.created_by === caller) return null;
-  void audit(actionType, caller, auditArgs, 'denied');
-  return {
-    ok: false,
-    action: actionType,
-    message: `You are not the owner of "${job.meta.id}". Only ${job.meta.created_by} can modify it.`,
-  };
 }
 
 async function executeSaveMemory(
@@ -570,61 +522,32 @@ async function executeCreateJob(
     thread_id: message.threadId,
   };
 
-  if (action.job_type === 'prompt' && !action.prompt) {
-    return { ok: false, action: 'create_job', message: 'prompt is required for job_type=prompt.' };
-  }
-  if (action.job_type === 'message' && !action.content) {
-    return { ok: false, action: 'create_job', message: 'content is required for job_type=message.' };
-  }
-  try {
-    assertSafeChatId(targetChatId);
-  } catch (err: any) {
-    return { ok: false, action: 'create_job', message: `Invalid target_chat_id: ${err?.message ?? targetChatId}` };
-  }
-
-  let cron: string;
-  let scheduleHuman: string;
-  let jobTz: string;
-  try {
-    jobTz = normalizeJobTimezone(action.timezone);
-    const expanded = expandSchedule(action.schedule, jobTz);
-    cron = expanded.cron;
-    scheduleHuman = expanded.human;
-  } catch (err: any) {
-    return { ok: false, action: 'create_job', message: `Invalid schedule expression: ${err?.message ?? action.schedule}` };
+  const created = await createJob({
+    name: action.name,
+    type: action.job_type,
+    schedule: action.schedule,
+    timezone: action.timezone,
+    prompt: action.prompt,
+    content: action.content,
+    targetChatId,
+    model: action.model,
+    originChatId: message.chatId,
+    caller,
+    auditAction: 'create_job',
+    auditArgs,
+  });
+  if (!created.ok) {
+    let error = created.message;
+    if (created.code === 'missing_prompt') error = 'prompt is required for job_type=prompt.';
+    if (created.code === 'missing_content') error = 'content is required for job_type=message.';
+    if (created.code === 'invalid_timezone') error = created.message.replace(/^Invalid timezone: /, 'Invalid schedule expression: ');
+    return { ok: false, action: 'create_job', message: error };
   }
 
-  const id = sanitizeJobId(action.name);
-  if (await jobExists(id)) {
-    return { ok: false, action: 'create_job', message: `Job "${id}" already exists.` };
-  }
-
-  const nextRunAt = computeNextRun(cron, jobTz);
-  const job: JobFile = {
-    meta: {
-      id,
-      name: action.name,
-      type: action.job_type,
-      schedule: cron,
-      schedule_human: scheduleHuman,
-      timezone: jobTz,
-      ...(action.job_type === 'prompt' ? { prompt: action.prompt } : { content: action.content, msg_type: 'text' }),
-      target_chat_id: targetChatId,
-      ...(action.model ? { model: action.model } : {}),
-      origin_chat_id: message.chatId,
-      status: 'active',
-      created_by: caller,
-      created_at: new Date().toISOString(),
-    },
-    runtime: createInitialJobRuntime(nextRunAt),
-  };
-
-  await writeJob(job);
-  void audit('create_job', caller, auditArgs, 'ok');
   return {
     ok: true,
     action: 'create_job',
-    message: `Created job "${id}" (job_id: ${id}, ${scheduleHuman}, tz=${jobTz}). Next run: ${formatCronDateTime(nextRunAt, jobTz)}`,
+    message: `Created job "${created.job.meta.id}" (job_id: ${created.job.meta.id}, ${created.scheduleHuman}, tz=${created.timezone}). Next run: ${formatCronDateTime(created.nextRunAt, created.timezone)}`,
   };
 }
 
@@ -639,11 +562,16 @@ async function executeListJobs(
   if ('error' in auth) return auth.error;
   const { caller } = auth;
 
-  const jobs = await listAllJobs();
-  const byStatus = status === 'all' ? jobs : jobs.filter((job) => job.meta.status === status);
-  const visible = byStatus.filter((job) => jobVisibleToCaller(job, message, caller));
+  const listed = await listVisibleJobs({
+    caller,
+    chatId: message.chatId,
+    isPrivateChat: isPrivateJobListing(message),
+    status,
+    auditArgs,
+  });
+  if (!listed.ok) return { ok: false, action: 'list_jobs', message: listed.message };
+  const { jobs: visible } = listed;
 
-  void audit('list_jobs', caller, auditArgs, 'ok');
   if (visible.length === 0) {
     return { ok: true, action: 'list_jobs', message: 'No jobs found.' };
   }
@@ -675,77 +603,27 @@ async function executeUpdateJob(
   if ('error' in auth) return auth.error;
   const { caller } = auth;
 
-  const resolved = await resolveJobReference(action);
-  if ('error' in resolved) return { ok: false, action: 'update_job', message: resolved.error };
-  const ownerError = requireJobOwner('update_job', resolved.job, caller, auditArgs);
-  if (ownerError) return ownerError;
-
-  let expandedSchedule: { cron: string; human: string } | null = null;
-  let requestedTimezone: string | null = null;
-  try {
-    requestedTimezone = action.timezone === undefined ? null : normalizeJobTimezone(action.timezone);
-  } catch (err: any) {
-    return {
-      ok: false,
-      action: 'update_job',
-      message: `Invalid timezone: ${err?.message ?? action.timezone}`,
-    };
-  }
-  if (action.schedule !== undefined) {
-    try {
-      expandedSchedule = expandSchedule(action.schedule, requestedTimezone ?? jobTimezone(resolved.job.meta));
-    } catch (err: any) {
-      return {
-        ok: false,
-        action: 'update_job',
-        message: `Invalid schedule: ${err?.message ?? action.schedule}`,
-      };
-    }
-  }
-
-  let ownerMismatch: string | null = null;
-  const updated = await mutateJob(resolved.job.meta.id, (latest) => {
-    if (latest.meta.created_by !== caller) {
-      ownerMismatch = latest.meta.created_by;
-      return false;
-    }
-
-    if (action.new_name !== undefined) latest.meta.name = action.new_name;
-    if (action.prompt !== undefined) latest.meta.prompt = action.prompt;
-    if (action.content !== undefined) latest.meta.content = action.content;
-    if (action.model !== undefined) latest.meta.model = action.model || undefined;
-    if (requestedTimezone) latest.meta.timezone = requestedTimezone;
-    if (expandedSchedule) {
-      latest.meta.schedule = expandedSchedule.cron;
-      latest.meta.schedule_human = expandedSchedule.human;
-      latest.runtime.next_run_at = computeNextRun(expandedSchedule.cron, jobTimezone(latest.meta));
-    }
-    if (requestedTimezone && !expandedSchedule) {
-      latest.runtime.next_run_at = computeNextRun(latest.meta.schedule, requestedTimezone);
-    }
-    if (action.status !== undefined) {
-      latest.meta.status = action.status;
-      if (action.status === 'active' && !expandedSchedule && !requestedTimezone) {
-        latest.runtime.next_run_at = computeNextRun(latest.meta.schedule, jobTimezone(latest.meta));
-      }
-    }
+  const updated = await updateJob({
+    action: 'update_job',
+    caller,
+    reference: { jobId: action.job_id, name: action.name },
+    updates: {
+      name: action.new_name,
+      status: action.status,
+      schedule: action.schedule,
+      timezone: action.timezone,
+      prompt: action.prompt,
+      content: action.content,
+      model: action.model,
+    },
+    auditArgs,
   });
+  if (!updated.ok) return { ok: false, action: 'update_job', message: updated.message };
 
-  if (ownerMismatch) {
-    void audit('update_job', caller, auditArgs, 'denied');
-    return {
-      ok: false,
-      action: 'update_job',
-      message: `You are not the owner of "${resolved.job.meta.id}". Only ${ownerMismatch} can modify it.`,
-    };
-  }
-  if (!updated) return { ok: false, action: 'update_job', message: `Job "${resolved.job.meta.id}" not found.` };
-
-  void audit('update_job', caller, auditArgs, 'ok');
   return {
     ok: true,
     action: 'update_job',
-    message: `Updated job "${updated.meta.id}" (job_id: ${updated.meta.id}). Status: ${updated.meta.status}, Schedule: ${updated.meta.schedule_human}, TZ: ${jobTimezone(updated.meta)}, Next run: ${formatCronDateTime(updated.runtime.next_run_at, jobTimezone(updated.meta))}`,
+    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Schedule: ${updated.job.meta.schedule_human}, TZ: ${jobTimezone(updated.job.meta)}, Next run: ${formatCronDateTime(updated.job.runtime.next_run_at, jobTimezone(updated.job.meta))}`,
   };
 }
 
@@ -759,35 +637,19 @@ async function executeDisableJob(
   if ('error' in auth) return auth.error;
   const { caller } = auth;
 
-  const resolved = await resolveJobReference(action);
-  if ('error' in resolved) return { ok: false, action: 'disable_job', message: resolved.error };
-  const ownerError = requireJobOwner('disable_job', resolved.job, caller, auditArgs);
-  if (ownerError) return ownerError;
-
-  let ownerMismatch: string | null = null;
-  const updated = await mutateJob(resolved.job.meta.id, (latest) => {
-    if (latest.meta.created_by !== caller) {
-      ownerMismatch = latest.meta.created_by;
-      return false;
-    }
-    latest.meta.status = 'paused';
+  const updated = await updateJob({
+    action: 'disable_job',
+    caller,
+    reference: { jobId: action.job_id, name: action.name },
+    updates: { status: 'paused' },
+    auditArgs,
   });
+  if (!updated.ok) return { ok: false, action: 'disable_job', message: updated.message };
 
-  if (ownerMismatch) {
-    void audit('disable_job', caller, auditArgs, 'denied');
-    return {
-      ok: false,
-      action: 'disable_job',
-      message: `You are not the owner of "${resolved.job.meta.id}". Only ${ownerMismatch} can modify it.`,
-    };
-  }
-  if (!updated) return { ok: false, action: 'disable_job', message: `Job "${resolved.job.meta.id}" not found.` };
-
-  void audit('disable_job', caller, auditArgs, 'ok');
   return {
     ok: true,
     action: 'disable_job',
-    message: `Updated job "${updated.meta.id}" (job_id: ${updated.meta.id}). Status: ${updated.meta.status}, Next run: ${formatCronDateTime(updated.runtime.next_run_at, jobTimezone(updated.meta))}`,
+    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Next run: ${formatCronDateTime(updated.job.runtime.next_run_at, jobTimezone(updated.job.meta))}`,
   };
 }
 
@@ -801,16 +663,14 @@ async function executeDeleteJob(
   if ('error' in auth) return auth.error;
   const { caller } = auth;
 
-  const resolved = await resolveJobReference(action);
-  if ('error' in resolved) return { ok: false, action: 'delete_job', message: resolved.error };
-  const ownerError = requireJobOwner('delete_job', resolved.job, caller, auditArgs);
-  if (ownerError) return ownerError;
+  const deleted = await deleteJob({
+    caller,
+    reference: { jobId: action.job_id, name: action.name },
+    auditArgs,
+  });
+  if (!deleted.ok) return { ok: false, action: 'delete_job', message: deleted.message };
 
-  const deleted = await deleteJobFile(resolved.job.meta.id);
-  if (!deleted) return { ok: false, action: 'delete_job', message: `Job "${resolved.job.meta.id}" not found.` };
-
-  void audit('delete_job', caller, auditArgs, 'ok');
-  return { ok: true, action: 'delete_job', message: `Deleted job "${resolved.job.meta.id}".` };
+  return { ok: true, action: 'delete_job', message: `Deleted job "${deleted.jobId}".` };
 }
 
 async function executeUpsertJob(
@@ -834,111 +694,32 @@ async function executeUpsertJob(
   if ('error' in auth) return auth.error;
   const { caller } = auth;
 
-  if (action.job_type === 'prompt' && !action.prompt) {
-    return { ok: false, action: 'upsert_job', message: 'prompt is required for job_type=prompt.' };
-  }
-  if (action.job_type === 'message' && !action.content) {
-    return { ok: false, action: 'upsert_job', message: 'content is required for job_type=message.' };
-  }
-  try {
-    assertSafeChatId(targetChatId);
-  } catch (err: any) {
-    return { ok: false, action: 'upsert_job', message: `Invalid target_chat_id: ${err?.message ?? targetChatId}` };
-  }
-
-  let cron: string;
-  let scheduleHuman: string;
-  let jobTz: string;
-  try {
-    jobTz = normalizeJobTimezone(action.timezone);
-    const expanded = expandSchedule(action.schedule, jobTz);
-    cron = expanded.cron;
-    scheduleHuman = expanded.human;
-  } catch (err: any) {
-    return { ok: false, action: 'upsert_job', message: `Invalid schedule expression: ${err?.message ?? action.schedule}` };
+  const upserted = await upsertJob({
+    name: action.name,
+    type: action.job_type,
+    schedule: action.schedule,
+    timezone: action.timezone,
+    prompt: action.prompt,
+    content: action.content,
+    targetChatId,
+    model: action.model,
+    status: action.status,
+    originChatId: message.chatId,
+    caller,
+    auditArgs,
+  });
+  if (!upserted.ok) {
+    let error = upserted.message;
+    if (upserted.code === 'missing_prompt') error = 'prompt is required for job_type=prompt.';
+    if (upserted.code === 'missing_content') error = 'content is required for job_type=message.';
+    if (upserted.code === 'invalid_timezone') error = upserted.message.replace(/^Invalid timezone: /, 'Invalid schedule expression: ');
+    return { ok: false, action: 'upsert_job', message: error };
   }
 
-  const existing = await resolveJobReference({ type: 'update_job', name: action.name });
-  if ('job' in existing) {
-    const ownerError = requireJobOwner('upsert_job', existing.job, caller, auditArgs);
-    if (ownerError) return ownerError;
-
-    let ownerMismatch: string | null = null;
-    const updated = await mutateJob(existing.job.meta.id, (latest) => {
-      if (latest.meta.created_by !== caller) {
-        ownerMismatch = latest.meta.created_by;
-        return false;
-      }
-      latest.meta.name = action.name;
-      latest.meta.type = action.job_type;
-      latest.meta.schedule = cron;
-      latest.meta.schedule_human = scheduleHuman;
-      latest.meta.timezone = jobTz;
-      latest.meta.target_chat_id = targetChatId;
-      latest.meta.model = action.model || undefined;
-      latest.meta.status = action.status ?? 'active';
-      if (action.job_type === 'prompt') {
-        latest.meta.prompt = action.prompt;
-        delete latest.meta.content;
-        delete latest.meta.msg_type;
-      } else {
-        latest.meta.content = action.content;
-        latest.meta.msg_type = 'text';
-        delete latest.meta.prompt;
-      }
-      latest.runtime.next_run_at = computeNextRun(cron, jobTz);
-      latest.runtime.last_error = null;
-    });
-
-    if (ownerMismatch) {
-      void audit('upsert_job', caller, auditArgs, 'denied');
-      return {
-        ok: false,
-        action: 'upsert_job',
-        message: `You are not the owner of "${existing.job.meta.id}". Only ${ownerMismatch} can modify it.`,
-      };
-    }
-    if (!updated) return { ok: false, action: 'upsert_job', message: `Job "${existing.job.meta.id}" not found.` };
-
-    void audit('upsert_job', caller, auditArgs, 'ok');
-    return {
-      ok: true,
-      action: 'upsert_job',
-      message: `Upserted job "${updated.meta.id}" (job_id: ${updated.meta.id}, ${scheduleHuman}, tz=${jobTz}). Status: ${updated.meta.status}, Next run: ${formatCronDateTime(updated.runtime.next_run_at, jobTz)}`,
-    };
-  }
-
-  if (existing.error && !/not found/i.test(existing.error)) {
-    return { ok: false, action: 'upsert_job', message: existing.error };
-  }
-
-  const id = sanitizeJobId(action.name);
-  const nextRunAt = computeNextRun(cron, jobTz);
-  const job: JobFile = {
-    meta: {
-      id,
-      name: action.name,
-      type: action.job_type,
-      schedule: cron,
-      schedule_human: scheduleHuman,
-      timezone: jobTz,
-      ...(action.job_type === 'prompt' ? { prompt: action.prompt } : { content: action.content, msg_type: 'text' }),
-      target_chat_id: targetChatId,
-      ...(action.model ? { model: action.model } : {}),
-      origin_chat_id: message.chatId,
-      status: action.status ?? 'active',
-      created_by: caller,
-      created_at: new Date().toISOString(),
-    },
-    runtime: createInitialJobRuntime(nextRunAt),
-  };
-
-  await writeJob(job);
-  void audit('upsert_job', caller, auditArgs, 'ok');
   return {
     ok: true,
     action: 'upsert_job',
-    message: `Upserted job "${id}" (job_id: ${id}, ${scheduleHuman}, tz=${jobTz}). Status: ${job.meta.status}, Next run: ${formatCronDateTime(nextRunAt, jobTz)}`,
+    message: `Upserted job "${upserted.job.meta.id}" (job_id: ${upserted.job.meta.id}, ${upserted.scheduleHuman}, tz=${upserted.timezone}). Status: ${upserted.job.meta.status}, Next run: ${formatCronDateTime(upserted.nextRunAt, upserted.timezone)}`,
   };
 }
 

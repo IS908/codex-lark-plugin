@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.12.2] - 2026-07-06
+
+### Changed
+- Extracted shared cronjob lifecycle logic into `job-service`, making MCP job tools and codex exec job actions thin adapters over the same visibility, reference resolution, owner check, schedule parsing, create/update/delete persistence, and runtime initialization paths.
+
+### Added
+- Added `job-lifecycle-parity-smoke` coverage to compare persisted job state across MCP create/update and exec create/upsert surfaces.
+
 ## [1.12.1] - 2026-07-06
 
 ### Fixed
