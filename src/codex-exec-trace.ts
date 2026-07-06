@@ -93,6 +93,7 @@ export function shouldTraceCodexExecToolEvent(event: unknown): boolean {
 function buildFullTraceRecord(event: unknown, now: number): Record<string, unknown> {
   return {
     at: new Date(now).toISOString(),
+    kind: 'trace',
     mode: 'full',
     event: sanitizeForTrace(event, { maxString: MAX_FULL_STRING }),
   };
@@ -122,6 +123,7 @@ function buildCompactTraceRecord(
     : undefined;
   return {
     at: new Date(now).toISOString(),
+    kind: 'trace',
     mode,
     event_type: eventType,
     tool: toolName,

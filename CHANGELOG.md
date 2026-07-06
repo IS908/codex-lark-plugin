@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-07-06
+
+### Changed
+- Changed `audit.log` from whitespace-delimited text to JSONL records with `at`, `kind`, `tool`, `outcome`, `caller`, and redacted `args` fields.
+- Added `kind: "trace"` to codex exec tool trace records so local diagnostic logs share a common JSONL envelope.
+- Documented the canonical local diagnostic JSONL format and clarified audit/trace rotation settings.
+
 ## [1.12.5] - 2026-07-06
 
 ### Changed

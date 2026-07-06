@@ -67,6 +67,7 @@ compact.recordLine(JSON.stringify({
 await compact.flush();
 const compactRecords = jsonl(compactLog);
 assert.equal(compactRecords.length, 2);
+assert.equal(compactRecords[0].kind, 'trace');
 assert.equal(compactRecords[0].mode, 'compact');
 assert.equal(compactRecords[0].tool, 'mcp.github.issue_create');
 assert.equal(compactRecords[0].args.authorization, '[redacted]');
@@ -95,6 +96,7 @@ full.recordLine(JSON.stringify({
 }));
 await full.flush();
 const fullRecords = jsonl(fullLog);
+assert.equal(fullRecords[0].kind, 'trace');
 assert.equal(fullRecords[0].mode, 'full');
 assert.equal(fullRecords[0].event.item.access_token, '[redacted]');
 assert.match(fullRecords[0].event.item.source, /\(1200 chars\)$/);
@@ -111,6 +113,7 @@ const hidden = createCodexExecToolTraceWriter({
 assert.ok(hidden);
 hidden.recordLine(JSON.stringify({ type: 'mcp_tool_call.started', name: 'lark.im.reply' }));
 await hidden.flush();
+assert.equal(jsonl(hiddenLog)[0].kind, 'trace');
 assert.equal(jsonl(hiddenLog)[0].mode, 'hidden');
 
 const fakeCodex = join(root, 'fake-codex.js');
@@ -137,6 +140,9 @@ const result = await runCodexExecCommand({
 assert.equal(result.text, 'final answer only');
 assert.equal(result.sessionId, 'thread_trace');
 const integrationLog = readFileSync(integrationTraceLog, 'utf-8');
+const integrationRecords = jsonl(integrationTraceLog);
+assert.ok(integrationRecords.length >= 2);
+assert.ok(integrationRecords.every((record) => record.kind === 'trace'));
 assert.match(integrationLog, /github\.get_issue/);
 assert.doesNotMatch(integrationLog, /should-not-appear/);
 assert.doesNotMatch(integrationLog, /final answer only/);

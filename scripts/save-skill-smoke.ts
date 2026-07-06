@@ -65,9 +65,29 @@ async function waitForAuditLog(path: string, expected: RegExp[] = []): Promise<s
 
 {
   const raceAuditLog = join(tmp, 'race-audit.log');
-  writeFileSync(raceAuditLog, '2026-06-15T00:00:00.000Z  save_skill          denied   caller=-\n');
+  writeFileSync(
+    raceAuditLog,
+    JSON.stringify({
+      at: '2026-06-15T00:00:00.000Z',
+      kind: 'audit',
+      tool: 'save_skill',
+      outcome: 'denied',
+      caller: null,
+      args: {},
+    }) + '\n',
+  );
   const timer = setTimeout(() => {
-    appendFileSync(raceAuditLog, '2026-06-15T00:00:00.030Z  save_skill          ok       caller=ou_owner\n');
+    appendFileSync(
+      raceAuditLog,
+      JSON.stringify({
+        at: '2026-06-15T00:00:00.030Z',
+        kind: 'audit',
+        tool: 'save_skill',
+        outcome: 'ok',
+        caller: 'ou_owner',
+        args: {},
+      }) + '\n',
+    );
   }, 30);
   try {
     const auditLog = await waitForAuditLog(raceAuditLog, [/ok/, /ou_owner/]);
