@@ -406,8 +406,9 @@ the same output includes a structured action, `[LARK_DEFER]` /
 returned without such a mechanism, the bridge replaces it with a safe notice
 instead of implying that background work will continue.
 
-For SDK migration smoke commands, rollout controls, and rollback steps, see
-[SDK channel rollout](docs/sdk-channel-rollout.md).
+For SDK migration smoke commands, rollout controls, rollback steps, and
+compatibility removal gates, see [SDK channel rollout](docs/sdk-channel-rollout.md)
+and [transition compatibility matrix](docs/transition-compatibility.md).
 
 ### Optional -- Local CLI Tools
 
