@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-07-06
+
+### Fixed
+- Tightened `codex exec` action-block parsing so ordinary reports that mention `<LARK_ACTIONS_JSON>` inline, inside code fences, after trailing text, or without a closing marker are delivered as normal text instead of parser errors.
+- Mark cronjob runs with complete but invalid action blocks as failed reports and preserve the original Codex output tail in diagnostics instead of sending `Invalid Lark action block` as a successful scheduled-job result.
+
 ## [1.11.0] - 2026-07-06
 
 ### Added

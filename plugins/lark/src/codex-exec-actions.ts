@@ -351,6 +351,12 @@ export interface CodexExecActionDispatcher {
   execute(request: CodexExecActionDispatchRequest): Promise<CodexExecActionExecutionResult[]>;
 }
 
+interface TopLevelMarkerLine {
+  marker: typeof CODEX_EXEC_ACTIONS_START | typeof CODEX_EXEC_ACTIONS_END;
+  offset: number;
+  nextOffset: number;
+}
+
 type CodexExecActionTransport =
   & Pick<LarkTransport, 'recallMessage'>
   & Partial<Pick<LarkTransport, 'fetchMessageContext' | 'downloadResource'>>;
@@ -372,52 +378,81 @@ function formatZodError(err: z.ZodError): string {
     .join('; ');
 }
 
+function collectTopLevelActionMarkerLines(text: string): TopLevelMarkerLine[] {
+  const markers: TopLevelMarkerLine[] = [];
+  let offset = 0;
+  let fenceMarker: '```' | '~~~' | null = null;
+
+  while (offset <= text.length) {
+    const newline = text.indexOf('\n', offset);
+    const lineEnd = newline === -1 ? text.length : newline;
+    const nextOffset = newline === -1 ? text.length : newline + 1;
+    const rawLine = text.slice(offset, lineEnd);
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+    const trimmed = line.trim();
+    const fence = trimmed.startsWith('```') ? '```' : trimmed.startsWith('~~~') ? '~~~' : null;
+
+    if (fence) {
+      fenceMarker = fenceMarker === fence ? null : fenceMarker ?? fence;
+    } else if (!fenceMarker && (trimmed === CODEX_EXEC_ACTIONS_START || trimmed === CODEX_EXEC_ACTIONS_END)) {
+      markers.push({
+        marker: trimmed,
+        offset,
+        nextOffset,
+      });
+    }
+
+    if (newline === -1) break;
+    offset = nextOffset;
+  }
+
+  return markers;
+}
+
+function findFinalActionBlock(text: string): { start: TopLevelMarkerLine; end: TopLevelMarkerLine } | null {
+  const markers = collectTopLevelActionMarkerLines(text);
+  for (let i = markers.length - 1; i >= 0; i -= 1) {
+    const marker = markers[i]!;
+    if (marker.marker !== CODEX_EXEC_ACTIONS_END) continue;
+    if (text.slice(marker.nextOffset).trim()) return null;
+
+    for (let j = i - 1; j >= 0; j -= 1) {
+      const start = markers[j]!;
+      if (start.marker === CODEX_EXEC_ACTIONS_END) return null;
+      if (start.marker === CODEX_EXEC_ACTIONS_START) return { start, end: marker };
+    }
+    return null;
+  }
+  return null;
+}
+
 export function parseCodexExecActionOutput(text: string): CodexExecParsedOutput {
-  const firstStart = text.indexOf(CODEX_EXEC_ACTIONS_START);
-  if (firstStart < 0) {
+  const actionBlock = findFinalActionBlock(text);
+  if (!actionBlock) {
     return findLarkDeferSentinel(text)
       ? { kind: 'defer', replyText: text.trim(), actions: [] }
       : { kind: 'reply', replyText: text.trim(), actions: [] };
   }
 
-  const secondStart = text.indexOf(CODEX_EXEC_ACTIONS_START, firstStart + CODEX_EXEC_ACTIONS_START.length);
-  if (secondStart >= 0) {
+  const earlierStart = collectTopLevelActionMarkerLines(text.slice(0, actionBlock.start.offset))
+    .some((marker) => marker.marker === CODEX_EXEC_ACTIONS_START);
+  if (earlierStart) {
     return {
       kind: 'invalid_actions',
-      replyText: text.slice(0, firstStart).trim(),
+      replyText: text.slice(0, actionBlock.start.offset).trim(),
       actions: [],
       error: 'multiple Lark action blocks are not allowed',
     };
   }
 
-  const end = text.indexOf(CODEX_EXEC_ACTIONS_END, firstStart + CODEX_EXEC_ACTIONS_START.length);
-  if (end < 0) {
-    return {
-      kind: 'invalid_actions',
-      replyText: text.slice(0, firstStart).trim(),
-      actions: [],
-      error: 'missing closing Lark action block marker',
-    };
-  }
-
-  const trailing = text.slice(end + CODEX_EXEC_ACTIONS_END.length).trim();
-  if (trailing) {
-    return {
-      kind: 'invalid_actions',
-      replyText: text.slice(0, firstStart).trim(),
-      actions: [],
-      error: 'text after the Lark action block is not allowed',
-    };
-  }
-
-  const rawJson = text.slice(firstStart + CODEX_EXEC_ACTIONS_START.length, end).trim();
+  const rawJson = text.slice(actionBlock.start.nextOffset, actionBlock.end.offset).trim();
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawJson);
   } catch (err) {
     return {
       kind: 'invalid_actions',
-      replyText: text.slice(0, firstStart).trim(),
+      replyText: text.slice(0, actionBlock.start.offset).trim(),
       actions: [],
       error: `invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
     };
@@ -427,7 +462,7 @@ export function parseCodexExecActionOutput(text: string): CodexExecParsedOutput 
   if (!envelope.success) {
     return {
       kind: 'invalid_actions',
-      replyText: text.slice(0, firstStart).trim(),
+      replyText: text.slice(0, actionBlock.start.offset).trim(),
       actions: [],
       error: formatZodError(envelope.error),
     };
@@ -435,7 +470,7 @@ export function parseCodexExecActionOutput(text: string): CodexExecParsedOutput 
 
   return {
     kind: 'actions',
-    replyText: text.slice(0, firstStart).trim() || envelope.data.reply?.trim() || '',
+    replyText: text.slice(0, actionBlock.start.offset).trim() || envelope.data.reply?.trim() || '',
     actions: envelope.data.actions,
   };
 }

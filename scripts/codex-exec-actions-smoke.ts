@@ -131,9 +131,48 @@ try {
   assert.equal(parsed.replyText, 'Done.');
   assert.equal(parsed.actions.length, 1);
 
-  const invalid = parseCodexExecActionOutput('<LARK_ACTIONS_JSON>{"version":2,"actions":[]}</LARK_ACTIONS_JSON>');
+  const invalid = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    '{"version":2,"actions":[]}',
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
   assert.equal(invalid.kind, 'invalid_actions');
   assert.match(invalid.error, /version/i);
+
+  const markerExplanation = [
+    'The action protocol uses this marker when a real structured action is needed:',
+    '<LARK_ACTIONS_JSON>',
+    '{"version":1,"actions":[]}',
+    'Do not emit a partial control block in ordinary prose.',
+  ].join('\n');
+  const markerExplanationParsed = parseCodexExecActionOutput(markerExplanation);
+  assert.equal(markerExplanationParsed.kind, 'reply');
+  assert.equal(markerExplanationParsed.replyText, markerExplanation);
+
+  const fencedMarker = [
+    'Example:',
+    '```json',
+    '<LARK_ACTIONS_JSON>',
+    '{"version":1,"actions":[{"type":"list_jobs"}]}',
+    '</LARK_ACTIONS_JSON>',
+    '```',
+  ].join('\n');
+  const fencedMarkerParsed = parseCodexExecActionOutput(fencedMarker);
+  assert.equal(fencedMarkerParsed.kind, 'reply');
+  assert.equal(fencedMarkerParsed.replyText, fencedMarker);
+
+  const inlineMarkerParsed = parseCodexExecActionOutput(
+    'Mentioning <LARK_ACTIONS_JSON> inline is normal text, not a control block.',
+  );
+  assert.equal(inlineMarkerParsed.kind, 'reply');
+
+  const trailingTextActionParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({ version: 1, actions: [{ type: 'list_jobs' }] }),
+    '</LARK_ACTIONS_JSON>',
+    'Trailing visible text keeps the whole output as a normal reply.',
+  ].join('\n'));
+  assert.equal(trailingTextActionParsed.kind, 'reply');
 
   const missingScheduleParsed = parseCodexExecActionOutput([
     '<LARK_ACTIONS_JSON>',
