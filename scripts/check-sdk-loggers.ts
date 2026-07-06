@@ -7,10 +7,9 @@
  * non-JSON-RPC bytes on stdout corrupt the protocol and Codex kills
  * the plugin. Every SDK object that can log must redirect to stderr.
  *
- * Why static (not runtime): dry-run exits before `channel.start()`, which
- * is where EventDispatcher and WSClient are actually constructed. So
- * `scripts/test.sh`'s "MCP stdout clean" assertion can't catch a missing
- * logger on those — this check closes the gap.
+ * Why static (not runtime): dry-run exercises the default startup path, but
+ * it is easy to add a new SDK construction path later. This check keeps
+ * every known SDK constructor/factory explicit about stderr logging.
  *
  * Scope limits (by design):
  *   - Only verifies the *presence* of `logger:` in the options block. A
@@ -19,7 +18,7 @@
  *     Human review covers the "is the value actually stderr-routing?"
  *     question — the lint catches the far more common mistake of
  *     omitting the option entirely.
- *   - Scans the legacy `new Lark.<...>(` constructors and the SDK scaffold's
+ *   - Scans `new Lark.<...>(` constructors and the SDK scaffold's
  *     `createLarkChannel(...)` factory. If new construction paths are added,
  *     extend this script before relying on dry-run stdout checks.
  */
@@ -29,7 +28,7 @@ import { join } from 'node:path';
 const channelSrc = readFileSync(join(process.cwd(), 'src/channel.ts'), 'utf-8');
 const sdkScaffoldSrc = readFileSync(join(process.cwd(), 'src/sdk-channel-scaffold.ts'), 'utf-8');
 
-const ctors = ['Client', 'EventDispatcher', 'WSClient'] as const;
+const ctors = ['Client'] as const;
 const problems: string[] = [];
 let totalMatches = 0;
 

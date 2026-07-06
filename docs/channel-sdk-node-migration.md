@@ -136,8 +136,8 @@ for quoted Interactive Card hydration.
 4. Use public `@larksuite/channel` APIs first; use `channel.rawClient` only
    inside the transport for missing parity such as `messages/mget`, deterministic
    scheduler uuid, or doc-comment return ids.
-5. Keep `LARK_CHANNEL_RUNTIME=legacy` as the coarse rollback path until the
-   SDK-unified transport has passed internal manual testing.
+5. Keep rollback at the package level after SDK unification; do not reintroduce
+   a runtime selector or hidden legacy flag.
 6. Run a fast trial loop: merge only after smoke/dry-run passes, deploy
    internally, capture regressions as small fixes, and cut patch releases as
    needed.
@@ -149,8 +149,8 @@ for quoted Interactive Card hydration.
 - `npm run typecheck`
 - `cd plugins/lark && npm run typecheck`
 - default SDK dry-run from workspace and installed plugin cache
-- explicit `LARK_CHANNEL_RUNTIME=legacy` dry-run from workspace and installed
-  plugin cache
+- config validation proving stale `LARK_CHANNEL_RUNTIME=legacy` fails loudly
+  while stale `LARK_CHANNEL_RUNTIME=sdk` remains a harmless no-op
 - manual internal Lark checks for:
   - owner P2P reply;
   - group `@bot` reply;

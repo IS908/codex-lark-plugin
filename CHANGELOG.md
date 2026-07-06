@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.12.4] - 2026-07-06
+
+### Changed
+- Removed the pre-SDK channel runtime selector and legacy WebSocket startup path. The SDK channel runtime is now the only live runtime.
+- Kept stale `LARK_CHANNEL_RUNTIME=sdk` as a harmless no-op for upgrade compatibility, while `LARK_CHANNEL_RUNTIME=legacy` now fails config validation and points operators to package downgrade rollback.
+
+### Removed
+- Removed the legacy raw message normalizer, legacy reaction event mapper, and legacy inbound image-download branch that were only used by the pre-SDK runtime.
+
 ## [1.12.3] - 2026-07-06
 
 ### Changed

@@ -43,12 +43,6 @@ interface ResourceDownloadRequest {
   resourceType: 'image' | 'file';
   fileName: string;
   logPrefix: string;
-  legacyImageLog?: boolean;
-}
-
-interface LegacyImageSelection {
-  imageKeys: string[];
-  parseFailed: boolean;
 }
 
 function optionNow(options: InboundAttachmentDownloadOptions): number {
@@ -73,33 +67,6 @@ function setDownloadedImagePaths(message: InboundAttachmentMessage, downloadedPa
   }
 }
 
-function selectLegacyImages(rawContent: string, messageType: string): LegacyImageSelection {
-  try {
-    const parsed = JSON.parse(rawContent);
-    if (messageType === 'image') {
-      return { imageKeys: parsed.image_key ? [parsed.image_key] : [], parseFailed: false };
-    }
-    if (messageType !== 'post') return { imageKeys: [], parseFailed: false };
-
-    const content = parsed.content ?? parsed.zh_cn?.content ?? parsed.en_us?.content ?? [];
-    const imageKeys: string[] = [];
-    for (const line of content) {
-      for (const node of line as any[]) {
-        if (node.tag === 'img' && node.image_key) {
-          imageKeys.push(node.image_key);
-        }
-      }
-    }
-    return { imageKeys, parseFailed: false };
-  } catch {
-    return { imageKeys: [], parseFailed: messageType === 'image' || messageType === 'post' };
-  }
-}
-
-export function selectLegacyImageKeys(rawContent: string, messageType: string): string[] {
-  return selectLegacyImages(rawContent, messageType).imageKeys;
-}
-
 export async function downloadInboundResource(
   transport: InboundDownloadTransport,
   request: ResourceDownloadRequest,
@@ -119,11 +86,7 @@ export async function downloadInboundResource(
       maxBytes: options.maxBytes ?? appConfig.downloadMaxBytes,
       timeoutMs: options.timeoutMs ?? appConfig.downloadTimeoutMs,
     });
-    if (request.legacyImageLog) {
-      log(`[channel] Downloaded image ${request.fileKey} → ${filePath}`);
-    } else {
-      log(`${request.logPrefix} Downloaded ${request.resourceType} ${request.fileKey} -> ${filePath}`);
-    }
+    log(`${request.logPrefix} Downloaded ${request.resourceType} ${request.fileKey} -> ${filePath}`);
     return filePath;
   } catch (err) {
     log(`${request.logPrefix} Failed to download ${request.resourceType} ${request.fileKey}: ${err}`);
@@ -151,38 +114,6 @@ export async function addSdkImageDownloads(
       resourceType: 'image',
       fileName: `${optionNow(options)}-${fileKey}-${safeName}`,
       logPrefix: '[sdk-channel]',
-    }, options);
-    if (downloaded) downloadedPaths.push(downloaded);
-  }
-
-  setDownloadedImagePaths(message, downloadedPaths);
-}
-
-export async function addLegacyImageDownloads(
-  message: InboundAttachmentMessage,
-  rawContent: string,
-  messageType: string,
-  transport: InboundDownloadTransport,
-  options: InboundAttachmentDownloadOptions = {},
-): Promise<void> {
-  const log = options.log ?? debugLog;
-  const { imageKeys, parseFailed } = selectLegacyImages(rawContent, messageType);
-  if (parseFailed && messageType === 'image') {
-    log('[channel] Failed to parse image content for auto-download');
-  } else if (parseFailed && messageType === 'post') {
-    log('[channel] Failed to parse post content for image auto-download');
-  }
-  if (imageKeys.length === 0) return;
-
-  const downloadedPaths: string[] = [];
-  for (const imageKey of imageKeys) {
-    const downloaded = await downloadInboundResource(transport, {
-      messageId: message.messageId,
-      fileKey: imageKey,
-      resourceType: 'image',
-      fileName: `${optionNow(options)}-${imageKey}.png`,
-      logPrefix: '[channel]',
-      legacyImageLog: true,
     }, options);
     if (downloaded) downloadedPaths.push(downloaded);
   }

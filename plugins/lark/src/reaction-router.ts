@@ -43,15 +43,6 @@ export interface ReactionRouteOptions {
   logPrefix: string;
 }
 
-export function legacyReactionRouteEvent(data: any): ReactionRouteEvent {
-  return {
-    messageId: data?.message_id ?? '',
-    emojiType: data?.reaction_type?.emoji_type ?? '',
-    operatorId: data?.user_id?.open_id ?? '',
-    isBotSelfReaction: data?.operator_type === 'app',
-  };
-}
-
 export function sdkReactionRouteEvent(reaction: {
   messageId?: string;
   emojiType?: string;

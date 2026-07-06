@@ -18,7 +18,8 @@ for (const required of [
   assert.match(doc, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 }
 
-assert.match(doc, /LARK_CHANNEL_RUNTIME=legacy/);
+assert.match(doc, /LARK_CHANNEL_RUNTIME=legacy.*rejected/is);
+assert.match(doc, /Rollback is package downgrade to v1\.12\.3 or earlier/);
 assert.match(doc, /LARK_CODEX_DELIVERY_MODE=exec/);
 assert.match(doc, /LARK_CODEX_DELIVERY_MODE=notification/);
 assert.match(doc, /createInitialJobRuntime\(\)/);

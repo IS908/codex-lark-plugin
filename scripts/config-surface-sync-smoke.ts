@@ -28,7 +28,6 @@ assert.equal(pluginEnv, rootEnv, 'root and plugin .env.example files must stay i
 assert.equal(pluginSkill, rootSkill, 'root and plugin configure skills must stay identical');
 
 assert.match(rootEnv, /LARK_QUEUE_HANDLER_TIMEOUT_MS=660000/);
-assert.match(rootEnv, /LARK_CHANNEL_RUNTIME=sdk/);
 assert.match(rootEnv, /LARK_CODEX_EXEC_CWD=.*codex-exec-workdir/);
 
 const keys = envKeys(rootEnv);

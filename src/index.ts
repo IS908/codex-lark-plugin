@@ -392,8 +392,8 @@ async function main() {
   });
 
   if (isDryRun) {
-    console.error(`[dry-run] Channel runtime: ${appConfig.channelRuntime}`);
-    if (appConfig.channelRuntime === 'sdk') validateSdkChannelScaffold();
+    console.error('[dry-run] Channel runtime: sdk');
+    validateSdkChannelScaffold();
     console.error('[dry-run] All modules loaded successfully.');
     console.error('[dry-run] Tools registered. Exiting.');
     process.exit(0);
@@ -407,11 +407,7 @@ async function main() {
   // 8. Acquire single-instance lock and start Lark WebSocket
   const lock = await acquireSingleInstanceLock(LOCK_FILE);
   registerLockCleanup(lock);
-  if (appConfig.channelRuntime === 'sdk') {
-    await startSdkChannelRuntime(channel);
-  } else {
-    await channel.start();
-  }
+  await startSdkChannelRuntime(channel);
 
   // 9. Re-arm flush timers from persisted episodes
   await buffer.rearmFromDisk();

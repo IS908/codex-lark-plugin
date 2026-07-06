@@ -8,10 +8,7 @@ import {
   AckReactionTracker,
   deleteAckReactionWithTransport,
 } from './ack-reactions.js';
-import {
-  addLegacyImageDownloads,
-  addSdkImageDownloads,
-} from './inbound-attachment-downloader.js';
+import { addSdkImageDownloads } from './inbound-attachment-downloader.js';
 import type { LarkTransport } from './lark-transport.js';
 import { addQuotedContext } from './quoted-context-loader.js';
 
@@ -30,18 +27,10 @@ export interface PrepareInboundTurnDeps {
   chatTypeCache: ChatTypeWriter;
 }
 
-export type InboundTurnSource =
-  | {
-      kind: 'sdk';
-      resources?: ResourceDescriptor[];
-      sdkChannel?: Pick<SdkLarkChannel, 'downloadResource' | 'fetchMessage' | 'addReaction'>;
-    }
-  | {
-      kind: 'legacy';
-      rawContent: string;
-      messageType: string;
-      resolveChatName?: (chatId: string) => Promise<string>;
-    };
+export interface InboundTurnSource {
+  resources?: ResourceDescriptor[];
+  sdkChannel?: Pick<SdkLarkChannel, 'downloadResource' | 'fetchMessage' | 'addReaction'>;
+}
 
 export async function prepareInboundTurn(
   message: LarkMessage,
@@ -55,22 +44,9 @@ export async function prepareInboundTurn(
   });
   deps.ackReactions.recordInbound(message.messageId);
 
-  addAckReaction(message, deps, source.kind);
+  addAckReaction(message, deps);
 
-  if (source.kind === 'sdk') {
-    await addSdkImageDownloads(message, source.resources ?? [], source.sdkChannel);
-  } else {
-    await addLegacyImageDownloads(
-      message,
-      source.rawContent,
-      source.messageType,
-      deps.larkTransport,
-    );
-    if (message.chatType === 'group' && source.resolveChatName) {
-      const chatName = await source.resolveChatName(message.chatId);
-      message.chatName = chatName || undefined;
-    }
-  }
+  await addSdkImageDownloads(message, source.resources ?? [], source.sdkChannel);
 
   await addQuotedContext(message, deps.larkTransport, {
     maxDepth: appConfig.quotedContextMaxDepth,
@@ -85,7 +61,6 @@ export async function prepareInboundTurn(
 function addAckReaction(
   message: LarkMessage,
   deps: Pick<PrepareInboundTurnDeps, 'ackReactions' | 'larkTransport'>,
-  sourceKind: InboundTurnSource['kind'],
 ): void {
   const ackEmoji = message.chatType === 'p2p' ? 'Typing' : appConfig.ackEmoji;
   if (!ackEmoji) return;
@@ -94,7 +69,7 @@ function addAckReaction(
     if (!reactionId) return;
     const stored = deps.ackReactions.storeReaction(message.messageId, reactionId);
     if (stored.action === 'delete-now') {
-      deleteAckReactionWithTransport(deps.larkTransport, stored.reaction, `${sourceKind}-channel.delete_late`);
+      deleteAckReactionWithTransport(deps.larkTransport, stored.reaction, 'sdk-channel.delete_late');
     }
   }).catch(() => {});
 }

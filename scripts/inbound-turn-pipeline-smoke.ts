@@ -37,7 +37,6 @@ await prepareInboundTurn(sdkMessage, {
   larkTransport: transport,
   chatTypeCache: { set: (chatId, chatType) => chatTypes.set(chatId, chatType) },
 }, {
-  kind: 'sdk',
   resources: [],
 });
 await waitTick();
@@ -47,32 +46,28 @@ assert.equal(sdkAck.activeCount, 1);
 assert.deepEqual(reactionCalls.at(-1), { messageId: 'om_sdk_pipeline', emoji: 'Typing' });
 assert.equal(chatTypes.get('oc_sdk_pipeline'), 'p2p');
 
-const legacyMessage: LarkMessage = {
-  messageId: 'om_legacy_pipeline',
-  chatId: 'oc_legacy_pipeline',
+const groupMessage: LarkMessage = {
+  messageId: 'om_group_pipeline',
+  chatId: 'oc_group_pipeline',
   chatType: 'group',
   senderId: 'ou_sender',
-  text: 'hello legacy',
+  text: 'hello group',
   messageType: 'text',
-  threadId: 'omt_legacy',
-  rawContent: JSON.stringify({ text: 'hello legacy' }),
+  threadId: 'omt_group',
+  rawContent: '{}',
 };
-const legacyAck = new AckReactionTracker();
-await prepareInboundTurn(legacyMessage, {
+const groupAck = new AckReactionTracker();
+await prepareInboundTurn(groupMessage, {
   latestMessageTracker: { record: (chatId, msg) => latestRecords.push({ chatId, ...msg }) },
-  ackReactions: legacyAck,
+  ackReactions: groupAck,
   larkTransport: transport,
   chatTypeCache: { set: (chatId, chatType) => chatTypes.set(chatId, chatType) },
 }, {
-  kind: 'legacy',
-  rawContent: legacyMessage.rawContent,
-  messageType: legacyMessage.messageType,
-  resolveChatName: async () => 'Pipeline Group',
+  resources: [],
 });
 await waitTick();
-assert.equal(legacyMessage.chatName, 'Pipeline Group');
-assert.equal(latestRecords.at(-1)?.threadId, 'omt_legacy');
-assert.equal(legacyAck.hasRecentInbound('om_legacy_pipeline'), true);
-assert.equal(chatTypes.get('oc_legacy_pipeline'), 'group');
+assert.equal(latestRecords.at(-1)?.threadId, 'omt_group');
+assert.equal(groupAck.hasRecentInbound('om_group_pipeline'), true);
+assert.equal(chatTypes.get('oc_group_pipeline'), 'group');
 
 console.log('inbound-turn-pipeline smoke: PASS');

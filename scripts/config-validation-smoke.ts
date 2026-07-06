@@ -16,7 +16,6 @@ const code = `
     codexExecTimeoutMs: appConfig.codexExecTimeoutMs,
     replyObligationTimeoutMs: appConfig.replyObligationTimeoutMs,
     codexExecCwd: appConfig.codexExecCwd,
-    channelRuntime: appConfig.channelRuntime,
     codexSessionRetentionDays: appConfig.codexSessionRetentionDays,
     codexSessionRetentionScanIntervalHours: appConfig.codexSessionRetentionScanIntervalHours,
     codexSessionRetentionDryRun: appConfig.codexSessionRetentionDryRun,
@@ -69,7 +68,8 @@ expectFail({ LARK_CRON_SCAN_INTERVAL: '0' }, /LARK_CRON_SCAN_INTERVAL.*positive/
 expectFail({ LARK_TEXT_CHUNK_LIMIT: '-1' }, /LARK_TEXT_CHUNK_LIMIT.*positive/i);
 expectFail({ LARK_MIN_SEARCH_SCORE: 'not-a-number' }, /LARK_MIN_SEARCH_SCORE.*number/i);
 expectFail({ LARK_MEMORY_DEDUP_WINDOW_MS: '-1' }, /LARK_MEMORY_DEDUP_WINDOW_MS.*non-negative/i);
-expectFail({ LARK_CHANNEL_RUNTIME: 'claude' }, /LARK_CHANNEL_RUNTIME.*legacy, sdk/i);
+expectFail({ LARK_CHANNEL_RUNTIME: 'legacy' }, /LARK_CHANNEL_RUNTIME.*removed/i);
+expectFail({ LARK_CHANNEL_RUNTIME: 'claude' }, /LARK_CHANNEL_RUNTIME.*no longer supported/i);
 expectFail({ LARK_CODEX_SESSION_RETENTION_DAYS: '0' }, /LARK_CODEX_SESSION_RETENTION_DAYS.*positive/i);
 expectFail({ LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: '-1' }, /LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS.*non-negative/i);
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS: '0' }, /LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS.*positive/i);
@@ -86,7 +86,6 @@ assert.equal(zeroAllowed.inboxMaxBytes, 0);
 const defaultPaths = expectOk({});
 assert.match(defaultPaths.codexExecCwd, /codex-exec-workdir$/);
 assert.doesNotMatch(defaultPaths.codexExecCwd, /codex-lark-plugin$/);
-assert.equal(defaultPaths.channelRuntime, 'sdk');
 assert.equal(defaultPaths.codexSessionRetentionDays, 14);
 assert.equal(defaultPaths.codexSessionRetentionScanIntervalHours, 24);
 assert.equal(defaultPaths.codexSessionRetentionDryRun, false);
@@ -129,11 +128,8 @@ assert.equal(customGithubIssue.githubIssueTimeoutMs, 2500);
 assert.equal(customGithubIssue.githubIssueApiBaseUrl, 'https://github.example.test/api/v3');
 assert.equal(customGithubIssue.githubIssueToken, 'token-from-lark');
 
-const sdkRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'sdk' });
-assert.equal(sdkRuntime.channelRuntime, 'sdk');
-
-const legacyRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'legacy' });
-assert.equal(legacyRuntime.channelRuntime, 'legacy');
+const staleSdkRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'sdk' });
+assert.equal(Object.prototype.hasOwnProperty.call(staleSdkRuntime, 'channelRuntime'), false);
 
 const customExecTimeout = expectOk({ LARK_CODEX_EXEC_TIMEOUT_MS: '5000' });
 assert.equal(customExecTimeout.codexExecTimeoutMs, 5000);
