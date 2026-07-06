@@ -2,6 +2,7 @@ import {
   cronJobPrompt,
   enrichmentPrompt,
   flushPrompt,
+  larkReplyPresentationGuideline,
   mcpServerInstructions,
   profileDistillationPrompt,
   untrustedDataBlock,
@@ -99,6 +100,17 @@ passed++;
 
 if (!/prefer plain text/i.test(mcpServerInstructions) || !/Feishu card/i.test(mcpServerInstructions) || !/sparingly/i.test(mcpServerInstructions)) {
   fail('6: MCP instructions should tell the LLM to prefer plain text and use Feishu cards sparingly');
+}
+if (!mcpServerInstructions.includes(larkReplyPresentationGuideline)) {
+  fail('6b: MCP instructions should include the shared Lark reply presentation guideline');
+}
+if (
+  !/longer Lark\/Feishu replies/i.test(larkReplyPresentationGuideline) ||
+  !/code, logs, JSON, diffs, command output/i.test(larkReplyPresentationGuideline) ||
+  !/explicit user formatting/i.test(larkReplyPresentationGuideline) ||
+  !/facts, reasoning, judgments, and risks/i.test(larkReplyPresentationGuideline)
+) {
+  fail('6b: Lark reply presentation guideline should preserve explicit formats and technical content');
 }
 passed++;
 
