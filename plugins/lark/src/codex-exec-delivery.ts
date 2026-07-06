@@ -48,6 +48,7 @@ export interface CodexExecDeliveryOptions {
   progressVisible?: boolean;
   onProgress?: (event: CodexExecProgressEvent) => void;
   actionBaseDir?: string;
+  traceLogId?: string;
 }
 
 export interface CodexExecSessionHealthRecorder {
@@ -148,6 +149,15 @@ const SAFE_NON_EXECUTION_PATTERNS = [
   /\b(?:cannot|can't|unable to|not configured|not enabled|did not|do not|won't|will not|no automatic|not automatically).{0,120}\b(?:create|file|open|post|continue|follow up|issue|action|background)\b/i,
   /(?:不能|无法|不会|未|没有).{0,40}(?:自动|后台|继续|创建|补提|执行|发起|回贴)/,
 ];
+
+function resolveTraceLogId(message: LarkMessage, explicit?: string): string {
+  if (explicit?.trim()) return explicit;
+  if (message.chatType === 'cronjob') {
+    const cronName = message.senderName?.replace(/^CronJob\s+/, '').trim();
+    if (cronName) return cronName;
+  }
+  return message.messageId;
+}
 
 function normalizeLifecycleGuardText(text: string): string {
   return text.normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -340,6 +350,7 @@ export async function deliverMessageViaCodexExec(
     ignoreUserConfig: appConfig.codexExecIgnoreUserConfig,
     skipGitRepoCheck: true,
     resumeSessionId: existingSession?.sessionId ?? null,
+    traceLogId: resolveTraceLogId(message, opts.traceLogId),
     ...(progressSink || actionChannel
       ? {
           extraEnv: {

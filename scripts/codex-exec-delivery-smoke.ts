@@ -129,6 +129,7 @@ await deliverMessageViaCodexExec({
 });
 
 assert.equal(execRequests.length, 1);
+assert.equal(execRequests[0].traceLogId, 'om_inbound_001');
 assert.match(execRequests[0].prompt, /Reply to this Feishu\/Lark message/);
 assert.ok(execRequests[0].actions?.filePath, 'codex exec request should include action side-channel file');
 assert.ok(execRequests[0].actions?.token, 'codex exec request should include action side-channel token');
@@ -156,6 +157,7 @@ assert.deepEqual(replyRequests, [
 ]);
 
 const cronReplies: ReplyRequest[] = [];
+const cronExecRequests: any[] = [];
 await deliverMessageViaCodexExec({
   message: {
     messageId: 'job-daily-report-abc123def456-1760000000000',
@@ -170,13 +172,17 @@ await deliverMessageViaCodexExec({
   },
   displayLabel: 'CronJob · Daily Report',
   useCodexSessions: false,
-  runCodexExec: async () => 'cron report',
+  runCodexExec: async (request) => {
+    cronExecRequests.push(request);
+    return 'cron report';
+  },
   sendReply: async (request) => {
     cronReplies.push(request);
     return { sentCount: 1 };
   },
 });
 
+assert.equal(cronExecRequests[0].traceLogId, 'Daily Report');
 assert.deepEqual(cronReplies, [
   {
     chat_id: 'oc_cron_target',

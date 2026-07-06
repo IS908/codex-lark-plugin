@@ -409,6 +409,7 @@ async function main() {
       await deliverMessageViaCodexExec({
         message,
         displayLabel: `CronJob · ${job.meta.name}`,
+        traceLogId: job.meta.name,
         sendReply: async (request) => {
           diagnostics.startStage('send_lark');
           try {

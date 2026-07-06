@@ -27,6 +27,7 @@ export interface CodexExecRequest {
     filePath: string;
     token: string;
   };
+  traceLogId?: string;
 }
 
 export interface CodexExecResult {
@@ -256,7 +257,9 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   let sessionId: string | null = null;
   let usage: CodexExecUsage | null = null;
   let timedOut = false;
-  const toolTrace = createCodexExecToolTraceWriter();
+  const toolTrace = createCodexExecToolTraceWriter(
+    request.traceLogId ? { logId: request.traceLogId } : undefined,
+  );
 
   try {
     await fs.mkdir(cwd, { recursive: true });

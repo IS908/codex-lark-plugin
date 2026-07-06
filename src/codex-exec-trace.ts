@@ -1,14 +1,31 @@
 import { appConfig } from './config.js';
+import {
+  diagnosticRaw,
+  formatDiagnosticLine,
+  formatDiagnosticPayload,
+  redactDiagnosticString,
+  truncateDiagnosticString,
+} from './diagnostic-log-format.js';
 import { appendRotatingLine } from './resource-governance.js';
 
 export type CodexExecToolTraceMode = 'compact' | 'full' | 'hidden';
 
 export interface CodexExecToolTraceConfig {
+  enabled?: boolean;
+  mode?: CodexExecToolTraceMode;
+  logPath?: string;
+  maxBytes?: number;
+  maxFiles?: number;
+  logId?: string | null;
+}
+
+interface ResolvedCodexExecToolTraceConfig {
   enabled: boolean;
   mode: CodexExecToolTraceMode;
   logPath: string;
   maxBytes: number;
   maxFiles: number;
+  logId?: string | null;
 }
 
 export interface CodexExecToolTraceWriter {
@@ -20,11 +37,6 @@ const TOOL_HINT_PATTERN = /(tool|function|mcp|connector|command|exec|shell|bash|
 const START_PATTERN = /\b(start|started|begin|began|running|in_progress|created|call|requested)\b/i;
 const END_PATTERN = /\b(end|ended|complete|completed|finish|finished|success|succeeded|failed|error|errored|cancel|cancelled)\b/i;
 const SENSITIVE_KEY_PATTERN = /(token|secret|password|authorization|cookie|api[_-]?key|access[_-]?key|refresh[_-]?token|credential|approval)/i;
-const SECRET_VALUE_PATTERNS = [
-  /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
-  /\b(sk|ghp|github_pat|xox[baprs])_[A-Za-z0-9_=-]{12,}/gi,
-  /\b[A-Za-z0-9+/]{32,}={0,2}\b/g,
-];
 const MAX_FULL_STRING = 500;
 const MAX_COMPACT_STRING = 160;
 const MAX_DEPTH = 4;
@@ -32,23 +44,28 @@ const MAX_ARRAY_ITEMS = 20;
 const MAX_OBJECT_KEYS = 40;
 
 export function createCodexExecToolTraceWriter(
-  config: CodexExecToolTraceConfig = {
-    enabled: appConfig.codexExecToolTraceEnabled,
-    mode: appConfig.codexExecToolTraceMode,
-    logPath: appConfig.codexExecTraceLogPath,
-    maxBytes: appConfig.logMaxBytes,
-    maxFiles: appConfig.logMaxFiles,
-  },
+  config: CodexExecToolTraceConfig = {},
 ): CodexExecToolTraceWriter | null {
-  if (!config.enabled) return null;
-  return new FileCodexExecToolTraceWriter(config);
+  const resolved: ResolvedCodexExecToolTraceConfig = {
+    enabled: config.enabled ?? appConfig.codexExecToolTraceEnabled,
+    mode: config.mode ?? appConfig.codexExecToolTraceMode,
+    logPath: config.logPath ?? appConfig.codexExecTraceLogPath,
+    maxBytes: config.maxBytes ?? appConfig.logMaxBytes,
+    maxFiles: config.maxFiles ?? appConfig.logMaxFiles,
+    logId: config.logId,
+  };
+  if (!resolved.enabled) return null;
+  return new FileCodexExecToolTraceWriter(resolved);
 }
 
 class FileCodexExecToolTraceWriter implements CodexExecToolTraceWriter {
   private readonly startedAtById = new Map<string, number>();
   private pending: Promise<void> = Promise.resolve();
+  private readonly logId: string;
 
-  constructor(private readonly config: CodexExecToolTraceConfig) {}
+  constructor(private readonly config: ResolvedCodexExecToolTraceConfig) {
+    this.logId = config.logId || '-';
+  }
 
   recordLine(line: string): void {
     const raw = line.trim();
@@ -73,10 +90,10 @@ class FileCodexExecToolTraceWriter implements CodexExecToolTraceWriter {
     if (!shouldTraceCodexExecToolEvent(event)) return;
 
     const now = Date.now();
-    const record = this.config.mode === 'full'
-      ? buildFullTraceRecord(event, now)
-      : buildCompactTraceRecord(event, now, this.startedAtById, this.config.mode);
-    await appendRotatingLine(this.config.logPath, `${JSON.stringify(record)}\n`, {
+    const traceLine = this.config.mode === 'full'
+      ? buildFullTraceLine(event, now, this.logId)
+      : buildCompactTraceLine(event, now, this.startedAtById, this.config.mode, this.logId);
+    await appendRotatingLine(this.config.logPath, traceLine, {
       maxBytes: this.config.maxBytes,
       maxFiles: this.config.maxFiles,
     });
@@ -90,21 +107,35 @@ export function shouldTraceCodexExecToolEvent(event: unknown): boolean {
   return candidates.some((value) => TOOL_HINT_PATTERN.test(value));
 }
 
-function buildFullTraceRecord(event: unknown, now: number): Record<string, unknown> {
-  return {
-    at: new Date(now).toISOString(),
-    kind: 'trace',
-    mode: 'full',
-    event: sanitizeForTrace(event, { maxString: MAX_FULL_STRING }),
-  };
+function buildFullTraceLine(event: unknown, now: number, logId: string): string {
+  const record = event && typeof event === 'object' && !Array.isArray(event)
+    ? event as Record<string, unknown>
+    : {};
+  const nested = firstObject(record, ['item', 'tool', 'call', 'function', 'data']) ?? {};
+  const eventType = firstString(record, ['type', 'event', 'event_type', 'eventType']) ?? 'unknown';
+  const toolName = inferToolName(record, nested);
+  const status = inferStatus(record, nested, eventType);
+  return formatDiagnosticLine([
+    new Date(now).toISOString(),
+    logId,
+    'trace',
+    'full',
+    eventType,
+    toolName,
+    status,
+    '-',
+    '-',
+    diagnosticRaw(formatDiagnosticPayload(sanitizeForTrace(event, { maxString: MAX_FULL_STRING }))),
+  ]);
 }
 
-function buildCompactTraceRecord(
+function buildCompactTraceLine(
   event: unknown,
   now: number,
   startedAtById: Map<string, number>,
   mode: 'compact' | 'hidden',
-): Record<string, unknown> {
+  logId: string,
+): string {
   const record = event && typeof event === 'object' && !Array.isArray(event)
     ? event as Record<string, unknown>
     : {};
@@ -121,18 +152,21 @@ function buildCompactTraceRecord(
   const durationMs = startedAt !== undefined && isEndStatus(status, eventType)
     ? Math.max(0, now - startedAt)
     : undefined;
-  return {
-    at: new Date(now).toISOString(),
-    kind: 'trace',
+  const payload = args !== undefined && error !== undefined
+    ? { args, error }
+    : args ?? error;
+  return formatDiagnosticLine([
+    new Date(now).toISOString(),
+    logId,
+    'trace',
     mode,
-    event_type: eventType,
-    tool: toolName,
+    eventType,
+    toolName,
     status,
-    ...(traceId ? { trace_id: traceId } : {}),
-    ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
-    ...(args !== undefined ? { args } : {}),
-    ...(error !== undefined ? { error } : {}),
-  };
+    traceId ?? '-',
+    durationMs !== undefined ? `${durationMs}ms` : '-',
+    diagnosticRaw(formatDiagnosticPayload(payload)),
+  ]);
 }
 
 function collectStringCandidates(record: Record<string, unknown>): string[] {
@@ -265,14 +299,9 @@ function sanitizeForTrace(
 }
 
 function redactSecretString(value: string): string {
-  let out = value;
-  for (const pattern of SECRET_VALUE_PATTERNS) {
-    out = out.replace(pattern, '[redacted]');
-  }
-  return out;
+  return redactDiagnosticString(value);
 }
 
 function truncateString(value: string, maxLen: number): string {
-  if (value.length <= maxLen) return value;
-  return `${value.slice(0, maxLen)}... (${value.length} chars)`;
+  return truncateDiagnosticString(value, maxLen);
 }

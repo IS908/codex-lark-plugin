@@ -11,18 +11,15 @@
  * worse to crash a tool call because of a log I/O issue).
  */
 import { appConfig } from './config.js';
+import {
+  diagnosticRaw,
+  formatDiagnosticLine,
+  formatDiagnosticPayload,
+  redactDiagnosticString,
+} from './diagnostic-log-format.js';
 import { appendRotatingLine } from './resource-governance.js';
 
 export type AuditOutcome = 'ok' | 'denied' | 'error';
-
-interface AuditLogRecord {
-  at: string;
-  kind: 'audit';
-  tool: string;
-  outcome: AuditOutcome;
-  caller: string | null;
-  args: Record<string, unknown>;
-}
 
 /** Best-effort append. Never throws. */
 export async function audit(
@@ -42,15 +39,15 @@ export async function audit(
     } catch {
       argsForLog = { serialization_error: '<unserializable>' };
     }
-    const record: AuditLogRecord = {
-      at: new Date().toISOString(),
-      kind: 'audit',
+    const line = formatDiagnosticLine([
+      new Date().toISOString(),
+      inferAuditLogId(argsForLog),
+      'audit',
       tool,
       outcome,
-      caller,
-      args: argsForLog,
-    };
-    const line = `${JSON.stringify(record)}\n`;
+      caller ?? '-',
+      diagnosticRaw(formatDiagnosticPayload(argsForLog)),
+    ]);
 
     await appendRotatingLine(appConfig.auditLogPath, line, {
       maxBytes: appConfig.logMaxBytes,
@@ -61,6 +58,14 @@ export async function audit(
   }
 }
 
+function inferAuditLogId(args: Record<string, unknown>): string {
+  for (const key of ['message_id', 'messageId', 'reply_to', 'fallback_message_id', 'thread_id', 'threadId', 'chat_id', 'chatId']) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return '-';
+}
+
 /**
  * Truncate long string fields so the log stays scannable and doesn't balloon
  * on large save_memory / prompt payloads.
@@ -68,8 +73,15 @@ export async function audit(
 function redact(args: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(args)) {
+    if (/(token|secret|password|authorization|cookie|api[_-]?key|credential)/i.test(k)) {
+      out[k] = '[redacted]';
+      continue;
+    }
     if (typeof v === 'string' && v.length > 80) {
-      out[k] = `${v.slice(0, 60)}… (${v.length} chars)`;
+      const redacted = redactDiagnosticString(v);
+      out[k] = `${redacted.slice(0, 60)}... (${v.length} chars)`;
+    } else if (typeof v === 'string') {
+      out[k] = redactDiagnosticString(v);
     } else {
       out[k] = v;
     }

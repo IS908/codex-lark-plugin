@@ -13,10 +13,6 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-function parseJsonl(text: string): any[] {
-  return text.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
-}
-
 // Route L2 rules file + audit log to a tmpdir before importing modules that
 // capture paths from env at import time.
 const tmp = mkdtempSync(join(tmpdir(), 'transparency-'));
@@ -108,15 +104,12 @@ let passed = 0;
   // Log is flushed synchronously by appendFile within this scope
   if (!existsSync(process.env.LARK_AUDIT_LOG!)) fail('7: audit log not created');
   const log = readFileSync(process.env.LARK_AUDIT_LOG!, 'utf8');
-  const records = parseJsonl(log);
-  if (records.length !== 2) fail(`7: expected 2 log lines, got ${records.length}`);
-  if (records[0].kind !== 'audit' || records[0].outcome !== 'ok' || records[0].caller !== 'ou_x') {
-    fail(`7: ok line content wrong: ${JSON.stringify(records[0])}`);
-  }
-  if (records[1].kind !== 'audit' || records[1].outcome !== 'denied' || records[1].caller !== null) {
-    fail(`7: denied line content wrong: ${JSON.stringify(records[1])}`);
-  }
-  if (records[0].args.chat_id !== 'oc_1') fail(`7: args not preserved: ${JSON.stringify(records[0])}`);
+  const lines = log.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length !== 2) fail(`7: expected 2 log lines, got ${lines.length}`);
+  if (lines.some((line) => line.trim().startsWith('{'))) fail('7: audit log must not be JSONL');
+  if (!/oc_1  audit  test_tool  ok  ou_x  /.test(lines[0])) fail(`7: ok line content wrong: ${lines[0]}`);
+  if (!/oc_1  audit  test_tool  denied  -  /.test(lines[1])) fail(`7: denied line content wrong: ${lines[1]}`);
+  if (!lines[0].includes('"chat_id":"oc_1"')) fail(`7: args not preserved: ${lines[0]}`);
   passed++;
 }
 
@@ -125,9 +118,9 @@ let passed = 0;
   const longPrompt = 'x'.repeat(500);
   await audit('t', 'ou_x', { prompt: longPrompt }, 'ok');
   const log = readFileSync(process.env.LARK_AUDIT_LOG!, 'utf8');
-  const last = parseJsonl(log).at(-1);
-  if (JSON.stringify(last).includes('x'.repeat(500))) fail('8: long string not redacted');
-  if (!String(last.args.prompt).includes('500 chars')) fail('8: truncation marker missing');
+  const last = log.trim().split(/\r?\n/).at(-1) ?? '';
+  if (last.includes('x'.repeat(500))) fail('8: long string not redacted');
+  if (!last.includes('500 chars')) fail('8: truncation marker missing');
   passed++;
 }
 
@@ -138,10 +131,8 @@ let passed = 0;
   await audit('t', 'ou_x', { weird: 123n as unknown as string }, 'ok');
   const after = readFileSync(process.env.LARK_AUDIT_LOG!, 'utf8');
   if (after.length <= before) fail('9: audit line not written for unserializable arg');
-  const bigintRecord = parseJsonl(after).at(-1);
-  if (bigintRecord.args.serialization_error !== '<unserializable>') {
-    fail(`9: missing unserializable fallback marker: ${JSON.stringify(bigintRecord)}`);
-  }
+  const bigintRecord = after.trim().split(/\r?\n/).at(-1) ?? '';
+  if (!bigintRecord.includes('<unserializable>')) fail(`9: missing unserializable fallback marker: ${bigintRecord}`);
 
   // Circular reference — JSON.stringify also throws here.
   const circular: Record<string, unknown> = { a: 1 };
@@ -149,11 +140,9 @@ let passed = 0;
   await audit('t', 'ou_x', circular, 'ok');
   const final = readFileSync(process.env.LARK_AUDIT_LOG!, 'utf8');
   // Log grew by at least one more line
-  const records = parseJsonl(final);
+  const records = final.trim().split(/\r?\n/).filter(Boolean);
   if (records.length < 5) fail(`9: expected at least 5 log lines, got ${records.length}`);
-  if (records.at(-1)?.args?.serialization_error !== '<unserializable>') {
-    fail(`9: circular fallback missing: ${JSON.stringify(records.at(-1))}`);
-  }
+  if (!records.at(-1)?.includes('<unserializable>')) fail(`9: circular fallback missing: ${records.at(-1)}`);
   passed++;
 }
 

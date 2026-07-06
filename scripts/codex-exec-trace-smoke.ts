@@ -19,10 +19,15 @@ const {
 } = await import('../src/codex-exec-trace.js');
 const { runCodexExecCommand } = await import('../src/codex-exec.js');
 
-function jsonl(path: string): any[] {
+function lines(path: string): string[] {
   return existsSync(path)
-    ? readFileSync(path, 'utf-8').trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+    ? readFileSync(path, 'utf-8').trim().split(/\r?\n/).filter(Boolean)
     : [];
+}
+
+function assertNotJsonl(line: string): void {
+  assert.doesNotMatch(line, /^\s*\{/);
+  assert.throws(() => JSON.parse(line));
 }
 
 assert.equal(shouldTraceCodexExecToolEvent({ type: 'thread.started', thread_id: 't1' }), false);
@@ -46,6 +51,7 @@ const compact = createCodexExecToolTraceWriter({
   logPath: compactLog,
   maxBytes: 1024 * 1024,
   maxFiles: 2,
+  logId: 'om_trace_001',
 });
 assert.ok(compact);
 compact.recordLine(JSON.stringify({
@@ -65,15 +71,14 @@ compact.recordLine(JSON.stringify({
   status: 'completed',
 }));
 await compact.flush();
-const compactRecords = jsonl(compactLog);
-assert.equal(compactRecords.length, 2);
-assert.equal(compactRecords[0].kind, 'trace');
-assert.equal(compactRecords[0].mode, 'compact');
-assert.equal(compactRecords[0].tool, 'mcp.github.issue_create');
-assert.equal(compactRecords[0].args.authorization, '[redacted]');
-assert.match(compactRecords[0].args.body, /\(600 chars\)$/);
-assert.equal(compactRecords[1].status, 'completed');
-assert.equal(typeof compactRecords[1].duration_ms, 'number');
+const compactLines = lines(compactLog);
+assert.equal(compactLines.length, 2);
+compactLines.forEach(assertNotJsonl);
+assert.match(compactLines[0], /om_trace_001  trace  compact  tool_call\.started  mcp\.github\.issue_create  started/);
+assert.match(compactLines[0], /\[redacted\]/);
+assert.match(compactLines[0], /\(600 chars\)/);
+assert.match(compactLines[1], /om_trace_001  trace  compact  tool_call\.completed  mcp\.github\.issue_create  completed/);
+assert.match(compactLines[1], /\s[0-9]+ms\s/);
 assert.doesNotMatch(readFileSync(compactLog, 'utf-8'), /should-not-appear/);
 
 const fullLog = join(root, 'full.log');
@@ -83,6 +88,7 @@ const full = createCodexExecToolTraceWriter({
   logPath: fullLog,
   maxBytes: 1024 * 1024,
   maxFiles: 2,
+  logId: 'Nightly Review',
 });
 assert.ok(full);
 full.recordLine(JSON.stringify({
@@ -95,11 +101,12 @@ full.recordLine(JSON.stringify({
   },
 }));
 await full.flush();
-const fullRecords = jsonl(fullLog);
-assert.equal(fullRecords[0].kind, 'trace');
-assert.equal(fullRecords[0].mode, 'full');
-assert.equal(fullRecords[0].event.item.access_token, '[redacted]');
-assert.match(fullRecords[0].event.item.source, /\(1200 chars\)$/);
+const fullLines = lines(fullLog);
+assert.equal(fullLines.length, 1);
+assertNotJsonl(fullLines[0]);
+assert.match(fullLines[0], /"Nightly Review"  trace  full  command_execution  shell  event/);
+assert.match(fullLines[0], /\[redacted\]/);
+assert.match(fullLines[0], /\(1200 chars\)/);
 assert.doesNotMatch(readFileSync(fullLog, 'utf-8'), /should-not-appear/);
 
 const hiddenLog = join(root, 'hidden.log');
@@ -113,8 +120,10 @@ const hidden = createCodexExecToolTraceWriter({
 assert.ok(hidden);
 hidden.recordLine(JSON.stringify({ type: 'mcp_tool_call.started', name: 'lark.im.reply' }));
 await hidden.flush();
-assert.equal(jsonl(hiddenLog)[0].kind, 'trace');
-assert.equal(jsonl(hiddenLog)[0].mode, 'hidden');
+const hiddenLines = lines(hiddenLog);
+assert.equal(hiddenLines.length, 1);
+assertNotJsonl(hiddenLines[0]);
+assert.match(hiddenLines[0], /-  trace  hidden  mcp_tool_call\.started  lark\.im\.reply  started/);
 
 const fakeCodex = join(root, 'fake-codex.js');
 await writeFile(fakeCodex, [
@@ -136,13 +145,17 @@ const result = await runCodexExecCommand({
   timeoutMs: 5000,
   ignoreUserConfig: true,
   skipGitRepoCheck: true,
+  traceLogId: 'om_integration_001',
 });
 assert.equal(result.text, 'final answer only');
 assert.equal(result.sessionId, 'thread_trace');
 const integrationLog = readFileSync(integrationTraceLog, 'utf-8');
-const integrationRecords = jsonl(integrationTraceLog);
-assert.ok(integrationRecords.length >= 2);
-assert.ok(integrationRecords.every((record) => record.kind === 'trace'));
+const integrationLines = lines(integrationTraceLog);
+assert.ok(integrationLines.length >= 2);
+integrationLines.forEach((line) => {
+  assertNotJsonl(line);
+  assert.match(line, /om_integration_001  trace  compact/);
+});
 assert.match(integrationLog, /github\.get_issue/);
 assert.doesNotMatch(integrationLog, /should-not-appear/);
 assert.doesNotMatch(integrationLog, /final answer only/);
