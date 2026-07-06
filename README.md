@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.11.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.12.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -358,11 +358,14 @@ that cannot safely call this MCP server from the child `codex exec` process:
 `delete_job`, `upsert_job`, `create_default_review_jobs`,
 `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`,
 `create_issue_from_proposal`, `create_low_risk_pr_from_proposal`,
-`run_local_cli_tool`, `send_message`, and `recall_message`. The child returns a validated
-`LARK_ACTIONS_JSON` marker block; the parent strips
-the block from the visible reply, derives caller identity from the current
-Feishu event, executes the action locally, and rejects malformed blocks instead
-of recursively loading the Lark MCP server. `create_job` and `list_jobs` expose
+`run_local_cli_tool`, `send_message`, and `recall_message`. The parent creates
+an owner-only action JSONL side channel for each `codex exec` turn and passes
+the child only a file path plus per-turn token. The child writes structured
+action requests there while stdout remains user-visible reply text only. The
+parent validates token/schema, rejects child-supplied identity fields, derives
+caller identity from the current Feishu event, executes accepted actions
+locally, and fails malformed action requests instead of recursively loading the
+Lark MCP server. `create_job` and `list_jobs` expose
 stable `job_id` values so later turns can update, pause, replace, or delete the
 exact reminder instead of recreating a duplicate name.
 `send_message` is the exec-mode media action: it can send image/file attachments

@@ -21,6 +21,10 @@ import type { ReplyRequest } from '../src/reply-sender.js';
 import { TurnObligationTracker } from '../src/turn-obligation.js';
 import { formatCodexExecFailureReply } from '../src/codex-exec-error.js';
 
+const { appConfig } = await import('../src/config.js');
+const deliveryBaseDir = await mkdtemp(join(tmpdir(), 'lark-delivery-smoke-'));
+(appConfig as any).codexExecCwd = deliveryBaseDir;
+
 const message: LarkMessage = {
   messageId: 'om_inbound_001',
   chatId: 'oc_group_001',
@@ -38,6 +42,17 @@ const message: LarkMessage = {
 
 const execRequests: any[] = [];
 const replyRequests: ReplyRequest[] = [];
+
+async function writeActionRequest(request: any, actions: any[]): Promise<void> {
+  const actionChannel = request.actions;
+  assert.ok(actionChannel?.filePath, 'codex exec request should include actions.filePath');
+  assert.ok(actionChannel?.token, 'codex exec request should include actions.token');
+  await appendFile(
+    actionChannel.filePath,
+    `${JSON.stringify({ version: 1, token: actionChannel.token, type: 'lark_action_request', actions })}\n`,
+    'utf-8',
+  );
+}
 
 assert.deepEqual(
   buildCodexExecArgs(
@@ -116,7 +131,11 @@ await deliverMessageViaCodexExec({
 
 assert.equal(execRequests.length, 1);
 assert.match(execRequests[0].prompt, /Reply to this Feishu\/Lark message/);
-assert.match(execRequests[0].prompt, /"priority":"P0\|P1\|P2\|P3"/);
+assert.ok(execRequests[0].actions?.filePath, 'codex exec request should include action side-channel file');
+assert.ok(execRequests[0].actions?.token, 'codex exec request should include action side-channel token');
+assert.match(execRequests[0].prompt, /Structured Lark actions/);
+assert.match(execRequests[0].prompt, /"type":"lark_action_request"/);
+assert.doesNotMatch(execRequests[0].prompt, /LARK_ACTIONS_JSON/);
 assert.match(execRequests[0].prompt, /message_id: om_inbound_001/);
 assert.match(execRequests[0].prompt, /chat_id: oc_group_001/);
 assert.match(execRequests[0].prompt, /thread_id: omt_thread_001/);
@@ -266,21 +285,15 @@ await deliverMessageViaCodexExec({
   },
   displayLabel: 'Kevin · Codex Test Group',
   useCodexSessions: false,
-  runCodexExec: async () =>
-    [
-      'Message recalled.',
-      '<LARK_ACTIONS_JSON>',
-      JSON.stringify({
-        version: 1,
-        actions: [
-          {
-            type: 'recall_message',
-            message_id: 'om_bot_reply_123',
-          },
-        ],
-      }),
-      '</LARK_ACTIONS_JSON>',
-    ].join('\n'),
+  runCodexExec: async (request) => {
+    await writeActionRequest(request, [
+      {
+        type: 'recall_message',
+        message_id: 'om_bot_reply_123',
+      },
+    ]);
+    return 'Message recalled.';
+  },
   actionDispatcher: {
     execute: async () => [
       {
@@ -315,20 +328,15 @@ await deliverMessageViaCodexExec({
   },
   displayLabel: 'Kevin · Codex Test Group',
   useCodexSessions: false,
-  runCodexExec: async () =>
-    [
-      '<LARK_ACTIONS_JSON>',
-      JSON.stringify({
-        version: 1,
-        actions: [
-          {
-            type: 'send_message',
-            message: { kind: 'image', source: 'current_message:first_image' },
-          },
-        ],
-      }),
-      '</LARK_ACTIONS_JSON>',
-    ].join('\n'),
+  runCodexExec: async (request) => {
+    await writeActionRequest(request, [
+      {
+        type: 'send_message',
+        message: { kind: 'image', source: 'current_message:first_image' },
+      },
+    ]);
+    return '';
+  },
   actionDispatcher: {
     execute: async () => [
       {
@@ -354,22 +362,16 @@ await deliverMessageViaCodexExec({
   },
   displayLabel: 'Kevin · Codex Test Group',
   useCodexSessions: false,
-  runCodexExec: async () =>
-    [
-      'Reminder updated.',
-      '<LARK_ACTIONS_JSON>',
-      JSON.stringify({
-        version: 1,
-        actions: [
-          {
-            type: 'update_job',
-            job_id: 'mrvl-covered-call',
-            content: 'updated covered call reminder',
-          },
-        ],
-      }),
-      '</LARK_ACTIONS_JSON>',
-    ].join('\n'),
+  runCodexExec: async (request) => {
+    await writeActionRequest(request, [
+      {
+        type: 'update_job',
+        job_id: 'mrvl-covered-call',
+        content: 'updated covered call reminder',
+      },
+    ]);
+    return 'Reminder updated.';
+  },
   actionDispatcher: {
     execute: async () => [
       {
@@ -404,24 +406,18 @@ await deliverMessageViaCodexExec({
   },
   displayLabel: 'Kevin · Codex Test Group',
   useCodexSessions: false,
-  runCodexExec: async () =>
-    [
-      'Noted.',
-      '<LARK_ACTIONS_JSON>',
-      JSON.stringify({
-        version: 1,
-        actions: [
-          {
-            type: 'save_memory',
-            memory_type: 'profile',
-            content: '- prefers visible issue links',
-            reason: 'User preference',
-            tier: 'private',
-          },
-        ],
-      }),
-      '</LARK_ACTIONS_JSON>',
-    ].join('\n'),
+  runCodexExec: async (request) => {
+    await writeActionRequest(request, [
+      {
+        type: 'save_memory',
+        memory_type: 'profile',
+        content: '- prefers visible issue links',
+        reason: 'User preference',
+        tier: 'private',
+      },
+    ]);
+    return 'Noted.';
+  },
   actionDispatcher: {
     execute: async () => [
       {
@@ -622,21 +618,16 @@ await deliverMessageViaCodexExec({
   },
   displayLabel: 'Kevin · Action Doc',
   useCodexSessions: false,
-  runCodexExec: async () =>
-    [
-      '<LARK_ACTIONS_JSON>',
-      JSON.stringify({
-        version: 1,
-        actions: [
-          {
-            type: 'run_local_cli_tool',
-            tool: 'echo',
-            args: ['doc-action-ok'],
-          },
-        ],
-      }),
-      '</LARK_ACTIONS_JSON>',
-    ].join('\n'),
+  runCodexExec: async (request) => {
+    await writeActionRequest(request, [
+      {
+        type: 'run_local_cli_tool',
+        tool: 'echo',
+        args: ['doc-action-ok'],
+      },
+    ]);
+    return '';
+  },
   actionDispatcher: {
     execute: async (request) => {
       docCommentActionDispatches.push(request);
@@ -788,25 +779,18 @@ await deliverMessageViaCodexExec({
   message,
   displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
   useCodexSessions: false,
-  runCodexExec: async () =>
-    [
-      'I will remember that.',
-      '',
-      '<LARK_ACTIONS_JSON>',
-      JSON.stringify({
-        version: 1,
-        actions: [
-          {
-            type: 'save_memory',
-            memory_type: 'profile',
-            content: '- prefers concise release notes',
-            reason: 'User asked the bot to remember this preference',
-            tier: 'private',
-          },
-        ],
-      }),
-      '</LARK_ACTIONS_JSON>',
-    ].join('\n'),
+  runCodexExec: async (request) => {
+    await writeActionRequest(request, [
+      {
+        type: 'save_memory',
+        memory_type: 'profile',
+        content: '- prefers concise release notes',
+        reason: 'User asked the bot to remember this preference',
+        tier: 'private',
+      },
+    ]);
+    return 'I will remember that.';
+  },
   actionDispatcher: {
     execute: async (request) => {
       actionDispatches.push(request);
@@ -831,62 +815,36 @@ assert.deepEqual(actionReplies, [
   },
 ]);
 
-const invalidActionReplies: ReplyRequest[] = [];
+let invalidActionError: any;
 await deliverMessageViaCodexExec({
   message,
   displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
   useCodexSessions: false,
-  runCodexExec: async () =>
-    [
-      'Trying an action.',
-      '',
-      '<LARK_ACTIONS_JSON>',
-      '{"version":1,"actions":[{"type":"save_memory","memory_type":"profile"}]}',
-      '</LARK_ACTIONS_JSON>',
-    ].join('\n'),
+  runCodexExec: async (request) => {
+    const actionChannel = (request as any).actions;
+    await appendFile(
+      actionChannel.filePath,
+      `${JSON.stringify({
+        version: 1,
+        token: actionChannel.token,
+        type: 'lark_action_request',
+        actions: [{ type: 'save_memory', memory_type: 'profile' }],
+      })}\n`,
+      'utf-8',
+    );
+    return 'Trying an action.';
+  },
   actionDispatcher: {
     execute: async () => {
-      throw new Error('invalid action blocks must not dispatch');
+      throw new Error('invalid side-channel actions must not dispatch');
     },
   },
-  sendReply: async (request) => {
-    invalidActionReplies.push(request);
-    return { sentCount: 1 };
-  },
+  sendReply: async () => ({ sentCount: 1 }),
+}).catch((err) => {
+  invalidActionError = err;
 });
-assert.equal(invalidActionReplies.length, 1);
-assert.match(invalidActionReplies[0].text, /Invalid Lark action block/);
-
-const accidentalCronMarkerOutput = [
-  'Daily Improvement found a parser boundary risk.',
-  '',
-  '<LARK_ACTIONS_JSON>',
-  '{"version":1,"actions":[{"type":"list_jobs"}]}',
-  'The report is explaining a partial marker, not requesting an action.',
-].join('\n');
-const accidentalCronMarkerReplies: ReplyRequest[] = [];
-await deliverMessageViaCodexExec({
-  message: {
-    ...message,
-    messageId: 'cronjob:daily-improvement-hash-1783334742722',
-    chatId: 'oc_cron_target',
-    chatType: 'cronjob',
-    text: 'Run daily improvement',
-    messageType: 'cronjob',
-    rawContent: 'Run daily improvement',
-    threadId: 'cronjob:daily-improvement-hash-1783334742722',
-  },
-  displayLabel: 'CronJob · Daily Improvement',
-  useCodexSessions: false,
-  runCodexExec: async () => accidentalCronMarkerOutput,
-  sendReply: async (request) => {
-    accidentalCronMarkerReplies.push(request);
-    return { sentCount: 1 };
-  },
-});
-assert.equal(accidentalCronMarkerReplies.length, 1);
-assert.equal(accidentalCronMarkerReplies[0].text, accidentalCronMarkerOutput);
-assert.doesNotMatch(accidentalCronMarkerReplies[0].text, /Invalid Lark action block/);
+assert.match(invalidActionError?.message ?? '', /Codex exec action side channel rejected invalid-shape/);
+assert.match(invalidActionError?.stdoutTail ?? '', /Trying an action/);
 
 let invalidCronActionError: any;
 try {
@@ -903,21 +861,29 @@ try {
     },
     displayLabel: 'CronJob · Bad Action',
     useCodexSessions: false,
-    runCodexExec: async () =>
-      [
-        '<LARK_ACTIONS_JSON>',
-        '{"version":2,"actions":[]}',
-        '</LARK_ACTIONS_JSON>',
-      ].join('\n'),
+    runCodexExec: async (request) => {
+      const actionChannel = (request as any).actions;
+      await appendFile(
+        actionChannel.filePath,
+        `${JSON.stringify({
+          version: 1,
+          token: actionChannel.token,
+          type: 'lark_action_request',
+          actions: [],
+        })}\n`,
+        'utf-8',
+      );
+      return 'Cronjob visible report survives in diagnostics.';
+    },
     sendReply: async () => {
-      throw new Error('invalid cronjob action block should not be sent as a successful report');
+      throw new Error('invalid cronjob side-channel action should not be sent as a successful report');
     },
   });
 } catch (err) {
   invalidCronActionError = err;
 }
-assert.match(invalidCronActionError?.message ?? '', /CronJob output contained an invalid Lark action block: version/);
-assert.match(invalidCronActionError?.stdoutTail ?? '', /"version":2/);
+assert.match(invalidCronActionError?.message ?? '', /Codex exec action side channel rejected invalid-shape/);
+assert.match(invalidCronActionError?.stdoutTail ?? '', /Cronjob visible report survives/);
 
 sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   key: 'chat:oc_group_001:thread:omt_thread_001',

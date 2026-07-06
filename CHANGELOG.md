@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-07-06
+
+### Changed
+- Replaced the visible `codex exec` action marker protocol with a required parent-owned JSONL side channel for structured Lark actions, so stdout is always user-visible reply text and malformed action requests fail through the side-channel diagnostics.
+
+### Added
+- Added side-channel retention cleanup and smoke coverage for action file permissions, token/schema validation, identity-field rejection, action ordering, and stale turn cleanup.
+
 ## [1.11.1] - 2026-07-06
 
 ### Fixed

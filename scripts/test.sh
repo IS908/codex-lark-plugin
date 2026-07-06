@@ -237,6 +237,10 @@ echo "=== Codex exec progress retention checks ==="
 node --import tsx scripts/codex-exec-progress-smoke.ts
 
 echo ""
+echo "=== Codex exec action side-channel checks ==="
+node --import tsx scripts/codex-exec-action-channel-smoke.ts
+
+echo ""
 echo "=== Codex exec session store unit checks ==="
 node --import tsx scripts/codex-session-store-smoke.ts
 
