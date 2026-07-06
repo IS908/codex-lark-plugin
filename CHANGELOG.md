@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-07-06
+
+### Fixed
+- Restored local diagnostic logs to compact human-readable text lines instead of JSONL.
+- Added codex exec trace log ids so ordinary message-triggered turns use the source message id and cronjob prompt turns use the cronjob name.
+- Kept trace/audit redaction, truncation, and rotating append behavior while updating smoke coverage and docs for the text-line format.
+
 ## [1.13.0] - 2026-07-06
 
 ### Changed

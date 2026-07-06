@@ -67,26 +67,12 @@ async function waitForAuditLog(path: string, expected: RegExp[] = []): Promise<s
   const raceAuditLog = join(tmp, 'race-audit.log');
   writeFileSync(
     raceAuditLog,
-    JSON.stringify({
-      at: '2026-06-15T00:00:00.000Z',
-      kind: 'audit',
-      tool: 'save_skill',
-      outcome: 'denied',
-      caller: null,
-      args: {},
-    }) + '\n',
+    '2026-06-15T00:00:00.000Z  -  audit  save_skill  denied  -  {}\n',
   );
   const timer = setTimeout(() => {
     appendFileSync(
       raceAuditLog,
-      JSON.stringify({
-        at: '2026-06-15T00:00:00.030Z',
-        kind: 'audit',
-        tool: 'save_skill',
-        outcome: 'ok',
-        caller: 'ou_owner',
-        args: {},
-      }) + '\n',
+      '2026-06-15T00:00:00.030Z  -  audit  save_skill  ok  ou_owner  {}\n',
     );
   }, 30);
   try {
