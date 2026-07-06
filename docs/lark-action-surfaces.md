@@ -21,6 +21,7 @@ parent-process bridge for actions that must run safely even when the child
 | Create default review jobs | `create_default_review_jobs` | `create_default_review_jobs` | yes; both create paused job presets through `default-review-jobs` |
 | Issue proposal lifecycle | `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`, `create_issue_from_proposal`, `create_low_risk_pr_from_proposal` | same action names | partial; both use `issue-proposal-store`; proposal filing uses the built-in proposal filing path unless a configured local CLI tool override is explicitly provided, while low-risk PR creation still goes through `runConfiguredLocalCliTool` |
 | Run local CLI tool | `run_local_cli_tool` | `run_local_cli_tool` | yes; both call `runConfiguredLocalCliTool` |
+| Image/file media reply | `reply(files=[...])` | `send_message` (`image`/`file` only) | partial; both flow through `sendFeishuReply`; exec supports `local_path` plus `current_message:first_image` for images |
 | Recall bot message | `recall_message` | `recall_message` | yes; both use the tracked bot-message scope guard |
 | Edit bot message | `edit_message` | not supported | MCP-only for now; uses the tracked bot-message scope guard |
 | Add reaction | `react` | not supported | MCP-only |
@@ -48,6 +49,10 @@ parent-process bridge for actions that must run safely even when the child
   proposal is marked `low-risk-auto-pr-eligible` and its GitHub issue exists,
   then goes through a separate allowlisted wrapper such as
   `gh_low_risk_pr_create`. Neither path may merge or release automatically.
+- `send_message` is intentionally narrow in exec mode: first-class image/file
+  replies only, using local paths or the current inbound message's first
+  downloaded image. Mixed rich post output, audio/video, and interactive cards
+  need separate design slices before they are exposed as normal exec actions.
 - `create_default_review_jobs` must only create paused presets. Users must
   explicitly resume those jobs before self-review or low-risk auto-fix runs.
 - Codex exec final answers have no background continuation after the visible

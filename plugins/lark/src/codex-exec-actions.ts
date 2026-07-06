@@ -1,7 +1,10 @@
 import { z } from 'zod';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
 import type { LarkMessage } from './channel.js';
+import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import type { IdentitySession } from './identity-session.js';
 import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import type { MemoryStore } from './memory/file.js';
@@ -130,6 +133,19 @@ const RunLocalCliToolActionSchema = z.object({
   args: z.array(z.string()).optional(),
 });
 
+const SendMessagePayloadSchema = z.object({
+  kind: z.enum(['image', 'file']),
+  source: z.enum(['local_path', 'current_message:first_image']),
+  path: z.string().min(1).optional(),
+  text: z.string().optional(),
+});
+
+const SendMessageActionSchema = z.object({
+  type: z.literal('send_message'),
+  message: SendMessagePayloadSchema,
+  reply_in_thread: z.boolean().optional(),
+});
+
 const IssueProposalPrioritySchema = z.enum(['P0', 'P1', 'P2', 'P3']);
 const IssueProposalAutomationLevelSchema = z.enum(['discovery-only', 'low-risk-auto-pr-eligible']);
 const IssueProposalStatusSchema = z.enum(['pending', 'approved', 'created', 'rejected', 'all']);
@@ -184,6 +200,7 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
   UpsertJobActionSchema,
   CreateDefaultReviewJobsActionSchema,
   RunLocalCliToolActionSchema,
+  SendMessageActionSchema,
   CreateIssueProposalActionSchema,
   ListIssueProposalsActionSchema,
   RejectIssueProposalActionSchema,
@@ -201,6 +218,23 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
       path: ['job_id'],
       message: 'job_id or name is required',
     });
+  }
+
+  if (action.type === 'send_message') {
+    if (action.message.source === 'local_path' && !action.message.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['message', 'path'],
+        message: 'path is required when source is local_path',
+      });
+    }
+    if (action.message.kind === 'file' && action.message.source === 'current_message:first_image') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['message', 'source'],
+        message: 'current_message:first_image is only valid for image messages',
+      });
+    }
   }
 
   const schedule =
@@ -272,6 +306,7 @@ export interface CreateCodexExecActionDispatcherOptions {
   identitySession: IdentitySession;
   localCliToolsConfigPath?: string;
   profileDistiller?: ProfileDistillationDispatcher;
+  sendReply?: (request: ReplyRequest) => Promise<ReplySendResult>;
   larkTransport?: Pick<LarkTransport, 'recallMessage'> | (() => Pick<LarkTransport, 'recallMessage'>);
   botMessageTracker?: Pick<BotMessageTracker, 'get'>;
   turnObligations?: Pick<TurnObligationTracker, 'markSatisfied'>;
@@ -1264,6 +1299,89 @@ function resolveRecallTransport(
   return typeof transport === 'function' ? transport() : transport;
 }
 
+function resolveSendMessageLocalPath(rawPath: string): string {
+  return path.isAbsolute(rawPath)
+    ? rawPath
+    : path.resolve(appConfig.codexExecCwd, rawPath);
+}
+
+function firstCurrentMessageImagePath(message: LarkMessage): string | null {
+  return message.imagePath ?? message.imagePaths?.[0] ?? null;
+}
+
+async function executeSendMessage(
+  action: z.infer<typeof SendMessageActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  if (!deps.sendReply) {
+    return {
+      ok: false,
+      action: 'send_message',
+      message: 'send_message is unavailable: reply sender is not configured.',
+    };
+  }
+  if (message.chatType === 'doc_comment') {
+    return {
+      ok: false,
+      action: 'send_message',
+      message: 'send_message is not supported for Feishu document comments.',
+    };
+  }
+
+  let filePath: string;
+  if (action.message.source === 'current_message:first_image') {
+    const currentImagePath = firstCurrentMessageImagePath(message);
+    if (!currentImagePath) {
+      return {
+        ok: false,
+        action: 'send_message',
+        message: 'No current-message image is available for source current_message:first_image.',
+      };
+    }
+    filePath = currentImagePath;
+  } else {
+    filePath = resolveSendMessageLocalPath(action.message.path!);
+  }
+
+  try {
+    await fs.access(filePath);
+  } catch {
+    return {
+      ok: false,
+      action: 'send_message',
+      message: `Local ${action.message.kind} file is not readable: ${filePath}`,
+    };
+  }
+
+  const result = await deps.sendReply({
+    chat_id: message.chatId,
+    text: action.message.text ?? '',
+    reply_to: message.messageId,
+    ...(action.reply_in_thread === false ? {} : message.threadId ? { thread_id: message.threadId } : {}),
+    files: [{ path: filePath, type: action.message.kind }],
+  });
+  if (result.isError) {
+    return {
+      ok: false,
+      action: 'send_message',
+      message: result.errorText ?? result.statusText,
+    };
+  }
+  if ((result.fileSentCount ?? 0) < 1) {
+    return {
+      ok: false,
+      action: 'send_message',
+      message: `Media was not delivered: ${result.statusText}`,
+    };
+  }
+  return {
+    ok: true,
+    action: 'send_message',
+    message: `Sent ${action.message.kind} via plugin reply path (${result.statusText}).`,
+  };
+}
+
 async function executeRecallMessage(
   action: z.infer<typeof RecallMessageActionSchema>,
   message: LarkMessage,
@@ -1354,6 +1472,8 @@ export function createCodexExecActionDispatcher(
           results.push(await executeCreateIssueFromProposal(action, request.message, deps));
         } else if (action.type === 'create_low_risk_pr_from_proposal') {
           results.push(await executeCreateLowRiskPrFromProposal(action, request.message, deps));
+        } else if (action.type === 'send_message') {
+          results.push(await executeSendMessage(action, request.message, deps));
         } else if (action.type === 'recall_message') {
           results.push(await executeRecallMessage(action, request.message, deps));
         } else {

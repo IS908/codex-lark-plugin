@@ -14,6 +14,7 @@ import { IdentitySession } from '../src/identity-session.js';
 import type { LarkChannel } from '../src/channel.js';
 import { appConfig } from '../src/config.js';
 import { JOB_THREAD_PREFIX, jobCreatedAtHash } from '../src/scheduler.js';
+import { sendFeishuReply } from '../src/reply-sender.js';
 
 function fail(msg: string): never {
   console.error(`FAIL: ${msg}`);
@@ -178,6 +179,27 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   if ('reply_in_thread' in imgCreate.args.data) {
     fail(`2: P2P image create must NOT carry reply_in_thread`);
   }
+  passed++;
+}
+
+// ── 2b. P2P + image-only: must not send an empty text reply first ──
+{
+  apiCalls.length = 0;
+  const imageOnlyResult = await sendFeishuReply({ client: mockClient() as any }, {
+    chat_id: 'chat_p2p',
+    text: '',
+    reply_to: 'om_p2p_media_only',
+    files: [{ path: imgPath, type: 'image' }],
+  });
+  const createCalls = apiCalls.filter((c) => c.method === 'message.create');
+  const replyCalls = apiCalls.filter((c) => c.method === 'message.reply');
+  if (replyCalls.length !== 0) fail(`2b: expected 0 empty text replies, got ${replyCalls.length}`);
+  if (createCalls.length !== 1) fail(`2b: expected 1 image create, got ${createCalls.length}`);
+  if (createCalls[0].args.data.msg_type !== 'image') {
+    fail(`2b: image create msg_type wrong: ${createCalls[0].args.data.msg_type}`);
+  }
+  if (imageOnlyResult.sentCount !== 1) fail(`2b: expected sentCount=1, got ${imageOnlyResult.sentCount}`);
+  if (imageOnlyResult.fileSentCount !== 1) fail(`2b: expected fileSentCount=1, got ${imageOnlyResult.fileSentCount}`);
   passed++;
 }
 
@@ -693,4 +715,4 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   passed++;
 }
 
-console.log(`reply-thread smoke: ${passed}/12 PASS`);
+console.log(`reply-thread smoke: ${passed}/13 PASS`);

@@ -306,6 +306,45 @@ assert.equal(
   ].join('\n'),
 );
 
+const sendMessageActionReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_send_message_action_only',
+    text: '[Current Message]\n@Codex send this image back',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () =>
+    [
+      '<LARK_ACTIONS_JSON>',
+      JSON.stringify({
+        version: 1,
+        actions: [
+          {
+            type: 'send_message',
+            message: { kind: 'image', source: 'current_message:first_image' },
+          },
+        ],
+      }),
+      '</LARK_ACTIONS_JSON>',
+    ].join('\n'),
+  actionDispatcher: {
+    execute: async () => [
+      {
+        ok: true,
+        action: 'send_message',
+        message: 'Sent image via plugin reply path (Sent 1 media message).',
+      },
+    ],
+  },
+  sendReply: async (request) => {
+    sendMessageActionReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(sendMessageActionReplies.length, 0);
+
 const visibleJobActionResultReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({
   message: {

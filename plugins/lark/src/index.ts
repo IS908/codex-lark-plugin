@@ -210,6 +210,18 @@ async function main() {
     memoryStore,
     identitySession,
     profileDistiller,
+    sendReply: (request) => sendFeishuReply(
+      {
+        client: channel.getClient(),
+        transport: channel.getLarkTransport(),
+        conversationBuffer: buffer,
+        ackReactions: channel.getAckReactions(),
+        botMessageTracker: channel.getBotMessageTracker(),
+        latestMessageTracker: channel.getLatestMessageTracker(),
+        turnObligations,
+      },
+      request,
+    ),
     larkTransport: () => channel.getLarkTransport(),
     botMessageTracker: channel.getBotMessageTracker(),
     turnObligations,

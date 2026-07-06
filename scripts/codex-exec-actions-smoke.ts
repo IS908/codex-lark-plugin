@@ -263,12 +263,50 @@ try {
   if (createPrParsed.kind !== 'actions') throw new Error('createPrParsed should be actions');
   assert.equal(createPrParsed.actions[0].type, 'create_low_risk_pr_from_proposal');
 
+  const sendMessageParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [{ type: 'send_message', message: { kind: 'image', source: 'current_message:first_image' } }],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(sendMessageParsed.kind, 'actions');
+  if (sendMessageParsed.kind !== 'actions') throw new Error('sendMessageParsed should be actions');
+  assert.equal(sendMessageParsed.actions[0].type, 'send_message');
+
+  const invalidSendMessageParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [{ type: 'send_message', message: { kind: 'file', source: 'local_path' } }],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(invalidSendMessageParsed.kind, 'invalid_actions');
+  assert.match(invalidSendMessageParsed.error, /path is required/i);
+
   const identitySession = new IdentitySession(() => 'ou_owner');
   identitySession.setCaller('oc_exec', 'thread_exec', 'ou_user');
+  const currentImagePath = join(root, 'current-image.png');
+  const localFilePath = join(root, 'report.txt');
+  writeFileSync(currentImagePath, 'fake image bytes', 'utf-8');
+  writeFileSync(localFilePath, 'report bytes', 'utf-8');
+  const sendReplyRequests: any[] = [];
   const dispatcher = createCodexExecActionDispatcher({
     memoryStore: new MemoryStore(memoriesDir),
     identitySession,
     localCliToolsConfigPath: localCliConfigPath,
+    sendReply: async (request: any) => {
+      sendReplyRequests.push(request);
+      const fileSentCount = request.text === 'caption-only-failure' ? 0 : request.files?.length ?? 0;
+      const textSentCount = request.text ? 1 : 0;
+      return {
+        sentCount: textSentCount + fileSentCount,
+        fileSentCount,
+        statusText: `Sent ${textSentCount + fileSentCount} message(s)`,
+      };
+    },
   });
 
   const results = await dispatcher.execute({
@@ -314,6 +352,81 @@ try {
   assert.match(privateProfile, /prefers concise updates/);
   assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), true);
   assert.match(results[2].message, /hello-from-action/);
+
+  const imageActionResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_media_image',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'send current image',
+      messageType: 'image',
+      rawContent: '{}',
+      imagePath: currentImagePath,
+    },
+    actions: [{ type: 'send_message', message: { kind: 'image', source: 'current_message:first_image' } }],
+  });
+  assert.equal(imageActionResults.length, 1);
+  assert.equal(imageActionResults[0].ok, true, JSON.stringify(imageActionResults));
+  assert.equal(sendReplyRequests.at(-1).chat_id, 'oc_exec');
+  assert.equal(sendReplyRequests.at(-1).reply_to, 'om_exec_media_image');
+  assert.equal(sendReplyRequests.at(-1).thread_id, 'thread_exec');
+  assert.deepEqual(sendReplyRequests.at(-1).files, [{ path: currentImagePath, type: 'image' }]);
+
+  const fileActionResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_media_file',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'send local file',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'send_message', message: { kind: 'file', source: 'local_path', path: localFilePath, text: 'Report attached.' } }],
+  });
+  assert.equal(fileActionResults[0].ok, true, JSON.stringify(fileActionResults));
+  assert.equal(sendReplyRequests.at(-1).text, 'Report attached.');
+  assert.deepEqual(sendReplyRequests.at(-1).files, [{ path: localFilePath, type: 'file' }]);
+
+  const fileUploadFailureResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_media_file_upload_failure',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'send local file',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [
+      {
+        type: 'send_message',
+        message: { kind: 'file', source: 'local_path', path: localFilePath, text: 'caption-only-failure' },
+      },
+    ],
+  });
+  assert.equal(fileUploadFailureResults[0].ok, false);
+  assert.match(fileUploadFailureResults[0].message, /Media was not delivered/i);
+
+  const missingImageActionResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_media_missing',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'send missing image',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'send_message', message: { kind: 'image', source: 'current_message:first_image' } }],
+  });
+  assert.equal(missingImageActionResults[0].ok, false);
+  assert.match(missingImageActionResults[0].message, /No current-message image/i);
 
   const proposalResults = await dispatcher.execute({
     message: {
