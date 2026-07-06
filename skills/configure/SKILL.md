@@ -46,7 +46,6 @@ LARK_ALLOWED_CHAT_IDS:     (not set)
 LARK_TEXT_CHUNK_LIMIT:              4000
 LARK_QUEUE_HANDLER_TIMEOUT_MS:      660000
 LARK_REPLY_OBLIGATION_TIMEOUT_MS:   660000
-LARK_CODEX_DELIVERY_MODE:           exec
 LARK_CODEX_EXEC_COMMAND:            codex
 LARK_CODEX_EXEC_CWD:                ~/.codex/channels/lark/codex-exec-workdir
 LARK_CODEX_EXEC_TIMEOUT_MS:         600000
@@ -178,7 +177,6 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_TEXT_CHUNK_LIMIT` — max chars per reply chunk (default: 4000)
 - `LARK_QUEUE_HANDLER_TIMEOUT_MS` — per-message queue guardrail timeout (default: `LARK_CODEX_EXEC_TIMEOUT_MS + 60000`; set `0` to disable; lower positive values are raised to the default)
 - `LARK_REPLY_OBLIGATION_TIMEOUT_MS` — max wait for a visible reply/defer before logging a missed Lark turn (default: `LARK_CODEX_EXEC_TIMEOUT_MS + 60000`)
-- `LARK_CODEX_DELIVERY_MODE` — `exec` or `notification` (default: `exec`)
 - `LARK_CODEX_EXEC_CWD` — working directory for `codex exec` (default: `~/.codex/channels/lark/codex-exec-workdir`)
 - `LARK_CODEX_EXEC_SANDBOX` — sandbox passed to `codex exec` (default: `workspace-write`)
 - `LARK_CODEX_EXEC_USE_SESSIONS` — resume one Codex session per Feishu chat/thread (default: true)
@@ -259,7 +257,7 @@ If user says "use defaults" or "skip", leave these at defaults.
 2. Remove all recognized keys:
    `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_ALLOWED_USER_IDS`,
    `LARK_ALLOWED_CHAT_IDS`, `LARK_TEXT_CHUNK_LIMIT`, `LARK_QUEUE_HANDLER_TIMEOUT_MS`,
-   `LARK_REPLY_OBLIGATION_TIMEOUT_MS`, `LARK_CODEX_DELIVERY_MODE`,
+   `LARK_REPLY_OBLIGATION_TIMEOUT_MS`,
    `LARK_CODEX_EXEC_COMMAND`,
    `LARK_CODEX_EXEC_CWD`, `LARK_CODEX_EXEC_TIMEOUT_MS`,
    `LARK_CODEX_EXEC_SANDBOX`, `LARK_CODEX_EXEC_MODEL`,
@@ -315,7 +313,6 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_TEXT_CHUNK_LIMIT` | Messaging | No | `4000` |
 | `LARK_QUEUE_HANDLER_TIMEOUT_MS` | Messaging | No | `660000` / `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` |
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | Messaging | No | `660000` / `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` |
-| `LARK_CODEX_DELIVERY_MODE` | Messaging | No | `exec` |
 | `LARK_CODEX_EXEC_COMMAND` | Messaging | No | `codex` |
 | `LARK_CODEX_EXEC_CWD` | Messaging | No | `~/.codex/channels/lark/codex-exec-workdir` |
 | `LARK_CODEX_EXEC_TIMEOUT_MS` | Messaging | No | `600000` |

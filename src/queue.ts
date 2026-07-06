@@ -10,7 +10,7 @@ import { debugLog } from './debug-log.js';
 export interface MessageQueueOptions {
   /**
    * Max time to wait for one queued handler before allowing the next message in
-   * the same key to proceed. A stuck MCP notification should not permanently
+   * the same key to proceed. A stuck delivery handler should not permanently
    * wedge a chat/thread queue.
    */
   handlerTimeoutMs?: number;

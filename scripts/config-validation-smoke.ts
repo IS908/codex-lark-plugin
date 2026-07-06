@@ -70,6 +70,8 @@ expectFail({ LARK_MIN_SEARCH_SCORE: 'not-a-number' }, /LARK_MIN_SEARCH_SCORE.*nu
 expectFail({ LARK_MEMORY_DEDUP_WINDOW_MS: '-1' }, /LARK_MEMORY_DEDUP_WINDOW_MS.*non-negative/i);
 expectFail({ LARK_CHANNEL_RUNTIME: 'legacy' }, /LARK_CHANNEL_RUNTIME.*removed/i);
 expectFail({ LARK_CHANNEL_RUNTIME: 'claude' }, /LARK_CHANNEL_RUNTIME.*no longer supported/i);
+expectFail({ LARK_CODEX_DELIVERY_MODE: 'notification' }, /LARK_CODEX_DELIVERY_MODE.*removed/i);
+expectFail({ LARK_CODEX_DELIVERY_MODE: 'claude' }, /LARK_CODEX_DELIVERY_MODE.*no longer supported/i);
 expectFail({ LARK_CODEX_SESSION_RETENTION_DAYS: '0' }, /LARK_CODEX_SESSION_RETENTION_DAYS.*positive/i);
 expectFail({ LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: '-1' }, /LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS.*non-negative/i);
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS: '0' }, /LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS.*positive/i);
@@ -130,6 +132,9 @@ assert.equal(customGithubIssue.githubIssueToken, 'token-from-lark');
 
 const staleSdkRuntime = expectOk({ LARK_CHANNEL_RUNTIME: 'sdk' });
 assert.equal(Object.prototype.hasOwnProperty.call(staleSdkRuntime, 'channelRuntime'), false);
+
+const staleExecDeliveryMode = expectOk({ LARK_CODEX_DELIVERY_MODE: 'exec' });
+assert.equal(Object.prototype.hasOwnProperty.call(staleExecDeliveryMode, 'codexDeliveryMode'), false);
 
 const customExecTimeout = expectOk({ LARK_CODEX_EXEC_TIMEOUT_MS: '5000' });
 assert.equal(customExecTimeout.codexExecTimeoutMs, 5000);

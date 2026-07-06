@@ -135,10 +135,6 @@ echo "=== Tool domain export unit checks ==="
 node --import tsx scripts/tool-domain-exports-smoke.ts
 
 echo ""
-echo "=== Channel notification meta unit checks ==="
-node --import tsx scripts/channel-notification-smoke.ts
-
-echo ""
 echo "=== Job store unit checks ==="
 node --import tsx scripts/job-smoke.ts
 

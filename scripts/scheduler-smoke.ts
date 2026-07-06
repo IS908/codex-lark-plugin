@@ -88,7 +88,6 @@ function readJobFixture(id: string): JobFile {
     },
   };
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
     botMessageTracker: {
@@ -132,7 +131,6 @@ function readJobFixture(id: string): JobFile {
     },
   };
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -167,7 +165,6 @@ function readJobFixture(id: string): JobFile {
     },
   };
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -195,7 +192,6 @@ function readJobFixture(id: string): JobFile {
   });
   writeJobFixture(job);
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: { im: { v1: { message: { create: async () => ({ data: { message_id: 'om_ok' } }) } } } } as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -248,7 +244,6 @@ function readJobFixture(id: string): JobFile {
     },
   };
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -276,7 +271,6 @@ function readJobFixture(id: string): JobFile {
   });
   writeJobFixture(job);
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: { im: { v1: { message: { create: async () => ({ data: { message_id: 'om_ok' } }) } } } } as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -318,7 +312,6 @@ function readJobFixture(id: string): JobFile {
     },
   };
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -353,7 +346,6 @@ function readJobFixture(id: string): JobFile {
     },
   };
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -397,7 +389,6 @@ function readJobFixture(id: string): JobFile {
     },
   };
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -434,14 +425,15 @@ function readJobFixture(id: string): JobFile {
   });
   writeJobFixture(job);
   let threadId = '';
+  let runnerCalls = 0;
   const scheduler = new JobScheduler({
-    server: {
-      notification: async (payload: any) => {
-        threadId = payload.params.meta.thread_id;
-      },
-    } as any,
     client: { im: { v1: { message: { create: async () => ({ data: { message_id: 'om_ok' } }) } } } } as any,
     identitySession: new IdentitySession(() => null),
+    promptRunner: async (input: any) => {
+      runnerCalls++;
+      threadId = input.jobThreadId;
+      return { report: 'thread ok' };
+    },
   });
   await (scheduler as any).executeJob(job);
   const expectedPrefix = `${JOB_THREAD_PREFIX}${id}-${jobCreatedAtHash(createdAt)}-`;
@@ -450,14 +442,17 @@ function readJobFixture(id: string): JobFile {
   }
   const persisted = readJobFixture(id);
   const runId = threadId.slice(threadId.lastIndexOf('-') + 1);
-  if (persisted.runtime.run_status !== 'started') {
-    fail(`10: expected prompt run_status=started after notification, got ${persisted.runtime.run_status}`);
+  if (runnerCalls !== 1) {
+    fail(`10: expected prompt runner once, got ${runnerCalls}`);
   }
-  if (persisted.runtime.output_status !== 'empty') {
-    fail(`10: expected prompt output_status=empty before reply, got ${persisted.runtime.output_status}`);
+  if (persisted.runtime.run_status !== 'success') {
+    fail(`10: expected prompt run_status=success after exec runner, got ${persisted.runtime.run_status}`);
   }
-  if (persisted.runtime.delivery_status !== 'pending') {
-    fail(`10: expected prompt delivery_status=pending before reply, got ${persisted.runtime.delivery_status}`);
+  if (persisted.runtime.output_status !== 'generated') {
+    fail(`10: expected prompt output_status=generated, got ${persisted.runtime.output_status}`);
+  }
+  if (persisted.runtime.delivery_status !== 'sent') {
+    fail(`10: expected prompt delivery_status=sent, got ${persisted.runtime.delivery_status}`);
   }
   if (persisted.runtime.run_id !== runId) {
     fail(`10: expected persisted run_id=${runId}, got ${persisted.runtime.run_id}`);
@@ -479,7 +474,6 @@ function readJobFixture(id: string): JobFile {
   });
   writeJobFixture(job);
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: { im: { v1: { message: { create: async () => ({ data: { message_id: 'om_ok' } }) } } } } as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -502,11 +496,12 @@ function readJobFixture(id: string): JobFile {
   passed++;
 }
 
-// 12. Prompt started-state persistence must not overwrite an already delivered report.
+// 12. Legacy pending prompt report delivery can still be recorded.
 {
-  const id = 'prompt-reply-before-start-persist';
+  const id = 'prompt-legacy-pending-report';
   const createdAt = '2026-06-07T02:30:00.000Z';
-  const report = '# Fast report\n\nDelivered before notification returned.';
+  const runId = '1760000000000';
+  const report = '# Fast report\n\nDelivered by legacy pending reply.';
   const job = makeJob({
     meta: {
       id,
@@ -516,23 +511,25 @@ function readJobFixture(id: string): JobFile {
       msg_type: undefined,
       created_at: createdAt,
     } as Partial<JobFile['meta']>,
+    runtime: {
+      run_id: runId,
+      run_status: 'started',
+      output_status: 'empty',
+      delivery_status: 'pending',
+      report: null,
+      report_type: null,
+      delivery_error: null,
+    },
   });
   writeJobFixture(job);
-  const scheduler = new JobScheduler({
-    server: {
-      notification: async (payload: any) => {
-        await recordCronJobReportDelivery(payload.params.meta.thread_id, {
-          runStatus: 'success',
-          deliveryStatus: 'sent',
-          report,
-          reportType: 'job_result',
-        });
-      },
-    } as any,
-    client: { im: { v1: { message: { create: async () => ({ data: { message_id: 'om_ok' } }) } } } } as any,
-    identitySession: new IdentitySession(() => null),
+  const threadId = `${JOB_THREAD_PREFIX}${id}-${jobCreatedAtHash(createdAt)}-${runId}`;
+  const updated = await recordCronJobReportDelivery(threadId, {
+    runStatus: 'success',
+    deliveryStatus: 'sent',
+    report,
+    reportType: 'job_result',
   });
-  await (scheduler as any).executeJob(job);
+  if (!updated) fail('12: expected legacy pending report delivery to update job');
   const persisted = readJobFixture(id);
   if (persisted.runtime.run_status !== 'success') {
     fail(`12: expected delivered run_status=success to be preserved, got ${persisted.runtime.run_status}`);
@@ -546,7 +543,7 @@ function readJobFixture(id: string): JobFile {
   passed++;
 }
 
-// 12b. Prompt jobs can complete through a reliable exec runner instead of pending notification delivery.
+// 12b. Prompt jobs complete through the exec runner.
 {
   const id = 'prompt-runner-completes';
   const createdAt = '2026-06-07T02:45:00.000Z';
@@ -562,13 +559,7 @@ function readJobFixture(id: string): JobFile {
   });
   writeJobFixture(job);
   let runnerCalls = 0;
-  let notificationCalls = 0;
   const scheduler = new JobScheduler({
-    server: {
-      notification: async () => {
-        notificationCalls++;
-      },
-    } as any,
     client: { im: { v1: { message: { create: async () => ({ data: { message_id: 'om_ok' } }) } } } } as any,
     identitySession: new IdentitySession(() => null),
     promptRunner: async (input: any) => {
@@ -587,7 +578,6 @@ function readJobFixture(id: string): JobFile {
   await (scheduler as any).executeJob(job);
   const persisted = readJobFixture(id);
   if (runnerCalls !== 1) fail(`12b: expected prompt runner once, got ${runnerCalls}`);
-  if (notificationCalls !== 0) fail(`12b: expected no channel notification fallback, got ${notificationCalls}`);
   if (persisted.runtime.run_status !== 'success') {
     fail(`12b: expected success run_status, got ${persisted.runtime.run_status}`);
   }
@@ -617,7 +607,6 @@ function readJobFixture(id: string): JobFile {
   writeJobFixture(job);
   const createdMessages: any[] = [];
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: {
       im: {
         v1: {
@@ -697,7 +686,6 @@ function readJobFixture(id: string): JobFile {
     },
   };
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -714,9 +702,9 @@ function readJobFixture(id: string): JobFile {
   passed++;
 }
 
-// 14. Prompt notification delivery failures persist an explicit defer signal.
+// 14. Missing prompt runner persists an explicit defer signal.
 {
-  const id = 'prompt-delivery-failure';
+  const id = 'prompt-runner-missing';
   const job = makeJob({
     meta: {
       id,
@@ -729,7 +717,6 @@ function readJobFixture(id: string): JobFile {
   writeJobFixture(job);
   const createdMessages: any[] = [];
   const scheduler = new JobScheduler({
-    server: { notification: async () => { throw new Error('channel unavailable'); } } as any,
     client: {
       im: {
         v1: {
@@ -771,7 +758,10 @@ function readJobFixture(id: string): JobFile {
   if (persisted.runtime.report_type !== 'error_report') {
     fail(`14: expected error_report type, got ${persisted.runtime.report_type}`);
   }
-  if (!persisted.runtime.report?.includes('CronJob prompt delivery failed')) {
+  if (!persisted.runtime.report?.includes('CronJob prompt execution failed')) {
+    fail(`14: expected persisted error report body, got ${persisted.runtime.report}`);
+  }
+  if (!persisted.runtime.report?.includes('prompt runner is not configured')) {
     fail(`14: expected persisted error report body, got ${persisted.runtime.report}`);
   }
   passed++;
@@ -790,15 +780,8 @@ function readJobFixture(id: string): JobFile {
     } as Partial<JobFile['meta']>,
   });
   writeJobFixture(job);
-  let notificationCalls = 0;
   let createCalls = 0;
   const scheduler = new JobScheduler({
-    server: {
-      notification: async () => {
-        notificationCalls++;
-        throw new Error('channel unavailable');
-      },
-    } as any,
     client: {
       im: {
         v1: {
@@ -817,6 +800,9 @@ function readJobFixture(id: string): JobFile {
       },
     } as any,
     identitySession: new IdentitySession(() => null),
+    promptRunner: async () => {
+      throw new Error('codex exec unavailable');
+    },
   });
   const realSetTimeout = globalThis.setTimeout;
   (globalThis as any).setTimeout = ((handler: (...args: any[]) => void, _ms?: number, ...args: any[]) =>
@@ -827,8 +813,8 @@ function readJobFixture(id: string): JobFile {
     globalThis.setTimeout = realSetTimeout;
   }
   const persisted = readJobFixture(id);
-  if (notificationCalls !== 2 || createCalls !== 2) {
-    fail(`15: expected notification + error report retry, got notification=${notificationCalls} create=${createCalls}`);
+  if (createCalls !== 2) {
+    fail(`15: expected retried error report delivery, got create=${createCalls}`);
   }
   if (persisted.runtime.delivery_status !== 'sent') {
     fail(`15: expected retried error report delivery_status=sent, got ${persisted.runtime.delivery_status}`);
@@ -839,62 +825,7 @@ function readJobFixture(id: string): JobFile {
   passed++;
 }
 
-// 16. Pending prompt jobs send a Feishu error report when no Codex reply arrives.
-{
-  const id = 'prompt-watchdog-error-report';
-  const runId = '1760000000000';
-  const job = makeJob({
-    meta: {
-      id,
-      type: 'prompt',
-      prompt: 'summarize',
-      content: undefined,
-      msg_type: undefined,
-    } as Partial<JobFile['meta']>,
-    runtime: {
-      run_id: runId,
-      run_status: 'started',
-      output_status: 'empty',
-      delivery_status: 'pending',
-      report: null,
-      report_type: null,
-      delivery_error: null,
-    },
-  });
-  writeJobFixture(job);
-  const createdMessages: any[] = [];
-  const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
-    client: {
-      im: {
-        v1: {
-          message: {
-            create: async (args: any) => {
-              createdMessages.push(args);
-              return { data: { message_id: 'om_watchdog_error_report' } };
-            },
-          },
-        },
-      },
-    } as any,
-    identitySession: new IdentitySession(() => null),
-  });
-  await (scheduler as any).failPendingPromptRun(job, runId);
-  const persisted = readJobFixture(id);
-  if (createdMessages.length !== 1) {
-    fail(`16: expected watchdog to send one Feishu error report, got ${createdMessages.length}`);
-  }
-  const sentContent = JSON.parse(createdMessages[0].data.content);
-  if (!sentContent.text?.includes('did not produce a Feishu reply')) {
-    fail(`16: watchdog error report payload missing timeout reason: ${createdMessages[0].data.content}`);
-  }
-  if (persisted.runtime.run_status !== 'failed' || persisted.runtime.delivery_status !== 'sent') {
-    fail(`16: expected failed/sent watchdog state, got ${JSON.stringify(persisted.runtime)}`);
-  }
-  passed++;
-}
-
-// 17. A stale execution must not update a job that was deleted/recreated with the same id.
+// 16. A stale execution must not update a job that was deleted/recreated with the same id.
 {
   const id = 'recreated-same-id';
   const oldJob = makeJob({
@@ -927,7 +858,6 @@ function readJobFixture(id: string): JobFile {
     },
   };
   const scheduler = new JobScheduler({
-    server: { notification: async () => {} } as any,
     client: client as any,
     identitySession: new IdentitySession(() => null),
   });
@@ -946,4 +876,4 @@ function readJobFixture(id: string): JobFile {
 (appConfig as { cronTimezone: string }).cronTimezone = originalCronTimezone;
 rmSync(tmpJobsDir, { recursive: true, force: true });
 
-console.log(`scheduler smoke: ${passed}/19 PASS`);
+console.log(`scheduler smoke: ${passed}/18 PASS`);

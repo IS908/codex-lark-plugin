@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.12.4-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.12.5-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -72,7 +72,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 ### Scheduled Jobs (CronJob)
 
-- **Two job types**: `message` sends fixed content deterministically; `prompt` runs through the same `codex exec` delivery path as chat messages in `exec` mode, with the legacy `notifications/Codex/channel` path kept only for `notification` mode
+- **Two job types**: `message` sends fixed content deterministically; `prompt` runs through the same `codex exec` delivery path as chat messages
 - Prompt job failures include structured run diagnostics: run metadata, observable stage timings, diagnostic-only progress, and redacted `codex exec` stdout/stderr tails when available
 - Standard cron expressions + simplified aliases (`every 30m`, `daily at 09:00`, `weekdays at 17:00`)
 - Create and manage jobs through Feishu chat or the `$lark:jobs` skill
@@ -313,7 +313,6 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_TEXT_CHUNK_LIMIT` | `4000` | Maximum characters per message chunk |
 | `LARK_QUEUE_HANDLER_TIMEOUT_MS` | `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` | Per-thread queue guardrail in milliseconds. `0` disables it; positive values below `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` are raised to that minimum so `codex exec` owns normal timeout failure replies. |
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | `max(60000, LARK_CODEX_EXEC_TIMEOUT_MS + 60000)` | Max wait for a visible reply/defer before logging a missed Lark turn |
-| `LARK_CODEX_DELIVERY_MODE` | `exec` | `exec` runs `codex exec` for each Feishu message and sends the final answer directly through Feishu. `notification` keeps the legacy `notifications/Codex/channel` path for compatible hosts. |
 | `LARK_CODEX_EXEC_COMMAND` | `codex` | Codex CLI command used by exec delivery |
 | `LARK_CODEX_EXEC_CWD` | `~/.codex/channels/lark/codex-exec-workdir` | Working directory for `codex exec`; keep it free of `.mcp.json` to avoid recursively loading this Lark MCP server |
 | `LARK_CODEX_EXEC_TIMEOUT_MS` | `600000` | Timeout for one `codex exec` run |

@@ -80,9 +80,9 @@ assert.match(index, /packageVersion/);
 assert.match(wrappedIndex, /packageVersion/);
 assert.doesNotMatch(index, /version:\s*['"]\d+\.\d+\.\d+['"]/);
 assert.doesNotMatch(wrappedIndex, /version:\s*['"]\d+\.\d+\.\d+['"]/);
-assert.match(index, /'Codex\/channel'/);
-assert.match(index, /notifications\/Codex\/channel/);
-assert.match(scheduler, /notifications\/Codex\/channel/);
+assert.doesNotMatch(index, /'Codex\/channel'/);
+assert.doesNotMatch(index, /notifications\/Codex\/channel/);
+assert.doesNotMatch(scheduler, /notifications\/Codex\/channel/);
 assert.doesNotMatch(index, /notifications\/claude\/channel|claude\/channel/);
 assert.doesNotMatch(scheduler, /notifications\/claude\/channel|claude\/channel/);
 
