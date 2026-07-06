@@ -161,6 +161,10 @@ echo "=== Job tool unit checks ==="
 node --import tsx scripts/job-tools-smoke.ts
 
 echo ""
+echo "=== Job lifecycle parity checks ==="
+node --import tsx scripts/job-lifecycle-parity-smoke.ts
+
+echo ""
 echo "=== Issue proposal tool unit checks ==="
 node --import tsx scripts/issue-proposal-tools-smoke.ts
 
