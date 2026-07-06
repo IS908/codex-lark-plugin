@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.10.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.10.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -356,8 +356,9 @@ of recursively loading the Lark MCP server. `create_job` and `list_jobs` expose
 stable `job_id` values so later turns can update, pause, replace, or delete the
 exact reminder instead of recreating a duplicate name.
 `send_message` is the exec-mode media action: it can send image/file attachments
-through the plugin runtime identity using either a local path or the current
-inbound message's first downloaded image. It also supports ordered `kind=rich`
+through the plugin runtime identity using a local path, the current inbound
+message's first downloaded image, or a quoted/replied message's first image. It
+also supports ordered `kind=rich`
 text+image parts, preferring one Feishu post and falling back to ordered split
 messages when rich post delivery is unavailable. Audio/video and interactive
 cards remain separate follow-up design work.

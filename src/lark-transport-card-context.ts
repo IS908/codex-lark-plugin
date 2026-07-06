@@ -3,6 +3,7 @@ import { appConfig } from './config.js';
 import { feishuApiCall } from './feishu-retry.js';
 import {
   fetchedMessageContentText,
+  extractMessageAttachments,
   interactiveCardTextMetadata,
   isPlaceholderCardText,
   messageItemRawContent,
@@ -350,6 +351,10 @@ function sdkMessageContext(messageId: string, message: any): LarkFetchedMessageC
     updateTime: message.updateTime ?? message.update_time,
     messagePosition: message.messagePosition ?? message.message_position,
     sender: normalizeSender(message.sender),
+    attachments: extractMessageAttachments({
+      content: message.content,
+      message_type: msgType,
+    }),
     interactiveCard: message.content && text
       ? interactiveCardTextMetadata(message.content, msgType, text)
       : undefined,
@@ -381,6 +386,9 @@ function messageItemContext(
     updateTime: item.update_time ?? item.updateTime,
     messagePosition: normalizeOptionalString(item.message_position ?? item.messagePosition),
     sender: normalizeSender(item.sender),
+    attachments: rawContent
+      ? extractMessageAttachments({ content: rawContent, message_type: msgType })
+      : undefined,
     interactiveCard: rawContent && text?.text
       ? interactiveCardTextMetadata(rawContent, msgType, text.text)
       : undefined,
@@ -410,6 +418,7 @@ function mergeContexts(
     updateTime: content.updateTime ?? base?.updateTime,
     messagePosition: content.messagePosition ?? base?.messagePosition,
     sender: content.sender ?? base?.sender,
+    attachments: content.attachments ?? base?.attachments,
     interactiveCard: content.interactiveCard ?? base?.interactiveCard,
     fetchStage: content.fetchStage ?? base?.fetchStage,
     fetchIdentity: content.fetchIdentity ?? base?.fetchIdentity,
@@ -434,6 +443,7 @@ function normalizeContext(context: LarkFetchedMessageContext): LarkFetchedMessag
   if (context.updateTime) normalized.updateTime = context.updateTime;
   if (context.messagePosition) normalized.messagePosition = context.messagePosition;
   if (context.sender) normalized.sender = context.sender;
+  if (context.attachments?.length) normalized.attachments = context.attachments;
   if (context.interactiveCard) normalized.interactiveCard = context.interactiveCard;
   if (context.fetchStage) normalized.fetchStage = context.fetchStage;
   if (context.fetchIdentity) normalized.fetchIdentity = context.fetchIdentity;

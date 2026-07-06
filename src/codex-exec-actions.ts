@@ -5,6 +5,7 @@ import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
 import type { LarkMessage } from './channel.js';
 import type { ReplyRequest, ReplyRichPart, ReplySendResult } from './reply-sender.js';
+import { downloadInboundResource } from './inbound-attachment-downloader.js';
 import type { IdentitySession } from './identity-session.js';
 import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import type { MemoryStore } from './memory/file.js';
@@ -32,6 +33,7 @@ import { logSafeError } from './safe-log.js';
 import type { BotMessageTracker } from './channel.js';
 import type { LarkTransport } from './lark-transport.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
+import { selectQuotedMessageId } from './quoted-context-loader.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
 import { createDefaultReviewJobs } from './default-review-jobs.js';
 import {
@@ -133,7 +135,11 @@ const RunLocalCliToolActionSchema = z.object({
   args: z.array(z.string()).optional(),
 });
 
-const SendMessageImageSourceSchema = z.enum(['local_path', 'current_message:first_image']);
+const SendMessageImageSourceSchema = z.enum([
+  'local_path',
+  'current_message:first_image',
+  'quoted_message:first_image',
+]);
 
 const SendMessageImagePayloadSchema = z.object({
   kind: z.literal('image'),
@@ -261,11 +267,11 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
         message: 'path is required when source is local_path',
       });
     }
-    if (action.message.kind !== 'rich' && action.message.kind === 'file' && action.message.source === 'current_message:first_image') {
+    if (action.message.kind !== 'rich' && action.message.kind === 'file' && action.message.source !== 'local_path') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['message', 'source'],
-        message: 'current_message:first_image is only valid for image messages',
+        message: 'file messages only support source local_path',
       });
     }
     if (action.message.kind === 'rich') {
@@ -345,13 +351,17 @@ export interface CodexExecActionDispatcher {
   execute(request: CodexExecActionDispatchRequest): Promise<CodexExecActionExecutionResult[]>;
 }
 
+type CodexExecActionTransport =
+  & Pick<LarkTransport, 'recallMessage'>
+  & Partial<Pick<LarkTransport, 'fetchMessageContext' | 'downloadResource'>>;
+
 export interface CreateCodexExecActionDispatcherOptions {
   memoryStore: MemoryStore;
   identitySession: IdentitySession;
   localCliToolsConfigPath?: string;
   profileDistiller?: ProfileDistillationDispatcher;
   sendReply?: (request: ReplyRequest) => Promise<ReplySendResult>;
-  larkTransport?: Pick<LarkTransport, 'recallMessage'> | (() => Pick<LarkTransport, 'recallMessage'>);
+  larkTransport?: CodexExecActionTransport | (() => CodexExecActionTransport);
   botMessageTracker?: Pick<BotMessageTracker, 'get'>;
   turnObligations?: Pick<TurnObligationTracker, 'markSatisfied'>;
 }
@@ -1343,6 +1353,12 @@ function resolveRecallTransport(
   return typeof transport === 'function' ? transport() : transport;
 }
 
+function resolveActionTransport(
+  transport: CreateCodexExecActionDispatcherOptions['larkTransport'],
+): CodexExecActionTransport | undefined {
+  return typeof transport === 'function' ? transport() : transport;
+}
+
 function resolveSendMessageLocalPath(rawPath: string): string {
   return path.isAbsolute(rawPath)
     ? rawPath
@@ -1357,13 +1373,96 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function safeQuotedResourceName(value: string): string {
+  return value.replace(/[\\/:\0]/g, '_').slice(0, 120) || 'quoted-image.png';
+}
+
+async function downloadQuotedMessageFirstImage(
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<{ ok: true; path: string } | { ok: false; result: CodexExecActionExecutionResult }> {
+  const quotedMessageId = selectQuotedMessageId(message);
+  if (!quotedMessageId) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        action: 'send_message',
+        message: 'No quoted message is available for source quoted_message:first_image.',
+      },
+    };
+  }
+
+  const transport = resolveActionTransport(deps.larkTransport);
+  if (!transport?.fetchMessageContext || !transport.downloadResource) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        action: 'send_message',
+        message: 'quoted_message:first_image is unavailable: Lark message fetch/download transport is not configured.',
+      },
+    };
+  }
+  const fetchMessageContext = transport.fetchMessageContext;
+  const downloadResource = transport.downloadResource;
+
+  let fetched;
+  try {
+    fetched = await fetchMessageContext(quotedMessageId);
+  } catch (err) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        action: 'send_message',
+        message: `Failed to fetch quoted message ${quotedMessageId}: ${errorMessage(err)}`,
+      },
+    };
+  }
+
+  const image = fetched?.attachments?.find((attachment) => attachment.fileType === 'image' && attachment.fileKey);
+  if (!image) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        action: 'send_message',
+        message: `Quoted message ${quotedMessageId} has no downloadable image attachment.`,
+      },
+    };
+  }
+
+  const downloaded = await downloadInboundResource({ downloadResource }, {
+    messageId: fetched?.messageId || quotedMessageId,
+    fileKey: image.fileKey,
+    resourceType: 'image',
+    fileName: `${Date.now()}-${safeQuotedResourceName(image.fileKey)}-${safeQuotedResourceName(image.fileName || 'image.png')}`,
+    logPrefix: '[codex-exec-send-message]',
+  });
+  if (!downloaded) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        action: 'send_message',
+        message: `Failed to download first image from quoted message ${quotedMessageId}.`,
+      },
+    };
+  }
+  return { ok: true, path: downloaded };
+}
+
 async function resolveSendMessageImagePath(
-  source: 'local_path' | 'current_message:first_image',
+  source: 'local_path' | 'current_message:first_image' | 'quoted_message:first_image',
   rawPath: string | undefined,
   message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<{ ok: true; path: string } | { ok: false; result: CodexExecActionExecutionResult }> {
   let filePath: string;
-  if (source === 'current_message:first_image') {
+  if (source === 'quoted_message:first_image') {
+    return downloadQuotedMessageFirstImage(message, deps);
+  } else if (source === 'current_message:first_image') {
     const currentImagePath = firstCurrentMessageImagePath(message);
     if (!currentImagePath) {
       return {
@@ -1398,6 +1497,7 @@ async function resolveSendMessageImagePath(
 async function resolveSendMessageRichParts(
   action: z.infer<typeof SendMessageRichPayloadSchema>,
   message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<{ ok: true; parts: ReplyRichPart[]; imageCount: number } | { ok: false; result: CodexExecActionExecutionResult }> {
   const parts: ReplyRichPart[] = [];
   let imageCount = 0;
@@ -1406,7 +1506,7 @@ async function resolveSendMessageRichParts(
       parts.push({ type: 'text', text: part.text });
       continue;
     }
-    const resolved = await resolveSendMessageImagePath(part.source, part.path, message);
+    const resolved = await resolveSendMessageImagePath(part.source, part.path, message, deps);
     if (!resolved.ok) return resolved;
     parts.push({ type: 'image', path: resolved.path, ...(part.alt ? { alt: part.alt } : {}) });
     imageCount++;
@@ -1435,7 +1535,7 @@ async function executeSendMessage(
   }
 
   if (action.message.kind === 'rich') {
-    const resolved = await resolveSendMessageRichParts(action.message, message);
+    const resolved = await resolveSendMessageRichParts(action.message, message, deps);
     if (!resolved.ok) return resolved.result;
     let result: ReplySendResult;
     try {
@@ -1482,28 +1582,21 @@ async function executeSendMessage(
   }
 
   let filePath: string;
-  if (action.message.source === 'current_message:first_image') {
-    const currentImagePath = firstCurrentMessageImagePath(message);
-    if (!currentImagePath) {
+  if (action.message.kind === 'image') {
+    const resolved = await resolveSendMessageImagePath(action.message.source, action.message.path, message, deps);
+    if (!resolved.ok) return resolved.result;
+    filePath = resolved.path;
+  } else {
+    filePath = resolveSendMessageLocalPath(action.message.path!);
+    try {
+      await fs.access(filePath);
+    } catch {
       return {
         ok: false,
         action: 'send_message',
-        message: 'No current-message image is available for source current_message:first_image.',
+        message: `Local ${action.message.kind} file is not readable: ${filePath}`,
       };
     }
-    filePath = currentImagePath;
-  } else {
-    filePath = resolveSendMessageLocalPath(action.message.path!);
-  }
-
-  try {
-    await fs.access(filePath);
-  } catch {
-    return {
-      ok: false,
-      action: 'send_message',
-      message: `Local ${action.message.kind} file is not readable: ${filePath}`,
-    };
   }
 
   let result: ReplySendResult;

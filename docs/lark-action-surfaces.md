@@ -21,7 +21,7 @@ parent-process bridge for actions that must run safely even when the child
 | Create default review jobs | `create_default_review_jobs` | `create_default_review_jobs` | yes; both create paused job presets through `default-review-jobs` |
 | Issue proposal lifecycle | `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`, `create_issue_from_proposal`, `create_low_risk_pr_from_proposal` | same action names | partial; both use `issue-proposal-store`; proposal filing uses the built-in proposal filing path unless a configured local CLI tool override is explicitly provided, while low-risk PR creation still goes through `runConfiguredLocalCliTool` |
 | Run local CLI tool | `run_local_cli_tool` | `run_local_cli_tool` | yes; both call `runConfiguredLocalCliTool` |
-| Image/file/rich media reply | `reply(files=[...])`; internal `richParts` | `send_message` (`image`/`file`/`rich`) | partial; both flow through `sendFeishuReply`; exec supports `local_path`, `current_message:first_image`, and ordered text+image rich parts |
+| Image/file/rich media reply | `reply(files=[...])`; internal `richParts` | `send_message` (`image`/`file`/`rich`) | partial; both flow through `sendFeishuReply`; exec supports `local_path`, `current_message:first_image`, `quoted_message:first_image`, and ordered text+image rich parts |
 | Recall bot message | `recall_message` | `recall_message` | yes; both use the tracked bot-message scope guard |
 | Edit bot message | `edit_message` | not supported | MCP-only for now; uses the tracked bot-message scope guard |
 | Add reaction | `react` | not supported | MCP-only |
@@ -70,8 +70,8 @@ parent-process bridge for actions that must run safely even when the child
 | --- | --- | --- | --- |
 | Plain text | supported | `kind=rich` with text-only parts, though ordinary final text is preferred | split by `LARK_TEXT_CHUNK_LIMIT`; first chunk quote-replies when `reply_to` is available, later chunks stay in-thread |
 | Body-only Markdown card | supported through automatic Schema 2.0 card rendering | not exposed as `send_message` | final rich Markdown still uses `buildCards()`; interactive workflow cards stay separate from ordinary media replies |
-| Rich text + images | supported when emitted as `send_message kind=rich` | supported | parts are ordered `text` and `image`; images must be local readable files or `current_message:first_image`; preferred delivery is one Feishu `post`, with ordered split fallback |
-| Image | supported through `reply(files=[{type:"image"}])` and `send_message kind=image` | supported | source is `local_path` or `current_message:first_image`; upload must return an image key and `fileSentCount >= 1` |
+| Rich text + images | supported when emitted as `send_message kind=rich` | supported | parts are ordered `text` and `image`; images must be local readable files, `current_message:first_image`, or `quoted_message:first_image`; preferred delivery is one Feishu `post`, with ordered split fallback |
+| Image | supported through `reply(files=[{type:"image"}])` and `send_message kind=image` | supported | source is `local_path`, `current_message:first_image`, or `quoted_message:first_image`; upload must return an image key and `fileSentCount >= 1` |
 | File | supported through `reply(files=[{type:"file"}])` and `send_message kind=file` | supported | source is `local_path`; files are uploaded as generic Feishu files, not native audio/video messages |
 | Native audio/video | unsupported | unsupported | send as a generic file only when acceptable; unsupported `kind=audio`/`video` action payloads are rejected with schema errors |
 | Interactive card workflow | supported only through existing card rendering or raw-card MCP reply surfaces | unsupported | keep workflow-specific cards outside `send_message` until there is a concrete interaction contract |
