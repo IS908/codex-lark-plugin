@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.12.3] - 2026-07-06
+
+### Changed
+- Extracted issue proposal lifecycle logic into `issue-proposal-service`, making MCP issue proposal tools and codex exec issue proposal actions thin adapters over the same visibility, mutation authorization, GitHub issue filing, and low-risk PR creation paths.
+
+### Added
+- Added `issue-proposal-lifecycle-parity-smoke` coverage to compare persisted proposal state, list visibility, authorization failures, and rejection behavior across MCP and exec surfaces.
+
 ## [1.12.2] - 2026-07-06
 
 ### Changed

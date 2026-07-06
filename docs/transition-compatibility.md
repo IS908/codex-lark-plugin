@@ -3,7 +3,7 @@
 This document records the compatibility paths tracked by issue #200. Its job is
 to keep transition-era code from becoming permanent architecture by accident.
 
-Status baseline: v1.12.2.
+Status baseline: v1.12.3.
 
 ## Support Matrix
 
@@ -15,7 +15,7 @@ Status baseline: v1.12.2.
 | Exec delivery vs notification delivery | `LARK_CODEX_DELIVERY_MODE=exec` is the default. `notification` still routes through `notifications/Codex/channel`. | Deprecate `notification` unless a supported host still requires it. Treat it as compatibility-only until decided. | Exec chat/doc-comment/cronjob delivery, session resume, progress, side-channel actions, and scheduler prompt jobs must remain covered before removing notification mode. | Remove only after confirming no supported host requires `notifications/Codex/channel`, documenting migration to exec mode, updating config validation/env docs, and preserving a package-level rollback path. | Confirm product boundary, then either document notification as supported or remove it. |
 | Job JSON backfill | `job-store.backfillJob()` supports pre-v0.9 fields, empty `created_by`, missing `origin_chat_id`, missing `timezone`, short-lived `send_chat_id`, and missing runtime diagnostic fields. | Keep as a data safety net until a one-time migrate/doctor path exists. | Backfill tests must prove legacy files become canonical on read and next write without losing ownership, target chat, timezone, or runtime diagnostics. | Remove individual backfills only after a `job doctor` / migration command exists, release notes tell operators how to run it, and at least one release has shipped with the command. | Add a job doctor/migration command or keep backfills. |
 | Profile single-file migration | `memory/file.ts` lazily migrates pre-v0.10 profile files into `public.md` / `private.md`. | Keep as a privacy-sensitive migration safety net. | `profile-tier-smoke` must cover idempotency, partial-failure recovery, L1 private split, and L2 `privacy-rules.md` influence. | Remove only after a profile doctor/migration command exists, the command preserves L1/L2 privacy classification, and docs explain how to audit migrated profiles. | Add profile doctor/migration design before removal. |
-| MCP tools vs exec actions | Both surfaces are intentional. Job lifecycle business logic now uses `job-service`; issue-proposal business logic is still partially duplicated. | Retain both surfaces, but make them thin adapters over shared services. This is not a removal path. | Parity tests must compare persisted state and authorization behavior across surfaces. | Do not remove either surface. Completion means shared services and explicit unsupported-surface errors. | Extract issue proposal service/parity next. |
+| MCP tools vs exec actions | Both surfaces are intentional. Job lifecycle business logic uses `job-service`; issue-proposal business logic uses `issue-proposal-service`. | Retain both surfaces, but keep them thin adapters over shared services. This is not a removal path. | `job-lifecycle-parity-smoke` and `issue-proposal-lifecycle-parity-smoke` must compare persisted state and authorization behavior across surfaces. | Already complete for job lifecycle and issue-proposal lifecycle parity. Do not remove either surface; future shared behavior must live in service modules first. | None for current job/proposal lifecycle parity. |
 
 ## Removal Checklist
 
@@ -32,9 +32,8 @@ Every compatibility removal PR must include:
 
 ## Priority Order
 
-1. Add issue proposal lifecycle parity/shared-service coverage.
-2. Decide whether `LARK_CHANNEL_RUNTIME=legacy` should be removed now that SDK
+1. Decide whether `LARK_CHANNEL_RUNTIME=legacy` should be removed now that SDK
    is the default path.
-3. Decide whether `LARK_CODEX_DELIVERY_MODE=notification` is still a supported
+2. Decide whether `LARK_CODEX_DELIVERY_MODE=notification` is still a supported
    product surface or should be removed.
-4. Design job/profile doctor commands before removing data-layout backfills.
+3. Design job/profile doctor commands before removing data-layout backfills.

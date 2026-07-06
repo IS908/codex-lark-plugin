@@ -26,7 +26,6 @@ import {
   upsertJob,
 } from './job-service.js';
 import { runConfiguredLocalCliTool } from './local-cli-tools.js';
-import { createGithubIssueFromProposal } from './github-issue-creator.js';
 import type { ProfileDistillationDispatcher } from './profile-distillation.js';
 import { logSafeError } from './safe-log.js';
 import type { BotMessageTracker } from './channel.js';
@@ -36,21 +35,13 @@ import { selectQuotedMessageId } from './quoted-context-loader.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
 import { createDefaultReviewJobs } from './default-review-jobs.js';
 import {
+  createIssueFromProposal,
   createIssueProposal,
-  extractGithubIssueUrl,
-  extractGithubPullRequestUrl,
-  formatIssueProposalForList,
-  formatIssueProposalIssueBody,
-  formatIssueProposalPullRequestBody,
-  listIssueProposals,
-  markIssueProposalApproved,
-  markIssueProposalCreated,
-  markIssueProposalPullRequestCreated,
-  markIssueProposalPullRequestError,
-  readIssueProposal,
+  createLowRiskPullRequestFromProposal,
+  listVisibleIssueProposals,
   rejectIssueProposal,
-  type IssueProposalFile,
-} from './issue-proposal-store.js';
+  type IssueProposalLocalCliRunner,
+} from './issue-proposal-service.js';
 
 const SaveMemoryActionSchema = z.object({
   type: z.literal('save_memory'),
@@ -788,31 +779,19 @@ async function executeCreateDefaultReviewJobs(
   }
 }
 
-function canMutateIssueProposal(proposal: IssueProposalFile, caller: string): boolean {
-  return proposal.meta.created_by === caller || (!!appConfig.ownerOpenId && appConfig.ownerOpenId === caller);
-}
-
-function issueProposalLocalCliArgs(proposal: IssueProposalFile): string[] {
-  return [
-    `--repo=${proposal.meta.target_repo}`,
-    `--title=${proposal.meta.title}`,
-    `--body=${formatIssueProposalIssueBody(proposal)}`,
-  ];
-}
-
-function lowRiskPullRequestTitle(proposal: IssueProposalFile): string {
-  const title = proposal.meta.title.trim();
-  return title.startsWith('[auto-review]') ? title : `[auto-review] ${title}`;
-}
-
-function issueProposalPullRequestLocalCliArgs(proposal: IssueProposalFile): string[] {
-  return [
-    `--repo=${proposal.meta.target_repo}`,
-    `--proposal-id=${proposal.meta.id}`,
-    `--issue=${proposal.meta.github_issue_url ?? ''}`,
-    `--title=${lowRiskPullRequestTitle(proposal)}`,
-    `--body=${formatIssueProposalPullRequestBody(proposal)}`,
-  ];
+function createIssueProposalLocalCliRunner(
+  deps: CreateCodexExecActionDispatcherOptions,
+  message: LarkMessage,
+): IssueProposalLocalCliRunner {
+  return (tool, args) =>
+    runConfiguredLocalCliTool({
+      identitySession: deps.identitySession,
+      tool,
+      args,
+      chat_id: message.chatId,
+      thread_id: message.threadId,
+      configPath: deps.localCliToolsConfigPath,
+    });
 }
 
 async function executeCreateIssueProposal(
@@ -833,33 +812,27 @@ async function executeCreateIssueProposal(
   if ('error' in auth) return auth.error;
   const { caller } = auth;
 
-  try {
-    const proposal = await createIssueProposal({
-      title: action.title,
-      body: action.body,
-      evidence: action.evidence,
-      impact: action.impact,
-      priority: action.priority,
-      automationLevel: action.automation_level,
-      targetRepo: action.target_repo,
-      targetChatId: action.target_chat_id ?? message.chatId,
-      originChatId: message.chatId,
-      createdBy: caller,
-    });
-    void audit('create_issue_proposal', caller, auditArgs, 'ok');
-    return {
-      ok: true,
-      action: 'create_issue_proposal',
-      message: `Created issue proposal "${proposal.meta.id}". Wait for explicit maintainer approval before filing a GitHub issue.`,
-    };
-  } catch (err: any) {
-    void audit('create_issue_proposal', caller, auditArgs, 'error');
-    return {
-      ok: false,
-      action: 'create_issue_proposal',
-      message: `Failed to create issue proposal: ${err?.message ?? String(err)}`,
-    };
+  const result = await createIssueProposal({
+    title: action.title,
+    body: action.body,
+    evidence: action.evidence,
+    impact: action.impact,
+    priority: action.priority,
+    automationLevel: action.automation_level,
+    targetRepo: action.target_repo,
+    targetChatId: action.target_chat_id ?? message.chatId,
+    originChatId: message.chatId,
+    caller,
+    auditArgs,
+  });
+  if (!result.ok) {
+    return { ok: false, action: 'create_issue_proposal', message: result.message };
   }
+  return {
+    ok: true,
+    action: 'create_issue_proposal',
+    message: `Created issue proposal "${result.proposal.meta.id}". Wait for explicit maintainer approval before filing a GitHub issue.`,
+  };
 }
 
 async function executeListIssueProposals(
@@ -872,15 +845,18 @@ async function executeListIssueProposals(
   const auditArgs = { status, chat_id: message.chatId, thread_id: message.threadId };
   if ('error' in auth) return auth.error;
   const { caller } = auth;
-  const proposals = await listIssueProposals({
+  const result = await listVisibleIssueProposals({
+    caller,
+    chatId: message.chatId,
+    isPrivateChat: message.chatType === 'p2p',
     status,
-    ...(message.chatType === 'p2p' ? { createdBy: caller } : { targetChatId: message.chatId }),
+    auditArgs,
   });
-  void audit('list_issue_proposals', caller, auditArgs, 'ok');
+  if (!result.ok) return { ok: false, action: 'list_issue_proposals', message: result.message };
   return {
     ok: true,
     action: 'list_issue_proposals',
-    message: proposals.length ? proposals.map(formatIssueProposalForList).join('\n\n') : 'No issue proposals found.',
+    message: result.message,
   };
 }
 
@@ -893,15 +869,13 @@ async function executeRejectIssueProposal(
   const auditArgs = { id: action.id, reason: action.reason, chat_id: message.chatId, thread_id: message.threadId };
   if ('error' in auth) return auth.error;
   const { caller } = auth;
-  const proposal = await readIssueProposal(action.id);
-  if (!proposal) return { ok: false, action: 'reject_issue_proposal', message: `Issue proposal "${action.id}" not found.` };
-  if (!canMutateIssueProposal(proposal, caller)) {
-    void audit('reject_issue_proposal', caller, auditArgs, 'denied');
-    return { ok: false, action: 'reject_issue_proposal', message: `You are not authorized to reject issue proposal "${action.id}".` };
-  }
-  const rejected = await rejectIssueProposal(action.id, { rejectedBy: caller, reason: action.reason });
-  void audit('reject_issue_proposal', caller, auditArgs, 'ok');
-  return { ok: true, action: 'reject_issue_proposal', message: `Rejected issue proposal "${rejected?.meta.id ?? action.id}".` };
+  const result = await rejectIssueProposal({
+    id: action.id,
+    reason: action.reason,
+    caller,
+    auditArgs,
+  });
+  return { ok: result.ok, action: 'reject_issue_proposal', message: result.message };
 }
 
 async function executeCreateIssueFromProposal(
@@ -914,69 +888,14 @@ async function executeCreateIssueFromProposal(
   const auditArgs = { id: action.id, tool: tool ?? '<builtin>', chat_id: message.chatId, thread_id: message.threadId };
   if ('error' in auth) return auth.error;
   const { caller } = auth;
-  const proposal = await readIssueProposal(action.id);
-  if (!proposal) return { ok: false, action: 'create_issue_from_proposal', message: `Issue proposal "${action.id}" not found.` };
-  if (!canMutateIssueProposal(proposal, caller)) {
-    void audit('create_issue_from_proposal', caller, auditArgs, 'denied');
-    return { ok: false, action: 'create_issue_from_proposal', message: `You are not authorized to create an issue from proposal "${action.id}".` };
-  }
-  if (proposal.meta.status === 'created' && proposal.meta.github_issue_url) {
-    return {
-      ok: true,
-      action: 'create_issue_from_proposal',
-      message: `Issue already created for proposal ${proposal.meta.id}: ${proposal.meta.github_issue_url}`,
-    };
-  }
-  if (proposal.meta.status === 'rejected') {
-    return {
-      ok: false,
-      action: 'create_issue_from_proposal',
-      message: `Issue proposal "${proposal.meta.id}" was rejected and cannot be filed.`,
-    };
-  }
-
-  const approved = await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller });
-  if (!approved) return { ok: false, action: 'create_issue_from_proposal', message: `Issue proposal "${proposal.meta.id}" not found.` };
-
-  const result = tool
-    ? await runConfiguredLocalCliTool({
-      identitySession: deps.identitySession,
-      tool,
-      args: issueProposalLocalCliArgs(approved),
-      chat_id: message.chatId,
-      thread_id: message.threadId,
-      configPath: deps.localCliToolsConfigPath,
-    })
-    : await createGithubIssueFromProposal(approved);
-  if (!result.ok) {
-    await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller, lastError: result.message });
-    void audit('create_issue_from_proposal', caller, auditArgs, 'error');
-    return {
-      ok: false,
-      action: 'create_issue_from_proposal',
-      message: `Failed to create GitHub issue for proposal "${proposal.meta.id}": ${result.message}`,
-    };
-  }
-
-  const issueUrl = (result as { issueUrl?: string }).issueUrl ?? extractGithubIssueUrl(result.message);
-  if (!issueUrl) {
-    await markIssueProposalApproved(proposal.meta.id, {
-      approvedBy: caller,
-      lastError: 'Issue creation completed but did not return a GitHub issue URL.',
-    });
-    return {
-      ok: false,
-      action: 'create_issue_from_proposal',
-      message: `Issue creation completed but did not return a GitHub issue URL for proposal "${proposal.meta.id}".`,
-    };
-  }
-  const created = await markIssueProposalCreated(proposal.meta.id, { approvedBy: caller, githubIssueUrl: issueUrl });
-  void audit('create_issue_from_proposal', caller, auditArgs, 'ok');
-  return {
-    ok: true,
-    action: 'create_issue_from_proposal',
-    message: `Created GitHub issue for proposal "${proposal.meta.id}": ${created?.meta.github_issue_url ?? issueUrl}`,
-  };
+  const result = await createIssueFromProposal({
+    id: action.id,
+    caller,
+    tool,
+    runLocalCli: createIssueProposalLocalCliRunner(deps, message),
+    auditArgs,
+  });
+  return { ok: result.ok, action: 'create_issue_from_proposal', message: result.message };
 }
 
 async function executeCreateLowRiskPrFromProposal(
@@ -989,79 +908,14 @@ async function executeCreateLowRiskPrFromProposal(
   const auditArgs = { id: action.id, tool, chat_id: message.chatId, thread_id: message.threadId };
   if ('error' in auth) return auth.error;
   const { caller } = auth;
-  const proposal = await readIssueProposal(action.id);
-  if (!proposal) return { ok: false, action: 'create_low_risk_pr_from_proposal', message: `Issue proposal "${action.id}" not found.` };
-  if (!canMutateIssueProposal(proposal, caller)) {
-    void audit('create_low_risk_pr_from_proposal', caller, auditArgs, 'denied');
-    return { ok: false, action: 'create_low_risk_pr_from_proposal', message: `You are not authorized to create a PR from proposal "${action.id}".` };
-  }
-  if (proposal.meta.github_pr_url) {
-    return {
-      ok: true,
-      action: 'create_low_risk_pr_from_proposal',
-      message: `Low-risk PR already created for proposal ${proposal.meta.id}: ${proposal.meta.github_pr_url}`,
-    };
-  }
-  if (proposal.meta.status === 'rejected') {
-    return {
-      ok: false,
-      action: 'create_low_risk_pr_from_proposal',
-      message: `Issue proposal "${proposal.meta.id}" was rejected and cannot open a PR.`,
-    };
-  }
-  if (proposal.meta.automation_level !== 'low-risk-auto-pr-eligible') {
-    return {
-      ok: false,
-      action: 'create_low_risk_pr_from_proposal',
-      message: `Issue proposal "${proposal.meta.id}" is ${proposal.meta.automation_level}; only low-risk-auto-pr-eligible proposals can open automatic PRs.`,
-    };
-  }
-  if (proposal.meta.status !== 'created' || !proposal.meta.github_issue_url) {
-    return {
-      ok: false,
-      action: 'create_low_risk_pr_from_proposal',
-      message: `Issue proposal "${proposal.meta.id}" must have a created GitHub issue before opening a low-risk PR.`,
-    };
-  }
-
-  const result = await runConfiguredLocalCliTool({
-    identitySession: deps.identitySession,
+  const result = await createLowRiskPullRequestFromProposal({
+    id: action.id,
+    caller,
     tool,
-    args: issueProposalPullRequestLocalCliArgs(proposal),
-    chat_id: message.chatId,
-    thread_id: message.threadId,
-    configPath: deps.localCliToolsConfigPath,
+    runLocalCli: createIssueProposalLocalCliRunner(deps, message),
+    auditArgs,
   });
-  if (!result.ok) {
-    await markIssueProposalPullRequestError(proposal.meta.id, { approvedBy: caller, lastError: result.message });
-    return {
-      ok: false,
-      action: 'create_low_risk_pr_from_proposal',
-      message: `Failed to create low-risk PR for proposal "${proposal.meta.id}": ${result.message}`,
-    };
-  }
-
-  const pullRequestUrl = extractGithubPullRequestUrl(result.message);
-  if (!pullRequestUrl) {
-    const lastError = 'Local CLI completed but did not return a GitHub pull request URL.';
-    await markIssueProposalPullRequestError(proposal.meta.id, { approvedBy: caller, lastError });
-    return {
-      ok: false,
-      action: 'create_low_risk_pr_from_proposal',
-      message: `${lastError} Proposal: "${proposal.meta.id}".`,
-    };
-  }
-
-  const updated = await markIssueProposalPullRequestCreated(proposal.meta.id, {
-    approvedBy: caller,
-    githubPullRequestUrl: pullRequestUrl,
-  });
-  void audit('create_low_risk_pr_from_proposal', caller, auditArgs, 'ok');
-  return {
-    ok: true,
-    action: 'create_low_risk_pr_from_proposal',
-    message: `Created low-risk PR for proposal "${proposal.meta.id}": ${updated?.meta.github_pr_url ?? pullRequestUrl}`,
-  };
+  return { ok: result.ok, action: 'create_low_risk_pr_from_proposal', message: result.message };
 }
 
 function resolveRecallTransport(
