@@ -857,6 +857,68 @@ await deliverMessageViaCodexExec({
 assert.equal(invalidActionReplies.length, 1);
 assert.match(invalidActionReplies[0].text, /Invalid Lark action block/);
 
+const accidentalCronMarkerOutput = [
+  'Daily Improvement found a parser boundary risk.',
+  '',
+  '<LARK_ACTIONS_JSON>',
+  '{"version":1,"actions":[{"type":"list_jobs"}]}',
+  'The report is explaining a partial marker, not requesting an action.',
+].join('\n');
+const accidentalCronMarkerReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'cronjob:daily-improvement-hash-1783334742722',
+    chatId: 'oc_cron_target',
+    chatType: 'cronjob',
+    text: 'Run daily improvement',
+    messageType: 'cronjob',
+    rawContent: 'Run daily improvement',
+    threadId: 'cronjob:daily-improvement-hash-1783334742722',
+  },
+  displayLabel: 'CronJob · Daily Improvement',
+  useCodexSessions: false,
+  runCodexExec: async () => accidentalCronMarkerOutput,
+  sendReply: async (request) => {
+    accidentalCronMarkerReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(accidentalCronMarkerReplies.length, 1);
+assert.equal(accidentalCronMarkerReplies[0].text, accidentalCronMarkerOutput);
+assert.doesNotMatch(accidentalCronMarkerReplies[0].text, /Invalid Lark action block/);
+
+let invalidCronActionError: any;
+try {
+  await deliverMessageViaCodexExec({
+    message: {
+      ...message,
+      messageId: 'cronjob:bad-action-hash-1783334742723',
+      chatId: 'oc_cron_target',
+      chatType: 'cronjob',
+      text: 'Run bad action job',
+      messageType: 'cronjob',
+      rawContent: 'Run bad action job',
+      threadId: 'cronjob:bad-action-hash-1783334742723',
+    },
+    displayLabel: 'CronJob · Bad Action',
+    useCodexSessions: false,
+    runCodexExec: async () =>
+      [
+        '<LARK_ACTIONS_JSON>',
+        '{"version":2,"actions":[]}',
+        '</LARK_ACTIONS_JSON>',
+      ].join('\n'),
+    sendReply: async () => {
+      throw new Error('invalid cronjob action block should not be sent as a successful report');
+    },
+  });
+} catch (err) {
+  invalidCronActionError = err;
+}
+assert.match(invalidCronActionError?.message ?? '', /CronJob output contained an invalid Lark action block: version/);
+assert.match(invalidCronActionError?.stdoutTail ?? '', /"version":2/);
+
 sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   key: 'chat:oc_group_001:thread:omt_thread_001',
   sessionId: 'stale-session',

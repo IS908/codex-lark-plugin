@@ -367,6 +367,13 @@ export async function deliverMessageViaCodexExec(
   let text = parsedOutput.replyText.trim();
   let suppressVisibleReply = false;
   if (parsedOutput.kind === 'invalid_actions') {
+    if (message.chatType === 'cronjob') {
+      const err = new Error(`CronJob output contained an invalid Lark action block: ${parsedOutput.error}`) as Error & {
+        stdoutTail?: string;
+      };
+      err.stdoutTail = result.text;
+      throw err;
+    }
     text = `Invalid Lark action block: ${parsedOutput.error}`;
   } else if (parsedOutput.kind === 'actions' && parsedOutput.actions.length > 0) {
     const actionResults = opts.actionDispatcher
