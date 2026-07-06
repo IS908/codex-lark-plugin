@@ -19,7 +19,7 @@ parent-process bridge for actions that must run safely even when the child
 | Save memory | `save_memory` | `save_memory` | partial; both use server-derived caller identity and `MemoryStore` |
 | Create job | `create_job` | `create_job` | partial; both use server-derived caller identity and `job-store` |
 | Create default review jobs | `create_default_review_jobs` | `create_default_review_jobs` | yes; both create paused job presets through `default-review-jobs` |
-| Issue proposal lifecycle | `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`, `create_issue_from_proposal`, `create_low_risk_pr_from_proposal` | same action names | partial; both use `issue-proposal-store`, and final GitHub issue/PR creation still goes through `runConfiguredLocalCliTool` |
+| Issue proposal lifecycle | `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`, `create_issue_from_proposal`, `create_low_risk_pr_from_proposal` | same action names | partial; both use `issue-proposal-store`; proposal filing uses the built-in proposal filing path unless a configured local CLI tool override is explicitly provided, while low-risk PR creation still goes through `runConfiguredLocalCliTool` |
 | Run local CLI tool | `run_local_cli_tool` | `run_local_cli_tool` | yes; both call `runConfiguredLocalCliTool` |
 | Recall bot message | `recall_message` | `recall_message` | yes; both use the tracked bot-message scope guard |
 | Edit bot message | `edit_message` | not supported | MCP-only for now; uses the tracked bot-message scope guard |
@@ -41,10 +41,10 @@ parent-process bridge for actions that must run safely even when the child
   and audit logging owned by the local tool config.
 - Issue proposal actions are the narrow exception for periodic review UX: they
   persist local proposal state and require explicit human approval before the
-  final GitHub write. Issue creation uses the built-in `gh issue create` path
-  first, falls back to the GitHub HTTP API when a token is configured, and only
-  uses an allowlisted local CLI tool such as `gh_issue_create` when explicitly
-  requested as an override. Low-risk PR creation is only allowed after the
+  final GitHub write. Issue creation uses the built-in token-backed GitHub HTTP
+  proposal filing path by default, and only uses an allowlisted local CLI tool
+  such as `external_issue_create` when explicitly requested as an override.
+  Low-risk PR creation is only allowed after the
   proposal is marked `low-risk-auto-pr-eligible` and its GitHub issue exists,
   then goes through a separate allowlisted wrapper such as
   `gh_low_risk_pr_create`. Neither path may merge or release automatically.

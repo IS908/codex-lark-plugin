@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,35 +22,27 @@ const {
 const root = mkdtempSync(join(tmpdir(), 'codex-exec-actions-'));
 const oldJobsDir = (appConfig as any).jobsDir;
 const oldIssueProposalsDir = (appConfig as any).issueProposalsDir;
-const oldGithubIssueGhCommand = (appConfig as any).githubIssueGhCommand;
 const oldGithubIssueTimeoutMs = (appConfig as any).githubIssueTimeoutMs;
+const oldGithubIssueApiBaseUrl = (appConfig as any).githubIssueApiBaseUrl;
+const oldGithubIssueToken = (appConfig as any).githubIssueToken;
+const oldFetch = globalThis.fetch;
 try {
   const jobsDir = join(root, 'jobs');
   const issueProposalsDir = join(root, 'issue-proposals');
   const memoriesDir = join(root, 'memories');
   const localCliConfigPath = join(root, 'local-cli-tools.json');
-  const fakeGhScript = join(root, 'fake-gh.js');
   const fakeIssueCreateScript = join(root, 'fake-gh-issue-create.js');
   const fakePrCreateScript = join(root, 'fake-gh-pr-create.js');
   (appConfig as any).jobsDir = jobsDir;
   (appConfig as any).issueProposalsDir = issueProposalsDir;
-  (appConfig as any).githubIssueGhCommand = fakeGhScript;
   (appConfig as any).githubIssueTimeoutMs = 5000;
+  (appConfig as any).githubIssueApiBaseUrl = 'https://api.test.github.local';
+  (appConfig as any).githubIssueToken = 'test-token';
+  globalThis.fetch = (async () => new Response(
+    JSON.stringify({ html_url: 'https://github.com/IS908/codex-lark-plugin/issues/654' }),
+    { status: 201, headers: { 'content-type': 'application/json' } },
+  )) as typeof fetch;
   await mkdir(jobsDir, { recursive: true });
-  writeFileSync(
-    fakeGhScript,
-    [
-      '#!/usr/bin/env node',
-      'const args = process.argv.slice(2);',
-      'if (args[0] !== "issue" || args[1] !== "create") process.exit(2);',
-      'if (!args.includes("--repo")) process.exit(3);',
-      'if (!args.includes("--title")) process.exit(4);',
-      'if (!args.includes("--body")) process.exit(5);',
-      'console.log("https://github.com/IS908/codex-lark-plugin/issues/654");',
-    ].join('\n'),
-    'utf-8',
-  );
-  chmodSync(fakeGhScript, 0o755);
   writeFileSync(
     fakeIssueCreateScript,
     [
@@ -89,7 +81,7 @@ try {
           timeoutMs: 5000,
           maxOutputBytes: 1024,
         },
-        gh_issue_create: {
+        external_issue_create: {
           command: process.execPath,
           fixedArgs: [fakeIssueCreateScript],
           paramAllowlist: ['--repo', '--title', '--body'],
@@ -218,6 +210,29 @@ try {
     ['create_issue_proposal', 'list_issue_proposals'],
   );
 
+  const directIssueParsed = parseCodexExecActionOutput([
+    '<LARK_ACTIONS_JSON>',
+    JSON.stringify({
+      version: 1,
+      actions: [
+        {
+          type: 'create_issue',
+          title: 'Direct issue filing should not need a second approval',
+          body: 'The user explicitly asked to file this GitHub issue.',
+          evidence: ['explicit user request'],
+          priority: 'P1',
+          automation_level: 'discovery-only',
+          target_repo: 'IS908/codex-lark-plugin',
+          target_chat_id: 'oc_exec',
+          tool: 'gh',
+        },
+      ],
+    }),
+    '</LARK_ACTIONS_JSON>',
+  ].join('\n'));
+  assert.equal(directIssueParsed.kind, 'invalid_actions');
+  assert.match(directIssueParsed.error, /create_issue|Invalid discriminator/i);
+
   const unsupportedIssueParsed = parseCodexExecActionOutput([
     '<LARK_ACTIONS_JSON>',
     JSON.stringify({
@@ -341,6 +356,47 @@ try {
   const createdProposal = await readIssueProposal(proposalId);
   assert.equal(createdProposal?.meta.status, 'created');
   assert.equal(createdProposal?.meta.github_issue_number, 654);
+
+  const explicitToolProposalResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_raw_tool_proposal',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'create raw tool proposal',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [
+      {
+        type: 'create_issue_proposal',
+        title: 'Raw executable names are not tool aliases',
+        body: 'Explicit tool overrides must reference local-cli-tools.json names.',
+        target_repo: 'IS908/codex-lark-plugin',
+        target_chat_id: 'oc_exec',
+      },
+    ],
+  });
+  assert.equal(explicitToolProposalResults[0].ok, true, JSON.stringify(explicitToolProposalResults));
+  const explicitToolProposalId = explicitToolProposalResults[0].message.match(/proposal-[a-zA-Z0-9-]+/)?.[0];
+  assert.ok(explicitToolProposalId, explicitToolProposalResults[0].message);
+  const explicitToolResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_raw_tool_issue',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'approve with raw tool name',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'create_issue_from_proposal', id: explicitToolProposalId, tool: 'gh' }],
+  });
+  assert.equal(explicitToolResults.length, 1);
+  assert.equal(explicitToolResults[0].ok, false, JSON.stringify(explicitToolResults));
+  assert.match(explicitToolResults[0].message, /Local CLI tool "gh" is not configured/);
 
   const lowRiskProposalResults = await dispatcher.execute({
     message: {
@@ -584,8 +640,10 @@ try {
 } finally {
   (appConfig as any).jobsDir = oldJobsDir;
   (appConfig as any).issueProposalsDir = oldIssueProposalsDir;
-  (appConfig as any).githubIssueGhCommand = oldGithubIssueGhCommand;
   (appConfig as any).githubIssueTimeoutMs = oldGithubIssueTimeoutMs;
+  (appConfig as any).githubIssueApiBaseUrl = oldGithubIssueApiBaseUrl;
+  (appConfig as any).githubIssueToken = oldGithubIssueToken;
+  globalThis.fetch = oldFetch;
   rmSync(root, { recursive: true, force: true });
 }
 

@@ -24,9 +24,7 @@ const code = `
     quotedCardUserFetchCommand: appConfig.quotedCardUserFetchCommand,
     quotedCardUserFetchTimeoutMs: appConfig.quotedCardUserFetchTimeoutMs,
     quotedCardUserFetchMaxBytes: appConfig.quotedCardUserFetchMaxBytes,
-    githubIssueGhCommand: appConfig.githubIssueGhCommand,
     githubIssueTimeoutMs: appConfig.githubIssueTimeoutMs,
-    githubIssueMaxOutputBytes: appConfig.githubIssueMaxOutputBytes,
     githubIssueApiBaseUrl: appConfig.githubIssueApiBaseUrl,
     githubIssueToken: appConfig.githubIssueToken,
     hasGithubIssueActionConfig: Object.prototype.hasOwnProperty.call(appConfig, 'githubIssueActionEnabled'),
@@ -77,7 +75,6 @@ expectFail({ LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: '-1' }, /LARK_COD
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS: '0' }, /LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS.*positive/i);
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES: '0' }, /LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES.*positive/i);
 expectFail({ LARK_GITHUB_ISSUE_TIMEOUT_MS: '0' }, /LARK_GITHUB_ISSUE_TIMEOUT_MS.*positive/i);
-expectFail({ LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES: '0' }, /LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES.*positive/i);
 
 const zeroAllowed = expectOk({
   LARK_MEMORY_DEDUP_WINDOW_MS: '0',
@@ -100,9 +97,7 @@ assert.equal(defaultPaths.quotedCardUserFetchEnabled, true);
 assert.equal(defaultPaths.quotedCardUserFetchCommand, 'lark-cli');
 assert.equal(defaultPaths.quotedCardUserFetchTimeoutMs, 10_000);
 assert.equal(defaultPaths.quotedCardUserFetchMaxBytes, 256 * 1024);
-assert.equal(defaultPaths.githubIssueGhCommand, 'gh');
 assert.equal(defaultPaths.githubIssueTimeoutMs, 30_000);
-assert.equal(defaultPaths.githubIssueMaxOutputBytes, 64 * 1024);
 assert.equal(defaultPaths.githubIssueApiBaseUrl, 'https://api.github.com');
 assert.equal(defaultPaths.githubIssueToken, null);
 assert.equal(defaultPaths.hasGithubIssueActionConfig, false);
@@ -126,15 +121,11 @@ assert.equal(customUserFetch.quotedCardUserFetchTimeoutMs, 2500);
 assert.equal(customUserFetch.quotedCardUserFetchMaxBytes, 1024);
 
 const customGithubIssue = expectOk({
-  LARK_GITHUB_ISSUE_GH_COMMAND: '/opt/homebrew/bin/gh',
   LARK_GITHUB_ISSUE_TIMEOUT_MS: '2500',
-  LARK_GITHUB_ISSUE_MAX_OUTPUT_BYTES: '2048',
   LARK_GITHUB_API_BASE_URL: 'https://github.example.test/api/v3',
   LARK_GITHUB_TOKEN: 'token-from-lark',
 });
-assert.equal(customGithubIssue.githubIssueGhCommand, '/opt/homebrew/bin/gh');
 assert.equal(customGithubIssue.githubIssueTimeoutMs, 2500);
-assert.equal(customGithubIssue.githubIssueMaxOutputBytes, 2048);
 assert.equal(customGithubIssue.githubIssueApiBaseUrl, 'https://github.example.test/api/v3');
 assert.equal(customGithubIssue.githubIssueToken, 'token-from-lark');
 

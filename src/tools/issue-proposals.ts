@@ -67,7 +67,7 @@ async function createIssueViaLocalCli(
   threadId: string | undefined,
   tool: string | undefined,
 ): Promise<ToolResult> {
-  const auditArgs = { id: proposal.meta.id, tool: tool ?? 'builtin-gh-http', chat_id: chatId, thread_id: threadId };
+  const auditArgs = { id: proposal.meta.id, tool: tool ?? '<builtin>', chat_id: chatId, thread_id: threadId };
 
   if (proposal.meta.status === 'created' && proposal.meta.github_issue_url) {
     return textResult(`Issue already created for proposal ${proposal.meta.id}: ${proposal.meta.github_issue_url}`);
@@ -91,6 +91,7 @@ async function createIssueViaLocalCli(
 
   if (!result.ok) {
     await markIssueProposalApproved(proposal.meta.id, { approvedBy: caller, lastError: result.message });
+    void audit('create_issue_from_proposal', caller, auditArgs, 'error');
     return textResult(`Failed to create GitHub issue for proposal "${proposal.meta.id}": ${result.message}`, true);
   }
 
@@ -277,10 +278,10 @@ export function registerIssueProposalTools(ctx: ToolContext): void {
     'create_issue_from_proposal',
     {
       description:
-        'Create a GitHub issue from a previously stored proposal after explicit maintainer authorization. Defaults to built-in gh issue create with HTTP API fallback; tool is an advanced local CLI override.',
+        'Create a GitHub issue from a previously stored proposal after explicit maintainer authorization. Omit tool to use the built-in proposal filing path; tool, when provided, must be a configured local-cli-tools.json tool name rather than a raw executable name.',
       inputSchema: z.object({
         id: z.string().describe('Issue proposal id'),
-        tool: z.string().optional().describe('Advanced configured local CLI tool override'),
+        tool: z.string().optional().describe('Configured local-cli-tools.json tool name override. Omit for the built-in proposal filing path.'),
         chat_id: z.string().describe('Current channel chat_id for server-side caller resolution'),
         thread_id: z.string().optional().describe('Current channel thread_id when present'),
       }),
