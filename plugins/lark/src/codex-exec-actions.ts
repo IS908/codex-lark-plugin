@@ -35,6 +35,10 @@ import { selectQuotedMessageId } from './quoted-context-loader.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
 import { createDefaultReviewJobs } from './default-review-jobs.js';
 import {
+  createDirectGithubIssue,
+  type GithubIssueLocalCliRunner,
+} from './github-issue-service.js';
+import {
   createIssueFromProposal,
   createIssueProposal,
   createLowRiskPullRequestFromProposal,
@@ -176,6 +180,14 @@ const IssueProposalPrioritySchema = z.enum(['P0', 'P1', 'P2', 'P3']);
 const IssueProposalAutomationLevelSchema = z.enum(['discovery-only', 'low-risk-auto-pr-eligible']);
 const IssueProposalStatusSchema = z.enum(['pending', 'approved', 'created', 'rejected', 'all']);
 
+const CreateGithubIssueActionSchema = z.object({
+  type: z.literal('create_github_issue'),
+  title: z.string().min(1),
+  body: z.string().min(1),
+  target_repo: z.string().min(1),
+  tool: z.string().min(1).optional(),
+});
+
 const CreateIssueProposalActionSchema = z.object({
   type: z.literal('create_issue_proposal'),
   title: z.string().min(1),
@@ -227,6 +239,7 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
   CreateDefaultReviewJobsActionSchema,
   RunLocalCliToolActionSchema,
   SendMessageActionSchema,
+  CreateGithubIssueActionSchema,
   CreateIssueProposalActionSchema,
   ListIssueProposalsActionSchema,
   RejectIssueProposalActionSchema,
@@ -794,6 +807,49 @@ function createIssueProposalLocalCliRunner(
     });
 }
 
+function createGithubIssueLocalCliRunner(
+  deps: CreateCodexExecActionDispatcherOptions,
+  message: LarkMessage,
+): GithubIssueLocalCliRunner {
+  return (tool, args) =>
+    runConfiguredLocalCliTool({
+      identitySession: deps.identitySession,
+      tool,
+      args,
+      chat_id: message.chatId,
+      thread_id: message.threadId,
+      configPath: deps.localCliToolsConfigPath,
+    });
+}
+
+async function executeCreateGithubIssue(
+  action: z.infer<typeof CreateGithubIssueActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'create_github_issue');
+  const tool = action.tool;
+  const auditArgs = {
+    title: action.title,
+    target_repo: action.target_repo,
+    tool: tool ?? '<builtin>',
+    chat_id: message.chatId,
+    thread_id: message.threadId,
+  };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+  const result = await createDirectGithubIssue({
+    title: action.title,
+    body: action.body,
+    targetRepo: action.target_repo,
+    caller,
+    tool,
+    runLocalCli: createGithubIssueLocalCliRunner(deps, message),
+    auditArgs,
+  });
+  return { ok: result.ok, action: 'create_github_issue', message: result.message };
+}
+
 async function executeCreateIssueProposal(
   action: z.infer<typeof CreateIssueProposalActionSchema>,
   message: LarkMessage,
@@ -1287,6 +1343,8 @@ export function createCodexExecActionDispatcher(
           results.push(await executeUpsertJob(action, request.message, deps));
         } else if (action.type === 'create_default_review_jobs') {
           results.push(await executeCreateDefaultReviewJobs(action, request.message, deps));
+        } else if (action.type === 'create_github_issue') {
+          results.push(await executeCreateGithubIssue(action, request.message, deps));
         } else if (action.type === 'create_issue_proposal') {
           results.push(await executeCreateIssueProposal(action, request.message, deps));
         } else if (action.type === 'list_issue_proposals') {

@@ -52,6 +52,7 @@ const oldGithubIssueApiBaseUrl = (appConfig as any).githubIssueApiBaseUrl;
 const oldGithubIssueToken = (appConfig as any).githubIssueToken;
 const oldInboxDir = (appConfig as any).inboxDir;
 const oldFetch = globalThis.fetch;
+const githubHttpCalls: Array<{ url: string; body: string }> = [];
 try {
   const jobsDir = join(root, 'jobs');
   const issueProposalsDir = join(root, 'issue-proposals');
@@ -66,10 +67,13 @@ try {
   (appConfig as any).githubIssueApiBaseUrl = 'https://api.test.github.local';
   (appConfig as any).githubIssueToken = 'test-token';
   (appConfig as any).inboxDir = inboxDir;
-  globalThis.fetch = (async () => new Response(
-    JSON.stringify({ html_url: 'https://github.com/IS908/codex-lark-plugin/issues/654' }),
-    { status: 201, headers: { 'content-type': 'application/json' } },
-  )) as typeof fetch;
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    githubHttpCalls.push({ url: String(url), body: String(init?.body ?? '') });
+    return new Response(
+      JSON.stringify({ html_url: 'https://github.com/IS908/codex-lark-plugin/issues/654' }),
+      { status: 201, headers: { 'content-type': 'application/json' } },
+    );
+  }) as typeof fetch;
   await mkdir(jobsDir, { recursive: true });
   await mkdir(inboxDir, { recursive: true });
   writeFileSync(
@@ -219,6 +223,21 @@ try {
     ['create_issue_proposal', 'list_issue_proposals'],
   );
 
+  const createGithubIssueParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [
+      {
+        type: 'create_github_issue',
+        title: 'Direct issue filing should not need a proposal',
+        body: 'The user explicitly asked to file this GitHub issue.',
+        target_repo: 'IS908/codex-lark-plugin',
+      },
+    ],
+  });
+  assert.equal(createGithubIssueParsed.kind, 'actions');
+  if (createGithubIssueParsed.kind !== 'actions') throw new Error('createGithubIssueParsed should be actions');
+  assert.equal(createGithubIssueParsed.actions[0].type, 'create_github_issue');
+
   const directIssueParsed = parseActionEnvelopeForTest({
     version: 1,
     actions: [
@@ -250,7 +269,7 @@ try {
     ],
   });
   assert.equal(unsupportedIssueParsed.kind, 'invalid_actions');
-  assert.match(unsupportedIssueParsed.error, /create_github_issue|Invalid discriminator/i);
+  assert.match(unsupportedIssueParsed.error, /target_repo/i);
 
   const createPrParsed = parseActionEnvelopeForTest({
     version: 1,
@@ -595,6 +614,27 @@ try {
   });
   assert.equal(missingQuotedImageActionResults[0].ok, false);
   assert.match(missingQuotedImageActionResults[0].message, /no downloadable image/i);
+
+  const directGithubIssueResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_direct_github_issue',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'create a GitHub issue now',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: createGithubIssueParsed.actions,
+  });
+  assert.equal(directGithubIssueResults.length, 1);
+  assert.equal(directGithubIssueResults[0].ok, true, JSON.stringify(directGithubIssueResults));
+  assert.equal(directGithubIssueResults[0].action, 'create_github_issue');
+  assert.match(directGithubIssueResults[0].message, /https:\/\/github\.com\/IS908\/codex-lark-plugin\/issues\/654/);
+  const directGithubIssueBody = JSON.parse(githubHttpCalls[githubHttpCalls.length - 1].body);
+  assert.equal(directGithubIssueBody.title, 'Direct issue filing should not need a proposal');
+  assert.equal(directGithubIssueBody.body, 'The user explicitly asked to file this GitHub issue.');
 
   const proposalResults = await dispatcher.execute({
     message: {

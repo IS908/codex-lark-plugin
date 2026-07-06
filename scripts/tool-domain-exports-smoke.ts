@@ -8,6 +8,7 @@ const replyTools = await import('../src/tools/reply.js');
 const mutationTools = await import('../src/tools/message-mutation.js');
 const memoryTools = await import('../src/tools/memory.js');
 const jobTools = await import('../src/tools/jobs.js');
+const githubIssueTools = await import('../src/tools/github-issues.js');
 
 const expectedExports = [
   ['registerReplyTools', replyTools.registerReplyTools],
@@ -15,6 +16,7 @@ const expectedExports = [
   ['registerMessageMutationTools', mutationTools.registerMessageMutationTools],
   ['registerMemoryTools', memoryTools.registerMemoryTools],
   ['registerJobTools', jobTools.registerJobTools],
+  ['registerGithubIssueTools', githubIssueTools.registerGithubIssueTools],
 ] as const;
 
 for (const [name, fn] of expectedExports) {

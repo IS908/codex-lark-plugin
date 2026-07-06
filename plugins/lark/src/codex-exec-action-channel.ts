@@ -311,6 +311,7 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     '  - {"type":"disable_job","job_id":"..."} or {"type":"delete_job","job_id":"..."}',
     '  - {"type":"upsert_job","name":"...","job_type":"prompt|message","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","target_chat_id":"...","model":"...","status":"active|paused"}',
     '  - {"type":"create_default_review_jobs","target_repo":"owner/repo or path","target_chat_id":"...","timezone":"IANA timezone"}',
+    '  - {"type":"create_github_issue","title":"...","body":"...","target_repo":"owner/repo","tool":"optional configured local CLI tool"}',
     '  - {"type":"create_issue_proposal","title":"...","body":"...","evidence":["..."],"impact":"...","priority":"P0|P1|P2|P3","automation_level":"discovery-only|low-risk-auto-pr-eligible","target_repo":"owner/repo or path","target_chat_id":"..."}',
     '  - {"type":"list_issue_proposals","status":"pending|approved|created|rejected|all"}',
     '  - {"type":"reject_issue_proposal","id":"...","reason":"..."}',

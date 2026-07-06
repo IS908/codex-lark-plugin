@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-07
+
+### Added
+- Added direct `create_github_issue` MCP and codex exec actions for explicitly authorized GitHub issue filing, keeping proposal approval as a separate periodic-review policy path.
+
 ## [1.14.0] - 2026-07-06
 
 ### Added

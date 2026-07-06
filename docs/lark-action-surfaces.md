@@ -19,6 +19,7 @@ parent-process bridge for actions that must run safely even when the child
 | Save memory | `save_memory` | `save_memory` | partial; both use server-derived caller identity and `MemoryStore` |
 | Job lifecycle | `create_job`, `list_jobs`, `update_job`, `delete_job` | `create_job`, `list_jobs`, `update_job`, `disable_job`, `delete_job`, `upsert_job` | yes; both surfaces delegate job visibility, reference resolution, owner checks, schedule parsing, create/update/delete persistence, and runtime initialization to `job-service` |
 | Create default review jobs | `create_default_review_jobs` | `create_default_review_jobs` | yes; both create paused job presets through `default-review-jobs` |
+| Direct GitHub issue creation | `create_github_issue` | `create_github_issue` | yes; both surfaces delegate explicit user-authorized GitHub issue filing to `github-issue-service` |
 | Issue proposal lifecycle | `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`, `create_issue_from_proposal`, `create_low_risk_pr_from_proposal` | same action names | yes; both surfaces delegate proposal creation, visibility, mutation authorization, GitHub issue filing, and low-risk PR creation to `issue-proposal-service` |
 | Run local CLI tool | `run_local_cli_tool` | `run_local_cli_tool` | yes; both call `runConfiguredLocalCliTool` |
 | Image/file/rich media reply | `reply(files=[...])`; internal `richParts` | `send_message` (`image`/`file`/`rich`) | partial; both flow through `sendFeishuReply`; exec supports `local_path`, `current_message:first_image`, `quoted_message:first_image`, and ordered text+image rich parts |
@@ -36,15 +37,19 @@ parent-process bridge for actions that must run safely even when the child
 - Message mutations that target prior bot messages must validate that the
   target message id is tracked by `BotMessageTracker` and belongs to the current
   chat/thread before calling Lark transport APIs.
-- Domain-specific external write actions should not be added directly to the
-  core exec action schema. Use `run_local_cli_tool` for explicitly configured
-  host-local workflows, with allowlists, fixed arguments, timeouts, output caps,
-  and audit logging owned by the local tool config.
+- Generic GitHub issue creation is exposed as `create_github_issue` for
+  explicit user-authorized filing. It uses the built-in token-backed GitHub HTTP
+  path by default and only uses an allowlisted local CLI tool such as
+  `external_issue_create` when explicitly requested as an override.
+- Other domain-specific external write actions should not be added directly to
+  the core exec action schema. Use `run_local_cli_tool` for explicitly
+  configured host-local workflows, with allowlists, fixed arguments, timeouts,
+  output caps, and audit logging owned by the local tool config.
 - Issue proposal actions are the narrow exception for periodic review UX: they
   persist local proposal state and require explicit human approval before the
-  final GitHub write. Issue creation uses the built-in token-backed GitHub HTTP
-  proposal filing path by default, and only uses an allowlisted local CLI tool
-  such as `external_issue_create` when explicitly requested as an override.
+  final GitHub write. Proposal filing uses the same built-in token-backed
+  GitHub HTTP path by default, and only uses an allowlisted local CLI tool such
+  as `external_issue_create` when explicitly requested as an override.
   Low-risk PR creation is only allowed after the
   proposal is marked `low-risk-auto-pr-eligible` and its GitHub issue exists,
   then goes through a separate allowlisted wrapper such as
