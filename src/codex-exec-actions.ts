@@ -12,6 +12,7 @@ import type { MemoryStore } from './memory/file.js';
 import { assertSafeChatId } from './prompts.js';
 import {
   computeNextRun,
+  createInitialJobRuntime,
   deleteJob as deleteJobFile,
   expandSchedule,
   formatCronDateTime,
@@ -615,12 +616,7 @@ async function executeCreateJob(
       created_by: caller,
       created_at: new Date().toISOString(),
     },
-    runtime: {
-      last_run_at: null,
-      next_run_at: nextRunAt,
-      run_count: 0,
-      last_error: null,
-    },
+    runtime: createInitialJobRuntime(nextRunAt),
   };
 
   await writeJob(job);
@@ -934,12 +930,7 @@ async function executeUpsertJob(
       created_by: caller,
       created_at: new Date().toISOString(),
     },
-    runtime: {
-      last_run_at: null,
-      next_run_at: nextRunAt,
-      run_count: 0,
-      last_error: null,
-    },
+    runtime: createInitialJobRuntime(nextRunAt),
   };
 
   await writeJob(job);

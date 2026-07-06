@@ -17,7 +17,7 @@ parent-process bridge for actions that must run safely even when the child
 | Plain Feishu reply | `reply` | ordinary exec text output | no; exec replies flow through `deliverMessageViaCodexExec` |
 | Defer/no visible reply | `defer_reply` | `[LARK_DEFER]` / `[LARK_NO_REPLY]` sentinel | no; exec uses output parsing |
 | Save memory | `save_memory` | `save_memory` | partial; both use server-derived caller identity and `MemoryStore` |
-| Create job | `create_job` | `create_job` | partial; both use server-derived caller identity and `job-store` |
+| Create job | `create_job` | `create_job` | partial; both use server-derived caller identity, `job-store`, and the shared initial runtime schema |
 | Create default review jobs | `create_default_review_jobs` | `create_default_review_jobs` | yes; both create paused job presets through `default-review-jobs` |
 | Issue proposal lifecycle | `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`, `create_issue_from_proposal`, `create_low_risk_pr_from_proposal` | same action names | partial; both use `issue-proposal-store`; proposal filing uses the built-in proposal filing path unless a configured local CLI tool override is explicitly provided, while low-risk PR creation still goes through `runConfiguredLocalCliTool` |
 | Run local CLI tool | `run_local_cli_tool` | `run_local_cli_tool` | yes; both call `runConfiguredLocalCliTool` |

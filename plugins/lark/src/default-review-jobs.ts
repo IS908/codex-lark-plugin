@@ -1,5 +1,6 @@
 import {
   computeNextRun,
+  createInitialJobRuntime,
   expandSchedule,
   jobExists,
   normalizeJobTimezone,
@@ -50,6 +51,7 @@ function buildJob(input: CreateDefaultReviewJobsInput, spec: {
   prompt: string;
 }, timezone: string, now: Date): JobFile {
   const expanded = expandSchedule(spec.schedule, timezone);
+  const nextRunAt = computeNextRun(expanded.cron, timezone);
   return {
     meta: {
       id: spec.id,
@@ -65,19 +67,7 @@ function buildJob(input: CreateDefaultReviewJobsInput, spec: {
       created_by: input.createdBy,
       created_at: now.toISOString(),
     },
-    runtime: {
-      last_run_at: null,
-      next_run_at: computeNextRun(expanded.cron, timezone),
-      run_count: 0,
-      last_error: null,
-      run_id: null,
-      run_status: null,
-      output_status: null,
-      delivery_status: null,
-      report: null,
-      report_type: null,
-      delivery_error: null,
-    },
+    runtime: createInitialJobRuntime(nextRunAt),
   };
 }
 

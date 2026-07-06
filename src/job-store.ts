@@ -63,6 +63,23 @@ export interface JobFile {
   runtime: JobRuntime;
 }
 
+export function createInitialJobRuntime(nextRunAt: string): JobRuntime {
+  return {
+    last_run_at: null,
+    next_run_at: nextRunAt,
+    run_count: 0,
+    last_error: null,
+    run_id: null,
+    run_status: null,
+    output_status: null,
+    delivery_status: null,
+    report: null,
+    report_type: null,
+    delivery_error: null,
+    diagnostics: null,
+  };
+}
+
 // ─── ID Sanitization ────────────────────────────────────────
 
 export function sanitizeJobId(input: string): string {
@@ -336,6 +353,18 @@ export function backfillJob(job: JobFile): JobFile {
 
   if (!job.meta.origin_chat_id) job.meta.origin_chat_id = job.meta.target_chat_id;
   if (!job.meta.timezone) job.meta.timezone = appConfig.cronTimezone;
+  job.runtime = {
+    ...createInitialJobRuntime(job.runtime.next_run_at),
+    ...job.runtime,
+    run_id: job.runtime.run_id ?? null,
+    run_status: job.runtime.run_status ?? null,
+    output_status: job.runtime.output_status ?? null,
+    delivery_status: job.runtime.delivery_status ?? null,
+    report: job.runtime.report ?? null,
+    report_type: job.runtime.report_type ?? null,
+    delivery_error: job.runtime.delivery_error ?? null,
+    diagnostics: job.runtime.diagnostics ?? null,
+  };
 
   // Legacy jobs may have empty created_by (the old create_job defaulted to '').
   // Without a valid owner, update_job / delete_job would permanently reject

@@ -7,6 +7,7 @@ import {
   sanitizeJobId,
   expandSchedule,
   computeNextRun,
+  createInitialJobRuntime,
   formatCronDateTime,
   jobTimezone,
   normalizeJobTimezone,
@@ -208,19 +209,7 @@ export function registerJobTools(ctx: ToolContext): void {
           created_by: caller,
           created_at: new Date().toISOString(),
         },
-        runtime: {
-          last_run_at: null,
-          next_run_at: nextRunAt,
-          run_count: 0,
-          last_error: null,
-          run_id: null,
-          run_status: null,
-          output_status: null,
-          delivery_status: null,
-          report: null,
-          report_type: null,
-          delivery_error: null,
-        },
+        runtime: createInitialJobRuntime(nextRunAt),
       };
 
       await writeJob(job);

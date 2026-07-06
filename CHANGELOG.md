@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-07-06
+
+### Fixed
+- Unified new cronjob runtime initialization across MCP `create_job`, exec `create_job` / `upsert_job`, and default review presets so all creation paths persist the same diagnostic runtime schema.
+
 ## [1.12.0] - 2026-07-06
 
 ### Changed
