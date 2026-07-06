@@ -123,6 +123,7 @@ function makeTools(client: any, ackReactions: AckReactionTracker) {
   const channel = new LarkChannel();
   let delivered = 0;
   try {
+    channel.setIdentitySession(new IdentitySession(() => null));
     channel.setMessageHandler(async () => {
       delivered++;
     });
@@ -139,16 +140,20 @@ function makeTools(client: any, ackReactions: AckReactionTracker) {
         },
       },
     };
+    channel.getLarkTransport();
 
-    await (channel as any).handleMessageEvent({
-      message: {
-        message_id: 'om_ack_create_fail',
-        chat_id: 'oc_ack_create_fail',
-        chat_type: 'p2p',
-        content: JSON.stringify({ text: 'hello' }),
-        message_type: 'text',
-      },
-      sender: { sender_id: { open_id: 'ou_ack_create_fail' } },
+    await channel.handleSdkMessageEvent({
+      messageId: 'om_ack_create_fail',
+      chatId: 'oc_ack_create_fail',
+      chatType: 'p2p',
+      senderId: 'ou_ack_create_fail',
+      content: 'hello',
+      rawContentType: 'text',
+      mentionedBot: false,
+      mentionAll: false,
+      mentions: [],
+      resources: [],
+      createTime: Date.now(),
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     await flushMicrotasks();

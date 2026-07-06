@@ -8,14 +8,16 @@ const migrationDoc = readFileSync(join(process.cwd(), 'docs/channel-sdk-node-mig
 for (const pattern of [
   /npm run smoke:sdk/,
   /npm start -- --dry-run/,
-  /default SDK runtime/i,
+  /SDK-backed channel/i,
   /Rollback/i,
-  /LARK_CHANNEL_RUNTIME=legacy/,
+  /LARK_CHANNEL_RUNTIME=legacy.*fails startup/is,
+  /LARK_CHANNEL_RUNTIME=sdk.*harmless/is,
+  /v1\.12\.3.*earlier/,
   /workspace/i,
   /marketplace clone/i,
   /runtime cache/i,
   /message.*comment.*reaction/is,
-  /remove the legacy path/i,
+  /package downgrade/i,
 ]) {
   assert.match(doc, pattern);
 }

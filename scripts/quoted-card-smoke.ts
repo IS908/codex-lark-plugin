@@ -7,6 +7,7 @@ process.env.LARK_ALLOWED_USER_IDS = '';
 process.env.LARK_ALLOWED_CHAT_IDS = '';
 
 const { LarkChannel } = await import('../src/channel.js');
+const { IdentitySession } = await import('../src/identity-session.js');
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 20; i++) {
@@ -14,6 +15,44 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   assert.equal(predicate(), true, 'timed out waiting for queued message handler');
+}
+
+function newTestChannel(): any {
+  const channel = new LarkChannel();
+  channel.setIdentitySession(new IdentitySession(() => null));
+  return channel;
+}
+
+async function handleSdkTextMessage(
+  channel: any,
+  message: {
+    messageId: string;
+    chatId: string;
+    chatType: 'p2p' | 'group';
+    senderId: string;
+    content: string;
+    threadId?: string;
+    rootId?: string;
+    replyToMessageId?: string;
+  },
+): Promise<void> {
+  channel.getLarkTransport();
+  await channel.handleSdkMessageEvent({
+    messageId: message.messageId,
+    chatId: message.chatId,
+    chatType: message.chatType,
+    senderId: message.senderId,
+    content: message.content,
+    rawContentType: 'text',
+    mentionedBot: false,
+    mentionAll: false,
+    mentions: [],
+    resources: [],
+    createTime: Date.now(),
+    ...(message.threadId ? { threadId: message.threadId } : {}),
+    ...(message.rootId ? { rootId: message.rootId } : {}),
+    ...(message.replyToMessageId ? { replyToMessageId: message.replyToMessageId } : {}),
+  });
 }
 
 const legacyCard = {
@@ -162,7 +201,7 @@ const legacyCard = {
 }
 
 {
-  const channel = new LarkChannel();
+  const channel = newTestChannel();
   let captured: any;
   channel.setMessageHandler(async (message: any) => {
     captured = message;
@@ -220,17 +259,14 @@ const legacyCard = {
     },
   };
 
-  await (channel as any).handleMessageEvent({
-    message: {
-      message_id: 'om_child_quote',
-      chat_id: 'oc_quote_card',
-      chat_type: 'p2p',
-      content: JSON.stringify({ text: 'what does this mean?' }),
-      message_type: 'text',
-      parent_id: 'om_parent_card',
-      root_id: 'omt_quote_card',
-    },
-    sender: { sender_id: { open_id: 'ou_quote_card' } },
+  await handleSdkTextMessage(channel, {
+    messageId: 'om_child_quote',
+    chatId: 'oc_quote_card',
+    chatType: 'p2p',
+    senderId: 'ou_quote_card',
+    content: 'what does this mean?',
+    replyToMessageId: 'om_parent_card',
+    rootId: 'omt_quote_card',
   });
 
   await waitFor(() => Boolean(captured));
@@ -243,7 +279,7 @@ const legacyCard = {
 }
 
 {
-  const channel = new LarkChannel();
+  const channel = newTestChannel();
   let captured: any;
   channel.setMessageHandler(async (message: any) => {
     captured = message;
@@ -288,16 +324,13 @@ const legacyCard = {
     },
   };
 
-  await (channel as any).handleMessageEvent({
-    message: {
-      message_id: 'om_root_child',
-      chat_id: 'oc_root_card',
-      chat_type: 'p2p',
-      content: JSON.stringify({ text: 'follow-up in thread' }),
-      message_type: 'text',
-      root_id: 'om_root_card',
-    },
-    sender: { sender_id: { open_id: 'ou_root_card' } },
+  await handleSdkTextMessage(channel, {
+    messageId: 'om_root_child',
+    chatId: 'oc_root_card',
+    chatType: 'p2p',
+    senderId: 'ou_root_card',
+    content: 'follow-up in thread',
+    rootId: 'om_root_card',
   });
 
   await waitFor(() => Boolean(captured));
@@ -307,7 +340,7 @@ const legacyCard = {
 }
 
 {
-  const channel = new LarkChannel();
+  const channel = newTestChannel();
   const captured: any[] = [];
   let mgetCalls = 0;
   channel.setMessageHandler(async (message: any) => {
@@ -383,17 +416,14 @@ const legacyCard = {
     },
   };
 
-  await (channel as any).handleMessageEvent({
-    message: {
-      message_id: 'om_thread_child_1',
-      chat_id: 'oc_mget_card',
-      chat_type: 'p2p',
-      content: JSON.stringify({ text: 'summarize root card' }),
-      message_type: 'text',
-      thread_id: 'omt_thread_card',
-      root_id: 'om_thread_root_card',
-    },
-    sender: { sender_id: { open_id: 'ou_mget_card' } },
+  await handleSdkTextMessage(channel, {
+    messageId: 'om_thread_child_1',
+    chatId: 'oc_mget_card',
+    chatType: 'p2p',
+    senderId: 'ou_mget_card',
+    content: 'summarize root card',
+    threadId: 'omt_thread_card',
+    rootId: 'om_thread_root_card',
   });
 
   await waitFor(() => captured.length === 1);
@@ -403,17 +433,14 @@ const legacyCard = {
   assert.match(captured[0].text, /Fetched card body with \*\*links hidden\*\*\./);
   assert.doesNotMatch(captured[0].text, /请升级至最新版本客户端/);
 
-  await (channel as any).handleMessageEvent({
-    message: {
-      message_id: 'om_thread_child_2',
-      chat_id: 'oc_mget_card',
-      chat_type: 'p2p',
-      content: JSON.stringify({ text: 'use cached root card' }),
-      message_type: 'text',
-      thread_id: 'omt_thread_card',
-      root_id: 'om_thread_root_card',
-    },
-    sender: { sender_id: { open_id: 'ou_mget_card' } },
+  await handleSdkTextMessage(channel, {
+    messageId: 'om_thread_child_2',
+    chatId: 'oc_mget_card',
+    chatType: 'p2p',
+    senderId: 'ou_mget_card',
+    content: 'use cached root card',
+    threadId: 'omt_thread_card',
+    rootId: 'om_thread_root_card',
   });
 
   await waitFor(() => captured.length === 2);

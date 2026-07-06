@@ -68,6 +68,18 @@ function optionalChoice<const T extends readonly string[]>(
   throw new Error(`Invalid ${key}: ${val}. Expected one of: ${choices.join(', ')}`);
 }
 
+function rejectRemovedChannelRuntime(): void {
+  const key = 'LARK_' + 'CHANNEL_RUNTIME';
+  const value = process.env[key]?.trim();
+  if (!value || value === 'sdk') return;
+  if (value === 'legacy') {
+    throw new Error(`${key}=legacy has been removed. The SDK channel runtime is always used; roll back by installing v1.12.3 or earlier.`);
+  }
+  throw new Error(`Invalid ${key}: ${value}. ${key} is no longer supported; leave it unset or use sdk.`);
+}
+
+rejectRemovedChannelRuntime();
+
 const codexExecTimeoutMs = optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000);
 const codexExecReplyBufferMs = 60_000;
 
@@ -95,11 +107,6 @@ export const appConfig = {
     'LARK_CODEX_DELIVERY_MODE',
     'exec',
     ['exec', 'notification'] as const,
-  ),
-  channelRuntime: optionalChoice(
-    'LARK_CHANNEL_RUNTIME',
-    'sdk',
-    ['legacy', 'sdk'] as const,
   ),
   codexExecCommand: optional('LARK_CODEX_EXEC_COMMAND', 'codex'),
   codexExecCwd: optional('LARK_CODEX_EXEC_CWD', defaultCodexExecCwd),

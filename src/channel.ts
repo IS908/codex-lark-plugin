@@ -28,13 +28,11 @@ import {
   MemoryContextDeduper,
 } from './memory-context-dedup.js';
 import {
-  legacyReactionRouteEvent,
   type ReactionRouteDecision,
   routeReactionEvent,
   sdkReactionRouteEvent,
 } from './reaction-router.js';
 import { DisplayNameResolver, generateUserAlias } from './display-name-resolver.js';
-import { normalizeLegacyMessageEvent } from './inbound-message-normalizer.js';
 import type { LarkCachedMessageContext } from './lark-message-context.js';
 import { enrichLarkMessageWithMemory } from './memory-enricher.js';
 import { handleCommentEvent } from './doc-comment-inbound.js';
@@ -46,8 +44,8 @@ export { handleCommentEvent, passesDocCommentWhitelist } from './doc-comment-inb
 /**
  * Build a Lark SDK logger that routes every level to stderr. The SDK's default
  * logger writes to stdout via `console.log`, which would corrupt MCP JSON-RPC
- * framing on the stdio transport. Every `new Lark.<Client|EventDispatcher|WSClient>(...)`
- * MUST be constructed with this logger — enforced statically by
+ * framing on the stdio transport. Every Lark Client construction MUST include
+ * this logger — enforced statically by
  * `scripts/check-sdk-loggers.ts`.
  *
  * Levels implemented: info / warn / error / debug / trace — the canonical
@@ -111,7 +109,7 @@ export interface LarkMessage {
     emojiType: string;
     operatorId: string;
     targetMessageId: string;
-    source: 'legacy' | 'sdk';
+    source: 'sdk';
     targetMessageType?: string;
     targetText?: string;
   };
@@ -231,7 +229,6 @@ export class LarkChannel {
   private displayNameResolver: DisplayNameResolver;
   private chatTypeCache = new BoundedCache<string, 'p2p' | 'group'>(appConfig.chatTypeCacheSize); // chatId → type (populated from inbound events)
   private botOpenId: string = '';
-  private wsClient: Lark.WSClient | null = null;
   private queue = new MessageQueue({ handlerTimeoutMs: appConfig.queueHandlerTimeoutMs });
   private messageHandler: MessageHandler | null = null;
   private memoryStore: MemoryStore | null = null;
@@ -351,66 +348,6 @@ export class LarkChannel {
     return this.queue.isIdle();
   }
 
-  async start(): Promise<void> {
-    // Fetch bot's own open_id for filtering group @mentions
-    await this.fetchBotOpenId();
-
-    debugLog('[channel] Registering event dispatcher...');
-    // EventDispatcher's default logger writes to stdout, which would corrupt
-    // MCP JSON-RPC framing the moment it logs "event-dispatch is ready".
-    // Redirect to stderr like Client and WSClient.
-    const eventDispatcher = new Lark.EventDispatcher({
-      loggerLevel: Lark.LoggerLevel.info,
-      logger: makeSdkLogger('lark-events'),
-    }).register({
-      'im.message.receive_v1': async (data: any) => {
-        debugLog(`[channel] Event received: im.message.receive_v1`);
-        try {
-          await this.handleMessageEvent(data);
-        } catch (err) {
-          logSafeError('[channel] Error handling message event:', err);
-        }
-      },
-    }).register({
-      'im.message.reaction.created_v1': async (data: any) => {
-        debugLog(`[channel] Event received: im.message.reaction.created_v1`);
-        try {
-          await this.handleReactionEvent(data);
-        } catch (err) {
-          logSafeError('[channel] Error handling reaction event:', err);
-        }
-      },
-    }).register({
-      'drive.notice.comment_add_v1': async (data: any) => {
-        debugLog(`[channel] Event received: drive.notice.comment_add_v1`);
-        try {
-          await handleCommentEvent(data, {
-            botOpenId: this.botOpenId,
-            seenEventIds: this.commentEventIdSeen,
-            identitySession: this.identitySession!,
-            queue: this.queue,
-            messageHandler: this.messageHandler,
-            processMessage: this.processEnqueuedMessage.bind(this),
-            resolveUserName: this.displayNameResolver.resolveUserName.bind(this.displayNameResolver),
-            client: this.client as any,
-          });
-        } catch (err) {
-          logSafeError('[channel] Error handling doc comment event:', err);
-        }
-      },
-    });
-
-    this.wsClient = new Lark.WSClient({
-      appId: appConfig.appId,
-      appSecret: appConfig.appSecret,
-      loggerLevel: Lark.LoggerLevel.info,
-      logger: makeSdkLogger('lark-ws'),
-    });
-
-    this.wsClient.start({ eventDispatcher });
-    debugLog('[channel] lark channel: connected to Feishu via WebSocket');
-  }
-
   async handleSdkMessageEvent(
     sdkMessage: NormalizedMessage,
     sdkChannel?: Pick<SdkLarkChannel, 'downloadResource' | 'fetchMessage' | 'addReaction'>,
@@ -468,7 +405,7 @@ export class LarkChannel {
       logPrefix: '[sdk-channel]',
     });
     if (decision.action === 'deliver') {
-      await this.enqueueReactionMessage(decision, 'sdk');
+      await this.enqueueReactionMessage(decision);
     }
   }
 
@@ -485,7 +422,6 @@ export class LarkChannel {
     sdkChannel?: Pick<SdkLarkChannel, 'downloadResource' | 'fetchMessage' | 'addReaction'>,
   ): Promise<void> {
     await prepareInboundTurn(message, this.inboundTurnDeps(), {
-      kind: 'sdk',
       resources: sdkMessage.resources,
       sdkChannel,
     });
@@ -517,27 +453,6 @@ export class LarkChannel {
     } catch {
       // Comment context is best-effort; keep the turn deliverable without it.
     }
-  }
-
-  private async handleMessageEvent(data: any): Promise<void> {
-    this.ensureOpenApiTransportCurrent();
-    const normalized = await normalizeLegacyMessageEvent(data, {
-      botOpenId: this.botOpenId,
-      passesWhitelist,
-      resolveUserName: this.displayNameResolver.resolveUserName.bind(this.displayNameResolver),
-      log: debugLog,
-    });
-    if (normalized.status === 'dropped') return;
-
-    const larkMessage: LarkMessage = normalized.message;
-    await prepareInboundTurn(larkMessage, this.inboundTurnDeps(), {
-      kind: 'legacy',
-      rawContent: larkMessage.rawContent,
-      messageType: larkMessage.messageType,
-      resolveChatName: this.displayNameResolver.resolveChatName.bind(this.displayNameResolver),
-    });
-
-    this.enqueueMessage(larkMessage);
   }
 
   private async processEnqueuedMessage(larkMessage: LarkMessage): Promise<void> {
@@ -590,32 +505,11 @@ export class LarkChannel {
     }
   }
 
-  /**
-   * Handle reaction events on bot messages.
-   *
-   * User reactions on tracked bot replies are normal interaction turns:
-   * Codex sees the emoji and target bot message, then decides whether to
-   * continue, retry, ask, reply, or return [LARK_NO_REPLY]. Bot self-reaction echoes and
-   * reactions on untracked messages remain filtered before they reach Codex.
-   */
-  private async handleReactionEvent(data: any): Promise<void> {
-    const decision = routeReactionEvent({
-      event: legacyReactionRouteEvent(data),
-      botMessageTracker: this.botMessageTracker,
-      passesWhitelist,
-      debugLog,
-      logPrefix: '[channel]',
-    });
-    if (decision.action === 'deliver') {
-      await this.enqueueReactionMessage(decision, 'legacy');
-    }
-  }
-
   private async enqueueReactionMessage(
     decision: Extract<ReactionRouteDecision, { action: 'deliver' }>,
-    source: 'legacy' | 'sdk',
   ): Promise<void> {
     const { event, trackedMessage } = decision;
+    const source = 'sdk';
     const chatId = trackedMessage.chatId;
     if (!chatId) return;
 

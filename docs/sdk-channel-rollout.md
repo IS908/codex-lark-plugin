@@ -1,9 +1,10 @@
-# SDK channel rollout and rollback
+# SDK channel runtime
 
 This document covers the SDK migration state for `codex-lark-plugin`.
-During internal testing, the default live runtime is the SDK-backed channel.
-The pre-SDK runtime remains available as `LARK_CHANNEL_RUNTIME=legacy` for
-rollback.
+The live runtime is the SDK-backed channel. The pre-SDK WebSocket runtime has
+been removed. A stale `LARK_CHANNEL_RUNTIME=sdk` value is ignored for upgrade
+compatibility; `LARK_CHANNEL_RUNTIME=legacy` fails startup so stale rollback
+configuration is visible instead of silently ignored.
 
 ## Verification commands
 
@@ -17,12 +18,6 @@ Run the default SDK dry-run:
 
 ```bash
 npm start -- --dry-run
-```
-
-Run the legacy rollback dry-run:
-
-```bash
-LARK_CHANNEL_RUNTIME=legacy npm start -- --dry-run
 ```
 
 Run the full project check before release:
@@ -46,13 +41,8 @@ The SDK smoke suite covers:
 
 ## Current rollout controls
 
-Use the default SDK runtime for internal testing:
-
-```bash
-LARK_CHANNEL_RUNTIME=sdk
-```
-
-or leave `LARK_CHANNEL_RUNTIME` unset.
+No runtime selector is exposed. Leave `LARK_CHANNEL_RUNTIME` unset; an old
+`LARK_CHANNEL_RUNTIME=sdk` line is harmless but no longer needed.
 
 The SDK runtime owns the live Lark channel connection and forwards SDK
 `message`, `comment`, and `reaction` events into the existing local processing
@@ -63,10 +53,10 @@ local CLI authorization, and reply-sending continue to be owned by this plugin.
 
 If an operator sees unexpected behavior after upgrading:
 
-1. Set `LARK_CHANNEL_RUNTIME=legacy`.
-2. Restart Codex so the plugin process reloads its environment.
-3. If the package itself must be rolled back, reinstall the previous plugin
-   release through the Codex plugin marketplace.
+1. Remove `LARK_CHANNEL_RUNTIME` from `~/.codex/channels/lark/.env` if present.
+2. Reinstall the previous plugin release through the Codex plugin marketplace,
+   or check out/install `v1.12.3` or earlier.
+3. Restart Codex so the plugin process reloads its code and environment.
 4. Re-run `npm start -- --dry-run` from the active plugin directory.
 
 Rollback does not require changing credentials, memory files, scheduled jobs,
@@ -83,9 +73,7 @@ During development and release, keep these three locations synchronized:
 After release installation, verify the runtime cache version selected by Codex
 matches the package and plugin manifest version.
 
-## Criteria to remove the legacy path
+## Legacy path removal
 
-Do not remove the legacy path until the SDK path has been the default for at
-least one stable release and no rollback-only issues remain open. Removal also
-requires updating operator docs, plugin manifests, marketplace/cache sync
-guidance, and release notes in the same PR.
+The legacy path was removed after the SDK path shipped as the default runtime.
+Future rollback should use package downgrade, not a hidden runtime flag.

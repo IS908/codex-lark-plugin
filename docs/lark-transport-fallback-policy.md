@@ -24,7 +24,7 @@ OpenAPI.
 Decision: partially migrate.
 
 Doc-comment receive already uses the SDK comment event path when
-`LARK_CHANNEL_RUNTIME=sdk`. Selected-text context fetch is also SDK-first:
+the plugin is running. Selected-text context fetch is also SDK-first:
 `LarkChannel.addSdkCommentContext()` calls `channel.comments.resolveTarget()`
 and `channel.comments.fetch()` on a best-effort basis, then preserves the local
 `doc:<file_token>` chat id and `thread_id === comment_id` identity binding.

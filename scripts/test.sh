@@ -71,11 +71,9 @@ node --import tsx scripts/stop-sh-smoke.ts
 
 echo ""
 echo "=== SDK constructors have stderr logger ==="
-# Dry-run cannot catch stdout pollution from SDK constructors that only run
-# inside channel.start() (e.g. EventDispatcher). Their default logger writes
-# to stdout and would corrupt MCP JSON-RPC framing. Enforce statically that
-# each `new Lark.<Client|EventDispatcher|WSClient>(` in src/channel.ts has a
-# `logger:` option within the parens of its arg block (depth-tracked scope).
+# Dry-run cannot catch every SDK construction path. The default SDK logger
+# writes to stdout and would corrupt MCP JSON-RPC framing, so statically check
+# that SDK constructors/factories include a `logger:` option.
 node --import tsx scripts/check-sdk-loggers.ts
 echo "PASS"
 
@@ -110,10 +108,6 @@ node --import tsx scripts/message-content-smoke.ts
 echo ""
 echo "=== Display name resolver unit checks ==="
 node --import tsx scripts/display-name-resolver-smoke.ts
-
-echo ""
-echo "=== Inbound message normalizer unit checks ==="
-node --import tsx scripts/inbound-message-normalizer-smoke.ts
 
 echo ""
 echo "=== Comment event unit checks ==="

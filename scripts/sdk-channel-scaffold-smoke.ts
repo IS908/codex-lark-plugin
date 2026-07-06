@@ -30,9 +30,4 @@ assert.equal(sdkDryRun.stdout, '');
 assert.match(sdkDryRun.stderr, /\[dry-run\] Channel runtime: sdk/);
 assert.match(sdkDryRun.stderr, /\[sdk-channel\] SDK scaffold validated/);
 
-const legacyDryRun = runStart({ LARK_CHANNEL_RUNTIME: 'legacy' });
-assert.equal(legacyDryRun.status, 0, legacyDryRun.stderr + legacyDryRun.stdout);
-assert.equal(legacyDryRun.stdout, '');
-assert.match(legacyDryRun.stderr, /\[dry-run\] Channel runtime: legacy/);
-
 console.log('sdk-channel-scaffold smoke: PASS');

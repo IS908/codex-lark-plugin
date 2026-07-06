@@ -35,13 +35,15 @@ channel.getBotMessageTracker().add('om_bot_reply_001', {
 });
 channel.getBotMessageTracker().add('om_bot_reply_denied', { chatId: 'oc_denied' });
 (channel as any).nameCache.set('ou_reactor_001', 'Kevin');
+channel.setBotOpenId('ou_bot');
 
 try {
-  await (channel as any).handleReactionEvent({
-    message_id: 'om_bot_reply_001',
-    reaction_type: { emoji_type: 'OK' },
-    operator_type: 'user',
-    user_id: { open_id: 'ou_reactor_001' },
+  await channel.handleSdkReactionEvent({
+    messageId: 'om_bot_reply_001',
+    emojiType: 'OK',
+    operator: { openId: 'ou_reactor_001' },
+    action: 'added',
+    actionTime: Date.now(),
   });
   await waitForHandled(1);
 
@@ -64,29 +66,32 @@ try {
     'allowed tracked chat should reach reaction delivery path',
   );
 
-  await (channel as any).handleReactionEvent({
-    message_id: 'om_bot_reply_denied',
-    reaction_type: { emoji_type: 'OK' },
-    operator_type: 'user',
-    user_id: { open_id: 'ou_reactor_001' },
+  await channel.handleSdkReactionEvent({
+    messageId: 'om_bot_reply_denied',
+    emojiType: 'OK',
+    operator: { openId: 'ou_reactor_001' },
+    action: 'added',
+    actionTime: Date.now(),
   });
   assert.ok(
     logs.some((line) => line.includes('Reaction from ou_reactor_001 rejected by whitelist')),
     'tracked chat metadata should be used for reaction whitelist checks',
   );
 
-  await (channel as any).handleReactionEvent({
-    message_id: 'om_bot_reply_001',
-    reaction_type: { emoji_type: 'MeMeMe' },
-    operator_type: 'app',
-    user_id: { open_id: 'ou_reactor_001' },
+  await channel.handleSdkReactionEvent({
+    messageId: 'om_bot_reply_001',
+    emojiType: 'MeMeMe',
+    operator: { openId: 'ou_bot' },
+    action: 'added',
+    actionTime: Date.now(),
   });
 
-  await (channel as any).handleReactionEvent({
-    message_id: 'om_untracked_user_message',
-    reaction_type: { emoji_type: 'OK' },
-    operator_type: 'user',
-    user_id: { open_id: 'ou_reactor_001' },
+  await channel.handleSdkReactionEvent({
+    messageId: 'om_untracked_user_message',
+    emojiType: 'OK',
+    operator: { openId: 'ou_reactor_001' },
+    action: 'added',
+    actionTime: Date.now(),
   });
 } finally {
   console.error = originalConsoleError;
