@@ -9,7 +9,6 @@ import { downloadInboundResource } from './inbound-attachment-downloader.js';
 import type { IdentitySession } from './identity-session.js';
 import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import type { MemoryStore } from './memory/file.js';
-import { assertSafeChatId } from './prompts.js';
 import {
   expandSchedule,
   formatCronDateTime,
@@ -33,19 +32,6 @@ import type { LarkTransport } from './lark-transport.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { selectQuotedMessageId } from './quoted-context-loader.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
-import { createDefaultReviewJobs } from './default-review-jobs.js';
-import {
-  createDirectGithubIssue,
-  type GithubIssueLocalCliRunner,
-} from './github-issue-service.js';
-import {
-  createIssueFromProposal,
-  createIssueProposal,
-  createLowRiskPullRequestFromProposal,
-  listVisibleIssueProposals,
-  rejectIssueProposal,
-  type IssueProposalLocalCliRunner,
-} from './issue-proposal-service.js';
 
 const SaveMemoryActionSchema = z.object({
   type: z.literal('save_memory'),
@@ -113,13 +99,6 @@ const UpsertJobActionSchema = z.object({
   status: z.enum(['active', 'paused']).optional(),
 });
 
-const CreateDefaultReviewJobsActionSchema = z.object({
-  type: z.literal('create_default_review_jobs'),
-  target_repo: z.string().min(1),
-  target_chat_id: z.string().min(1).optional(),
-  timezone: z.string().min(1).optional(),
-});
-
 const RunLocalCliToolActionSchema = z.object({
   type: z.literal('run_local_cli_tool'),
   tool: z.string().min(1),
@@ -176,53 +155,6 @@ const SendMessageActionSchema = z.object({
   reply_in_thread: z.boolean().optional(),
 });
 
-const IssueProposalPrioritySchema = z.enum(['P0', 'P1', 'P2', 'P3']);
-const IssueProposalAutomationLevelSchema = z.enum(['discovery-only', 'low-risk-auto-pr-eligible']);
-const IssueProposalStatusSchema = z.enum(['pending', 'approved', 'created', 'rejected', 'all']);
-
-const CreateGithubIssueActionSchema = z.object({
-  type: z.literal('create_github_issue'),
-  title: z.string().min(1),
-  body: z.string().min(1),
-  target_repo: z.string().min(1),
-  tool: z.string().min(1).optional(),
-});
-
-const CreateIssueProposalActionSchema = z.object({
-  type: z.literal('create_issue_proposal'),
-  title: z.string().min(1),
-  body: z.string().min(1),
-  evidence: z.array(z.string()).optional(),
-  impact: z.string().optional(),
-  priority: IssueProposalPrioritySchema.optional(),
-  automation_level: IssueProposalAutomationLevelSchema.optional(),
-  target_repo: z.string().min(1),
-  target_chat_id: z.string().min(1).optional(),
-});
-
-const ListIssueProposalsActionSchema = z.object({
-  type: z.literal('list_issue_proposals'),
-  status: IssueProposalStatusSchema.optional(),
-});
-
-const RejectIssueProposalActionSchema = z.object({
-  type: z.literal('reject_issue_proposal'),
-  id: z.string().min(1),
-  reason: z.string().optional(),
-});
-
-const CreateIssueFromProposalActionSchema = z.object({
-  type: z.literal('create_issue_from_proposal'),
-  id: z.string().min(1),
-  tool: z.string().min(1).optional(),
-});
-
-const CreateLowRiskPrFromProposalActionSchema = z.object({
-  type: z.literal('create_low_risk_pr_from_proposal'),
-  id: z.string().min(1),
-  tool: z.string().min(1).optional(),
-});
-
 const RecallMessageActionSchema = z.object({
   type: z.literal('recall_message'),
   message_id: z.string().min(1),
@@ -236,15 +168,8 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
   DisableJobActionSchema,
   DeleteJobActionSchema,
   UpsertJobActionSchema,
-  CreateDefaultReviewJobsActionSchema,
   RunLocalCliToolActionSchema,
   SendMessageActionSchema,
-  CreateGithubIssueActionSchema,
-  CreateIssueProposalActionSchema,
-  ListIssueProposalsActionSchema,
-  RejectIssueProposalActionSchema,
-  CreateIssueFromProposalActionSchema,
-  CreateLowRiskPrFromProposalActionSchema,
   RecallMessageActionSchema,
 ]).superRefine((action, ctx) => {
   if (
@@ -294,7 +219,7 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
         ? action.schedule
         : undefined;
   const timezone =
-    action.type === 'create_job' || action.type === 'upsert_job' || action.type === 'update_job' || action.type === 'create_default_review_jobs'
+    action.type === 'create_job' || action.type === 'upsert_job' || action.type === 'update_job'
       ? action.timezone
       : undefined;
   let normalizedTimezone: string | undefined;
@@ -743,237 +668,6 @@ async function executeRunLocalCliTool(
   return { ok: result.ok, action: 'run_local_cli_tool', message: result.message };
 }
 
-async function executeCreateDefaultReviewJobs(
-  action: z.infer<typeof CreateDefaultReviewJobsActionSchema>,
-  message: LarkMessage,
-  deps: CreateCodexExecActionDispatcherOptions,
-): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'create_default_review_jobs');
-  const targetChatId = action.target_chat_id ?? message.chatId;
-  const auditArgs = {
-    target_repo: action.target_repo,
-    target_chat_id: targetChatId,
-    timezone: action.timezone,
-    chat_id: message.chatId,
-    thread_id: message.threadId,
-  };
-  if ('error' in auth) return auth.error;
-  const { caller } = auth;
-  try {
-    assertSafeChatId(targetChatId);
-  } catch (err: any) {
-    return { ok: false, action: 'create_default_review_jobs', message: `Invalid target_chat_id: ${err?.message ?? targetChatId}` };
-  }
-  try {
-    const result = await createDefaultReviewJobs({
-      targetRepo: action.target_repo,
-      targetChatId,
-      originChatId: message.chatId,
-      createdBy: caller,
-      timezone: action.timezone,
-    });
-    void audit('create_default_review_jobs', caller, auditArgs, 'ok');
-    return {
-      ok: true,
-      action: 'create_default_review_jobs',
-      message: [
-        `Created default review jobs: ${result.created.length ? result.created.join(', ') : 'none'}.`,
-        result.skipped.length ? `Skipped existing jobs: ${result.skipped.join(', ')}.` : '',
-        'These jobs are disabled by default (status=paused). Resume them explicitly before they run.',
-      ].filter(Boolean).join('\n'),
-    };
-  } catch (err: any) {
-    void audit('create_default_review_jobs', caller, auditArgs, 'error');
-    return {
-      ok: false,
-      action: 'create_default_review_jobs',
-      message: `Failed to create default review jobs: ${err?.message ?? String(err)}`,
-    };
-  }
-}
-
-function createIssueProposalLocalCliRunner(
-  deps: CreateCodexExecActionDispatcherOptions,
-  message: LarkMessage,
-): IssueProposalLocalCliRunner {
-  return (tool, args) =>
-    runConfiguredLocalCliTool({
-      identitySession: deps.identitySession,
-      tool,
-      args,
-      chat_id: message.chatId,
-      thread_id: message.threadId,
-      configPath: deps.localCliToolsConfigPath,
-    });
-}
-
-function createGithubIssueLocalCliRunner(
-  deps: CreateCodexExecActionDispatcherOptions,
-  message: LarkMessage,
-): GithubIssueLocalCliRunner {
-  return (tool, args) =>
-    runConfiguredLocalCliTool({
-      identitySession: deps.identitySession,
-      tool,
-      args,
-      chat_id: message.chatId,
-      thread_id: message.threadId,
-      configPath: deps.localCliToolsConfigPath,
-    });
-}
-
-async function executeCreateGithubIssue(
-  action: z.infer<typeof CreateGithubIssueActionSchema>,
-  message: LarkMessage,
-  deps: CreateCodexExecActionDispatcherOptions,
-): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'create_github_issue');
-  const tool = action.tool;
-  const auditArgs = {
-    title: action.title,
-    target_repo: action.target_repo,
-    tool: tool ?? '<builtin>',
-    chat_id: message.chatId,
-    thread_id: message.threadId,
-  };
-  if ('error' in auth) return auth.error;
-  const { caller } = auth;
-  const result = await createDirectGithubIssue({
-    title: action.title,
-    body: action.body,
-    targetRepo: action.target_repo,
-    caller,
-    tool,
-    runLocalCli: createGithubIssueLocalCliRunner(deps, message),
-    auditArgs,
-  });
-  return { ok: result.ok, action: 'create_github_issue', message: result.message };
-}
-
-async function executeCreateIssueProposal(
-  action: z.infer<typeof CreateIssueProposalActionSchema>,
-  message: LarkMessage,
-  deps: CreateCodexExecActionDispatcherOptions,
-): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'create_issue_proposal');
-  const auditArgs = {
-    title: action.title,
-    priority: action.priority,
-    automation_level: action.automation_level,
-    target_repo: action.target_repo,
-    target_chat_id: action.target_chat_id,
-    chat_id: message.chatId,
-    thread_id: message.threadId,
-  };
-  if ('error' in auth) return auth.error;
-  const { caller } = auth;
-
-  const result = await createIssueProposal({
-    title: action.title,
-    body: action.body,
-    evidence: action.evidence,
-    impact: action.impact,
-    priority: action.priority,
-    automationLevel: action.automation_level,
-    targetRepo: action.target_repo,
-    targetChatId: action.target_chat_id ?? message.chatId,
-    originChatId: message.chatId,
-    caller,
-    auditArgs,
-  });
-  if (!result.ok) {
-    return { ok: false, action: 'create_issue_proposal', message: result.message };
-  }
-  return {
-    ok: true,
-    action: 'create_issue_proposal',
-    message: `Created issue proposal "${result.proposal.meta.id}". Wait for explicit maintainer approval before filing a GitHub issue.`,
-  };
-}
-
-async function executeListIssueProposals(
-  action: z.infer<typeof ListIssueProposalsActionSchema>,
-  message: LarkMessage,
-  deps: CreateCodexExecActionDispatcherOptions,
-): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'list_issue_proposals');
-  const status = action.status ?? 'pending';
-  const auditArgs = { status, chat_id: message.chatId, thread_id: message.threadId };
-  if ('error' in auth) return auth.error;
-  const { caller } = auth;
-  const result = await listVisibleIssueProposals({
-    caller,
-    chatId: message.chatId,
-    isPrivateChat: message.chatType === 'p2p',
-    status,
-    auditArgs,
-  });
-  if (!result.ok) return { ok: false, action: 'list_issue_proposals', message: result.message };
-  return {
-    ok: true,
-    action: 'list_issue_proposals',
-    message: result.message,
-  };
-}
-
-async function executeRejectIssueProposal(
-  action: z.infer<typeof RejectIssueProposalActionSchema>,
-  message: LarkMessage,
-  deps: CreateCodexExecActionDispatcherOptions,
-): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'reject_issue_proposal');
-  const auditArgs = { id: action.id, reason: action.reason, chat_id: message.chatId, thread_id: message.threadId };
-  if ('error' in auth) return auth.error;
-  const { caller } = auth;
-  const result = await rejectIssueProposal({
-    id: action.id,
-    reason: action.reason,
-    caller,
-    auditArgs,
-  });
-  return { ok: result.ok, action: 'reject_issue_proposal', message: result.message };
-}
-
-async function executeCreateIssueFromProposal(
-  action: z.infer<typeof CreateIssueFromProposalActionSchema>,
-  message: LarkMessage,
-  deps: CreateCodexExecActionDispatcherOptions,
-): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'create_issue_from_proposal');
-  const tool = action.tool;
-  const auditArgs = { id: action.id, tool: tool ?? '<builtin>', chat_id: message.chatId, thread_id: message.threadId };
-  if ('error' in auth) return auth.error;
-  const { caller } = auth;
-  const result = await createIssueFromProposal({
-    id: action.id,
-    caller,
-    tool,
-    runLocalCli: createIssueProposalLocalCliRunner(deps, message),
-    auditArgs,
-  });
-  return { ok: result.ok, action: 'create_issue_from_proposal', message: result.message };
-}
-
-async function executeCreateLowRiskPrFromProposal(
-  action: z.infer<typeof CreateLowRiskPrFromProposalActionSchema>,
-  message: LarkMessage,
-  deps: CreateCodexExecActionDispatcherOptions,
-): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'create_low_risk_pr_from_proposal');
-  const tool = action.tool ?? 'gh_low_risk_pr_create';
-  const auditArgs = { id: action.id, tool, chat_id: message.chatId, thread_id: message.threadId };
-  if ('error' in auth) return auth.error;
-  const { caller } = auth;
-  const result = await createLowRiskPullRequestFromProposal({
-    id: action.id,
-    caller,
-    tool,
-    runLocalCli: createIssueProposalLocalCliRunner(deps, message),
-    auditArgs,
-  });
-  return { ok: result.ok, action: 'create_low_risk_pr_from_proposal', message: result.message };
-}
-
 function resolveRecallTransport(
   transport: CreateCodexExecActionDispatcherOptions['larkTransport'],
 ): Pick<LarkTransport, 'recallMessage'> | undefined {
@@ -1341,20 +1035,6 @@ export function createCodexExecActionDispatcher(
           results.push(await executeDeleteJob(action, request.message, deps));
         } else if (action.type === 'upsert_job') {
           results.push(await executeUpsertJob(action, request.message, deps));
-        } else if (action.type === 'create_default_review_jobs') {
-          results.push(await executeCreateDefaultReviewJobs(action, request.message, deps));
-        } else if (action.type === 'create_github_issue') {
-          results.push(await executeCreateGithubIssue(action, request.message, deps));
-        } else if (action.type === 'create_issue_proposal') {
-          results.push(await executeCreateIssueProposal(action, request.message, deps));
-        } else if (action.type === 'list_issue_proposals') {
-          results.push(await executeListIssueProposals(action, request.message, deps));
-        } else if (action.type === 'reject_issue_proposal') {
-          results.push(await executeRejectIssueProposal(action, request.message, deps));
-        } else if (action.type === 'create_issue_from_proposal') {
-          results.push(await executeCreateIssueFromProposal(action, request.message, deps));
-        } else if (action.type === 'create_low_risk_pr_from_proposal') {
-          results.push(await executeCreateLowRiskPrFromProposal(action, request.message, deps));
         } else if (action.type === 'send_message') {
           results.push(await executeSendMessage(action, request.message, deps));
         } else if (action.type === 'recall_message') {

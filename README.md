@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.15.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.15.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -57,7 +57,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 ### Privacy & Security (v0.9.0+)
 
-- **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `create_github_issue`, `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`, `create_issue_from_proposal`, `create_low_risk_pr_from_proposal`, `run_local_cli_tool`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
+- **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `run_local_cli_tool`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
 - **Doc-comment binding**: doc-comment tools only run from `doc:<file_token>` turns, require the current `thread_id`, and reject prompt-injected `doc_token` mismatches so comments cannot be posted into a different document
 - **Memory transparency (v0.11.0+)**: `what_do_you_know` lists what the bot has stored about the caller (filtered by current-chat visibility); `forget_memory` removes a specific line by hash. Optional `promote_to_rule` feeds corrections into `privacy-rules.md` — a self-learning loop that makes future misclassifications less likely
 - **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/audit.log` records every sensitive-tool invocation as compact text lines (time / log id / `audit` / tool / outcome / caller / redacted args) so the operator can retrospectively inspect what was accessed on their machine
@@ -358,10 +358,8 @@ are removed on startup and by a best-effort hourly cleanup.
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:
 `save_memory`, `create_job`, `list_jobs`, `update_job`, `disable_job`,
-`delete_job`, `upsert_job`, `create_default_review_jobs`,
-`create_github_issue`, `create_issue_proposal`, `list_issue_proposals`, `reject_issue_proposal`,
-`create_issue_from_proposal`, `create_low_risk_pr_from_proposal`,
-`run_local_cli_tool`, `send_message`, and `recall_message`. The parent creates
+`delete_job`, `upsert_job`, `run_local_cli_tool`, `send_message`, and
+`recall_message`. The parent creates
 an owner-only action JSONL side channel for each `codex exec` turn and passes
 the child only a file path plus per-turn token. The child writes structured
 action requests there while stdout remains user-visible reply text only. The
@@ -379,30 +377,12 @@ text+image parts, preferring one Feishu post and falling back to ordered split
 messages when rich post delivery is unavailable. Audio/video and interactive
 cards remain separate follow-up design work.
 
-When a user explicitly authorizes filing a GitHub issue and the repo/title/body
-are clear, `create_github_issue` creates the issue directly through the built-in
-GitHub HTTP path or an optional configured local CLI tool override. Periodic
-review workflows should use issue proposals before writing to GitHub:
-`create_issue_proposal` stores a durable pending proposal under the local Lark
-channel home, the Feishu report asks the maintainer whether to file it, and
-`create_issue_from_proposal` may file it only after explicit human approval.
-Low-risk proposals whose GitHub issue already exists may then use
-`create_low_risk_pr_from_proposal` to call a trusted `gh_low_risk_pr_create`
-wrapper. Proposal filing uses the same built-in GitHub HTTP path by default;
-that path uses the configured GitHub token and HTTP API. Advanced
-operators can still pass a configured local CLI tool override such as
-`external_issue_create`. Raw executable names such as `gh` are not accepted as
-tool overrides. PR creation remains intentionally wrapper-based so local policy
-can enforce low-risk scope, verification, and no auto-merge/release.
-
-`create_default_review_jobs` creates two built-in prompt cronjobs:
-`plugin-self-review` and `plugin-low-risk-auto-fix`. Both are created with
-`status=paused`; `plugin-self-review` defaults to `weekly on fri at 17:00`,
-and `plugin-low-risk-auto-fix` defaults to `weekly on fri at 18:00`. They do
-not run until the user explicitly resumes them. The self-review preset creates
-issue proposals and reports to Feishu. The low-risk auto-fix preset is
-constrained to low-risk docs/tests/metadata work and must never merge PRs or
-create releases.
+External project-management writes are intentionally not built into the core
+Lark plugin. Creating GitHub/GitLab issues, Jira tickets, Linear issues, PRs,
+or project-governance review proposals should be modeled as user-configured
+skills, custom MCP tools, or allowlisted `run_local_cli_tool` workflows. The
+plugin provides the Lark channel, identity, cronjob, audit, and generic local
+tool boundary; provider-specific policy stays outside the plugin.
 
 Because exec delivery is a single-turn flow, the plugin also guards against
 misleading follow-up promises. A final answer must not claim that Codex will
@@ -460,14 +440,6 @@ Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
       "allowedCallers": "owners"
-    },
-    "gh_low_risk_pr_create": {
-      "command": "/Users/you/bin/create-low-risk-pr",
-      "fixedArgs": [],
-      "paramAllowlist": ["--repo", "--proposal-id", "--issue", "--title", "--body"],
-      "timeoutMs": 120000,
-      "maxOutputBytes": 65536,
-      "allowedCallers": "owners"
     }
   }
 }
@@ -479,16 +451,10 @@ one of `paramAllowlist` or `paramBlocklist`. Commands must be absolute paths.
 Environment keys in `envAllowlist` and `env` must use shell-compatible names
 such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 
-`create_github_issue` and `create_issue_from_proposal` default to the built-in
-GitHub HTTP filing path, which requires `LARK_GITHUB_TOKEN`, `GH_TOKEN`, or
-`GITHUB_TOKEN`. Passing the optional `tool` argument keeps the advanced local
-CLI override path; the value must name a configured `local-cli-tools.json` tool,
-not a raw executable name. Include `--repo`, `--title`, and `--body` in that
-tool's `paramAllowlist`.
-`create_low_risk_pr_from_proposal` defaults to `gh_low_risk_pr_create` and
-passes `--repo`, `--proposal-id`, `--issue`, `--title`, and `--body`. That local
-wrapper must enforce the low-risk file policy, run verification, create a PR
-whose title starts with `[auto-review]`, and must not merge or release.
+For external trackers, configure a local wrapper such as `external_issue_create`
+or expose a separate provider-specific skill/MCP server. The core plugin does
+not parse GitHub/GitLab/Jira/Linear semantics and does not provide built-in
+issue or PR creation tools.
 
 ### Optional -- Acknowledgement
 
@@ -583,9 +549,6 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 | `LARK_PRIVACY_RULES_FILE` | `~/.codex/channels/lark/privacy-rules.md` | Override the path to the L2 user rules file. The distiller injects this file's contents into its classification prompt. |
 | `LARK_AUDIT_LOG` | `~/.codex/channels/lark/audit.log` | Override the path to the append-only text-line audit log. Every sensitive-tool invocation is recorded (best-effort; log failures never propagate). (v0.11.0+) |
 | `LARK_LOCAL_CLI_TOOLS_CONFIG` | `~/.codex/channels/lark/local-cli-tools.json` | Allowlist config for `run_local_cli_tool` host-local CLI execution. (v1.1.0+) |
-| `LARK_GITHUB_ISSUE_TIMEOUT_MS` | `30000` | Timeout for built-in GitHub HTTP issue creation. |
-| `LARK_GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub API base URL for built-in GitHub issue creation. |
-| `LARK_GITHUB_TOKEN` | (empty) | Token for built-in GitHub HTTP issue creation. If unset, `GH_TOKEN` or `GITHUB_TOKEN` is used. |
 | `LARK_QUOTED_CARD_USER_FETCH_ENABLED` | `true` | When bot SDK/raw fetches cannot hydrate a quoted Interactive Card, try `lark-cli im +messages-mget --as user` as a best-effort user-identity fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_COMMAND` | `lark-cli` | Executable used for the quoted-card user fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS` | `10000` | Timeout for the quoted-card user fallback. |
@@ -704,16 +667,9 @@ The plugin registers the following MCP tools for Codex to use:
 | `save_memory` | Save a memory entry (profile / chat episode / thread episode) for cross-session recall. Profile writes target the resolved caller (server-derived, v0.9.0+) and go into the chosen `tier` (`public` or `private`, default `private`, v0.10.0+). Requires `chat_id`. |
 | `save_skill` | Save a reusable procedure as a globally searchable skill. Owner-only because skills are visible across users/chats; requires `chat_id` and optional `thread_id` for server-derived caller identity. |
 | `create_job` | Create a scheduled cronjob (message or prompt type). Creator derived from session; requires `chat_id` (used to populate `origin_chat_id`). Optional `timezone` stores an explicit IANA timezone in the job file. |
-| `create_default_review_jobs` | Create paused self-review and low-risk auto-fix cronjob presets. They are disabled by default and only run after an explicit `update_job status=active`. |
 | `list_jobs` | List cronjobs visible in the current chat. Filter follows rendering-visibility: private → caller's own jobs, group → jobs with `target_chat_id == currentChat` (prompts redacted for non-owners). Requires `chat_id`; renders each job's own timezone plus UTC. |
 | `update_job` | Update a cronjob (schedule, timezone, content, pause/resume). Owner-only. Requires `chat_id`. |
 | `delete_job` | Delete a cronjob. Owner-only. Requires `chat_id`. |
-| `create_github_issue` | Create a GitHub issue directly after explicit user authorization. Uses the built-in GitHub HTTP path by default; optional `tool` must name a configured local CLI override. |
-| `create_issue_proposal` | Create a durable pending GitHub issue proposal without filing it. Used by periodic review jobs before asking for maintainer approval. |
-| `list_issue_proposals` | List visible issue proposals. Private chats show caller-created proposals; group chats show proposals targeting the group. |
-| `reject_issue_proposal` | Reject a pending issue proposal. Only the proposal creator or configured owner can mutate it. |
-| `create_issue_from_proposal` | After explicit maintainer approval, file a proposal through the built-in GitHub HTTP path; optional `tool` must name a configured local CLI override. |
-| `create_low_risk_pr_from_proposal` | After a low-risk eligible proposal has a GitHub issue, open a PR through an allowlisted local CLI tool (`gh_low_risk_pr_create` by default). The plugin never merges or releases it automatically. |
 | `what_do_you_know` | List what the bot has stored in the caller's profile. Filtered by rendering visibility (both tiers in p2p, public only in groups). Each line carries an 8-char hash for use with `forget_memory`. (v0.11.0+) |
 | `forget_memory` | Remove a specific line from the caller's profile by hash. Caller-scoped and idempotent. Optional `promote_to_rule` promotes the removal into a durable `## Always private` rule in `privacy-rules.md`. (v0.11.0+) |
 | `run_local_cli_tool` | Run a configured allowlisted local CLI capability on the plugin host. Caller identity is server-derived from `chat_id` / `thread_id`; parameters and environment are filtered by `local-cli-tools.json`. (v1.1.0+) |

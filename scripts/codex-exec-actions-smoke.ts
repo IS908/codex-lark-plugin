@@ -13,7 +13,6 @@ const { IdentitySession } = await import('../src/identity-session.js');
 const { BotMessageTracker } = await import('../src/channel.js');
 const { TurnObligationTracker } = await import('../src/turn-obligation.js');
 const { MemoryStore } = await import('../src/memory/file.js');
-const { readIssueProposal } = await import('../src/issue-proposal-store.js');
 const { createInitialJobRuntime } = await import('../src/job-store.js');
 const {
   createCodexExecActionDispatcher,
@@ -46,60 +45,16 @@ function assertInitialRuntimeShape(job: any): void {
 
 const root = mkdtempSync(join(tmpdir(), 'codex-exec-actions-'));
 const oldJobsDir = (appConfig as any).jobsDir;
-const oldIssueProposalsDir = (appConfig as any).issueProposalsDir;
-const oldGithubIssueTimeoutMs = (appConfig as any).githubIssueTimeoutMs;
-const oldGithubIssueApiBaseUrl = (appConfig as any).githubIssueApiBaseUrl;
-const oldGithubIssueToken = (appConfig as any).githubIssueToken;
 const oldInboxDir = (appConfig as any).inboxDir;
-const oldFetch = globalThis.fetch;
-const githubHttpCalls: Array<{ url: string; body: string }> = [];
 try {
   const jobsDir = join(root, 'jobs');
-  const issueProposalsDir = join(root, 'issue-proposals');
   const memoriesDir = join(root, 'memories');
   const inboxDir = join(root, 'inbox');
   const localCliConfigPath = join(root, 'local-cli-tools.json');
-  const fakeIssueCreateScript = join(root, 'fake-gh-issue-create.js');
-  const fakePrCreateScript = join(root, 'fake-gh-pr-create.js');
   (appConfig as any).jobsDir = jobsDir;
-  (appConfig as any).issueProposalsDir = issueProposalsDir;
-  (appConfig as any).githubIssueTimeoutMs = 5000;
-  (appConfig as any).githubIssueApiBaseUrl = 'https://api.test.github.local';
-  (appConfig as any).githubIssueToken = 'test-token';
   (appConfig as any).inboxDir = inboxDir;
-  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-    githubHttpCalls.push({ url: String(url), body: String(init?.body ?? '') });
-    return new Response(
-      JSON.stringify({ html_url: 'https://github.com/IS908/codex-lark-plugin/issues/654' }),
-      { status: 201, headers: { 'content-type': 'application/json' } },
-    );
-  }) as typeof fetch;
   await mkdir(jobsDir, { recursive: true });
   await mkdir(inboxDir, { recursive: true });
-  writeFileSync(
-    fakeIssueCreateScript,
-    [
-      'const args = process.argv.slice(2);',
-      'if (!args.some((arg) => arg.startsWith("--repo="))) process.exit(2);',
-      'if (!args.some((arg) => arg.startsWith("--title="))) process.exit(3);',
-      'if (!args.some((arg) => arg.includes("Authorization Required"))) process.exit(4);',
-      'console.log("https://github.com/IS908/codex-lark-plugin/issues/654");',
-    ].join('\n'),
-    'utf-8',
-  );
-  writeFileSync(
-    fakePrCreateScript,
-    [
-      'const args = process.argv.slice(2);',
-      'if (!args.some((arg) => arg.startsWith("--repo="))) process.exit(2);',
-      'if (!args.some((arg) => arg.startsWith("--proposal-id="))) process.exit(3);',
-      'if (!args.some((arg) => arg.startsWith("--issue=https://github.com/IS908/codex-lark-plugin/issues/654"))) process.exit(4);',
-      'if (!args.some((arg) => arg.startsWith("--title=[auto-review]"))) process.exit(5);',
-      'if (!args.some((arg) => arg.includes("must not be merged or released automatically"))) process.exit(6);',
-      'console.log("https://github.com/IS908/codex-lark-plugin/pull/777");',
-    ].join('\n'),
-    'utf-8',
-  );
   writeFileSync(
     localCliConfigPath,
     JSON.stringify({
@@ -113,26 +68,6 @@ try {
           allowedCallers: 'public',
           timeoutMs: 5000,
           maxOutputBytes: 1024,
-        },
-        external_issue_create: {
-          command: process.execPath,
-          fixedArgs: [fakeIssueCreateScript],
-          paramAllowlist: ['--repo', '--title', '--body'],
-          envAllowlist: [],
-          inheritEnv: false,
-          allowedCallers: 'public',
-          timeoutMs: 5000,
-          maxOutputBytes: 4096,
-        },
-        gh_low_risk_pr_create: {
-          command: process.execPath,
-          fixedArgs: [fakePrCreateScript],
-          paramAllowlist: ['--repo', '--proposal-id', '--issue', '--title', '--body'],
-          envAllowlist: [],
-          inheritEnv: false,
-          allowedCallers: 'public',
-          timeoutMs: 5000,
-          maxOutputBytes: 4096,
         },
       },
     }),
@@ -199,44 +134,32 @@ try {
   assert.equal(recallParsed.kind, 'actions');
   assert.equal(recallParsed.actions[0].type, 'recall_message');
 
-  const proposalParsed = parseActionEnvelopeForTest({
-    version: 1,
-    actions: [
-      {
-        type: 'create_issue_proposal',
-        title: 'Periodic review found missing Feishu delivery',
-        body: 'A cronjob generated a report but did not deliver it to Feishu.',
-        evidence: ['run_status=success', 'delivery_status=failed'],
-        impact: 'Users cannot see scheduled reports.',
-        priority: 'P0',
-        automation_level: 'discovery-only',
-        target_repo: 'IS908/codex-lark-plugin',
-        target_chat_id: 'oc_exec',
-      },
-      { type: 'list_issue_proposals', status: 'pending' },
-    ],
-  });
-  assert.equal(proposalParsed.kind, 'actions');
-  if (proposalParsed.kind !== 'actions') throw new Error('proposalParsed should be actions');
-  assert.deepEqual(
-    proposalParsed.actions.map((action: any) => action.type),
-    ['create_issue_proposal', 'list_issue_proposals'],
-  );
-
-  const createGithubIssueParsed = parseActionEnvelopeForTest({
-    version: 1,
-    actions: [
-      {
-        type: 'create_github_issue',
-        title: 'Direct issue filing should not need a proposal',
-        body: 'The user explicitly asked to file this GitHub issue.',
-        target_repo: 'IS908/codex-lark-plugin',
-      },
-    ],
-  });
-  assert.equal(createGithubIssueParsed.kind, 'actions');
-  if (createGithubIssueParsed.kind !== 'actions') throw new Error('createGithubIssueParsed should be actions');
-  assert.equal(createGithubIssueParsed.actions[0].type, 'create_github_issue');
+  for (const removedAction of [
+    {
+      type: 'create_github_issue',
+      title: 'Provider-specific issue creation should not be a Lark action',
+      body: 'External issue creation belongs to custom local tools or skills.',
+      target_repo: 'IS908/codex-lark-plugin',
+    },
+    {
+      type: 'create_issue_proposal',
+      title: 'Provider-specific issue proposal should not be a Lark action',
+      body: 'Project governance proposals belong to custom workflow layers.',
+      target_repo: 'IS908/codex-lark-plugin',
+    },
+    { type: 'list_issue_proposals', status: 'pending' },
+    { type: 'reject_issue_proposal', id: 'proposal-abc123' },
+    { type: 'create_issue_from_proposal', id: 'proposal-abc123' },
+    { type: 'create_low_risk_pr_from_proposal', id: 'proposal-abc123' },
+    { type: 'create_default_review_jobs', target_repo: 'IS908/codex-lark-plugin', target_chat_id: 'oc_exec' },
+  ]) {
+    const parsedRemovedAction = parseActionEnvelopeForTest({
+      version: 1,
+      actions: [removedAction],
+    });
+    assert.equal(parsedRemovedAction.kind, 'invalid_actions', `${removedAction.type} should be rejected`);
+    assert.match(parsedRemovedAction.error, /Invalid discriminator|create_|issue_proposal/i);
+  }
 
   const directIssueParsed = parseActionEnvelopeForTest({
     version: 1,
@@ -256,28 +179,6 @@ try {
   });
   assert.equal(directIssueParsed.kind, 'invalid_actions');
   assert.match(directIssueParsed.error, /create_issue|Invalid discriminator/i);
-
-  const unsupportedIssueParsed = parseActionEnvelopeForTest({
-    version: 1,
-    actions: [
-      {
-        type: 'create_github_issue',
-        title: 'Bridge should create issues',
-        body: 'Issue body',
-        labels: ['bug'],
-      },
-    ],
-  });
-  assert.equal(unsupportedIssueParsed.kind, 'invalid_actions');
-  assert.match(unsupportedIssueParsed.error, /target_repo/i);
-
-  const createPrParsed = parseActionEnvelopeForTest({
-    version: 1,
-    actions: [{ type: 'create_low_risk_pr_from_proposal', id: 'proposal-abc123' }],
-  });
-  assert.equal(createPrParsed.kind, 'actions');
-  if (createPrParsed.kind !== 'actions') throw new Error('createPrParsed should be actions');
-  assert.equal(createPrParsed.actions[0].type, 'create_low_risk_pr_from_proposal');
 
   const sendMessageParsed = parseActionEnvelopeForTest({
     version: 1,
@@ -615,185 +516,6 @@ try {
   assert.equal(missingQuotedImageActionResults[0].ok, false);
   assert.match(missingQuotedImageActionResults[0].message, /no downloadable image/i);
 
-  const directGithubIssueResults = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_direct_github_issue',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'create a GitHub issue now',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: createGithubIssueParsed.actions,
-  });
-  assert.equal(directGithubIssueResults.length, 1);
-  assert.equal(directGithubIssueResults[0].ok, true, JSON.stringify(directGithubIssueResults));
-  assert.equal(directGithubIssueResults[0].action, 'create_github_issue');
-  assert.match(directGithubIssueResults[0].message, /https:\/\/github\.com\/IS908\/codex-lark-plugin\/issues\/654/);
-  const directGithubIssueBody = JSON.parse(githubHttpCalls[githubHttpCalls.length - 1].body);
-  assert.equal(directGithubIssueBody.title, 'Direct issue filing should not need a proposal');
-  assert.equal(directGithubIssueBody.body, 'The user explicitly asked to file this GitHub issue.');
-
-  const proposalResults = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_proposal',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'create issue proposal',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: proposalParsed.actions,
-  });
-  assert.equal(proposalResults.length, 2);
-  assert.ok(proposalResults.every((result: any) => result.ok), JSON.stringify(proposalResults));
-  const proposalId = proposalResults[0].message.match(/proposal-[a-zA-Z0-9-]+/)?.[0];
-  assert.ok(proposalId, proposalResults[0].message);
-  assert.match(proposalResults[1].message, new RegExp(proposalId));
-  const proposalFile = await readIssueProposal(proposalId);
-  assert.equal(proposalFile?.meta.status, 'pending');
-  assert.equal(proposalFile?.meta.priority, 'P0');
-
-  const createIssueResults = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_create_issue',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'approve issue proposal',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: [{ type: 'create_issue_from_proposal', id: proposalId }],
-  });
-  assert.equal(createIssueResults.length, 1);
-  assert.equal(createIssueResults[0].ok, true, JSON.stringify(createIssueResults));
-  assert.match(createIssueResults[0].message, /https:\/\/github\.com\/IS908\/codex-lark-plugin\/issues\/654/);
-  const createdProposal = await readIssueProposal(proposalId);
-  assert.equal(createdProposal?.meta.status, 'created');
-  assert.equal(createdProposal?.meta.github_issue_number, 654);
-
-  const explicitToolProposalResults = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_raw_tool_proposal',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'create raw tool proposal',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: [
-      {
-        type: 'create_issue_proposal',
-        title: 'Raw executable names are not tool aliases',
-        body: 'Explicit tool overrides must reference local-cli-tools.json names.',
-        target_repo: 'IS908/codex-lark-plugin',
-        target_chat_id: 'oc_exec',
-      },
-    ],
-  });
-  assert.equal(explicitToolProposalResults[0].ok, true, JSON.stringify(explicitToolProposalResults));
-  const explicitToolProposalId = explicitToolProposalResults[0].message.match(/proposal-[a-zA-Z0-9-]+/)?.[0];
-  assert.ok(explicitToolProposalId, explicitToolProposalResults[0].message);
-  const explicitToolResults = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_raw_tool_issue',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'approve with raw tool name',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: [{ type: 'create_issue_from_proposal', id: explicitToolProposalId, tool: 'gh' }],
-  });
-  assert.equal(explicitToolResults.length, 1);
-  assert.equal(explicitToolResults[0].ok, false, JSON.stringify(explicitToolResults));
-  assert.match(explicitToolResults[0].message, /Local CLI tool "gh" is not configured/);
-
-  const lowRiskProposalResults = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_low_risk_proposal',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'create low-risk issue proposal',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: [
-      {
-        type: 'create_issue_proposal',
-        title: 'Docs badge drift can be fixed automatically',
-        body: 'README badge drift is low-risk metadata work.',
-        evidence: ['README.md badge differs from package.json'],
-        priority: 'P3',
-        automation_level: 'low-risk-auto-pr-eligible',
-        target_repo: 'IS908/codex-lark-plugin',
-        target_chat_id: 'oc_exec',
-      },
-    ],
-  });
-  assert.equal(lowRiskProposalResults.length, 1);
-  assert.equal(lowRiskProposalResults[0].ok, true, JSON.stringify(lowRiskProposalResults));
-  const lowRiskProposalId = lowRiskProposalResults[0].message.match(/proposal-[a-zA-Z0-9-]+/)?.[0];
-  assert.ok(lowRiskProposalId, lowRiskProposalResults[0].message);
-  const lowRiskPrBeforeIssue = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_low_risk_pr_before_issue',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'open pr too early',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: [{ type: 'create_low_risk_pr_from_proposal', id: lowRiskProposalId }],
-  });
-  assert.equal(lowRiskPrBeforeIssue[0].ok, false);
-  assert.match(lowRiskPrBeforeIssue[0].message, /created GitHub issue/i);
-  const lowRiskIssueResults = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_low_risk_issue',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'approve low-risk issue',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: [{ type: 'create_issue_from_proposal', id: lowRiskProposalId }],
-  });
-  assert.equal(lowRiskIssueResults[0].ok, true, JSON.stringify(lowRiskIssueResults));
-  const lowRiskPrResults = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_low_risk_pr',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'open low-risk pr',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: [{ type: 'create_low_risk_pr_from_proposal', id: lowRiskProposalId }],
-  });
-  assert.equal(lowRiskPrResults[0].ok, true, JSON.stringify(lowRiskPrResults));
-  assert.match(lowRiskPrResults[0].message, /https:\/\/github\.com\/IS908\/codex-lark-plugin\/pull\/777/);
-  const prCreatedProposal = await readIssueProposal(lowRiskProposalId);
-  assert.equal(prCreatedProposal?.meta.github_pr_number, 777);
-
   const jobManagementParsed = parseActionEnvelopeForTest({
     version: 1,
     actions: [
@@ -819,34 +541,6 @@ try {
     jobManagementParsed.actions.map((action: any) => action.type),
     ['list_jobs', 'update_job', 'disable_job', 'upsert_job', 'delete_job'],
   );
-  const defaultReviewJobsParsed = parseActionEnvelopeForTest({
-    version: 1,
-    actions: [
-      { type: 'create_default_review_jobs', target_repo: 'IS908/codex-lark-plugin', target_chat_id: 'oc_exec' },
-    ],
-  });
-  assert.equal(defaultReviewJobsParsed.kind, 'actions');
-  if (defaultReviewJobsParsed.kind !== 'actions') {
-    throw new Error(`expected default review job action, got ${JSON.stringify(defaultReviewJobsParsed)}`);
-  }
-  const defaultReviewJobResults = await dispatcher.execute({
-    message: {
-      messageId: 'om_exec_default_review_jobs',
-      chatId: 'oc_exec',
-      threadId: 'thread_exec',
-      chatType: 'group',
-      senderId: 'ou_user',
-      text: 'create default review jobs',
-      messageType: 'text',
-      rawContent: '{}',
-    },
-    actions: defaultReviewJobsParsed.actions,
-  });
-  assert.equal(defaultReviewJobResults.length, 1);
-  assert.equal(defaultReviewJobResults[0].ok, true, JSON.stringify(defaultReviewJobResults));
-  assert.match(defaultReviewJobResults[0].message, /disabled by default/i);
-  assert.equal(JSON.parse(readFileSync(join(jobsDir, 'plugin-self-review.json'), 'utf-8')).meta.status, 'paused');
-  assert.equal(JSON.parse(readFileSync(join(jobsDir, 'plugin-low-risk-auto-fix.json'), 'utf-8')).meta.status, 'paused');
   const jobManagementResults = await dispatcher.execute({
     message: {
       messageId: 'om_exec_jobs',
@@ -977,12 +671,7 @@ try {
   );
 } finally {
   (appConfig as any).jobsDir = oldJobsDir;
-  (appConfig as any).issueProposalsDir = oldIssueProposalsDir;
-  (appConfig as any).githubIssueTimeoutMs = oldGithubIssueTimeoutMs;
-  (appConfig as any).githubIssueApiBaseUrl = oldGithubIssueApiBaseUrl;
-  (appConfig as any).githubIssueToken = oldGithubIssueToken;
   (appConfig as any).inboxDir = oldInboxDir;
-  globalThis.fetch = oldFetch;
   rmSync(root, { recursive: true, force: true });
 }
 

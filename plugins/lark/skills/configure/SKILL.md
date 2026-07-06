@@ -109,9 +109,6 @@ LARK_IDENTITY_SESSION_TTL_MS:     auto
 LARK_PRIVACY_RULES_FILE:          ~/.codex/channels/lark/privacy-rules.md
 LARK_AUDIT_LOG:                   ~/.codex/channels/lark/audit.log
 LARK_LOCAL_CLI_TOOLS_CONFIG:      ~/.codex/channels/lark/local-cli-tools.json
-LARK_GITHUB_ISSUE_TIMEOUT_MS:     30000
-LARK_GITHUB_API_BASE_URL:         https://api.github.com
-LARK_GITHUB_TOKEN:                (not set)
 LARK_CARD_CONTEXT_CACHE_SIZE:      200
 LARK_CARD_CONTEXT_CACHE_TTL_MS:    1800000
 LARK_QUOTED_CONTEXT_MAX_DEPTH:     4
@@ -226,9 +223,6 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_CHAT_TYPE_CACHE_SIZE` — max cached Feishu chat types (default: 1000)
 - `LARK_LATEST_MESSAGE_TRACKER_SIZE` — max latest-message tracker entries (default: 1000)
 - `LARK_LOCAL_CLI_TOOLS_CONFIG` — local CLI allowlist config path (default: `~/.codex/channels/lark/local-cli-tools.json`)
-- `LARK_GITHUB_ISSUE_TIMEOUT_MS` — timeout for built-in GitHub HTTP issue creation (default: 30000)
-- `LARK_GITHUB_API_BASE_URL` — GitHub API base URL for built-in proposal filing (default: `https://api.github.com`)
-- `LARK_GITHUB_TOKEN` — token for built-in GitHub HTTP issue creation; `GH_TOKEN` and `GITHUB_TOKEN` also work
 - `LARK_CARD_CONTEXT_CACHE_SIZE` — cached fetched-card parent/root contexts (default: 200)
 - `LARK_CARD_CONTEXT_CACHE_TTL_MS` — TTL for fetched-card context cache (default: 1800000)
 - `LARK_QUOTED_CONTEXT_MAX_DEPTH` — max quoted/replied message chain depth before prompting Codex (default: 4)
@@ -291,8 +285,7 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_LATEST_MESSAGE_TRACKER_SIZE`,
    `LARK_OWNER_OPEN_ID`, `LARK_IDENTITY_SESSION_TTL_MS`,
    `LARK_PRIVACY_RULES_FILE`, `LARK_AUDIT_LOG`, `LARK_LOCAL_CLI_TOOLS_CONFIG`,
-   `LARK_GITHUB_ISSUE_TIMEOUT_MS`, `LARK_GITHUB_API_BASE_URL`,
-   `LARK_GITHUB_TOKEN`, `LARK_CARD_CONTEXT_CACHE_SIZE`,
+   `LARK_CARD_CONTEXT_CACHE_SIZE`,
    `LARK_CARD_CONTEXT_CACHE_TTL_MS`, `LARK_QUOTED_CONTEXT_MAX_DEPTH`,
    `LARK_QUOTED_CONTEXT_MAX_BYTES`, `LARK_QUOTED_CARD_USER_FETCH_ENABLED`,
    `LARK_QUOTED_CARD_USER_FETCH_COMMAND`, `LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS`,
@@ -375,9 +368,6 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_PRIVACY_RULES_FILE` | Privacy | No | `~/.codex/channels/lark/privacy-rules.md` |
 | `LARK_AUDIT_LOG` | Privacy | No | `~/.codex/channels/lark/audit.log` |
 | `LARK_LOCAL_CLI_TOOLS_CONFIG` | Local tools | No | `~/.codex/channels/lark/local-cli-tools.json` |
-| `LARK_GITHUB_ISSUE_TIMEOUT_MS` | GitHub issue filing | No | `30000` |
-| `LARK_GITHUB_API_BASE_URL` | GitHub issue filing | No | `https://api.github.com` |
-| `LARK_GITHUB_TOKEN` | GitHub issue filing | No | `GH_TOKEN` / `GITHUB_TOKEN` fallback |
 | `LARK_CARD_CONTEXT_CACHE_SIZE` | Quoted cards | No | `200` |
 | `LARK_CARD_CONTEXT_CACHE_TTL_MS` | Quoted cards | No | `1800000` |
 | `LARK_QUOTED_CONTEXT_MAX_DEPTH` | Quoted cards | No | `4` |
