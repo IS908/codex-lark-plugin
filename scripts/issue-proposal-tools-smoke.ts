@@ -127,6 +127,7 @@ try {
   );
 
   const createProposal = getTool('create_issue_proposal');
+  const createDirectIssue = getTool('create_github_issue');
   const listProposals = getTool('list_issue_proposals');
   const createIssue = getTool('create_issue_from_proposal');
   const createPr = getTool('create_low_risk_pr_from_proposal');
@@ -283,6 +284,48 @@ try {
   const rejectedPersisted = await readIssueProposal(rejectedId);
   if (rejectedPersisted?.meta.status !== 'rejected') fail(`11: expected rejected, got ${rejectedPersisted?.meta.status}`);
   passed++;
+
+  const directIssue = await createDirectIssue({
+    title: 'Directly authorized issue filing',
+    body: 'The user explicitly asked to create this GitHub issue.',
+    target_repo: 'IS908/codex-lark-plugin',
+    chat_id: 'chat_owner',
+    thread_id: 'thread_owner',
+  });
+  if (directIssue.isError) fail(`12: create_github_issue failed ${JSON.stringify(directIssue)}`);
+  if (!directIssue.content[0].text.includes('https://github.com/IS908/codex-lark-plugin/issues/432')) {
+    fail(`12: direct create response missing issue URL: ${directIssue.content[0].text}`);
+  }
+  const directHttpBody = JSON.parse(githubHttpCalls[githubHttpCalls.length - 1].body);
+  if (directHttpBody.title !== 'Directly authorized issue filing') {
+    fail(`12: direct HTTP title mismatch ${JSON.stringify(directHttpBody)}`);
+  }
+  if (directHttpBody.body !== 'The user explicitly asked to create this GitHub issue.') {
+    fail(`12: direct HTTP body should not be wrapped as a proposal ${JSON.stringify(directHttpBody)}`);
+  }
+  passed++;
+
+  const directCliIssue = await createDirectIssue({
+    title: 'Direct issue through configured CLI',
+    body: 'Use the configured local CLI override without creating a proposal.',
+    target_repo: 'IS908/codex-lark-plugin',
+    tool: 'external_issue_create',
+    chat_id: 'chat_owner',
+    thread_id: 'thread_owner',
+  });
+  if (directCliIssue.isError) fail(`13: direct CLI issue create failed ${JSON.stringify(directCliIssue)}`);
+  const cliCalls = JSON.parse(readFileSync(cliCallsPath, 'utf-8')) as string[][];
+  if (cliCalls.length !== 1) fail(`13: expected one direct CLI call, got ${cliCalls.length}`);
+  if (!cliCalls[0].some((arg) => arg === '--repo=IS908/codex-lark-plugin')) {
+    fail(`13: direct CLI repo arg missing ${JSON.stringify(cliCalls[0])}`);
+  }
+  if (!cliCalls[0].some((arg) => arg === '--title=Direct issue through configured CLI')) {
+    fail(`13: direct CLI title arg missing ${JSON.stringify(cliCalls[0])}`);
+  }
+  if (!cliCalls[0].some((arg) => arg === '--body=Use the configured local CLI override without creating a proposal.')) {
+    fail(`13: direct CLI body arg missing ${JSON.stringify(cliCalls[0])}`);
+  }
+  passed++;
 } finally {
   if (originalProposalsDir === undefined) {
     delete (appConfig as { issueProposalsDir?: string }).issueProposalsDir;
@@ -298,4 +341,4 @@ try {
   rmSync(dir, { recursive: true, force: true });
 }
 
-console.log(`issue-proposal-tools smoke: ${passed}/11 PASS`);
+console.log(`issue-proposal-tools smoke: ${passed}/13 PASS`);

@@ -148,7 +148,9 @@ assert.match(execRequests[0].prompt, /facts, reasoning, judgments, and risks/);
 assert.match(execRequests[0].prompt, /no background continuation after the visible reply is posted/);
 assert.match(execRequests[0].prompt, /For cronjob schedule fields, use only supported recurring formats/);
 assert.match(execRequests[0].prompt, /Do not use one-off or natural-language aliases/);
-assert.doesNotMatch(execRequests[0].prompt, /create_github_issue|LARK_GITHUB/i);
+assert.match(execRequests[0].prompt, /explicit user-authorized GitHub issue filing, use create_github_issue directly/);
+assert.match(execRequests[0].prompt, /periodic review findings or agent-generated suggestions, prefer create_issue_proposal/);
+assert.match(execRequests[0].prompt, /Do not create a proposal when the user asked for a direct external write/);
 assert.deepEqual(execRequests[0].imagePaths, ['/tmp/lark-img-1.png', '/tmp/lark-img-2.png']);
 
 assert.deepEqual(replyRequests, [

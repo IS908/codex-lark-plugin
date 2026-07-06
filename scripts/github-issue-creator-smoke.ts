@@ -2,7 +2,7 @@
  * Built-in GitHub issue creator smoke tests.
  */
 import assert from 'node:assert/strict';
-import { createGithubIssueFromProposal } from '../src/github-issue-creator.js';
+import { createGithubIssue, createGithubIssueFromProposal } from '../src/github-issue-creator.js';
 import { appConfig } from '../src/config.js';
 import type { IssueProposalFile } from '../src/issue-proposal-store.js';
 
@@ -32,6 +32,14 @@ function proposal(title = 'Use HTTP for issue creation'): IssueProposalFile {
 
 try {
   (appConfig as any).githubIssueToken = null;
+  const missingDirectToken = await createGithubIssue({
+    targetRepo: 'IS908/codex-lark-plugin',
+    title: 'Missing token',
+    body: 'Direct GitHub issue creation needs a token.',
+  });
+  assert.equal(missingDirectToken.ok, false);
+  assert.match(missingDirectToken.message, /LARK_GITHUB_TOKEN/);
+
   const missingToken = await createGithubIssueFromProposal(proposal('Missing token'));
   assert.equal(missingToken.ok, false);
   assert.match(missingToken.message, /LARK_GITHUB_TOKEN|configured local CLI override tool/);
@@ -52,13 +60,27 @@ try {
   (appConfig as any).githubIssueTimeoutMs = 5000;
   (appConfig as any).githubIssueToken = 'test-token';
 
+  const directResult = await createGithubIssue({
+    targetRepo: 'IS908/codex-lark-plugin',
+    title: 'Direct HTTP issue',
+    body: 'The user explicitly authorized direct filing.',
+  });
+  assert.equal(directResult.ok, true, directResult.message);
+  assert.equal(directResult.issueUrl, 'https://github.example.test/IS908/codex-lark-plugin/issues/502');
+  assert.equal(directResult.method, 'http');
+  assert.equal(requestUrl, 'https://api.test.github.local/repos/IS908/codex-lark-plugin/issues');
+  assert.equal(requestAuth, 'Bearer test-token');
+  let parsedBody = JSON.parse(requestBody);
+  assert.equal(parsedBody.title, 'Direct HTTP issue');
+  assert.equal(parsedBody.body, 'The user explicitly authorized direct filing.');
+
   const httpResult = await createGithubIssueFromProposal(proposal('HTTP issue'));
   assert.equal(httpResult.ok, true, httpResult.message);
   assert.equal(httpResult.issueUrl, 'https://github.example.test/IS908/codex-lark-plugin/issues/502');
   assert.equal(httpResult.method, 'http');
   assert.equal(requestUrl, 'https://api.test.github.local/repos/IS908/codex-lark-plugin/issues');
   assert.equal(requestAuth, 'Bearer test-token');
-  const parsedBody = JSON.parse(requestBody);
+  parsedBody = JSON.parse(requestBody);
   assert.equal(parsedBody.title, 'HTTP issue');
   assert.match(parsedBody.body, /Authorization Required/);
 } finally {

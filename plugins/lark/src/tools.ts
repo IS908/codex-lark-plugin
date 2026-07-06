@@ -17,6 +17,7 @@ import { registerReplyTools } from './tools/reply.js';
 import { registerMessageMutationTools } from './tools/message-mutation.js';
 import { registerMemoryTools } from './tools/memory.js';
 import { registerJobTools } from './tools/jobs.js';
+import { registerGithubIssueTools } from './tools/github-issues.js';
 import { registerIssueProposalTools } from './tools/issue-proposals.js';
 import { registerTransparencyTools } from './tools/transparency.js';
 
@@ -26,6 +27,7 @@ export { capSanitizedFilename, registerReplyTools } from './tools/reply.js';
 export { registerMessageMutationTools } from './tools/message-mutation.js';
 export { registerMemoryTools } from './tools/memory.js';
 export { registerJobTools } from './tools/jobs.js';
+export { registerGithubIssueTools } from './tools/github-issues.js';
 export { registerIssueProposalTools } from './tools/issue-proposals.js';
 
 /**
@@ -71,6 +73,7 @@ export function registerTools(
   registerMessageMutationTools(ctx);
   registerMemoryTools(ctx);
   registerJobTools(ctx);
+  registerGithubIssueTools(ctx);
   registerIssueProposalTools(ctx);
   registerTransparencyTools(ctx);
 }

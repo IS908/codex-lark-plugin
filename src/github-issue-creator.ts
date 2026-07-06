@@ -14,6 +14,12 @@ export interface GithubIssueCreateResult {
   method?: GithubIssueCreateMethod;
 }
 
+export interface GithubIssueCreateInput {
+  targetRepo: string;
+  title: string;
+  body: string;
+}
+
 function redactSensitiveText(text: string): string {
   return text.replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1<redacted>');
 }
@@ -24,7 +30,7 @@ function repoPath(targetRepo: string): string | null {
   return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 }
 
-async function createWithHttp(proposal: IssueProposalFile, body: string): Promise<GithubIssueCreateResult> {
+async function createWithHttp(input: GithubIssueCreateInput): Promise<GithubIssueCreateResult> {
   const token = appConfig.githubIssueToken;
   if (!token) {
     return {
@@ -33,9 +39,9 @@ async function createWithHttp(proposal: IssueProposalFile, body: string): Promis
     };
   }
 
-  const path = repoPath(proposal.meta.target_repo);
+  const path = repoPath(input.targetRepo);
   if (!path) {
-    return { ok: false, message: `Invalid target_repo "${proposal.meta.target_repo}". Expected owner/name.` };
+    return { ok: false, message: `Invalid target_repo "${input.targetRepo}". Expected owner/name.` };
   }
 
   const controller = new AbortController();
@@ -50,8 +56,8 @@ async function createWithHttp(proposal: IssueProposalFile, body: string): Promis
         'X-GitHub-Api-Version': '2022-11-28',
       },
       body: JSON.stringify({
-        title: proposal.meta.title,
-        body,
+        title: input.title,
+        body: input.body,
       }),
       signal: controller.signal,
     });
@@ -89,11 +95,18 @@ async function createWithHttp(proposal: IssueProposalFile, body: string): Promis
   }
 }
 
+export async function createGithubIssue(input: GithubIssueCreateInput): Promise<GithubIssueCreateResult> {
+  return createWithHttp(input);
+}
+
 export async function createGithubIssueFromProposal(
   proposal: IssueProposalFile,
 ): Promise<GithubIssueCreateResult> {
-  const body = formatIssueProposalIssueBody(proposal);
-  const httpResult = await createWithHttp(proposal, body);
+  const httpResult = await createGithubIssue({
+    targetRepo: proposal.meta.target_repo,
+    title: proposal.meta.title,
+    body: formatIssueProposalIssueBody(proposal),
+  });
   if (httpResult.ok) return httpResult;
 
   return {
