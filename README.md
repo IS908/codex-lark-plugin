@@ -433,10 +433,10 @@ Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
       "maxOutputBytes": 65536,
       "allowedCallers": "lark_allowed_user_ids"
     },
-    "external_issue_create": {
-      "command": "/Users/you/bin/create-issue",
+    "my_tracker_create_item": {
+      "command": "/Users/you/bin/my-tracker-create-item",
       "fixedArgs": [],
-      "paramAllowlist": ["--repo", "--title", "--body", "--label"],
+      "paramAllowlist": ["--project", "--title", "--body", "--label"],
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
       "allowedCallers": "owners"
@@ -451,10 +451,14 @@ one of `paramAllowlist` or `paramBlocklist`. Commands must be absolute paths.
 Environment keys in `envAllowlist` and `env` must use shell-compatible names
 such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 
-For external trackers, configure a local wrapper such as `external_issue_create`
-or expose a separate provider-specific skill/MCP server. The core plugin does
-not parse GitHub/GitLab/Jira/Linear semantics and does not provide built-in
-issue or PR creation tools.
+External tracker examples are user-owned wrappers, not plugin-provided tools or
+reserved action names. For example, `my_tracker_create_item` above would be a
+local script outside this repository, with its own argument validation, required
+field checks, provider CLI capability probes, and dry-run tests for argument
+assembly before any write path is enabled. You can also expose a separate
+provider-specific skill or custom MCP server. The core plugin does not parse
+GitHub/GitLab/Jira/Linear semantics and does not provide built-in issue or PR
+creation tools.
 
 ### Optional -- Acknowledgement
 
