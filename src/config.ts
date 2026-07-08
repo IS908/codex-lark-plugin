@@ -6,6 +6,7 @@ const envPath = path.join(os.homedir(), '.codex', 'channels', 'lark', '.env');
 config({ path: envPath });
 
 const channelHome = path.join(os.homedir(), '.codex', 'channels', 'lark');
+const logsDir = path.join(channelHome, 'logs');
 const defaultCodexExecCwd = path.join(channelHome, 'codex-exec-workdir');
 const isDryRun = process.argv.includes('--dry-run');
 
@@ -166,6 +167,7 @@ export const appConfig = {
   feishuApiRetryBaseDelayMs: optionalNonNegativeNumber('LARK_FEISHU_API_RETRY_BASE_DELAY_MS', 250),
   logMaxBytes: optionalNonNegativeNumber('LARK_LOG_MAX_BYTES', 5 * 1024 * 1024),
   logMaxFiles: optionalNonNegativeNumber('LARK_LOG_MAX_FILES', 5),
+  logArchiveRetentionMonths: optionalNonNegativeNumber('LARK_LOG_ARCHIVE_RETENTION_MONTHS', 6),
 
   // Memory
   minSearchScore: optionalNonNegativeNumber('LARK_MIN_SEARCH_SCORE', 0.3),
@@ -224,11 +226,11 @@ export const appConfig = {
     'LARK_LOCAL_CLI_TOOLS_CONFIG',
     path.join(os.homedir(), '.codex', 'channels', 'lark', 'local-cli-tools.json'),
   ),
-  debugLogPath: optional('LARK_DEBUG_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'debug.log')),
-  auditLogPath: optional('LARK_AUDIT_LOG', path.join(os.homedir(), '.codex', 'channels', 'lark', 'audit.log')),
+  debugLogPath: optional('LARK_DEBUG_LOG', path.join(logsDir, 'debug.log')),
+  auditLogPath: optional('LARK_AUDIT_LOG', path.join(logsDir, 'audit.log')),
   codexExecTraceLogPath: optional(
     'LARK_CODEX_EXEC_TRACE_LOG',
-    path.join(os.homedir(), '.codex', 'channels', 'lark', 'trace.log'),
+    path.join(logsDir, 'trace.log'),
   ),
 } as const;
 

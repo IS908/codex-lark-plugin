@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.15.2] - 2026-07-08
+
+### Added
+- Added monthly gzip archival and retention for local debug/audit/trace logs.
+
+### Changed
+- Moved default debug/audit/trace log paths under `~/.codex/channels/lark/logs/` instead of placing loose log files in the channel root.
+- Documented log archive retention and ignore patterns for custom project/workdir log paths.
+
 ## [1.15.1] - 2026-07-07
 
 ### Removed

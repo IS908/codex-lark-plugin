@@ -14,10 +14,13 @@ plugins/lark/dist/
 
 # Logs and diagnostics
 *.log
+*.log.*
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+.plugin/logs/
+.codex/channels/lark/logs/
 
 # Test and coverage output
 coverage/
