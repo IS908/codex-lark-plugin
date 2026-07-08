@@ -16,6 +16,10 @@ const code = `
     codexExecTimeoutMs: appConfig.codexExecTimeoutMs,
     replyObligationTimeoutMs: appConfig.replyObligationTimeoutMs,
     codexExecCwd: appConfig.codexExecCwd,
+    debugLogPath: appConfig.debugLogPath,
+    auditLogPath: appConfig.auditLogPath,
+    codexExecTraceLogPath: appConfig.codexExecTraceLogPath,
+    logArchiveRetentionMonths: appConfig.logArchiveRetentionMonths,
     codexSessionRetentionDays: appConfig.codexSessionRetentionDays,
     codexSessionRetentionScanIntervalHours: appConfig.codexSessionRetentionScanIntervalHours,
     codexSessionRetentionDryRun: appConfig.codexSessionRetentionDryRun,
@@ -77,6 +81,7 @@ expectFail({ LARK_CODEX_SESSION_RETENTION_DAYS: '0' }, /LARK_CODEX_SESSION_RETEN
 expectFail({ LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: '-1' }, /LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS.*non-negative/i);
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS: '0' }, /LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS.*positive/i);
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES: '0' }, /LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES.*positive/i);
+expectFail({ LARK_LOG_ARCHIVE_RETENTION_MONTHS: '-1' }, /LARK_LOG_ARCHIVE_RETENTION_MONTHS.*non-negative/i);
 
 const zeroAllowed = expectOk({
   LARK_MEMORY_DEDUP_WINDOW_MS: '0',
@@ -88,6 +93,10 @@ assert.equal(zeroAllowed.inboxMaxBytes, 0);
 const defaultPaths = expectOk({});
 assert.match(defaultPaths.codexExecCwd, /codex-exec-workdir$/);
 assert.doesNotMatch(defaultPaths.codexExecCwd, /codex-lark-plugin$/);
+assert.match(defaultPaths.debugLogPath, /\.codex\/channels\/lark\/logs\/debug\.log$/);
+assert.match(defaultPaths.auditLogPath, /\.codex\/channels\/lark\/logs\/audit\.log$/);
+assert.match(defaultPaths.codexExecTraceLogPath, /\.codex\/channels\/lark\/logs\/trace\.log$/);
+assert.equal(defaultPaths.logArchiveRetentionMonths, 6);
 assert.equal(defaultPaths.codexSessionRetentionDays, 14);
 assert.equal(defaultPaths.codexSessionRetentionScanIntervalHours, 24);
 assert.equal(defaultPaths.codexSessionRetentionDryRun, false);
@@ -109,6 +118,9 @@ assert.equal(defaultPaths.hasGithubIssueCommandConfig, false);
 
 const retentionDryRun = expectOk({ LARK_CODEX_SESSION_RETENTION_DRY_RUN: 'true' });
 assert.equal(retentionDryRun.codexSessionRetentionDryRun, true);
+
+const customLogArchiveRetention = expectOk({ LARK_LOG_ARCHIVE_RETENTION_MONTHS: '0' });
+assert.equal(customLogArchiveRetention.logArchiveRetentionMonths, 0);
 
 const userFetchDisabled = expectOk({ LARK_QUOTED_CARD_USER_FETCH_ENABLED: 'false' });
 assert.equal(userFetchDisabled.quotedCardUserFetchEnabled, false);

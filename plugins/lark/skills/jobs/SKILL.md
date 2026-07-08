@@ -64,7 +64,7 @@ confirmation is needed.
 ## Audit
 
 Every sensitive tool invocation is written to
-`~/.codex/channels/lark/audit.log` automatically by the MCP server.
+`~/.codex/channels/lark/logs/audit.log` automatically by the MCP server.
 You do not need to log explicitly — but remind the user on first
 invocation of a session that the log exists, so they can review
 retrospectively if they suspect someone else used their terminal.

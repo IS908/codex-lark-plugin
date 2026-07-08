@@ -1,8 +1,9 @@
 # Local Diagnostic Logs
 
 `codex-lark-plugin` writes local-only diagnostic logs under
-`~/.codex/channels/lark/` by default. These logs are plaintext files protected
-by OS file permissions; they are not sent to Feishu or a remote backend.
+`~/.codex/channels/lark/logs/` by default. These logs are plaintext files
+protected by OS file permissions; they are not sent to Feishu or a remote
+backend.
 
 ## Canonical Format
 
@@ -21,12 +22,18 @@ the value remains readable while preserving the fixed-position layout. The
 payload may be a compact sanitized JSON fragment, but the complete line is not
 JSONL.
 
-Writers must use `appendRotatingLine()` so `LARK_LOG_MAX_BYTES` and
-`LARK_LOG_MAX_FILES` keep applying consistently.
+Writers must use `appendRotatingLine()` so `LARK_LOG_MAX_BYTES`,
+`LARK_LOG_MAX_FILES`, and `LARK_LOG_ARCHIVE_RETENTION_MONTHS` keep applying
+consistently. Previous-month active and rotated logs are compressed under
+`~/.codex/channels/lark/logs/archive/YYYY-MM/` before the new month's active log
+is written. Archives older than the configured retention window are removed.
+When a custom log path points into a project/workdir, ignore `.plugin/logs/`,
+`*.log`, and `*.log.*` so active logs, rotated files, and gzip archives are not
+committed.
 
 ## Audit Records
 
-`LARK_AUDIT_LOG` defaults to `~/.codex/channels/lark/audit.log`.
+`LARK_AUDIT_LOG` defaults to `~/.codex/channels/lark/logs/audit.log`.
 
 Sensitive tool calls append records shaped like:
 
@@ -48,7 +55,8 @@ Fields:
 
 ## Trace Records
 
-`LARK_CODEX_EXEC_TRACE_LOG` defaults to `~/.codex/channels/lark/trace.log`.
+`LARK_CODEX_EXEC_TRACE_LOG` defaults to
+`~/.codex/channels/lark/logs/trace.log`.
 
 When `LARK_CODEX_EXEC_TOOL_TRACE=true`, codex exec tool events append text-line
 records. Compact/hidden records include mode, event type, tool, status, tool

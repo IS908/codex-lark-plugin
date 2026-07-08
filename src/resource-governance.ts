@@ -12,10 +12,12 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { gzip } from 'node:zlib';
+import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const gzipAsync = promisify(gzip);
 const INVALID_LOCK_STALE_MS = 30_000;
 const TAKEOVER_STALE_MS = 30_000;
 const LOCK_ACQUIRE_ATTEMPTS = 10;
@@ -557,6 +559,8 @@ export function registerLockCleanup(
 export interface RotatingLogOptions {
   maxBytes: number;
   maxFiles: number;
+  archiveRetentionMonths?: number;
+  now?: Date;
 }
 
 const rotatingLogQueues = new Map<string, Promise<void>>();
@@ -588,6 +592,7 @@ async function appendRotatingLineUnlocked(
   options: RotatingLogOptions,
 ): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
+  await archivePreviousMonthLogFiles(filePath, options);
   const maxBytes = normalizeNonNegative(options.maxBytes);
   const maxFiles = normalizeNonNegative(options.maxFiles);
   const lineBytes = Buffer.byteLength(line, 'utf8');
@@ -607,6 +612,92 @@ async function appendRotatingLineUnlocked(
   }
 
   await appendFile(filePath, line, 'utf8');
+}
+
+async function archivePreviousMonthLogFiles(filePath: string, options: RotatingLogOptions): Promise<void> {
+  const retentionMonths = normalizeNonNegative(options.archiveRetentionMonths ?? 0);
+  if (retentionMonths <= 0) return;
+
+  const logDir = dirname(filePath);
+  const baseName = basename(filePath);
+  const now = options.now ?? new Date();
+  const currentMonth = monthIndex(now);
+  const entries = await readdir(logDir, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !isLogFileForBase(entry.name, baseName)) continue;
+    const candidate = join(logDir, entry.name);
+    try {
+      const s = await stat(candidate);
+      const fileMonth = monthIndex(s.mtime);
+      if (fileMonth >= currentMonth) continue;
+      await gzipArchiveAndRemove(candidate, join(logDir, 'archive', monthKey(s.mtime)), entry.name);
+    } catch (err: any) {
+      console.error(`[resource-governance] Failed to archive old log ${candidate}:`, err?.message ?? String(err));
+    }
+  }
+
+  await pruneLogArchiveMonths(join(logDir, 'archive'), retentionMonths, now);
+}
+
+function isLogFileForBase(name: string, baseName: string): boolean {
+  if (name === baseName) return true;
+  if (!name.startsWith(`${baseName}.`)) return false;
+  const suffix = name.slice(baseName.length + 1);
+  return /^\d+$/.test(suffix);
+}
+
+async function gzipArchiveAndRemove(filePath: string, archiveDir: string, sourceName: string): Promise<void> {
+  const contents = await readFile(filePath);
+  if (contents.length === 0) {
+    await unlink(filePath).catch(() => undefined);
+    return;
+  }
+  await mkdir(archiveDir, { recursive: true });
+  const archivePath = uniqueArchivePath(archiveDir, `${sourceName}.gz`);
+  await writeFile(archivePath, await gzipAsync(contents));
+  await unlink(filePath);
+}
+
+function uniqueArchivePath(archiveDir: string, fileName: string): string {
+  let candidate = join(archiveDir, fileName);
+  let attempt = 1;
+  while (existsSync(candidate)) {
+    candidate = join(archiveDir, `${fileName}.${attempt}`);
+    attempt++;
+  }
+  return candidate;
+}
+
+async function pruneLogArchiveMonths(archiveRoot: string, retentionMonths: number, now: Date): Promise<void> {
+  if (!existsSync(archiveRoot)) return;
+  const cutoff = monthIndex(now) - retentionMonths;
+  const entries = await readdir(archiveRoot, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const index = parseMonthKey(entry.name);
+    if (index === null || index >= cutoff) continue;
+    await rm(join(archiveRoot, entry.name), { recursive: true, force: true }).catch((err: any) => {
+      console.error(`[resource-governance] Failed to prune log archive ${entry.name}:`, err?.message ?? String(err));
+    });
+  }
+}
+
+function monthKey(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthIndex(date: Date): number {
+  return date.getUTCFullYear() * 12 + date.getUTCMonth();
+}
+
+function parseMonthKey(key: string): number | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(key);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
+  return year * 12 + (month - 1);
 }
 
 function normalizeNonNegative(value: number): number {

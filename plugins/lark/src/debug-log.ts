@@ -6,6 +6,7 @@ export function debugLog(msg: string): void {
   void appendRotatingLine(appConfig.debugLogPath, line, {
     maxBytes: appConfig.logMaxBytes,
     maxFiles: appConfig.logMaxFiles,
+    archiveRetentionMonths: appConfig.logArchiveRetentionMonths,
   }).catch(() => undefined);
   console.error(msg);
 }

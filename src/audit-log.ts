@@ -52,6 +52,7 @@ export async function audit(
     await appendRotatingLine(appConfig.auditLogPath, line, {
       maxBytes: appConfig.logMaxBytes,
       maxFiles: appConfig.logMaxFiles,
+      archiveRetentionMonths: appConfig.logArchiveRetentionMonths,
     });
   } catch {
     // Silent — log failures should never affect tool behavior.

@@ -61,7 +61,7 @@ LARK_EXEC_PROGRESS_MIN_INTERVAL_MS: 15000
 LARK_EXEC_PROGRESS_POLL_INTERVAL_MS: 250
 LARK_CODEX_EXEC_TOOL_TRACE:         false
 LARK_CODEX_EXEC_TOOL_TRACE_MODE:    compact
-LARK_CODEX_EXEC_TRACE_LOG:          ~/.codex/channels/lark/trace.log
+LARK_CODEX_EXEC_TRACE_LOG:          ~/.codex/channels/lark/logs/trace.log
 LARK_CODEX_SESSION_RETENTION_DAYS:  14
 LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: 24
 LARK_CODEX_SESSION_RETENTION_DRY_RUN: false
@@ -94,9 +94,10 @@ LARK_DOWNLOAD_TIMEOUT_MS:              60000
 LARK_MAX_EPISODE_FILES_PER_SCOPE: 200
 LARK_MAX_EPISODE_SCOPE_BYTES:     10485760
 LARK_IDENTITY_SESSION_MAX_ENTRIES: 5000
-LARK_DEBUG_LOG:                   ~/.codex/channels/lark/debug.log
+LARK_DEBUG_LOG:                   ~/.codex/channels/lark/logs/debug.log
 LARK_LOG_MAX_BYTES:               5242880
 LARK_LOG_MAX_FILES:               5
+LARK_LOG_ARCHIVE_RETENTION_MONTHS: 6
 LARK_INBOX_MAX_AGE_HOURS:         168
 LARK_INBOX_MAX_BYTES:             209715200
 LARK_NAME_CACHE_SIZE:             1000
@@ -107,7 +108,7 @@ LARK_LATEST_MESSAGE_TRACKER_SIZE: 1000
 LARK_OWNER_OPEN_ID:               (not set)
 LARK_IDENTITY_SESSION_TTL_MS:     auto
 LARK_PRIVACY_RULES_FILE:          ~/.codex/channels/lark/privacy-rules.md
-LARK_AUDIT_LOG:                   ~/.codex/channels/lark/audit.log
+LARK_AUDIT_LOG:                   ~/.codex/channels/lark/logs/audit.log
 LARK_LOCAL_CLI_TOOLS_CONFIG:      ~/.codex/channels/lark/local-cli-tools.json
 LARK_CARD_CONTEXT_CACHE_SIZE:      200
 LARK_CARD_CONTEXT_CACHE_TTL_MS:    1800000
@@ -184,7 +185,7 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS` — parent watcher polling interval for progress JSONL (default: 250)
 - `LARK_CODEX_EXEC_TOOL_TRACE` — write local codex exec tool-call trace text lines to trace.log; never renders tool traces into Feishu replies (default: false)
 - `LARK_CODEX_EXEC_TOOL_TRACE_MODE` — `compact`, `full`, or `hidden`; `hidden` keeps local compact tracing and no visible Feishu tool trace (default: compact)
-- `LARK_CODEX_EXEC_TRACE_LOG` — local codex exec tool trace text log path (default: `~/.codex/channels/lark/trace.log`)
+- `LARK_CODEX_EXEC_TRACE_LOG` — local codex exec tool trace text log path (default: `~/.codex/channels/lark/logs/trace.log`)
 - `LARK_CODEX_SESSION_RETENTION_DAYS` — keep Codex exec resume-pointer records newer than this many days (default: 14)
 - `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` — periodic cleanup interval; set `0` to disable automatic cleanup (default: 24)
 - `LARK_CODEX_SESSION_RETENTION_DRY_RUN` — preview session cleanup candidates without deleting records (default: false)
@@ -214,9 +215,10 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_MAX_EPISODE_FILES_PER_SCOPE` — max episode files per chat/thread scope (default: 200)
 - `LARK_MAX_EPISODE_SCOPE_BYTES` — max total episode bytes per chat/thread scope (default: 10485760)
 - `LARK_IDENTITY_SESSION_MAX_ENTRIES` — max caller session entries (default: 5000)
-- `LARK_DEBUG_LOG` — debug log path (default: `~/.codex/channels/lark/debug.log`)
+- `LARK_DEBUG_LOG` — debug log path (default: `~/.codex/channels/lark/logs/debug.log`)
 - `LARK_LOG_MAX_BYTES` — rotate debug/audit/trace logs after this many bytes (default: 5242880)
 - `LARK_LOG_MAX_FILES` — rotated log files to keep (default: 5)
+- `LARK_LOG_ARCHIVE_RETENTION_MONTHS` — monthly gzip archive directories to keep; `0` disables archival (default: 6)
 - `LARK_INBOX_MAX_AGE_HOURS` — remove old inbox downloads on startup (default: 168)
 - `LARK_INBOX_MAX_BYTES` — LRU byte cap for inbox downloads (default: 209715200)
 - `LARK_NAME_CACHE_SIZE` — max cached Feishu user/chat names (default: 1000)
@@ -279,7 +281,7 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_MEMORY_DEDUP_WINDOW_MS`,
    `LARK_MAX_EPISODE_FILES_PER_SCOPE`, `LARK_MAX_EPISODE_SCOPE_BYTES`,
    `LARK_IDENTITY_SESSION_MAX_ENTRIES`, `LARK_DEBUG_LOG`,
-   `LARK_LOG_MAX_BYTES`, `LARK_LOG_MAX_FILES`,
+   `LARK_LOG_MAX_BYTES`, `LARK_LOG_MAX_FILES`, `LARK_LOG_ARCHIVE_RETENTION_MONTHS`,
    `LARK_INBOX_MAX_AGE_HOURS`, `LARK_INBOX_MAX_BYTES`,
    `LARK_NAME_CACHE_SIZE`, `LARK_CHAT_TYPE_CACHE_SIZE`,
    `LARK_LATEST_MESSAGE_TRACKER_SIZE`,
@@ -321,7 +323,7 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS` | Messaging | No | `250` |
 | `LARK_CODEX_EXEC_TOOL_TRACE` | Messaging | No | `false` |
 | `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | Messaging | No | `compact` |
-| `LARK_CODEX_EXEC_TRACE_LOG` | Messaging | No | `~/.codex/channels/lark/trace.log` |
+| `LARK_CODEX_EXEC_TRACE_LOG` | Messaging | No | `~/.codex/channels/lark/logs/trace.log` |
 | `LARK_CODEX_SESSION_RETENTION_DAYS` | Messaging | No | `14` |
 | `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` | Messaging | No | `24` |
 | `LARK_CODEX_SESSION_RETENTION_DRY_RUN` | Messaging | No | `false` |
@@ -354,9 +356,10 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_MEMORY_DEDUP_WINDOW_MS` | Memory | No | `1800000` |
 | `LARK_MAX_EPISODE_FILES_PER_SCOPE` | Resource governance | No | `200` |
 | `LARK_MAX_EPISODE_SCOPE_BYTES` | Resource governance | No | `10485760` |
-| `LARK_DEBUG_LOG` | Resource governance | No | `~/.codex/channels/lark/debug.log` |
+| `LARK_DEBUG_LOG` | Resource governance | No | `~/.codex/channels/lark/logs/debug.log` |
 | `LARK_LOG_MAX_BYTES` | Resource governance | No | `5242880` |
 | `LARK_LOG_MAX_FILES` | Resource governance | No | `5` |
+| `LARK_LOG_ARCHIVE_RETENTION_MONTHS` | Resource governance | No | `6` |
 | `LARK_INBOX_MAX_AGE_HOURS` | Resource governance | No | `168` |
 | `LARK_INBOX_MAX_BYTES` | Resource governance | No | `209715200` |
 | `LARK_NAME_CACHE_SIZE` | Resource governance | No | `1000` |
@@ -366,7 +369,7 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_IDENTITY_SESSION_TTL_MS` | Identity | No | auto |
 | `LARK_IDENTITY_SESSION_MAX_ENTRIES` | Identity | No | `5000` |
 | `LARK_PRIVACY_RULES_FILE` | Privacy | No | `~/.codex/channels/lark/privacy-rules.md` |
-| `LARK_AUDIT_LOG` | Privacy | No | `~/.codex/channels/lark/audit.log` |
+| `LARK_AUDIT_LOG` | Privacy | No | `~/.codex/channels/lark/logs/audit.log` |
 | `LARK_LOCAL_CLI_TOOLS_CONFIG` | Local tools | No | `~/.codex/channels/lark/local-cli-tools.json` |
 | `LARK_CARD_CONTEXT_CACHE_SIZE` | Quoted cards | No | `200` |
 | `LARK_CARD_CONTEXT_CACHE_TTL_MS` | Quoted cards | No | `1800000` |

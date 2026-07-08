@@ -96,6 +96,7 @@ class FileCodexExecToolTraceWriter implements CodexExecToolTraceWriter {
     await appendRotatingLine(this.config.logPath, traceLine, {
       maxBytes: this.config.maxBytes,
       maxFiles: this.config.maxFiles,
+      archiveRetentionMonths: appConfig.logArchiveRetentionMonths,
     });
   }
 }

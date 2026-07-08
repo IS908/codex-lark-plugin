@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.15.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.15.2-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -60,7 +60,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `run_local_cli_tool`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
 - **Doc-comment binding**: doc-comment tools only run from `doc:<file_token>` turns, require the current `thread_id`, and reject prompt-injected `doc_token` mismatches so comments cannot be posted into a different document
 - **Memory transparency (v0.11.0+)**: `what_do_you_know` lists what the bot has stored about the caller (filtered by current-chat visibility); `forget_memory` removes a specific line by hash. Optional `promote_to_rule` feeds corrections into `privacy-rules.md` — a self-learning loop that makes future misclassifications less likely
-- **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/audit.log` records every sensitive-tool invocation as compact text lines (time / log id / `audit` / tool / outcome / caller / redacted args) so the operator can retrospectively inspect what was accessed on their machine
+- **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/logs/audit.log` records every sensitive-tool invocation as compact text lines (time / log id / `audit` / tool / outcome / caller / redacted args) so the operator can retrospectively inspect what was accessed on their machine
 - **Terminal skills default to redacted output (v0.11.0+)**: `$lark:jobs` hides prompt bodies by default; verbose opt-in is required. Destructive operations require interactive confirmation
 - **Tiered profile memory (v0.10.0+)**: each user's profile is split into `public.md` (visible to anyone who @mentions the user) and `private.md` (owner-only). Private-chat preferences no longer leak into groups via @mention injection
 - **L1/L2/L3 classification** (v0.10.0+): hardcoded regex + keyword rules catch phones / credentials / sensitive Chinese keywords. Email is intentionally NOT in L1 — the plugin targets **work-chat use cases** where emails are commonly shared via signatures/directories; personal deployments can add their own "Always private" email rule to `privacy-rules.md`. User-editable `privacy-rules.md` covers personal/org-specific cases; LLM handles the nuance. `parseTieredProfile` applies an L1 safety net over LLM output so misclassified credentials get forced to private
@@ -329,7 +329,7 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS` | `250` | Parent watcher polling interval for progress JSONL |
 | `LARK_CODEX_EXEC_TOOL_TRACE` | `false` | Enable local `codex exec --json` tool execution tracing to `trace.log`. This never renders tool traces into Feishu replies. |
 | `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | `compact` | Trace mode: `compact` writes sanitized summaries; `full` writes sanitized/truncated event JSON; `hidden` is a compatibility alias that keeps local compact tracing while never showing tool traces in Feishu. |
-| `LARK_CODEX_EXEC_TRACE_LOG` | `~/.codex/channels/lark/trace.log` | Override the local codex exec tool trace text log path |
+| `LARK_CODEX_EXEC_TRACE_LOG` | `~/.codex/channels/lark/logs/trace.log` | Override the local codex exec tool trace text log path |
 
 Exec delivery can expose a bounded progress side channel for long-running
 visible IM/doc-comment turns. The parent bridge creates a temporary JSONL file
@@ -551,7 +551,7 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 | `LARK_IDENTITY_SESSION_TTL_MS` | `max(2h, LARK_INACTIVITY_HOURS × 2h)` | Lifetime of a server-side `(chat_id, thread_id?) → open_id` session entry. Must exceed the auto-flush window so distillation-triggered tool calls still resolve to the last real user. |
 | `LARK_IDENTITY_SESSION_MAX_ENTRIES` | `5000` | Maximum server-derived caller session entries retained in memory. Oldest entries are evicted first. |
 | `LARK_PRIVACY_RULES_FILE` | `~/.codex/channels/lark/privacy-rules.md` | Override the path to the L2 user rules file. The distiller injects this file's contents into its classification prompt. |
-| `LARK_AUDIT_LOG` | `~/.codex/channels/lark/audit.log` | Override the path to the append-only text-line audit log. Every sensitive-tool invocation is recorded (best-effort; log failures never propagate). (v0.11.0+) |
+| `LARK_AUDIT_LOG` | `~/.codex/channels/lark/logs/audit.log` | Override the path to the append-only text-line audit log. Every sensitive-tool invocation is recorded (best-effort; log failures never propagate). (v0.11.0+) |
 | `LARK_LOCAL_CLI_TOOLS_CONFIG` | `~/.codex/channels/lark/local-cli-tools.json` | Allowlist config for `run_local_cli_tool` host-local CLI execution. (v1.1.0+) |
 | `LARK_QUOTED_CARD_USER_FETCH_ENABLED` | `true` | When bot SDK/raw fetches cannot hydrate a quoted Interactive Card, try `lark-cli im +messages-mget --as user` as a best-effort user-identity fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_COMMAND` | `lark-cli` | Executable used for the quoted-card user fallback. |
@@ -562,9 +562,10 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 
 | Variable | Default | Description |
 |---|---|---|
-| `LARK_DEBUG_LOG` | `~/.codex/channels/lark/debug.log` | Override the debug log path |
+| `LARK_DEBUG_LOG` | `~/.codex/channels/lark/logs/debug.log` | Override the debug log path |
 | `LARK_LOG_MAX_BYTES` | `5242880` | Rotate debug/audit/trace logs once the active file exceeds this size |
 | `LARK_LOG_MAX_FILES` | `5` | Number of rotated log files to retain |
+| `LARK_LOG_ARCHIVE_RETENTION_MONTHS` | `6` | Compress previous-month debug/audit/trace logs under `archive/YYYY-MM/` and keep this many archive months. Set `0` to disable monthly archival. |
 | `LARK_INBOX_MAX_AGE_HOURS` | `168` | Startup cleanup deletes inbox downloads older than this |
 | `LARK_INBOX_MAX_BYTES` | `209715200` | Startup cleanup deletes least-recently-used inbox files until under this byte cap |
 | `LARK_NAME_CACHE_SIZE` | `1000` | Maximum cached Feishu user/chat display names |
@@ -612,7 +613,8 @@ Step 4: Advanced tuning (optional)
      LARK_FEISHU_API_RETRY_BASE_DELAY_MS,
      LARK_DOWNLOAD_MAX_BYTES, LARK_DOWNLOAD_TIMEOUT_MS,
      LARK_IDENTITY_SESSION_MAX_ENTRIES, LARK_DEBUG_LOG,
-     LARK_LOG_MAX_BYTES, LARK_LOG_MAX_FILES, LARK_CODEX_EXEC_TRACE_LOG,
+     LARK_LOG_MAX_BYTES, LARK_LOG_MAX_FILES, LARK_LOG_ARCHIVE_RETENTION_MONTHS,
+     LARK_CODEX_EXEC_TRACE_LOG,
      LARK_INBOX_MAX_AGE_HOURS,
      LARK_INBOX_MAX_BYTES, LARK_NAME_CACHE_SIZE,
      LARK_CHAT_TYPE_CACHE_SIZE, LARK_LATEST_MESSAGE_TRACKER_SIZE,

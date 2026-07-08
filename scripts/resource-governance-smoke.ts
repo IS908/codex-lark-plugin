@@ -17,6 +17,7 @@ import {
 import { chmod, readdir, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import {
   acquireSingleInstanceLock,
   appendRotatingLine,
@@ -354,6 +355,38 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
+// 8a. Previous-month logs archive to gzip files and expired archive months are pruned.
+{
+  const dir = tmpRoot('resource-log-archive-');
+  const logPath = join(dir, 'debug.log');
+  await writeFile(logPath, 'june-active\n');
+  await writeFile(`${logPath}.1`, 'june-rotated\n');
+  const june = new Date(Date.UTC(2026, 5, 15, 12, 0, 0));
+  await utimes(logPath, june, june);
+  await utimes(`${logPath}.1`, june, june);
+
+  const expiredArchiveDir = join(dir, 'archive', '2025-12');
+  mkdirSync(expiredArchiveDir, { recursive: true });
+  writeFileSync(join(expiredArchiveDir, 'debug.log.gz'), 'expired', 'utf-8');
+
+  await appendRotatingLine(logPath, 'july-active\n', {
+    maxBytes: 1024,
+    maxFiles: 2,
+    archiveRetentionMonths: 6,
+    now: new Date(Date.UTC(2026, 6, 1, 0, 0, 0)),
+  });
+
+  assert.equal(readFileSync(logPath, 'utf-8'), 'july-active\n');
+  assert.equal(gunzipSync(readFileSync(join(dir, 'archive', '2026-06', 'debug.log.gz'))).toString('utf-8'), 'june-active\n');
+  assert.equal(
+    gunzipSync(readFileSync(join(dir, 'archive', '2026-06', 'debug.log.1.gz'))).toString('utf-8'),
+    'june-rotated\n',
+  );
+  assert.equal(existsSync(expiredArchiveDir), false);
+  cleanup(dir);
+  passed++;
+}
+
 // 9. Inbox GC removes old files first, then LRU files until under byte cap.
 {
   const dir = tmpRoot('resource-inbox-');
@@ -619,4 +652,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/27 PASS`);
+console.log(`resource-governance smoke: ${passed}/28 PASS`);
