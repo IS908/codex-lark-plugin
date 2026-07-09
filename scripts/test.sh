@@ -36,6 +36,11 @@ npm run --silent check:plugin-src-sync
 echo "PASS"
 
 echo ""
+echo "=== Runtime bundle build ==="
+npm run --silent build
+echo "PASS"
+
+echo ""
 echo "=== Dry-run (module loading) ==="
 npm run --silent start -- --dry-run 1>/tmp/lark-test-stdout.txt 2>/tmp/lark-test-stderr.txt
 echo "PASS"
@@ -47,6 +52,10 @@ node --import tsx scripts/dry-run-no-credentials-smoke.ts
 echo ""
 echo "=== Startup dependency install guard ==="
 node --import tsx scripts/startup-no-install-smoke.ts
+
+echo ""
+echo "=== Plugin runtime package checks ==="
+node --import tsx scripts/plugin-runtime-package-smoke.ts
 
 echo ""
 echo "=== MCP stdout clean ==="
