@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.15.5] - 2026-07-10
+
+### Fixed
+- Shipped a checked-in bundled runtime for the Lark plugin wrapper so Codex plugin cache startup no longer depends on `node_modules` or `tsx` being present.
+- Added a no-`node_modules` runtime-package smoke test to guard MCP startup from regressing before the `initialize` response.
+
 ## [1.15.4] - 2026-07-10
 
 ### Fixed

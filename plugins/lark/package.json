@@ -1,6 +1,6 @@
 {
   "name": "codex-lark-plugin",
-  "version": "1.15.4",
+  "version": "1.15.5",
   "description": "Codex channel plugin for Feishu/Lark — chat with Codex through Feishu with local-file memory and scheduled jobs",
   "keywords": [
     "codex",
@@ -22,11 +22,11 @@
   },
   "homepage": "https://github.com/IS908/codex-lark-plugin#readme",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "runtime/index.js",
   "scripts": {
-    "start": "node --import tsx src/index.ts",
-    "stop": "node --import tsx src/stop.ts",
-    "build": "tsc",
+    "start": "node runtime/index.js",
+    "stop": "node runtime/stop.js",
+    "build": "tsc && node ../../scripts/build-runtime-bundles.js --target plugins/lark",
     "typecheck": "tsc --noEmit",
     "audit:deps": "npm audit --omit=dev --audit-level=high"
   },
@@ -40,6 +40,7 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
