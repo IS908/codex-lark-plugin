@@ -7,6 +7,7 @@ import {
 import {
   createJob,
   deleteJob,
+  formatJobNextRun,
   listVisibleJobs,
   updateJob,
 } from '../job-service.js';
@@ -161,12 +162,13 @@ export function registerJobTools(ctx: ToolContext): void {
           j.runtime.run_status || j.runtime.output_status || j.runtime.delivery_status
             ? ` | Run: ${j.runtime.run_status ?? '-'} / Output: ${j.runtime.output_status ?? '-'} / Delivery: ${j.runtime.delivery_status ?? '-'}`
             : '';
+        const nextRun = formatJobNextRun(j, tz);
 
         if (!isPrivate && !isOwner) {
-          return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   By: ${j.meta.created_by} | TZ: ${tz} | Next: ${formatCronDateTime(j.runtime.next_run_at, tz)}`;
+          return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   By: ${j.meta.created_by} | TZ: ${tz} | Next: ${nextRun}`;
         }
         const modelNote = j.meta.model ? ` | Model: ${j.meta.model}` : '';
-        return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   TZ: ${tz} | Next: ${formatCronDateTime(j.runtime.next_run_at, tz)} | Last: ${lastRun} | Runs: ${j.runtime.run_count}${modelNote}${runState}${error}`;
+        return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   TZ: ${tz} | Next: ${nextRun} | Last: ${lastRun} | Runs: ${j.runtime.run_count}${modelNote}${runState}${error}`;
       });
 
       return {
@@ -237,7 +239,7 @@ export function registerJobTools(ctx: ToolContext): void {
         content: [
           {
             type: 'text' as const,
-            text: `Updated job "${id}". Status: ${updated.job.meta.status}, TZ: ${jobTimezone(updated.job.meta)}, Next run: ${formatCronDateTime(updated.job.runtime.next_run_at, jobTimezone(updated.job.meta))}`,
+            text: `Updated job "${id}". Status: ${updated.job.meta.status}, TZ: ${jobTimezone(updated.job.meta)}, Next run: ${formatJobNextRun(updated.job)}`,
           },
         ],
       };

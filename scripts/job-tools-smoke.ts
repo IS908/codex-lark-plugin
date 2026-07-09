@@ -176,7 +176,30 @@ try {
     passed++;
   }
 
-  // 5. Job listings render next/last run in the configured cron timezone and keep UTC.
+  // 5. Paused jobs keep their cached schedule state on disk but hide stale next_run_at from user-facing output.
+  {
+    const job = makeJob({ id: 'pause-display', status: 'active' });
+    writeJob(job);
+    const r = await updateJob({
+      id: 'pause-display',
+      status: 'paused',
+      chat_id: 'chat_owner',
+      thread_id: 'thread_owner',
+    });
+    if (r.isError) fail(`5: pause update should succeed, got ${JSON.stringify(r)}`);
+    const updateText = r.content[0].text;
+    if (!updateText.includes('Status: paused')) fail(`5: update response should show paused status, got ${updateText}`);
+    if (!updateText.includes('Next run: - (paused)')) fail(`5: update response should hide next run, got ${updateText}`);
+
+    const list = await listJobs({ status: 'all', chat_id: 'chat_owner', thread_id: 'thread_owner' });
+    if (list.isError) fail(`5: list_jobs should succeed, got ${JSON.stringify(list)}`);
+    const listText = list.content[0].text;
+    if (!listText.includes('**pause-display**')) fail(`5: list should include pause-display, got ${listText}`);
+    if (!listText.includes('Next: - (paused)')) fail(`5: list should hide paused next run, got ${listText}`);
+    passed++;
+  }
+
+  // 6. Job listings render next/last run in the configured cron timezone and keep UTC.
   {
     const job = makeJob(
       { id: 'timezone-display', status: 'active', schedule_human: 'daily at 09:00', schedule: '0 9 * * *' },
@@ -187,19 +210,19 @@ try {
     );
     writeJob(job);
     const r = await listJobs({ status: 'all', chat_id: 'chat_owner', thread_id: 'thread_owner' });
-    if (r.isError) fail(`5: list_jobs should succeed, got ${JSON.stringify(r)}`);
+    if (r.isError) fail(`6: list_jobs should succeed, got ${JSON.stringify(r)}`);
     const text = r.content[0].text;
-    if (!text.includes('Timezone: Asia/Shanghai')) fail(`5: missing configured timezone: ${text}`);
+    if (!text.includes('Timezone: Asia/Shanghai')) fail(`6: missing configured timezone: ${text}`);
     if (!text.includes('Next: 2026-07-03 09:00:00 (Asia/Shanghai; UTC 2026-07-03T01:00:00.000Z)')) {
-      fail(`5: next_run_at should include cron timezone wall time and UTC, got ${text}`);
+      fail(`6: next_run_at should include cron timezone wall time and UTC, got ${text}`);
     }
     if (!text.includes('Last: 2026-07-02 09:00:00 (Asia/Shanghai; UTC 2026-07-02T01:00:00.000Z)')) {
-      fail(`5: last_run_at should include cron timezone wall time and UTC, got ${text}`);
+      fail(`6: last_run_at should include cron timezone wall time and UTC, got ${text}`);
     }
     passed++;
   }
 
-  // 6. create_job persists an explicit per-job timezone in the job file.
+  // 7. create_job persists an explicit per-job timezone in the job file.
   {
     const r = await createJob({
       name: 'Per Job Timezone',
@@ -211,15 +234,15 @@ try {
       chat_id: 'chat_owner',
       thread_id: 'thread_owner',
     });
-    if (r.isError) fail(`6: create_job should accept timezone, got ${JSON.stringify(r)}`);
+    if (r.isError) fail(`7: create_job should accept timezone, got ${JSON.stringify(r)}`);
     const persisted = readJob('per-job-timezone');
     if ((persisted.meta as any).timezone !== 'Asia/Tokyo') {
-      fail(`6: expected persisted timezone Asia/Tokyo, got ${JSON.stringify(persisted.meta)}`);
+      fail(`7: expected persisted timezone Asia/Tokyo, got ${JSON.stringify(persisted.meta)}`);
     }
     if (!r.content[0].text.includes('Asia/Tokyo; UTC ')) {
-      fail(`6: expected create_job response to render per-job timezone, got ${r.content[0].text}`);
+      fail(`7: expected create_job response to render per-job timezone, got ${r.content[0].text}`);
     }
-    assertInitialRuntimeShape(persisted, '6');
+    assertInitialRuntimeShape(persisted, '7');
     passed++;
   }
 
@@ -229,4 +252,4 @@ try {
   rmSync(jobsDir, { recursive: true, force: true });
 }
 
-console.log(`job-tools smoke: ${passed}/6 PASS`);
+console.log(`job-tools smoke: ${passed}/7 PASS`);
