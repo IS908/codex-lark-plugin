@@ -562,6 +562,7 @@ try {
   assert.match(jobManagementResults[1].message, /weekdays at 10:00/);
   assert.match(jobManagementResults[1].message, /Next run: .*Asia\/Shanghai; UTC /);
   assert.match(jobManagementResults[2].message, /Status: paused/i);
+  assert.match(jobManagementResults[2].message, /Next run: - \(paused\)/);
   assert.match(jobManagementResults[3].message, /Upserted job "exec-action-job"/);
   assert.match(jobManagementResults[3].message, /daily at 11:00/);
   assert.match(jobManagementResults[3].message, /Next run: .*Asia\/Shanghai; UTC /);

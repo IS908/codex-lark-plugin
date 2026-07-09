@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.15.3] - 2026-07-09
+
+### Fixed
+- Hid stale `next_run_at` values from paused cronjob update receipts, list output, and codex exec job actions while preserving active-job next-run formatting.
+
 ## [1.15.2] - 2026-07-08
 
 ### Added

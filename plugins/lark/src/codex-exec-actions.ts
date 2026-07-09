@@ -20,6 +20,7 @@ import {
   canReadJobBody,
   createJob,
   deleteJob,
+  formatJobNextRun,
   listVisibleJobs,
   updateJob,
   upsertJob,
@@ -356,7 +357,7 @@ function formatJobForActionList(job: JobFile, caller: string): string {
     `schedule: ${job.meta.schedule_human} (${job.meta.schedule})`,
     `timezone: ${tz}`,
     `target_chat_id: ${job.meta.target_chat_id}`,
-    `next_run_at: ${formatCronDateTime(job.runtime.next_run_at, tz)}`,
+    `next_run_at: ${formatJobNextRun(job, tz)}`,
     `last_run_at: ${lastRun}`,
     `run_count: ${job.runtime.run_count}${modelNote}${lastError}`,
     body,
@@ -552,7 +553,7 @@ async function executeUpdateJob(
   return {
     ok: true,
     action: 'update_job',
-    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Schedule: ${updated.job.meta.schedule_human}, TZ: ${jobTimezone(updated.job.meta)}, Next run: ${formatCronDateTime(updated.job.runtime.next_run_at, jobTimezone(updated.job.meta))}`,
+    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Schedule: ${updated.job.meta.schedule_human}, TZ: ${jobTimezone(updated.job.meta)}, Next run: ${formatJobNextRun(updated.job)}`,
   };
 }
 
@@ -578,7 +579,7 @@ async function executeDisableJob(
   return {
     ok: true,
     action: 'disable_job',
-    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Next run: ${formatCronDateTime(updated.job.runtime.next_run_at, jobTimezone(updated.job.meta))}`,
+    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Next run: ${formatJobNextRun(updated.job)}`,
   };
 }
 
@@ -648,7 +649,7 @@ async function executeUpsertJob(
   return {
     ok: true,
     action: 'upsert_job',
-    message: `Upserted job "${upserted.job.meta.id}" (job_id: ${upserted.job.meta.id}, ${upserted.scheduleHuman}, tz=${upserted.timezone}). Status: ${upserted.job.meta.status}, Next run: ${formatCronDateTime(upserted.nextRunAt, upserted.timezone)}`,
+    message: `Upserted job "${upserted.job.meta.id}" (job_id: ${upserted.job.meta.id}, ${upserted.scheduleHuman}, tz=${upserted.timezone}). Status: ${upserted.job.meta.status}, Next run: ${formatJobNextRun(upserted.job, upserted.timezone)}`,
   };
 }
 

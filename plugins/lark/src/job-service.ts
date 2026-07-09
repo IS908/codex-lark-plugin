@@ -5,6 +5,7 @@ import {
   createInitialJobRuntime,
   deleteJob as deleteJobFile,
   expandSchedule,
+  formatCronDateTime,
   jobExists,
   jobTimezone,
   listAllJobs,
@@ -247,6 +248,11 @@ export function jobVisibleToCaller(
 
 export function canReadJobBody(job: JobFile, caller: string): boolean {
   return job.meta.created_by === caller || job.meta.type === 'message';
+}
+
+export function formatJobNextRun(job: JobFile, timezone = jobTimezone(job.meta)): string {
+  if (job.meta.status !== 'active') return `- (${job.meta.status})`;
+  return formatCronDateTime(job.runtime.next_run_at, timezone);
 }
 
 export async function resolveJobReference(reference: JobReference): Promise<JobServiceResult<{ job: JobFile }>> {
