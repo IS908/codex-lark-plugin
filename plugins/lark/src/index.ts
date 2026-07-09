@@ -33,7 +33,7 @@ import { emitCodexExecConfigDiagnostics } from './codex-exec-config.js';
 import { createCodexExecActionDispatcher } from './codex-exec-actions.js';
 import { ProfileDistillationManager } from './profile-distillation.js';
 import { validateSdkChannelScaffold } from './sdk-channel-scaffold.js';
-import { startSdkChannelRuntime } from './sdk-channel-runtime.js';
+import { startSdkChannelRuntimeWithRetry } from './sdk-channel-runtime.js';
 import { startCodexSessionRetention } from './codex-session-retention.js';
 import { startCodexExecProgressRetention } from './codex-exec-progress.js';
 import { startCodexExecActionChannelRetention } from './codex-exec-action-channel.js';
@@ -382,86 +382,98 @@ async function main() {
   // 8. Acquire single-instance lock and start Lark WebSocket
   const lock = await acquireSingleInstanceLock(LOCK_FILE);
   registerLockCleanup(lock);
-  await startSdkChannelRuntime(channel);
-
-  // 9. Re-arm flush timers from persisted episodes
-  await buffer.rearmFromDisk();
-
-  // 10. Start cronjob scheduler
-  const scheduler = new JobScheduler({
-    client: channel.getClient(),
-    transport: channel.getLarkTransport(),
-    identitySession,
-    botMessageTracker: channel.getBotMessageTracker(),
-    promptRunner: async ({ job, jobThreadId, promptContent, diagnostics }) => {
-      let deliveredReport = '';
-      const message: LarkMessage = {
-        messageId: jobThreadId,
-        chatId: job.meta.target_chat_id,
-        chatType: 'cronjob',
-        senderId: job.meta.created_by,
-        senderName: `CronJob ${job.meta.name}`,
-        text: promptContent,
-        messageType: 'cronjob',
-        rawContent: promptContent,
-        threadId: jobThreadId,
-      };
-      await deliverMessageViaCodexExec({
-        message,
-        displayLabel: `CronJob · ${job.meta.name}`,
-        traceLogId: job.meta.name,
-        sendReply: async (request) => {
-          diagnostics.startStage('send_lark');
-          try {
-            const result = await sendFeishuReply(
-              {
-                client: channel.getClient(),
-                transport: channel.getLarkTransport(),
-                conversationBuffer: buffer,
-                botMessageTracker: channel.getBotMessageTracker(),
-                latestMessageTracker: channel.getLatestMessageTracker(),
-                turnObligations,
-              },
-              { ...request, reply_to: undefined },
-            );
-            if (result.isError) throw new Error(result.errorText ?? result.statusText);
-            if (result.sentCount > 0) deliveredReport = request.text;
-            diagnostics.completeStage('send_lark');
-            return result;
-          } catch (err) {
-            diagnostics.failStage('send_lark', err);
-            throw err;
-          }
-        },
-        recordAssistantMessage: ({ chatId, threadId, text }) => {
-          buffer.record(chatId, {
-            role: 'assistant',
-            senderId: 'bot',
-            text: text.slice(0, 500),
-            timestamp: new Date().toISOString(),
-            timestampMs: Date.now(),
-            ...(threadId ? { threadId } : {}),
-            messageType: 'text',
-          });
-        },
-        sessionHealth: sessionHealthMonitor ?? undefined,
-        actionDispatcher: codexExecActionDispatcher,
-        progressVisible: false,
-        onProgress: (event) => {
-          diagnostics.recordProgress(event.content, event.timestampMs, event.bytes);
-        },
-      });
-      return { report: deliveredReport };
-    },
-  });
-  await scheduler.start();
 
   runStartupResourceCleanup(memoryStore);
   startCodexSessionRetention();
   startCodexExecProgressRetention(appConfig.codexExecCwd);
   startCodexExecActionChannelRetention(appConfig.codexExecCwd);
 
-  console.error('[index] codex-lark-plugin started successfully');
+  let channelServicesStart: Promise<void> | null = null;
+  const startChannelServices = () => {
+    if (channelServicesStart) return channelServicesStart;
+    channelServicesStart = (async () => {
+      // 9. Re-arm flush timers from persisted episodes
+      await buffer.rearmFromDisk();
+
+      // 10. Start cronjob scheduler
+      const scheduler = new JobScheduler({
+        client: channel.getClient(),
+        transport: channel.getLarkTransport(),
+        identitySession,
+        botMessageTracker: channel.getBotMessageTracker(),
+        promptRunner: async ({ job, jobThreadId, promptContent, diagnostics }) => {
+          let deliveredReport = '';
+          const message: LarkMessage = {
+            messageId: jobThreadId,
+            chatId: job.meta.target_chat_id,
+            chatType: 'cronjob',
+            senderId: job.meta.created_by,
+            senderName: `CronJob ${job.meta.name}`,
+            text: promptContent,
+            messageType: 'cronjob',
+            rawContent: promptContent,
+            threadId: jobThreadId,
+          };
+          await deliverMessageViaCodexExec({
+            message,
+            displayLabel: `CronJob · ${job.meta.name}`,
+            traceLogId: job.meta.name,
+            sendReply: async (request) => {
+              diagnostics.startStage('send_lark');
+              try {
+                const result = await sendFeishuReply(
+                  {
+                    client: channel.getClient(),
+                    transport: channel.getLarkTransport(),
+                    conversationBuffer: buffer,
+                    botMessageTracker: channel.getBotMessageTracker(),
+                    latestMessageTracker: channel.getLatestMessageTracker(),
+                    turnObligations,
+                  },
+                  { ...request, reply_to: undefined },
+                );
+                if (result.isError) throw new Error(result.errorText ?? result.statusText);
+                if (result.sentCount > 0) deliveredReport = request.text;
+                diagnostics.completeStage('send_lark');
+                return result;
+              } catch (err) {
+                diagnostics.failStage('send_lark', err);
+                throw err;
+              }
+            },
+            recordAssistantMessage: ({ chatId, threadId, text }) => {
+              buffer.record(chatId, {
+                role: 'assistant',
+                senderId: 'bot',
+                text: text.slice(0, 500),
+                timestamp: new Date().toISOString(),
+                timestampMs: Date.now(),
+                ...(threadId ? { threadId } : {}),
+                messageType: 'text',
+              });
+            },
+            sessionHealth: sessionHealthMonitor ?? undefined,
+            actionDispatcher: codexExecActionDispatcher,
+            progressVisible: false,
+            onProgress: (event) => {
+              diagnostics.recordProgress(event.content, event.timestampMs, event.bytes);
+            },
+          });
+          return { report: deliveredReport };
+        },
+      });
+      await scheduler.start();
+      console.error('[index] codex-lark-plugin channel services started');
+    })();
+    return channelServicesStart;
+  };
+
+  startSdkChannelRuntimeWithRetry(channel, {
+    onConnected: startChannelServices,
+    onStopped: (err) => logSafeError('[index] Lark channel services stopped:', err),
+  });
+
+  console.error('[index] codex-lark-plugin MCP server started; Lark runtime connecting');
 }
 
 main().catch((err) => {

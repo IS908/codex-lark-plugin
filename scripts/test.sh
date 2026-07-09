@@ -195,6 +195,10 @@ echo "=== SDK runtime adapter checks ==="
 node --import tsx scripts/sdk-runtime-smoke.ts
 
 echo ""
+echo "=== SDK runtime retry checks ==="
+node --import tsx scripts/sdk-runtime-retry-smoke.ts
+
+echo ""
 echo "=== SDK rollout docs checks ==="
 node --import tsx scripts/sdk-rollout-doc-smoke.ts
 
