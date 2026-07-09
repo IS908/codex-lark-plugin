@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.15.4] - 2026-07-10
+
+### Fixed
+- Kept MCP stdio startup alive when the Lark SDK runtime cannot initially resolve or reach Feishu, retrying the channel connection in the background and starting channel-dependent services only after the runtime connects.
+
 ## [1.15.3] - 2026-07-09
 
 ### Fixed
