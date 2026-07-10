@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.15.6] - 2026-07-10
+
+### Changed
+- Render local debug, audit, and trace log timestamps in `LARK_CRON_TIMEZONE` with an explicit UTC offset.
+- Shortened compact/hidden codex exec trace records to tool/type, status, trace id, duration, and sanitized payload while keeping full trace records detailed.
+- Changed debug log lines from bracket-wrapped text to compact `time scope message` lines.
+
 ## [1.15.5] - 2026-07-10
 
 ### Fixed

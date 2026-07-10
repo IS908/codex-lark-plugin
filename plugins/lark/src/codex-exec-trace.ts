@@ -3,6 +3,7 @@ import {
   diagnosticRaw,
   formatDiagnosticLine,
   formatDiagnosticPayload,
+  formatZonedDiagnosticTime,
   redactDiagnosticString,
   truncateDiagnosticString,
 } from './diagnostic-log-format.js';
@@ -92,7 +93,7 @@ class FileCodexExecToolTraceWriter implements CodexExecToolTraceWriter {
     const now = Date.now();
     const traceLine = this.config.mode === 'full'
       ? buildFullTraceLine(event, now, this.logId)
-      : buildCompactTraceLine(event, now, this.startedAtById, this.config.mode, this.logId);
+      : buildCompactTraceLine(event, now, this.startedAtById, this.logId);
     await appendRotatingLine(this.config.logPath, traceLine, {
       maxBytes: this.config.maxBytes,
       maxFiles: this.config.maxFiles,
@@ -117,7 +118,7 @@ function buildFullTraceLine(event: unknown, now: number, logId: string): string 
   const toolName = inferToolName(record, nested);
   const status = inferStatus(record, nested, eventType);
   return formatDiagnosticLine([
-    new Date(now).toISOString(),
+    formatZonedDiagnosticTime(new Date(now), appConfig.cronTimezone),
     logId,
     'trace',
     'full',
@@ -134,7 +135,6 @@ function buildCompactTraceLine(
   event: unknown,
   now: number,
   startedAtById: Map<string, number>,
-  mode: 'compact' | 'hidden',
   logId: string,
 ): string {
   const record = event && typeof event === 'object' && !Array.isArray(event)
@@ -157,11 +157,8 @@ function buildCompactTraceLine(
     ? { args, error }
     : args ?? error;
   return formatDiagnosticLine([
-    new Date(now).toISOString(),
+    formatZonedDiagnosticTime(new Date(now), appConfig.cronTimezone),
     logId,
-    'trace',
-    mode,
-    eventType,
     toolName,
     status,
     traceId ?? '-',
