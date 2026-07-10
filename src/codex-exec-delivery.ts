@@ -296,6 +296,7 @@ export async function deliverMessageViaCodexExec(
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
   const sessionKey = buildCodexExecSessionKey(message.chatId, message.threadId);
   const existingSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
+  const sessionModel = useCodexSessions && existingSession?.model ? existingSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
   const progressBaseDir = opts.progressBaseDir ?? appConfig.codexExecCwd;
   const actionBaseDir = opts.actionBaseDir ?? appConfig.codexExecCwd;
@@ -338,11 +339,11 @@ export async function deliverMessageViaCodexExec(
     cwd: appConfig.codexExecCwd,
     timeoutMs: appConfig.codexExecTimeoutMs,
     sandbox: appConfig.codexExecSandbox,
-    model: appConfig.codexExecModel,
+    model: sessionModel ?? appConfig.codexExecModel,
     profile: appConfig.codexExecProfile,
     ignoreUserConfig: appConfig.codexExecIgnoreUserConfig,
     skipGitRepoCheck: true,
-    resumeSessionId: existingSession?.sessionId ?? null,
+    resumeSessionId: existingSession?.sessionId || null,
     traceLogId: resolveTraceLogId(message, opts.traceLogId),
     ...(progressSink || actionChannel
       ? {
@@ -408,6 +409,7 @@ export async function deliverMessageViaCodexExec(
       chatId: message.chatId,
       ...(message.threadId ? { threadId: message.threadId } : {}),
       updatedAt: new Date().toISOString(),
+      ...(sessionModel ? { model: sessionModel } : {}),
     });
   }
 

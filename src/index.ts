@@ -13,6 +13,7 @@ import { JobScheduler } from './scheduler.js';
 import { mcpServerInstructions } from './prompts.js';
 import { debugLog } from './debug-log.js';
 import { deliverMessageViaCodexExec } from './codex-exec-delivery.js';
+import { handleCodexModelCommand } from './codex-model-command.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
@@ -240,6 +241,23 @@ async function main() {
     () => channel.getLarkTransport()
   );
 
+  channel.setControlMessageHandler(async (message) => handleCodexModelCommand({
+    message,
+    useCodexSessions: appConfig.codexExecUseSessions,
+    sendReply: (request) => sendFeishuReply(
+      {
+        client: channel.getClient(),
+        transport: channel.getLarkTransport(),
+        conversationBuffer: buffer,
+        ackReactions: channel.getAckReactions(),
+        botMessageTracker: channel.getBotMessageTracker(),
+        latestMessageTracker: channel.getLatestMessageTracker(),
+        turnObligations,
+      },
+      request,
+    ),
+  }));
+
   // 6. Set message handler — forwards Feishu messages to Codex via MCP
   channel.setMessageHandler(async (message) => {
     // Build friendly display: user_xxx or user_xxx · chat_xxx · thread_xxx
@@ -264,6 +282,29 @@ async function main() {
       });
       turnObligations.setActive(message.chatId, message.threadId, message.messageId);
     }
+    const sendReplyViaFeishu = (request: Parameters<typeof sendFeishuReply>[1]) => sendFeishuReply(
+      {
+        client: channel.getClient(),
+        transport: channel.getLarkTransport(),
+        conversationBuffer: buffer,
+        ackReactions: channel.getAckReactions(),
+        botMessageTracker: channel.getBotMessageTracker(),
+        latestMessageTracker: channel.getLatestMessageTracker(),
+        turnObligations,
+      },
+      request,
+    );
+    const recordAssistantMessage = ({ chatId, threadId, text }: { chatId: string; threadId?: string; text: string }) => {
+      buffer.record(chatId, {
+        role: 'assistant',
+        senderId: 'bot',
+        text: text.slice(0, 500),
+        timestamp: new Date().toISOString(),
+        timestampMs: Date.now(),
+        ...(threadId ? { threadId } : {}),
+        messageType: 'text',
+      });
+    };
 
     try {
       debugLog(
@@ -272,18 +313,7 @@ async function main() {
       await deliverMessageViaCodexExec({
         message,
         displayLabel,
-        sendReply: (request) => sendFeishuReply(
-          {
-            client: channel.getClient(),
-            transport: channel.getLarkTransport(),
-            conversationBuffer: buffer,
-            ackReactions: channel.getAckReactions(),
-            botMessageTracker: channel.getBotMessageTracker(),
-            latestMessageTracker: channel.getLatestMessageTracker(),
-            turnObligations,
-          },
-          request,
-        ),
+        sendReply: sendReplyViaFeishu,
         sendDocCommentReply: async (request) => {
           const resp = await channel.getLarkTransport().replyDocComment({
             docToken: request.doc_token,
@@ -293,17 +323,7 @@ async function main() {
           });
           return { replyId: resp.replyId };
         },
-        recordAssistantMessage: ({ chatId, threadId, text }) => {
-          buffer.record(chatId, {
-            role: 'assistant',
-            senderId: 'bot',
-            text: text.slice(0, 500),
-            timestamp: new Date().toISOString(),
-            timestampMs: Date.now(),
-            ...(threadId ? { threadId } : {}),
-            messageType: 'text',
-          });
-        },
+        recordAssistantMessage,
         sessionHealth: sessionHealthMonitor ?? undefined,
         turnObligations,
         actionDispatcher: codexExecActionDispatcher,
@@ -334,23 +354,12 @@ async function main() {
           });
         }
       } else if (shouldSendCodexExecFailureReply(message)) {
-        await sendFeishuReply(
-          {
-            client: channel.getClient(),
-            transport: channel.getLarkTransport(),
-            conversationBuffer: buffer,
-            ackReactions: channel.getAckReactions(),
-            botMessageTracker: channel.getBotMessageTracker(),
-            latestMessageTracker: channel.getLatestMessageTracker(),
-            turnObligations,
-          },
-          {
-            chat_id: message.chatId,
-            text: errorText,
-            reply_to: message.messageId,
-            thread_id: message.threadId,
-          },
-        ).catch((replyErr) => {
+        await sendReplyViaFeishu({
+          chat_id: message.chatId,
+          text: errorText,
+          reply_to: message.messageId,
+          thread_id: message.threadId,
+        }).catch((replyErr) => {
           console.error('[channel] Failed to send codex exec error reply:', redactErrorForLog(replyErr));
         });
       } else {

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-07-10
+
+### Added
+- Added `/model`, `/model <model-id>`, and `/model reset` for per-chat/thread Codex exec model overrides in realtime Feishu/Lark chats.
+
 ## [1.15.6] - 2026-07-10
 
 ### Changed
