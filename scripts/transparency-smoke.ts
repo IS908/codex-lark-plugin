@@ -18,6 +18,7 @@ function fail(msg: string): never {
 const tmp = mkdtempSync(join(tmpdir(), 'transparency-'));
 process.env.LARK_PRIVACY_RULES_FILE = join(tmp, 'privacy-rules.md');
 process.env.LARK_AUDIT_LOG = join(tmp, 'audit.log');
+process.env.LARK_CRON_TIMEZONE = 'Asia/Singapore';
 
 const { MemoryStore } = await import('../src/memory/file.js');
 const { loadL2Rules, addL2Rule } = await import('../src/privacy-rules.js');
@@ -107,6 +108,9 @@ let passed = 0;
   const lines = log.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length !== 2) fail(`7: expected 2 log lines, got ${lines.length}`);
   if (lines.some((line) => line.trim().startsWith('{'))) fail('7: audit log must not be JSONL');
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00  oc_1  audit/.test(lines[0])) {
+    fail(`7: audit line should use configured timezone with offset: ${lines[0]}`);
+  }
   if (!/oc_1  audit  test_tool  ok  ou_x  /.test(lines[0])) fail(`7: ok line content wrong: ${lines[0]}`);
   if (!/oc_1  audit  test_tool  denied  -  /.test(lines[1])) fail(`7: denied line content wrong: ${lines[1]}`);
   if (!lines[0].includes('"chat_id":"oc_1"')) fail(`7: args not preserved: ${lines[0]}`);

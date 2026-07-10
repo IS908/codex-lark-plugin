@@ -15,6 +15,7 @@ import {
   diagnosticRaw,
   formatDiagnosticLine,
   formatDiagnosticPayload,
+  formatZonedDiagnosticTime,
   redactDiagnosticString,
 } from './diagnostic-log-format.js';
 import { appendRotatingLine } from './resource-governance.js';
@@ -40,7 +41,7 @@ export async function audit(
       argsForLog = { serialization_error: '<unserializable>' };
     }
     const line = formatDiagnosticLine([
-      new Date().toISOString(),
+      formatZonedDiagnosticTime(new Date(), appConfig.cronTimezone),
       inferAuditLogId(argsForLog),
       'audit',
       tool,

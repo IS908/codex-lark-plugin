@@ -11,10 +11,13 @@ Local diagnostic logs use compact UTF-8 text lines. They are optimized for
 terminal reading and `grep`, not for strict JSON ingestion. The line itself is
 not a JSON object.
 
-Common positional shape:
+Timestamps use `LARK_CRON_TIMEZONE` and include an explicit UTC offset, for
+example `2026-07-10T19:20:50.822+08:00`.
+
+Most records use this positional shape:
 
 ```text
-<iso-time>  <log-id>  <kind>  <kind-specific fields...>  <compact-payload>
+<zoned-time>  <log-id>  <kind>  <kind-specific fields...>  <compact-payload>
 ```
 
 Fields are separated by two spaces. Fields with whitespace are JSON-quoted so
@@ -38,7 +41,7 @@ committed.
 Sensitive tool calls append records shaped like:
 
 ```text
-2026-07-06T12:00:00.000Z  om_xxx  audit  save_memory  ok  ou_xxx  {"memory_type":"chat"}
+2026-07-06T20:00:00.000+08:00  om_xxx  audit  save_memory  ok  ou_xxx  {"memory_type":"chat"}
 ```
 
 Fields:
@@ -59,14 +62,22 @@ Fields:
 `~/.codex/channels/lark/logs/trace.log`.
 
 When `LARK_CODEX_EXEC_TOOL_TRACE=true`, codex exec tool events append text-line
-records. Compact/hidden records include mode, event type, tool, status, tool
-call trace id, duration, sanitized args, and sanitized errors when available.
-Full records keep a sanitized/truncated event payload.
+records. Compact/hidden records intentionally omit the `trace` kind, trace
+mode, and raw event type after the log id; they use a short shape with
+tool/type, status, tool call trace id, duration, sanitized args, and sanitized
+errors when available. Full records keep the trace kind, mode, event type, and
+a sanitized/truncated event payload for deeper diagnostics.
 
 Example compact record:
 
 ```text
-2026-07-06T12:00:00.000Z  om_xxx  trace  compact  tool_call.started  exec_command  started  call_123  -  {"command":"npm test"}
+2026-07-06T20:00:00.000+08:00  om_xxx  exec_command  started  call_123  -  {"command":"npm test"}
+```
+
+Debug records use the same timestamp style and omit bracket wrappers:
+
+```text
+2026-07-06T20:00:00.000+08:00 channel Enqueue message om_xxx
 ```
 
 The trace `log-id` correlates records from the same trigger:

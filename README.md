@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.15.5-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.15.6-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -345,12 +345,14 @@ When `LARK_CODEX_EXEC_TOOL_TRACE=true`, the parent bridge also scans
 `codex exec --json` stdout for tool execution events and appends sanitized
 human-readable text lines to `LARK_CODEX_EXEC_TRACE_LOG`. This is local-only
 troubleshooting data: Feishu still receives only the final answer or bounded
-progress messages. `compact` mode records tool name, argument summary, status,
-duration, and error summary; `full` mode records the event shape with
-redaction/truncation. Trace log lines include a log id near the start: ordinary
-Feishu message turns use the source message id, and cronjob prompt turns use
-the cronjob name. Audit and trace logs share the canonical local diagnostic text
-format described in [docs/local-diagnostic-logs.md](docs/local-diagnostic-logs.md).
+progress messages. `compact` mode records a short text line with tool/type,
+status, trace id, duration, and sanitized argument/error summary; `full` mode
+keeps the event shape with redaction/truncation. Trace log lines include a log
+id near the start: ordinary Feishu message turns use the source message id, and
+cronjob prompt turns use the cronjob name. Debug, audit, and trace logs use
+`LARK_CRON_TIMEZONE` for timestamps with an explicit UTC offset, and share the
+canonical local diagnostic text format described in
+[docs/local-diagnostic-logs.md](docs/local-diagnostic-logs.md).
 Progress directories are owner-only (`0700`) and JSONL files are owner-only
 read/write (`0600`). Stale `.lark-progress/turn-*` entries older than 12 hours
 are removed on startup and by a best-effort hourly cleanup.
@@ -483,7 +485,7 @@ creation tools.
 | Variable | Default | Description |
 |---|---|---|
 | `LARK_CRON_SCAN_INTERVAL` | `60` | CronJob scheduler scan interval in seconds |
-| `LARK_CRON_TIMEZONE` | system timezone | Default IANA timezone for new cronjobs (e.g. `Asia/Shanghai`, `UTC`). Each job stores its own `meta.timezone`; changing this env var later does not silently retime existing jobs. |
+| `LARK_CRON_TIMEZONE` | system timezone | Default IANA timezone for new cronjobs and local debug/audit/trace log timestamps (e.g. `Asia/Shanghai`, `UTC`). Each job stores its own `meta.timezone`; changing this env var later does not silently retime existing jobs. |
 
 ### Optional -- Codex Exec Session Health
 
@@ -562,7 +564,7 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 
 | Variable | Default | Description |
 |---|---|---|
-| `LARK_DEBUG_LOG` | `~/.codex/channels/lark/logs/debug.log` | Override the debug log path |
+| `LARK_DEBUG_LOG` | `~/.codex/channels/lark/logs/debug.log` | Override the debug log path. Debug lines use `LARK_CRON_TIMEZONE` timestamps and omit bracket wrappers, e.g. `2026-07-10T19:20:50.822+08:00 channel ...`. |
 | `LARK_LOG_MAX_BYTES` | `5242880` | Rotate debug/audit/trace logs once the active file exceeds this size |
 | `LARK_LOG_MAX_FILES` | `5` | Number of rotated log files to retain |
 | `LARK_LOG_ARCHIVE_RETENTION_MONTHS` | `6` | Compress previous-month debug/audit/trace logs under `archive/YYYY-MM/` and keep this many archive months. Set `0` to disable monthly archival. |

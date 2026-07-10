@@ -9,15 +9,19 @@ process.env.LARK_APP_SECRET ||= 'test_app_secret';
 
 const root = await mkdtemp(join(tmpdir(), 'codex-exec-trace-'));
 const integrationTraceLog = join(root, 'integration-trace.log');
+const debugLogPath = join(root, 'debug.log');
 process.env.LARK_CODEX_EXEC_TOOL_TRACE = 'true';
 process.env.LARK_CODEX_EXEC_TOOL_TRACE_MODE = 'compact';
 process.env.LARK_CODEX_EXEC_TRACE_LOG = integrationTraceLog;
+process.env.LARK_CRON_TIMEZONE = 'Asia/Singapore';
+process.env.LARK_DEBUG_LOG = debugLogPath;
 
 const {
   createCodexExecToolTraceWriter,
   shouldTraceCodexExecToolEvent,
 } = await import('../src/codex-exec-trace.js');
 const { runCodexExecCommand } = await import('../src/codex-exec.js');
+const { debugLog } = await import('../src/debug-log.js');
 
 function lines(path: string): string[] {
   return existsSync(path)
@@ -28,6 +32,15 @@ function lines(path: string): string[] {
 function assertNotJsonl(line: string): void {
   assert.doesNotMatch(line, /^\s*\{/);
   assert.throws(() => JSON.parse(line));
+}
+
+async function waitForLine(path: string, pattern: RegExp): Promise<string> {
+  for (let i = 0; i < 50; i++) {
+    const found = lines(path).find((line) => pattern.test(line));
+    if (found) return found;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${pattern} in ${path}`);
 }
 
 assert.equal(shouldTraceCodexExecToolEvent({ type: 'thread.started', thread_id: 't1' }), false);
@@ -74,12 +87,46 @@ await compact.flush();
 const compactLines = lines(compactLog);
 assert.equal(compactLines.length, 2);
 compactLines.forEach(assertNotJsonl);
-assert.match(compactLines[0], /om_trace_001  trace  compact  tool_call\.started  mcp\.github\.issue_create  started/);
+assert.match(compactLines[0], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00  om_trace_001  mcp\.github\.issue_create  started  call-1  -  /);
 assert.match(compactLines[0], /\[redacted\]/);
 assert.match(compactLines[0], /\(600 chars\)/);
-assert.match(compactLines[1], /om_trace_001  trace  compact  tool_call\.completed  mcp\.github\.issue_create  completed/);
-assert.match(compactLines[1], /\s[0-9]+ms\s/);
+assert.match(compactLines[1], /om_trace_001  mcp\.github\.issue_create  completed  call-1  [0-9]+ms  -/);
+assert.doesNotMatch(compactLines[0], /trace  compact|tool_call\.started/);
+assert.doesNotMatch(compactLines[1], /trace  compact|tool_call\.completed/);
 assert.doesNotMatch(readFileSync(compactLog, 'utf-8'), /should-not-appear/);
+
+const compactCommandLog = join(root, 'compact-command.log');
+const compactCommand = createCodexExecToolTraceWriter({
+  enabled: true,
+  mode: 'compact',
+  logPath: compactCommandLog,
+  maxBytes: 1024 * 1024,
+  maxFiles: 2,
+  logId: 'om_command_001',
+});
+assert.ok(compactCommand);
+compactCommand.recordLine(JSON.stringify({
+  type: 'item.started',
+  item: {
+    id: 'item_13',
+    type: 'command_execution',
+    command: "/bin/zsh -lc 'bash /Users/kevin/.agents/skills/optix/bin/optix.sh premarket --format json'",
+  },
+}));
+compactCommand.recordLine(JSON.stringify({
+  type: 'item.completed',
+  item: {
+    id: 'item_13',
+    type: 'command_execution',
+    command: "/bin/zsh -lc 'bash /Users/kevin/.agents/skills/optix/bin/optix.sh premarket --format json'",
+  },
+}));
+await compactCommand.flush();
+const compactCommandLines = lines(compactCommandLog);
+assert.equal(compactCommandLines.length, 2);
+compactCommandLines.forEach(assertNotJsonl);
+assert.match(compactCommandLines[1], /om_command_001  command_execution  completed  item_13  [0-9]+ms  "\/bin\/zsh -lc/);
+assert.doesNotMatch(compactCommandLines[1], /trace  compact|item\.completed/);
 
 const fullLog = join(root, 'full.log');
 const full = createCodexExecToolTraceWriter({
@@ -104,7 +151,7 @@ await full.flush();
 const fullLines = lines(fullLog);
 assert.equal(fullLines.length, 1);
 assertNotJsonl(fullLines[0]);
-assert.match(fullLines[0], /"Nightly Review"  trace  full  command_execution  shell  event/);
+assert.match(fullLines[0], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00  "Nightly Review"  trace  full  command_execution  shell  event/);
 assert.match(fullLines[0], /\[redacted\]/);
 assert.match(fullLines[0], /\(1200 chars\)/);
 assert.doesNotMatch(readFileSync(fullLog, 'utf-8'), /should-not-appear/);
@@ -123,7 +170,12 @@ await hidden.flush();
 const hiddenLines = lines(hiddenLog);
 assert.equal(hiddenLines.length, 1);
 assertNotJsonl(hiddenLines[0]);
-assert.match(hiddenLines[0], /-  trace  hidden  mcp_tool_call\.started  lark\.im\.reply  started/);
+assert.match(hiddenLines[0], /-  lark\.im\.reply  started  -  -/);
+assert.doesNotMatch(hiddenLines[0], /trace  hidden|mcp_tool_call\.started/);
+
+debugLog('[channel] compact debug line');
+const debugLine = await waitForLine(debugLogPath, /compact debug line/);
+assert.match(debugLine, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00 channel compact debug line$/);
 
 const fakeCodex = join(root, 'fake-codex.js');
 await writeFile(fakeCodex, [
@@ -154,7 +206,8 @@ const integrationLines = lines(integrationTraceLog);
 assert.ok(integrationLines.length >= 2);
 integrationLines.forEach((line) => {
   assertNotJsonl(line);
-  assert.match(line, /om_integration_001  trace  compact/);
+  assert.match(line, /om_integration_001  github\.get_issue  /);
+  assert.doesNotMatch(line, /trace  compact|mcp_tool_call\.(started|completed)/);
 });
 assert.match(integrationLog, /github\.get_issue/);
 assert.doesNotMatch(integrationLog, /should-not-appear/);
