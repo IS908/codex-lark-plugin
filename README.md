@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.15.6-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.16.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -318,7 +318,7 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_CODEX_EXEC_CWD` | `~/.codex/channels/lark/codex-exec-workdir` | Working directory for `codex exec`; keep it free of `.mcp.json` to avoid recursively loading this Lark MCP server |
 | `LARK_CODEX_EXEC_TIMEOUT_MS` | `600000` | Timeout for one `codex exec` run |
 | `LARK_CODEX_EXEC_SANDBOX` | `workspace-write` | Sandbox passed to `codex exec`: `read-only`, `workspace-write`, or `danger-full-access` |
-| `LARK_CODEX_EXEC_MODEL` | (empty) | Optional model override for exec delivery |
+| `LARK_CODEX_EXEC_MODEL` | (empty) | Optional global model override for exec delivery. Realtime chats can override it per chat/thread with `/model <model-id>` when `LARK_CODEX_EXEC_USE_SESSIONS=true`. |
 | `LARK_CODEX_EXEC_PROFILE` | (empty) | Optional Codex config profile for exec delivery; startup warns if the selected profile appears to include the Lark MCP server |
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | Pass `--ignore-user-config` to `codex exec` to avoid recursively loading the Lark MCP server |
 | `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | Resume one Codex exec session per Feishu `chat_id` / `thread_id`. This preserves multi-turn context inside the Codex CLI session store; it does not attach to an already-open interactive terminal TUI session. |
@@ -330,6 +330,18 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_CODEX_EXEC_TOOL_TRACE` | `false` | Enable local `codex exec --json` tool execution tracing to `trace.log`. This never renders tool traces into Feishu replies. |
 | `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | `compact` | Trace mode: `compact` writes sanitized summaries; `full` writes sanitized/truncated event JSON; `hidden` is a compatibility alias that keeps local compact tracing while never showing tool traces in Feishu. |
 | `LARK_CODEX_EXEC_TRACE_LOG` | `~/.codex/channels/lark/logs/trace.log` | Override the local codex exec tool trace text log path |
+
+Realtime Feishu/Lark chats support a lightweight model control command:
+
+```text
+/model             Show the effective model for the current chat/thread
+/model <model-id>  Set a chat/thread model override for subsequent realtime turns
+/model reset       Clear only the chat/thread model override
+```
+
+Model resolution order is: chat/thread override, then `LARK_CODEX_EXEC_MODEL`,
+then the Codex CLI default. The override is stored on the existing
+`codex-sessions` record and follows the same retention lifecycle.
 
 Exec delivery can expose a bounded progress side channel for long-running
 visible IM/doc-comment turns. The parent bridge creates a temporary JSONL file

@@ -7,6 +7,7 @@ export interface CodexExecSessionRecord {
   chatId: string;
   threadId?: string;
   updatedAt: string;
+  model?: string;
 }
 
 export interface CodexExecSessionStore {

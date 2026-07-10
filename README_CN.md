@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.15.6-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.16.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -301,7 +301,7 @@ git push origin v1.0.0
 | `LARK_CODEX_EXEC_CWD` | `~/.codex/channels/lark/codex-exec-workdir` | `codex exec` 的工作目录；保持目录内没有 `.mcp.json`，避免递归加载当前 Lark MCP server |
 | `LARK_CODEX_EXEC_TIMEOUT_MS` | `600000` | 单次 `codex exec` 超时时间 |
 | `LARK_CODEX_EXEC_SANDBOX` | `workspace-write` | 传给 `codex exec` 的沙箱：`read-only`、`workspace-write` 或 `danger-full-access` |
-| `LARK_CODEX_EXEC_MODEL` | （空） | exec delivery 的可选模型覆盖 |
+| `LARK_CODEX_EXEC_MODEL` | （空） | exec delivery 的全局可选模型覆盖。实时 chat 可在 `LARK_CODEX_EXEC_USE_SESSIONS=true` 时通过 `/model <model-id>` 按 chat/thread 覆盖 |
 | `LARK_CODEX_EXEC_PROFILE` | （空） | exec delivery 的可选 Codex 配置 profile；启动时会提示该 profile 是否疑似包含 Lark MCP server |
 | `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | `true` | 传 `--ignore-user-config` 给 `codex exec`，避免递归加载当前 Lark MCP server |
 | `LARK_CODEX_EXEC_USE_SESSIONS` | `true` | 为每个飞书 `chat_id` / `thread_id` 恢复一个 Codex exec session，以保留多轮上下文；这不是接管某个已经打开的终端 TUI 交互 session。 |
@@ -313,6 +313,18 @@ git push origin v1.0.0
 | `LARK_CODEX_EXEC_TOOL_TRACE` | `false` | 启用本地 `codex exec --json` 工具执行 trace，写入 `trace.log`；不会把工具过程渲染到飞书回复里 |
 | `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | `compact` | trace 模式：`compact` 写脱敏摘要；`full` 写脱敏/截断后的事件 JSON；`hidden` 是兼容模式，本地按 compact 记录且不向飞书展示工具过程 |
 | `LARK_CODEX_EXEC_TRACE_LOG` | `~/.codex/channels/lark/logs/trace.log` | 本地 codex exec tool trace 文本日志路径 |
+
+实时飞书/Lark chat 支持轻量模型控制命令：
+
+```text
+/model             查看当前 chat/thread 的实际模型
+/model <model-id>  为后续实时 turn 设置 chat/thread 模型覆盖
+/model reset       只清除当前 chat/thread 的模型覆盖
+```
+
+模型解析顺序是：chat/thread override，然后是 `LARK_CODEX_EXEC_MODEL`，
+最后回落到 Codex CLI 默认值。override 存在现有 `codex-sessions` 记录上，
+并跟随同一套 retention 生命周期。
 
 当 `LARK_CODEX_EXEC_TOOL_TRACE=true` 时，父进程会扫描 `codex exec --json`
 stdout 中的工具执行事件，并把脱敏的人类可读文本行追加到

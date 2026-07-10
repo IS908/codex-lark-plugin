@@ -100,4 +100,31 @@ await (channel as any).processEnqueuedMessage({
 });
 assert.match(handled[0].text, /channel profile/);
 
+const controlChannel = new LarkChannel();
+let controlHandled = 0;
+controlChannel.setControlMessageHandler(async () => {
+  controlHandled += 1;
+  return true;
+});
+controlChannel.setMemoryStore({
+  getProfile: async () => {
+    throw new Error('control command should bypass memory enrichment');
+  },
+  searchEpisodes: async () => [],
+  searchSkills: async () => [],
+} as any);
+controlChannel.setMessageHandler(async () => {
+  throw new Error('control command should bypass message handler');
+});
+await (controlChannel as any).processEnqueuedMessage({
+  messageId: 'om_channel_control',
+  chatId: 'oc_channel_control',
+  chatType: 'p2p',
+  senderId: 'ou_owner',
+  text: '/model gpt-5',
+  messageType: 'text',
+  rawContent: '{"text":"/model gpt-5"}',
+});
+assert.equal(controlHandled, 1);
+
 console.log('memory-enricher smoke: PASS');

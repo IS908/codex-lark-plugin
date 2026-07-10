@@ -116,6 +116,7 @@ export interface LarkMessage {
 }
 
 export type MessageHandler = (message: LarkMessage) => Promise<void>;
+export type ControlMessageHandler = (message: LarkMessage) => Promise<boolean>;
 
 const SDK_COMMENT_CONTEXT_CAP_BYTES = 8 * 1024;
 
@@ -231,6 +232,7 @@ export class LarkChannel {
   private botOpenId: string = '';
   private queue = new MessageQueue({ handlerTimeoutMs: appConfig.queueHandlerTimeoutMs });
   private messageHandler: MessageHandler | null = null;
+  private controlMessageHandler: ControlMessageHandler | null = null;
   private memoryStore: MemoryStore | null = null;
   private conversationBuffer: ConversationBuffer | null = null;
   private identitySession: IdentitySession | null = null;
@@ -263,6 +265,10 @@ export class LarkChannel {
 
   setMessageHandler(handler: MessageHandler): void {
     this.messageHandler = handler;
+  }
+
+  setControlMessageHandler(handler: ControlMessageHandler): void {
+    this.controlMessageHandler = handler;
   }
 
   setMemoryStore(store: MemoryStore): void {
@@ -464,6 +470,11 @@ export class LarkChannel {
     // Bind identity for this chat/thread so MCP tools can resolve the
     // true caller without trusting Codex-declared identity arguments.
     this.identitySession?.setCaller(chatId, threadId, senderId);
+
+    if (this.controlMessageHandler && await this.controlMessageHandler(larkMessage)) {
+      debugLog(`[channel] Control message handled for message ${messageId}`);
+      return;
+    }
 
     // Record in conversation buffer
     this.conversationBuffer?.record(chatId, {
