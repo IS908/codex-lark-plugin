@@ -7,6 +7,11 @@ import {
   type AccessControlAction,
   type AccessControlListName,
 } from '../runtime-access-control.js';
+import {
+  formatAccessControlMutationMessage,
+  validateAccessControlMutation,
+  validateFeishuChatAccess,
+} from '../access-control-validation.js';
 import type { ToolContext } from './tool-context.js';
 
 function textResult(text: string, isError = false) {
@@ -60,10 +65,18 @@ export function registerAccessControlTools(ctx: ToolContext): void {
       }
 
       try {
-        const result = await accessControlStore.mutate({
+        const validated = await validateAccessControlMutation({
           action: action as AccessControlAction,
           list: list as AccessControlListName,
           value,
+          currentChatId: chat_id,
+          currentChatType: ctx.channel.isPrivateChat(chat_id) ? 'p2p' : 'group',
+          validateChatAccess: (chatId) => validateFeishuChatAccess(ctx.client, chatId),
+        });
+        const result = await accessControlStore.mutate({
+          action: validated.action,
+          list: validated.list,
+          value: validated.value,
           updatedBy: caller,
         });
         await audit('manage_access_control', caller, auditArgs, 'ok');
@@ -71,6 +84,13 @@ export function registerAccessControlTools(ctx: ToolContext): void {
           JSON.stringify(
             {
               changed: result.changed,
+              message: formatAccessControlMutationMessage(
+                result.changed,
+                validated.action,
+                validated.list,
+                validated.value,
+              ),
+              resolved_from_current_chat: validated.resolvedFromCurrentChat,
               snapshot: result.snapshot,
             },
             null,

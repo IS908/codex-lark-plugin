@@ -15,12 +15,18 @@ import {
   type AccessControlAction,
   type AccessControlListName,
 } from './runtime-access-control.js';
+import {
+  formatAccessControlMutationMessage,
+  validateAccessControlMutation,
+  type AccessControlValidationInput,
+} from './access-control-validation.js';
 
 export interface CodexModelCommandOptions {
   message: LarkMessage;
   sessionStore?: CodexExecSessionStore;
   identitySession?: IdentitySession;
   useCodexSessions?: boolean;
+  validateChatAccess?: AccessControlValidationInput['validateChatAccess'];
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
   recordAssistantMessage?: (message: { chatId: string; threadId?: string; text: string }) => void;
 }
@@ -80,7 +86,7 @@ export async function handleCodexModelCommand(
         text = parsed.command.error;
         await audit('lark_access_command', caller, auditArgs, 'error');
       } else {
-        text = await executeAccessCommand(parsed.command, caller);
+        text = await executeAccessCommand(parsed.command, caller, opts);
         await audit('lark_access_command', caller, auditArgs, 'ok');
       }
     } catch (err) {
@@ -248,14 +254,36 @@ async function executeCodexModelCommand(
   return `Chat/thread Codex model override set to ${command.model}. Subsequent realtime turns in this chat/thread will use it.`;
 }
 
-async function executeAccessCommand(command: AccessCommand, caller: string): Promise<string> {
+async function executeAccessCommand(
+  command: AccessCommand,
+  caller: string,
+  opts: CodexModelCommandOptions,
+): Promise<string> {
   if (command.action === 'invalid') return command.error;
   if (command.action === 'list') return JSON.stringify(accessControlStore.snapshot(), null, 2);
-  const result = await accessControlStore.mutate({
-    action: command.action as AccessControlAction,
+  const validated = await validateAccessControlMutation({
+    action: command.action,
     list: command.list,
     value: command.value,
+    currentChatId: opts.message.chatId,
+    currentChatType: opts.message.chatType,
+    validateChatAccess: opts.validateChatAccess,
+  });
+  const result = await accessControlStore.mutate({
+    action: validated.action as AccessControlAction,
+    list: validated.list,
+    value: validated.value,
     updatedBy: caller,
   });
-  return JSON.stringify({ changed: result.changed, snapshot: result.snapshot }, null, 2);
+  return JSON.stringify({
+    changed: result.changed,
+    message: formatAccessControlMutationMessage(
+      result.changed,
+      validated.action,
+      validated.list,
+      validated.value,
+    ),
+    resolved_from_current_chat: validated.resolvedFromCurrentChat,
+    snapshot: result.snapshot,
+  }, null, 2);
 }

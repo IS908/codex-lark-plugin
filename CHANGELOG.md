@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-07-11
+
+### Fixed
+- Resolved `/access add/remove chat current|here|当前群聊` from the current Feishu event instead of accepting placeholder text.
+- Added chat ID format and Feishu `chat.get` accessibility validation before access-control chat/no-mention writes.
+- Added clear idempotent mutation messages and coverage for `/access`, `manage_access_control`, and exec action bridge access-control paths.
+
 ## [1.19.0] - 2026-07-11
 
 ### Added
