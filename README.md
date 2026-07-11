@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.17.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.18.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -302,10 +302,19 @@ failure invalidates that scope so the next turn receives the full context.
 |---|---|---|
 | `LARK_ALLOWED_USER_IDS` | (empty) | Comma-separated list of allowed user open_ids. Empty means all users allowed. |
 | `LARK_ALLOWED_CHAT_IDS` | (empty) | Comma-separated list of allowed chat IDs. Empty means all chats allowed. |
+| `LARK_GROUP_NO_MENTION_CHAT_IDS` | (empty) | Comma-separated trusted group IDs that may trigger Codex without @mention. This is separate from access control allowlists. |
 
 > **Whitelist semantics:** when both lists are set, a message is accepted if **either** the sender is in `LARK_ALLOWED_USER_IDS` **or** the chat is in `LARK_ALLOWED_CHAT_IDS` (OR). Setting only one list gates on that list alone.
 >
 > For `drive.notice.comment_add_v1` doc-comment events, `LARK_ALLOWED_USER_IDS` filters the comment author's `open_id`. If only `LARK_ALLOWED_CHAT_IDS` is set, doc-comment events pass because the synthetic `doc:<file_token>` chat id cannot match a real chat id; Feishu's document ACL and @mention requirement remain the upstream boundary.
+
+By default, group messages still require an explicit @bot mention. To opt a
+trusted group into no-mention triggering, add its chat id to
+`LARK_GROUP_NO_MENTION_CHAT_IDS`. Top-level no-mention messages pass only when
+they look like a clear question or command; thread replies in those groups may
+enter Codex with `unmentioned_group_trigger=true`, and the prompt requires
+Codex to return `[LARK_NO_REPLY]` for low-confidence or unrelated messages.
+Remove a chat id from this setting to disable the behavior for that group.
 
 ### Optional -- Messaging
 

@@ -3,7 +3,7 @@ import type { LarkMessage } from './channel.js';
 import { DOC_CHAT_ID_PREFIX, type IdentitySession } from './identity-session.js';
 import { bindSdkMessageIdentity } from './sdk-channel-identity.js';
 
-export type SdkMessageDropReason = 'no_mention' | 'not_allowed';
+export type SdkMessageDropReason = 'bot_self' | 'no_mention' | 'no_mention_trigger' | 'not_allowed';
 export type SdkMessageResult =
   | { status: 'processed'; message: LarkMessage }
   | { status: 'dropped'; reason: SdkMessageDropReason };
@@ -12,6 +12,8 @@ export interface SdkMessageDeps {
   identitySession: IdentitySession;
   allowedUserIds: string[];
   allowedChatIds: string[];
+  groupNoMentionChatIds?: string[];
+  botOpenId?: string | null;
   handleMessage: (message: LarkMessage) => Promise<void>;
 }
 
@@ -22,6 +24,26 @@ function passesSdkWhitelist(senderId: string, chatId: string, deps: SdkMessageDe
   const userOk = userConfigured && deps.allowedUserIds.includes(senderId);
   const chatOk = chatConfigured && deps.allowedChatIds.includes(chatId);
   return userOk || chatOk;
+}
+
+function isThreadMessage(sdkMessage: NormalizedMessage): boolean {
+  return !!(sdkMessage.threadId || sdkMessage.rootId || sdkMessage.replyToMessageId);
+}
+
+function isLikelyQuestionOrCommand(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/^(?:\/|\$)\S+/.test(trimmed)) return true;
+  if (/[?？]\s*$/.test(trimmed)) return true;
+  return /^(?:please\s+)?(?:can|could|would|should|do|does|did|is|are|was|were|what|why|how|when|where|which|who)\b/i.test(trimmed) ||
+    /(?:帮我|帮忙|请(?:帮|看|检查|处理|修复)|能否|能不能|可以(?:帮|.*吗)|可否|是否|是不是|有没有|怎么|如何|为什么|为啥|要不要|看下|检查一下|review一下|修复一下|处理一下)/i.test(trimmed);
+}
+
+export function shouldProcessUnmentionedGroupMessage(sdkMessage: NormalizedMessage): boolean {
+  const text = sdkMessage.content.trim();
+  if (!text) return false;
+  if (isLikelyQuestionOrCommand(text)) return true;
+  return isThreadMessage(sdkMessage);
 }
 
 function mapSdkResources(
@@ -42,8 +64,16 @@ export async function processSdkMessage(
   sdkMessage: NormalizedMessage,
   deps: SdkMessageDeps,
 ): Promise<SdkMessageResult> {
+  if (deps.botOpenId && sdkMessage.senderId === deps.botOpenId) {
+    return { status: 'dropped', reason: 'bot_self' };
+  }
   if (sdkMessage.chatType === 'group' && !sdkMessage.mentionedBot) {
-    return { status: 'dropped', reason: 'no_mention' };
+    if (!(deps.groupNoMentionChatIds ?? []).includes(sdkMessage.chatId)) {
+      return { status: 'dropped', reason: 'no_mention' };
+    }
+    if (!shouldProcessUnmentionedGroupMessage(sdkMessage)) {
+      return { status: 'dropped', reason: 'no_mention_trigger' };
+    }
   }
   if (!passesSdkWhitelist(sdkMessage.senderId, sdkMessage.chatId, deps)) {
     return { status: 'dropped', reason: 'not_allowed' };
@@ -69,6 +99,9 @@ export async function processSdkMessage(
     },
     deps.identitySession,
   );
+  if (sdkMessage.chatType === 'group' && !sdkMessage.mentionedBot) {
+    larkMessage.unmentionedGroupTrigger = true;
+  }
   larkMessage.attachments = mapSdkResources(sdkMessage.resources);
 
   await deps.handleMessage(larkMessage);

@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.17.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.18.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -285,10 +285,18 @@ git push origin v1.0.0
 |------|--------|------|
 | `LARK_ALLOWED_USER_IDS` | （空） | 发送者 open_id 白名单，逗号分隔 |
 | `LARK_ALLOWED_CHAT_IDS` | （空） | 群聊 ID 白名单，逗号分隔 |
+| `LARK_GROUP_NO_MENTION_CHAT_IDS` | （空） | 可信群聊 ID 列表，允许这些群在未 @bot 时触发 Codex；它独立于访问控制白名单 |
 
 > **白名单语义**：两个列表都设置时，发送者在 `LARK_ALLOWED_USER_IDS` 里**或**聊天在 `LARK_ALLOWED_CHAT_IDS` 里即允许（OR 关系）。只设置一个列表时，只用那个列表过滤。
 >
 > 对于 `drive.notice.comment_add_v1` 文档评论事件，`LARK_ALLOWED_USER_IDS` 会过滤评论作者的 `open_id`。如果只设置 `LARK_ALLOWED_CHAT_IDS`，文档评论事件会放行，因为合成的 `doc:<file_token>` chat id 无法匹配真实群聊；上游边界仍由飞书文档 ACL 和 @机器人 要求保证。
+
+默认情况下，群聊消息仍然必须显式 @bot 才会触发。要为可信群开启免 @
+触发，把该群的 chat id 加到 `LARK_GROUP_NO_MENTION_CHAT_IDS`。未 @ 的
+top-level 消息只有像明确问题或命令时才会进入；这些群里的 thread reply
+可以进入 Codex，并带上 `unmentioned_group_trigger=true`，prompt 会要求
+Codex 对低置信或无关消息返回 `[LARK_NO_REPLY]`。从该配置移除 chat id
+即可关闭对应群的免 @ 行为。
 
 ### 可选 —— 消息
 
