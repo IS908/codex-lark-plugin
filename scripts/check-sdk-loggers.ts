@@ -51,6 +51,41 @@ function extractArgBlock(source: string, openParenIdx: number): string | null {
   return null; // unbalanced
 }
 
+function extractBraceBlock(source: string, openBraceIdx: number): string | null {
+  let depth = 0;
+  for (let i = openBraceIdx; i < source.length; i++) {
+    const c = source[i];
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return source.slice(openBraceIdx, i + 1);
+    }
+  }
+  return null;
+}
+
+function lineNo(source: string, index: number): number {
+  return source.slice(0, index).split('\n').length;
+}
+
+function extractLocalFunctionBlock(source: string, functionName: string): string | null {
+  const pattern = new RegExp(`\\bfunction\\s+${functionName}\\s*\\([^)]*\\)\\s*(?::\\s*[^\\{]+)?\\{`, 'm');
+  const found = pattern.exec(source);
+  if (!found) return null;
+  const braceIdx = found.index + found[0].length - 1;
+  return extractBraceBlock(source, braceIdx);
+}
+
+function hasLoggerOption(source: string, argBlock: string): boolean {
+  if (/\blogger:/.test(argBlock)) return true;
+
+  const builderCall = /\b([A-Za-z_$][\w$]*)\s*\(\s*\)/.exec(argBlock);
+  if (!builderCall) return false;
+
+  const builderBlock = extractLocalFunctionBlock(source, builderCall[1]);
+  return builderBlock !== null && /\blogger:/.test(builderBlock);
+}
+
 for (const ctor of ctors) {
   const pattern = new RegExp(`new Lark\\.${ctor}\\(`, 'g');
   let found: RegExpExecArray | null;
@@ -64,10 +99,9 @@ for (const ctor of ctors) {
       );
       continue;
     }
-    if (!/\blogger:/.test(block)) {
-      const lineNo = channelSrc.slice(0, found.index).split('\n').length;
+    if (!hasLoggerOption(channelSrc, block)) {
       problems.push(
-        `src/channel.ts:${lineNo} — new Lark.${ctor}( has no 'logger:' option in its argument block (would corrupt MCP stdout)`,
+        `src/channel.ts:${lineNo(channelSrc, found.index)} — new Lark.${ctor}( has no 'logger:' option in its argument block (would corrupt MCP stdout)`,
       );
     }
   }
@@ -85,10 +119,9 @@ while ((sdkFound = sdkPattern.exec(sdkScaffoldSrc)) !== null) {
     );
     continue;
   }
-  if (!/\blogger:/.test(block)) {
-    const lineNo = sdkScaffoldSrc.slice(0, sdkFound.index).split('\n').length;
+  if (!hasLoggerOption(sdkScaffoldSrc, block)) {
     problems.push(
-      `src/sdk-channel-scaffold.ts:${lineNo} — createLarkChannel( has no 'logger:' option in its argument block (would corrupt MCP stdout)`,
+      `src/sdk-channel-scaffold.ts:${lineNo(sdkScaffoldSrc, sdkFound.index)} — createLarkChannel( has no 'logger:' option in its argument block (would corrupt MCP stdout)`,
     );
   }
 }

@@ -1,4 +1,4 @@
-import { createLarkChannel } from '@larksuite/channel';
+import { createLarkChannel, type LarkChannelOptions } from '@larksuite/channel';
 import { LoggerLevel } from '@larksuiteoapi/node-sdk';
 import { appConfig } from './config.js';
 import { redactErrorForLog } from './safe-log.js';
@@ -13,16 +13,23 @@ function makeSdkChannelLogger(prefix: string) {
   };
 }
 
-export function createSdkChannelScaffold() {
-  return createLarkChannel({
+export function buildSdkChannelOptions(): LarkChannelOptions {
+  return {
     appId: appConfig.appId,
     appSecret: appConfig.appSecret,
     transport: 'websocket',
+    policy: {
+      requireMention: false,
+    },
     logger: makeSdkChannelLogger('lark-channel-sdk'),
     loggerLevel: LoggerLevel.info,
     includeRawEvent: true,
     source: 'codex-lark-plugin',
-  });
+  };
+}
+
+export function createSdkChannelScaffold() {
+  return createLarkChannel(buildSdkChannelOptions());
 }
 
 export function validateSdkChannelScaffold(): void {

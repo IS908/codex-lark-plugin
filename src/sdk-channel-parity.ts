@@ -35,6 +35,7 @@ function isLikelyQuestionOrCommand(text: string): boolean {
   if (!trimmed) return false;
   if (/^(?:\/|\$)\S+/.test(trimmed)) return true;
   if (/[?？]\s*$/.test(trimmed)) return true;
+  if (/[吗么]\s*$/.test(trimmed)) return true;
   return /^(?:please\s+)?(?:can|could|would|should|do|does|did|is|are|was|were|what|why|how|when|where|which|who)\b/i.test(trimmed) ||
     /(?:帮我|帮忙|请(?:帮|看|检查|处理|修复)|能否|能不能|可以(?:帮|.*吗)|可否|是否|是不是|有没有|怎么|如何|为什么|为啥|要不要|看下|检查一下|review一下|修复一下|处理一下)/i.test(trimmed);
 }

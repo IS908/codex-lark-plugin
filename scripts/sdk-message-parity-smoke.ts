@@ -125,6 +125,40 @@ import {
 
 {
   const identitySession = new IdentitySession(() => null);
+  const handled: any[] = [];
+  const result = await processSdkMessage(
+    {
+      messageId: 'om_group_no_mention_chinese_question',
+      chatId: 'oc_trusted_group',
+      chatType: 'group',
+      senderId: 'ou_sender',
+      content: '原因定位了吗',
+      rawContentType: 'text',
+      mentionedBot: false,
+      mentionAll: false,
+      mentions: [],
+      resources: [],
+      createTime: Date.now(),
+    },
+    {
+      identitySession,
+      allowedUserIds: [],
+      allowedChatIds: [],
+      groupNoMentionChatIds: ['oc_trusted_group'],
+      handleMessage: async (message) => {
+        handled.push(message);
+      },
+    },
+  );
+
+  assert.equal(result.status, 'processed');
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].unmentionedGroupTrigger, true);
+  assert.equal(identitySession.getCaller('oc_trusted_group'), 'ou_sender');
+}
+
+{
+  const identitySession = new IdentitySession(() => null);
   let handled = false;
   const result = await processSdkMessage(
     {

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.18.2] - 2026-07-11
+
+### Fixed
+- Disabled the Channel SDK's upstream mention gate so `LARK_GROUP_NO_MENTION_CHAT_IDS` is evaluated by the plugin as the single source of truth.
+- Recognized short Chinese no-mention questions such as `原因定位了吗` in trusted groups while preserving chatter/noise rejection.
+
 ## [1.18.1] - 2026-07-11
 
 ### Changed
