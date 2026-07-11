@@ -62,6 +62,8 @@ LARK_EXEC_PROGRESS_POLL_INTERVAL_MS: 250
 LARK_CODEX_EXEC_TOOL_TRACE:         false
 LARK_CODEX_EXEC_TOOL_TRACE_MODE:    compact
 LARK_CODEX_EXEC_TRACE_LOG:          ~/.codex/channels/lark/logs/trace.log
+LARK_CARD_FOOTER_METRICS_ENABLED:   true
+LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD: 20000
 LARK_CODEX_SESSION_RETENTION_DAYS:  14
 LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: 24
 LARK_CODEX_SESSION_RETENTION_DRY_RUN: false
@@ -186,6 +188,8 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_CODEX_EXEC_TOOL_TRACE` — write local codex exec tool-call trace text lines to trace.log; never renders tool traces into Feishu replies (default: false)
 - `LARK_CODEX_EXEC_TOOL_TRACE_MODE` — `compact`, `full`, or `hidden`; `hidden` keeps local compact tracing and no visible Feishu tool trace (default: compact)
 - `LARK_CODEX_EXEC_TRACE_LOG` — local codex exec tool trace text log path (default: `~/.codex/channels/lark/logs/trace.log`)
+- `LARK_CARD_FOOTER_METRICS_ENABLED` — append compact runtime metrics to generated card replies from Codex exec (default: true)
+- `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` — show token usage in card footer only above this total-token threshold (default: 20000)
 - `LARK_CODEX_SESSION_RETENTION_DAYS` — keep Codex exec resume-pointer records newer than this many days (default: 14)
 - `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` — periodic cleanup interval; set `0` to disable automatic cleanup (default: 24)
 - `LARK_CODEX_SESSION_RETENTION_DRY_RUN` — preview session cleanup candidates without deleting records (default: false)
@@ -262,7 +266,8 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_EXEC_PROGRESS_MAX_MESSAGES`, `LARK_EXEC_PROGRESS_MAX_CHARS`,
    `LARK_EXEC_PROGRESS_MIN_INTERVAL_MS`, `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS`,
    `LARK_CODEX_EXEC_TOOL_TRACE`, `LARK_CODEX_EXEC_TOOL_TRACE_MODE`,
-   `LARK_CODEX_EXEC_TRACE_LOG`,
+   `LARK_CODEX_EXEC_TRACE_LOG`, `LARK_CARD_FOOTER_METRICS_ENABLED`,
+   `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD`,
    `LARK_CODEX_SESSION_RETENTION_DAYS`,
    `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS`,
    `LARK_CODEX_SESSION_RETENTION_DRY_RUN`, `LARK_SESSION_HEALTH_ENABLED`,
@@ -324,6 +329,8 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_CODEX_EXEC_TOOL_TRACE` | Messaging | No | `false` |
 | `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | Messaging | No | `compact` |
 | `LARK_CODEX_EXEC_TRACE_LOG` | Messaging | No | `~/.codex/channels/lark/logs/trace.log` |
+| `LARK_CARD_FOOTER_METRICS_ENABLED` | Messaging | No | `true` |
+| `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` | Messaging | No | `20000` |
 | `LARK_CODEX_SESSION_RETENTION_DAYS` | Messaging | No | `14` |
 | `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` | Messaging | No | `24` |
 | `LARK_CODEX_SESSION_RETENTION_DRY_RUN` | Messaging | No | `false` |

@@ -5,6 +5,7 @@ import { appConfig } from './config.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { BotMessageTracker, LatestMessageTracker, TrackedBotMessageQuotedContext } from './channel.js';
 import { buildCards, shouldUseCard } from './feishu-card.js';
+import { mergeCardFooterWithRuntimeMetrics } from './codex-exec-metrics.js';
 import { JOB_THREAD_PREFIX } from './scheduler.js';
 import {
   revokeAckReactionWithTransport,
@@ -49,6 +50,7 @@ export interface ReplyRequest {
   thread_id?: string;
   format?: 'text' | 'card';
   footer?: string;
+  runtimeFooter?: string;
   files?: Array<{ path: string; type: 'image' | 'file' }>;
   richParts?: ReplyRichPart[];
 }
@@ -141,6 +143,7 @@ export async function sendFeishuReply(
     thread_id,
     format,
     footer,
+    runtimeFooter,
     files,
     richParts,
   } = request;
@@ -483,7 +486,8 @@ export async function sendFeishuReply(
   if (useCard) {
     const deliveredBeforeCard = deliveredCount;
     try {
-      const cards = buildCards(text, { footer });
+      const mergedFooter = mergeCardFooterWithRuntimeMetrics(footer, runtimeFooter);
+      const cards = buildCards(text, { footer: mergedFooter });
       sentCount = cards.length;
       for (let i = 0; i < cards.length; i++) {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;

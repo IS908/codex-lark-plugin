@@ -186,6 +186,7 @@ await writeFile(fakeCodex, [
   'console.log(JSON.stringify({ type: "thread.started", thread_id: "thread_trace" }));',
   'console.log(JSON.stringify({ type: "mcp_tool_call.started", id: "mcp-1", name: "github.get_issue", args: { token: "should-not-appear", issue: 195 } }));',
   'console.log(JSON.stringify({ type: "mcp_tool_call.completed", id: "mcp-1", name: "github.get_issue", status: "ok" }));',
+  'console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1500, cached_input_tokens: 1000, output_tokens: 50 } }));',
   'fs.writeFileSync(outputFile, "final answer only");',
 ].join('\n'), 'utf-8');
 await chmod(fakeCodex, 0o755);
@@ -201,14 +202,29 @@ const result = await runCodexExecCommand({
 });
 assert.equal(result.text, 'final answer only');
 assert.equal(result.sessionId, 'thread_trace');
+assert.deepEqual(result.runtimeMetrics?.usage, {
+  inputTokens: 1500,
+  cachedInputTokens: 1000,
+  outputTokens: 50,
+  totalTokens: 1550,
+});
+assert.equal(result.runtimeMetrics?.toolCalls, 1);
 const integrationLog = readFileSync(integrationTraceLog, 'utf-8');
 const integrationLines = lines(integrationTraceLog);
-assert.ok(integrationLines.length >= 2);
-integrationLines.forEach((line) => {
+assert.ok(integrationLines.length >= 3);
+const integrationToolLines = integrationLines.filter((line) => /github\.get_issue/.test(line));
+assert.equal(integrationToolLines.length, 2);
+integrationToolLines.forEach((line) => {
   assertNotJsonl(line);
   assert.match(line, /om_integration_001  github\.get_issue  /);
   assert.doesNotMatch(line, /trace  compact|mcp_tool_call\.(started|completed)/);
 });
+const metricsLine = integrationLines.find((line) => /om_integration_001  metrics  /.test(line));
+assert.ok(metricsLine);
+assertNotJsonl(metricsLine);
+assert.match(metricsLine, /elapsed_ms=\d+  tool_calls=1  skill_usages=0  subagents=0  input_tokens=1500  cached_input_tokens=1000  output_tokens=50  total_tokens=1550/);
+const metricsDebugLine = await waitForLine(debugLogPath, /codex-exec-metrics log_id=om_integration_001/);
+assert.match(metricsDebugLine, /input_tokens=1500 .* total_tokens=1550/);
 assert.match(integrationLog, /github\.get_issue/);
 assert.doesNotMatch(integrationLog, /should-not-appear/);
 assert.doesNotMatch(integrationLog, /final answer only/);
