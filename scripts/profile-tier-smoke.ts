@@ -126,12 +126,13 @@ passed++;
   const r = mkdtempSync(join(tmpdir(), 'profile-l2-migrate-'));
   // Point L2 path to a file inside this tmp root; write rules BEFORE reading profile.
   const l2Path = join(r, 'privacy-rules.md');
+  const oldL2 = appConfig.privacyRulesPath;
   writeFileSync(
     l2Path,
     '## Always private\n- Phoenix\n- ACME Corp\n',
     'utf-8',
   );
-  process.env.LARK_PRIVACY_RULES_FILE = l2Path;
+  (appConfig as { privacyRulesPath: string }).privacyRulesPath = l2Path;
 
   // Legacy single-file profile that L1 alone wouldn't flag
   mkdirSync(join(r, 'profiles'), { recursive: true });
@@ -162,7 +163,7 @@ passed++;
   if (!byOther?.includes('TypeScript')) fail('8b: TS should be in public');
   if (!byOther?.includes('偏好会议')) fail('8b: gray content should stay in public');
 
-  delete process.env.LARK_PRIVACY_RULES_FILE;
+  (appConfig as { privacyRulesPath: string }).privacyRulesPath = oldL2;
   rmSync(r, { recursive: true, force: true });
   passed++;
 }
@@ -356,10 +357,10 @@ passed++;
 // ── 16b. public profile writes apply L2 safety net ────────────
 {
   const r = mkdtempSync(join(tmpdir(), 'profile-l2-save-'));
-  const oldL2 = process.env.LARK_PRIVACY_RULES_FILE;
+  const oldL2 = appConfig.privacyRulesPath;
   const l2Path = join(r, 'privacy-rules.md');
   writeFileSync(l2Path, '## Always private\n- 项目代号 Phoenix\n', 'utf-8');
-  process.env.LARK_PRIVACY_RULES_FILE = l2Path;
+  (appConfig as { privacyRulesPath: string }).privacyRulesPath = l2Path;
   const s = new MemoryStore(r);
   await s.saveProfile('ou_l2', '- works on TypeScript\n- 项目代号 Phoenix', 'public');
 
@@ -368,8 +369,7 @@ passed++;
   const priv = existsSync(privPath) ? readFileSync(privPath, 'utf-8') : '';
   if (pub.includes('Phoenix')) fail(`16b: L2 private fact leaked to public: ${pub}`);
   if (!priv.includes('Phoenix')) fail(`16b: L2 private spillover missing: ${priv}`);
-  if (oldL2 === undefined) delete process.env.LARK_PRIVACY_RULES_FILE;
-  else process.env.LARK_PRIVACY_RULES_FILE = oldL2;
+  (appConfig as { privacyRulesPath: string }).privacyRulesPath = oldL2;
   rmSync(r, { recursive: true, force: true });
   passed++;
 }
@@ -393,10 +393,10 @@ passed++;
 // ── 16d. private replace preserves L2 spillover ───────────────
 {
   const r = mkdtempSync(join(tmpdir(), 'profile-replace-l2-spill-'));
-  const oldL2 = process.env.LARK_PRIVACY_RULES_FILE;
+  const oldL2 = appConfig.privacyRulesPath;
   const l2Path = join(r, 'privacy-rules.md');
   writeFileSync(l2Path, '## Always private\n- 项目代号 Phoenix\n', 'utf-8');
-  process.env.LARK_PRIVACY_RULES_FILE = l2Path;
+  (appConfig as { privacyRulesPath: string }).privacyRulesPath = l2Path;
   const s = new MemoryStore(r);
   await s.saveProfile('ou_l2_spill', '- 项目代号 Phoenix', 'public', 'replace');
   await s.saveProfile('ou_l2_spill', '- explicit private fact', 'private', 'replace');
@@ -406,8 +406,7 @@ passed++;
   if (pub.includes('Phoenix')) fail(`16d: L2 private fact leaked to public: ${pub}`);
   if (!priv.includes('Phoenix')) fail(`16d: L2 spillover lost after private replace: ${priv}`);
   if (!priv.includes('explicit private fact')) fail(`16d: private replace content missing: ${priv}`);
-  if (oldL2 === undefined) delete process.env.LARK_PRIVACY_RULES_FILE;
-  else process.env.LARK_PRIVACY_RULES_FILE = oldL2;
+  (appConfig as { privacyRulesPath: string }).privacyRulesPath = oldL2;
   rmSync(r, { recursive: true, force: true });
   passed++;
 }

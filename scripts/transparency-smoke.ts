@@ -16,10 +16,11 @@ function fail(msg: string): never {
 // Route L2 rules file + audit log to a tmpdir before importing modules that
 // capture paths from env at import time.
 const tmp = mkdtempSync(join(tmpdir(), 'transparency-'));
-process.env.LARK_PRIVACY_RULES_FILE = join(tmp, 'privacy-rules.md');
 process.env.LARK_AUDIT_LOG = join(tmp, 'audit.log');
 process.env.LARK_CRON_TIMEZONE = 'Asia/Singapore';
 
+const { appConfig } = await import('../src/config.js');
+(appConfig as { privacyRulesPath: string }).privacyRulesPath = join(tmp, 'privacy-rules.md');
 const { MemoryStore } = await import('../src/memory/file.js');
 const { loadL2Rules, addL2Rule } = await import('../src/privacy-rules.js');
 const { audit } = await import('../src/audit-log.js');

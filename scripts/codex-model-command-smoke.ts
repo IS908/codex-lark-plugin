@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,9 +12,13 @@ const root = await mkdtemp(join(tmpdir(), 'codex-model-command-'));
 
 const { appConfig } = await import('../src/config.js');
 (appConfig as any).codexExecCwd = root;
+(appConfig as { ownerOpenId: string | null }).ownerOpenId = 'ou_sender';
+(appConfig as { auditLogPath: string }).auditLogPath = join(root, 'audit.log');
 
 const { handleCodexModelCommand } = await import('../src/codex-model-command.js');
 const { deliverMessageViaCodexExec } = await import('../src/codex-exec-delivery.js');
+const { IdentitySession } = await import('../src/identity-session.js');
+const { accessControlStore } = await import('../src/runtime-access-control.js');
 const {
   buildCodexExecSessionKey,
   FileCodexExecSessionStore,
@@ -22,6 +27,8 @@ import type { LarkMessage } from '../src/channel.js';
 import type { ReplyRequest } from '../src/reply-sender.js';
 
 const store = new FileCodexExecSessionStore(join(root, 'sessions'));
+await accessControlStore.load(join(root, 'access-control.json'));
+const identitySession = new IdentitySession(() => 'ou_sender');
 const replies: ReplyRequest[] = [];
 const assistantRecords: Array<{ chatId: string; threadId?: string; text: string }> = [];
 
@@ -39,9 +46,11 @@ const baseMessage: LarkMessage = {
 };
 
 async function runCommand(message: LarkMessage, useCodexSessions = true): Promise<boolean> {
+  identitySession.setCaller(message.chatId, message.threadId, message.senderId);
   return handleCodexModelCommand({
     message,
     sessionStore: store,
+    identitySession,
     useCodexSessions,
     sendReply: async (request) => {
       replies.push(request);
@@ -150,9 +159,52 @@ assert.match(replies.at(-1)?.text ?? '', /LARK_CODEX_EXEC_USE_SESSIONS=true/);
 
 assert.equal(await runCommand({
   ...baseMessage,
+  messageId: 'om_model_non_owner',
+  senderId: 'ou_not_owner',
+  text: '/model gpt-4',
+  rawContent: '{"text":"/model gpt-4"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /Chat\/thread Codex model override set to gpt-4/);
+record = await store.get(sessionKey);
+assert.equal(record?.model, 'gpt-4');
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_add',
+  text: '/access add user ou_new_allowed',
+  rawContent: '{"text":"/access add user ou_new_allowed"}',
+}), true);
+assert.equal(accessControlStore.isAllowedUserId('ou_new_allowed'), true);
+assert.match(replies.at(-1)?.text ?? '', /ou_new_allowed/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_list',
+  text: '/access',
+  rawContent: '{"text":"/access"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /ou_new_allowed/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_denied',
+  senderId: 'ou_not_owner',
+  text: '/access add user ou_denied',
+  rawContent: '{"text":"/access add user ou_denied"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /owner-only/);
+assert.equal(accessControlStore.isAllowedUserId('ou_denied'), false);
+
+assert.equal(await runCommand({
+  ...baseMessage,
   messageId: 'om_not_model',
   text: 'ordinary message',
   rawContent: '{"text":"ordinary message"}',
 }), false);
+
+const auditText = readFileSync(appConfig.auditLogPath, 'utf8');
+assert.match(auditText, /lark_model_command\s+ok/);
+assert.match(auditText, /lark_access_command\s+ok/);
+assert.match(auditText, /lark_access_command\s+denied/);
 
 console.log('codex-model-command smoke: PASS');

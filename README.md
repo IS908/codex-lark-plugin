@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.18.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.19.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -57,7 +57,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 ### Privacy & Security (v0.9.0+)
 
-- **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `run_local_cli_tool`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
+- **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `run_local_cli_tool`, `manage_access_control`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
 - **Doc-comment binding**: doc-comment tools only run from `doc:<file_token>` turns, require the current `thread_id`, and reject prompt-injected `doc_token` mismatches so comments cannot be posted into a different document
 - **Memory transparency (v0.11.0+)**: `what_do_you_know` lists what the bot has stored about the caller (filtered by current-chat visibility); `forget_memory` removes a specific line by hash. Optional `promote_to_rule` feeds corrections into `privacy-rules.md` — a self-learning loop that makes future misclassifications less likely
 - **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/logs/audit.log` records every sensitive-tool invocation as compact text lines (time / log id / `audit` / tool / outcome / caller / redacted args) so the operator can retrospectively inspect what was accessed on their machine
@@ -296,25 +296,55 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_APP_ID` | Feishu app ID |
 | `LARK_APP_SECRET` | Feishu app secret |
 
-### Optional -- Filtering
+### Runtime Access Control
 
-| Variable | Default | Description |
-|---|---|---|
-| `LARK_ALLOWED_USER_IDS` | (empty) | Comma-separated list of allowed user open_ids. Empty means all users allowed. |
-| `LARK_ALLOWED_CHAT_IDS` | (empty) | Comma-separated list of allowed chat IDs. Empty means all chats allowed. |
-| `LARK_GROUP_NO_MENTION_CHAT_IDS` | (empty) | Comma-separated trusted group IDs that may trigger Codex without @mention. This is separate from access control allowlists. |
+Access control is managed in
+`~/.codex/channels/lark/runtime-config/access-control.json`, not in `.env`.
+`LARK_OWNER_OPEN_ID` remains the immutable trust root. Only the owner can change
+runtime access control through `/access` in Lark or the `manage_access_control`
+tool, and every attempt is written to the audit log.
 
-> **Whitelist semantics:** when both lists are set, a message is accepted if **either** the sender is in `LARK_ALLOWED_USER_IDS` **or** the chat is in `LARK_ALLOWED_CHAT_IDS` (OR). Setting only one list gates on that list alone.
->
-> For `drive.notice.comment_add_v1` doc-comment events, `LARK_ALLOWED_USER_IDS` filters the comment author's `open_id`. If only `LARK_ALLOWED_CHAT_IDS` is set, doc-comment events pass because the synthetic `doc:<file_token>` chat id cannot match a real chat id; Feishu's document ACL and @mention requirement remain the upstream boundary.
+```json
+{
+  "version": 1,
+  "revision": 3,
+  "updated_at": "2026-07-11T00:00:00.000Z",
+  "updated_by": "ou_owner",
+  "allowed_user_ids": ["ou_xxx"],
+  "allowed_chat_ids": ["oc_xxx"],
+  "group_no_mention_chat_ids": ["oc_trusted"]
+}
+```
 
-By default, group messages still require an explicit @bot mention. To opt a
-trusted group into no-mention triggering, add its chat id to
-`LARK_GROUP_NO_MENTION_CHAT_IDS`. Top-level no-mention messages pass only when
-they look like a clear question or command; thread replies in those groups may
-enter Codex with `unmentioned_group_trigger=true`, and the prompt requires
-Codex to return `[LARK_NO_REPLY]` for low-confidence or unrelated messages.
-Remove a chat id from this setting to disable the behavior for that group.
+Missing file means no user/chat allowlist, so regular messages are accepted,
+and no groups are trusted for no-mention triggering. The file is loaded once at
+startup; owner mutations persist atomically and update the in-memory snapshot
+immediately. External file edits take effect after restart. Invalid reloads or
+failed mutations do not replace the last known-good snapshot.
+
+Whitelist semantics stay OR-based: when both `allowed_user_ids` and
+`allowed_chat_ids` are non-empty, a message is accepted if either the sender or
+the chat matches. Doc-comment events filter on `allowed_user_ids` because their
+synthetic `doc:<file_token>` chat id cannot match a real chat id.
+
+By default, group messages still require an explicit @bot mention. Add a group
+chat id to `group_no_mention_chat_ids` to allow no-mention triggering for that
+trusted group. Top-level no-mention messages pass only when they look like a
+clear question or command; thread replies in those groups may enter Codex with
+`unmentioned_group_trigger=true`, and the prompt requires Codex to return
+`[LARK_NO_REPLY]` for low-confidence or unrelated messages.
+
+Owner-only Lark commands:
+
+```text
+/access
+/access add user ou_xxx
+/access remove user ou_xxx
+/access add chat oc_xxx
+/access remove chat oc_xxx
+/access add no-mention oc_xxx
+/access remove no-mention oc_xxx
+```
 
 ### Optional -- Messaging
 
@@ -342,7 +372,8 @@ Remove a chat id from this setting to disable the behavior for that group.
 | `LARK_CARD_FOOTER_METRICS_ENABLED` | `true` | Append compact runtime metrics to generated card replies from Codex exec. Plain text replies are unchanged. |
 | `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` | `20000` | Show token usage in the card footer only when reported total tokens exceed this threshold. |
 
-Realtime Feishu/Lark chats support a lightweight model control command:
+Realtime Feishu/Lark chats support lightweight model control commands. Every
+attempt is written to the audit log.
 
 ```text
 /model             Show the effective model for the current chat/thread
@@ -390,8 +421,8 @@ omitted when usage is unavailable or `total_tokens` does not exceed
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:
 `save_memory`, `create_job`, `list_jobs`, `update_job`, `disable_job`,
-`delete_job`, `upsert_job`, `run_local_cli_tool`, `send_message`, and
-`recall_message`. The parent creates
+`delete_job`, `upsert_job`, `run_local_cli_tool`, `manage_access_control`,
+`send_message`, and `recall_message`. The parent creates
 an owner-only action JSONL side channel for each `codex exec` turn and passes
 the child only a file path plus per-turn token. The child writes structured
 action requests there while stdout remains user-visible reply text only. The
@@ -441,8 +472,7 @@ By default, the child process receives only a small runtime environment
 environment keys, literal `env` for fixed values, or `inheritEnv: true` only for
 trusted tools that intentionally need the full plugin process environment.
 
-Config file: `LARK_LOCAL_CLI_TOOLS_CONFIG`, default
-`~/.codex/channels/lark/local-cli-tools.json`.
+Config file: `~/.codex/channels/lark/runtime-config/local-cli-tools.json`.
 
 ```json
 {
@@ -582,13 +612,15 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 | `LARK_OWNER_OPEN_ID` | (empty) | Operator open_id. Enables terminal skill invocations (e.g. `$lark:jobs`) to resolve the caller via the reserved `__terminal__` chat id outside active Lark turns. When unset, terminal-side sensitive operations are denied. |
 | `LARK_IDENTITY_SESSION_TTL_MS` | `max(2h, LARK_INACTIVITY_HOURS × 2h)` | Lifetime of a server-side `(chat_id, thread_id?) → open_id` session entry. Must exceed the auto-flush window so distillation-triggered tool calls still resolve to the last real user. |
 | `LARK_IDENTITY_SESSION_MAX_ENTRIES` | `5000` | Maximum server-derived caller session entries retained in memory. Oldest entries are evicted first. |
-| `LARK_PRIVACY_RULES_FILE` | `~/.codex/channels/lark/privacy-rules.md` | Override the path to the L2 user rules file. The distiller injects this file's contents into its classification prompt. |
 | `LARK_AUDIT_LOG` | `~/.codex/channels/lark/logs/audit.log` | Override the path to the append-only text-line audit log. Every sensitive-tool invocation is recorded (best-effort; log failures never propagate). (v0.11.0+) |
-| `LARK_LOCAL_CLI_TOOLS_CONFIG` | `~/.codex/channels/lark/local-cli-tools.json` | Allowlist config for `run_local_cli_tool` host-local CLI execution. (v1.1.0+) |
 | `LARK_QUOTED_CARD_USER_FETCH_ENABLED` | `true` | When bot SDK/raw fetches cannot hydrate a quoted Interactive Card, try `lark-cli im +messages-mget --as user` as a best-effort user-identity fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_COMMAND` | `lark-cli` | Executable used for the quoted-card user fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS` | `10000` | Timeout for the quoted-card user fallback. |
 | `LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES` | `262144` | Maximum stdout/stderr bytes captured from the quoted-card user fallback. |
+
+L2 privacy rules live at
+`~/.codex/channels/lark/runtime-config/privacy-rules.md`. Local CLI allowlists
+live at `~/.codex/channels/lark/runtime-config/local-cli-tools.json`.
 
 ### Optional -- Resource Governance
 
@@ -629,8 +661,8 @@ The interactive setup walks through 5 steps, each with the option to skip or use
 Step 1: Credentials
   -> LARK_APP_ID and LARK_APP_SECRET (shows masked current values if already set)
 
-Step 2: Filtering (optional)
-  -> LARK_ALLOWED_USER_IDS, LARK_ALLOWED_CHAT_IDS
+Step 2: Runtime access control (optional)
+  -> owner-managed after setup with /access or manage_access_control
 
 Step 3: CronJob (optional)
   -> LARK_CRON_TIMEZONE (default timezone for newly created jobs)
@@ -711,6 +743,7 @@ The plugin registers the following MCP tools for Codex to use:
 | `what_do_you_know` | List what the bot has stored in the caller's profile. Filtered by rendering visibility (both tiers in p2p, public only in groups). Each line carries an 8-char hash for use with `forget_memory`. (v0.11.0+) |
 | `forget_memory` | Remove a specific line from the caller's profile by hash. Caller-scoped and idempotent. Optional `promote_to_rule` promotes the removal into a durable `## Always private` rule in `privacy-rules.md`. (v0.11.0+) |
 | `run_local_cli_tool` | Run a configured allowlisted local CLI capability on the plugin host. Caller identity is server-derived from `chat_id` / `thread_id`; parameters and environment are filtered by `local-cli-tools.json`. (v1.1.0+) |
+| `manage_access_control` | Owner-only list/add/remove for runtime access control. Mirrors `/access` and audits every attempt. |
 
 ---
 

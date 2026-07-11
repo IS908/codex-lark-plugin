@@ -2,6 +2,7 @@ import { appConfig } from './config.js';
 import { debugLog } from './debug-log.js';
 import { feishuApiCall } from './feishu-retry.js';
 import { DOC_CHAT_ID_PREFIX, type IdentitySession } from './identity-session.js';
+import { accessControlStore } from './runtime-access-control.js';
 import type { MessageQueue } from './queue.js';
 import type { BoundedCache } from './resource-governance.js';
 import type { LarkMessage, MessageHandler } from './channel.js';
@@ -32,8 +33,7 @@ export interface CommentEventDeps {
 }
 
 export function passesDocCommentWhitelist(senderId: string): boolean {
-  if (appConfig.allowedUserIds.length === 0) return true;
-  return appConfig.allowedUserIds.includes(senderId);
+  return accessControlStore.allowsDocComment(senderId);
 }
 
 function capUtf8(s: string | undefined, maxBytes: number): string | undefined {

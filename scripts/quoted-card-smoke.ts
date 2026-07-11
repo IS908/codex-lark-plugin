@@ -3,8 +3,6 @@ import { extractMessageText } from '../src/message-content.js';
 
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
-process.env.LARK_ALLOWED_USER_IDS = '';
-process.env.LARK_ALLOWED_CHAT_IDS = '';
 
 const { LarkChannel } = await import('../src/channel.js');
 const { IdentitySession } = await import('../src/identity-session.js');

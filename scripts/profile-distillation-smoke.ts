@@ -19,10 +19,11 @@ function fail(msg: string): never {
 
 const root = mkdtempSync(join(tmpdir(), 'profile-distillation-'));
 const l2Path = join(root, 'privacy-rules.md');
-process.env.LARK_PRIVACY_RULES_FILE = l2Path;
 process.env.LARK_AUDIT_LOG = join(root, 'audit.log');
 writeFileSync(l2Path, '## Always private\n- Project Phoenix\n', 'utf-8');
 
+const { appConfig } = await import('../src/config.js');
+(appConfig as { privacyRulesPath: string }).privacyRulesPath = l2Path;
 const { MemoryStore } = await import('../src/memory/file.js');
 const { ProfileDistillationManager } = await import('../src/profile-distillation.js');
 

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
 import { SYSTEM_FLUSH_CALLER, type IdentitySession } from './identity-session.js';
+import { accessControlStore } from './runtime-access-control.js';
 
 type CallerMode = 'owners' | 'lark_allowed_user_ids' | 'public' | string[];
 type ParamMode = 'allowlist' | 'blocklist';
@@ -227,7 +228,7 @@ async function loadConfig(configPath = appConfig.localCliToolsConfigPath): Promi
 function isCallerAllowed(caller: string, mode: CallerMode): boolean {
   if (mode === 'public') return true;
   if (mode === 'owners') return !!appConfig.ownerOpenId && caller === appConfig.ownerOpenId;
-  if (mode === 'lark_allowed_user_ids') return appConfig.allowedUserIds.includes(caller);
+  if (mode === 'lark_allowed_user_ids') return accessControlStore.isAllowedUserId(caller);
   return mode.includes(caller);
 }
 

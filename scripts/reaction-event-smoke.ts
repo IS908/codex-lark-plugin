@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
-process.env.LARK_ALLOWED_USER_IDS = '';
-process.env.LARK_ALLOWED_CHAT_IDS = 'oc_allowed';
 
 const { LarkChannel } = await import('../src/channel.js');
+const { accessControlStore } = await import('../src/runtime-access-control.js');
+
+accessControlStore.replaceForTest({ allowed_chat_ids: ['oc_allowed'] });
 
 const channel = new LarkChannel();
 const forwardedMessages: unknown[] = [];

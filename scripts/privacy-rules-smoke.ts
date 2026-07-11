@@ -2,7 +2,8 @@
  * Privacy rules smoke test — runs as part of `npm test`.
  * Exits non-zero if any assertion fails.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyL1, loadL2Rules, addL2Rule, extractL2PrivatePhrases } from '../src/privacy-rules.js';
@@ -70,11 +71,40 @@ if (!c.includes('## Always public')) fail('L2.4: new section not created');
 if ((c.match(/## Always/g) || []).length !== 2) fail('L2.4: expected 2 "## Always" sections');
 l2Passed++;
 
-// L2.5 — LARK_PRIVACY_RULES_FILE env override
-process.env.LARK_PRIVACY_RULES_FILE = tmpFile;
-const d = await loadL2Rules(); // no arg, should use env
-if (d !== c) fail('L2.5: env override not honored');
-delete process.env.LARK_PRIVACY_RULES_FILE;
+// L2.5 — old env override and old default path are intentionally ignored.
+{
+  const home = mkdtempSync(join(tmpdir(), 'privacy-rules-home-'));
+  const oldDir = join(home, '.codex', 'channels', 'lark');
+  mkdirSync(oldDir, { recursive: true });
+  writeFileSync(join(oldDir, 'privacy-rules.md'), '## Always private\n- should not load\n');
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      `
+        process.env.LARK_APP_ID = 'privacy_test_app';
+        process.env.LARK_APP_SECRET = 'privacy_test_secret';
+        process.env.LARK_PRIVACY_RULES_FILE = ${JSON.stringify(tmpFile)};
+        const { loadL2Rules } = await import('./src/privacy-rules.js');
+        const text = await loadL2Rules();
+        if (text !== '') {
+          console.error(text);
+          process.exit(1);
+        }
+      `,
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '', HOME: home },
+    },
+  );
+  rmSync(home, { recursive: true, force: true });
+  if (result.status !== 0) fail(`L2.5: old env/path should be ignored: ${result.stderr || result.stdout}`);
+}
 l2Passed++;
 
 // L2.6 — rejects empty / malformed / overbroad rules before persisting

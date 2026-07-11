@@ -38,6 +38,7 @@ import { startSdkChannelRuntimeWithRetry } from './sdk-channel-runtime.js';
 import { startCodexSessionRetention } from './codex-session-retention.js';
 import { startCodexExecProgressRetention } from './codex-exec-progress.js';
 import { startCodexExecActionChannelRetention } from './codex-exec-action-channel.js';
+import { accessControlStore } from './runtime-access-control.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
@@ -66,6 +67,8 @@ function runStartupResourceCleanup(memoryStore: MemoryStore): void {
 async function main() {
   const isDryRun = process.argv.includes('--dry-run');
   await emitCodexExecConfigDiagnostics(appConfig);
+  await accessControlStore.load();
+  console.error(`[access-control] Using ${appConfig.accessControlConfigPath}`);
 
   // 1. Create memory store
   const memoryStore = new MemoryStore();
@@ -243,6 +246,7 @@ async function main() {
 
   channel.setControlMessageHandler(async (message) => handleCodexModelCommand({
     message,
+    identitySession,
     useCodexSessions: appConfig.codexExecUseSessions,
     sendReply: (request) => sendFeishuReply(
       {

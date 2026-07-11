@@ -13,8 +13,8 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { dirname } from 'node:path';
+import { appConfig } from './config.js';
 
 /**
  * Regex patterns that force a fact into `private`.
@@ -110,10 +110,8 @@ export function applyL1(fact: string): TierDecision {
 
 // ─── L2 user rules file ─────────────────────────────────────
 
-const DEFAULT_L2_PATH = join(homedir(), '.codex', 'channels', 'lark', 'privacy-rules.md');
-
 function resolveL2Path(overridePath?: string): string {
-  return overridePath || process.env.LARK_PRIVACY_RULES_FILE || DEFAULT_L2_PATH;
+  return overridePath || appConfig.privacyRulesPath;
 }
 
 /**

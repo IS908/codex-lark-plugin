@@ -24,7 +24,6 @@ function fail(msg: string): never {
 // Route audit log to a tmpdir BEFORE importing audit-log.js (it reads env at import).
 const tmp = mkdtempSync(join(tmpdir(), 'auto-flush-smoke-'));
 process.env.LARK_AUDIT_LOG = join(tmp, 'audit.log');
-process.env.LARK_PRIVACY_RULES_FILE = join(tmp, 'privacy-rules.md');
 
 const { IdentitySession, SYSTEM_FLUSH_CALLER } = await import('../src/identity-session.js');
 const { MemoryStore } = await import('../src/memory/file.js');

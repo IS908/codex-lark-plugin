@@ -9,10 +9,10 @@ const { IdentitySession } = await import('../src/identity-session.js');
 const { MessageQueue } = await import('../src/queue.js');
 const { BoundedCache } = await import('../src/resource-governance.js');
 const { ConversationBuffer } = await import('../src/memory/buffer.js');
+const { accessControlStore } = await import('../src/runtime-access-control.js');
 const { appConfig } = await import('../src/config.js');
 
-(appConfig as { allowedUserIds: string[] }).allowedUserIds = [];
-(appConfig as { allowedChatIds: string[] }).allowedChatIds = [];
+accessControlStore.replaceForTest();
 
 async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -191,10 +191,11 @@ function makeDeps(overrides: any = {}) {
 
 // 4. Doc-comment whitelist gates on users when configured.
 {
-  const originalAllowedUsers = appConfig.allowedUserIds;
-  const originalAllowedChats = appConfig.allowedChatIds;
-  (appConfig as { allowedUserIds: string[] }).allowedUserIds = ['ou_allowed'];
-  (appConfig as { allowedChatIds: string[] }).allowedChatIds = ['oc_irrelevant'];
+  const originalAccessControl = accessControlStore.snapshot();
+  accessControlStore.replaceForTest({
+    allowed_user_ids: ['ou_allowed'],
+    allowed_chat_ids: ['oc_irrelevant'],
+  });
   try {
     const denied = makeDeps();
     await handleCommentEvent(makeEvent({ from_open_id: 'ou_denied' }), denied);
@@ -206,8 +207,7 @@ function makeDeps(overrides: any = {}) {
     await flush();
     assert.equal(allowed.handlerCalls.length, 1);
   } finally {
-    (appConfig as { allowedUserIds: string[] }).allowedUserIds = originalAllowedUsers;
-    (appConfig as { allowedChatIds: string[] }).allowedChatIds = originalAllowedChats;
+    accessControlStore.replaceForTest(originalAccessControl);
   }
 }
 

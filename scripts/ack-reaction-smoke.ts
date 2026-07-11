@@ -10,6 +10,7 @@ import { IdentitySession } from '../src/identity-session.js';
 import type { MemoryStore } from '../src/memory/file.js';
 import type { LarkChannel } from '../src/channel.js';
 import { appConfig } from '../src/config.js';
+import { accessControlStore } from '../src/runtime-access-control.js';
 
 async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
@@ -116,10 +117,8 @@ function makeTools(client: any, ackReactions: AckReactionTracker) {
 
 // 6. Ack create failures do not leave active/pending ack state or block delivery.
 {
-  const originalAllowedUserIds = appConfig.allowedUserIds;
-  const originalAllowedChatIds = appConfig.allowedChatIds;
-  (appConfig as { allowedUserIds: string[] }).allowedUserIds = [];
-  (appConfig as { allowedChatIds: string[] }).allowedChatIds = [];
+  const originalAccessControl = accessControlStore.snapshot();
+  accessControlStore.replaceForTest();
   const channel = new LarkChannel();
   let delivered = 0;
   try {
@@ -161,8 +160,7 @@ function makeTools(client: any, ackReactions: AckReactionTracker) {
     assert.equal(channel.getAckReactions().activeCount, 0);
     assert.equal(channel.getAckReactions().pendingCount, 0);
   } finally {
-    (appConfig as { allowedUserIds: string[] }).allowedUserIds = originalAllowedUserIds;
-    (appConfig as { allowedChatIds: string[] }).allowedChatIds = originalAllowedChatIds;
+    accessControlStore.replaceForTest(originalAccessControl);
   }
 }
 
