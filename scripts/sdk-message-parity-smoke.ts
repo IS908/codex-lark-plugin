@@ -90,6 +90,145 @@ import {
 
 {
   const identitySession = new IdentitySession(() => null);
+  const handled: any[] = [];
+  const result = await processSdkMessage(
+    {
+      messageId: 'om_group_no_mention_question',
+      chatId: 'oc_trusted_group',
+      chatType: 'group',
+      senderId: 'ou_sender',
+      content: 'Can you summarize this thread?',
+      rawContentType: 'text',
+      mentionedBot: false,
+      mentionAll: false,
+      mentions: [],
+      resources: [],
+      createTime: Date.now(),
+    },
+    {
+      identitySession,
+      allowedUserIds: [],
+      allowedChatIds: [],
+      groupNoMentionChatIds: ['oc_trusted_group'],
+      handleMessage: async (message) => {
+        handled.push(message);
+      },
+    },
+  );
+
+  assert.equal(result.status, 'processed');
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].unmentionedGroupTrigger, true);
+  assert.equal(handled[0].botMentioned, false);
+  assert.equal(identitySession.getCaller('oc_trusted_group'), 'ou_sender');
+}
+
+{
+  const identitySession = new IdentitySession(() => null);
+  let handled = false;
+  const result = await processSdkMessage(
+    {
+      messageId: 'om_group_no_mention_chatter',
+      chatId: 'oc_trusted_group',
+      chatType: 'group',
+      senderId: 'ou_sender',
+      content: 'sounds good',
+      rawContentType: 'text',
+      mentionedBot: false,
+      mentionAll: false,
+      mentions: [],
+      resources: [],
+      createTime: Date.now(),
+    },
+    {
+      identitySession,
+      allowedUserIds: [],
+      allowedChatIds: [],
+      groupNoMentionChatIds: ['oc_trusted_group'],
+      handleMessage: async () => {
+        handled = true;
+      },
+    },
+  );
+
+  assert.deepEqual(result, { status: 'dropped', reason: 'no_mention_trigger' });
+  assert.equal(handled, false);
+  assert.equal(identitySession.getCaller('oc_trusted_group'), null);
+}
+
+{
+  const identitySession = new IdentitySession(() => null);
+  const handled: any[] = [];
+  const result = await processSdkMessage(
+    {
+      messageId: 'om_group_no_mention_thread',
+      chatId: 'oc_trusted_group',
+      chatType: 'group',
+      senderId: 'ou_sender',
+      content: 'sounds good',
+      rawContentType: 'text',
+      mentionedBot: false,
+      mentionAll: false,
+      mentions: [],
+      resources: [],
+      threadId: 'omt_trusted_thread',
+      rootId: 'om_trusted_root',
+      replyToMessageId: 'om_parent',
+      createTime: Date.now(),
+    },
+    {
+      identitySession,
+      allowedUserIds: [],
+      allowedChatIds: [],
+      groupNoMentionChatIds: ['oc_trusted_group'],
+      handleMessage: async (message) => {
+        handled.push(message);
+      },
+    },
+  );
+
+  assert.equal(result.status, 'processed');
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].unmentionedGroupTrigger, true);
+  assert.equal(handled[0].threadId, 'omt_trusted_thread');
+  assert.equal(identitySession.getCaller('oc_trusted_group', 'omt_trusted_thread'), 'ou_sender');
+}
+
+{
+  const identitySession = new IdentitySession(() => null);
+  let handled = false;
+  const result = await processSdkMessage(
+    {
+      messageId: 'om_group_bot_self',
+      chatId: 'oc_trusted_group',
+      chatType: 'group',
+      senderId: 'ou_bot',
+      content: 'Can you summarize this thread?',
+      rawContentType: 'text',
+      mentionedBot: false,
+      mentionAll: false,
+      mentions: [],
+      resources: [],
+      createTime: Date.now(),
+    },
+    {
+      identitySession,
+      allowedUserIds: [],
+      allowedChatIds: [],
+      groupNoMentionChatIds: ['oc_trusted_group'],
+      botOpenId: 'ou_bot',
+      handleMessage: async () => {
+        handled = true;
+      },
+    },
+  );
+
+  assert.deepEqual(result, { status: 'dropped', reason: 'bot_self' });
+  assert.equal(handled, false);
+}
+
+{
+  const identitySession = new IdentitySession(() => null);
   let handled = false;
   const result = await processSdkMessage(
     {

@@ -95,6 +95,8 @@ export interface LarkMessage {
   mentions?: Array<{ id: string; name: string }>;
   /** True when this bot's open_id appears in mentions. Forwarded to Codex as meta.bot_mentioned. */
   botMentioned?: boolean;
+  /** True when a trusted group allowlist let a non-@mention message enter Codex. */
+  unmentionedGroupTrigger?: boolean;
   attachments?: Array<{ fileKey: string; fileName: string; fileType: string }>;
   rawContent: string;
   imagePath?: string;
@@ -362,6 +364,8 @@ export class LarkChannel {
       identitySession: this.identitySession!,
       allowedUserIds: appConfig.allowedUserIds,
       allowedChatIds: appConfig.allowedChatIds,
+      groupNoMentionChatIds: appConfig.groupNoMentionChatIds,
+      botOpenId: this.botOpenId,
       handleMessage: async (message) => {
         await this.prepareSdkMessage(message, sdkMessage, sdkChannel);
         this.enqueueMessage(message);

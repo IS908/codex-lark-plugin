@@ -488,6 +488,7 @@ var appConfig = {
   // Filtering
   allowedUserIds: optionalList("LARK_ALLOWED_USER_IDS"),
   allowedChatIds: optionalList("LARK_ALLOWED_CHAT_IDS"),
+  groupNoMentionChatIds: optionalList("LARK_GROUP_NO_MENTION_CHAT_IDS"),
   textChunkLimit: optionalPositiveNumber("LARK_TEXT_CHUNK_LIMIT", 4e3),
   ackEmoji: optional("LARK_ACK_EMOJI", "MeMeMe"),
   docCommentAckEmoji: optionalAllowEmpty("LARK_DOC_COMMENT_ACK_EMOJI", "THUMBSUP"),

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { appendFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
+import { buildCodexExecPrompt, deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
 import {
   buildCodexExecArgs,
   extractCodexExecSessionId,
@@ -41,6 +41,20 @@ const message: LarkMessage = {
 
 const execRequests: any[] = [];
 const replyRequests: ReplyRequest[] = [];
+
+const noMentionPrompt = buildCodexExecPrompt(
+  {
+    ...message,
+    messageId: 'om_unmentioned_group',
+    botMentioned: false,
+    unmentionedGroupTrigger: true,
+    text: '[Current Message]\nCan you summarize this thread?',
+  },
+  'Kevin · Trusted Group',
+);
+assert.match(noMentionPrompt, /unmentioned_group_trigger: true/);
+assert.match(noMentionPrompt, /trusted-group no-mention allowlist/);
+assert.match(noMentionPrompt, /\[LARK_NO_REPLY\]/);
 
 async function writeActionRequest(request: any, actions: any[]): Promise<void> {
   const actionChannel = request.actions;

@@ -41,6 +41,7 @@ LARK_MEMORY_DEDUP_WINDOW_MS: 1800000
 === Filtering ===
 LARK_ALLOWED_USER_IDS:     (not set)
 LARK_ALLOWED_CHAT_IDS:     (not set)
+LARK_GROUP_NO_MENTION_CHAT_IDS: (not set)
 
 === Messaging ===
 LARK_TEXT_CHUNK_LIMIT:              4000
@@ -159,6 +160,7 @@ Ask for `LARK_APP_ID` and `LARK_APP_SECRET`.
 Ask if the user wants to restrict access:
 - `LARK_ALLOWED_USER_IDS` — comma-separated sender open_id whitelist. Empty = allow all.
 - `LARK_ALLOWED_CHAT_IDS` — comma-separated chat ID whitelist. Empty = allow all.
+- `LARK_GROUP_NO_MENTION_CHAT_IDS` — comma-separated trusted group chat IDs that may trigger Codex without @mention. Empty = all groups still require @bot.
 - If user says "skip" or "no", leave these empty.
 
 ### Step 3: CronJob timezone (optional)
@@ -256,7 +258,8 @@ If user says "use defaults" or "skip", leave these at defaults.
 1. Read `~/.codex/channels/lark/.env`.
 2. Remove all recognized keys:
    `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_ALLOWED_USER_IDS`,
-   `LARK_ALLOWED_CHAT_IDS`, `LARK_TEXT_CHUNK_LIMIT`, `LARK_QUEUE_HANDLER_TIMEOUT_MS`,
+   `LARK_ALLOWED_CHAT_IDS`, `LARK_GROUP_NO_MENTION_CHAT_IDS`,
+   `LARK_TEXT_CHUNK_LIMIT`, `LARK_QUEUE_HANDLER_TIMEOUT_MS`,
    `LARK_REPLY_OBLIGATION_TIMEOUT_MS`,
    `LARK_CODEX_EXEC_COMMAND`,
    `LARK_CODEX_EXEC_CWD`, `LARK_CODEX_EXEC_TIMEOUT_MS`,
@@ -310,6 +313,7 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_APP_SECRET` | Credentials | Yes | - |
 | `LARK_ALLOWED_USER_IDS` | Filtering | No | (empty) |
 | `LARK_ALLOWED_CHAT_IDS` | Filtering | No | (empty) |
+| `LARK_GROUP_NO_MENTION_CHAT_IDS` | Filtering | No | (empty) |
 | `LARK_TEXT_CHUNK_LIMIT` | Messaging | No | `4000` |
 | `LARK_QUEUE_HANDLER_TIMEOUT_MS` | Messaging | No | `660000` / `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` |
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | Messaging | No | `660000` / `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` |

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-07-11
+
+### Added
+- Added `LARK_GROUP_NO_MENTION_CHAT_IDS` for trusted groups that may trigger Codex without an explicit @bot mention.
+- Added a conservative no-mention group gate: top-level messages must look like a clear question or command, thread replies may enter with low-confidence no-reply prompting, and bot-originated messages are dropped.
+
 ## [1.17.0] - 2026-07-11
 
 ### Added
