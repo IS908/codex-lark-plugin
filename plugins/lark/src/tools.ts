@@ -18,6 +18,7 @@ import { registerMessageMutationTools } from './tools/message-mutation.js';
 import { registerMemoryTools } from './tools/memory.js';
 import { registerJobTools } from './tools/jobs.js';
 import { registerTransparencyTools } from './tools/transparency.js';
+import { registerAccessControlTools } from './tools/access-control.js';
 
 export type { DocCommentToolsDeps } from './tools/doc-comments.js';
 export { registerDocCommentTools } from './tools/doc-comments.js';
@@ -70,4 +71,5 @@ export function registerTools(
   registerMemoryTools(ctx);
   registerJobTools(ctx);
   registerTransparencyTools(ctx);
+  registerAccessControlTools(ctx);
 }

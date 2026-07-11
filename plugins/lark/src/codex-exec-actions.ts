@@ -26,6 +26,12 @@ import {
   upsertJob,
 } from './job-service.js';
 import { runConfiguredLocalCliTool } from './local-cli-tools.js';
+import {
+  ACCESS_CONTROL_LISTS,
+  accessControlStore,
+  type AccessControlAction,
+  type AccessControlListName,
+} from './runtime-access-control.js';
 import type { ProfileDistillationDispatcher } from './profile-distillation.js';
 import { logSafeError } from './safe-log.js';
 import type { BotMessageTracker } from './channel.js';
@@ -106,6 +112,13 @@ const RunLocalCliToolActionSchema = z.object({
   args: z.array(z.string()).optional(),
 });
 
+const ManageAccessControlActionSchema = z.object({
+  type: z.literal('manage_access_control'),
+  action: z.enum(['list', 'add', 'remove']).default('list'),
+  list: z.enum(ACCESS_CONTROL_LISTS).optional(),
+  value: z.string().min(1).optional(),
+});
+
 const SendMessageImageSourceSchema = z.enum([
   'local_path',
   'current_message:first_image',
@@ -170,6 +183,7 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
   DeleteJobActionSchema,
   UpsertJobActionSchema,
   RunLocalCliToolActionSchema,
+  ManageAccessControlActionSchema,
   SendMessageActionSchema,
   RecallMessageActionSchema,
 ]).superRefine((action, ctx) => {
@@ -183,6 +197,23 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
       path: ['job_id'],
       message: 'job_id or name is required',
     });
+  }
+
+  if (action.type === 'manage_access_control' && action.action !== 'list') {
+    if (!action.list) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['list'],
+        message: 'list is required for add/remove',
+      });
+    }
+    if (!action.value) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['value'],
+        message: 'value is required for add/remove',
+      });
+    }
   }
 
   if (action.type === 'send_message') {
@@ -669,6 +700,63 @@ async function executeRunLocalCliTool(
   return { ok: result.ok, action: 'run_local_cli_tool', message: result.message };
 }
 
+async function executeManageAccessControl(
+  action: z.infer<typeof ManageAccessControlActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'manage_access_control');
+  const auditArgs = {
+    action: action.action,
+    list: action.list,
+    value: action.value,
+    chat_id: message.chatId,
+    thread_id: message.threadId,
+  };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+
+  if (!appConfig.ownerOpenId || caller !== appConfig.ownerOpenId) {
+    await audit('manage_access_control', caller, auditArgs, 'denied');
+    return {
+      ok: false,
+      action: 'manage_access_control',
+      message: 'manage_access_control is owner-only. Set LARK_OWNER_OPEN_ID and call from that owner identity.',
+    };
+  }
+
+  if (action.action === 'list') {
+    await audit('manage_access_control', caller, auditArgs, 'ok');
+    return {
+      ok: true,
+      action: 'manage_access_control',
+      message: JSON.stringify(accessControlStore.snapshot(), null, 2),
+    };
+  }
+
+  try {
+    const result = await accessControlStore.mutate({
+      action: action.action as AccessControlAction,
+      list: action.list as AccessControlListName,
+      value: action.value!,
+      updatedBy: caller,
+    });
+    await audit('manage_access_control', caller, auditArgs, 'ok');
+    return {
+      ok: true,
+      action: 'manage_access_control',
+      message: JSON.stringify({ changed: result.changed, snapshot: result.snapshot }, null, 2),
+    };
+  } catch (err) {
+    await audit('manage_access_control', caller, auditArgs, 'error');
+    return {
+      ok: false,
+      action: 'manage_access_control',
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 function resolveRecallTransport(
   transport: CreateCodexExecActionDispatcherOptions['larkTransport'],
 ): Pick<LarkTransport, 'recallMessage'> | undefined {
@@ -1036,6 +1124,8 @@ export function createCodexExecActionDispatcher(
           results.push(await executeDeleteJob(action, request.message, deps));
         } else if (action.type === 'upsert_job') {
           results.push(await executeUpsertJob(action, request.message, deps));
+        } else if (action.type === 'manage_access_control') {
+          results.push(await executeManageAccessControl(action, request.message, deps));
         } else if (action.type === 'send_message') {
           results.push(await executeSendMessage(action, request.message, deps));
         } else if (action.type === 'recall_message') {

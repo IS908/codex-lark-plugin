@@ -38,10 +38,10 @@ LARK_PROFILE_DISTILLATION_MAX_EPISODES: 5
 LARK_PROFILE_DISTILLATION_COOLDOWN_MS: 86400000
 LARK_MEMORY_DEDUP_WINDOW_MS: 1800000
 
-=== Filtering ===
-LARK_ALLOWED_USER_IDS:     (not set)
-LARK_ALLOWED_CHAT_IDS:     (not set)
-LARK_GROUP_NO_MENTION_CHAT_IDS: (not set)
+=== Runtime Config Files ===
+access-control:  ~/.codex/channels/lark/runtime-config/access-control.json
+privacy-rules:   ~/.codex/channels/lark/runtime-config/privacy-rules.md
+local-cli-tools: ~/.codex/channels/lark/runtime-config/local-cli-tools.json
 
 === Messaging ===
 LARK_TEXT_CHUNK_LIMIT:              4000
@@ -110,9 +110,7 @@ LARK_LATEST_MESSAGE_TRACKER_SIZE: 1000
 === Identity / Privacy ===
 LARK_OWNER_OPEN_ID:               (not set)
 LARK_IDENTITY_SESSION_TTL_MS:     auto
-LARK_PRIVACY_RULES_FILE:          ~/.codex/channels/lark/privacy-rules.md
 LARK_AUDIT_LOG:                   ~/.codex/channels/lark/logs/audit.log
-LARK_LOCAL_CLI_TOOLS_CONFIG:      ~/.codex/channels/lark/local-cli-tools.json
 LARK_CARD_CONTEXT_CACHE_SIZE:      200
 LARK_CARD_CONTEXT_CACHE_TTL_MS:    1800000
 LARK_QUOTED_CONTEXT_MAX_DEPTH:     4
@@ -155,13 +153,12 @@ Ask for `LARK_APP_ID` and `LARK_APP_SECRET`.
 - If user says "keep" or "skip", preserve existing values.
 - Explain: these come from the Feishu Open Platform app dashboard.
 
-### Step 2: Filtering (optional)
+### Step 2: Runtime access control (optional)
 
-Ask if the user wants to restrict access:
-- `LARK_ALLOWED_USER_IDS` — comma-separated sender open_id whitelist. Empty = allow all.
-- `LARK_ALLOWED_CHAT_IDS` — comma-separated chat ID whitelist. Empty = allow all.
-- `LARK_GROUP_NO_MENTION_CHAT_IDS` — comma-separated trusted group chat IDs that may trigger Codex without @mention. Empty = all groups still require @bot.
-- If user says "skip" or "no", leave these empty.
+Explain that access control is no longer stored in `.env`. It lives in
+`~/.codex/channels/lark/runtime-config/access-control.json` and is normally
+managed by the owner with `/access` in Lark or the `manage_access_control` tool.
+`LARK_OWNER_OPEN_ID` should be set before using those owner-only controls.
 
 ### Step 3: CronJob timezone (optional)
 
@@ -230,7 +227,6 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_NAME_CACHE_SIZE` — max cached Feishu user/chat names (default: 1000)
 - `LARK_CHAT_TYPE_CACHE_SIZE` — max cached Feishu chat types (default: 1000)
 - `LARK_LATEST_MESSAGE_TRACKER_SIZE` — max latest-message tracker entries (default: 1000)
-- `LARK_LOCAL_CLI_TOOLS_CONFIG` — local CLI allowlist config path (default: `~/.codex/channels/lark/local-cli-tools.json`)
 - `LARK_CARD_CONTEXT_CACHE_SIZE` — cached fetched-card parent/root contexts (default: 200)
 - `LARK_CARD_CONTEXT_CACHE_TTL_MS` — TTL for fetched-card context cache (default: 1800000)
 - `LARK_QUOTED_CONTEXT_MAX_DEPTH` — max quoted/replied message chain depth before prompting Codex (default: 4)
@@ -257,8 +253,7 @@ If user says "use defaults" or "skip", leave these at defaults.
 
 1. Read `~/.codex/channels/lark/.env`.
 2. Remove all recognized keys:
-   `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_ALLOWED_USER_IDS`,
-   `LARK_ALLOWED_CHAT_IDS`, `LARK_GROUP_NO_MENTION_CHAT_IDS`,
+   `LARK_APP_ID`, `LARK_APP_SECRET`,
    `LARK_TEXT_CHUNK_LIMIT`, `LARK_QUEUE_HANDLER_TIMEOUT_MS`,
    `LARK_REPLY_OBLIGATION_TIMEOUT_MS`,
    `LARK_CODEX_EXEC_COMMAND`,
@@ -294,7 +289,7 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_NAME_CACHE_SIZE`, `LARK_CHAT_TYPE_CACHE_SIZE`,
    `LARK_LATEST_MESSAGE_TRACKER_SIZE`,
    `LARK_OWNER_OPEN_ID`, `LARK_IDENTITY_SESSION_TTL_MS`,
-   `LARK_PRIVACY_RULES_FILE`, `LARK_AUDIT_LOG`, `LARK_LOCAL_CLI_TOOLS_CONFIG`,
+   `LARK_AUDIT_LOG`,
    `LARK_CARD_CONTEXT_CACHE_SIZE`,
    `LARK_CARD_CONTEXT_CACHE_TTL_MS`, `LARK_QUOTED_CONTEXT_MAX_DEPTH`,
    `LARK_QUOTED_CONTEXT_MAX_BYTES`, `LARK_QUOTED_CARD_USER_FETCH_ENABLED`,
@@ -311,9 +306,6 @@ If user says "use defaults" or "skip", leave these at defaults.
 |-----|----------|----------|---------|
 | `LARK_APP_ID` | Credentials | Yes | - |
 | `LARK_APP_SECRET` | Credentials | Yes | - |
-| `LARK_ALLOWED_USER_IDS` | Filtering | No | (empty) |
-| `LARK_ALLOWED_CHAT_IDS` | Filtering | No | (empty) |
-| `LARK_GROUP_NO_MENTION_CHAT_IDS` | Filtering | No | (empty) |
 | `LARK_TEXT_CHUNK_LIMIT` | Messaging | No | `4000` |
 | `LARK_QUEUE_HANDLER_TIMEOUT_MS` | Messaging | No | `660000` / `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` |
 | `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | Messaging | No | `660000` / `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` |
@@ -379,9 +371,7 @@ If user says "use defaults" or "skip", leave these at defaults.
 | `LARK_OWNER_OPEN_ID` | Identity | No | (empty) |
 | `LARK_IDENTITY_SESSION_TTL_MS` | Identity | No | auto |
 | `LARK_IDENTITY_SESSION_MAX_ENTRIES` | Identity | No | `5000` |
-| `LARK_PRIVACY_RULES_FILE` | Privacy | No | `~/.codex/channels/lark/privacy-rules.md` |
 | `LARK_AUDIT_LOG` | Privacy | No | `~/.codex/channels/lark/logs/audit.log` |
-| `LARK_LOCAL_CLI_TOOLS_CONFIG` | Local tools | No | `~/.codex/channels/lark/local-cli-tools.json` |
 | `LARK_CARD_CONTEXT_CACHE_SIZE` | Quoted cards | No | `200` |
 | `LARK_CARD_CONTEXT_CACHE_TTL_MS` | Quoted cards | No | `1800000` |
 | `LARK_QUOTED_CONTEXT_MAX_DEPTH` | Quoted cards | No | `4` |

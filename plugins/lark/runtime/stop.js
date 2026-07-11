@@ -404,6 +404,7 @@ import os from "node:os";
 var envPath = path.join(os.homedir(), ".codex", "channels", "lark", ".env");
 (0, import_dotenv.config)({ path: envPath });
 var channelHome = path.join(os.homedir(), ".codex", "channels", "lark");
+var runtimeConfigDir = path.join(channelHome, "runtime-config");
 var logsDir = path.join(channelHome, "logs");
 var defaultCodexExecCwd = path.join(channelHome, "codex-exec-workdir");
 var isDryRun = process.argv.includes("--dry-run");
@@ -421,10 +422,6 @@ function optional(key, fallback) {
 function optionalAllowEmpty(key, fallback) {
   const val = process.env[key];
   return val === void 0 ? fallback : val;
-}
-function optionalList(key) {
-  const val = process.env[key];
-  return val ? val.split(",").map((s) => s.trim()).filter(Boolean) : [];
 }
 function optionalNumber(key, fallback) {
   const val = process.env[key];
@@ -485,10 +482,6 @@ var appConfig = {
   // Required
   appId: required("LARK_APP_ID"),
   appSecret: required("LARK_APP_SECRET"),
-  // Filtering
-  allowedUserIds: optionalList("LARK_ALLOWED_USER_IDS"),
-  allowedChatIds: optionalList("LARK_ALLOWED_CHAT_IDS"),
-  groupNoMentionChatIds: optionalList("LARK_GROUP_NO_MENTION_CHAT_IDS"),
   textChunkLimit: optionalPositiveNumber("LARK_TEXT_CHUNK_LIMIT", 4e3),
   ackEmoji: optional("LARK_ACK_EMOJI", "MeMeMe"),
   docCommentAckEmoji: optionalAllowEmpty("LARK_DOC_COMMENT_ACK_EMOJI", "THUMBSUP"),
@@ -602,10 +595,10 @@ var appConfig = {
   inboxDir: path.join(os.homedir(), ".codex", "channels", "lark", "inbox"),
   jobsDir: path.join(os.homedir(), ".codex", "channels", "lark", "jobs"),
   codexExecSessionsDir: path.join(os.homedir(), ".codex", "channels", "lark", "codex-sessions"),
-  localCliToolsConfigPath: optional(
-    "LARK_LOCAL_CLI_TOOLS_CONFIG",
-    path.join(os.homedir(), ".codex", "channels", "lark", "local-cli-tools.json")
-  ),
+  runtimeConfigDir,
+  accessControlConfigPath: path.join(runtimeConfigDir, "access-control.json"),
+  localCliToolsConfigPath: path.join(runtimeConfigDir, "local-cli-tools.json"),
+  privacyRulesPath: path.join(runtimeConfigDir, "privacy-rules.md"),
   debugLogPath: optional("LARK_DEBUG_LOG", path.join(logsDir, "debug.log")),
   auditLogPath: optional("LARK_AUDIT_LOG", path.join(logsDir, "audit.log")),
   codexExecTraceLogPath: optional(

@@ -3,8 +3,6 @@ import assert from 'node:assert/strict';
 process.env.LARK_APP_ID = 'sdk_runtime_retry_app_id';
 process.env.LARK_APP_SECRET = 'sdk_runtime_retry_secret';
 process.env.LARK_ACK_EMOJI = '';
-process.env.LARK_ALLOWED_USER_IDS = '';
-process.env.LARK_ALLOWED_CHAT_IDS = '';
 
 const { LarkChannel } = await import('../src/channel.js');
 const { startSdkChannelRuntimeWithRetry } = await import('../src/sdk-channel-runtime.js');

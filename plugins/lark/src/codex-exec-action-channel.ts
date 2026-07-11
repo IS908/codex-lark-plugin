@@ -311,6 +311,7 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     '  - {"type":"disable_job","job_id":"..."} or {"type":"delete_job","job_id":"..."}',
     '  - {"type":"upsert_job","name":"...","job_type":"prompt|message","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","target_chat_id":"...","model":"...","status":"active|paused"}',
     '  - {"type":"run_local_cli_tool","tool":"configured-tool","args":["..."]}',
+    '  - {"type":"manage_access_control","action":"list|add|remove","list":"allowed_user_ids|allowed_chat_ids|group_no_mention_chat_ids","value":"ou_xxx or oc_xxx"}',
     '  - {"type":"send_message","message":{"kind":"image|file","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","text":"..."}}',
     '  - {"type":"send_message","message":{"kind":"rich","parts":[{"type":"text","text":"..."},{"type":"image","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","alt":"..."}]},"reply_in_thread":true}',
     '  - {"type":"recall_message","message_id":"..."}',

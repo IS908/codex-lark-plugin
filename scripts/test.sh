@@ -164,6 +164,10 @@ echo "=== Local CLI tool unit checks ==="
 node --import tsx scripts/local-cli-tools-smoke.ts
 
 echo ""
+echo "=== Runtime access-control unit checks ==="
+node --import tsx scripts/access-control-smoke.ts
+
+echo ""
 echo "=== Reply raw-card unit checks ==="
 node --import tsx scripts/reply-card-smoke.ts
 

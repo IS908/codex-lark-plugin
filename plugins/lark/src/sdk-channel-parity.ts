@@ -1,6 +1,7 @@
 import type { CommentEvent, NormalizedMessage, ResourceDescriptor } from '@larksuite/channel';
 import type { LarkMessage } from './channel.js';
 import { DOC_CHAT_ID_PREFIX, type IdentitySession } from './identity-session.js';
+import type { AccessControlReader } from './runtime-access-control.js';
 import { bindSdkMessageIdentity } from './sdk-channel-identity.js';
 
 export type SdkMessageDropReason = 'bot_self' | 'no_mention' | 'no_mention_trigger' | 'not_allowed';
@@ -10,20 +11,13 @@ export type SdkMessageResult =
 
 export interface SdkMessageDeps {
   identitySession: IdentitySession;
-  allowedUserIds: string[];
-  allowedChatIds: string[];
-  groupNoMentionChatIds?: string[];
+  accessControl: AccessControlReader;
   botOpenId?: string | null;
   handleMessage: (message: LarkMessage) => Promise<void>;
 }
 
 function passesSdkWhitelist(senderId: string, chatId: string, deps: SdkMessageDeps): boolean {
-  const userConfigured = deps.allowedUserIds.length > 0;
-  const chatConfigured = deps.allowedChatIds.length > 0;
-  if (!userConfigured && !chatConfigured) return true;
-  const userOk = userConfigured && deps.allowedUserIds.includes(senderId);
-  const chatOk = chatConfigured && deps.allowedChatIds.includes(chatId);
-  return userOk || chatOk;
+  return deps.accessControl.allowsMessage(senderId, chatId);
 }
 
 function isThreadMessage(sdkMessage: NormalizedMessage): boolean {
@@ -69,7 +63,7 @@ export async function processSdkMessage(
     return { status: 'dropped', reason: 'bot_self' };
   }
   if (sdkMessage.chatType === 'group' && !sdkMessage.mentionedBot) {
-    if (!(deps.groupNoMentionChatIds ?? []).includes(sdkMessage.chatId)) {
+    if (!deps.accessControl.allowsNoMentionChat(sdkMessage.chatId)) {
       return { status: 'dropped', reason: 'no_mention' };
     }
     if (!shouldProcessUnmentionedGroupMessage(sdkMessage)) {

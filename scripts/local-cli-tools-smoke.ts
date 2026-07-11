@@ -9,6 +9,7 @@ process.env.LARK_APP_SECRET ||= 'test_app_secret';
 const { registerLocalCliTools } = await import('../src/local-cli-tools.js');
 const { IdentitySession, SYSTEM_FLUSH_CALLER } = await import('../src/identity-session.js');
 const { appConfig } = await import('../src/config.js');
+const { accessControlStore } = await import('../src/runtime-access-control.js');
 
 const tmpDir = mkdtempSync(join(tmpdir(), 'local-cli-tools-'));
 const configPath = join(tmpDir, 'local-cli-tools.json');
@@ -33,12 +34,12 @@ chmodSync(helperPath, 0o755);
 const originalConfigPath = appConfig.localCliToolsConfigPath;
 const originalAuditLog = appConfig.auditLogPath;
 const originalOwner = appConfig.ownerOpenId;
-const originalAllowedUsers = appConfig.allowedUserIds;
+const originalAccessControl = accessControlStore.snapshot();
 
 (appConfig as { localCliToolsConfigPath: string }).localCliToolsConfigPath = configPath;
 (appConfig as { auditLogPath: string }).auditLogPath = auditPath;
 (appConfig as { ownerOpenId: string | null }).ownerOpenId = 'ou_owner';
-(appConfig as { allowedUserIds: string[] }).allowedUserIds = ['ou_allowed'];
+accessControlStore.replaceForTest({ allowed_user_ids: ['ou_allowed'] });
 
 const handlers = new Map<string, (args: any) => Promise<any>>();
 const fakeServer = {
@@ -289,7 +290,7 @@ try {
   (appConfig as { localCliToolsConfigPath: string }).localCliToolsConfigPath = originalConfigPath;
   (appConfig as { auditLogPath: string }).auditLogPath = originalAuditLog;
   (appConfig as { ownerOpenId: string | null }).ownerOpenId = originalOwner;
-  (appConfig as { allowedUserIds: string[] }).allowedUserIds = originalAllowedUsers;
+  accessControlStore.replaceForTest(originalAccessControl);
   rmSync(tmpDir, { recursive: true, force: true });
 }
 

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-07-11
+
+### Added
+- Added runtime access control at `~/.codex/channels/lark/runtime-config/access-control.json` with owner-only `/access` and `manage_access_control` list/add/remove operations.
+- Added smoke coverage for runtime access-control loading, mutation, owner authorization, and audit logging.
+
+### Changed
+- Moved access control, local CLI allowlists, and L2 privacy rules into `runtime-config/`; legacy env/path overrides for those runtime files are ignored.
+- Both legacy OpenAPI and Channel SDK inbound paths now read the same access-control snapshot.
+- `/model` remains available to normal chat users, but model control attempts are now recorded in the audit log.
+
 ## [1.18.2] - 2026-07-11
 
 ### Fixed

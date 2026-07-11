@@ -6,6 +6,7 @@ import type {
   ReactionEvent,
 } from '@larksuite/channel';
 import { appConfig } from './config.js';
+import { accessControlStore } from './runtime-access-control.js';
 import { MessageQueue } from './queue.js';
 import type { MemoryStore } from './memory/file.js';
 import type { ConversationBuffer } from './memory/buffer.js';
@@ -71,12 +72,7 @@ function makeSdkLogger(prefix: string) {
  * - Both lists → allow when user OR chat matches (either list whitelists the message)
  */
 function passesWhitelist(senderId: string, chatId: string): boolean {
-  const userConfigured = appConfig.allowedUserIds.length > 0;
-  const chatConfigured = appConfig.allowedChatIds.length > 0;
-  if (!userConfigured && !chatConfigured) return true;
-  const userOk = userConfigured && appConfig.allowedUserIds.includes(senderId);
-  const chatOk = chatConfigured && appConfig.allowedChatIds.includes(chatId);
-  return userOk || chatOk;
+  return accessControlStore.allowsMessage(senderId, chatId);
 }
 
 export interface LarkMessage {
@@ -362,9 +358,7 @@ export class LarkChannel {
   ): Promise<void> {
     const result = await processSdkMessage(sdkMessage, {
       identitySession: this.identitySession!,
-      allowedUserIds: appConfig.allowedUserIds,
-      allowedChatIds: appConfig.allowedChatIds,
-      groupNoMentionChatIds: appConfig.groupNoMentionChatIds,
+      accessControl: accessControlStore,
       botOpenId: this.botOpenId,
       handleMessage: async (message) => {
         await this.prepareSdkMessage(message, sdkMessage, sdkChannel);
