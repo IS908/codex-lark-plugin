@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-07-11
+
+### Changed
+- Scoped the no-mention group low-confidence prompt instruction to only turns that actually carry `unmentioned_group_trigger=true`, reducing unrelated prompt noise for normal @bot, private, cronjob, and reaction turns.
+
 ## [1.18.0] - 2026-07-11
 
 ### Added
