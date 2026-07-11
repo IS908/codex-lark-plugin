@@ -31,6 +31,7 @@ await accessControlStore.load(join(root, 'access-control.json'));
 const identitySession = new IdentitySession(() => 'ou_sender');
 const replies: ReplyRequest[] = [];
 const assistantRecords: Array<{ chatId: string; threadId?: string; text: string }> = [];
+const validatedChats: string[] = [];
 
 const baseMessage: LarkMessage = {
   messageId: 'om_model_001',
@@ -52,6 +53,10 @@ async function runCommand(message: LarkMessage, useCodexSessions = true): Promis
     sessionStore: store,
     identitySession,
     useCodexSessions,
+    validateChatAccess: async (chatId) => {
+      validatedChats.push(chatId);
+      if (chatId === 'oc_missing') throw new Error('Chat oc_missing does not exist.');
+    },
     sendReply: async (request) => {
       replies.push(request);
       return { sentCount: 1 };
@@ -176,6 +181,50 @@ assert.equal(await runCommand({
 }), true);
 assert.equal(accessControlStore.isAllowedUserId('ou_new_allowed'), true);
 assert.match(replies.at(-1)?.text ?? '', /ou_new_allowed/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_add_current_chat',
+  text: '/access add chat 当前群聊',
+  rawContent: '{"text":"/access add chat 当前群聊"}',
+}), true);
+assert.equal(accessControlStore.snapshot().allowed_chat_ids.includes('oc_model'), true);
+assert.deepEqual(validatedChats.at(-1), 'oc_model');
+assert.match(replies.at(-1)?.text ?? '', /resolved_from_current_chat/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_remove_here',
+  text: '/access remove chat here',
+  rawContent: '{"text":"/access remove chat here"}',
+}), true);
+assert.equal(accessControlStore.snapshot().allowed_chat_ids.includes('oc_model'), false);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_invalid_chat',
+  text: '/access add chat not-a-chat',
+  rawContent: '{"text":"/access add chat not-a-chat"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /oc_\.\.\. format/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_missing_chat',
+  text: '/access add chat oc_missing',
+  rawContent: '{"text":"/access add chat oc_missing"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /does not exist/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_current_from_p2p',
+  chatId: 'ou_p2p_chat',
+  chatType: 'p2p',
+  text: '/access add chat current',
+  rawContent: '{"text":"/access add chat current"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /group chat/);
 
 assert.equal(await runCommand({
   ...baseMessage,

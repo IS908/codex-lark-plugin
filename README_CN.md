@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.19.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.19.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -323,9 +323,15 @@ owner-only 飞书命令：
 /access remove user ou_xxx
 /access add chat oc_xxx
 /access remove chat oc_xxx
+/access add chat current
+/access remove chat here
 /access add no-mention oc_xxx
 /access remove no-mention oc_xxx
 ```
+
+`current`、`here`、`当前群聊`、`当前群聊id` 会由 bridge 根据当前飞书事件解析，
+不会交给模型猜测。写入 chat 类列表前必须满足 `oc_...` 格式，并通过飞书
+`chat.get` 可访问性校验。
 
 ### 可选 —— 消息
 

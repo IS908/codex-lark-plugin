@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import path from 'node:path';
 import os from 'node:os';
 import { appConfig } from './config.js';
+import { validateFeishuChatAccess } from './access-control-validation.js';
 import { LarkChannel, type LarkMessage } from './channel.js';
 import { registerTools } from './tools.js';
 import { ConversationBuffer } from './memory/buffer.js';
@@ -226,6 +227,7 @@ async function main() {
     larkTransport: () => channel.getLarkTransport(),
     botMessageTracker: channel.getBotMessageTracker(),
     turnObligations,
+    validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
   });
 
   // 5. Register MCP tools (pass buffer so reply records assistant messages)
@@ -248,6 +250,7 @@ async function main() {
     message,
     identitySession,
     useCodexSessions: appConfig.codexExecUseSessions,
+    validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
     sendReply: (request) => sendFeishuReply(
       {
         client: channel.getClient(),

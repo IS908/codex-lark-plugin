@@ -13,6 +13,7 @@ const { IdentitySession } = await import('../src/identity-session.js');
 const { BotMessageTracker } = await import('../src/channel.js');
 const { TurnObligationTracker } = await import('../src/turn-obligation.js');
 const { MemoryStore } = await import('../src/memory/file.js');
+const { accessControlStore } = await import('../src/runtime-access-control.js');
 const { createInitialJobRuntime } = await import('../src/job-store.js');
 const {
   createCodexExecActionDispatcher,
@@ -46,6 +47,8 @@ function assertInitialRuntimeShape(job: any): void {
 const root = mkdtempSync(join(tmpdir(), 'codex-exec-actions-'));
 const oldJobsDir = (appConfig as any).jobsDir;
 const oldInboxDir = (appConfig as any).inboxDir;
+const oldOwnerOpenId = appConfig.ownerOpenId;
+const oldAccessSnapshot = accessControlStore.snapshot();
 try {
   const jobsDir = join(root, 'jobs');
   const memoriesDir = join(root, 'memories');
@@ -53,6 +56,8 @@ try {
   const localCliConfigPath = join(root, 'local-cli-tools.json');
   (appConfig as any).jobsDir = jobsDir;
   (appConfig as any).inboxDir = inboxDir;
+  (appConfig as any).ownerOpenId = 'ou_user';
+  await accessControlStore.load(join(root, 'access-control.json'));
   await mkdir(jobsDir, { recursive: true });
   await mkdir(inboxDir, { recursive: true });
   writeFileSync(
@@ -276,6 +281,9 @@ try {
     memoryStore: new MemoryStore(memoriesDir),
     identitySession,
     localCliToolsConfigPath: localCliConfigPath,
+    validateChatAccess: async (chatId) => {
+      if (chatId === 'oc_missing') throw new Error('Chat oc_missing does not exist.');
+    },
     sendReply: async (request: any) => {
       sendReplyRequests.push(request);
       if (request.richParts) {
@@ -343,6 +351,40 @@ try {
   assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), true);
   assertInitialRuntimeShape(JSON.parse(readFileSync(join(jobsDir, 'exec-action-job.json'), 'utf-8')));
   assert.match(results[2].message, /hello-from-action/);
+
+  const accessResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_access_current',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'allow this chat',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'manage_access_control', action: 'add', list: 'allowed_chat_ids', value: 'current' }],
+  });
+  assert.equal(accessResults.length, 1);
+  assert.equal(accessResults[0].ok, true, JSON.stringify(accessResults));
+  assert.equal(accessControlStore.snapshot().allowed_chat_ids.includes('oc_exec'), true);
+  assert.match(accessResults[0].message, /resolved_from_current_chat/);
+
+  const invalidAccessResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_access_invalid',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'bad chat id',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'manage_access_control', action: 'add', list: 'allowed_chat_ids', value: 'not-a-chat' }],
+  });
+  assert.equal(invalidAccessResults[0].ok, false);
+  assert.match(invalidAccessResults[0].message, /oc_\.\.\. format/);
 
   const imageActionResults = await dispatcher.execute({
     message: {
@@ -673,6 +715,8 @@ try {
 } finally {
   (appConfig as any).jobsDir = oldJobsDir;
   (appConfig as any).inboxDir = oldInboxDir;
+  (appConfig as any).ownerOpenId = oldOwnerOpenId;
+  accessControlStore.replaceForTest(oldAccessSnapshot);
   rmSync(root, { recursive: true, force: true });
 }
 

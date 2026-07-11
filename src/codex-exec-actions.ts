@@ -32,6 +32,11 @@ import {
   type AccessControlAction,
   type AccessControlListName,
 } from './runtime-access-control.js';
+import {
+  formatAccessControlMutationMessage,
+  validateAccessControlMutation,
+  type AccessControlValidationInput,
+} from './access-control-validation.js';
 import type { ProfileDistillationDispatcher } from './profile-distillation.js';
 import { logSafeError } from './safe-log.js';
 import type { BotMessageTracker } from './channel.js';
@@ -324,6 +329,7 @@ export interface CreateCodexExecActionDispatcherOptions {
   larkTransport?: CodexExecActionTransport | (() => CodexExecActionTransport);
   botMessageTracker?: Pick<BotMessageTracker, 'get'>;
   turnObligations?: Pick<TurnObligationTracker, 'markSatisfied'>;
+  validateChatAccess?: AccessControlValidationInput['validateChatAccess'];
 }
 
 function formatZodError(err: z.ZodError): string {
@@ -735,17 +741,35 @@ async function executeManageAccessControl(
   }
 
   try {
-    const result = await accessControlStore.mutate({
+    const validated = await validateAccessControlMutation({
       action: action.action as AccessControlAction,
       list: action.list as AccessControlListName,
       value: action.value!,
+      currentChatId: message.chatId,
+      currentChatType: message.chatType,
+      validateChatAccess: deps.validateChatAccess,
+    });
+    const result = await accessControlStore.mutate({
+      action: validated.action,
+      list: validated.list,
+      value: validated.value,
       updatedBy: caller,
     });
     await audit('manage_access_control', caller, auditArgs, 'ok');
     return {
       ok: true,
       action: 'manage_access_control',
-      message: JSON.stringify({ changed: result.changed, snapshot: result.snapshot }, null, 2),
+      message: JSON.stringify({
+        changed: result.changed,
+        message: formatAccessControlMutationMessage(
+          result.changed,
+          validated.action,
+          validated.list,
+          validated.value,
+        ),
+        resolved_from_current_chat: validated.resolvedFromCurrentChat,
+        snapshot: result.snapshot,
+      }, null, 2),
     };
   } catch (err) {
     await audit('manage_access_control', caller, auditArgs, 'error');

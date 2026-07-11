@@ -63,11 +63,28 @@ try {
   (appConfig as { auditLogPath: string }).auditLogPath = auditPath;
 
   const handlers = new Map<string, (args: any) => Promise<any>>();
+  const validatedChats: string[] = [];
   registerAccessControlTools({
     server: {
       registerTool(name: string, _config: unknown, handler: any) {
         handlers.set(name, handler);
       },
+    },
+    client: {
+      im: {
+        v1: {
+          chat: {
+            get: async ({ path }: any) => {
+              validatedChats.push(path.chat_id);
+              if (path.chat_id === 'oc_missing') return { code: 230001, msg: 'chat not found' };
+              return { code: 0, data: { name: 'Test Chat' } };
+            },
+          },
+        },
+      },
+    },
+    channel: {
+      isPrivateChat: (chatId: string) => chatId === 'ou_p2p_chat',
     },
     resolveCaller(_toolName: string, chatId: string | undefined, threadId: string | undefined) {
       const caller = identity.getCaller(chatId ?? '', threadId);
@@ -80,6 +97,8 @@ try {
   const identity = new IdentitySession(() => 'ou_owner');
   identity.setCaller('chat_owner', 'thread_owner', 'ou_owner');
   identity.setCaller('chat_other', 'thread_other', 'ou_other');
+  identity.setCaller('oc_current_group', 'thread_owner', 'ou_owner');
+  identity.setCaller('ou_p2p_chat', 'thread_owner', 'ou_owner');
 
   const manage = handlers.get('manage_access_control');
   assert.ok(manage, 'manage_access_control registered');
@@ -103,6 +122,48 @@ try {
   });
   assert.equal(added.isError, undefined);
   assert.equal(accessControlStore.isAllowedUserId('ou_allowed_live'), true);
+
+  const currentChat = await manage!({
+    action: 'add',
+    list: 'allowed_chat_ids',
+    value: 'current',
+    chat_id: 'oc_current_group',
+    thread_id: 'thread_owner',
+  });
+  assert.equal(currentChat.isError, undefined);
+  assert.equal(accessControlStore.snapshot().allowed_chat_ids.includes('oc_current_group'), true);
+  assert.deepEqual(validatedChats.at(-1), 'oc_current_group');
+  assert.match(currentChat.content[0].text, /resolved_from_current_chat/);
+
+  const p2pCurrent = await manage!({
+    action: 'add',
+    list: 'allowed_chat_ids',
+    value: 'current',
+    chat_id: 'ou_p2p_chat',
+    thread_id: 'thread_owner',
+  });
+  assert.equal(p2pCurrent.isError, true);
+  assert.match(p2pCurrent.content[0].text, /group chat/);
+
+  const invalidChat = await manage!({
+    action: 'add',
+    list: 'allowed_chat_ids',
+    value: 'not-a-chat',
+    chat_id: 'chat_owner',
+    thread_id: 'thread_owner',
+  });
+  assert.equal(invalidChat.isError, true);
+  assert.match(invalidChat.content[0].text, /oc_\.\.\. format/);
+
+  const missingChat = await manage!({
+    action: 'add',
+    list: 'allowed_chat_ids',
+    value: 'oc_missing',
+    chat_id: 'chat_owner',
+    thread_id: 'thread_owner',
+  });
+  assert.equal(missingChat.isError, true);
+  assert.match(missingChat.content[0].text, /does not exist|not accessible/);
 
   const listed = await manage!({ action: 'list', chat_id: 'chat_owner', thread_id: 'thread_owner' });
   assert.equal(listed.isError, undefined);
