@@ -13,6 +13,7 @@ export interface CodexExecActionChannelPromptInfo {
   filePath: string;
   token: string;
   maxActions: number;
+  localCliToolNames?: string[];
 }
 
 export interface CodexExecActionChannelOptions {
@@ -295,6 +296,18 @@ export function startCodexExecActionChannelRetention(
 
 export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPromptInfo | null): string[] {
   if (!info?.enabled) return [];
+  const localCliToolNames = [...new Set(info.localCliToolNames ?? [])].filter(Boolean).sort();
+  const primaryLocalCliToolName = localCliToolNames[0];
+  const localCliToolLines =
+    primaryLocalCliToolName
+      ? [
+          '- Sandbox host-tool bridge: run_local_cli_tool executes one of the listed allowlisted CLI tools on the plugin host, outside the Codex exec sandbox. Use it when sandbox restrictions prevent an in-scope operation and a matching listed tool fits.',
+          '- This bridge is an additional capability, not an exclusive tool route. You may use other available skills, connectors, MCP tools, or runtime tools. Do not ask for separate permission to use it when the user already authorized the operation; tool availability does not expand the user request scope.',
+          `  - {"type":"run_local_cli_tool","tool":"${primaryLocalCliToolName}","args":["..."]}`,
+          `    Configured host tools: ${localCliToolNames.join(', ')}`,
+        ]
+      : [];
+
   return [
     'Structured Lark actions (optional):',
     '- Final stdout is user-visible reply text only. Do not include control payloads in the visible reply.',
@@ -310,7 +323,7 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     '  - {"type":"update_job","job_id":"...","name":"...","new_name":"...","status":"active|paused","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","model":"..."}',
     '  - {"type":"disable_job","job_id":"..."} or {"type":"delete_job","job_id":"..."}',
     '  - {"type":"upsert_job","name":"...","job_type":"prompt|message","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","target_chat_id":"...","model":"...","status":"active|paused"}',
-    '  - {"type":"run_local_cli_tool","tool":"configured-tool","args":["..."]}',
+    ...localCliToolLines,
     '  - {"type":"manage_access_control","action":"list|add|remove","list":"allowed_user_ids|allowed_chat_ids|group_no_mention_chat_ids","value":"ou_xxx, oc_xxx, or current"}',
     '    Use value="current" for the current group chat; never guess chat IDs.',
     '  - {"type":"send_message","message":{"kind":"image|file","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","text":"..."}}',

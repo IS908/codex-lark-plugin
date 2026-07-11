@@ -31,6 +31,8 @@ import {
   createCodexExecActionChannel,
   type CodexExecActionChannelPromptInfo,
 } from './codex-exec-action-channel.js';
+import { listConfiguredLocalCliToolNames } from './local-cli-tools.js';
+import { logSafeError } from './safe-log.js';
 
 export interface CodexExecDeliveryOptions {
   message: LarkMessage;
@@ -105,6 +107,22 @@ function resolveProgressLimits(overrides: Partial<CodexExecProgressLimits> = {})
     minIntervalMs: overrides.minIntervalMs ?? appConfig.codexExecProgressMinIntervalMs,
     pollIntervalMs: overrides.pollIntervalMs ?? appConfig.codexExecProgressPollIntervalMs,
   };
+}
+
+async function enrichCodexExecActionPromptInfo(
+  info: CodexExecActionChannelPromptInfo | null,
+): Promise<CodexExecActionChannelPromptInfo | null> {
+  if (!info?.enabled) return info;
+  if (appConfig.codexExecSandbox === 'danger-full-access') return info;
+
+  try {
+    const localCliToolNames = await listConfiguredLocalCliToolNames();
+    if (localCliToolNames.length === 0) return info;
+    return { ...info, localCliToolNames };
+  } catch (err) {
+    logSafeError('[codex-exec-actions] local CLI host bridge config unavailable:', err);
+    return info;
+  }
 }
 
 interface LifecycleGuardResult {
@@ -265,7 +283,6 @@ export function buildCodexExecPrompt(
     'For existing cronjobs, prefer the stable job_id returned by create_job/list_jobs; use name only when it is unique. If create_job reports that a job already exists, use list_jobs plus update_job, disable_job, delete_job, or upsert_job instead of retrying create_job with the same name.',
     'Use send_message when the user asks Codex to send back an image, file, or ordered text+image rich message through Feishu. For a single image/file, use message.kind=image|file with source=local_path, source=current_message:first_image, or source=quoted_message:first_image. File messages only support local_path. For mixed text and images, use message.kind=rich with ordered parts; the parent bridge prefers one Feishu post and falls back to split messages while preserving order and thread context. Do not use send_message for document comments, audio, video, or interactive cards yet.',
     'Do not put chat_id, thread_id, open_id, created_by, or caller in the action request; the parent Lark bridge derives identity from the current Feishu event.',
-    'For external systems such as GitHub, GitLab, Jira, or Linear, use run_local_cli_tool only when a matching local allowlisted tool is already configured; otherwise provide a draft or explain that the external action is not configured. Do not invent provider-specific Lark actions or imply the plugin has built-in issue/PR creation.',
     'For ordinary replies, do not write an action request.',
     'If this turn intentionally should not send a Feishu reply, put [LARK_DEFER] or [LARK_NO_REPLY] on its own line outside code fences, optionally followed by a short reason.',
     ...buildCodexExecProgressPrompt(progressInfo),
@@ -340,7 +357,7 @@ export async function deliverMessageViaCodexExec(
       message,
       displayLabel,
       progressSink?.promptInfo ?? null,
-      actionChannel?.promptInfo ?? null,
+      await enrichCodexExecActionPromptInfo(actionChannel?.promptInfo ?? null),
     ),
     imagePaths: collectImagePaths(message),
     command: appConfig.codexExecCommand,

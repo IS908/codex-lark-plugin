@@ -6,7 +6,7 @@
  * and the final answer is sent back through the normal Feishu reply path.
  */
 import assert from 'node:assert/strict';
-import { appendFile, mkdtemp } from 'node:fs/promises';
+import { appendFile, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildCodexExecPrompt, deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
@@ -23,6 +23,33 @@ import { formatCodexExecFailureReply } from '../src/codex-exec-error.js';
 const { appConfig } = await import('../src/config.js');
 const deliveryBaseDir = await mkdtemp(join(tmpdir(), 'lark-delivery-smoke-'));
 (appConfig as any).codexExecCwd = deliveryBaseDir;
+const localCliToolsConfigPath = join(deliveryBaseDir, 'local-cli-tools.json');
+const missingLocalCliToolsConfigPath = join(deliveryBaseDir, 'missing-local-cli-tools.json');
+await writeFile(
+  localCliToolsConfigPath,
+  JSON.stringify(
+    {
+      tools: {
+        lark_doc_create: {
+          command: process.execPath,
+          fixedArgs: ['helper.js'],
+          paramAllowlist: ['--title', '--content'],
+          allowedCallers: 'owners',
+        },
+        gh_host: {
+          command: process.execPath,
+          paramBlocklist: ['--token'],
+          allowedCallers: 'owners',
+        },
+      },
+    },
+    null,
+    2,
+  ),
+  'utf-8',
+);
+(appConfig as any).localCliToolsConfigPath = localCliToolsConfigPath;
+(appConfig as any).codexExecSandbox = 'workspace-write';
 
 const message: LarkMessage = {
   messageId: 'om_inbound_001',
@@ -167,9 +194,12 @@ assert.match(execRequests[0].prompt, /facts, reasoning, judgments, and risks/);
 assert.match(execRequests[0].prompt, /no background continuation after the visible reply is posted/);
 assert.match(execRequests[0].prompt, /For cronjob schedule fields, use only supported recurring formats/);
 assert.match(execRequests[0].prompt, /Do not use one-off or natural-language aliases/);
-assert.match(execRequests[0].prompt, /For external systems such as GitHub, GitLab, Jira, or Linear/);
-assert.match(execRequests[0].prompt, /use run_local_cli_tool only when a matching local allowlisted tool is already configured/);
-assert.match(execRequests[0].prompt, /Do not invent provider-specific Lark actions/);
+assert.match(execRequests[0].prompt, /Sandbox host-tool bridge/);
+assert.match(execRequests[0].prompt, /not an exclusive tool route/);
+assert.match(execRequests[0].prompt, /"type":"run_local_cli_tool","tool":"gh_host","args":\["\.\.\."\]/);
+assert.match(execRequests[0].prompt, /Configured host tools: gh_host, lark_doc_create/);
+assert.doesNotMatch(execRequests[0].prompt, /For external systems such as GitHub, GitLab, Jira, or Linear/);
+assert.doesNotMatch(execRequests[0].prompt, /configured-tool/);
 assert.doesNotMatch(execRequests[0].prompt, /create_github_issue/);
 assert.doesNotMatch(execRequests[0].prompt, /create_issue_proposal/);
 assert.deepEqual(execRequests[0].imagePaths, ['/tmp/lark-img-1.png', '/tmp/lark-img-2.png']);
@@ -182,6 +212,43 @@ assert.deepEqual(replyRequests, [
     thread_id: 'omt_thread_001',
   },
 ]);
+
+const hiddenBridgeRequests: any[] = [];
+(appConfig as any).codexExecSandbox = 'danger-full-access';
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_no_sandbox_bridge',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async (request) => {
+    hiddenBridgeRequests.push(request);
+    return 'no sandbox bridge';
+  },
+  sendReply: async () => ({ sentCount: 1 }),
+});
+assert.doesNotMatch(hiddenBridgeRequests[0].prompt, /Sandbox host-tool bridge/);
+assert.doesNotMatch(hiddenBridgeRequests[0].prompt, /run_local_cli_tool/);
+
+(appConfig as any).codexExecSandbox = 'workspace-write';
+(appConfig as any).localCliToolsConfigPath = missingLocalCliToolsConfigPath;
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_no_configured_host_tools',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async (request) => {
+    hiddenBridgeRequests.push(request);
+    return 'no configured host bridge';
+  },
+  sendReply: async () => ({ sentCount: 1 }),
+});
+assert.doesNotMatch(hiddenBridgeRequests[1].prompt, /Sandbox host-tool bridge/);
+assert.doesNotMatch(hiddenBridgeRequests[1].prompt, /run_local_cli_tool/);
+(appConfig as any).localCliToolsConfigPath = localCliToolsConfigPath;
 
 const metricsReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({
