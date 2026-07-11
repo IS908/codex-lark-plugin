@@ -225,6 +225,13 @@ async function loadConfig(configPath = appConfig.localCliToolsConfigPath): Promi
   return { tools };
 }
 
+export async function listConfiguredLocalCliToolNames(
+  configPath = appConfig.localCliToolsConfigPath,
+): Promise<string[]> {
+  const config = await loadConfig(configPath);
+  return Object.keys(config.tools).sort();
+}
+
 function isCallerAllowed(caller: string, mode: CallerMode): boolean {
   if (mode === 'public') return true;
   if (mode === 'owners') return !!appConfig.ownerOpenId && caller === appConfig.ownerOpenId;
@@ -441,7 +448,7 @@ export function registerLocalCliTools(options: RegisterLocalCliToolsOptions): vo
     'run_local_cli_tool',
     {
       description:
-        'Run a configured allowlisted local CLI capability on the plugin host. Pass chat_id/thread_id from the current channel metadata. The server resolves caller identity and applies the configured authorization and parameter filter.',
+        'Optional sandbox host-tool bridge: run a configured allowlisted local CLI capability on the plugin host, outside the Codex exec sandbox. This is an additional capability, not an exclusive route for external systems. Pass chat_id/thread_id from the current channel metadata; the server resolves caller identity and applies authorization and parameter filters.',
       inputSchema: z.object({
         tool: z.string().describe('Configured local CLI tool name from local-cli-tools.json'),
         args: z.array(z.string()).default([]).describe('CLI arguments to append after the configured fixedArgs'),

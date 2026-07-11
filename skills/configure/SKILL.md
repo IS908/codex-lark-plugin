@@ -177,7 +177,7 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_QUEUE_HANDLER_TIMEOUT_MS` — per-message queue guardrail timeout (default: `LARK_CODEX_EXEC_TIMEOUT_MS + 60000`; set `0` to disable; lower positive values are raised to the default)
 - `LARK_REPLY_OBLIGATION_TIMEOUT_MS` — max wait for a visible reply/defer before logging a missed Lark turn (default: `LARK_CODEX_EXEC_TIMEOUT_MS + 60000`)
 - `LARK_CODEX_EXEC_CWD` — working directory for `codex exec` (default: `~/.codex/channels/lark/codex-exec-workdir`)
-- `LARK_CODEX_EXEC_SANDBOX` — sandbox passed to `codex exec` (default: `workspace-write`)
+- `LARK_CODEX_EXEC_SANDBOX` — sandbox passed to `codex exec` (default: `workspace-write`); the optional `run_local_cli_tool` host bridge is only described to Codex exec when this is `read-only`/`workspace-write` and `runtime-config/local-cli-tools.json` has allowlisted tools.
 - `LARK_CODEX_EXEC_USE_SESSIONS` — resume one Codex session per Feishu chat/thread (default: true)
 - `LARK_EXEC_PROGRESS_ENABLED` — send bounded progress messages during long-running visible Codex exec turns (default: true)
 - `LARK_EXEC_PROGRESS_MAX_MESSAGES` — max progress messages per Codex exec turn (default: 3)

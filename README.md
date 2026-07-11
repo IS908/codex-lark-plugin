@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.19.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.19.2-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -449,9 +449,10 @@ cards remain separate follow-up design work.
 External project-management writes are intentionally not built into the core
 Lark plugin. Creating GitHub/GitLab issues, Jira tickets, Linear issues, PRs,
 or project-governance review proposals should be modeled as user-configured
-skills, custom MCP tools, or allowlisted `run_local_cli_tool` workflows. The
-plugin provides the Lark channel, identity, cronjob, audit, and generic local
-tool boundary; provider-specific policy stays outside the plugin.
+skills, custom MCP tools, normal Codex runtime tools, or allowlisted
+`run_local_cli_tool` workflows. The plugin provides the Lark channel, identity,
+cronjob, audit, and generic local tool boundary; provider-specific policy stays
+outside the plugin.
 
 Because exec delivery is a single-turn flow, the plugin also guards against
 misleading follow-up promises. A final answer must not claim that Codex will
@@ -467,12 +468,20 @@ and [transition compatibility matrix](docs/transition-compatibility.md).
 
 ### Optional -- Local CLI Tools
 
-`run_local_cli_tool` is a controlled MCP tool for trusted host-local CLI or
-skill-backed workflows, such as `lark-cli`. It does not run shell strings and
-does not change the general `codex exec` sandbox. Each invocation resolves the
-caller from `IdentitySession`, authorizes against the per-tool config, applies
-one parameter filtering mode, runs `spawn(command, args, { shell: false })`,
-captures bounded output, redacts common secrets, and writes the audit log.
+`run_local_cli_tool` is an optional sandbox host-tool bridge for trusted
+host-local CLI or skill-backed workflows, such as `lark-cli`. It is exposed to
+`codex exec` prompts only when `LARK_CODEX_EXEC_SANDBOX` is `read-only` or
+`workspace-write` and at least one allowlisted tool exists. It is an additional
+capability, not an exclusive route for external systems: Codex may still use
+other available skills, connectors, MCP tools, runtime tools, or normal CLI
+access when they are available. Missing bridge config should not by itself make
+Codex stop at a draft.
+
+The bridge does not run shell strings and does not change the general
+`codex exec` sandbox. Each invocation resolves the caller from
+`IdentitySession`, authorizes against the per-tool config, applies one parameter
+filtering mode, runs `spawn(command, args, { shell: false })`, captures bounded
+output, redacts common secrets, and writes the audit log.
 By default, the child process receives only a small runtime environment
 (`HOME`, `PATH`, temp/user/locale keys). Use `envAllowlist` for selected parent
 environment keys, literal `env` for fixed values, or `inheritEnv: true` only for
@@ -748,7 +757,7 @@ The plugin registers the following MCP tools for Codex to use:
 | `delete_job` | Delete a cronjob. Owner-only. Requires `chat_id`. |
 | `what_do_you_know` | List what the bot has stored in the caller's profile. Filtered by rendering visibility (both tiers in p2p, public only in groups). Each line carries an 8-char hash for use with `forget_memory`. (v0.11.0+) |
 | `forget_memory` | Remove a specific line from the caller's profile by hash. Caller-scoped and idempotent. Optional `promote_to_rule` promotes the removal into a durable `## Always private` rule in `privacy-rules.md`. (v0.11.0+) |
-| `run_local_cli_tool` | Run a configured allowlisted local CLI capability on the plugin host. Caller identity is server-derived from `chat_id` / `thread_id`; parameters and environment are filtered by `local-cli-tools.json`. (v1.1.0+) |
+| `run_local_cli_tool` | Optional sandbox host-tool bridge for a configured allowlisted local CLI capability on the plugin host; it is additive and not an exclusive route for external systems. Caller identity is server-derived from `chat_id` / `thread_id`; parameters and environment are filtered by `local-cli-tools.json`. (v1.1.0+) |
 | `manage_access_control` | Owner-only list/add/remove for runtime access control. Mirrors `/access` and audits every attempt. |
 
 ---

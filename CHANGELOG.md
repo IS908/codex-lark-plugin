@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.19.2] - 2026-07-11
+
+### Fixed
+- Clarified `run_local_cli_tool` as an optional sandbox host-tool bridge, not an exclusive route for external systems.
+- Exposed the exec action prompt only when sandboxed exec has configured allowlisted host tools, and showed real configured tool names instead of a placeholder.
+- Removed the prompt rule that pushed GitHub/GitLab/Jira/Linear actions toward drafts when no matching host bridge was configured.
+
 ## [1.19.1] - 2026-07-11
 
 ### Fixed
