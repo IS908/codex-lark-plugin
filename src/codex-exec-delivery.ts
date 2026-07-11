@@ -25,6 +25,7 @@ import {
   type CodexExecActionDispatcher,
   type CodexExecAction,
 } from './codex-exec-actions.js';
+import { formatCodexExecRuntimeMetricsFooter } from './codex-exec-metrics.js';
 import {
   buildCodexExecActionChannelPrompt,
   createCodexExecActionChannel,
@@ -508,11 +509,18 @@ export async function deliverMessageViaCodexExec(
     return;
   }
 
+  const runtimeFooter = appConfig.cardFooterMetricsEnabled
+    ? formatCodexExecRuntimeMetricsFooter(
+        result.runtimeMetrics ?? null,
+        appConfig.cardFooterMetricsTokenUsageThreshold,
+      )
+    : undefined;
   await sendReply({
     chat_id: message.chatId,
     text,
     ...(isFeishuOpenMessageId(message.messageId) ? { reply_to: message.messageId } : {}),
     thread_id: message.threadId,
+    ...(runtimeFooter ? { runtimeFooter } : {}),
   });
 }
 

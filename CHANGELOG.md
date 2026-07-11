@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-07-11
+
+### Added
+- Added compact Codex exec runtime metrics footers for generated Feishu/Lark card replies, including elapsed time, tool/skill/subagent counts, and threshold-gated token usage.
+- Added `LARK_CARD_FOOTER_METRICS_ENABLED` and `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD`.
+
+### Changed
+- Codex exec now captures `cached_input_tokens` from `turn.completed.usage` and writes per-turn runtime metrics summaries to local debug logs and trace logs when trace is enabled.
+- Generated card footer handling now preserves business/model footer text before bridge-injected runtime metrics and replaces an existing runtime metrics line instead of appending duplicates.
+
 ## [1.16.0] - 2026-07-10
 
 ### Added

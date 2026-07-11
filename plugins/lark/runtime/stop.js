@@ -516,6 +516,11 @@ var appConfig = {
     "compact",
     ["compact", "full", "hidden"]
   ),
+  cardFooterMetricsEnabled: optionalBoolean("LARK_CARD_FOOTER_METRICS_ENABLED", true),
+  cardFooterMetricsTokenUsageThreshold: optionalNonNegativeNumber(
+    "LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD",
+    2e4
+  ),
   codexSessionRetentionDays: optionalPositiveNumber("LARK_CODEX_SESSION_RETENTION_DAYS", 14),
   codexSessionRetentionScanIntervalHours: optionalNonNegativeNumber(
     "LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS",

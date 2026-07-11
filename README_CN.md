@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.16.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.17.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -36,7 +36,7 @@
 
 - 文字、图片（不超过 10 MB）、文件（不超过 30 MB）
 - 较长的 Lark/Feishu 回复会默认倾向使用轻量 Markdown 结构来提升可扫读性；短回复、代码、日志、JSON、diff、命令输出、action block 和用户显式指定的格式保持不变
-- **卡片渲染**：简单回复保持可复制文本；包含标题、代码块、Markdown 表格、多项列表或结构化段落的富 Markdown 会自动渲染为 body-only 飞书 Schema 2.0 交互式卡片，默认不生成 header/template。传 `format='text'` 可强制纯文本，`format='card'` 可强制生成卡片，也支持 raw `card` payload。生成卡片时可选 `footer` 底部小字脚注
+- **卡片渲染**：简单回复保持可复制文本；包含标题、代码块、Markdown 表格、多项列表或结构化段落的富 Markdown 会自动渲染为 body-only 飞书 Schema 2.0 交互式卡片，默认不生成 header/template。传 `format='text'` 可强制纯文本，`format='card'` 可强制生成卡片，也支持 raw `card` payload。生成卡片时可选 `footer` 底部小字脚注；Codex exec 生成的卡片回复可自动追加紧凑运行指标 footer
 - 编辑已发送的消息
 - 回复已有飞书文档评论线程，或在当前文档中新建顶级评论
 - 文档评论 @bot 事件会收到可配置的持久 emoji 确认回应（默认 `THUMBSUP`）
@@ -313,6 +313,8 @@ git push origin v1.0.0
 | `LARK_CODEX_EXEC_TOOL_TRACE` | `false` | 启用本地 `codex exec --json` 工具执行 trace，写入 `trace.log`；不会把工具过程渲染到飞书回复里 |
 | `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | `compact` | trace 模式：`compact` 写脱敏摘要；`full` 写脱敏/截断后的事件 JSON；`hidden` 是兼容模式，本地按 compact 记录且不向飞书展示工具过程 |
 | `LARK_CODEX_EXEC_TRACE_LOG` | `~/.codex/channels/lark/logs/trace.log` | 本地 codex exec tool trace 文本日志路径 |
+| `LARK_CARD_FOOTER_METRICS_ENABLED` | `true` | 为 Codex exec 生成的卡片回复追加紧凑运行指标 footer；纯文本回复不变 |
+| `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` | `20000` | 仅当上报的 total tokens 超过该阈值时，在卡片 footer 中显示 token usage |
 
 实时飞书/Lark chat 支持轻量模型控制命令：
 
@@ -334,6 +336,13 @@ progress 消息。`compact` 记录精简文本行：工具/类型、状态、tra
 log id：普通飞书消息 turn 使用 source message id，cronjob prompt turn 使用
 cronjob name。debug、audit 和 trace 日志时间都使用 `LARK_CRON_TIMEZONE`
 并带显式 UTC offset，三者共享[本地诊断日志文本格式](docs/local-diagnostic-logs.md)。
+
+生成卡片回复时，`LARK_CARD_FOOTER_METRICS_ENABLED=true` 会在最终
+`turn.completed` 事件可用后追加紧凑运行指标 footer，例如
+`🔧4 · 🧩2 · ⏱18s · 📊 I62.4k(C48.2k) O1.3k T63.7k`。已有业务 footer
+会保留在前面，runtime footer 追加在后面。usage 不可用或 `total_tokens`
+未超过 `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` 时不会显示 token
+段，但仍会显示耗时。
 
 exec delivery 可以为长时间运行的可见 IM / 文档评论 turn 暴露一个有界过程消息侧通道。
 父进程创建临时 JSONL 文件，并把文件路径和本 turn token 传给子 `codex exec` 进程；

@@ -228,6 +228,10 @@ echo "=== Codex exec delivery unit checks ==="
 node --import tsx scripts/codex-exec-delivery-smoke.ts
 
 echo ""
+echo "=== Codex exec metrics unit checks ==="
+node --import tsx scripts/codex-exec-metrics-smoke.ts
+
+echo ""
 echo "=== Codex model command unit checks ==="
 node --import tsx scripts/codex-model-command-smoke.ts
 

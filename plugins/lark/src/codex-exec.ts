@@ -3,6 +3,17 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createCodexExecToolTraceWriter } from './codex-exec-trace.js';
+import {
+  createCodexExecRuntimeMetricsCollector,
+  extractCodexExecUsageFromJsonLine,
+  logCodexExecRuntimeMetrics,
+  mergeCodexExecUsage,
+  type CodexExecRuntimeMetrics,
+  type CodexExecUsage,
+} from './codex-exec-metrics.js';
+
+export type { CodexExecRuntimeMetrics, CodexExecUsage } from './codex-exec-metrics.js';
+export { extractCodexExecUsage } from './codex-exec-metrics.js';
 
 export type CodexExecSandbox = 'read-only' | 'workspace-write' | 'danger-full-access';
 
@@ -34,13 +45,7 @@ export interface CodexExecResult {
   text: string;
   sessionId?: string | null;
   usage?: CodexExecUsage | null;
-}
-
-export interface CodexExecUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  contextWindowTokens?: number;
+  runtimeMetrics?: CodexExecRuntimeMetrics | null;
 }
 
 export type CodexExecRunner = (request: CodexExecRequest) => Promise<string | CodexExecResult>;
@@ -114,97 +119,12 @@ function extractSessionIdFromJsonLine(line: string): string | null {
   return null;
 }
 
-function finitePositiveNumber(value: unknown): number | undefined {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-  return Math.floor(parsed);
-}
-
-function firstNumber(source: Record<string, unknown>, keys: string[]): number | undefined {
-  for (const key of keys) {
-    const value = finitePositiveNumber(source[key]);
-    if (value !== undefined) return value;
-  }
-  return undefined;
-}
-
-function extractUsageFromObject(source: unknown): CodexExecUsage | null {
-  if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
-  const record = source as Record<string, unknown>;
-  const usageSource =
-    (record.usage && typeof record.usage === 'object' ? record.usage : null) ??
-    (record.token_usage && typeof record.token_usage === 'object' ? record.token_usage : null) ??
-    (record.tokenUsage && typeof record.tokenUsage === 'object' ? record.tokenUsage : null) ??
-    record;
-  if (!usageSource || typeof usageSource !== 'object' || Array.isArray(usageSource)) return null;
-  const usageRecord = usageSource as Record<string, unknown>;
-
-  const inputTokens = firstNumber(usageRecord, [
-    'input_tokens',
-    'inputTokens',
-    'prompt_tokens',
-    'promptTokens',
-  ]);
-  const outputTokens = firstNumber(usageRecord, [
-    'output_tokens',
-    'outputTokens',
-    'completion_tokens',
-    'completionTokens',
-  ]);
-  const explicitTotalTokens = firstNumber(usageRecord, ['total_tokens', 'totalTokens']);
-  const totalTokens =
-    explicitTotalTokens ??
-    (inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined);
-  const contextWindowTokens = firstNumber(usageRecord, [
-    'context_window',
-    'context_window_tokens',
-    'contextWindow',
-    'contextWindowTokens',
-  ]);
-
-  if (
-    inputTokens === undefined &&
-    outputTokens === undefined &&
-    totalTokens === undefined &&
-    contextWindowTokens === undefined
-  ) {
-    return null;
-  }
-  return {
-    ...(inputTokens !== undefined ? { inputTokens } : {}),
-    ...(outputTokens !== undefined ? { outputTokens } : {}),
-    ...(totalTokens !== undefined ? { totalTokens } : {}),
-    ...(contextWindowTokens !== undefined ? { contextWindowTokens } : {}),
-  };
-}
-
-function mergeUsage(previous: CodexExecUsage | null, next: CodexExecUsage | null): CodexExecUsage | null {
-  if (!next) return previous;
-  return { ...(previous ?? {}), ...next };
-}
-
-function extractUsageFromJsonLine(line: string): CodexExecUsage | null {
-  try {
-    return extractUsageFromObject(JSON.parse(line));
-  } catch {
-    return null;
-  }
-}
-
 export function extractCodexExecSessionId(jsonl: string): string | null {
   for (const line of jsonl.split(/\r?\n/)) {
     const sessionId = line.trim() ? extractSessionIdFromJsonLine(line) : null;
     if (sessionId) return sessionId;
   }
   return null;
-}
-
-export function extractCodexExecUsage(jsonl: string): CodexExecUsage | null {
-  let usage: CodexExecUsage | null = null;
-  for (const line of jsonl.split(/\r?\n/)) {
-    usage = line.trim() ? mergeUsage(usage, extractUsageFromJsonLine(line)) : usage;
-  }
-  return usage;
 }
 
 export function buildCodexExecArgs(
@@ -257,9 +177,17 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   let sessionId: string | null = null;
   let usage: CodexExecUsage | null = null;
   let timedOut = false;
+  const runtimeMetrics = createCodexExecRuntimeMetricsCollector();
   const toolTrace = createCodexExecToolTraceWriter(
     request.traceLogId ? { logId: request.traceLogId } : undefined,
   );
+
+  function recordStdoutJsonLine(line: string): void {
+    sessionId ??= extractSessionIdFromJsonLine(line);
+    usage = mergeCodexExecUsage(usage, extractCodexExecUsageFromJsonLine(line));
+    runtimeMetrics.recordLine(line);
+    toolTrace?.recordLine(line);
+  }
 
   try {
     await fs.mkdir(cwd, { recursive: true });
@@ -286,9 +214,7 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
         const lines = stdoutLineBuffer.split(/\r?\n/);
         stdoutLineBuffer = lines.pop() ?? '';
         for (const line of lines) {
-          sessionId ??= extractSessionIdFromJsonLine(line);
-          usage = mergeUsage(usage, extractUsageFromJsonLine(line));
-          toolTrace?.recordLine(line);
+          recordStdoutJsonLine(line);
         }
       });
       child.stderr.on('data', (chunk: Buffer) => {
@@ -316,17 +242,27 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
     });
 
     sessionId ??= extractCodexExecSessionId(stdoutLineBuffer);
-    usage = mergeUsage(usage, extractCodexExecUsage(stdoutLineBuffer));
     for (const line of stdoutLineBuffer.split(/\r?\n/)) {
-      if (line.trim()) toolTrace?.recordLine(line);
+      if (line.trim()) recordStdoutJsonLine(line);
     }
     stdoutLineBuffer = '';
     await toolTrace?.flush();
+    const metrics = runtimeMetrics.finish();
+    usage = mergeCodexExecUsage(usage, metrics.usage ?? null);
+    await logCodexExecRuntimeMetrics(metrics, { logId: request.traceLogId });
     const answer = await fs.readFile(outputFile, 'utf8');
-    return { text: answer.trim(), sessionId, ...(usage ? { usage } : {}) };
+    return {
+      text: answer.trim(),
+      sessionId,
+      ...(usage ? { usage } : {}),
+      runtimeMetrics: metrics,
+    };
   } finally {
     for (const line of stdoutLineBuffer.split(/\r?\n/)) {
-      if (line.trim()) toolTrace?.recordLine(line);
+      if (line.trim()) {
+        runtimeMetrics.recordLine(line);
+        toolTrace?.recordLine(line);
+      }
     }
     await toolTrace?.flush();
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});

@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.16.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.17.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -37,7 +37,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 - Text replies with automatic chunking for long messages (configurable limit)
 - Long Lark/Feishu replies are guided toward lightweight Markdown structure when it improves scanability, while short replies, code, logs, JSON, diffs, command output, action blocks, and explicit user-requested formats stay unchanged
-- **Card rendering**: simple replies stay as copyable text, while rich Markdown with headings, fenced code, tables, multi-item lists, or structured sections is automatically rendered as a body-only Feishu Schema 2.0 interactive card with no generated header/template. Pass `format='text'` to force plain text, `format='card'` to force a generated card, or a raw `card` payload for pre-built cards. Optional `footer` footnote supported for generated cards
+- **Card rendering**: simple replies stay as copyable text, while rich Markdown with headings, fenced code, tables, multi-item lists, or structured sections is automatically rendered as a body-only Feishu Schema 2.0 interactive card with no generated header/template. Pass `format='text'` to force plain text, `format='card'` to force a generated card, or a raw `card` payload for pre-built cards. Optional `footer` footnote supported for generated cards; Codex exec card replies can append a compact runtime metrics footer
 - **Ack reaction**: bot automatically reacts with an emoji (default: MeMeMe) on receive, removes it after replying
 - **Doc-comment ack reaction**: inbound doc-comment @mentions receive a persistent configurable emoji reaction (default: THUMBSUP)
 - Image and file uploads (images up to 10 MB, files up to 30 MB)
@@ -330,6 +330,8 @@ failure invalidates that scope so the next turn receives the full context.
 | `LARK_CODEX_EXEC_TOOL_TRACE` | `false` | Enable local `codex exec --json` tool execution tracing to `trace.log`. This never renders tool traces into Feishu replies. |
 | `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | `compact` | Trace mode: `compact` writes sanitized summaries; `full` writes sanitized/truncated event JSON; `hidden` is a compatibility alias that keeps local compact tracing while never showing tool traces in Feishu. |
 | `LARK_CODEX_EXEC_TRACE_LOG` | `~/.codex/channels/lark/logs/trace.log` | Override the local codex exec tool trace text log path |
+| `LARK_CARD_FOOTER_METRICS_ENABLED` | `true` | Append compact runtime metrics to generated card replies from Codex exec. Plain text replies are unchanged. |
+| `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` | `20000` | Show token usage in the card footer only when reported total tokens exceed this threshold. |
 
 Realtime Feishu/Lark chats support a lightweight model control command:
 
@@ -368,6 +370,13 @@ canonical local diagnostic text format described in
 Progress directories are owner-only (`0700`) and JSONL files are owner-only
 read/write (`0600`). Stale `.lark-progress/turn-*` entries older than 12 hours
 are removed on startup and by a best-effort hourly cleanup.
+
+For generated card replies, `LARK_CARD_FOOTER_METRICS_ENABLED=true` appends a
+compact runtime footer after the final `turn.completed` event is available,
+for example `🔧4 · 🧩2 · ⏱18s · 📊 I62.4k(C48.2k) O1.3k T63.7k`. Existing
+business footer text is preserved before the runtime footer. Token usage is
+omitted when usage is unavailable or `total_tokens` does not exceed
+`LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD`; elapsed time is still shown.
 
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:

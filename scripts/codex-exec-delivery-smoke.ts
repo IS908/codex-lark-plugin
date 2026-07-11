@@ -94,12 +94,13 @@ assert.equal(
 assert.deepEqual(
   extractCodexExecUsage(
     [
-      '{"type":"turn.completed","usage":{"input_tokens":1200,"output_tokens":300,"total_tokens":1500,"context_window":200000}}',
+      '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":700,"output_tokens":300,"total_tokens":1500,"context_window":200000}}',
       '{"type":"ignored"}',
     ].join('\n'),
   ),
   {
     inputTokens: 1200,
+    cachedInputTokens: 700,
     outputTokens: 300,
     totalTokens: 1500,
     contextWindowTokens: 200000,
@@ -161,6 +162,45 @@ assert.deepEqual(replyRequests, [
     text: 'pong from codex',
     reply_to: 'om_inbound_001',
     thread_id: 'omt_thread_001',
+  },
+]);
+
+const metricsReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_inbound_metrics',
+    text: '[Current Message]\n@Codex summarize',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () => ({
+    text: '# Summary\n\n- point one\n- point two',
+    runtimeMetrics: {
+      elapsedMs: 18_400,
+      toolCalls: 2,
+      skillUsages: 1,
+      subagents: 0,
+      usage: {
+        inputTokens: 62400,
+        cachedInputTokens: 48200,
+        outputTokens: 1300,
+        totalTokens: 63700,
+      },
+    },
+  }),
+  sendReply: async (request) => {
+    metricsReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.deepEqual(metricsReplies, [
+  {
+    chat_id: 'oc_group_001',
+    text: '# Summary\n\n- point one\n- point two',
+    reply_to: 'om_inbound_metrics',
+    thread_id: 'omt_thread_001',
+    runtimeFooter: '🔧2 · 🧩1 · ⏱18s · 📊 I62.4k(C48.2k) O1.3k T63.7k',
   },
 ]);
 
