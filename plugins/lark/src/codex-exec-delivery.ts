@@ -237,6 +237,11 @@ export function buildCodexExecPrompt(
       ? [untrustedDataBlock('codex-exec-attachments', JSON.stringify(message.attachments))]
       : []),
   ];
+  const unmentionedGroupPrompt = message.unmentionedGroupTrigger
+    ? [
+        'This group message entered through an explicit trusted-group no-mention allowlist. Reply only when the message is clearly a question, command, or relevant thread continuation for Codex; otherwise return [LARK_NO_REPLY]. Ask for confirmation before sensitive or high-risk operations when intent is ambiguous.',
+      ]
+    : [];
 
   return [
     isDocComment
@@ -252,7 +257,7 @@ export function buildCodexExecPrompt(
     larkReplyPresentationGuideline,
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',
-    'If unmentioned_group_trigger is true, this group message entered through an explicit trusted-group no-mention allowlist. Reply only when the message is clearly a question, command, or relevant thread continuation for Codex; otherwise return [LARK_NO_REPLY]. Ask for confirmation before sensitive or high-risk operations when intent is ambiguous.',
+    ...unmentionedGroupPrompt,
     'If the user asks for a supported built-in Lark action, request it through the structured Lark action mechanism instead of saying the MCP tool is unavailable.',
     'This exec turn has no background continuation after the visible reply is posted. Do not promise to create, file, post, reply with a link, or continue later unless the same turn writes a structured side-channel action, creates a cronjob action, or intentionally returns [LARK_DEFER]/[LARK_NO_REPLY].',
     ...buildCodexExecActionChannelPrompt(actionInfo),

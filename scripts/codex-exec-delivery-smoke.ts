@@ -56,6 +56,10 @@ assert.match(noMentionPrompt, /unmentioned_group_trigger: true/);
 assert.match(noMentionPrompt, /trusted-group no-mention allowlist/);
 assert.match(noMentionPrompt, /\[LARK_NO_REPLY\]/);
 
+const mentionedPrompt = buildCodexExecPrompt(message, 'Kevin · Codex Test Group');
+assert.doesNotMatch(mentionedPrompt, /unmentioned_group_trigger: true/);
+assert.doesNotMatch(mentionedPrompt, /trusted-group no-mention allowlist/);
+
 async function writeActionRequest(request: any, actions: any[]): Promise<void> {
   const actionChannel = request.actions;
   assert.ok(actionChannel?.filePath, 'codex exec request should include actions.filePath');
