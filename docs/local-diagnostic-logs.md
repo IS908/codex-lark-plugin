@@ -89,7 +89,7 @@ separates repeated executions of that trigger:
 
 When tracing is enabled, the exec action bridge can serve bounded
 `get_run_trace` requests. Message queries are limited to the current or quoted
-message trace. Cronjob queries require an authorized `job_id` and default to the
-latest matching run within the last 12 hours unless a `run_id` is supplied.
+message trace. Cronjob queries require an authorized `job_id`. Queries return
+all matching runs within the last 12 hours unless a `run_id` is supplied.
 The query result is a structured, redacted summary; the raw log file is not
 injected into Codex and should not be read directly by model instructions.

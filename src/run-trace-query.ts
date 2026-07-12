@@ -16,6 +16,7 @@ export interface RunTraceQueryOptions {
 }
 
 export interface RunTraceToolCall {
+  run_id: string;
   name: string;
   status: string;
   call_id?: string;
@@ -30,6 +31,7 @@ export interface RunTraceQueryResult {
   status: 'ok' | 'disabled' | 'not_found' | 'expired' | 'invalid_request';
   log_id: string;
   run_id?: string;
+  run_ids?: string[];
   within_hours: number;
   started_at?: string;
   completed_at?: string;
@@ -107,13 +109,11 @@ export async function queryRunTrace(options: RunTraceQueryOptions): Promise<RunT
     };
   }
 
-  const selectedRunId = options.runId ?? latestRunId(matching);
-  const selected = matching.filter((line) => line.runId === selectedRunId);
   return buildRunTraceResult({
     logId,
-    runId: selectedRunId,
+    runId: options.runId ?? undefined,
     withinHours,
-    lines: selected,
+    lines: matching,
     maxToolCalls: options.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
     maxSummaryChars: options.maxSummaryChars ?? DEFAULT_MAX_SUMMARY_CHARS,
   });
@@ -167,7 +167,7 @@ function parseCompactTraceLine(rawLine: string): ParsedTraceLine | null {
   const [, timestamp, logId, runId, tool, status, callId, duration, rawSummary] = match;
   // Ignore legacy full-format records from releases before run_id existed:
   // <time> <log_id> trace full <event_type> ...
-  if (runId === 'trace') return null;
+  if (runId === 'trace' || runId === 'metrics') return null;
   const timestampMs = Date.parse(timestamp);
   if (!Number.isFinite(timestampMs)) return null;
   return {
@@ -185,7 +185,7 @@ function parseCompactTraceLine(rawLine: string): ParsedTraceLine | null {
 
 function buildRunTraceResult(input: {
   logId: string;
-  runId: string;
+  runId?: string;
   withinHours: number;
   lines: ParsedTraceLine[];
   maxToolCalls: number;
@@ -195,10 +195,13 @@ function buildRunTraceResult(input: {
   const orderedKeys: string[] = [];
 
   for (const line of input.lines) {
-    const key = line.callId && line.callId !== '-' ? line.callId : `${line.tool}:${orderedKeys.length}`;
+    const key = line.callId && line.callId !== '-'
+      ? `${line.runId}:${line.callId}`
+      : `${line.runId}:${line.tool}:${orderedKeys.length}`;
     let call = byKey.get(key);
     if (!call) {
       call = {
+        run_id: line.runId,
         name: line.tool,
         status: line.status,
         ...(line.callId && line.callId !== '-' ? { call_id: line.callId } : {}),
@@ -237,7 +240,7 @@ function buildRunTraceResult(input: {
   return {
     status: 'ok',
     log_id: input.logId,
-    run_id: input.runId,
+    ...(input.runId ? { run_id: input.runId } : { run_ids: uniqueRunIds(input.lines) }),
     within_hours: input.withinHours,
     ...(startedAt ? { started_at: startedAt } : {}),
     ...(completedAt ? { completed_at: completedAt } : {}),
@@ -246,12 +249,8 @@ function buildRunTraceResult(input: {
   };
 }
 
-function latestRunId(lines: ParsedTraceLine[]): string {
-  const latestByRun = new Map<string, number>();
-  for (const line of lines) {
-    latestByRun.set(line.runId, Math.max(latestByRun.get(line.runId) ?? 0, line.timestampMs));
-  }
-  return [...latestByRun.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? lines.at(-1)!.runId;
+function uniqueRunIds(lines: ParsedTraceLine[]): string[] {
+  return [...new Set(lines.map((line) => line.runId))];
 }
 
 function normalizeWithinHours(value: number | null | undefined): number {
