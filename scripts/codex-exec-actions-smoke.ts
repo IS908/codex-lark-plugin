@@ -368,7 +368,8 @@ try {
   assert.equal(accessResults.length, 1);
   assert.equal(accessResults[0].ok, true, JSON.stringify(accessResults));
   assert.equal(accessControlStore.snapshot().allowed_chat_ids.includes('oc_exec'), true);
-  assert.match(accessResults[0].message, /resolved_from_current_chat/);
+  assert.equal(accessResults[0].message, 'Chat access added.');
+  assert.doesNotMatch(accessResults[0].message, /oc_exec|allowed_chat_ids|resolved_from_current_chat|snapshot/);
 
   const invalidAccessResults = await dispatcher.execute({
     message: {
