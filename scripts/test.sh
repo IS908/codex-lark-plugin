@@ -26,6 +26,10 @@ echo "=== Codex exec config safety checks ==="
 node --import tsx scripts/codex-exec-config-smoke.ts
 
 echo ""
+echo "=== Run trace query checks ==="
+node --import tsx scripts/run-trace-query-smoke.ts
+
+echo ""
 echo "=== Release version checks ==="
 npm run --silent check:release-version
 echo "PASS"

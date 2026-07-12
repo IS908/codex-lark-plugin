@@ -48,15 +48,20 @@ const root = mkdtempSync(join(tmpdir(), 'codex-exec-actions-'));
 const oldJobsDir = (appConfig as any).jobsDir;
 const oldInboxDir = (appConfig as any).inboxDir;
 const oldOwnerOpenId = appConfig.ownerOpenId;
+const oldTraceEnabled = appConfig.codexExecToolTraceEnabled;
+const oldTraceLogPath = appConfig.codexExecTraceLogPath;
 const oldAccessSnapshot = accessControlStore.snapshot();
 try {
   const jobsDir = join(root, 'jobs');
   const memoriesDir = join(root, 'memories');
   const inboxDir = join(root, 'inbox');
+  const traceLogPath = join(root, 'trace.log');
   const localCliConfigPath = join(root, 'local-cli-tools.json');
   (appConfig as any).jobsDir = jobsDir;
   (appConfig as any).inboxDir = inboxDir;
   (appConfig as any).ownerOpenId = 'ou_user';
+  (appConfig as any).codexExecToolTraceEnabled = true;
+  (appConfig as any).codexExecTraceLogPath = traceLogPath;
   await accessControlStore.load(join(root, 'access-control.json'));
   await mkdir(jobsDir, { recursive: true });
   await mkdir(inboxDir, { recursive: true });
@@ -138,6 +143,20 @@ try {
   });
   assert.equal(recallParsed.kind, 'actions');
   assert.equal(recallParsed.actions[0].type, 'recall_message');
+
+  const traceQueryParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'get_run_trace', source: 'message', target: 'quoted', within_hours: 12 }],
+  });
+  assert.equal(traceQueryParsed.kind, 'actions');
+  assert.equal(traceQueryParsed.actions[0].type, 'get_run_trace');
+
+  const invalidTraceQueryParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'get_run_trace', source: 'cronjob', target: 'quoted', log_id: 'job_daily' }],
+  });
+  assert.equal(invalidTraceQueryParsed.kind, 'invalid_actions');
+  assert.match(invalidTraceQueryParsed.error, /target is only supported/i);
 
   for (const removedAction of [
     {
@@ -306,6 +325,133 @@ try {
     },
     larkTransport: new ThisBoundQuotedTransport(),
   });
+
+  const traceTimestamp = new Date().toISOString();
+  writeFileSync(traceLogPath, [
+    `${traceTimestamp}  om_exec_trace  run_msg_1  exec_command  completed  item_1  1000ms  {"cmd":"npm test"}`,
+    `${traceTimestamp}  om_quoted_trace  run_quoted_1  github.get_issue  completed  call_quoted  1000ms  {"issue":248}`,
+    `${traceTimestamp}  trace-job  run_cron_1  command_execution  completed  item_cron  1000ms  {"cmd":"cron"}`,
+    '',
+  ].join('\n'));
+  writeFileSync(join(jobsDir, 'trace-job.json'), JSON.stringify({
+    meta: {
+      id: 'trace-job',
+      name: 'Trace Job',
+      type: 'prompt',
+      schedule: 'daily at 09:00',
+      schedule_human: 'daily at 09:00',
+      timezone: 'Asia/Shanghai',
+      prompt: 'trace me',
+      target_chat_id: 'oc_exec',
+      origin_chat_id: 'oc_exec',
+      status: 'active',
+      created_by: 'ou_user',
+      created_at: '2026-07-12T00:00:00.000Z',
+    },
+    runtime: createInitialJobRuntime('2026-07-13T01:00:00.000Z'),
+  }, null, 2), 'utf-8');
+
+  const traceResult = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'show current trace',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'get_run_trace', source: 'message' }],
+  });
+  assert.equal(traceResult[0].ok, true, JSON.stringify(traceResult));
+  assert.match(traceResult[0].message, /"log_id": "om_exec_trace"/);
+  assert.match(traceResult[0].message, /"run_id": "run_msg_1"/);
+
+  const quotedTraceResult = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace_quoted_request',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'show quoted trace',
+      messageType: 'text',
+      rawContent: '{}',
+      parentId: 'om_quoted_trace',
+    },
+    actions: [{ type: 'get_run_trace', source: 'message', target: 'quoted' }],
+  });
+  assert.equal(quotedTraceResult[0].ok, true, JSON.stringify(quotedTraceResult));
+  assert.match(quotedTraceResult[0].message, /"log_id": "om_quoted_trace"/);
+
+  const deniedMessageTraceResult = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace_denied',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'show another message trace',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'get_run_trace', source: 'message', log_id: 'om_quoted_trace' }],
+  });
+  assert.equal(deniedMessageTraceResult[0].ok, false);
+  assert.match(deniedMessageTraceResult[0].message, /"status": "unauthorized"/);
+  assert.match(deniedMessageTraceResult[0].message, /current message trace or the quoted message trace/i);
+
+  const cronTraceResult = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace_cron',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'show cron trace',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'get_run_trace', source: 'cronjob', log_id: 'trace-job' }],
+  });
+  assert.equal(cronTraceResult[0].ok, true, JSON.stringify(cronTraceResult));
+  assert.match(cronTraceResult[0].message, /"log_id": "trace-job"/);
+
+  const invalidCronTraceLogIdResult = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace_invalid_cron',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'show invalid cron trace',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'get_run_trace', source: 'cronjob', log_id: '../trace-job' }],
+  });
+  assert.equal(invalidCronTraceLogIdResult[0].ok, false);
+  assert.match(invalidCronTraceLogIdResult[0].message, /"status": "unauthorized"/);
+  assert.match(invalidCronTraceLogIdResult[0].message, /stable job_id/i);
+
+  (appConfig as any).codexExecToolTraceEnabled = false;
+  const disabledAfterToggle = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'show trace while disabled',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'get_run_trace', source: 'message' }],
+  });
+  assert.equal(disabledAfterToggle[0].ok, false);
+  assert.match(disabledAfterToggle[0].message, /"status": "disabled"/);
+  (appConfig as any).codexExecToolTraceEnabled = true;
 
   const results = await dispatcher.execute({
     message: {
@@ -717,6 +863,8 @@ try {
   (appConfig as any).jobsDir = oldJobsDir;
   (appConfig as any).inboxDir = oldInboxDir;
   (appConfig as any).ownerOpenId = oldOwnerOpenId;
+  (appConfig as any).codexExecToolTraceEnabled = oldTraceEnabled;
+  (appConfig as any).codexExecTraceLogPath = oldTraceLogPath;
   accessControlStore.replaceForTest(oldAccessSnapshot);
   rmSync(root, { recursive: true, force: true });
 }

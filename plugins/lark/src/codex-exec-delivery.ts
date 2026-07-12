@@ -52,6 +52,7 @@ export interface CodexExecDeliveryOptions {
   onProgress?: (event: CodexExecProgressEvent) => void;
   actionBaseDir?: string;
   traceLogId?: string;
+  traceRunId?: string;
 }
 
 export interface CodexExecSessionHealthRecorder {
@@ -83,6 +84,7 @@ const VISIBLE_SUCCESS_ACTIONS = new Set<CodexExecActionExecutionResult['action']
   'disable_job',
   'delete_job',
   'upsert_job',
+  'get_run_trace',
   'recall_message',
   'run_local_cli_tool',
 ]);
@@ -113,15 +115,18 @@ async function enrichCodexExecActionPromptInfo(
   info: CodexExecActionChannelPromptInfo | null,
 ): Promise<CodexExecActionChannelPromptInfo | null> {
   if (!info?.enabled) return info;
-  if (appConfig.codexExecSandbox === 'danger-full-access') return info;
+  const baseInfo = appConfig.codexExecToolTraceEnabled
+    ? { ...info, traceQueryEnabled: true }
+    : info;
+  if (appConfig.codexExecSandbox === 'danger-full-access') return baseInfo;
 
   try {
     const localCliToolNames = await listConfiguredLocalCliToolNames();
-    if (localCliToolNames.length === 0) return info;
-    return { ...info, localCliToolNames };
+    if (localCliToolNames.length === 0) return baseInfo;
+    return { ...baseInfo, localCliToolNames };
   } catch (err) {
     logSafeError('[codex-exec-actions] local CLI host bridge config unavailable:', err);
-    return info;
+    return baseInfo;
   }
 }
 
@@ -166,8 +171,8 @@ const SAFE_NON_EXECUTION_PATTERNS = [
 function resolveTraceLogId(message: LarkMessage, explicit?: string): string {
   if (explicit?.trim()) return explicit;
   if (message.chatType === 'cronjob') {
-    const cronName = message.senderName?.replace(/^CronJob\s+/, '').trim();
-    if (cronName) return cronName;
+    const parsedThread = message.threadId?.match(/^job-(.+)-[a-f0-9]{12}-\d{10,}$/);
+    if (parsedThread?.[1]) return parsedThread[1];
   }
   return message.messageId;
 }
@@ -370,6 +375,7 @@ export async function deliverMessageViaCodexExec(
     skipGitRepoCheck: true,
     resumeSessionId: existingSession?.sessionId || null,
     traceLogId: resolveTraceLogId(message, opts.traceLogId),
+    traceRunId: opts.traceRunId,
     ...(progressSink || actionChannel
       ? {
           extraEnv: {

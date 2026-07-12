@@ -14,6 +14,8 @@ import {
   formatCronDateTime,
   jobTimezone,
   normalizeJobTimezone,
+  readJob,
+  sanitizeJobId,
   type JobFile,
 } from './job-store.js';
 import {
@@ -44,6 +46,7 @@ import type { LarkTransport } from './lark-transport.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { selectQuotedMessageId } from './quoted-context-loader.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
+import { queryRunTrace } from './run-trace-query.js';
 
 const SaveMemoryActionSchema = z.object({
   type: z.literal('save_memory'),
@@ -124,6 +127,15 @@ const ManageAccessControlActionSchema = z.object({
   value: z.string().min(1).optional(),
 });
 
+const GetRunTraceActionSchema = z.object({
+  type: z.literal('get_run_trace'),
+  source: z.enum(['message', 'cronjob']),
+  target: z.enum(['current', 'quoted']).optional(),
+  log_id: z.string().min(1).optional(),
+  run_id: z.string().min(1).optional(),
+  within_hours: z.number().positive().max(168).optional(),
+});
+
 const SendMessageImageSourceSchema = z.enum([
   'local_path',
   'current_message:first_image',
@@ -189,6 +201,7 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
   UpsertJobActionSchema,
   RunLocalCliToolActionSchema,
   ManageAccessControlActionSchema,
+  GetRunTraceActionSchema,
   SendMessageActionSchema,
   RecallMessageActionSchema,
 ]).superRefine((action, ctx) => {
@@ -247,6 +260,14 @@ const CodexExecActionSchema = z.discriminatedUnion('type', [
         }
       });
     }
+  }
+
+  if (action.type === 'get_run_trace' && action.source !== 'message' && action.target) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['target'],
+      message: 'target is only supported when source=message',
+    });
   }
 
   const schedule =
@@ -776,6 +797,152 @@ async function executeManageAccessControl(
   }
 }
 
+function parseCronJobIdFromThreadId(threadId: string | undefined): string | null {
+  if (!threadId?.startsWith('job-')) return null;
+  const rest = threadId.slice('job-'.length);
+  const current = rest.match(/^(.+)-[a-f0-9]{12}-\d{10,}$/);
+  if (current?.[1]) return current[1];
+  const legacy = rest.match(/^(.+)-\d{10,}$/);
+  return legacy?.[1] ?? null;
+}
+
+function normalizeTraceWithinHours(value: number | undefined): number {
+  if (!Number.isFinite(value) || value === undefined || value <= 0) return 12;
+  return Math.max(1, Math.min(168, Math.floor(value)));
+}
+
+function formatGetRunTraceFailure(
+  action: z.infer<typeof GetRunTraceActionSchema>,
+  status: 'invalid_request' | 'not_found' | 'unauthorized',
+  message: string,
+): string {
+  return JSON.stringify({
+    status,
+    log_id: action.log_id?.trim() || '-',
+    ...(action.run_id ? { run_id: action.run_id } : {}),
+    within_hours: normalizeTraceWithinHours(action.within_hours),
+    tools: [],
+    truncated: false,
+    message,
+  }, null, 2);
+}
+
+function resolveMessageTraceLogId(
+  action: z.infer<typeof GetRunTraceActionSchema>,
+  message: LarkMessage,
+): { ok: true; logId: string } | { ok: false; message: string; denied?: boolean } {
+  const quotedMessageId = selectQuotedMessageId(message);
+  const allowedLogIds = new Set([message.messageId, quotedMessageId].filter((value): value is string => !!value));
+  let logId = action.log_id?.trim();
+  if (!logId) {
+    logId = action.target === 'quoted' ? quotedMessageId : message.messageId;
+  }
+  if (!logId) {
+    return { ok: false, message: 'No quoted message is available for get_run_trace target=quoted.' };
+  }
+  if (!allowedLogIds.has(logId)) {
+    return {
+      ok: false,
+      denied: true,
+      message: 'get_run_trace(source=message) can only read the current message trace or the quoted message trace.',
+    };
+  }
+  return { ok: true, logId };
+}
+
+async function resolveCronJobTraceLogId(
+  action: z.infer<typeof GetRunTraceActionSchema>,
+  message: LarkMessage,
+  caller: string,
+): Promise<{ ok: true; logId: string } | { ok: false; message: string; denied?: boolean }> {
+  const logId = action.log_id?.trim() || parseCronJobIdFromThreadId(message.threadId) || undefined;
+  if (!logId) {
+    return {
+      ok: false,
+      message: 'get_run_trace(source=cronjob) requires log_id unless the current turn is a cronjob execution.',
+    };
+  }
+  if (sanitizeJobId(logId) !== logId) {
+    return {
+      ok: false,
+      denied: true,
+      message: 'get_run_trace(source=cronjob) requires a stable job_id, not a path, display name, or arbitrary log id.',
+    };
+  }
+
+  const job = await readJob(logId);
+  if (!job) {
+    return { ok: false, message: `Cronjob ${logId} was not found.` };
+  }
+
+  const canRead =
+    caller === job.meta.created_by ||
+    (!!appConfig.ownerOpenId && caller === appConfig.ownerOpenId) ||
+    message.chatId === job.meta.target_chat_id;
+  if (!canRead) {
+    return {
+      ok: false,
+      denied: true,
+      message: `get_run_trace(source=cronjob) denied for job ${logId}.`,
+    };
+  }
+  return { ok: true, logId };
+}
+
+async function executeGetRunTrace(
+  action: z.infer<typeof GetRunTraceActionSchema>,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'get_run_trace');
+  const auditArgs = {
+    source: action.source,
+    target: action.target,
+    log_id: action.log_id,
+    run_id: action.run_id,
+    within_hours: action.within_hours,
+    chat_id: message.chatId,
+    thread_id: message.threadId,
+  };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+
+  const resolved = action.source === 'message'
+    ? resolveMessageTraceLogId(action, message)
+    : await resolveCronJobTraceLogId(action, message, caller);
+  if (!resolved.ok) {
+    void audit('get_run_trace', caller, auditArgs, resolved.denied ? 'denied' : 'error');
+    const status = resolved.denied
+      ? 'unauthorized'
+      : /not found/i.test(resolved.message)
+        ? 'not_found'
+        : 'invalid_request';
+    return {
+      ok: false,
+      action: 'get_run_trace',
+      message: formatGetRunTraceFailure(action, status, resolved.message),
+    };
+  }
+
+  const result = await queryRunTrace({
+    logId: resolved.logId,
+    runId: action.run_id,
+    withinHours: action.within_hours,
+  });
+  void audit(
+    'get_run_trace',
+    caller,
+    { ...auditArgs, log_id: resolved.logId, status: result.status, tool_calls: result.tools.length },
+    result.status === 'ok' ? 'ok' : result.status === 'disabled' ? 'denied' : 'error',
+  );
+
+  return {
+    ok: result.status === 'ok',
+    action: 'get_run_trace',
+    message: JSON.stringify(result, null, 2),
+  };
+}
+
 function resolveRecallTransport(
   transport: CreateCodexExecActionDispatcherOptions['larkTransport'],
 ): Pick<LarkTransport, 'recallMessage'> | undefined {
@@ -1145,6 +1312,8 @@ export function createCodexExecActionDispatcher(
           results.push(await executeUpsertJob(action, request.message, deps));
         } else if (action.type === 'manage_access_control') {
           results.push(await executeManageAccessControl(action, request.message, deps));
+        } else if (action.type === 'get_run_trace') {
+          results.push(await executeGetRunTrace(action, request.message, deps));
         } else if (action.type === 'send_message') {
           results.push(await executeSendMessage(action, request.message, deps));
         } else if (action.type === 'recall_message') {
