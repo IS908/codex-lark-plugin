@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.20.1] - 2026-07-13
+
+### Fixed
+- Changed `get_run_trace` without an explicit `run_id` to return all matching runs for the authorized `log_id` instead of only the latest record group.
+- Added per-tool `run_id` fields for aggregated trace results and excluded runtime metrics summary lines from tool-call trace query results.
+
 ## [1.20.0] - 2026-07-12
 
 ### Added

@@ -21,6 +21,9 @@ writeFileSync(traceLog, [
   '2026-07-12T10:00:00.000+08:00  om_msg  run_msg_1  exec_command  started  call_1  -  {"cmd":"npm test","authorization":"Bearer should-not-appear"}',
   '2026-07-12T10:00:02.000+08:00  om_msg  run_msg_1  exec_command  completed  call_1  2000ms  -',
   '2026-07-12T10:01:00.000+08:00  om_msg  run_msg_1  mcp.github.issue_create  failed  call_2  500ms  {"error":"Bearer should-not-appear"}',
+  '2026-07-12T10:01:30.000+08:00  om_msg  run_msg_2  exec_command  started  call_1  -  {"cmd":"npm run typecheck"}',
+  '2026-07-12T10:01:32.000+08:00  om_msg  run_msg_2  exec_command  completed  call_1  2000ms  -',
+  '2026-07-12T10:01:33.000+08:00  om_msg  metrics  elapsed_ms=93000  tool_calls=3  skill_usages=0  input_tokens=100  output_tokens=20',
   '2026-07-12T10:02:00.000+08:00  om_full  run_full  trace  full  tool_call.completed  github.get_issue  completed  -  -  {"issue":248}',
   '2026-07-11T08:00:00.000+08:00  om_old  run_old_1  exec_command  completed  call_old  1000ms  -',
   'not a trace line',
@@ -41,9 +44,11 @@ const messageResult = await queryRunTrace({
   maxFiles: 1,
 });
 assert.equal(messageResult.status, 'ok');
-assert.equal(messageResult.run_id, 'run_msg_1');
-assert.equal(messageResult.tools.length, 2);
+assert.deepEqual(messageResult.run_ids, ['run_msg_1', 'run_msg_2']);
+assert.equal(messageResult.run_id, undefined);
+assert.equal(messageResult.tools.length, 3);
 assert.deepEqual(messageResult.tools[0], {
+  run_id: 'run_msg_1',
   name: 'exec_command',
   status: 'completed',
   call_id: 'call_1',
@@ -54,17 +59,22 @@ assert.deepEqual(messageResult.tools[0], {
 });
 assert.equal(messageResult.tools[1].status, 'failed');
 assert.match(messageResult.tools[1].error ?? '', /\[redacted\]/);
+assert.equal(messageResult.tools[2].run_id, 'run_msg_2');
+assert.equal(messageResult.tools[2].call_id, 'call_1');
+assert.equal(messageResult.tools[2].summary, '{"cmd":"npm run typecheck"}');
+assert.equal(messageResult.tools.some((tool) => tool.name.startsWith('elapsed_ms=')), false);
 assert.doesNotMatch(JSON.stringify(messageResult), /should-not-appear/);
 
-const latestCronResult = await queryRunTrace({
+const allCronResult = await queryRunTrace({
   logId: 'job_daily',
   now,
   logPath: traceLog,
   maxFiles: 0,
 });
-assert.equal(latestCronResult.status, 'ok');
-assert.equal(latestCronResult.run_id, 'run_new');
-assert.equal(latestCronResult.tools[0].duration_ms, 2500);
+assert.equal(allCronResult.status, 'ok');
+assert.deepEqual(allCronResult.run_ids, ['run_old', 'run_new']);
+assert.equal(allCronResult.tools.length, 2);
+assert.equal(allCronResult.tools[1].duration_ms, 2500);
 
 const explicitCronResult = await queryRunTrace({
   logId: 'job_daily',
@@ -84,7 +94,7 @@ const rotatedResult = await queryRunTrace({
   maxFiles: 1,
 });
 assert.equal(rotatedResult.status, 'ok');
-assert.equal(rotatedResult.run_id, 'run_rotated_1');
+assert.deepEqual(rotatedResult.run_ids, ['run_rotated_1']);
 assert.equal(rotatedResult.tools[0].summary, '{"cmd":"from rotated log"}');
 
 const fullResult = await queryRunTrace({

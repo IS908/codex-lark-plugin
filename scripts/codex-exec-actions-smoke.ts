@@ -366,7 +366,7 @@ try {
   });
   assert.equal(traceResult[0].ok, true, JSON.stringify(traceResult));
   assert.match(traceResult[0].message, /"log_id": "om_exec_trace"/);
-  assert.match(traceResult[0].message, /"run_id": "run_msg_1"/);
+  assert.match(traceResult[0].message, /"run_ids": \[\s*"run_msg_1"\s*\]/);
 
   const quotedTraceResult = await dispatcher.execute({
     message: {
