@@ -63,15 +63,15 @@ Fields:
 
 When `LARK_CODEX_EXEC_TOOL_TRACE=true`, codex exec tool events append text-line
 records. Compact/hidden records intentionally omit the `trace` kind, trace
-mode, and raw event type after the log id; they use a short shape with
-tool/type, status, tool call trace id, duration, sanitized args, and sanitized
-errors when available. Full records keep the trace kind, mode, event type, and
-a sanitized/truncated event payload for deeper diagnostics.
+mode, and raw event type after `log_id` and `run_id`; they use a short shape
+with tool/type, status, tool call trace id, duration, sanitized args, and
+sanitized errors when available. Full records keep the trace kind, mode, event
+type, and a sanitized/truncated event payload for deeper diagnostics.
 
 Example compact record:
 
 ```text
-2026-07-06T20:00:00.000+08:00  om_xxx  exec_command  started  call_123  -  {"command":"npm test"}
+2026-07-06T20:00:00.000+08:00  om_xxx  run_abc123  exec_command  started  call_123  -  {"command":"npm test"}
 ```
 
 Debug records use the same timestamp style and omit bracket wrappers:
@@ -80,8 +80,16 @@ Debug records use the same timestamp style and omit bracket wrappers:
 2026-07-06T20:00:00.000+08:00 channel Enqueue message om_xxx
 ```
 
-The trace `log-id` correlates records from the same trigger:
+The trace `log_id` correlates records from the same trigger, while `run_id`
+separates repeated executions of that trigger:
 
 - ordinary Feishu/Lark message turns use the source message id;
-- scheduled prompt jobs use the cronjob name when no source message id exists;
+- scheduled prompt jobs use the stable `job_id` when no source message id exists;
 - direct host-side `codex exec` calls without a source use `-`.
+
+When tracing is enabled, the exec action bridge can serve bounded
+`get_run_trace` requests. Message queries are limited to the current or quoted
+message trace. Cronjob queries require an authorized `job_id` and default to the
+latest matching run within the last 12 hours unless a `run_id` is supplied.
+The query result is a structured, redacted summary; the raw log file is not
+injected into Codex and should not be read directly by model instructions.

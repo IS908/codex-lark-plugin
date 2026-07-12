@@ -315,7 +315,7 @@ await deliverMessageViaCodexExec({
   },
 });
 
-assert.equal(cronExecRequests[0].traceLogId, 'Daily Report');
+assert.equal(cronExecRequests[0].traceLogId, 'daily-report');
 assert.deepEqual(cronReplies, [
   {
     chat_id: 'oc_cron_target',

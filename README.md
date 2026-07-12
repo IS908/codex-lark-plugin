@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.19.3-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.20.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -417,9 +417,13 @@ human-readable text lines to `LARK_CODEX_EXEC_TRACE_LOG`. This is local-only
 troubleshooting data: Feishu still receives only the final answer or bounded
 progress messages. `compact` mode records a short text line with tool/type,
 status, trace id, duration, and sanitized argument/error summary; `full` mode
-keeps the event shape with redaction/truncation. Trace log lines include a log
-id near the start: ordinary Feishu message turns use the source message id, and
-cronjob prompt turns use the cronjob name. Debug, audit, and trace logs use
+keeps the event shape with redaction/truncation. Trace log lines include a
+`log_id` and `run_id` near the start: ordinary Feishu message turns use the
+source message id as `log_id`, cronjob prompt turns use the stable `job_id`, and
+`run_id` distinguishes repeated executions of the same source. When tracing is
+enabled, the exec action bridge exposes a bounded `get_run_trace` query for the
+current/quoted message or an authorized cronjob; it returns only sanitized
+structured summaries, never raw `trace.log` contents. Debug, audit, and trace logs use
 `LARK_CRON_TIMEZONE` for timestamps with an explicit UTC offset, and share the
 canonical local diagnostic text format described in
 [docs/local-diagnostic-logs.md](docs/local-diagnostic-logs.md).

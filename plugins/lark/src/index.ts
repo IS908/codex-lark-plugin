@@ -417,7 +417,7 @@ async function main() {
         transport: channel.getLarkTransport(),
         identitySession,
         botMessageTracker: channel.getBotMessageTracker(),
-        promptRunner: async ({ job, jobThreadId, promptContent, diagnostics }) => {
+        promptRunner: async ({ job, jobThreadId, promptContent, diagnostics, runId }) => {
           let deliveredReport = '';
           const message: LarkMessage = {
             messageId: jobThreadId,
@@ -433,7 +433,8 @@ async function main() {
           await deliverMessageViaCodexExec({
             message,
             displayLabel: `CronJob · ${job.meta.name}`,
-            traceLogId: job.meta.name,
+            traceLogId: job.meta.id,
+            traceRunId: runId,
             sendReply: async (request) => {
               diagnostics.startStage('send_lark');
               try {

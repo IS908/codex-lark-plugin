@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appConfig } from './config.js';
 import {
   diagnosticRaw,
@@ -18,6 +19,7 @@ export interface CodexExecToolTraceConfig {
   maxBytes?: number;
   maxFiles?: number;
   logId?: string | null;
+  runId?: string | null;
 }
 
 interface ResolvedCodexExecToolTraceConfig {
@@ -27,6 +29,7 @@ interface ResolvedCodexExecToolTraceConfig {
   maxBytes: number;
   maxFiles: number;
   logId?: string | null;
+  runId: string;
 }
 
 export interface CodexExecToolTraceWriter {
@@ -54,6 +57,7 @@ export function createCodexExecToolTraceWriter(
     maxBytes: config.maxBytes ?? appConfig.logMaxBytes,
     maxFiles: config.maxFiles ?? appConfig.logMaxFiles,
     logId: config.logId,
+    runId: config.runId?.trim() || `run_${randomUUID()}`,
   };
   if (!resolved.enabled) return null;
   return new FileCodexExecToolTraceWriter(resolved);
@@ -63,9 +67,11 @@ class FileCodexExecToolTraceWriter implements CodexExecToolTraceWriter {
   private readonly startedAtById = new Map<string, number>();
   private pending: Promise<void> = Promise.resolve();
   private readonly logId: string;
+  private readonly runId: string;
 
   constructor(private readonly config: ResolvedCodexExecToolTraceConfig) {
     this.logId = config.logId || '-';
+    this.runId = config.runId;
   }
 
   recordLine(line: string): void {
@@ -92,8 +98,8 @@ class FileCodexExecToolTraceWriter implements CodexExecToolTraceWriter {
 
     const now = Date.now();
     const traceLine = this.config.mode === 'full'
-      ? buildFullTraceLine(event, now, this.logId)
-      : buildCompactTraceLine(event, now, this.startedAtById, this.logId);
+      ? buildFullTraceLine(event, now, this.logId, this.runId)
+      : buildCompactTraceLine(event, now, this.startedAtById, this.logId, this.runId);
     await appendRotatingLine(this.config.logPath, traceLine, {
       maxBytes: this.config.maxBytes,
       maxFiles: this.config.maxFiles,
@@ -109,7 +115,7 @@ export function shouldTraceCodexExecToolEvent(event: unknown): boolean {
   return candidates.some((value) => TOOL_HINT_PATTERN.test(value));
 }
 
-function buildFullTraceLine(event: unknown, now: number, logId: string): string {
+function buildFullTraceLine(event: unknown, now: number, logId: string, runId: string): string {
   const record = event && typeof event === 'object' && !Array.isArray(event)
     ? event as Record<string, unknown>
     : {};
@@ -120,6 +126,7 @@ function buildFullTraceLine(event: unknown, now: number, logId: string): string 
   return formatDiagnosticLine([
     formatZonedDiagnosticTime(new Date(now), appConfig.cronTimezone),
     logId,
+    runId,
     'trace',
     'full',
     eventType,
@@ -136,6 +143,7 @@ function buildCompactTraceLine(
   now: number,
   startedAtById: Map<string, number>,
   logId: string,
+  runId: string,
 ): string {
   const record = event && typeof event === 'object' && !Array.isArray(event)
     ? event as Record<string, unknown>
@@ -159,6 +167,7 @@ function buildCompactTraceLine(
   return formatDiagnosticLine([
     formatZonedDiagnosticTime(new Date(now), appConfig.cronTimezone),
     logId,
+    runId,
     toolName,
     status,
     traceId ?? '-',

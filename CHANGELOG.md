@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-07-12
+
+### Added
+- Added bounded `get_run_trace` exec actions for sanitized local Codex tool-call trace summaries scoped to the current/quoted message or an authorized cronjob.
+- Added per-run trace identifiers so repeated executions of the same message or cronjob can be queried independently.
+
+### Changed
+- Cronjob prompt trace records now use the stable `job_id` as `log_id` instead of the display name.
+- Documented trace `log_id`/`run_id` semantics and the bounded trace-query authorization model.
+
 ## [1.19.3] - 2026-07-12
 
 ### Fixed

@@ -39,6 +39,7 @@ export interface CodexExecRequest {
     token: string;
   };
   traceLogId?: string;
+  traceRunId?: string;
 }
 
 export interface CodexExecResult {
@@ -179,7 +180,9 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   let timedOut = false;
   const runtimeMetrics = createCodexExecRuntimeMetricsCollector();
   const toolTrace = createCodexExecToolTraceWriter(
-    request.traceLogId ? { logId: request.traceLogId } : undefined,
+    request.traceLogId || request.traceRunId
+      ? { logId: request.traceLogId, runId: request.traceRunId }
+      : undefined,
   );
 
   function recordStdoutJsonLine(line: string): void {

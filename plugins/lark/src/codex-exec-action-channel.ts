@@ -14,6 +14,7 @@ export interface CodexExecActionChannelPromptInfo {
   token: string;
   maxActions: number;
   localCliToolNames?: string[];
+  traceQueryEnabled?: boolean;
 }
 
 export interface CodexExecActionChannelOptions {
@@ -298,6 +299,13 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
   if (!info?.enabled) return [];
   const localCliToolNames = [...new Set(info.localCliToolNames ?? [])].filter(Boolean).sort();
   const primaryLocalCliToolName = localCliToolNames[0];
+  const traceQueryLines = info.traceQueryEnabled
+    ? [
+        '  - {"type":"get_run_trace","source":"message","target":"current|quoted","log_id":"optional current-or-quoted message id","run_id":"optional","within_hours":12}',
+        '  - {"type":"get_run_trace","source":"cronjob","log_id":"job_id","run_id":"optional","within_hours":12}',
+        '    Use get_run_trace only for bounded sanitized local tool-call summaries. Do not read trace.log directly; ordinary message queries are limited to the current or quoted message, and cronjob queries use stable job_id values.',
+      ]
+    : [];
   const localCliToolLines =
     primaryLocalCliToolName
       ? [
@@ -326,6 +334,7 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     ...localCliToolLines,
     '  - {"type":"manage_access_control","action":"list|add|remove","list":"allowed_user_ids|allowed_chat_ids|group_no_mention_chat_ids","value":"ou_xxx, oc_xxx, or current"}',
     '    Use value="current" for the current group chat; never guess chat IDs.',
+    ...traceQueryLines,
     '  - {"type":"send_message","message":{"kind":"image|file","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","text":"..."}}',
     '  - {"type":"send_message","message":{"kind":"rich","parts":[{"type":"text","text":"..."},{"type":"image","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","alt":"..."}]},"reply_in_thread":true}',
     '  - {"type":"recall_message","message_id":"..."}',
