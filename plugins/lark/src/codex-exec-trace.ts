@@ -9,6 +9,7 @@ import {
   truncateDiagnosticString,
 } from './diagnostic-log-format.js';
 import { appendRotatingLine } from './resource-governance.js';
+import { formatTraceRunIdForDisplay } from './trace-run-id.js';
 
 export type CodexExecToolTraceMode = 'compact' | 'full' | 'hidden';
 
@@ -97,9 +98,10 @@ class FileCodexExecToolTraceWriter implements CodexExecToolTraceWriter {
     if (!shouldTraceCodexExecToolEvent(event)) return;
 
     const now = Date.now();
+    const displayRunId = formatTraceRunIdForDisplay(this.runId);
     const traceLine = this.config.mode === 'full'
-      ? buildFullTraceLine(event, now, this.logId, this.runId)
-      : buildCompactTraceLine(event, now, this.startedAtById, this.logId, this.runId);
+      ? buildFullTraceLine(event, now, this.logId, displayRunId)
+      : buildCompactTraceLine(event, now, this.startedAtById, this.logId, displayRunId);
     await appendRotatingLine(this.config.logPath, traceLine, {
       maxBytes: this.config.maxBytes,
       maxFiles: this.config.maxFiles,

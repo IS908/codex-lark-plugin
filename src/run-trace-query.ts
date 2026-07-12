@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { appConfig } from './config.js';
 import { redactDiagnosticString, truncateDiagnosticString } from './diagnostic-log-format.js';
+import { formatTraceRunIdForDisplay } from './trace-run-id.js';
 
 export interface RunTraceQueryOptions {
   logId: string;
@@ -91,11 +92,11 @@ export async function queryRunTrace(options: RunTraceQueryOptions): Promise<RunT
   const matching = parsed
     .filter((line) => line.logId === logId)
     .filter((line) => line.timestampMs >= cutoffMs && line.timestampMs <= now.getTime() + 60_000)
-    .filter((line) => !options.runId || line.runId === options.runId)
+    .filter((line) => matchesRequestedRunId(line.runId, options.runId))
     .sort((a, b) => a.timestampMs - b.timestampMs);
 
   if (matching.length === 0) {
-    const hadLogId = parsed.some((line) => line.logId === logId && (!options.runId || line.runId === options.runId));
+    const hadLogId = parsed.some((line) => line.logId === logId && matchesRequestedRunId(line.runId, options.runId));
     return {
       status: hadLogId ? 'expired' : 'not_found',
       log_id: logId,
@@ -201,7 +202,7 @@ function buildRunTraceResult(input: {
     let call = byKey.get(key);
     if (!call) {
       call = {
-        run_id: line.runId,
+        run_id: input.runId ?? line.runId,
         name: line.tool,
         status: line.status,
         ...(line.callId && line.callId !== '-' ? { call_id: line.callId } : {}),
@@ -247,6 +248,19 @@ function buildRunTraceResult(input: {
     tools: tools.map(({ firstMs, lastMs, ...tool }) => tool),
     truncated,
   };
+}
+
+function matchesRequestedRunId(lineRunId: string, requestedRunId: string | null | undefined): boolean {
+  const requested = requestedRunId?.trim();
+  if (!requested) return true;
+  const lineDisplay = formatTraceRunIdForDisplay(lineRunId);
+  const requestedDisplay = formatTraceRunIdForDisplay(requested);
+  return (
+    lineRunId === requested
+    || lineRunId === requestedDisplay
+    || lineDisplay === requested
+    || lineDisplay === requestedDisplay
+  );
 }
 
 function uniqueRunIds(lines: ParsedTraceLine[]): string[] {

@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.20.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.20.2-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -387,9 +387,11 @@ progress 消息。`compact` 记录精简文本行：工具/类型、状态、tra
 脱敏后的参数/错误摘要；`full` 记录脱敏/截断后的事件结构。trace 行靠前位置会带
 `log_id` 和 `run_id`：普通飞书消息 turn 使用 source message id 作为
 `log_id`，cronjob prompt turn 使用稳定的 `job_id`，`run_id` 用于区分同一来源的
-多次执行。启用 trace 后，exec action bridge 会暴露有界 `get_run_trace` 查询：
-只能查询当前/引用消息或有权限的 cronjob，并只返回脱敏结构化摘要，不暴露原始
-`trace.log` 内容。debug、audit 和 trace 日志时间都使用 `LARK_CRON_TIMEZONE`
+多次执行。本地 trace 行只展示紧凑 run id（`TRACE_RUN_ID_DISPLAY_LENGTH=16`，
+去掉分隔符）以保持日志可读，但查询仍可传完整内部 `run_id`。启用 trace 后，
+exec action bridge 会暴露有界 `get_run_trace` 查询：只能查询当前/引用消息或有权限
+的 cronjob，并只返回脱敏结构化摘要，不暴露原始 `trace.log` 内容。
+debug、audit 和 trace 日志时间都使用 `LARK_CRON_TIMEZONE`
 并带显式 UTC offset，三者共享[本地诊断日志文本格式](docs/local-diagnostic-logs.md)。
 
 生成卡片回复时，`LARK_CARD_FOOTER_METRICS_ENABLED=true` 会在最终
