@@ -759,17 +759,12 @@ async function executeManageAccessControl(
     return {
       ok: true,
       action: 'manage_access_control',
-      message: JSON.stringify({
-        changed: result.changed,
-        message: formatAccessControlMutationMessage(
-          result.changed,
-          validated.action,
-          validated.list,
-          validated.value,
-        ),
-        resolved_from_current_chat: validated.resolvedFromCurrentChat,
-        snapshot: result.snapshot,
-      }, null, 2),
+      message: formatAccessControlMutationMessage(
+        result.changed,
+        validated.action,
+        validated.list,
+        validated.value,
+      ),
     };
   } catch (err) {
     await audit('manage_access_control', caller, auditArgs, 'error');

@@ -81,20 +81,11 @@ export function registerAccessControlTools(ctx: ToolContext): void {
         });
         await audit('manage_access_control', caller, auditArgs, 'ok');
         return textResult(
-          JSON.stringify(
-            {
-              changed: result.changed,
-              message: formatAccessControlMutationMessage(
-                result.changed,
-                validated.action,
-                validated.list,
-                validated.value,
-              ),
-              resolved_from_current_chat: validated.resolvedFromCurrentChat,
-              snapshot: result.snapshot,
-            },
-            null,
-            2,
+          formatAccessControlMutationMessage(
+            result.changed,
+            validated.action,
+            validated.list,
+            validated.value,
           ),
         );
       } catch (err) {

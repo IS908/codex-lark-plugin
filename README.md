@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.19.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.19.3-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -338,6 +338,7 @@ Owner-only Lark commands:
 
 ```text
 /access
+/access list
 /access add user ou_xxx
 /access remove user ou_xxx
 /access add chat oc_xxx
@@ -346,7 +347,16 @@ Owner-only Lark commands:
 /access remove chat here
 /access add no-mention oc_xxx
 /access remove no-mention oc_xxx
+/access admin list users
+/access admin list chats
+/access admin list no-mention
 ```
+
+`/access` and `/access list` report only the current caller/chat status, for
+example `User access: allowed`, `Chat access: allowed`, and
+`No-mention mode: enabled`. Normal status and mutation responses do not include
+the complete configured ID lists. Use the explicit admin list commands above
+when the owner needs to inspect the full runtime access configuration.
 
 `current`, `here`, `当前群聊`, and `当前群聊id` are resolved by the bridge from
 the current Feishu event. Chat writes require `oc_...` format and a successful

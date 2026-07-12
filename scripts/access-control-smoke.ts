@@ -122,6 +122,8 @@ try {
   });
   assert.equal(added.isError, undefined);
   assert.equal(accessControlStore.isAllowedUserId('ou_allowed_live'), true);
+  assert.equal(added.content[0].text, 'User access added.');
+  assert.doesNotMatch(added.content[0].text, /ou_allowed_live|allowed_user_ids|snapshot/);
 
   const currentChat = await manage!({
     action: 'add',
@@ -133,7 +135,20 @@ try {
   assert.equal(currentChat.isError, undefined);
   assert.equal(accessControlStore.snapshot().allowed_chat_ids.includes('oc_current_group'), true);
   assert.deepEqual(validatedChats.at(-1), 'oc_current_group');
-  assert.match(currentChat.content[0].text, /resolved_from_current_chat/);
+  assert.equal(currentChat.content[0].text, 'Chat access added.');
+  assert.doesNotMatch(currentChat.content[0].text, /oc_current_group|allowed_chat_ids|resolved_from_current_chat|snapshot/);
+
+  const noMention = await manage!({
+    action: 'add',
+    list: 'group_no_mention_chat_ids',
+    value: 'current',
+    chat_id: 'oc_current_group',
+    thread_id: 'thread_owner',
+  });
+  assert.equal(noMention.isError, undefined);
+  assert.equal(accessControlStore.snapshot().group_no_mention_chat_ids.includes('oc_current_group'), true);
+  assert.equal(noMention.content[0].text, 'No-mention mode enabled.');
+  assert.doesNotMatch(noMention.content[0].text, /oc_current_group|group_no_mention_chat_ids|snapshot/);
 
   const p2pCurrent = await manage!({
     action: 'add',

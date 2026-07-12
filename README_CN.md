@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.19.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.19.3-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -319,6 +319,7 @@ owner-only 飞书命令：
 
 ```text
 /access
+/access list
 /access add user ou_xxx
 /access remove user ou_xxx
 /access add chat oc_xxx
@@ -327,7 +328,15 @@ owner-only 飞书命令：
 /access remove chat here
 /access add no-mention oc_xxx
 /access remove no-mention oc_xxx
+/access admin list users
+/access admin list chats
+/access admin list no-mention
 ```
+
+`/access` 和 `/access list` 只返回当前调用者/当前群聊的状态，例如
+`User access: allowed`、`Chat access: allowed`、`No-mention mode: enabled`。
+普通状态查询和 add/remove 结果不会返回完整配置 ID 列表。owner 需要查看完整
+runtime access 配置时，使用上面的显式 admin list 命令。
 
 `current`、`here`、`当前群聊`、`当前群聊id` 会由 bridge 根据当前飞书事件解析，
 不会交给模型猜测。写入 chat 类列表前必须满足 `oc_...` 格式，并通过飞书

@@ -103,8 +103,17 @@ export function formatAccessControlMutationMessage(
   changed: boolean,
   action: AccessControlAction,
   list: AccessControlListName,
-  value: string,
+  _value: string,
 ): string {
-  if (changed) return `${action === 'add' ? 'Added' : 'Removed'} ${value} in ${list}.`;
-  return `${value} is already ${action === 'add' ? 'present in' : 'absent from'} ${list}.`;
+  if (list === 'allowed_user_ids') {
+    if (changed) return action === 'add' ? 'User access added.' : 'User access removed.';
+    return action === 'add' ? 'User access already allowed.' : 'User access was not configured.';
+  }
+  if (list === 'allowed_chat_ids') {
+    if (changed) return action === 'add' ? 'Chat access added.' : 'Chat access removed.';
+    return action === 'add' ? 'Chat access already allowed.' : 'Chat access was not configured.';
+  }
+
+  if (changed) return action === 'add' ? 'No-mention mode enabled.' : 'No-mention mode disabled.';
+  return action === 'add' ? 'No-mention mode already enabled.' : 'No-mention mode already disabled.';
 }

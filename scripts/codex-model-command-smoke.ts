@@ -175,12 +175,55 @@ assert.equal(record?.model, 'gpt-4');
 
 assert.equal(await runCommand({
   ...baseMessage,
+  messageId: 'om_access_status_initial',
+  text: '/access',
+  rawContent: '{"text":"/access"}',
+}), true);
+assert.equal(
+  replies.at(-1)?.text,
+  [
+    'User access: allowed',
+    'Chat access: allowed',
+    'No-mention mode: disabled',
+  ].join('\n'),
+);
+
+assert.equal(await runCommand({
+  ...baseMessage,
   messageId: 'om_access_add',
   text: '/access add user ou_new_allowed',
   rawContent: '{"text":"/access add user ou_new_allowed"}',
 }), true);
 assert.equal(accessControlStore.isAllowedUserId('ou_new_allowed'), true);
-assert.match(replies.at(-1)?.text ?? '', /ou_new_allowed/);
+assert.equal(replies.at(-1)?.text, 'User access added.');
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /ou_new_allowed|allowed_user_ids|snapshot/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_status_after_user',
+  text: '/access list',
+  rawContent: '{"text":"/access list"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /User access: blocked/);
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /ou_new_allowed|allowed_user_ids/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_admin_list_users',
+  text: '/access admin list users',
+  rawContent: '{"text":"/access admin list users"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /Configured users:\n- ou_new_allowed/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_remove_user',
+  text: '/access remove user ou_new_allowed',
+  rawContent: '{"text":"/access remove user ou_new_allowed"}',
+}), true);
+assert.equal(accessControlStore.isAllowedUserId('ou_new_allowed'), false);
+assert.equal(replies.at(-1)?.text, 'User access removed.');
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /ou_new_allowed|allowed_user_ids|snapshot/);
 
 assert.equal(await runCommand({
   ...baseMessage,
@@ -190,7 +233,16 @@ assert.equal(await runCommand({
 }), true);
 assert.equal(accessControlStore.snapshot().allowed_chat_ids.includes('oc_model'), true);
 assert.deepEqual(validatedChats.at(-1), 'oc_model');
-assert.match(replies.at(-1)?.text ?? '', /resolved_from_current_chat/);
+assert.equal(replies.at(-1)?.text, 'Chat access added.');
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /oc_model|allowed_chat_ids|resolved_from_current_chat|snapshot/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_admin_list_chats',
+  text: '/access admin list chats',
+  rawContent: '{"text":"/access admin list chats"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /Configured chats:\n- oc_model/);
 
 assert.equal(await runCommand({
   ...baseMessage,
@@ -199,6 +251,36 @@ assert.equal(await runCommand({
   rawContent: '{"text":"/access remove chat here"}',
 }), true);
 assert.equal(accessControlStore.snapshot().allowed_chat_ids.includes('oc_model'), false);
+assert.equal(replies.at(-1)?.text, 'Chat access removed.');
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /oc_model|allowed_chat_ids|snapshot/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_add_no_mention',
+  text: '/access add no-mention current',
+  rawContent: '{"text":"/access add no-mention current"}',
+}), true);
+assert.equal(accessControlStore.snapshot().group_no_mention_chat_ids.includes('oc_model'), true);
+assert.equal(replies.at(-1)?.text, 'No-mention mode enabled.');
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /oc_model|group_no_mention_chat_ids|snapshot/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_admin_list_no_mention',
+  text: '/access admin list no-mention',
+  rawContent: '{"text":"/access admin list no-mention"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /Configured no-mention chats:\n- oc_model/);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_remove_no_mention',
+  text: '/access remove no-mention current',
+  rawContent: '{"text":"/access remove no-mention current"}',
+}), true);
+assert.equal(accessControlStore.snapshot().group_no_mention_chat_ids.includes('oc_model'), false);
+assert.equal(replies.at(-1)?.text, 'No-mention mode disabled.');
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /oc_model|group_no_mention_chat_ids|snapshot/);
 
 assert.equal(await runCommand({
   ...baseMessage,
@@ -228,11 +310,18 @@ assert.match(replies.at(-1)?.text ?? '', /group chat/);
 
 assert.equal(await runCommand({
   ...baseMessage,
-  messageId: 'om_access_list',
+  messageId: 'om_access_admin_list_empty',
   text: '/access',
   rawContent: '{"text":"/access"}',
 }), true);
-assert.match(replies.at(-1)?.text ?? '', /ou_new_allowed/);
+assert.equal(
+  replies.at(-1)?.text,
+  [
+    'User access: allowed',
+    'Chat access: allowed',
+    'No-mention mode: disabled',
+  ].join('\n'),
+);
 
 assert.equal(await runCommand({
   ...baseMessage,
@@ -243,6 +332,16 @@ assert.equal(await runCommand({
 }), true);
 assert.match(replies.at(-1)?.text ?? '', /owner-only/);
 assert.equal(accessControlStore.isAllowedUserId('ou_denied'), false);
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_access_admin_list_denied',
+  senderId: 'ou_not_owner',
+  text: '/access admin list users',
+  rawContent: '{"text":"/access admin list users"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /owner-only/);
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /Configured users|ou_/);
 
 assert.equal(await runCommand({
   ...baseMessage,

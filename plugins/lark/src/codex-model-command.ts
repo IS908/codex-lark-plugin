@@ -13,6 +13,7 @@ import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import {
   accessControlStore,
   type AccessControlAction,
+  type AccessControlSnapshot,
   type AccessControlListName,
 } from './runtime-access-control.js';
 import {
@@ -38,7 +39,8 @@ type ModelCommand =
   | { action: 'invalid'; error: string };
 
 type AccessCommand =
-  | { action: 'list' }
+  | { action: 'status' }
+  | { action: 'admin-list'; list: AccessControlListName }
   | { action: 'add' | 'remove'; list: AccessControlListName; value: string }
   | { action: 'invalid'; error: string };
 
@@ -144,7 +146,20 @@ function parseCodexModelCommandText(normalized: string): ModelCommand {
 function parseAccessCommandText(normalized: string): AccessCommand {
   const match = normalized.match(/^\/access(?:\s+(.+))?$/i);
   const arg = (match?.[1] ?? '').trim();
-  if (!arg || /^list$/i.test(arg)) return { action: 'list' };
+  if (!arg || /^list$/i.test(arg) || /^status$/i.test(arg)) return { action: 'status' };
+
+  const adminListMatch = arg.match(/^admin\s+list(?:\s+(.+))?$/i);
+  if (adminListMatch) {
+    const list = normalizeAccessList(adminListMatch[1]);
+    if (!list) {
+      return {
+        action: 'invalid',
+        error:
+          'Invalid /access admin list command. Use `/access admin list users`, `/access admin list chats`, or `/access admin list no-mention`.',
+      };
+    }
+    return { action: 'admin-list', list };
+  }
 
   const parts = arg.split(/\s+/);
   const action = parts[0]?.toLowerCase();
@@ -260,7 +275,13 @@ async function executeAccessCommand(
   opts: CodexModelCommandOptions,
 ): Promise<string> {
   if (command.action === 'invalid') return command.error;
-  if (command.action === 'list') return JSON.stringify(accessControlStore.snapshot(), null, 2);
+  if (command.action === 'status') {
+    return formatAccessStatus(accessControlStore.snapshot(), caller, opts.message);
+  }
+  if (command.action === 'admin-list') {
+    return formatAccessAdminList(command.list, accessControlStore.snapshot());
+  }
+
   const validated = await validateAccessControlMutation({
     action: command.action,
     list: command.list,
@@ -275,15 +296,44 @@ async function executeAccessCommand(
     value: validated.value,
     updatedBy: caller,
   });
-  return JSON.stringify({
-    changed: result.changed,
-    message: formatAccessControlMutationMessage(
-      result.changed,
-      validated.action,
-      validated.list,
-      validated.value,
-    ),
-    resolved_from_current_chat: validated.resolvedFromCurrentChat,
-    snapshot: result.snapshot,
-  }, null, 2);
+  return formatAccessControlMutationMessage(
+    result.changed,
+    validated.action,
+    validated.list,
+    validated.value,
+  );
+}
+
+function formatAccessStatus(
+  snapshot: AccessControlSnapshot,
+  caller: string,
+  message: LarkMessage,
+): string {
+  const userAllowed =
+    snapshot.allowed_user_ids.length === 0 || snapshot.allowed_user_ids.includes(caller);
+  const chatAllowed =
+    snapshot.allowed_chat_ids.length === 0 || snapshot.allowed_chat_ids.includes(message.chatId);
+  const noMentionEnabled =
+    message.chatType === 'group' && snapshot.group_no_mention_chat_ids.includes(message.chatId);
+
+  return [
+    `User access: ${userAllowed ? 'allowed' : 'blocked'}`,
+    `Chat access: ${chatAllowed ? 'allowed' : 'blocked'}`,
+    `No-mention mode: ${noMentionEnabled ? 'enabled' : 'disabled'}`,
+  ].join('\n');
+}
+
+function formatAccessAdminList(
+  list: AccessControlListName,
+  snapshot: AccessControlSnapshot,
+): string {
+  const values = snapshot[list];
+  const label =
+    list === 'allowed_user_ids'
+      ? 'Configured users'
+      : list === 'allowed_chat_ids'
+        ? 'Configured chats'
+        : 'Configured no-mention chats';
+  if (values.length === 0) return `${label}: none`;
+  return `${label}:\n${values.map((value) => `- ${value}`).join('\n')}`;
 }

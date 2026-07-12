@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.19.3] - 2026-07-12
+
+### Fixed
+- Made normal `/access` status and mutation responses privacy-safe by avoiding full configured ID lists and internal access-control field names.
+- Added explicit owner-only `/access admin list users|chats|no-mention` commands for full runtime access inspection.
+- Standardized `/access` user-facing responses to concise English across user, chat, and no-mention operations.
+
 ## [1.19.2] - 2026-07-11
 
 ### Fixed
