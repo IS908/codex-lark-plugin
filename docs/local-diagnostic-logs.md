@@ -71,7 +71,7 @@ type, and a sanitized/truncated event payload for deeper diagnostics.
 Example compact record:
 
 ```text
-2026-07-06T20:00:00.000+08:00  om_xxx  run_abc123  exec_command  started  call_123  -  {"command":"npm test"}
+2026-07-06T20:00:00.000+08:00  om_xxx  019f0abc1234abcd  exec_command  started  call_123  -  {"command":"npm test"}
 ```
 
 Debug records use the same timestamp style and omit bracket wrappers:
@@ -81,7 +81,11 @@ Debug records use the same timestamp style and omit bracket wrappers:
 ```
 
 The trace `log_id` correlates records from the same trigger, while `run_id`
-separates repeated executions of that trigger:
+separates repeated executions of that trigger. Trace lines display the compact
+run id returned by `formatTraceRunIdForDisplay()`; the display width is
+centralized as `TRACE_RUN_ID_DISPLAY_LENGTH=16`. UUID-like values remove
+separators and keep the first hexadecimal characters; non-UUID values fall back
+to a compact lowercase alphanumeric form:
 
 - ordinary Feishu/Lark message turns use the source message id;
 - scheduled prompt jobs use the stable `job_id` when no source message id exists;
@@ -90,6 +94,9 @@ separates repeated executions of that trigger:
 When tracing is enabled, the exec action bridge can serve bounded
 `get_run_trace` requests. Message queries are limited to the current or quoted
 message trace. Cronjob queries require an authorized `job_id`. Queries return
-all matching runs within the last 12 hours unless a `run_id` is supplied.
+all matching runs within the last 12 hours unless a `run_id` is supplied. The
+query accepts either the compact display id or the full internal `run_id`; when
+the full id is supplied, the response preserves that full id while matching the
+compact log records.
 The query result is a structured, redacted summary; the raw log file is not
 injected into Codex and should not be read directly by model instructions.

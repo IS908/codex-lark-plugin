@@ -328,9 +328,9 @@ try {
 
   const traceTimestamp = new Date().toISOString();
   writeFileSync(traceLogPath, [
-    `${traceTimestamp}  om_exec_trace  run_msg_1  exec_command  completed  item_1  1000ms  {"cmd":"npm test"}`,
-    `${traceTimestamp}  om_quoted_trace  run_quoted_1  github.get_issue  completed  call_quoted  1000ms  {"issue":248}`,
-    `${traceTimestamp}  trace-job  run_cron_1  command_execution  completed  item_cron  1000ms  {"cmd":"cron"}`,
+    `${traceTimestamp}  om_exec_trace  runmsg1  exec_command  completed  item_1  1000ms  {"cmd":"npm test"}`,
+    `${traceTimestamp}  om_quoted_trace  runquoted1  github.get_issue  completed  call_quoted  1000ms  {"issue":248}`,
+    `${traceTimestamp}  trace-job  runcron1  command_execution  completed  item_cron  1000ms  {"cmd":"cron"}`,
     '',
   ].join('\n'));
   writeFileSync(join(jobsDir, 'trace-job.json'), JSON.stringify({
@@ -366,7 +366,7 @@ try {
   });
   assert.equal(traceResult[0].ok, true, JSON.stringify(traceResult));
   assert.match(traceResult[0].message, /"log_id": "om_exec_trace"/);
-  assert.match(traceResult[0].message, /"run_ids": \[\s*"run_msg_1"\s*\]/);
+  assert.match(traceResult[0].message, /"run_ids": \[\s*"runmsg1"\s*\]/);
 
   const quotedTraceResult = await dispatcher.execute({
     message: {

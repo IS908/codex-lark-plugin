@@ -20,6 +20,10 @@ const {
   createCodexExecToolTraceWriter,
   shouldTraceCodexExecToolEvent,
 } = await import('../src/codex-exec-trace.js');
+const {
+  TRACE_RUN_ID_DISPLAY_LENGTH,
+  formatTraceRunIdForDisplay,
+} = await import('../src/trace-run-id.js');
 const { runCodexExecCommand } = await import('../src/codex-exec.js');
 const { debugLog } = await import('../src/debug-log.js');
 
@@ -45,6 +49,12 @@ async function waitForLine(path: string, pattern: RegExp): Promise<string> {
 
 assert.equal(shouldTraceCodexExecToolEvent({ type: 'thread.started', thread_id: 't1' }), false);
 assert.equal(shouldTraceCodexExecToolEvent({ type: 'tool_call.started', tool_name: 'mcp.github.issue' }), true);
+assert.equal(TRACE_RUN_ID_DISPLAY_LENGTH, 16);
+assert.equal(
+  formatTraceRunIdForDisplay('run_01234567-89ab-cdef-0123-456789abcdef'),
+  '0123456789abcdef',
+);
+assert.equal(formatTraceRunIdForDisplay('run_trace_001'), 'runtrace001');
 assert.equal(
   createCodexExecToolTraceWriter({
     enabled: false,
@@ -88,10 +98,10 @@ await compact.flush();
 const compactLines = lines(compactLog);
 assert.equal(compactLines.length, 2);
 compactLines.forEach(assertNotJsonl);
-assert.match(compactLines[0], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00  om_trace_001  run_trace_001  mcp\.github\.issue_create  started  call-1  -  /);
+assert.match(compactLines[0], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00  om_trace_001  runtrace001  mcp\.github\.issue_create  started  call-1  -  /);
 assert.match(compactLines[0], /\[redacted\]/);
 assert.match(compactLines[0], /\(600 chars\)/);
-assert.match(compactLines[1], /om_trace_001  run_trace_001  mcp\.github\.issue_create  completed  call-1  [0-9]+ms  -/);
+assert.match(compactLines[1], /om_trace_001  runtrace001  mcp\.github\.issue_create  completed  call-1  [0-9]+ms  -/);
 assert.doesNotMatch(compactLines[0], /trace  compact|tool_call\.started/);
 assert.doesNotMatch(compactLines[1], /trace  compact|tool_call\.completed/);
 assert.doesNotMatch(readFileSync(compactLog, 'utf-8'), /should-not-appear/);
@@ -127,7 +137,7 @@ await compactCommand.flush();
 const compactCommandLines = lines(compactCommandLog);
 assert.equal(compactCommandLines.length, 2);
 compactCommandLines.forEach(assertNotJsonl);
-assert.match(compactCommandLines[1], /om_command_001  run_command_001  command_execution  completed  item_13  [0-9]+ms  "\/bin\/zsh -lc/);
+assert.match(compactCommandLines[1], /om_command_001  runcommand001  command_execution  completed  item_13  [0-9]+ms  "\/bin\/zsh -lc/);
 assert.doesNotMatch(compactCommandLines[1], /trace  compact|item\.completed/);
 
 const fullLog = join(root, 'full.log');
@@ -154,7 +164,7 @@ await full.flush();
 const fullLines = lines(fullLog);
 assert.equal(fullLines.length, 1);
 assertNotJsonl(fullLines[0]);
-assert.match(fullLines[0], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00  "Nightly Review"  run_full_001  trace  full  command_execution  shell  event/);
+assert.match(fullLines[0], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00  "Nightly Review"  runfull001  trace  full  command_execution  shell  event/);
 assert.match(fullLines[0], /\[redacted\]/);
 assert.match(fullLines[0], /\(1200 chars\)/);
 assert.doesNotMatch(readFileSync(fullLog, 'utf-8'), /should-not-appear/);
@@ -173,7 +183,7 @@ await hidden.flush();
 const hiddenLines = lines(hiddenLog);
 assert.equal(hiddenLines.length, 1);
 assertNotJsonl(hiddenLines[0]);
-assert.match(hiddenLines[0], /-  run_[a-f0-9-]+  lark\.im\.reply  started  -  -/);
+assert.match(hiddenLines[0], /-  [a-f0-9]{16}  lark\.im\.reply  started  -  -/);
 assert.doesNotMatch(hiddenLines[0], /trace  hidden|mcp_tool_call\.started/);
 
 debugLog('[channel] compact debug line');
@@ -219,7 +229,7 @@ const integrationToolLines = integrationLines.filter((line) => /github\.get_issu
 assert.equal(integrationToolLines.length, 2);
 integrationToolLines.forEach((line) => {
   assertNotJsonl(line);
-  assert.match(line, /om_integration_001  run_[a-f0-9-]+  github\.get_issue  /);
+  assert.match(line, /om_integration_001  [a-f0-9]{16}  github\.get_issue  /);
   assert.doesNotMatch(line, /trace  compact|mcp_tool_call\.(started|completed)/);
 });
 const metricsLine = integrationLines.find((line) => /om_integration_001  metrics  /.test(line));

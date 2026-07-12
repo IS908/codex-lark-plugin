@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.20.2] - 2026-07-13
+
+### Changed
+- Shortened displayed trace `run_id` values in local logs to a centralized 16-character display form while keeping full `run_id` query matching intact.
+
 ## [1.20.1] - 2026-07-13
 
 ### Fixed
