@@ -50,6 +50,8 @@ export interface CodexExecDeliveryOptions {
   progressLimits?: Partial<CodexExecProgressLimits>;
   progressVisible?: boolean;
   onProgress?: (event: CodexExecProgressEvent) => void;
+  onFinalText?: (text: string) => void;
+  onActionResults?: (results: CodexExecActionExecutionResult[]) => void;
   actionBaseDir?: string;
   traceLogId?: string;
   traceRunId?: string;
@@ -467,6 +469,7 @@ export async function deliverMessageViaCodexExec(
             message: 'Lark exec action dispatcher is not configured.',
           },
         ];
+    opts.onActionResults?.(actionResults);
     const actionSummary = formatCodexExecActionResults(actionResults);
     if (!text) {
       if (shouldSuppressEmptyActionReply(actionResults)) {
@@ -477,6 +480,8 @@ export async function deliverMessageViaCodexExec(
     } else if (shouldShowActionSummary(actionResults)) {
       text = `${text}\n\n[Action results]\n${actionSummary}`;
     }
+  } else {
+    opts.onActionResults?.([]);
   }
   if (!text) {
     text = 'Codex exec returned an empty response.';
@@ -500,6 +505,7 @@ export async function deliverMessageViaCodexExec(
     responseBytes: Buffer.byteLength(result.text, 'utf8'),
     usage: result.usage ?? null,
   });
+  opts.onFinalText?.(text);
   if (suppressVisibleReply) {
     return;
   }

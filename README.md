@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.20.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.21.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -388,18 +388,32 @@ Feishu `chat.get` check before the access-control file is changed.
 | `LARK_CARD_FOOTER_METRICS_ENABLED` | `true` | Append compact runtime metrics to generated card replies from Codex exec. Plain text replies are unchanged. |
 | `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` | `20000` | Show token usage in the card footer only when reported total tokens exceed this threshold. |
 
-Realtime Feishu/Lark chats support lightweight model control commands. Every
-attempt is written to the audit log.
+Realtime Feishu/Lark chats support lightweight control commands. `/help`
+renders the command list from the same definition used by the parser so command
+help does not drift silently. Model, access, flush, and new-session attempts are
+written to the audit log.
 
 ```text
+/help              Show supported chat commands and permission scope
 /model             Show the effective model for the current chat/thread
 /model <model-id>  Set a chat/thread model override for subsequent realtime turns
 /model reset       Clear only the chat/thread model override
+/flush             Distill buffered context now and keep the current Codex session
+/new               Distill buffered context, then start a fresh session on next turn
+
+Owner-only:
+/access            Show current user/chat/no-mention access status
+/access ...        Manage runtime access control
 ```
 
 Model resolution order is: chat/thread override, then `LARK_CODEX_EXEC_MODEL`,
 then the Codex CLI default. The override is stored on the existing
-`codex-sessions` record and follows the same retention lifecycle.
+`codex-sessions` record and follows the same retention lifecycle. `/flush`
+persists the current chat/thread buffer into memory and leaves the session
+pointer unchanged. `/new` runs the same safe flush first, then clears only the
+current chat/thread session pointer; long-term memories, jobs, access control,
+and model overrides are preserved. If distillation fails, buffered context and
+the current session pointer are preserved.
 
 Exec delivery can expose a bounded progress side channel for long-running
 visible IM/doc-comment turns. The parent bridge creates a temporary JSONL file

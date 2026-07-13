@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.20.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.21.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -368,17 +368,28 @@ runtime access 配置时，使用上面的显式 admin list 命令。
 | `LARK_CARD_FOOTER_METRICS_ENABLED` | `true` | 为 Codex exec 生成的卡片回复追加紧凑运行指标 footer；纯文本回复不变 |
 | `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` | `20000` | 仅当上报的 total tokens 超过该阈值时，在卡片 footer 中显示 token usage |
 
-实时飞书/Lark chat 支持轻量模型控制命令。每次尝试都会写入审计日志：
+实时飞书/Lark chat 支持轻量控制命令。`/help` 从解析器共用的命令定义生成，
+避免帮助文本静默漂移。model、access、flush 和 new-session 尝试都会写入审计日志：
 
 ```text
+/help              展示当前支持的聊天指令和权限范围
 /model             查看当前 chat/thread 的实际模型
 /model <model-id>  为后续实时 turn 设置 chat/thread 模型覆盖
 /model reset       只清除当前 chat/thread 的模型覆盖
+/flush             立即蒸馏 buffered context，并继续使用当前 Codex session
+/new               先蒸馏 buffered context，下一个 turn 开始使用新 session
+
+Owner-only：
+/access            查看当前用户/群聊/no-mention 访问状态
+/access ...        管理运行时访问控制
 ```
 
 模型解析顺序是：chat/thread override，然后是 `LARK_CODEX_EXEC_MODEL`，
 最后回落到 Codex CLI 默认值。override 存在现有 `codex-sessions` 记录上，
-并跟随同一套 retention 生命周期。
+并跟随同一套 retention 生命周期。`/flush` 会把当前 chat/thread buffer 持久化到
+memory，不改变 session pointer。`/new` 会先执行同一套安全 flush，再只清除当前
+chat/thread 的 session pointer；长期记忆、任务、访问控制和模型 override 都保留。
+如果蒸馏失败，buffered context 和当前 session pointer 都会保留。
 
 当 `LARK_CODEX_EXEC_TOOL_TRACE=true` 时，父进程会扫描 `codex exec --json`
 stdout 中的工具执行事件，并把脱敏的人类可读文本行追加到

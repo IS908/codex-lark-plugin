@@ -135,6 +135,10 @@ echo "=== Memory enricher unit checks ==="
 node --import tsx scripts/memory-enricher-smoke.ts
 
 echo ""
+echo "=== Conversation buffer unit checks ==="
+node --import tsx scripts/conversation-buffer-smoke.ts
+
+echo ""
 echo "=== Doc comment tool unit checks ==="
 node --import tsx scripts/reply-doc-comment-smoke.ts
 

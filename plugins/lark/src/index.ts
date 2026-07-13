@@ -152,38 +152,61 @@ async function main() {
 
   // 4. Create conversation buffer + wire flush handler
   const buffer = new ConversationBuffer();
-  buffer.setFlushHandler(async (chatId, messages) => {
-    const flushPrompt = buildFlushPrompt(chatId, messages);
-    // In auto-flush, we inject the prompt as if it were a message
-    // The channel's message handler will forward it to Codex
-    console.error(`[distiller] Auto-flush for chat ${chatId}: ${messages.length} messages`);
+  let codexExecActionDispatcher: ReturnType<typeof createCodexExecActionDispatcher> | null = null;
+  buffer.setFlushHandler(async ({ chatId, threadId, messages, reason }) => {
+    const flushPrompt = buildFlushPrompt(chatId, messages, threadId);
+    // Flushes run as synthetic system turns through Codex exec. Feishu does
+    // not see the synthetic turn; manual /flush and /new commands receive a
+    // separate confirmation after save_memory succeeds.
+    console.error(
+      `[distiller] ${reason} flush for chat ${chatId}`
+      + `${threadId ? ` thread=${threadId}` : ''}: ${messages.length} messages`,
+    );
 
     // Bind a system-flush caller BEFORE notifying Codex (#66). Without
     // this, save_memory(type=chat) inside the flush turn fails caller
     // resolution because:
     //   - User entries are stored by IdentitySession under (chatId, threadId).
-    //   - The flush notification carries chatId only (no threadId, since the
-    //     buffer is chat-scoped, not thread-scoped).
-    //   - getCaller(chatId, undefined) falls back to a chat-level entry,
-    //     which is only present in non-threaded chats. Threaded chats miss.
+    //   - Auto flush carries chatId only, while manual thread flushes carry
+    //     both chatId and threadId.
+    //   - getCaller must resolve the same scope used by save_memory.
     //
     // Chat episodes are stored by (chatId, threadId?), NOT by caller, so a
     // sentinel caller doesn't change WHERE the data goes — only WHAT the
     // audit log records. Mirrors scheduler.executePromptJob's pattern of
     // binding job.meta.created_by before cronjob execution.
-    identitySession.setCaller(chatId, undefined, SYSTEM_FLUSH_CALLER);
+    identitySession.setCaller(chatId, threadId, SYSTEM_FLUSH_CALLER);
 
-    // Forward flush prompt through the normal message handler
-    if (channel['messageHandler']) {
-      await channel['messageHandler']({
+    if (!codexExecActionDispatcher) {
+      throw new Error('Codex exec action dispatcher is not configured for conversation flush.');
+    }
+    let summary = '';
+    let saveMemoryOk = false;
+    await deliverMessageViaCodexExec({
+      message: {
         messageId: `flush-${Date.now()}`,
         chatId,
+        ...(threadId ? { threadId } : {}),
         chatType: 'system',
         senderId: 'system',
         text: flushPrompt,
         messageType: 'text',
         rawContent: flushPrompt,
-      });
+      },
+      displayLabel: threadId ? `System flush · ${chatId} · ${threadId}` : `System flush · ${chatId}`,
+      useCodexSessions: false,
+      progressVisible: false,
+      actionDispatcher: codexExecActionDispatcher,
+      sendReply: async () => ({ sentCount: 0, statusText: 'Synthetic flush reply suppressed.' }),
+      onFinalText: (text) => {
+        summary = text.trim();
+      },
+      onActionResults: (results) => {
+        saveMemoryOk = results.some((result) => result.ok && result.action === 'save_memory');
+      },
+    });
+    if (!saveMemoryOk) {
+      throw new Error('Conversation flush did not persist a memory summary.');
     }
 
     const activeUserIds = [...new Set(
@@ -206,9 +229,10 @@ async function main() {
         })
         .catch((err) => logSafeError('[profile-distill] dispatch failed:', err));
     }
+    return { summary };
   });
   channel.setConversationBuffer(buffer);
-  const codexExecActionDispatcher = createCodexExecActionDispatcher({
+  codexExecActionDispatcher = createCodexExecActionDispatcher({
     memoryStore,
     identitySession,
     profileDistiller,
@@ -250,6 +274,8 @@ async function main() {
     message,
     identitySession,
     useCodexSessions: appConfig.codexExecUseSessions,
+    flushConversation: ({ chatId, threadId, reason }) => buffer.flushNow(chatId, { threadId, reason }),
+    resetSessionHealth: (sessionKey) => sessionHealthMonitor?.reset(sessionKey, 'manual'),
     validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
     sendReply: (request) => sendFeishuReply(
       {
