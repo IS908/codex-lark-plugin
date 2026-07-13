@@ -7,6 +7,10 @@ import {
   FileCodexExecSessionStore,
   type CodexExecSessionStore,
 } from './codex-session-store.js';
+import {
+  createNextConversationBoundaryFields,
+  preserveConversationBoundaryFields,
+} from './conversation-boundary.js';
 import { isFeishuOpenMessageId } from './codex-exec-error.js';
 import { extractMessageText } from './message-content.js';
 import type { IdentitySession } from './identity-session.js';
@@ -35,6 +39,7 @@ export interface CodexModelCommandOptions {
     chatId: string;
     threadId?: string;
     reason: ConversationFlushReason;
+    commitBeforeRemove?: (result: { summary?: string } | void) => Promise<void>;
   }) => Promise<ConversationFlushResult>;
   resetSessionHealth?: (sessionKey: string) => void;
 }
@@ -353,6 +358,7 @@ async function executeCodexModelCommand(
       chatId: opts.message.chatId,
       ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
       updatedAt: new Date().toISOString(),
+      ...preserveConversationBoundaryFields(existing),
     });
     return appConfig.codexExecModel
       ? `Chat/thread model override cleared. Effective Codex model now falls back to LARK_CODEX_EXEC_MODEL: ${appConfig.codexExecModel}.`
@@ -365,6 +371,7 @@ async function executeCodexModelCommand(
     chatId: opts.message.chatId,
     ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
     updatedAt: new Date().toISOString(),
+    ...preserveConversationBoundaryFields(existing),
     model: command.model,
   });
   return `Chat/thread Codex model override set to ${command.model}. Subsequent realtime turns in this chat/thread will use it.`;
@@ -393,16 +400,24 @@ async function executeNewSessionCommand(opts: CodexModelCommandOptions): Promise
     return 'Manual conversation flush is not configured. New chat was not started.';
   }
 
+  let committedSessionKey: string | null = null;
   const flushResult = await opts.flushConversation({
     chatId: opts.message.chatId,
     ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
     reason: 'new_session',
+    commitBeforeRemove: async (result) => {
+      committedSessionKey = await clearCodexSessionPointer(opts, {
+        status: 'flushed',
+        messageCount: 0,
+        ...(result?.summary ? { summary: result.summary } : {}),
+      });
+    },
   });
   if (flushResult.status === 'busy') {
     return 'A conversation flush is already running for this chat. New chat was not started.';
   }
 
-  const sessionKey = await clearCodexSessionPointer(opts);
+  const sessionKey = committedSessionKey ?? await clearCodexSessionPointer(opts, flushResult);
   opts.resetSessionHealth?.(sessionKey);
   if (flushResult.status === 'empty') {
     return 'No buffered context needed archiving. New Codex session will start on the next turn.';
@@ -410,7 +425,10 @@ async function executeNewSessionCommand(opts: CodexModelCommandOptions): Promise
   return formatFlushSuccess(flushResult, true);
 }
 
-async function clearCodexSessionPointer(opts: CodexModelCommandOptions): Promise<string> {
+async function clearCodexSessionPointer(
+  opts: CodexModelCommandOptions,
+  flushResult: ConversationFlushResult,
+): Promise<string> {
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
   const sessionKey = buildCodexExecSessionKey(opts.message.chatId, opts.message.threadId);
   const existing = await sessionStore.get(sessionKey);
@@ -421,6 +439,12 @@ async function clearCodexSessionPointer(opts: CodexModelCommandOptions): Promise
     ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
     updatedAt: new Date().toISOString(),
     ...(existing?.model ? { model: existing.model } : {}),
+    ...createNextConversationBoundaryFields({
+      existing,
+      cutoffMessageId: opts.message.messageId,
+      cutoffTimestampMs: opts.message.timestampMs,
+      handoffSummary: flushResult.summary,
+    }),
   });
   return sessionKey;
 }

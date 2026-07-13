@@ -8,6 +8,12 @@ export interface CodexExecSessionRecord {
   threadId?: string;
   updatedAt: string;
   model?: string;
+  generation?: number;
+  cutoffMessageId?: string;
+  cutoffTimestampMs?: number;
+  handoffSummary?: string;
+  handoffConsumedAt?: string;
+  boundaryUpdatedAt?: string;
 }
 
 export interface CodexExecSessionStore {
@@ -84,11 +90,15 @@ export class FileCodexExecSessionStore implements CodexExecSessionStore {
 
   async set(record: CodexExecSessionRecord): Promise<void> {
     await fs.mkdir(this.rootDir, { recursive: true });
-    await fs.writeFile(
-      recordPath(this.rootDir, record.key),
-      `${JSON.stringify(record, null, 2)}\n`,
-      'utf8',
-    );
+    const targetPath = recordPath(this.rootDir, record.key);
+    const tmpPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      await fs.writeFile(tmpPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+      await fs.rename(tmpPath, targetPath);
+    } catch (err) {
+      await fs.unlink(tmpPath).catch(() => {});
+      throw err;
+    }
   }
 
   async cleanupExpired(options: CodexSessionRetentionOptions): Promise<CodexSessionRetentionResult> {

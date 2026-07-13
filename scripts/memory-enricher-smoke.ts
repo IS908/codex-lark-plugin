@@ -80,6 +80,62 @@ const noStorePrompt = await enrichLarkMessageWithMemory({
 assert.match(noStorePrompt, /\[Memory Context\]/);
 assert.match(noStorePrompt, /\(empty\)/);
 
+const boundaryBuffer = new ConversationBuffer();
+boundaryBuffer.record('oc_boundary', {
+  role: 'user',
+  senderId: 'ou_owner',
+  text: 'OLD_RECENT_CANARY should not cross /new',
+  timestamp: '2026-06-18T01:00:00.000Z',
+  timestampMs: 1781744400000,
+  messageId: 'om_old_recent',
+  threadId: 'omt_boundary',
+  messageType: 'text',
+});
+boundaryBuffer.record('oc_boundary', {
+  role: 'user',
+  senderId: 'ou_owner',
+  text: 'fresh boundary turn',
+  timestamp: '2026-06-18T01:02:00.000Z',
+  timestampMs: 1781744520000,
+  messageId: 'om_boundary_current',
+  threadId: 'omt_boundary',
+  messageType: 'text',
+});
+const boundaryPrompt = await enrichLarkMessageWithMemory({
+  messageId: 'om_boundary_current',
+  chatId: 'oc_boundary',
+  chatType: 'group',
+  senderId: 'ou_owner',
+  text: 'fresh boundary turn',
+  messageType: 'text',
+  threadId: 'omt_boundary',
+  parentContent: [
+    'kind: lark_message',
+    'message_id: om_old_quoted',
+    'msg_type: text',
+    'timestamp_ms: 1781744400000',
+    'hydration_status: success',
+    'content:',
+    'OLD_QUOTED_CANARY should not cross /new',
+  ].join('\n'),
+  rawContent: '{}',
+}, {
+  conversationBuffer: boundaryBuffer,
+  conversationBoundary: {
+    generation: 2,
+    cutoffMessageId: 'om_new_boundary',
+    cutoffTimestampMs: 1781744460000,
+    handoffSummary: 'HANDOFF_SUMMARY_CANARY',
+  },
+  memoryDeduper: new MemoryContextDeduper({ windowMs: 0 }),
+  memoryStore: null,
+});
+assert.match(boundaryPrompt, /HANDOFF_SUMMARY_CANARY/);
+assert.match(boundaryPrompt, /fresh boundary turn/);
+assert.match(boundaryPrompt, /reason: before_conversation_boundary/);
+assert.doesNotMatch(boundaryPrompt, /OLD_RECENT_CANARY/);
+assert.doesNotMatch(boundaryPrompt, /OLD_QUOTED_CANARY/);
+
 // Keep the public channel path wired through the same enricher boundary.
 const channel = new LarkChannel();
 channel.setMemoryStore({
@@ -87,6 +143,18 @@ channel.setMemoryStore({
   searchEpisodes: async () => [],
   searchSkills: async () => [],
 } as any);
+let consumedHandoff: any = null;
+channel.setConversationBoundaryProvider({
+  get: async () => ({
+    generation: 4,
+    cutoffMessageId: 'om_channel_new',
+    cutoffTimestampMs: 1,
+    handoffSummary: 'CHANNEL_HANDOFF_SUMMARY',
+  }),
+  markHandoffConsumed: async (chatId, threadId, generation) => {
+    consumedHandoff = { chatId, threadId, generation };
+  },
+});
 const handled: any[] = [];
 channel.setMessageHandler(async (message) => handled.push(message));
 await (channel as any).processEnqueuedMessage({
@@ -96,9 +164,27 @@ await (channel as any).processEnqueuedMessage({
   senderId: 'ou_owner',
   text: 'hello',
   messageType: 'text',
+  parentContent: [
+    'kind: lark_message',
+    'message_id: om_channel_old_parent',
+    'msg_type: text',
+    'timestamp_ms: 0',
+    'hydration_status: success',
+    'content:',
+    'CHANNEL_PARENT_OLD_CANARY',
+  ].join('\n'),
   rawContent: '{}',
 });
 assert.match(handled[0].text, /channel profile/);
+assert.match(handled[0].text, /CHANNEL_HANDOFF_SUMMARY/);
+assert.match(handled[0].parentContent, /reason: before_conversation_boundary/);
+assert.doesNotMatch(handled[0].text, /CHANNEL_PARENT_OLD_CANARY/);
+assert.doesNotMatch(handled[0].parentContent, /CHANNEL_PARENT_OLD_CANARY/);
+assert.deepEqual(consumedHandoff, {
+  chatId: 'oc_channel_enrich',
+  threadId: undefined,
+  generation: 4,
+});
 
 const controlChannel = new LarkChannel();
 let controlHandled = 0;

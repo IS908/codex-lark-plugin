@@ -31,6 +31,10 @@ await store.set({
   sessionId: 'recent-session',
   chatId: 'oc_recent',
   updatedAt: new Date(now.getTime() - 2 * DAY_MS).toISOString(),
+  generation: 3,
+  cutoffMessageId: 'om_new_recent',
+  cutoffTimestampMs: now.getTime() - DAY_MS,
+  handoffSummary: 'recent handoff',
 });
 await store.set({
   key: activeKey,
@@ -82,6 +86,9 @@ assert.equal(cleanup.failed, 0);
 assert.equal(cleanup.removedEmptyDirs, 2);
 assert.equal(await store.get(oldKey), null);
 assert.equal((await store.get(recentKey))?.sessionId, 'recent-session');
+assert.equal((await store.get(recentKey))?.generation, 3);
+assert.equal((await store.get(recentKey))?.cutoffMessageId, 'om_new_recent');
+assert.equal((await store.get(recentKey))?.handoffSummary, 'recent handoff');
 assert.equal((await store.get(activeKey))?.sessionId, 'active-session');
 assert.equal(existsSync(join(root, 'empty')), false);
 assert.equal(await readFile(join(root, 'invalid.json'), 'utf8'), '{"key":"broken"');

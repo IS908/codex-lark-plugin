@@ -86,6 +86,7 @@ export async function processSdkMessage(
       threadId: sdkMessage.threadId,
       rootId: sdkMessage.rootId,
       replyToMessageId: sdkMessage.replyToMessageId,
+      timestampMs: sdkMessage.createTime,
       mentionedBot: sdkMessage.mentionedBot,
       mentions: sdkMessage.mentions.map((mention) => ({
         id: mention.openId ?? mention.userId ?? mention.key,

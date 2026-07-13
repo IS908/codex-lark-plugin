@@ -9,11 +9,18 @@ import {
 } from './memory-context-dedup.js';
 import { enrichmentPrompt } from './prompts.js';
 import { buildRecentThreadContext } from './recent-thread-context.js';
+import {
+  filterBufferedMessagesAfterBoundary,
+  filterParentContentAfterBoundary,
+  formatConversationHandoffBlock,
+  type ConversationBoundary,
+} from './conversation-boundary.js';
 
 export interface MemoryEnrichmentDeps {
   memoryStore: MemoryStore | null;
   conversationBuffer: ConversationBuffer | null;
   memoryDeduper: MemoryContextDeduper;
+  conversationBoundary?: ConversationBoundary | null;
   log?: (line: string) => void;
 }
 
@@ -21,26 +28,39 @@ export async function enrichLarkMessageWithMemory(
   msg: LarkMessage,
   deps: MemoryEnrichmentDeps,
 ): Promise<string> {
+  const boundary = deps.conversationBoundary ?? null;
+  const bufferedMessages = deps.conversationBuffer
+    ? filterBufferedMessagesAfterBoundary(deps.conversationBuffer.getMessages(msg.chatId), boundary)
+    : [];
+  const parentContent = filterParentContentAfterBoundary(msg.parentContent, boundary);
   const recentThreadContext = deps.conversationBuffer
     ? buildRecentThreadContext({
         chatId: msg.chatId,
         threadId: msg.threadId,
         currentMessageId: msg.messageId,
-        messages: deps.conversationBuffer.getMessages(msg.chatId),
-        quotedContent: msg.parentContent,
+        messages: bufferedMessages,
+        quotedContent: parentContent,
       })
     : undefined;
 
   if (!deps.memoryStore) {
-    return enrichmentPrompt('', msg.parentContent, msg.senderId, msg.chatId, msg.text, recentThreadContext);
+    return enrichmentPrompt(
+      formatConversationHandoffBlock(boundary) ?? '',
+      parentContent,
+      msg.senderId,
+      msg.chatId,
+      msg.text,
+      recentThreadContext,
+    );
   }
 
   deps.memoryDeduper.setWindowMs(appConfig.memoryDedupWindowMs);
   const blocks: MemoryContextBlock[] = [];
+  const handoffBlock = formatConversationHandoffBlock(boundary);
 
   let searchQuery = msg.text;
   if (msg.text.length < 15 && deps.conversationBuffer) {
-    const recent = deps.conversationBuffer.getMessages(msg.chatId).slice(-3);
+    const recent = bufferedMessages.slice(-3);
     const context = recent.map(m => m.text).join(' ');
     if (context.length > 0) {
       searchQuery = `${context} ${msg.text}`;
@@ -124,14 +144,15 @@ export async function enrichLarkMessageWithMemory(
 
   const scopeKey = createMemoryDedupScopeKey(msg.chatId, msg.threadId);
   const deduped = deps.memoryDeduper.filter(scopeKey, blocks);
+  const memoryContext = [handoffBlock, deduped.memoryContext].filter(Boolean).join('\n\n');
   if (blocks.length > 0) {
     deps.log?.(
       `[memory-dedup] scope=${scopeKey} injected=${deduped.injectedCount} suppressed=${deduped.suppressedCount} bytes_saved=${deduped.bytesSaved}`
     );
   }
   return enrichmentPrompt(
-    deduped.memoryContext,
-    msg.parentContent,
+    memoryContext,
+    parentContent,
     msg.senderId,
     msg.chatId,
     msg.text,

@@ -7,6 +7,7 @@ import {
   FileCodexExecSessionStore,
   type CodexExecSessionStore,
 } from './codex-session-store.js';
+import { preserveConversationBoundaryFields } from './conversation-boundary.js';
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { larkReplyPresentationGuideline, untrustedDataBlock } from './prompts.js';
 import { findLarkDeferSentinel, type TurnObligationTracker } from './turn-obligation.js';
@@ -442,6 +443,7 @@ export async function deliverMessageViaCodexExec(
       chatId: message.chatId,
       ...(message.threadId ? { threadId: message.threadId } : {}),
       updatedAt: new Date().toISOString(),
+      ...preserveConversationBoundaryFields(existingSession),
       ...(sessionModel ? { model: sessionModel } : {}),
     });
   }

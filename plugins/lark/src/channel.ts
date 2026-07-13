@@ -38,6 +38,10 @@ import type { LarkCachedMessageContext } from './lark-message-context.js';
 import { enrichLarkMessageWithMemory } from './memory-enricher.js';
 import { handleCommentEvent } from './doc-comment-inbound.js';
 import { prepareInboundTurn } from './inbound-turn-pipeline.js';
+import {
+  filterParentContentAfterBoundary,
+  type ConversationBoundary,
+} from './conversation-boundary.js';
 
 export { resolveMentionPlaceholders } from './message-content.js';
 export { handleCommentEvent, passesDocCommentWhitelist } from './doc-comment-inbound.js';
@@ -88,6 +92,8 @@ export interface LarkMessage {
   parentContent?: string;
   threadId?: string;
   rootMessageId?: string;
+  timestampMs?: number;
+  messagePosition?: string;
   mentions?: Array<{ id: string; name: string }>;
   /** True when this bot's open_id appears in mentions. Forwarded to Codex as meta.bot_mentioned. */
   botMentioned?: boolean;
@@ -115,6 +121,10 @@ export interface LarkMessage {
 
 export type MessageHandler = (message: LarkMessage) => Promise<void>;
 export type ControlMessageHandler = (message: LarkMessage) => Promise<boolean>;
+export interface ConversationBoundaryProvider {
+  get(chatId: string, threadId?: string): Promise<ConversationBoundary | null>;
+  markHandoffConsumed(chatId: string, threadId: string | undefined, generation: number): Promise<void>;
+}
 
 const SDK_COMMENT_CONTEXT_CAP_BYTES = 8 * 1024;
 
@@ -242,6 +252,7 @@ export class LarkChannel {
   private larkTransport: LarkTransport;
   private larkTransportRawClient: Lark.Client;
   private larkTransportRuntime: 'openapi' | 'sdk' = 'openapi';
+  private conversationBoundaryProvider: ConversationBoundaryProvider | null = null;
 
   constructor() {
     this.client = new Lark.Client({
@@ -293,6 +304,10 @@ export class LarkChannel {
 
   setConversationBuffer(buffer: ConversationBuffer): void {
     this.conversationBuffer = buffer;
+  }
+
+  setConversationBoundaryProvider(provider: ConversationBoundaryProvider): void {
+    this.conversationBoundaryProvider = provider;
   }
 
   getClient(): Lark.Client {
@@ -480,29 +495,45 @@ export class LarkChannel {
       senderId,
       text: larkMessage.text,
       timestamp: new Date().toISOString(),
-      timestampMs: Date.now(),
+      timestampMs: larkMessage.timestampMs ?? Date.now(),
       messageId,
       threadId,
       messageType: larkMessage.messageType,
+      ...(larkMessage.messagePosition ? { messagePosition: larkMessage.messagePosition } : {}),
     });
 
     // Build memory-enriched context
     debugLog(`[channel] Enriching memory for message ${messageId}`);
-    const enrichedText = await enrichLarkMessageWithMemory(larkMessage, {
+    const conversationBoundary = this.conversationBoundaryProvider
+      ? await this.conversationBoundaryProvider.get(chatId, threadId)
+      : null;
+    const boundaryFilteredMessage = {
+      ...larkMessage,
+      parentContent: filterParentContentAfterBoundary(larkMessage.parentContent, conversationBoundary),
+    };
+    const enrichedText = await enrichLarkMessageWithMemory(boundaryFilteredMessage, {
       memoryStore: this.memoryStore,
       conversationBuffer: this.conversationBuffer,
       memoryDeduper: this.memoryDeduper,
+      conversationBoundary,
       log: debugLog,
     });
     debugLog(`[channel] Memory enrichment complete for message ${messageId}`);
 
     // Forward to handler with enriched context
-    const enrichedMessage = { ...larkMessage, text: enrichedText };
+    const enrichedMessage = { ...boundaryFilteredMessage, text: enrichedText };
 
     if (this.messageHandler) {
       debugLog(`[channel] Calling message handler for message ${messageId}`);
       try {
         await this.messageHandler(enrichedMessage);
+        if (conversationBoundary?.handoffSummary && !conversationBoundary.handoffConsumedAt) {
+          await this.conversationBoundaryProvider?.markHandoffConsumed(
+            chatId,
+            threadId,
+            conversationBoundary.generation,
+          );
+        }
         debugLog(`[channel] Message handler completed for message ${messageId}`);
       } catch (err) {
         this.invalidateMemoryDedupScope(chatId, threadId, `delivery failure for message ${messageId}`);

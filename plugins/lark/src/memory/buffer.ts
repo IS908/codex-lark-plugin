@@ -72,7 +72,11 @@ export class ConversationBuffer {
 
   async flushNow(
     chatId: string,
-    options: { threadId?: string; reason?: ConversationFlushReason } = {},
+    options: {
+      threadId?: string;
+      reason?: ConversationFlushReason;
+      commitBeforeRemove?: (result: ConversationFlushHandlerResult | void) => Promise<void>;
+    } = {},
   ): Promise<ConversationFlushResult> {
     const messages = this.selectMessages(chatId, options.threadId);
     if (messages.length === 0) return { status: 'empty', messageCount: 0 };
@@ -95,6 +99,7 @@ export class ConversationBuffer {
         messages: [...messages],
         reason: options.reason ?? 'manual',
       });
+      await options.commitBeforeRemove?.(result);
       this.removeMessages(chatId, messages);
       return {
         status: 'flushed',
