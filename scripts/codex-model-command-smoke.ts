@@ -53,17 +53,24 @@ async function runCommand(
   useCodexSessions = true,
   overrides: {
     flushConversation?: Parameters<typeof handleCodexModelCommand>[0]['flushConversation'];
+    sessionStore?: Parameters<typeof handleCodexModelCommand>[0]['sessionStore'];
   } = {},
 ): Promise<boolean> {
   identitySession.setCaller(message.chatId, message.threadId, message.senderId);
   return handleCodexModelCommand({
     message,
-    sessionStore: store,
+    sessionStore: overrides.sessionStore ?? store,
     identitySession,
     useCodexSessions,
     flushConversation: overrides.flushConversation ?? (async (request) => {
-      flushRequests.push(request);
-      return { status: 'flushed', messageCount: 2, summary: 'Short distilled summary.' };
+      flushRequests.push({
+        chatId: request.chatId,
+        ...(request.threadId ? { threadId: request.threadId } : {}),
+        reason: request.reason,
+      });
+      const result = { status: 'flushed' as const, messageCount: 2, summary: 'Short distilled summary.' };
+      await request.commitBeforeRemove?.({ summary: result.summary });
+      return result;
     }),
     resetSessionHealth: (sessionKey) => {
       sessionHealthResets.push(sessionKey);
@@ -260,6 +267,7 @@ await store.set({
 assert.equal(await runCommand({
   ...baseMessage,
   messageId: 'om_new',
+  timestampMs: 1781744460000,
   text: '/new',
   rawContent: '{"text":"/new"}',
 }), true);
@@ -273,6 +281,11 @@ assert.match(replies.at(-1)?.text ?? '', /New Codex session will start on the ne
 record = await store.get(sessionKey);
 assert.equal(record?.sessionId, '');
 assert.equal(record?.model, 'gpt-4');
+assert.equal(record?.generation, 1);
+assert.equal(record?.cutoffMessageId, 'om_new');
+assert.equal(record?.cutoffTimestampMs, 1781744460000);
+assert.equal(record?.handoffSummary, 'Short distilled summary.');
+assert.equal(record?.handoffConsumedAt, undefined);
 assert.equal(sessionHealthResets.at(-1), sessionKey);
 
 await store.set({
@@ -297,6 +310,7 @@ assert.match(replies.at(-1)?.text ?? '', /New session was not started/);
 assert.match(replies.at(-1)?.text ?? '', /buffered context were preserved/);
 record = await store.get(sessionKey);
 assert.equal(record?.sessionId, 'codex-session-before-new-failure');
+assert.equal(record?.generation, undefined);
 
 await store.set({
   key: sessionKey,
@@ -317,6 +331,7 @@ assert.equal(await runCommand({
 assert.match(replies.at(-1)?.text ?? '', /already running/);
 record = await store.get(sessionKey);
 assert.equal(record?.sessionId, 'codex-session-before-new-busy');
+assert.equal(record?.generation, undefined);
 
 await store.set({
   key: sessionKey,
@@ -325,10 +340,14 @@ await store.set({
   threadId: baseMessage.threadId,
   updatedAt: new Date().toISOString(),
   model: 'gpt-4',
+  generation: 2,
+  cutoffMessageId: 'om_previous_new',
+  cutoffTimestampMs: 1781744000000,
 });
 assert.equal(await runCommand({
   ...baseMessage,
   messageId: 'om_new_empty',
+  timestampMs: 1781744520000,
   text: '/new',
   rawContent: '{"text":"/new"}',
 }, true, {
@@ -338,6 +357,54 @@ assert.match(replies.at(-1)?.text ?? '', /No buffered context needed archiving/)
 record = await store.get(sessionKey);
 assert.equal(record?.sessionId, '');
 assert.equal(record?.model, 'gpt-4');
+assert.equal(record?.generation, 3);
+assert.equal(record?.cutoffMessageId, 'om_new_empty');
+assert.equal(record?.cutoffTimestampMs, 1781744520000);
+assert.equal(record?.handoffSummary, undefined);
+
+await store.set({
+  key: sessionKey,
+  sessionId: 'codex-session-before-boundary-write-failure',
+  chatId: baseMessage.chatId,
+  threadId: baseMessage.threadId,
+  updatedAt: new Date().toISOString(),
+  model: 'gpt-4',
+  generation: 9,
+  cutoffMessageId: 'om_existing_boundary',
+  cutoffTimestampMs: 1781744500000,
+});
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_new_boundary_write_failure',
+  timestampMs: 1781744580000,
+  text: '/new',
+  rawContent: '{"text":"/new"}',
+}, true, {
+  sessionStore: {
+    async get() {
+      return {
+        key: sessionKey,
+        sessionId: 'codex-session-before-boundary-write-failure',
+        chatId: baseMessage.chatId,
+        threadId: baseMessage.threadId,
+        updatedAt: new Date().toISOString(),
+        model: 'gpt-4',
+        generation: 9,
+        cutoffMessageId: 'om_existing_boundary',
+        cutoffTimestampMs: 1781744500000,
+      };
+    },
+    async set() {
+      throw new Error('session boundary write failed');
+    },
+  },
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /New session was not started/);
+assert.match(replies.at(-1)?.text ?? '', /session boundary write failed/);
+record = await store.get(sessionKey);
+assert.equal(record?.sessionId, 'codex-session-before-boundary-write-failure');
+assert.equal(record?.generation, 9);
+assert.equal(record?.cutoffMessageId, 'om_existing_boundary');
 
 assert.equal(await runCommand({
   ...baseMessage,

@@ -911,6 +911,42 @@ assert.deepEqual(sessionHealthRecords[0].usage, {
   contextWindowTokens: 200000,
 });
 
+sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
+  key: 'chat:oc_group_001:thread:omt_thread_001',
+  sessionId: '',
+  chatId: 'oc_group_001',
+  threadId: 'omt_thread_001',
+  updatedAt: new Date(0).toISOString(),
+  model: 'gpt-4',
+  generation: 5,
+  cutoffMessageId: 'om_new_boundary',
+  cutoffTimestampMs: 1781744460000,
+  handoffSummary: 'Short handoff.',
+});
+const boundarySessionRequests: any[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_boundary_first_turn',
+    text: '[Current Message]\nfirst turn after /new',
+  },
+  displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+  sessionStore,
+  runCodexExec: async (request) => {
+    boundarySessionRequests.push(request);
+    return { text: 'fresh session answer', sessionId: 'fresh-session-after-boundary' };
+  },
+  sendReply: async () => ({ sentCount: 1 }),
+});
+assert.equal(boundarySessionRequests[0].resumeSessionId, null);
+const boundaryRecord = sessionRecords.get('chat:oc_group_001:thread:omt_thread_001');
+assert.equal(boundaryRecord?.sessionId, 'fresh-session-after-boundary');
+assert.equal(boundaryRecord?.model, 'gpt-4');
+assert.equal(boundaryRecord?.generation, 5);
+assert.equal(boundaryRecord?.cutoffMessageId, 'om_new_boundary');
+assert.equal(boundaryRecord?.cutoffTimestampMs, 1781744460000);
+assert.equal(boundaryRecord?.handoffSummary, 'Short handoff.');
+
 const actionDispatches: any[] = [];
 const actionReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({

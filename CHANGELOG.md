@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.21.1] - 2026-07-13
+
+### Fixed
+- Hardened `/new` by persisting a per-chat/thread generation boundary with cutoff metadata, clearing the session pointer atomically with the boundary update, and filtering pre-boundary recent/quoted/root/hydrated raw context before prompt assembly.
+- Preserved buffered context when `/new` distillation succeeds but boundary persistence fails, capped persisted handoff summaries, and stopped debug logs from recording enriched prompt content.
+
 ## [1.21.0] - 2026-07-13
 
 ### Added

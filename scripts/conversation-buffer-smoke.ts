@@ -44,6 +44,22 @@ await assert.rejects(
 );
 assert.deepEqual(buffer.getMessages('oc_buffer').map((message) => message.text), ['thread two message']);
 
+buffer.setFlushHandler(async (request) => {
+  requests.push(request);
+  return { summary: 'commit gate summary' };
+});
+await assert.rejects(
+  () => buffer.flushNow('oc_buffer', {
+    threadId: 'omt_two',
+    reason: 'new_session',
+    commitBeforeRemove: async () => {
+      throw new Error('boundary commit failed');
+    },
+  }),
+  /boundary commit failed/,
+);
+assert.deepEqual(buffer.getMessages('oc_buffer').map((message) => message.text), ['thread two message']);
+
 let releaseFlush!: () => void;
 buffer.setFlushHandler(async () => {
   await new Promise<void>((resolve) => {

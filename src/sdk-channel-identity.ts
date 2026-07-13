@@ -13,6 +13,8 @@ export interface SdkIdentityMessage {
   threadId?: string;
   rootId?: string;
   replyToMessageId?: string;
+  timestampMs?: number;
+  messagePosition?: string;
   mentionedBot?: boolean;
   mentions?: Array<{ id?: string; openId?: string; name?: string }>;
 }
@@ -64,6 +66,8 @@ export function bindSdkMessageIdentity(
     parentId: sdkMessage.replyToMessageId,
     threadId,
     rootMessageId: sdkMessage.rootId,
+    timestampMs: sdkMessage.timestampMs,
+    messagePosition: sdkMessage.messagePosition,
     mentions: normalizeMentions(sdkMessage.mentions),
     botMentioned: sdkMessage.mentionedBot,
     rawContent: sdkMessage.content,

@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.21.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.21.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -410,10 +410,17 @@ Model resolution order is: chat/thread override, then `LARK_CODEX_EXEC_MODEL`,
 then the Codex CLI default. The override is stored on the existing
 `codex-sessions` record and follows the same retention lifecycle. `/flush`
 persists the current chat/thread buffer into memory and leaves the session
-pointer unchanged. `/new` runs the same safe flush first, then clears only the
-current chat/thread session pointer; long-term memories, jobs, access control,
-and model overrides are preserved. If distillation fails, buffered context and
-the current session pointer are preserved.
+pointer unchanged; it does not create a raw-context isolation boundary. `/new`
+runs the same safe flush first, then atomically advances a persisted
+chat/thread generation boundary (`cutoffMessageId` + `cutoffTimestampMs`) and
+clears only the current chat/thread session pointer. The next turn starts a new
+Codex session, receives at most the bounded handoff summary once, and prompt
+assembly filters pre-cutoff Recent Thread Context plus quoted/root/hydrated
+message bodies before they reach Codex. Older explicitly quoted messages are
+not automatically injected across the boundary; the prompt keeps only a compact
+omission marker. Long-term memories, jobs, access control, and model overrides
+are preserved. If distillation or boundary persistence fails, buffered context,
+the current session pointer, and the previous generation boundary are preserved.
 
 Exec delivery can expose a bounded progress side channel for long-running
 visible IM/doc-comment turns. The parent bridge creates a temporary JSONL file

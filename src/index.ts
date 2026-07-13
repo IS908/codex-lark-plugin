@@ -15,6 +15,11 @@ import { mcpServerInstructions } from './prompts.js';
 import { debugLog } from './debug-log.js';
 import { deliverMessageViaCodexExec } from './codex-exec-delivery.js';
 import { handleCodexModelCommand } from './codex-model-command.js';
+import { FileCodexExecSessionStore } from './codex-session-store.js';
+import {
+  markConversationHandoffConsumed,
+  readConversationBoundary,
+} from './conversation-boundary.js';
 import { sendFeishuReply } from './reply-sender.js';
 import { TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
@@ -102,6 +107,12 @@ async function main() {
   const channel = new LarkChannel();
   channel.setMemoryStore(memoryStore);
   channel.setIdentitySession(identitySession);
+  const codexSessionStore = new FileCodexExecSessionStore(appConfig.codexExecSessionsDir);
+  channel.setConversationBoundaryProvider({
+    get: (chatId, threadId) => readConversationBoundary(codexSessionStore, chatId, threadId),
+    markHandoffConsumed: (chatId, threadId, generation) =>
+      markConversationHandoffConsumed(codexSessionStore, chatId, threadId, generation),
+  });
   const profileDistiller = new ProfileDistillationManager({
     enabled: appConfig.profileDistillationEnabled,
     memoryStore,
@@ -272,9 +283,11 @@ async function main() {
 
   channel.setControlMessageHandler(async (message) => handleCodexModelCommand({
     message,
+    sessionStore: codexSessionStore,
     identitySession,
     useCodexSessions: appConfig.codexExecUseSessions,
-    flushConversation: ({ chatId, threadId, reason }) => buffer.flushNow(chatId, { threadId, reason }),
+    flushConversation: ({ chatId, threadId, reason, commitBeforeRemove }) =>
+      buffer.flushNow(chatId, { threadId, reason, commitBeforeRemove }),
     resetSessionHealth: (sessionKey) => sessionHealthMonitor?.reset(sessionKey, 'manual'),
     validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
     sendReply: (request) => sendFeishuReply(
@@ -301,7 +314,7 @@ async function main() {
     const displayLabel = displayParts.join(' · ');
 
     debugLog(
-      `[channel] Handler received message ${message.messageId} chat=${message.chatId} thread=${message.threadId ?? '(none)'} from=${displayLabel}: ${message.text.slice(0, 100)}...`
+      `[channel] Handler received message ${message.messageId} chat=${message.chatId} thread=${message.threadId ?? '(none)'} from=${displayLabel} text_bytes=${Buffer.byteLength(message.text, 'utf8')}`
     );
     const hasReplyObligation = message.chatType === 'p2p' || message.chatType === 'group';
     identitySession.beginChannelTurn(message.chatId, message.threadId, appConfig.replyObligationTimeoutMs);
@@ -346,6 +359,7 @@ async function main() {
       await deliverMessageViaCodexExec({
         message,
         displayLabel,
+        sessionStore: codexSessionStore,
         sendReply: sendReplyViaFeishu,
         sendDocCommentReply: async (request) => {
           const resp = await channel.getLarkTransport().replyDocComment({
@@ -459,6 +473,7 @@ async function main() {
           await deliverMessageViaCodexExec({
             message,
             displayLabel: `CronJob · ${job.meta.name}`,
+            sessionStore: codexSessionStore,
             traceLogId: job.meta.id,
             traceRunId: runId,
             sendReply: async (request) => {

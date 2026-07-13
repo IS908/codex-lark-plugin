@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-1.21.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.21.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -387,9 +387,15 @@ Owner-only：
 模型解析顺序是：chat/thread override，然后是 `LARK_CODEX_EXEC_MODEL`，
 最后回落到 Codex CLI 默认值。override 存在现有 `codex-sessions` 记录上，
 并跟随同一套 retention 生命周期。`/flush` 会把当前 chat/thread buffer 持久化到
-memory，不改变 session pointer。`/new` 会先执行同一套安全 flush，再只清除当前
-chat/thread 的 session pointer；长期记忆、任务、访问控制和模型 override 都保留。
-如果蒸馏失败，buffered context 和当前 session pointer 都会保留。
+memory，不改变 session pointer，也不建立 raw-context 隔离边界。`/new` 会先执行
+同一套安全 flush，再原子推进当前 chat/thread 的持久化 generation boundary
+（`cutoffMessageId` + `cutoffTimestampMs`），并清除当前 chat/thread 的 session
+pointer。下一个 turn 会启动新的 Codex session，最多只注入一次有上限的 handoff
+summary，并在最终 prompt 组装前过滤 cutoff 之前的 Recent Thread Context 以及
+quoted/root/hydrated message 正文。边界前的显式 quoted 旧消息默认不会自动跨界注入，
+prompt 只保留紧凑的省略标记。长期记忆、任务、访问控制和模型 override 都保留。
+如果蒸馏或 boundary 持久化失败，buffered context、当前 session pointer 和旧
+generation boundary 都会保留。
 
 当 `LARK_CODEX_EXEC_TOOL_TRACE=true` 时，父进程会扫描 `codex exec --json`
 stdout 中的工具执行事件，并把脱敏的人类可读文本行追加到
