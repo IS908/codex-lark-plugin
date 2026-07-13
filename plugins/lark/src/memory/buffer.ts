@@ -15,7 +15,26 @@ export interface BufferedMessage {
   messagePosition?: string;
 }
 
-type FlushHandler = (chatId: string, messages: BufferedMessage[]) => Promise<void>;
+export type ConversationFlushReason = 'auto' | 'manual' | 'new_session';
+
+export interface ConversationFlushRequest {
+  chatId: string;
+  threadId?: string;
+  messages: BufferedMessage[];
+  reason: ConversationFlushReason;
+}
+
+export interface ConversationFlushHandlerResult {
+  summary?: string;
+}
+
+export interface ConversationFlushResult {
+  status: 'flushed' | 'empty' | 'busy';
+  messageCount: number;
+  summary?: string;
+}
+
+type FlushHandler = (request: ConversationFlushRequest) => Promise<ConversationFlushHandlerResult | void>;
 
 /**
  * Per-chat conversation buffer (Layer 1 — short-term/working memory).
@@ -49,6 +68,45 @@ export class ConversationBuffer {
   clear(chatId: string): void {
     this.buffers.delete(chatId);
     this.clearTimer(chatId);
+  }
+
+  async flushNow(
+    chatId: string,
+    options: { threadId?: string; reason?: ConversationFlushReason } = {},
+  ): Promise<ConversationFlushResult> {
+    const messages = this.selectMessages(chatId, options.threadId);
+    if (messages.length === 0) return { status: 'empty', messageCount: 0 };
+    if (this.flushing.has(chatId)) return { status: 'busy', messageCount: messages.length };
+
+    console.error(
+      `[buffer] ${options.reason ?? 'manual'} flush triggered for chat ${chatId}`
+      + `${options.threadId ? ` thread=${options.threadId}` : ''} (${messages.length} messages)`,
+    );
+
+    this.clearTimer(chatId);
+    this.flushing.add(chatId);
+    try {
+      if (!this.flushHandler) {
+        throw new Error('Conversation flush handler is not configured.');
+      }
+      const result = await this.flushHandler({
+        chatId,
+        ...(options.threadId ? { threadId: options.threadId } : {}),
+        messages: [...messages],
+        reason: options.reason ?? 'manual',
+      });
+      this.removeMessages(chatId, messages);
+      return {
+        status: 'flushed',
+        messageCount: messages.length,
+        ...(result?.summary ? { summary: result.summary } : {}),
+      };
+    } catch (err) {
+      this.resetTimer(chatId);
+      throw err;
+    } finally {
+      this.flushing.delete(chatId);
+    }
   }
 
   /**
@@ -114,24 +172,29 @@ export class ConversationBuffer {
   }
 
   private async triggerFlush(chatId: string): Promise<void> {
-    const messages = this.buffers.get(chatId);
-    if (!messages || messages.length === 0) return;
-    if (this.flushing.has(chatId)) return; // already flushing
-
-    console.error(`[buffer] Auto-flush triggered for chat ${chatId} (${messages.length} messages)`);
-
-    this.flushing.add(chatId);
     try {
-      if (this.flushHandler) {
-        await this.flushHandler(chatId, [...messages]);
-      }
+      await this.flushNow(chatId, { reason: 'auto' });
     } catch (err) {
       logSafeError(`[buffer] Flush failed for chat ${chatId}:`, err);
-    } finally {
-      this.flushing.delete(chatId);
     }
+  }
 
-    this.buffers.delete(chatId);
-    this.timers.delete(chatId);
+  private selectMessages(chatId: string, threadId?: string): BufferedMessage[] {
+    const messages = this.buffers.get(chatId) ?? [];
+    return threadId ? messages.filter((message) => message.threadId === threadId) : messages;
+  }
+
+  private removeMessages(chatId: string, flushed: BufferedMessage[]): void {
+    const existing = this.buffers.get(chatId);
+    if (!existing) return;
+    const flushedSet = new Set(flushed);
+    const remaining = existing.filter((message) => !flushedSet.has(message));
+    if (remaining.length === 0) {
+      this.buffers.delete(chatId);
+      this.timers.delete(chatId);
+      return;
+    }
+    this.buffers.set(chatId, remaining);
+    this.resetTimer(chatId);
   }
 }

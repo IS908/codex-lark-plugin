@@ -32,6 +32,8 @@ const identitySession = new IdentitySession(() => 'ou_sender');
 const replies: ReplyRequest[] = [];
 const assistantRecords: Array<{ chatId: string; threadId?: string; text: string }> = [];
 const validatedChats: string[] = [];
+const flushRequests: Array<{ chatId: string; threadId?: string; reason: string }> = [];
+const sessionHealthResets: string[] = [];
 
 const baseMessage: LarkMessage = {
   messageId: 'om_model_001',
@@ -46,13 +48,26 @@ const baseMessage: LarkMessage = {
   botMentioned: true,
 };
 
-async function runCommand(message: LarkMessage, useCodexSessions = true): Promise<boolean> {
+async function runCommand(
+  message: LarkMessage,
+  useCodexSessions = true,
+  overrides: {
+    flushConversation?: Parameters<typeof handleCodexModelCommand>[0]['flushConversation'];
+  } = {},
+): Promise<boolean> {
   identitySession.setCaller(message.chatId, message.threadId, message.senderId);
   return handleCodexModelCommand({
     message,
     sessionStore: store,
     identitySession,
     useCodexSessions,
+    flushConversation: overrides.flushConversation ?? (async (request) => {
+      flushRequests.push(request);
+      return { status: 'flushed', messageCount: 2, summary: 'Short distilled summary.' };
+    }),
+    resetSessionHealth: (sessionKey) => {
+      sessionHealthResets.push(sessionKey);
+    },
     validateChatAccess: async (chatId) => {
       validatedChats.push(chatId);
       if (chatId === 'oc_missing') throw new Error('Chat oc_missing does not exist.');
@@ -69,11 +84,24 @@ async function runCommand(message: LarkMessage, useCodexSessions = true): Promis
 
 const sessionKey = buildCodexExecSessionKey(baseMessage.chatId, baseMessage.threadId);
 
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_help',
+  text: '/help',
+  rawContent: '{"text":"/help"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /User commands:/);
+for (const command of ['/help', '/model', '/flush', '/new']) {
+  assert.match(replies.at(-1)?.text ?? '', new RegExp(command.replace('/', '\\/')));
+}
+assert.match(replies.at(-1)?.text ?? '', /Owner-only commands:/);
+assert.match(replies.at(-1)?.text ?? '', /\/access/);
+
 assert.equal(await runCommand(baseMessage), true);
-assert.equal(replies.length, 1);
-assert.equal(replies[0].reply_to, 'om_model_001');
-assert.match(replies[0].text, /override set to gpt-5\.6-sol/);
-assert.equal(assistantRecords.length, 1);
+assert.equal(replies.at(-1)?.reply_to, 'om_model_001');
+assert.match(replies.at(-1)?.text ?? '', /override set to gpt-5\.6-sol/);
+assert.equal(assistantRecords.at(-1)?.chatId, baseMessage.chatId);
+assert.match(assistantRecords.at(-1)?.text ?? '', /override set to gpt-5\.6-sol/);
 let record = await store.get(sessionKey);
 assert.equal(record?.sessionId, '');
 assert.equal(record?.model, 'gpt-5.6-sol');
@@ -172,6 +200,152 @@ assert.equal(await runCommand({
 assert.match(replies.at(-1)?.text ?? '', /Chat\/thread Codex model override set to gpt-4/);
 record = await store.get(sessionKey);
 assert.equal(record?.model, 'gpt-4');
+
+await store.set({
+  key: sessionKey,
+  sessionId: 'codex-session-before-flush',
+  chatId: baseMessage.chatId,
+  threadId: baseMessage.threadId,
+  updatedAt: new Date().toISOString(),
+  model: 'gpt-4',
+});
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_flush',
+  text: '/flush',
+  rawContent: '{"text":"/flush"}',
+}), true);
+assert.deepEqual(flushRequests.at(-1), {
+  chatId: baseMessage.chatId,
+  threadId: baseMessage.threadId,
+  reason: 'manual',
+});
+assert.match(replies.at(-1)?.text ?? '', /Conversation context flushed \(2 messages\)/);
+assert.match(replies.at(-1)?.text ?? '', /Current Codex session is unchanged/);
+assert.match(replies.at(-1)?.text ?? '', /Short distilled summary/);
+record = await store.get(sessionKey);
+assert.equal(record?.sessionId, 'codex-session-before-flush');
+assert.equal(record?.model, 'gpt-4');
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_flush_p2p',
+  chatId: 'oc_p2p_flush',
+  chatType: 'p2p',
+  threadId: undefined,
+  text: '/flush',
+  rawContent: '{"text":"/flush"}',
+}), true);
+assert.deepEqual(flushRequests.at(-1), {
+  chatId: 'oc_p2p_flush',
+  reason: 'manual',
+});
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_flush_invalid',
+  text: '/flush now',
+  rawContent: '{"text":"/flush now"}',
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /Invalid \/flush command/);
+
+await store.set({
+  key: sessionKey,
+  sessionId: 'codex-session-before-new',
+  chatId: baseMessage.chatId,
+  threadId: baseMessage.threadId,
+  updatedAt: new Date().toISOString(),
+  model: 'gpt-4',
+});
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_new',
+  text: '/new',
+  rawContent: '{"text":"/new"}',
+}), true);
+assert.deepEqual(flushRequests.at(-1), {
+  chatId: baseMessage.chatId,
+  threadId: baseMessage.threadId,
+  reason: 'new_session',
+});
+assert.match(replies.at(-1)?.text ?? '', /Conversation context archived \(2 messages\)/);
+assert.match(replies.at(-1)?.text ?? '', /New Codex session will start on the next turn/);
+record = await store.get(sessionKey);
+assert.equal(record?.sessionId, '');
+assert.equal(record?.model, 'gpt-4');
+assert.equal(sessionHealthResets.at(-1), sessionKey);
+
+await store.set({
+  key: sessionKey,
+  sessionId: 'codex-session-before-new-failure',
+  chatId: baseMessage.chatId,
+  threadId: baseMessage.threadId,
+  updatedAt: new Date().toISOString(),
+  model: 'gpt-4',
+});
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_new_failure',
+  text: '/new',
+  rawContent: '{"text":"/new"}',
+}, true, {
+  flushConversation: async () => {
+    throw new Error('distillation failed');
+  },
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /New session was not started/);
+assert.match(replies.at(-1)?.text ?? '', /buffered context were preserved/);
+record = await store.get(sessionKey);
+assert.equal(record?.sessionId, 'codex-session-before-new-failure');
+
+await store.set({
+  key: sessionKey,
+  sessionId: 'codex-session-before-new-busy',
+  chatId: baseMessage.chatId,
+  threadId: baseMessage.threadId,
+  updatedAt: new Date().toISOString(),
+  model: 'gpt-4',
+});
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_new_busy',
+  text: '/new',
+  rawContent: '{"text":"/new"}',
+}, true, {
+  flushConversation: async () => ({ status: 'busy', messageCount: 2 }),
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /already running/);
+record = await store.get(sessionKey);
+assert.equal(record?.sessionId, 'codex-session-before-new-busy');
+
+await store.set({
+  key: sessionKey,
+  sessionId: 'codex-session-before-new-empty',
+  chatId: baseMessage.chatId,
+  threadId: baseMessage.threadId,
+  updatedAt: new Date().toISOString(),
+  model: 'gpt-4',
+});
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_new_empty',
+  text: '/new',
+  rawContent: '{"text":"/new"}',
+}, true, {
+  flushConversation: async () => ({ status: 'empty', messageCount: 0 }),
+}), true);
+assert.match(replies.at(-1)?.text ?? '', /No buffered context needed archiving/);
+record = await store.get(sessionKey);
+assert.equal(record?.sessionId, '');
+assert.equal(record?.model, 'gpt-4');
+
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_new_disabled',
+  text: '/new',
+  rawContent: '{"text":"/new"}',
+}, false), true);
+assert.match(replies.at(-1)?.text ?? '', /LARK_CODEX_EXEC_USE_SESSIONS=true/);
 
 assert.equal(await runCommand({
   ...baseMessage,
@@ -354,5 +528,8 @@ const auditText = readFileSync(appConfig.auditLogPath, 'utf8');
 assert.match(auditText, /lark_model_command\s+ok/);
 assert.match(auditText, /lark_access_command\s+ok/);
 assert.match(auditText, /lark_access_command\s+denied/);
+assert.match(auditText, /lark_flush_command\s+ok/);
+assert.match(auditText, /lark_new_session_command\s+ok/);
+assert.match(auditText, /lark_new_session_command\s+error/);
 
 console.log('codex-model-command smoke: PASS');

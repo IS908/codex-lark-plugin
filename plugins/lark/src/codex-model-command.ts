@@ -1,6 +1,7 @@
 import { appConfig } from './config.js';
 import type { LarkMessage } from './channel.js';
 import { audit } from './audit-log.js';
+import type { ConversationFlushResult, ConversationFlushReason } from './memory/buffer.js';
 import {
   buildCodexExecSessionKey,
   FileCodexExecSessionStore,
@@ -30,6 +31,12 @@ export interface CodexModelCommandOptions {
   validateChatAccess?: AccessControlValidationInput['validateChatAccess'];
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
   recordAssistantMessage?: (message: { chatId: string; threadId?: string; text: string }) => void;
+  flushConversation?: (request: {
+    chatId: string;
+    threadId?: string;
+    reason: ConversationFlushReason;
+  }) => Promise<ConversationFlushResult>;
+  resetSessionHealth?: (sessionKey: string) => void;
 }
 
 type ModelCommand =
@@ -45,11 +52,61 @@ type AccessCommand =
   | { action: 'invalid'; error: string };
 
 type ControlCommand =
+  | { kind: 'help' }
   | { kind: 'model'; command: ModelCommand }
-  | { kind: 'access'; command: AccessCommand };
+  | { kind: 'access'; command: AccessCommand }
+  | { kind: 'flush'; command: SimpleControlCommand }
+  | { kind: 'new'; command: SimpleControlCommand };
+
+type SimpleControlCommand =
+  | { action: 'run' }
+  | { action: 'invalid'; error: string };
+
+interface ChatCommandDefinition {
+  name: 'help' | 'model' | 'access' | 'flush' | 'new';
+  usage: string;
+  description: string;
+  scope: 'user' | 'owner';
+}
 
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/;
 const defaultSessionStore = new FileCodexExecSessionStore(appConfig.codexExecSessionsDir);
+const CHAT_COMMANDS: ChatCommandDefinition[] = [
+  {
+    name: 'help',
+    usage: '/help',
+    description: 'Show supported chat commands and permission scope.',
+    scope: 'user',
+  },
+  {
+    name: 'model',
+    usage: '/model [model-id|reset]',
+    description: 'Show, set, or clear the current chat/thread Codex model override.',
+    scope: 'user',
+  },
+  {
+    name: 'flush',
+    usage: '/flush',
+    description: 'Distill buffered conversation context now and keep using the current Codex session.',
+    scope: 'user',
+  },
+  {
+    name: 'new',
+    usage: '/new',
+    description: 'Distill buffered context, then clear the current chat/thread session pointer for a fresh next turn.',
+    scope: 'user',
+  },
+  {
+    name: 'access',
+    usage: '/access [list|add|remove|admin list ...]',
+    description: 'Inspect or manage runtime access control.',
+    scope: 'owner',
+  },
+];
+const CONTROL_COMMAND_PATTERN = new RegExp(
+  `^/(?:${CHAT_COMMANDS.map((command) => command.name).join('|')})(?:\\s|$)`,
+  'i',
+);
 
 export async function handleCodexModelCommand(
   opts: CodexModelCommandOptions,
@@ -66,7 +123,9 @@ export async function handleCodexModelCommand(
   };
 
   let text: string;
-  if (parsed.kind === 'model') {
+  if (parsed.kind === 'help') {
+    text = formatHelpMessage();
+  } else if (parsed.kind === 'model') {
     try {
       if (parsed.command.action === 'invalid') {
         text = parsed.command.error;
@@ -78,6 +137,32 @@ export async function handleCodexModelCommand(
     } catch (err) {
       await audit('lark_model_command', caller, auditArgs, 'error');
       text = err instanceof Error ? err.message : String(err);
+    }
+  } else if (parsed.kind === 'flush') {
+    try {
+      if (parsed.command.action === 'invalid') {
+        text = parsed.command.error;
+        await audit('lark_flush_command', caller, auditArgs, 'error');
+      } else {
+        text = await executeFlushCommand(opts);
+        await audit('lark_flush_command', caller, auditArgs, 'ok');
+      }
+    } catch (err) {
+      await audit('lark_flush_command', caller, auditArgs, 'error');
+      text = formatFlushFailure(err, false);
+    }
+  } else if (parsed.kind === 'new') {
+    try {
+      if (parsed.command.action === 'invalid') {
+        text = parsed.command.error;
+        await audit('lark_new_session_command', caller, auditArgs, 'error');
+      } else {
+        text = await executeNewSessionCommand(opts);
+        await audit('lark_new_session_command', caller, auditArgs, 'ok');
+      }
+    } catch (err) {
+      await audit('lark_new_session_command', caller, auditArgs, 'error');
+      text = formatFlushFailure(err, true);
     }
   } else if (!appConfig.ownerOpenId || caller !== appConfig.ownerOpenId) {
     await audit('lark_access_command', caller, auditArgs, 'denied');
@@ -123,6 +208,15 @@ function parseControlCommand(message: LarkMessage): ControlCommand | null {
   }
   if (/^\/access(?:\s|$)/i.test(normalized)) {
     return { kind: 'access', command: parseAccessCommandText(normalized) };
+  }
+  if (/^\/help(?:\s|$)/i.test(normalized)) {
+    return { kind: 'help' };
+  }
+  if (/^\/flush(?:\s|$)/i.test(normalized)) {
+    return { kind: 'flush', command: parseNoArgControlCommand(normalized, 'flush') };
+  }
+  if (/^\/new(?:\s|$)/i.test(normalized)) {
+    return { kind: 'new', command: parseNoArgControlCommand(normalized, 'new') };
   }
   return null;
 }
@@ -174,6 +268,13 @@ function parseAccessCommandText(normalized: string): AccessCommand {
   return { action, list, value };
 }
 
+function parseNoArgControlCommand(normalized: string, commandName: 'flush' | 'new'): SimpleControlCommand {
+  const match = normalized.match(new RegExp(`^/${commandName}(?:\\s+(.+))?$`, 'i'));
+  const arg = (match?.[1] ?? '').trim();
+  if (!arg) return { action: 'run' };
+  return { action: 'invalid', error: `Invalid /${commandName} command. Use /${commandName} with no arguments.` };
+}
+
 function normalizeAccessList(raw: string | undefined): AccessControlListName | null {
   const value = raw?.toLowerCase().replace(/_/g, '-');
   if (value === 'user' || value === 'users' || value === 'allowed-user-ids') return 'allowed_user_ids';
@@ -200,7 +301,7 @@ function commandTextCandidate(message: LarkMessage): string {
 }
 
 function looksLikeControlCommand(text: string): boolean {
-  return /^\/(?:model|access)(?:\s|$)/i.test(stripLeadingMentions(text.replace(/\u00a0/g, ' ').trim()));
+  return CONTROL_COMMAND_PATTERN.test(stripLeadingMentions(text.replace(/\u00a0/g, ' ').trim()));
 }
 
 function stripLeadingMentions(text: string): string {
@@ -267,6 +368,93 @@ async function executeCodexModelCommand(
     model: command.model,
   });
   return `Chat/thread Codex model override set to ${command.model}. Subsequent realtime turns in this chat/thread will use it.`;
+}
+
+async function executeFlushCommand(opts: CodexModelCommandOptions): Promise<string> {
+  if (!opts.flushConversation) {
+    return 'Manual conversation flush is not configured.';
+  }
+  const result = await opts.flushConversation({
+    chatId: opts.message.chatId,
+    ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
+    reason: 'manual',
+  });
+  if (result.status === 'empty') return 'No buffered conversation context to flush.';
+  if (result.status === 'busy') return 'A conversation flush is already running for this chat. Try again after it finishes.';
+  return formatFlushSuccess(result, false);
+}
+
+async function executeNewSessionCommand(opts: CodexModelCommandOptions): Promise<string> {
+  const useSessions = opts.useCodexSessions ?? appConfig.codexExecUseSessions;
+  if (!useSessions) {
+    return 'New chat requires LARK_CODEX_EXEC_USE_SESSIONS=true.';
+  }
+  if (!opts.flushConversation) {
+    return 'Manual conversation flush is not configured. New chat was not started.';
+  }
+
+  const flushResult = await opts.flushConversation({
+    chatId: opts.message.chatId,
+    ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
+    reason: 'new_session',
+  });
+  if (flushResult.status === 'busy') {
+    return 'A conversation flush is already running for this chat. New chat was not started.';
+  }
+
+  const sessionKey = await clearCodexSessionPointer(opts);
+  opts.resetSessionHealth?.(sessionKey);
+  if (flushResult.status === 'empty') {
+    return 'No buffered context needed archiving. New Codex session will start on the next turn.';
+  }
+  return formatFlushSuccess(flushResult, true);
+}
+
+async function clearCodexSessionPointer(opts: CodexModelCommandOptions): Promise<string> {
+  const sessionStore = opts.sessionStore ?? defaultSessionStore;
+  const sessionKey = buildCodexExecSessionKey(opts.message.chatId, opts.message.threadId);
+  const existing = await sessionStore.get(sessionKey);
+  await sessionStore.set({
+    key: sessionKey,
+    sessionId: '',
+    chatId: opts.message.chatId,
+    ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
+    updatedAt: new Date().toISOString(),
+    ...(existing?.model ? { model: existing.model } : {}),
+  });
+  return sessionKey;
+}
+
+function formatFlushSuccess(result: ConversationFlushResult, startedNewSession: boolean): string {
+  const headline = startedNewSession
+    ? `Conversation context archived (${result.messageCount} messages). New Codex session will start on the next turn.`
+    : `Conversation context flushed (${result.messageCount} messages). Current Codex session is unchanged.`;
+  return result.summary ? `${headline}\n\nSummary:\n${result.summary}` : headline;
+}
+
+function formatFlushFailure(err: unknown, newSession: boolean): string {
+  const prefix = newSession
+    ? 'New session was not started because conversation flush failed; current session and buffered context were preserved.'
+    : 'Conversation flush failed; current session and buffered context were preserved.';
+  const message = err instanceof Error ? err.message : String(err);
+  return `${prefix}\nError: ${message}`;
+}
+
+function formatHelpMessage(): string {
+  const formatSection = (scope: ChatCommandDefinition['scope'], title: string) => {
+    const rows = CHAT_COMMANDS.filter((command) => command.scope === scope);
+    return [
+      title,
+      ...rows.map((command) => `- ${command.usage}: ${command.description}`),
+    ].join('\n');
+  };
+  return [
+    'Available chat commands',
+    '',
+    formatSection('user', 'User commands:'),
+    '',
+    formatSection('owner', 'Owner-only commands:'),
+  ].join('\n');
 }
 
 async function executeAccessCommand(

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-07-13
+
+### Added
+- Added `/help`, `/flush`, and `/new` realtime chat commands. `/help` is generated from the shared command definition, `/flush` manually distills buffered context without changing the current Codex session, and `/new` distills buffered context before clearing the current chat/thread session pointer.
+- Added conversation-buffer flush coverage for thread-scoped manual flushes, failure preservation, and duplicate-trigger handling.
+
 ## [1.20.2] - 2026-07-13
 
 ### Changed

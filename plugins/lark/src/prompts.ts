@@ -63,14 +63,23 @@ export function assertSafeChatId(value: string): string {
  * episode summary here — individual profile updates happen in the dedicated
  * profileDistillationPrompt path where the target user is unambiguous.
  */
-export function flushPrompt(chatId: string, conversation: string, messageCount: number): string {
+export function flushPrompt(
+  chatId: string,
+  conversation: string,
+  messageCount: number,
+  threadId?: string,
+): string {
+  const memoryType = threadId ? 'thread' : 'chat';
+  const threadArg = threadId ? `, thread_id="${threadId}"` : '';
+  const scopeText = threadId ? `thread ${threadId} in chat ${chatId}` : `chat ${chatId}`;
   return `[Auto-memory-flush — system-initiated]
-This is a buffer flush triggered by inactivity, not a user message. The plugin has bound a system caller for this turn, so save_memory(type="chat", ...) will succeed even though no real user invoked it.
+This is a buffer flush triggered by inactivity, not a user message. The plugin has bound a system caller for this turn, so save_memory(type="${memoryType}", ...) will succeed even though no real user invoked it.
 
-The following is a conversation from chat ${chatId} (${messageCount} messages).
+The following is a conversation from ${scopeText} (${messageCount} messages).
 Please:
 1. Write a 3-5 sentence summary focusing on: what was discussed, what was decided, what was resolved, and any open items.
-2. Call save_memory(type="chat", content=<summary>, reason=<why>, chat_id="${chatId}") to persist it. Do not output a reply — this is system, not user.
+2. Call save_memory(type="${memoryType}", content=<summary>, reason=<why>, chat_id="${chatId}"${threadArg}) to persist it.
+3. Output only the same concise summary text after the save_memory call. The plugin suppresses automatic flush replies, but manual /flush and /new commands reuse this text as their confirmation summary.
 
 Do NOT call save_memory(type="profile", ...) in this turn — profile writes are user-scoped (they persist into a specific user's profile directory), and a system caller has no user identity to attribute private-tier data to. The server-side gate will reject any profile write attempt here. Individual profile updates are handled by a separate distillation stage.
 
