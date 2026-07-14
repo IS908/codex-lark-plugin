@@ -87,6 +87,7 @@ The `$lark:configure` skill (in `skills/configure/SKILL.md`) provides interactiv
 - **Stdout is sacred**: MCP uses stdio for JSON-RPC. All logging must go to `console.error`, never `console.log`. The Lark SDK uses custom loggers to redirect to stderr.
 - **`.mcp.json` must use `--silent`**: Prevents npm script lifecycle output from corrupting MCP transport.
 - **Channel protocol**: Messages are forwarded to Codex via `notifications/Codex/channel` (not `sendLoggingMessage`). Requires `experimental: { 'Codex/channel': {} }` capability.
+- **Architecture guardrails**: New code should follow `docs/architecture.md`. `npm run check:architecture` and `npm test` reject new dependency cycles and new forbidden cross-layer imports. Existing violations are only allowed when listed in `scripts/architecture-baseline.json` with a removal reason.
 - **User display names**: Resolved via contact API → cached. Falls back to stable aliases (`user_` + last 7 chars of open_id). Memory keys always use raw open_id/chat_id.
 - **Group chat filtering**: Only messages with @bot mentions are processed (precise match via bot open_id fetched at startup). P2P messages are always processed.
 - **Reaction events**: If the Feishu app subscribes to `im.message.reaction.created_v1`, user reactions on tracked bot replies are forwarded as normal interaction turns. The reaction prompt tells Codex to interpret the emoji with the reacted bot message instead of treating acknowledgement/completion emoji as passive by default.
