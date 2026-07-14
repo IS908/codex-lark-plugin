@@ -5,40 +5,26 @@ import os from 'node:os';
 import { appConfig } from './config.js';
 import { validateFeishuChatAccess } from './access-control-validation.js';
 import { LarkChannel } from './channel.js';
-import type { LarkMessage } from './lark-message.js';
 import { registerTools } from './tools.js';
 import { ConversationBuffer } from './memory/buffer.js';
-import { buildFlushPrompt } from './memory/distiller.js';
 import { MemoryStore } from './memory/file.js';
-import { IdentitySession, SYSTEM_FLUSH_CALLER } from './identity-session.js';
-import { JobScheduler } from './scheduler.js';
+import { IdentitySession } from './identity-session.js';
 import { mcpServerInstructions } from './prompts.js';
-import { debugLog } from './debug-log.js';
-import { deliverMessageViaCodexExec } from './codex-exec-delivery.js';
-import { handleCodexModelCommand } from './codex-model-command.js';
 import { FileCodexExecSessionStore } from './codex-session-store.js';
 import {
   markConversationHandoffConsumed,
   readConversationBoundary,
 } from './conversation-boundary.js';
-import { sendFeishuReply } from './reply-sender.js';
 import { TurnObligationTracker } from './turn-obligation.js';
-import { splitDocCommentText } from './doc-comment-api.js';
-import { formatCodexExecFailureReply, shouldSendCodexExecFailureReply } from './codex-exec-error.js';
-import { logSafeError, redactErrorForLog } from './safe-log.js';
+import { logSafeError } from './safe-log.js';
 import { packageName, packageVersion } from './package-metadata.js';
-import {
-  buildSessionHealthNudgeText,
-  sendSessionHealthOwnerDm,
-  SessionHealthMonitor,
-} from './session-health.js';
 import {
   acquireSingleInstanceLock,
   registerLockCleanup,
-  sweepInbox,
 } from './resource-governance.js';
 import { emitCodexExecConfigDiagnostics } from './codex-exec-config.js';
 import { createCodexExecActionDispatcher } from './codex-exec-actions.js';
+import type { CodexExecActionDispatcher } from './codex-exec-actions.js';
 import { ProfileDistillationManager } from './profile-distillation.js';
 import { validateSdkChannelScaffold } from './sdk-channel-scaffold.js';
 import { startSdkChannelRuntimeWithRetry } from './sdk-channel-runtime.js';
@@ -46,30 +32,16 @@ import { startCodexSessionRetention } from './codex-session-retention.js';
 import { startCodexExecProgressRetention } from './codex-exec-progress.js';
 import { startCodexExecActionChannelRetention } from './codex-exec-action-channel.js';
 import { accessControlStore } from './runtime-access-control.js';
+import { runStartupResourceCleanup } from './runtime-bootstrap.js';
+import { createConfiguredSessionHealthMonitor } from './session-health-service.js';
+import { registerConversationFlushHandler } from './conversation-flush-service.js';
+import {
+  createReplySender,
+  registerCodexDeliveryHandlers,
+} from './codex-delivery-wiring.js';
+import { createChannelServicesStarter } from './channel-services.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
-
-function runStartupResourceCleanup(memoryStore: MemoryStore): void {
-  void sweepInbox(appConfig.inboxDir, {
-    maxAgeMs: appConfig.inboxMaxAgeHours * 60 * 60 * 1000,
-    maxBytes: appConfig.inboxMaxBytes,
-  })
-    .then((result) => {
-      if (result.removedOld || result.removedForSize) {
-        debugLog(
-          `[governance] Inbox cleanup removed ${result.removedOld} old and ${result.removedForSize} LRU files`,
-        );
-      }
-    })
-    .catch((err) => debugLog(`[governance] Inbox cleanup failed: ${err}`));
-
-  void memoryStore
-    .pruneEpisodes()
-    .then((result) => {
-      if (result.removedFiles) debugLog(`[governance] Episode pruning removed ${result.removedFiles} files`);
-    })
-    .catch((err) => debugLog(`[governance] Episode pruning failed: ${err}`));
-}
 
 async function main() {
   const isDryRun = process.argv.includes('--dry-run');
@@ -128,138 +100,32 @@ async function main() {
     );
   }
   const turnObligations = new TurnObligationTracker();
-  const sessionHealthMonitor =
-    appConfig.sessionHealthEnabled && appConfig.ownerOpenId
-      ? new SessionHealthMonitor({
-          enabled: appConfig.codexExecUseSessions,
-          ownerOpenId: appConfig.ownerOpenId,
-          turnThreshold: appConfig.sessionHealthTurnThreshold,
-          promptBytesThreshold: appConfig.sessionHealthPromptBytesThreshold,
-          tokenUsageThreshold: appConfig.sessionHealthTokenThreshold,
-          quietDelayMs: appConfig.sessionHealthIdleDelayMs,
-          baseCooldownMs: appConfig.sessionHealthCooldownMs,
-          maxCooldownMs: appConfig.sessionHealthMaxCooldownMs,
-          maxNudges: appConfig.sessionHealthMaxNudges,
-          quiet: () => ({
-            queueIdle: channel.isIdle(),
-            ackQuiet:
-              channel.getAckReactions().activeCount === 0 &&
-              channel.getAckReactions().pendingCount === 0,
-            turnQuiet: turnObligations.pendingCount() === 0,
-          }),
-          notifyOwner: async (nudge) => {
-            await sendSessionHealthOwnerDm(
-              channel.getLarkTransport(),
-              appConfig.ownerOpenId!,
-              buildSessionHealthNudgeText(nudge),
-            );
-          },
-        })
-      : null;
-  if (appConfig.sessionHealthEnabled && !appConfig.ownerOpenId) {
-    console.error('[session-health] disabled: LARK_OWNER_OPEN_ID is required');
-  } else if (appConfig.sessionHealthEnabled && !appConfig.codexExecUseSessions) {
-    console.error('[session-health] disabled: LARK_CODEX_EXEC_USE_SESSIONS=false');
-  }
+  const sessionHealthMonitor = createConfiguredSessionHealthMonitor(channel, turnObligations);
 
   // 4. Create conversation buffer + wire flush handler
   const buffer = new ConversationBuffer();
-  let codexExecActionDispatcher: ReturnType<typeof createCodexExecActionDispatcher> | null = null;
-  buffer.setFlushHandler(async ({ chatId, threadId, messages, reason }) => {
-    const flushPrompt = buildFlushPrompt(chatId, messages, threadId);
-    // Flushes run as synthetic system turns through Codex exec. Feishu does
-    // not see the synthetic turn; manual /flush and /new commands receive a
-    // separate confirmation after save_memory succeeds.
-    console.error(
-      `[distiller] ${reason} flush for chat ${chatId}`
-      + `${threadId ? ` thread=${threadId}` : ''}: ${messages.length} messages`,
-    );
-
-    // Bind a system-flush caller BEFORE notifying Codex (#66). Without
-    // this, save_memory(type=chat) inside the flush turn fails caller
-    // resolution because:
-    //   - User entries are stored by IdentitySession under (chatId, threadId).
-    //   - Auto flush carries chatId only, while manual thread flushes carry
-    //     both chatId and threadId.
-    //   - getCaller must resolve the same scope used by save_memory.
-    //
-    // Chat episodes are stored by (chatId, threadId?), NOT by caller, so a
-    // sentinel caller doesn't change WHERE the data goes — only WHAT the
-    // audit log records. Mirrors scheduler.executePromptJob's pattern of
-    // binding job.meta.created_by before cronjob execution.
-    identitySession.setCaller(chatId, threadId, SYSTEM_FLUSH_CALLER);
-
-    if (!codexExecActionDispatcher) {
-      throw new Error('Codex exec action dispatcher is not configured for conversation flush.');
-    }
-    let summary = '';
-    let saveMemoryOk = false;
-    await deliverMessageViaCodexExec({
-      message: {
-        messageId: `flush-${Date.now()}`,
-        chatId,
-        ...(threadId ? { threadId } : {}),
-        chatType: 'system',
-        senderId: 'system',
-        text: flushPrompt,
-        messageType: 'text',
-        rawContent: flushPrompt,
-      },
-      displayLabel: threadId ? `System flush · ${chatId} · ${threadId}` : `System flush · ${chatId}`,
-      useCodexSessions: false,
-      progressVisible: false,
-      actionDispatcher: codexExecActionDispatcher,
-      sendReply: async () => ({ sentCount: 0, statusText: 'Synthetic flush reply suppressed.' }),
-      onFinalText: (text) => {
-        summary = text.trim();
-      },
-      onActionResults: (results) => {
-        saveMemoryOk = results.some((result) => result.ok && result.action === 'save_memory');
-      },
-    });
-    if (!saveMemoryOk) {
-      throw new Error('Conversation flush did not persist a memory summary.');
-    }
-
-    const activeUserIds = [...new Set(
-      messages
-        .filter((message) => message.role === 'user')
-        .map((message) => message.senderId)
-        .filter((senderId) => senderId && senderId !== 'system'),
-    )];
-    for (const userId of activeUserIds) {
-      void profileDistiller
-        .maybeDispatch({
-          userId,
-          chatId,
-          chatType: channel.isPrivateChat(chatId) ? 'p2p' : 'group',
-        })
-        .then((result) => {
-          if (result.status === 'error') {
-            console.error(`[profile-distill] dispatch failed for ${userId}: ${result.error ?? 'unknown error'}`);
-          }
-        })
-        .catch((err) => logSafeError('[profile-distill] dispatch failed:', err));
-    }
-    return { summary };
+  let codexExecActionDispatcher: CodexExecActionDispatcher | null = null;
+  registerConversationFlushHandler({
+    buffer,
+    identitySession,
+    profileDistiller,
+    chatVisibility: channel,
+    getActionDispatcher: () => codexExecActionDispatcher,
   });
   channel.setConversationBuffer(buffer);
   codexExecActionDispatcher = createCodexExecActionDispatcher({
     memoryStore,
     identitySession,
     profileDistiller,
-    sendReply: (request) => sendFeishuReply(
-      {
-        client: channel.getClient(),
-        transport: channel.getLarkTransport(),
-        conversationBuffer: buffer,
-        ackReactions: channel.getAckReactions(),
-        botMessageTracker: channel.getBotMessageTracker(),
-        latestMessageTracker: channel.getLatestMessageTracker(),
-        turnObligations,
-      },
-      request,
-    ),
+    sendReply: createReplySender({
+      client: () => channel.getClient(),
+      transport: () => channel.getLarkTransport(),
+      conversationBuffer: buffer,
+      ackReactions: channel.getAckReactions(),
+      botMessageTracker: channel.getBotMessageTracker(),
+      latestMessageTracker: channel.getLatestMessageTracker(),
+      turnObligations,
+    }),
     larkTransport: () => channel.getLarkTransport(),
     botMessageTracker: channel.getBotMessageTracker(),
     turnObligations,
@@ -282,145 +148,15 @@ async function main() {
     () => channel.getLarkTransport()
   );
 
-  channel.setControlMessageHandler(async (message) => handleCodexModelCommand({
-    message,
-    sessionStore: codexSessionStore,
+  // 6. Register channel delivery handlers
+  registerCodexDeliveryHandlers({
+    channel,
+    buffer,
     identitySession,
-    useCodexSessions: appConfig.codexExecUseSessions,
-    flushConversation: ({ chatId, threadId, reason, commitBeforeRemove }) =>
-      buffer.flushNow(chatId, { threadId, reason, commitBeforeRemove }),
-    resetSessionHealth: (sessionKey) => sessionHealthMonitor?.reset(sessionKey, 'manual'),
-    validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
-    sendReply: (request) => sendFeishuReply(
-      {
-        client: channel.getClient(),
-        transport: channel.getLarkTransport(),
-        conversationBuffer: buffer,
-        ackReactions: channel.getAckReactions(),
-        botMessageTracker: channel.getBotMessageTracker(),
-        latestMessageTracker: channel.getLatestMessageTracker(),
-        turnObligations,
-      },
-      request,
-    ),
-  }));
-
-  // 6. Set message handler — forwards Feishu messages to Codex via MCP
-  channel.setMessageHandler(async (message) => {
-    // Build friendly display: user_xxx or user_xxx · chat_xxx · thread_xxx
-    const displayUser = message.senderName || message.senderId;
-    const displayParts = [displayUser];
-    if (message.chatName) displayParts.push(message.chatName);
-    if (message.threadId) displayParts.push(`thread_${message.threadId.slice(-7)}`);
-    const displayLabel = displayParts.join(' · ');
-
-    debugLog(
-      `[channel] Handler received message ${message.messageId} chat=${message.chatId} thread=${message.threadId ?? '(none)'} from=${displayLabel} text_bytes=${Buffer.byteLength(message.text, 'utf8')}`
-    );
-    const hasReplyObligation = message.chatType === 'p2p' || message.chatType === 'group';
-    identitySession.beginChannelTurn(message.chatId, message.threadId, appConfig.replyObligationTimeoutMs);
-    if (hasReplyObligation) {
-      turnObligations.begin({
-        messageId: message.messageId,
-        chatId: message.chatId,
-        ...(message.threadId ? { threadId: message.threadId } : {}),
-        caller: message.senderId,
-        mode: 'exec',
-      });
-      turnObligations.setActive(message.chatId, message.threadId, message.messageId);
-    }
-    const sendReplyViaFeishu = (request: Parameters<typeof sendFeishuReply>[1]) => sendFeishuReply(
-      {
-        client: channel.getClient(),
-        transport: channel.getLarkTransport(),
-        conversationBuffer: buffer,
-        ackReactions: channel.getAckReactions(),
-        botMessageTracker: channel.getBotMessageTracker(),
-        latestMessageTracker: channel.getLatestMessageTracker(),
-        turnObligations,
-      },
-      request,
-    );
-    const recordAssistantMessage = ({ chatId, threadId, text }: { chatId: string; threadId?: string; text: string }) => {
-      buffer.record(chatId, {
-        role: 'assistant',
-        senderId: 'bot',
-        text: text.slice(0, 500),
-        timestamp: new Date().toISOString(),
-        timestampMs: Date.now(),
-        ...(threadId ? { threadId } : {}),
-        messageType: 'text',
-      });
-    };
-
-    try {
-      debugLog(
-        `[channel] Delivering message ${message.messageId} via codex exec`
-      );
-      await deliverMessageViaCodexExec({
-        message,
-        displayLabel,
-        sessionStore: codexSessionStore,
-        sendReply: sendReplyViaFeishu,
-        sendDocCommentReply: async (request) => {
-          const resp = await channel.getLarkTransport().replyDocComment({
-            docToken: request.doc_token,
-            commentId: request.comment_id,
-            fileType: request.file_type,
-            content: request.content,
-          });
-          return { replyId: resp.replyId };
-        },
-        recordAssistantMessage,
-        sessionHealth: sessionHealthMonitor ?? undefined,
-        turnObligations,
-        actionDispatcher: codexExecActionDispatcher,
-      });
-      if (hasReplyObligation) {
-        turnObligations.requireSatisfiedOrDeferred(message.messageId);
-      }
-      debugLog(
-        `[channel] codex exec delivery completed for message ${message.messageId}`
-      );
-    } catch (err) {
-      const errText = err instanceof Error ? err.message : String(err);
-      channel.invalidateMemoryDedupScope(message.chatId, message.threadId, `delivery catch for message ${message.messageId}`);
-      debugLog(
-        `[channel] Failed to deliver inbound to Codex for message ${message.messageId}: ${errText}`
-      );
-      console.error('[channel] Failed to deliver inbound to Codex:', redactErrorForLog(err));
-      const errorText = formatCodexExecFailureReply(err);
-      if (message.chatType === 'doc_comment' && message.docComment) {
-        for (const chunk of splitDocCommentText(errorText)) {
-          await channel.getLarkTransport().replyDocComment({
-            docToken: message.docComment.fileToken,
-            commentId: message.docComment.commentId,
-            fileType: message.docComment.fileType,
-            content: chunk,
-          }).catch((replyErr) => {
-            logSafeError('[channel] Failed to send codex exec doc-comment error reply:', replyErr);
-          });
-        }
-      } else if (shouldSendCodexExecFailureReply(message)) {
-        await sendReplyViaFeishu({
-          chat_id: message.chatId,
-          text: errorText,
-          reply_to: message.messageId,
-          thread_id: message.threadId,
-        }).catch((replyErr) => {
-          console.error('[channel] Failed to send codex exec error reply:', redactErrorForLog(replyErr));
-        });
-      } else {
-        console.error(
-          `[channel] Suppressed codex exec error reply for non-user-visible or synthetic message ${message.messageId} (${message.chatType}): ${errorText}`,
-        );
-      }
-    } finally {
-      identitySession.endChannelTurn(message.chatId, message.threadId);
-      if (hasReplyObligation) {
-        turnObligations.clearActive(message.chatId, message.threadId, message.messageId);
-      }
-    }
+    sessionStore: codexSessionStore,
+    sessionHealth: sessionHealthMonitor,
+    turnObligations,
+    actionDispatcher: codexExecActionDispatcher,
   });
 
   if (isDryRun) {
@@ -445,87 +181,15 @@ async function main() {
   startCodexExecProgressRetention(appConfig.codexExecCwd);
   startCodexExecActionChannelRetention(appConfig.codexExecCwd);
 
-  let channelServicesStart: Promise<void> | null = null;
-  const startChannelServices = () => {
-    if (channelServicesStart) return channelServicesStart;
-    channelServicesStart = (async () => {
-      // 9. Re-arm flush timers from persisted episodes
-      await buffer.rearmFromDisk();
-
-      // 10. Start cronjob scheduler
-      const scheduler = new JobScheduler({
-        client: channel.getClient(),
-        transport: channel.getLarkTransport(),
-        identitySession,
-        botMessageTracker: channel.getBotMessageTracker(),
-        promptRunner: async ({ job, jobThreadId, promptContent, diagnostics, runId }) => {
-          let deliveredReport = '';
-          const message: LarkMessage = {
-            messageId: jobThreadId,
-            chatId: job.meta.target_chat_id,
-            chatType: 'cronjob',
-            senderId: job.meta.created_by,
-            senderName: `CronJob ${job.meta.name}`,
-            text: promptContent,
-            messageType: 'cronjob',
-            rawContent: promptContent,
-            threadId: jobThreadId,
-          };
-          await deliverMessageViaCodexExec({
-            message,
-            displayLabel: `CronJob · ${job.meta.name}`,
-            sessionStore: codexSessionStore,
-            traceLogId: job.meta.id,
-            traceRunId: runId,
-            sendReply: async (request) => {
-              diagnostics.startStage('send_lark');
-              try {
-                const result = await sendFeishuReply(
-                  {
-                    client: channel.getClient(),
-                    transport: channel.getLarkTransport(),
-                    conversationBuffer: buffer,
-                    botMessageTracker: channel.getBotMessageTracker(),
-                    latestMessageTracker: channel.getLatestMessageTracker(),
-                    turnObligations,
-                  },
-                  { ...request, reply_to: undefined },
-                );
-                if (result.isError) throw new Error(result.errorText ?? result.statusText);
-                if (result.sentCount > 0) deliveredReport = request.text;
-                diagnostics.completeStage('send_lark');
-                return result;
-              } catch (err) {
-                diagnostics.failStage('send_lark', err);
-                throw err;
-              }
-            },
-            recordAssistantMessage: ({ chatId, threadId, text }) => {
-              buffer.record(chatId, {
-                role: 'assistant',
-                senderId: 'bot',
-                text: text.slice(0, 500),
-                timestamp: new Date().toISOString(),
-                timestampMs: Date.now(),
-                ...(threadId ? { threadId } : {}),
-                messageType: 'text',
-              });
-            },
-            sessionHealth: sessionHealthMonitor ?? undefined,
-            actionDispatcher: codexExecActionDispatcher,
-            progressVisible: false,
-            onProgress: (event) => {
-              diagnostics.recordProgress(event.content, event.timestampMs, event.bytes);
-            },
-          });
-          return { report: deliveredReport };
-        },
-      });
-      await scheduler.start();
-      console.error('[index] codex-lark-plugin channel services started');
-    })();
-    return channelServicesStart;
-  };
+  const startChannelServices = createChannelServicesStarter({
+    channel,
+    buffer,
+    identitySession,
+    sessionStore: codexSessionStore,
+    sessionHealth: sessionHealthMonitor,
+    turnObligations,
+    actionDispatcher: codexExecActionDispatcher,
+  });
 
   startSdkChannelRuntimeWithRetry(channel, {
     onConnected: startChannelServices,
