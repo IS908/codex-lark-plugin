@@ -57,11 +57,13 @@ The current baseline is empty:
 - job and cronjob diagnostic contracts live in `src/job-contracts.ts` and
   `src/cronjob-diagnostic-contracts.ts`;
 - shared job timezone helpers live in `src/job-timezone.ts`.
+- `src/index.ts` is now a composition root; startup cleanup, session health,
+  conversation flush, Codex delivery, and channel service orchestration live in
+  focused service modules.
 
 The remaining planned order is:
 
-1. Composition root slimming.
-2. Hotspot module splits.
+1. Hotspot module splits.
 
 ## PR Guidance
 
