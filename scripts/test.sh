@@ -40,6 +40,11 @@ npm run --silent check:plugin-src-sync
 echo "PASS"
 
 echo ""
+echo "=== Architecture guardrail checks ==="
+npm run --silent check:architecture
+echo "PASS"
+
+echo ""
 echo "=== Runtime bundle build ==="
 npm run --silent build
 echo "PASS"
