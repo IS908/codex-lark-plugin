@@ -31,37 +31,24 @@ import {
   formatCronJobDiagnostics,
   type CronJobDiagnosticSnapshot,
 } from './cronjob-diagnostics.js';
-
-/**
- * Prefix for synthetic `thread_id` values used by cronjob prompt executions.
- * Used only for IdentitySession isolation per cronjob run —
- * NOT a real Feishu thread. Consumers that route messages to Feishu threads
- * (e.g. the `reply` tool) must exclude thread_ids with this prefix.
- */
-export const JOB_THREAD_PREFIX = 'job-';
-
-export interface ParsedJobThreadId {
-  jobId: string;
-  createdAtHash?: string;
-  runId?: string;
-}
-
-export function jobCreatedAtHash(createdAt: string): string {
-  return createHash('sha256').update(createdAt).digest('hex').slice(0, 12);
-}
-
-export function parseJobThreadId(threadId: string | undefined): ParsedJobThreadId | null {
-  if (!threadId?.startsWith(JOB_THREAD_PREFIX)) return null;
-  const rest = threadId.slice(JOB_THREAD_PREFIX.length);
-  const current = rest.match(/^(.+)-([a-f0-9]{12})-(\d{10,})$/);
-  if (current) return { jobId: current[1], createdAtHash: current[2], runId: current[3] };
-  const legacy = rest.match(/^(.+)-(\d{10,})$/);
-  return legacy ? { jobId: legacy[1] } : null;
-}
-
-export function parseJobIdFromThreadId(threadId: string | undefined): string | null {
-  return parseJobThreadId(threadId)?.jobId ?? null;
-}
+import {
+  isPermanentTargetError,
+  isRetryableError,
+  MAX_SCHEDULER_RETRIES,
+  schedulerRetryDelayMs,
+} from './scheduler-policy.js';
+import { JOB_THREAD_PREFIX, jobCreatedAtHash, parseJobThreadId } from './job-thread.js';
+export {
+  isPermanentTargetError,
+  isRetryableError,
+} from './scheduler-policy.js';
+export {
+  JOB_THREAD_PREFIX,
+  jobCreatedAtHash,
+  parseJobIdFromThreadId,
+  parseJobThreadId,
+  type ParsedJobThreadId,
+} from './job-thread.js';
 
 export interface SchedulerOptions {
   client: Lark.Client;
@@ -84,65 +71,6 @@ export interface PromptJobRunnerResult {
 }
 
 export type PromptJobRunner = (input: PromptJobRunnerInput) => Promise<PromptJobRunnerResult>;
-
-// ─── Retry Logic ────────────────────────────────────────────
-
-const MAX_RETRIES = 3;
-const RETRY_DELAYS = [30_000, 60_000, 120_000]; // 30s, 60s, 120s
-
-/** Network/transient error codes that warrant a retry. */
-const RETRYABLE_NETWORK_ERRORS = new Set([
-  'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED',
-  'ECONNABORTED', 'EAI_AGAIN', 'EPIPE',
-]);
-
-/** HTTP status codes that warrant a retry. */
-const RETRYABLE_HTTP_CODES = new Set([429, 500, 502, 503, 504]);
-const PERMANENT_TARGET_HTTP_CODES = new Set([403, 404]);
-const PERMANENT_TARGET_API_CODES = new Set([
-  99991672, // permission denied / target inaccessible
-]);
-
-export function isRetryableError(err: any): boolean {
-  // Network-level errors (Node.js syscall errors)
-  if (err?.code && RETRYABLE_NETWORK_ERRORS.has(err.code)) return true;
-  if (err?.cause?.code && RETRYABLE_NETWORK_ERRORS.has(err.cause.code)) return true;
-
-  // HTTP status from Feishu SDK (wrapped in response)
-  const status = err?.response?.status ?? err?.status ?? err?.cause?.response?.status ?? err?.cause?.status;
-  if (status && RETRYABLE_HTTP_CODES.has(status)) return true;
-
-  // Feishu API error codes — permission/param errors are NOT retryable
-  const apiCode = Number(
-    err?.response?.data?.code ?? err?.data?.code ?? err?.cause?.response?.data?.code ?? err?.cause?.data?.code,
-  );
-  if (Number.isFinite(apiCode)) {
-    // Known non-retryable Feishu codes
-    // 99991672 = permission denied, 230001 = param error
-    if (apiCode === 99991672 || apiCode === 230001) return false;
-    return false;
-  }
-
-  // Error message heuristics
-  const msg = (err?.message ?? '').toLowerCase();
-  if (msg.includes('timeout') || msg.includes('enotfound') || msg.includes('econnreset')) {
-    return true;
-  }
-
-  return false;
-}
-
-export function isPermanentTargetError(err: any): boolean {
-  if (isRetryableError(err)) return false;
-
-  const status = err?.response?.status ?? err?.status ?? err?.cause?.response?.status ?? err?.cause?.status;
-  if (PERMANENT_TARGET_HTTP_CODES.has(status)) return true;
-
-  const apiCode = Number(
-    err?.response?.data?.code ?? err?.data?.code ?? err?.cause?.response?.data?.code ?? err?.cause?.data?.code,
-  );
-  return PERMANENT_TARGET_API_CODES.has(apiCode);
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -432,7 +360,7 @@ export class JobScheduler {
     const runKey = this.computeRunKey(job, new Date(startTime));
     let lastErr: any = null;
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= MAX_SCHEDULER_RETRIES; attempt++) {
       const refreshed = await this.refreshRunnableJob(job, attempt);
       if (!refreshed) return;
       if (refreshed !== job) {
@@ -490,13 +418,13 @@ export class JobScheduler {
         lastErr = err;
 
         // Check if the error is retryable
-        if (!isRetryableError(err) || attempt >= MAX_RETRIES) {
+        if (!isRetryableError(err) || attempt >= MAX_SCHEDULER_RETRIES) {
           break; // permanent error or exhausted retries
         }
 
-        const delay = RETRY_DELAYS[attempt] ?? RETRY_DELAYS[RETRY_DELAYS.length - 1];
+        const delay = schedulerRetryDelayMs(attempt + 1);
         console.error(
-          `[scheduler] Job ${job.meta.id} failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}), ` +
+          `[scheduler] Job ${job.meta.id} failed (attempt ${attempt + 1}/${MAX_SCHEDULER_RETRIES + 1}), ` +
           `retrying in ${delay / 1000}s: ${err?.message ?? err}`
         );
         await sleep(delay);
@@ -526,7 +454,7 @@ export class JobScheduler {
     });
 
     const retryNote = isRetryableError(lastErr)
-      ? ` (exhausted ${MAX_RETRIES} retries)`
+      ? ` (exhausted ${MAX_SCHEDULER_RETRIES} retries)`
       : ' (non-retryable)';
     const pauseNote = autoPause ? '; auto-paused' : '';
     if (!updated) {

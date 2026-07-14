@@ -1,59 +1,18 @@
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { appConfig } from '../config.js';
-import { applyL1, loadL2Rules, extractL2PrivatePhrases } from '../privacy-rules.js';
+import { loadL2Rules, extractL2PrivatePhrases } from '../privacy-rules.js';
+import type { ProfileLine, Tier } from './profile-policy.js';
+import {
+  isDeterministicPrivate,
+  lineHash,
+  mergeProfileLines,
+  splitProfileContentByPrivacy,
+} from './profile-policy.js';
 
-export type Tier = 'public' | 'private';
-
-/** Short, stable-per-text identifier for a profile line (used by forget_memory). */
-export interface ProfileLine {
-  index: number;
-  hash: string;
-  text: string;
-}
-
-function lineHash(text: string): string {
-  return createHash('sha1').update(text).digest('hex').slice(0, 8);
-}
-
-/** Normalize a profile line for deduplication (not for storage). */
-function normalizeProfileLine(line: string): string {
-  return line.trim().replace(/^[-*]\s+/, '').toLowerCase();
-}
-
-function isL2Private(line: string, l2PrivatePhrases: string[]): boolean {
-  if (l2PrivatePhrases.length === 0) return false;
-  const lower = line.toLowerCase();
-  return l2PrivatePhrases.some((phrase) => lower.includes(phrase));
-}
-
-function isDeterministicPrivate(line: string, l2PrivatePhrases: string[]): boolean {
-  return applyL1(line) === 'private' || isL2Private(line, l2PrivatePhrases);
-}
-
-function splitProfileContentByPrivacy(
-  content: string,
-  l2PrivatePhrases: string[],
-): { publicContent: string; privateContent: string } {
-  const publicLines: string[] = [];
-  const privateLines: string[] = [];
-
-  for (const raw of content.split('\n')) {
-    if (!raw.trim()) {
-      publicLines.push(raw);
-      continue;
-    }
-    if (isDeterministicPrivate(raw, l2PrivatePhrases)) privateLines.push(raw);
-    else publicLines.push(raw);
-  }
-
-  return {
-    publicContent: publicLines.join('\n'),
-    privateContent: privateLines.join('\n'),
-  };
-}
+export type { ProfileLine, Tier } from './profile-policy.js';
+export { mergeProfileLines } from './profile-policy.js';
 
 function capUtf8Bytes(content: string, maxBytes: number): string {
   if (!Number.isFinite(maxBytes) || maxBytes <= 0) return content;
@@ -78,61 +37,6 @@ function capUtf8Bytes(content: string, maxBytes: number): string {
 
 function capEpisodeContent(content: string): string {
   return capUtf8Bytes(content, appConfig.maxEpisodeBytes);
-}
-
-/**
- * Merge new profile lines into an existing tier file body.
- *
- * Dedup rules:
- * - Case-insensitive line match after trim + leading-bullet strip.
- * - Punctuation is **not** normalized — "prefers tea" and "prefers tea."
- *   are kept as distinct lines to avoid silent merges.
- *
- * Original capitalization and punctuation are preserved in the output.
- *
- * Incoming lines without a `-`/`*` bullet marker are normalized on write to
- * `- <line>` so the tier file remains a well-formed markdown bullet list.
- *
- * Near-duplicates (prefix containment after normalization) are logged to
- * stderr to help operators notice redundant writes, but are still preserved.
- */
-export function mergeProfileLines(
-  existing: string,
-  incoming: string,
-  ctx?: { userId?: string; tier?: Tier },
-): string {
-  const existingLinesRaw = existing.split('\n').filter((l) => l.trim());
-  const existingKeys = new Set(existingLinesRaw.map(normalizeProfileLine));
-  const existingNormalized = existingLinesRaw.map(normalizeProfileLine);
-
-  const newLines: string[] = [];
-  for (const raw of incoming.split('\n')) {
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-    const key = normalizeProfileLine(trimmed);
-    if (existingKeys.has(key)) continue; // exact match → skip
-    newLines.push(trimmed);
-    existingKeys.add(key); // also dedupe within the incoming batch
-
-    // Near-duplicate warning: prefix-containment either direction.
-    for (const other of existingNormalized) {
-      if (key !== other && (key.startsWith(other) || other.startsWith(key))) {
-        const where = ctx?.userId && ctx?.tier ? ` in ${ctx.userId}/${ctx.tier}.md` : '';
-        console.error(
-          `[memory] Possible near-duplicate${where}: incoming "${trimmed}" resembles existing entry "${existingLinesRaw[existingNormalized.indexOf(other)]}"`,
-        );
-        break;
-      }
-    }
-  }
-
-  if (newLines.length === 0) return existing;
-
-  const appended = newLines
-    .map((l) => (/^[-*]\s+/.test(l) ? l : `- ${l}`))
-    .join('\n');
-  const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
-  return existing + sep + appended + '\n';
 }
 
 export interface Episode {
@@ -242,42 +146,19 @@ export class MemoryStore {
     }
 
     const content = await fs.readFile(legacy, 'utf-8');
-    const publicLines: string[] = [];
-    const privateLines: string[] = [];
-
     // Pre-load L2 user rules so operators who configure privacy-rules.md
     // BEFORE upgrading can influence their own legacy-profile migration
     // (org codenames, people mentions, etc. that L1 doesn't cover).
     // Substring match is case-insensitive, deterministic, no LLM needed.
     const l2Phrases = await this.loadL2PrivatePhrases();
-
-    for (const line of content.split('\n')) {
-      if (!line.trim()) {
-        // Preserve blank lines in public for readability; skip in private.
-        publicLines.push(line);
-        continue;
-      }
-
-      if (applyL1(line) === 'private') {
-        privateLines.push(line);
-        continue;
-      }
-
-      if (l2Phrases.length > 0) {
-        const lower = line.toLowerCase();
-        if (l2Phrases.some((p) => lower.includes(p))) {
-          privateLines.push(line);
-          continue;
-        }
-      }
-
-      publicLines.push(line);
-    }
+    const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
+    const publicCount = publicContent.split('\n').filter((line) => line.trim()).length;
+    const privateCount = privateContent.split('\n').filter((line) => line.trim()).length;
 
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(this.profileTierPath(userId, 'public'), publicLines.join('\n'), 'utf-8');
-    if (privateLines.length > 0) {
-      await fs.writeFile(this.profileTierPath(userId, 'private'), privateLines.join('\n'), 'utf-8');
+    await fs.writeFile(this.profileTierPath(userId, 'public'), publicContent, 'utf-8');
+    if (privateContent.trim()) {
+      await fs.writeFile(this.profileTierPath(userId, 'private'), privateContent, 'utf-8');
     }
     // Wrap unlink in try/catch to tolerate concurrent migrations of the
     // same user (e.g. User A is mentioned in two chats handled in parallel
@@ -286,7 +167,7 @@ export class MemoryStore {
     try { await fs.unlink(legacy); } catch {}
 
     console.error(
-      `[migrate] profile ${userId}: ${publicLines.filter(l => l.trim()).length} public, ${privateLines.length} private`,
+      `[migrate] profile ${userId}: ${publicCount} public, ${privateCount} private`,
     );
   }
 

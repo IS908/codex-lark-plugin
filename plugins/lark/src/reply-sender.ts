@@ -6,15 +6,14 @@ import type { ConversationBuffer } from './memory/buffer.js';
 import type { BotMessageTracker, LatestMessageTracker, TrackedBotMessageQuotedContext } from './message-trackers.js';
 import { buildCards, shouldUseCard } from './feishu-card.js';
 import { mergeCardFooterWithRuntimeMetrics } from './codex-exec-metrics.js';
-import { JOB_THREAD_PREFIX } from './scheduler.js';
 import {
   revokeAckReactionWithTransport,
   revokeAllAckReactionsWithTransport,
   type AckReactionTracker,
 } from './ack-reactions.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
-import { isFeishuOpenMessageId, isSyntheticSystemMessageId } from './codex-exec-error.js';
 import { logSafeError } from './safe-log.js';
+import { resolveReplyRouting } from './reply-routing-policy.js';
 import {
   createOpenApiLarkTransport,
 } from './lark-transport.js';
@@ -158,53 +157,18 @@ export async function sendFeishuReply(
     outboundMessageContextCache: botMessageTracker,
   });
 
-  // Auto-correct reply_to from the plugin's per-thread tracker when Codex
-  // omits it. Works for both threaded and non-threaded (P2P) messages.
-  // Explicit reply_to from Codex always wins.
-  let effectiveReplyTo = reply_to;
-  if (!effectiveReplyTo && turnObligations) {
-    const fallback = turnObligations.resolveFallback(chat_id, thread_id);
-    if (fallback.status === 'ambiguous') {
-      throw new Error(
-        `reply_to is required: ${fallback.count} pending Lark turns match chat=${chat_id} thread=${thread_id ?? '(none)'}.`,
-      );
-    }
-    if (fallback.status === 'active' || fallback.status === 'single-pending') {
-      effectiveReplyTo = fallback.messageId;
-      console.error(
-        `[reply-sender] Auto-filled reply_to=${effectiveReplyTo} from ${fallback.status} turn for chat=${chat_id} thread=${thread_id ?? '(none)'}`
-      );
-    }
-  }
-  if (!effectiveReplyTo && latestMessageTracker) {
-    const latest = latestMessageTracker.getLatest(chat_id, thread_id);
-    if (latest) {
-      effectiveReplyTo = latest.messageId;
-      console.error(
-        `[reply-sender] Auto-filled reply_to=${latest.messageId} for chat=${chat_id} thread=${thread_id ?? '(none)'}`
-      );
-    }
-  }
-  if (effectiveReplyTo && !isFeishuOpenMessageId(effectiveReplyTo)) {
-    if (isSyntheticSystemMessageId(effectiveReplyTo)) {
-      console.error(`[reply-sender] Skipping visible reply for synthetic system message ${effectiveReplyTo}`);
-      return {
-        sentCount: 0,
-        statusText: `Skipped reply for synthetic system message ${effectiveReplyTo}`,
-      };
-    }
-    return {
-      sentCount: 0,
-      statusText: `Invalid reply_to: ${effectiveReplyTo}`,
-      isError: true,
-      errorText: `Invalid reply_to: expected a Feishu open_message_id starting with "om_", got "${effectiveReplyTo}".`,
-    };
-  }
+  const route = resolveReplyRouting({
+    chatId: chat_id,
+    threadId: thread_id,
+    replyTo: reply_to,
+    turnObligations,
+    latestMessageTracker,
+  });
+  if (!route.ok) return route.result;
+  const { effectiveReplyTo, shouldStayInThread } = route;
 
   // Thread-aware routing: follow-up messages (text chunks 2..N, card 2..N,
   // attachments) must stay in the same thread as the first reply.
-  const isSyntheticThread = !!thread_id && thread_id.startsWith(JOB_THREAD_PREFIX);
-  const shouldStayInThread = !!thread_id && !isSyntheticThread && !!effectiveReplyTo;
   async function sendTransportMessage(args: {
     input: LarkTransportInput;
     replyTo?: string;
