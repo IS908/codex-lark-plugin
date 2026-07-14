@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.21.2] - 2026-07-14
+
+### Changed
+- Added architecture guardrails, documentation, and test integration so dependency cycles and restricted imports stay at an empty baseline.
+- Extracted shared Lark, transport, job, cronjob diagnostic, and timezone contracts out of implementation-heavy modules.
+- Slimmed the entrypoint into focused bootstrap/application-service wiring.
+- Split architecture hotspots into dedicated Codex exec action schemas/registry, scheduler policy, synthetic job-thread contracts, reply routing policy, and profile memory policy modules.
+
 ## [1.21.1] - 2026-07-13
 
 ### Fixed
@@ -763,7 +771,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.4...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.2...HEAD
+[1.21.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.1...v1.21.2
 [1.7.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.3...v1.7.4
 [1.7.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.1...v1.7.2
