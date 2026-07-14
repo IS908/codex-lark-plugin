@@ -1,7 +1,7 @@
 import type * as Lark from '@larksuiteoapi/node-sdk';
 import { buildCommentElements } from './doc-comment-api.js';
 import { feishuApiCall } from './feishu-retry.js';
-import type { LarkDocCommentRequest } from './lark-transport.js';
+import type { LarkDocCommentRequest } from './lark-transport-contracts.js';
 
 export async function replyDocCommentViaRaw(
   raw: Lark.Client,

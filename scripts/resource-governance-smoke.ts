@@ -26,7 +26,8 @@ import {
   sweepInbox,
 } from '../src/resource-governance.js';
 import { IdentitySession } from '../src/identity-session.js';
-import { BotMessageTracker, LarkChannel, LatestMessageTracker } from '../src/channel.js';
+import { LarkChannel } from '../src/channel.js';
+import { BotMessageTracker, LatestMessageTracker } from '../src/message-trackers.js';
 import { MemoryStore } from '../src/memory/file.js';
 import { appConfig } from '../src/config.js';
 import { sendFeishuReply } from '../src/reply-sender.js';

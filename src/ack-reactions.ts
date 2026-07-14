@@ -1,5 +1,5 @@
 import { appConfig } from './config.js';
-import type { LarkTransport } from './lark-transport.js';
+import type { LarkTransport } from './lark-transport-contracts.js';
 
 export interface AckReactionDelete {
   messageId: string;

@@ -5,7 +5,7 @@ import type {
   LarkTransportInput,
   LarkTransportSendRequest,
   LarkTransportSendResult,
-} from './lark-transport.js';
+} from './lark-transport-contracts.js';
 
 export function serializeTransportInput(input: LarkTransportInput): { msg_type: string; content: string } {
   if ('text' in input) {

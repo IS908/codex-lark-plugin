@@ -1,5 +1,5 @@
 import type { CodexExecUsage } from './codex-exec.js';
-import type { LarkTransport } from './lark-transport.js';
+import type { LarkTransport } from './lark-transport-contracts.js';
 
 export type SessionHealthNudgeReason = 'turn_threshold' | 'prompt_bytes_threshold' | 'token_usage_threshold';
 

@@ -10,7 +10,7 @@ process.env.LARK_CRON_TIMEZONE = 'Asia/Shanghai';
 
 const { appConfig } = await import('../src/config.js');
 const { IdentitySession } = await import('../src/identity-session.js');
-const { BotMessageTracker } = await import('../src/channel.js');
+const { BotMessageTracker } = await import('../src/message-trackers.js');
 const { TurnObligationTracker } = await import('../src/turn-obligation.js');
 const { MemoryStore } = await import('../src/memory/file.js');
 const { accessControlStore } = await import('../src/runtime-access-control.js');

@@ -5,7 +5,7 @@ import { DOC_CHAT_ID_PREFIX, type IdentitySession } from './identity-session.js'
 import { accessControlStore } from './runtime-access-control.js';
 import type { MessageQueue } from './queue.js';
 import type { BoundedCache } from './resource-governance.js';
-import type { LarkMessage, MessageHandler } from './channel.js';
+import type { LarkMessage, MessageHandler } from './lark-message.js';
 
 const DOC_COMMENT_BODY_CAP_BYTES = 8 * 1024;
 

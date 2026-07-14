@@ -1,4 +1,4 @@
-import type { LarkMessage } from './channel.js';
+import type { LarkMessage } from './lark-message.js';
 import { IdentitySession, TERMINAL_CHAT_ID } from './identity-session.js';
 
 export interface SdkIdentityMessage {
