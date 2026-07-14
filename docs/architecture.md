@@ -60,10 +60,26 @@ The current baseline is empty:
 - `src/index.ts` is now a composition root; startup cleanup, session health,
   conversation flush, Codex delivery, and channel service orchestration live in
   focused service modules.
+- Codex exec action schemas and envelope parsing live in
+  `src/codex-exec-action-schemas.ts`; dispatch goes through
+  `src/codex-exec-action-registry.ts` so action validation/routing is separate
+  from the individual handler implementations.
+- Scheduler retry and permanent-target classification live in
+  `src/scheduler-policy.ts`; timer, storage, and delivery effects remain in
+  `src/scheduler.ts`.
+- Synthetic cronjob thread identifiers live in `src/job-thread.ts`; scheduler
+  re-exports them for compatibility, but routing policy can depend on the
+  light contract directly.
+- Reply target planning and invalid/synthetic message handling live in
+  `src/reply-routing-policy.ts`; `src/reply-sender.ts` owns upload/send
+  adapter behavior.
+- Profile memory privacy, line identity, and merge policy live in
+  `src/memory/profile-policy.ts`; `src/memory/file.ts` owns filesystem
+  persistence, locks, and migration orchestration.
 
-The remaining planned order is:
-
-1. Hotspot module splits.
+There is no active architecture baseline exception. Future hotspot work should
+continue to be driven by concrete behavior or dependency evidence rather than
+large mechanical reshuffles.
 
 ## PR Guidance
 

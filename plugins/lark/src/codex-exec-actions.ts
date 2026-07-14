@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { appConfig } from './config.js';
@@ -10,10 +9,8 @@ import type { IdentitySession } from './identity-session.js';
 import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
 import type { MemoryStore } from './memory/file.js';
 import {
-  expandSchedule,
   formatCronDateTime,
   jobTimezone,
-  normalizeJobTimezone,
   readJob,
   sanitizeJobId,
   type JobFile,
@@ -29,7 +26,6 @@ import {
 } from './job-service.js';
 import { runConfiguredLocalCliTool } from './local-cli-tools.js';
 import {
-  ACCESS_CONTROL_LISTS,
   accessControlStore,
   type AccessControlAction,
   type AccessControlListName,
@@ -47,286 +43,38 @@ import type { TurnObligationTracker } from './turn-obligation.js';
 import { selectQuotedMessageId } from './quoted-context-loader.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
 import { queryRunTrace } from './run-trace-query.js';
-
-const SaveMemoryActionSchema = z.object({
-  type: z.literal('save_memory'),
-  memory_type: z.enum(['profile', 'chat', 'thread']),
-  content: z.string().min(1),
-  reason: z.string().min(1),
-  tier: z.enum(['public', 'private']).optional(),
-  mode: z.enum(['append', 'replace']).optional(),
-});
-
-const CreateJobActionSchema = z.object({
-  type: z.literal('create_job'),
-  name: z.string().min(1),
-  job_type: z.enum(['prompt', 'message']),
-  schedule: z.string().min(1),
-  timezone: z.string().min(1).optional(),
-  prompt: z.string().optional(),
-  content: z.string().optional(),
-  target_chat_id: z.string().optional(),
-  model: z.string().optional(),
-});
-
-const JobReferenceShape = {
-  job_id: z.string().min(1).optional(),
-  name: z.string().min(1).optional(),
-};
-
-const ListJobsActionSchema = z.object({
-  type: z.literal('list_jobs'),
-  status: z.enum(['active', 'paused', 'all']).optional(),
-});
-
-const UpdateJobActionSchema = z.object({
-  type: z.literal('update_job'),
-  ...JobReferenceShape,
-  new_name: z.string().min(1).optional(),
-  status: z.enum(['active', 'paused']).optional(),
-  schedule: z.string().min(1).optional(),
-  timezone: z.string().min(1).optional(),
-  prompt: z.string().optional(),
-  content: z.string().optional(),
-  model: z.string().optional(),
-});
-
-const DisableJobActionSchema = z.object({
-  type: z.literal('disable_job'),
-  ...JobReferenceShape,
-});
-
-const DeleteJobActionSchema = z.object({
-  type: z.literal('delete_job'),
-  ...JobReferenceShape,
-});
-
-const UpsertJobActionSchema = z.object({
-  type: z.literal('upsert_job'),
-  name: z.string().min(1),
-  job_type: z.enum(['prompt', 'message']),
-  schedule: z.string().min(1),
-  timezone: z.string().min(1).optional(),
-  prompt: z.string().optional(),
-  content: z.string().optional(),
-  target_chat_id: z.string().optional(),
-  model: z.string().optional(),
-  status: z.enum(['active', 'paused']).optional(),
-});
-
-const RunLocalCliToolActionSchema = z.object({
-  type: z.literal('run_local_cli_tool'),
-  tool: z.string().min(1),
-  args: z.array(z.string()).optional(),
-});
-
-const ManageAccessControlActionSchema = z.object({
-  type: z.literal('manage_access_control'),
-  action: z.enum(['list', 'add', 'remove']).default('list'),
-  list: z.enum(ACCESS_CONTROL_LISTS).optional(),
-  value: z.string().min(1).optional(),
-});
-
-const GetRunTraceActionSchema = z.object({
-  type: z.literal('get_run_trace'),
-  source: z.enum(['message', 'cronjob']),
-  target: z.enum(['current', 'quoted']).optional(),
-  log_id: z.string().min(1).optional(),
-  run_id: z.string().min(1).optional(),
-  within_hours: z.number().positive().max(168).optional(),
-});
-
-const SendMessageImageSourceSchema = z.enum([
-  'local_path',
-  'current_message:first_image',
-  'quoted_message:first_image',
-]);
-
-const SendMessageImagePayloadSchema = z.object({
-  kind: z.literal('image'),
-  source: SendMessageImageSourceSchema,
-  path: z.string().min(1).optional(),
-  text: z.string().optional(),
-});
-
-const SendMessageFilePayloadSchema = z.object({
-  kind: z.literal('file'),
-  source: SendMessageImageSourceSchema,
-  path: z.string().min(1).optional(),
-  text: z.string().optional(),
-});
-
-const SendMessageRichPartSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('text'),
-    text: z.string(),
-  }),
-  z.object({
-    type: z.literal('image'),
-    source: SendMessageImageSourceSchema,
-    path: z.string().min(1).optional(),
-    alt: z.string().optional(),
-  }),
-]);
-
-const SendMessageRichPayloadSchema = z.object({
-  kind: z.literal('rich'),
-  parts: z.array(SendMessageRichPartSchema).min(1),
-});
-
-const SendMessagePayloadSchema = z.discriminatedUnion('kind', [
-  SendMessageImagePayloadSchema,
-  SendMessageFilePayloadSchema,
-  SendMessageRichPayloadSchema,
-]);
-
-const SendMessageActionSchema = z.object({
-  type: z.literal('send_message'),
-  message: SendMessagePayloadSchema,
-  reply_in_thread: z.boolean().optional(),
-});
-
-const RecallMessageActionSchema = z.object({
-  type: z.literal('recall_message'),
-  message_id: z.string().min(1),
-});
-
-const CodexExecActionSchema = z.discriminatedUnion('type', [
-  SaveMemoryActionSchema,
-  CreateJobActionSchema,
-  ListJobsActionSchema,
-  UpdateJobActionSchema,
-  DisableJobActionSchema,
-  DeleteJobActionSchema,
-  UpsertJobActionSchema,
-  RunLocalCliToolActionSchema,
-  ManageAccessControlActionSchema,
-  GetRunTraceActionSchema,
-  SendMessageActionSchema,
-  RecallMessageActionSchema,
-]).superRefine((action, ctx) => {
-  if (
-    (action.type === 'update_job' || action.type === 'disable_job' || action.type === 'delete_job') &&
-    !action.job_id &&
-    !action.name
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['job_id'],
-      message: 'job_id or name is required',
-    });
-  }
-
-  if (action.type === 'manage_access_control' && action.action !== 'list') {
-    if (!action.list) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['list'],
-        message: 'list is required for add/remove',
-      });
-    }
-    if (!action.value) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['value'],
-        message: 'value is required for add/remove',
-      });
-    }
-  }
-
-  if (action.type === 'send_message') {
-    if (action.message.kind !== 'rich' && action.message.source === 'local_path' && !action.message.path) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['message', 'path'],
-        message: 'path is required when source is local_path',
-      });
-    }
-    if (action.message.kind !== 'rich' && action.message.kind === 'file' && action.message.source !== 'local_path') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['message', 'source'],
-        message: 'file messages only support source local_path',
-      });
-    }
-    if (action.message.kind === 'rich') {
-      action.message.parts.forEach((part, index) => {
-        if (part.type === 'image' && part.source === 'local_path' && !part.path) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['message', 'parts', index, 'path'],
-            message: 'path is required when image source is local_path',
-          });
-        }
-      });
-    }
-  }
-
-  if (action.type === 'get_run_trace' && action.source !== 'message' && action.target) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['target'],
-      message: 'target is only supported when source=message',
-    });
-  }
-
-  const schedule =
-    action.type === 'create_job' || action.type === 'upsert_job'
-      ? action.schedule
-      : action.type === 'update_job'
-        ? action.schedule
-        : undefined;
-  const timezone =
-    action.type === 'create_job' || action.type === 'upsert_job' || action.type === 'update_job'
-      ? action.timezone
-      : undefined;
-  let normalizedTimezone: string | undefined;
-  if (timezone !== undefined) {
-    try {
-      normalizedTimezone = normalizeJobTimezone(timezone);
-    } catch (err) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['timezone'],
-        message: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
-  }
-  if (schedule === undefined) return;
-  try {
-    expandSchedule(schedule, normalizedTimezone);
-  } catch (err) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['schedule'],
-      message: err instanceof Error ? err.message : String(err),
-    });
-  }
-});
-
-const CodexExecActionEnvelopeSchema = z.object({
-  version: z.literal(1),
-  reply: z.string().optional(),
-  actions: z.array(CodexExecActionSchema).min(1).max(5),
-});
-
-export type CodexExecAction = z.infer<typeof CodexExecActionSchema>;
+import {
+  dispatchRegisteredAction,
+  type ActionHandlerRegistry,
+} from './codex-exec-action-registry.js';
+import type {
+  CodexExecAction,
+  CreateJobAction,
+  DeleteJobAction,
+  DisableJobAction,
+  GetRunTraceAction,
+  ListJobsAction,
+  ManageAccessControlAction,
+  RecallMessageAction,
+  RunLocalCliToolAction,
+  SaveMemoryAction,
+  SendMessageAction,
+  SendMessageRichPayload,
+  UpdateJobAction,
+  UpsertJobAction,
+} from './codex-exec-action-schemas.js';
+export { parseCodexExecActionEnvelope } from './codex-exec-action-schemas.js';
+export type {
+  CodexExecAction,
+  CodexExecActionEnvelope,
+  CodexExecActionEnvelopeParseResult,
+} from './codex-exec-action-schemas.js';
 
 export interface CodexExecActionExecutionResult {
   ok: boolean;
   action: CodexExecAction['type'] | 'action_channel';
   message: string;
 }
-
-export interface CodexExecActionEnvelope {
-  reply?: string;
-  actions: CodexExecAction[];
-}
-
-export type CodexExecActionEnvelopeParseResult =
-  | { ok: true; envelope: CodexExecActionEnvelope }
-  | { ok: false; error: string };
 
 export interface CodexExecActionDispatchRequest {
   message: LarkMessage;
@@ -353,25 +101,11 @@ export interface CreateCodexExecActionDispatcherOptions {
   validateChatAccess?: AccessControlValidationInput['validateChatAccess'];
 }
 
-function formatZodError(err: z.ZodError): string {
-  return err.issues
-    .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
-    .join('; ');
-}
-
-export function parseCodexExecActionEnvelope(parsed: unknown): CodexExecActionEnvelopeParseResult {
-  const envelope = CodexExecActionEnvelopeSchema.safeParse(parsed);
-  if (!envelope.success) {
-    return { ok: false, error: formatZodError(envelope.error) };
-  }
-  return {
-    ok: true,
-    envelope: {
-      ...(envelope.data.reply !== undefined ? { reply: envelope.data.reply } : {}),
-      actions: envelope.data.actions,
-    },
-  };
-}
+type CodexExecActionHandlerRegistry = ActionHandlerRegistry<
+  CodexExecAction,
+  LarkMessage,
+  CodexExecActionExecutionResult
+>;
 
 function currentCaller(
   identitySession: IdentitySession,
@@ -423,7 +157,7 @@ function formatJobForActionList(job: JobFile, caller: string): string {
 }
 
 async function executeSaveMemory(
-  action: z.infer<typeof SaveMemoryActionSchema>,
+  action: SaveMemoryAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -491,7 +225,7 @@ async function executeSaveMemory(
 }
 
 async function executeCreateJob(
-  action: z.infer<typeof CreateJobActionSchema>,
+  action: CreateJobAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -540,7 +274,7 @@ async function executeCreateJob(
 }
 
 async function executeListJobs(
-  action: z.infer<typeof ListJobsActionSchema>,
+  action: ListJobsAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -572,7 +306,7 @@ async function executeListJobs(
 }
 
 async function executeUpdateJob(
-  action: z.infer<typeof UpdateJobActionSchema>,
+  action: UpdateJobAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -616,7 +350,7 @@ async function executeUpdateJob(
 }
 
 async function executeDisableJob(
-  action: z.infer<typeof DisableJobActionSchema>,
+  action: DisableJobAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -642,7 +376,7 @@ async function executeDisableJob(
 }
 
 async function executeDeleteJob(
-  action: z.infer<typeof DeleteJobActionSchema>,
+  action: DeleteJobAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -662,7 +396,7 @@ async function executeDeleteJob(
 }
 
 async function executeUpsertJob(
-  action: z.infer<typeof UpsertJobActionSchema>,
+  action: UpsertJobAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -712,7 +446,7 @@ async function executeUpsertJob(
 }
 
 async function executeRunLocalCliTool(
-  action: z.infer<typeof RunLocalCliToolActionSchema>,
+  action: RunLocalCliToolAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -728,7 +462,7 @@ async function executeRunLocalCliTool(
 }
 
 async function executeManageAccessControl(
-  action: z.infer<typeof ManageAccessControlActionSchema>,
+  action: ManageAccessControlAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -812,7 +546,7 @@ function normalizeTraceWithinHours(value: number | undefined): number {
 }
 
 function formatGetRunTraceFailure(
-  action: z.infer<typeof GetRunTraceActionSchema>,
+  action: GetRunTraceAction,
   status: 'invalid_request' | 'not_found' | 'unauthorized',
   message: string,
 ): string {
@@ -828,7 +562,7 @@ function formatGetRunTraceFailure(
 }
 
 function resolveMessageTraceLogId(
-  action: z.infer<typeof GetRunTraceActionSchema>,
+  action: GetRunTraceAction,
   message: LarkMessage,
 ): { ok: true; logId: string } | { ok: false; message: string; denied?: boolean } {
   const quotedMessageId = selectQuotedMessageId(message);
@@ -851,7 +585,7 @@ function resolveMessageTraceLogId(
 }
 
 async function resolveCronJobTraceLogId(
-  action: z.infer<typeof GetRunTraceActionSchema>,
+  action: GetRunTraceAction,
   message: LarkMessage,
   caller: string,
 ): Promise<{ ok: true; logId: string } | { ok: false; message: string; denied?: boolean }> {
@@ -890,7 +624,7 @@ async function resolveCronJobTraceLogId(
 }
 
 async function executeGetRunTrace(
-  action: z.infer<typeof GetRunTraceActionSchema>,
+  action: GetRunTraceAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -1091,7 +825,7 @@ async function resolveSendMessageImagePath(
 }
 
 async function resolveSendMessageRichParts(
-  action: z.infer<typeof SendMessageRichPayloadSchema>,
+  action: SendMessageRichPayload,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<{ ok: true; parts: ReplyRichPart[]; imageCount: number } | { ok: false; result: CodexExecActionExecutionResult }> {
@@ -1111,7 +845,7 @@ async function resolveSendMessageRichParts(
 }
 
 async function executeSendMessage(
-  action: z.infer<typeof SendMessageActionSchema>,
+  action: SendMessageAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -1233,7 +967,7 @@ async function executeSendMessage(
 }
 
 async function executeRecallMessage(
-  action: z.infer<typeof RecallMessageActionSchema>,
+  action: RecallMessageAction,
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
@@ -1292,37 +1026,33 @@ export function formatCodexExecActionResults(results: CodexExecActionExecutionRe
 export function createCodexExecActionDispatcher(
   deps: CreateCodexExecActionDispatcherOptions,
 ): CodexExecActionDispatcher {
+  const registry = createCodexExecActionHandlerRegistry(deps);
   return {
     async execute(request) {
       const results: CodexExecActionExecutionResult[] = [];
       for (const action of request.actions) {
-        if (action.type === 'save_memory') {
-          results.push(await executeSaveMemory(action, request.message, deps));
-        } else if (action.type === 'create_job') {
-          results.push(await executeCreateJob(action, request.message, deps));
-        } else if (action.type === 'list_jobs') {
-          results.push(await executeListJobs(action, request.message, deps));
-        } else if (action.type === 'update_job') {
-          results.push(await executeUpdateJob(action, request.message, deps));
-        } else if (action.type === 'disable_job') {
-          results.push(await executeDisableJob(action, request.message, deps));
-        } else if (action.type === 'delete_job') {
-          results.push(await executeDeleteJob(action, request.message, deps));
-        } else if (action.type === 'upsert_job') {
-          results.push(await executeUpsertJob(action, request.message, deps));
-        } else if (action.type === 'manage_access_control') {
-          results.push(await executeManageAccessControl(action, request.message, deps));
-        } else if (action.type === 'get_run_trace') {
-          results.push(await executeGetRunTrace(action, request.message, deps));
-        } else if (action.type === 'send_message') {
-          results.push(await executeSendMessage(action, request.message, deps));
-        } else if (action.type === 'recall_message') {
-          results.push(await executeRecallMessage(action, request.message, deps));
-        } else {
-          results.push(await executeRunLocalCliTool(action, request.message, deps));
-        }
+        results.push(await dispatchRegisteredAction(registry, action, request.message));
       }
       return results;
     },
+  };
+}
+
+function createCodexExecActionHandlerRegistry(
+  deps: CreateCodexExecActionDispatcherOptions,
+): CodexExecActionHandlerRegistry {
+  return {
+    save_memory: (action, message) => executeSaveMemory(action, message, deps),
+    create_job: (action, message) => executeCreateJob(action, message, deps),
+    list_jobs: (action, message) => executeListJobs(action, message, deps),
+    update_job: (action, message) => executeUpdateJob(action, message, deps),
+    disable_job: (action, message) => executeDisableJob(action, message, deps),
+    delete_job: (action, message) => executeDeleteJob(action, message, deps),
+    upsert_job: (action, message) => executeUpsertJob(action, message, deps),
+    run_local_cli_tool: (action, message) => executeRunLocalCliTool(action, message, deps),
+    manage_access_control: (action, message) => executeManageAccessControl(action, message, deps),
+    get_run_trace: (action, message) => executeGetRunTrace(action, message, deps),
+    send_message: (action, message) => executeSendMessage(action, message, deps),
+    recall_message: (action, message) => executeRecallMessage(action, message, deps),
   };
 }
