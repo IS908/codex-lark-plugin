@@ -1,5 +1,5 @@
 import { appConfig } from './config.js';
-import type { LarkMessage } from './channel.js';
+import type { LarkMessage } from './lark-message.js';
 import type { CodexExecRequest, CodexExecRunner } from './codex-exec.js';
 import { isCodexExecTimeoutError, normalizeCodexExecResult, runCodexExecCommand } from './codex-exec.js';
 import {

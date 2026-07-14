@@ -23,7 +23,7 @@ const {
   buildCodexExecSessionKey,
   FileCodexExecSessionStore,
 } = await import('../src/codex-session-store.js');
-import type { LarkMessage } from '../src/channel.js';
+import type { LarkMessage } from '../src/lark-message.js';
 import type { ReplyRequest } from '../src/reply-sender.js';
 
 const store = new FileCodexExecSessionStore(join(root, 'sessions'));

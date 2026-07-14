@@ -43,25 +43,25 @@ The check currently enforces:
 - future `src/domain/**` and `src/ports/**` modules cannot import known
   infrastructure modules.
 
-Existing violations are listed in `scripts/architecture-baseline.json` with a
-reason and removal phase. Removing a baseline violation is always allowed; adding
-one requires an explicit architecture decision and baseline update.
+Temporary exceptions must be listed in `scripts/architecture-baseline.json` with
+a reason and removal phase. The current baseline is empty; adding an exception
+requires an explicit architecture decision and baseline update.
 
 ## Current Baseline
 
-The baseline exists because v1.21.1 already has known dependency cycles around:
+The current baseline is empty:
 
-- `channel.ts` with SDK parity, identity, memory enrichment, doc-comment, and
-  inbound pipeline modules;
-- `lark-transport.ts` with transport API/context helper modules;
-- `job-store.ts` with cronjob diagnostics.
+- `LarkMessage` and channel handler contracts live in `src/lark-message.ts`;
+- bot/latest message trackers live in `src/message-trackers.ts`;
+- transport contracts live in `src/lark-transport-contracts.ts`;
+- job and cronjob diagnostic contracts live in `src/job-contracts.ts` and
+  `src/cronjob-diagnostic-contracts.ts`;
+- shared job timezone helpers live in `src/job-timezone.ts`.
 
-The planned removal order is:
+The remaining planned order is:
 
-1. Guardrails and baseline.
-2. Shared contracts extraction and cycle removal.
-3. Composition root slimming.
-4. Hotspot module splits.
+1. Composition root slimming.
+2. Hotspot module splits.
 
 ## PR Guidance
 

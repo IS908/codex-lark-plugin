@@ -1,5 +1,5 @@
 import type { CommentEvent, NormalizedMessage, ResourceDescriptor } from '@larksuite/channel';
-import type { LarkMessage } from './channel.js';
+import type { LarkMessage } from './lark-message.js';
 import { DOC_CHAT_ID_PREFIX, type IdentitySession } from './identity-session.js';
 import type { AccessControlReader } from './runtime-access-control.js';
 import { bindSdkMessageIdentity } from './sdk-channel-identity.js';

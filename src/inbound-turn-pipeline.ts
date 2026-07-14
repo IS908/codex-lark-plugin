@@ -3,13 +3,13 @@ import type {
   ResourceDescriptor,
 } from '@larksuite/channel';
 import { appConfig } from './config.js';
-import type { LarkMessage } from './channel.js';
+import type { LarkMessage } from './lark-message.js';
 import {
   AckReactionTracker,
   deleteAckReactionWithTransport,
 } from './ack-reactions.js';
 import { addSdkImageDownloads } from './inbound-attachment-downloader.js';
-import type { LarkTransport } from './lark-transport.js';
+import type { LarkTransport } from './lark-transport-contracts.js';
 import { addQuotedContext } from './quoted-context-loader.js';
 
 export interface LatestInboundMessageTracker {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { AckReactionTracker } from '../src/ack-reactions.js';
 import { prepareInboundTurn } from '../src/inbound-turn-pipeline.js';
-import type { LarkMessage } from '../src/channel.js';
+import type { LarkMessage } from '../src/lark-message.js';
 
 function waitTick(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));

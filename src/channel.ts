@@ -19,9 +19,8 @@ import { AckReactionTracker } from './ack-reactions.js';
 import {
   createOpenApiLarkTransport,
   createSdkLarkTransport,
-  type LarkTransport,
-  type SdkLarkTransportChannel,
 } from './lark-transport.js';
+import type { LarkTransport, SdkLarkTransportChannel } from './lark-transport-contracts.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
 import { bindSdkCommentIdentity, processSdkMessage } from './sdk-channel-parity.js';
 import {
@@ -34,14 +33,17 @@ import {
   sdkReactionRouteEvent,
 } from './reaction-router.js';
 import { DisplayNameResolver, generateUserAlias } from './display-name-resolver.js';
-import type { LarkCachedMessageContext } from './lark-message-context.js';
 import { enrichLarkMessageWithMemory } from './memory-enricher.js';
 import { handleCommentEvent } from './doc-comment-inbound.js';
 import { prepareInboundTurn } from './inbound-turn-pipeline.js';
-import {
-  filterParentContentAfterBoundary,
-  type ConversationBoundary,
-} from './conversation-boundary.js';
+import { filterParentContentAfterBoundary } from './conversation-boundary.js';
+import type {
+  ControlMessageHandler,
+  ConversationBoundaryProvider,
+  LarkMessage,
+  MessageHandler,
+} from './lark-message.js';
+import { BotMessageTracker, LatestMessageTracker } from './message-trackers.js';
 
 export { resolveMentionPlaceholders } from './message-content.js';
 export { handleCommentEvent, passesDocCommentWhitelist } from './doc-comment-inbound.js';
@@ -79,53 +81,6 @@ function passesWhitelist(senderId: string, chatId: string): boolean {
   return accessControlStore.allowsMessage(senderId, chatId);
 }
 
-export interface LarkMessage {
-  messageId: string;
-  chatId: string;
-  chatType: string; // 'p2p' | 'group'
-  senderId: string;
-  senderName?: string;
-  chatName?: string;
-  text: string;
-  messageType: string;
-  parentId?: string;
-  parentContent?: string;
-  threadId?: string;
-  rootMessageId?: string;
-  timestampMs?: number;
-  messagePosition?: string;
-  mentions?: Array<{ id: string; name: string }>;
-  /** True when this bot's open_id appears in mentions. Forwarded to Codex as meta.bot_mentioned. */
-  botMentioned?: boolean;
-  /** True when a trusted group allowlist let a non-@mention message enter Codex. */
-  unmentionedGroupTrigger?: boolean;
-  attachments?: Array<{ fileKey: string; fileName: string; fileType: string }>;
-  rawContent: string;
-  imagePath?: string;
-  imagePaths?: string[];
-  docComment?: {
-    fileToken: string;
-    commentId: string;
-    fileType: string;
-    replyId?: string;
-  };
-  reaction?: {
-    emojiType: string;
-    operatorId: string;
-    targetMessageId: string;
-    source: 'sdk';
-    targetMessageType?: string;
-    targetText?: string;
-  };
-}
-
-export type MessageHandler = (message: LarkMessage) => Promise<void>;
-export type ControlMessageHandler = (message: LarkMessage) => Promise<boolean>;
-export interface ConversationBoundaryProvider {
-  get(chatId: string, threadId?: string): Promise<ConversationBoundary | null>;
-  markHandoffConsumed(chatId: string, threadId: string | undefined, generation: number): Promise<void>;
-}
-
 const SDK_COMMENT_CONTEXT_CAP_BYTES = 8 * 1024;
 
 function capUtf8Text(s: string | undefined, maxBytes: number): string | undefined {
@@ -135,101 +90,6 @@ function capUtf8Text(s: string | undefined, maxBytes: number): string | undefine
   let cut = maxBytes;
   while (cut > 0 && (buf[cut] & 0xc0) === 0x80) cut--;
   return `${buf.subarray(0, cut).toString('utf8')} ...[truncated]`;
-}
-
-export class BotMessageTracker {
-  private ids: string[] = [];
-  private map = new Map<string, TrackedBotMessage>();
-  private readonly maxSize: number;
-
-  constructor(maxSize = 500) {
-    this.maxSize = Number.isFinite(maxSize) ? Math.max(0, Math.floor(maxSize)) : 0;
-  }
-
-  add(messageId: string, meta: Omit<TrackedBotMessage, 'messageId' | 'timestamp'> = {}): void {
-    if (this.maxSize <= 0 || !messageId) return;
-    if (this.map.has(messageId)) return;
-    this.map.set(messageId, {
-      messageId,
-      chatId: meta.chatId,
-      threadId: meta.threadId,
-      quotedContext: meta.quotedContext,
-      timestamp: Date.now(),
-    });
-    this.ids.push(messageId);
-    while (this.ids.length > this.maxSize) {
-      const oldest = this.ids.shift()!;
-      this.map.delete(oldest);
-    }
-  }
-
-  has(messageId: string): boolean {
-    return this.map.has(messageId);
-  }
-
-  get(messageId: string): TrackedBotMessage | undefined {
-    return this.map.get(messageId);
-  }
-}
-
-export interface TrackedBotMessage {
-  messageId: string;
-  chatId?: string;
-  threadId?: string;
-  quotedContext?: TrackedBotMessageQuotedContext;
-  timestamp: number;
-}
-
-export type TrackedBotMessageQuotedContext = LarkCachedMessageContext;
-
-/**
- * Records the latest inbound user message per (chatId, threadId) pair.
- * Used by the reply tool to auto-correct reply_to when Codex omits it in
- * concurrent thread scenarios.
- */
-export interface TrackedMessage {
-  messageId: string;
-  threadId?: string;
-  timestamp: number;
-}
-
-export class LatestMessageTracker {
-  private map = new Map<string, TrackedMessage>();
-  private readonly ttlMs: number;
-  private readonly maxSize: number;
-
-  constructor(ttlMs = 10 * 60 * 1000, maxSize = 1000) {
-    this.ttlMs = Number.isFinite(ttlMs) && ttlMs > 0 ? Math.floor(ttlMs) : 10 * 60 * 1000;
-    this.maxSize = Number.isFinite(maxSize) ? Math.max(0, Math.floor(maxSize)) : 0;
-  }
-
-  private key(chatId: string, threadId?: string): string {
-    // Use || instead of ?? so empty strings also fall back to '_'
-    return `${chatId}::${threadId || '_'}`;
-  }
-
-  record(chatId: string, msg: TrackedMessage): void {
-    const key = this.key(chatId, msg.threadId);
-    this.map.delete(key);
-    this.map.set(key, msg);
-    while (this.map.size > this.maxSize) {
-      const oldest = this.map.keys().next().value as string;
-      this.map.delete(oldest);
-    }
-  }
-
-  getLatest(chatId: string, threadId?: string): TrackedMessage | undefined {
-    const key = this.key(chatId, threadId);
-    const m = this.map.get(key);
-    if (!m) return undefined;
-    if (Date.now() - m.timestamp > this.ttlMs) {
-      this.map.delete(key);
-      return undefined;
-    }
-    this.map.delete(key);
-    this.map.set(key, m);
-    return m;
-  }
 }
 
 export class LarkChannel {

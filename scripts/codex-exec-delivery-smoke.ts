@@ -15,7 +15,7 @@ import {
   extractCodexExecSessionId,
   extractCodexExecUsage,
 } from '../src/codex-exec.js';
-import type { LarkMessage } from '../src/channel.js';
+import type { LarkMessage } from '../src/lark-message.js';
 import type { ReplyRequest } from '../src/reply-sender.js';
 import { TurnObligationTracker } from '../src/turn-obligation.js';
 import { formatCodexExecFailureReply } from '../src/codex-exec-error.js';

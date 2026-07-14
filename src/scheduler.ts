@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { appConfig } from './config.js';
 import { cronJobPrompt } from './prompts.js';
 import type { IdentitySession } from './identity-session.js';
-import type { BotMessageTracker } from './channel.js';
+import type { BotMessageTracker } from './message-trackers.js';
 import {
   listAllJobs,
   readJob,
@@ -24,8 +24,8 @@ import { feishuApiCall } from './feishu-retry.js';
 import { logSafeError } from './safe-log.js';
 import {
   createOpenApiLarkTransport,
-  type LarkTransport,
 } from './lark-transport.js';
+import type { LarkTransport } from './lark-transport-contracts.js';
 import {
   CronJobRunDiagnostics,
   formatCronJobDiagnostics,

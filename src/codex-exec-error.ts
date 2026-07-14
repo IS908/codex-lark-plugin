@@ -1,4 +1,4 @@
-import type { LarkMessage } from './channel.js';
+import type { LarkMessage } from './lark-message.js';
 import { isCodexExecTimeoutError } from './codex-exec.js';
 
 export const CODEX_EXEC_TIMEOUT_REPLY =

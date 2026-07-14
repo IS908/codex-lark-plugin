@@ -2,13 +2,14 @@ import type * as Lark from '@larksuiteoapi/node-sdk';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AckReactionTracker } from '../ack-reactions.js';
 import { audit } from '../audit-log.js';
-import type { BotMessageTracker, LatestMessageTracker, LarkChannel } from '../channel.js';
+import type { ChatVisibilityProvider } from '../lark-message.js';
+import type { BotMessageTracker, LatestMessageTracker } from '../message-trackers.js';
 import { SYSTEM_FLUSH_CALLER } from '../identity-session.js';
 import type { IdentitySession } from '../identity-session.js';
 import {
   createOpenApiLarkTransport,
-  type LarkTransport,
 } from '../lark-transport.js';
+import type { LarkTransport } from '../lark-transport-contracts.js';
 import type { ConversationBuffer } from '../memory/buffer.js';
 import type { MemoryStore } from '../memory/file.js';
 import type { ProfileDistillationDispatcher } from '../profile-distillation.js';
@@ -31,7 +32,7 @@ export interface ToolContext {
   client: Lark.Client;
   memoryStore: MemoryStore;
   identitySession: IdentitySession;
-  channel: LarkChannel;
+  channel: ChatVisibilityProvider;
   transport: LarkTransport;
   conversationBuffer?: ConversationBuffer;
   ackReactions?: AckReactionTracker;
@@ -64,7 +65,7 @@ export interface CreateToolContextArgs {
   client: Lark.Client;
   memoryStore: MemoryStore;
   identitySession: IdentitySession;
-  channel: LarkChannel;
+  channel: ChatVisibilityProvider;
   conversationBuffer?: ConversationBuffer;
   ackReactions?: AckReactionTracker;
   botMessageTracker?: BotMessageTracker;

@@ -5,7 +5,7 @@ import type {
   ReactionEvent,
   RejectEvent,
 } from '@larksuite/channel';
-import type { LarkChannel } from './channel.js';
+import type { SdkChannelRuntimeTarget } from './lark-message.js';
 import { createSdkChannelScaffold } from './sdk-channel-scaffold.js';
 import { debugLog } from './debug-log.js';
 import { logSafeError } from './safe-log.js';
@@ -48,7 +48,7 @@ function retryDelay(options: SdkRuntimeRetryOptions, attempt: number, err: unkno
 }
 
 export async function startSdkChannelRuntime(
-  channel: LarkChannel,
+  channel: SdkChannelRuntimeTarget,
   options: SdkRuntimeOptions = {},
 ): Promise<SdkRuntimeChannel> {
   const sdkChannel = options.createChannel?.() ?? createSdkChannelScaffold();
@@ -95,7 +95,7 @@ export async function startSdkChannelRuntime(
 }
 
 export function startSdkChannelRuntimeWithRetry(
-  channel: LarkChannel,
+  channel: SdkChannelRuntimeTarget,
   options: SdkRuntimeRetryOptions = {},
 ): SdkRuntimeRetryController {
   let stopped = false;

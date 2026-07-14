@@ -1,5 +1,5 @@
 import { appConfig } from './config.js';
-import type { LarkMessage } from './channel.js';
+import type { LarkMessage } from './lark-message.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { MemoryStore } from './memory/file.js';
 import {

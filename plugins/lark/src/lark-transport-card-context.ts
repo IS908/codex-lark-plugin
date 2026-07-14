@@ -9,16 +9,26 @@ import {
   messageItemRawContent,
   messageItemText,
 } from './message-content.js';
-import type { SdkLarkTransportChannel } from './lark-transport.js';
 import type {
-  LarkCachedMessageContext,
-  LarkMessageContext,
+  LarkCachedQuotedMessageContext,
+  LarkFetchedMessageContext,
+  LarkOutboundMessageContextCache,
+  LarkUserMessageFetchResult,
+  LarkUserMessageFetcher,
+  SdkLarkTransportChannel,
+} from './lark-transport-contracts.js';
+import type {
   LarkMessageFetchResult,
   LarkMessageFetchStage,
 } from './lark-message-context.js';
 
-export type LarkFetchedMessageContext = LarkMessageContext;
-export type LarkCachedQuotedMessageContext = LarkCachedMessageContext;
+export type {
+  LarkCachedQuotedMessageContext,
+  LarkFetchedMessageContext,
+  LarkOutboundMessageContextCache,
+  LarkUserMessageFetchResult,
+  LarkUserMessageFetcher,
+} from './lark-transport-contracts.js';
 export type {
   LarkMessageContext,
   LarkMessageFetchIdentity,
@@ -26,20 +36,6 @@ export type {
   LarkMessageFetchStage,
   LarkMessageHydrationReason,
 } from './lark-message-context.js';
-
-export interface LarkOutboundMessageContextCache {
-  get(messageId: string): { quotedContext?: LarkCachedQuotedMessageContext } | undefined;
-}
-
-export interface LarkUserMessageFetchResult {
-  item?: unknown;
-  diagnostic?: string;
-  fetchResult?: LarkMessageFetchResult;
-}
-
-export interface LarkUserMessageFetcher {
-  fetchMessage(messageId: string): Promise<LarkUserMessageFetchResult | null>;
-}
 
 export class LarkTransportCardContext {
   private readonly sdkChannel?: Pick<SdkLarkTransportChannel, 'fetchMessage'>;

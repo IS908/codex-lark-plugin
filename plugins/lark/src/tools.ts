@@ -2,7 +2,8 @@ import type * as Lark from '@larksuiteoapi/node-sdk';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { MemoryStore } from './memory/file.js';
 import type { ConversationBuffer } from './memory/buffer.js';
-import type { BotMessageTracker, LatestMessageTracker, LarkChannel } from './channel.js';
+import type { ChatVisibilityProvider } from './lark-message.js';
+import type { BotMessageTracker, LatestMessageTracker } from './message-trackers.js';
 import type { IdentitySession } from './identity-session.js';
 import type { AckReactionTracker } from './ack-reactions.js';
 import { registerLocalCliTools } from './local-cli-tools.js';
@@ -35,7 +36,7 @@ export function registerTools(
   client: Lark.Client,
   memoryStore: MemoryStore,
   identitySession: IdentitySession,
-  channel: LarkChannel,
+  channel: ChatVisibilityProvider,
   conversationBuffer?: ConversationBuffer,
   ackReactions?: AckReactionTracker,
   botMessageTracker?: BotMessageTracker,

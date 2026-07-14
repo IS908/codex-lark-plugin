@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { appConfig } from './config.js';
 import type { ConversationBuffer } from './memory/buffer.js';
-import type { BotMessageTracker, LatestMessageTracker, TrackedBotMessageQuotedContext } from './channel.js';
+import type { BotMessageTracker, LatestMessageTracker, TrackedBotMessageQuotedContext } from './message-trackers.js';
 import { buildCards, shouldUseCard } from './feishu-card.js';
 import { mergeCardFooterWithRuntimeMetrics } from './codex-exec-metrics.js';
 import { JOB_THREAD_PREFIX } from './scheduler.js';
@@ -17,9 +17,8 @@ import { isFeishuOpenMessageId, isSyntheticSystemMessageId } from './codex-exec-
 import { logSafeError } from './safe-log.js';
 import {
   createOpenApiLarkTransport,
-  type LarkTransport,
-  type LarkTransportInput,
 } from './lark-transport.js';
+import type { LarkTransport, LarkTransportInput } from './lark-transport-contracts.js';
 import {
   fetchedMessageContentText,
   isPlaceholderCardText,

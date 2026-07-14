@@ -3,7 +3,7 @@ import { appConfig } from './config.js';
 import type {
   LarkUserMessageFetchResult,
   LarkUserMessageFetcher,
-} from './lark-transport-card-context.js';
+} from './lark-transport-contracts.js';
 
 interface ProcessResult {
   exitCode: number | null;

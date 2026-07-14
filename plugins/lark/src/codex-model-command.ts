@@ -1,5 +1,5 @@
 import { appConfig } from './config.js';
-import type { LarkMessage } from './channel.js';
+import type { LarkMessage } from './lark-message.js';
 import { audit } from './audit-log.js';
 import type { ConversationFlushResult, ConversationFlushReason } from './memory/buffer.js';
 import {
