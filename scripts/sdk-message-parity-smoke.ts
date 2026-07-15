@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { IdentitySession } from '../src/identity-session.js';
 import {
   bindSdkCommentIdentity,
+  evaluateUnmentionedGroupMessage,
   processSdkMessage,
 } from '../src/sdk-channel-parity.js';
 import type { AccessControlReader } from '../src/runtime-access-control.js';
@@ -116,7 +117,17 @@ function accessControl(options: {
     },
   );
 
-  assert.deepEqual(result, { status: 'dropped', reason: 'no_mention' });
+  assert.equal(result.status, 'dropped');
+  assert.equal(result.reason, 'no_mention');
+  assert.deepEqual(result.diagnostic, {
+    chatId: 'oc_group',
+    chatType: 'group',
+    mentionedBot: false,
+    noMentionAllowed: false,
+    topLevel: true,
+    threadMessage: false,
+    triggerDecision: 'not_evaluated',
+  });
   assert.equal(handled, false);
   assert.equal(identitySession.getCaller('oc_group'), null);
 }
@@ -188,6 +199,99 @@ function accessControl(options: {
 
 {
   const identitySession = new IdentitySession(() => null);
+  const handled: any[] = [];
+  const content = [
+    '总结一下这个会议记录，讲了几件事，每件都做一下完整总结',
+    'https://bytedance.my.larkoffice.com/minutes/minu_abc123',
+  ].join('\n');
+  const result = await processSdkMessage(
+    {
+      messageId: 'om_group_no_mention_minutes_summary',
+      chatId: 'oc_trusted_group',
+      chatType: 'group',
+      senderId: 'ou_sender',
+      content,
+      rawContentType: 'text',
+      mentionedBot: false,
+      mentionAll: false,
+      mentions: [],
+      resources: [],
+      createTime: Date.now(),
+    },
+    {
+      identitySession,
+      accessControl: accessControl({ groupNoMentionChatIds: ['oc_trusted_group'] }),
+      handleMessage: async (message) => {
+        handled.push(message);
+      },
+    },
+  );
+
+  assert.equal(result.status, 'processed');
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].unmentionedGroupTrigger, true);
+  assert.equal(handled[0].text, content);
+  assert.equal(identitySession.getCaller('oc_trusted_group'), 'ou_sender');
+}
+
+{
+  const identitySession = new IdentitySession(() => null);
+  let handled = false;
+  const result = await processSdkMessage(
+    {
+      messageId: 'om_group_no_mention_minutes_non_allowlisted',
+      chatId: 'oc_group',
+      chatType: 'group',
+      senderId: 'ou_sender',
+      content: '总结一下这个会议记录\nhttps://bytedance.my.larkoffice.com/minutes/minu_abc123',
+      rawContentType: 'text',
+      mentionedBot: false,
+      mentionAll: false,
+      mentions: [],
+      resources: [],
+      createTime: Date.now(),
+    },
+    {
+      identitySession,
+      accessControl: accessControl({ groupNoMentionChatIds: ['oc_other_group'] }),
+      handleMessage: async () => {
+        handled = true;
+      },
+    },
+  );
+
+  assert.equal(result.status, 'dropped');
+  assert.equal(result.reason, 'no_mention');
+  assert.equal(result.diagnostic?.noMentionAllowed, false);
+  assert.equal(result.diagnostic?.triggerDecision, 'not_evaluated');
+  assert.equal(handled, false);
+}
+
+{
+  const decision = evaluateUnmentionedGroupMessage({
+    messageId: 'om_group_no_mention_actionable_url',
+    chatId: 'oc_trusted_group',
+    chatType: 'group',
+    senderId: 'ou_sender',
+    content: 'https://bytedance.my.larkoffice.com/minutes/minu_abc123',
+    rawContentType: 'text',
+    mentionedBot: false,
+    mentionAll: false,
+    mentions: [],
+    resources: [],
+    createTime: Date.now(),
+  });
+
+  assert.deepEqual(decision, {
+    shouldProcess: true,
+    reason: 'actionable_url',
+    topLevel: true,
+    threadMessage: false,
+  });
+}
+
+{
+  const identitySession = new IdentitySession(() => null);
   let handled = false;
   const result = await processSdkMessage(
     {
@@ -212,7 +316,17 @@ function accessControl(options: {
     },
   );
 
-  assert.deepEqual(result, { status: 'dropped', reason: 'no_mention_trigger' });
+  assert.equal(result.status, 'dropped');
+  assert.equal(result.reason, 'no_mention_trigger');
+  assert.deepEqual(result.diagnostic, {
+    chatId: 'oc_trusted_group',
+    chatType: 'group',
+    mentionedBot: false,
+    noMentionAllowed: true,
+    topLevel: true,
+    threadMessage: false,
+    triggerDecision: 'noise',
+  });
   assert.equal(handled, false);
   assert.equal(identitySession.getCaller('oc_trusted_group'), null);
 }

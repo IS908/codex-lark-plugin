@@ -242,7 +242,14 @@ export class LarkChannel {
     });
 
     if (result.status === 'dropped') {
-      debugLog(`[sdk-channel] Dropped message ${sdkMessage.messageId}: ${result.reason}`);
+      const diagnostic = result.diagnostic
+        ? ` chat=${result.diagnostic.chatId}` +
+          ` top_level=${result.diagnostic.topLevel}` +
+          ` thread=${result.diagnostic.threadMessage}` +
+          ` no_mention_allowed=${result.diagnostic.noMentionAllowed}` +
+          ` heuristic=${result.diagnostic.triggerDecision}`
+        : '';
+      debugLog(`[sdk-channel] Dropped message ${sdkMessage.messageId}: ${result.reason}${diagnostic}`);
     }
   }
 

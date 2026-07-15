@@ -311,8 +311,8 @@ git push origin v1.0.0
 
 默认情况下，群聊消息仍然必须显式 @bot 才会触发。把群聊 chat id 加到
 `group_no_mention_chat_ids` 后，该可信群可以免 @ 触发。未 @ 的 top-level
-消息只有像明确问题或命令时才会进入；这些群里的 thread reply 可以进入
-Codex，并带上 `unmentioned_group_trigger=true`，prompt 会要求 Codex 对
+消息只有像明确问题/命令，或包含可操作的 Lark/飞书资源链接时才会进入；
+这些群里的 thread reply 可以进入 Codex，并带上 `unmentioned_group_trigger=true`，prompt 会要求 Codex 对
 低置信或无关消息返回 `[LARK_NO_REPLY]`。
 
 owner-only 飞书命令：
