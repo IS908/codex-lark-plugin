@@ -330,7 +330,8 @@ synthetic `doc:<file_token>` chat id cannot match a real chat id.
 By default, group messages still require an explicit @bot mention. Add a group
 chat id to `group_no_mention_chat_ids` to allow no-mention triggering for that
 trusted group. Top-level no-mention messages pass only when they look like a
-clear question or command; thread replies in those groups may enter Codex with
+clear question or command, or include an actionable Lark/Feishu resource URL;
+thread replies in those groups may enter Codex with
 `unmentioned_group_trigger=true`, and the prompt requires Codex to return
 `[LARK_NO_REPLY]` for low-confidence or unrelated messages.
 
