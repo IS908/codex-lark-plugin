@@ -9,12 +9,28 @@ log() {
   printf '[%s] %s\n' "$(timestamp)" "$*" >&2
 }
 
+require_supported_node() {
+  if ! node -e '
+    const required = [24, 15, 0];
+    const actual = process.versions.node.split(".").map(Number);
+    for (let i = 0; i < required.length; i += 1) {
+      if ((actual[i] || 0) > required[i]) process.exit(0);
+      if ((actual[i] || 0) < required[i]) process.exit(1);
+    }
+  '; then
+    log "Node.js >=24.15.0 is required; current version is $(node --version 2>/dev/null || printf unknown)."
+    exit 1
+  fi
+}
+
 timestamp_stderr() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
     printf '[%s] %s\n' "$(timestamp)" "$line" >&2
   done
 }
+
+require_supported_node
 
 # Load env
 ENV_FILE="${HOME}/.codex/channels/lark/.env"

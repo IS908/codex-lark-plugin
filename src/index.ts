@@ -40,10 +40,12 @@ import {
   registerCodexDeliveryHandlers,
 } from './codex-delivery-wiring.js';
 import { createChannelServicesStarter } from './channel-services.js';
+import { assertSupportedNodeVersion } from './runtime-version.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 
 async function main() {
+  assertSupportedNodeVersion();
   const isDryRun = process.argv.includes('--dry-run');
   await emitCodexExecConfigDiagnostics(appConfig);
   await accessControlStore.load();

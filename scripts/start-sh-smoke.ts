@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,6 +30,31 @@ try {
       `missing timestamp prefix: ${line}`,
     );
   }
+
+  const fakeBin = join(home, 'fake-bin');
+  const fakeNode = join(fakeBin, 'node');
+  mkdirSync(fakeBin, { recursive: true });
+  writeFileSync(
+    fakeNode,
+    '#!/usr/bin/env bash\nif [ "${1:-}" = "--version" ]; then echo v22.20.0; exit 0; fi\nexit 1\n',
+    'utf-8',
+  );
+  chmodSync(fakeNode, 0o755);
+
+  const unsupported = spawnSync('bash', ['scripts/start.sh', '--dry-run'], {
+    cwd: process.cwd(),
+    encoding: 'utf-8',
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+      HOME: home,
+      LARK_APP_ID: 'start_smoke_app_id',
+      LARK_APP_SECRET: 'start_smoke_secret',
+    },
+  });
+  assert.equal(unsupported.status, 1, unsupported.stderr || unsupported.stdout);
+  assert.equal(unsupported.stdout, '');
+  assert.match(unsupported.stderr, /Node\.js >=24\.15\.0 is required; current version is v22\.20\.0/);
 } finally {
   rmSync(home, { recursive: true, force: true });
 }

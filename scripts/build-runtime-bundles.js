@@ -35,7 +35,7 @@ for (const target of targets) {
     outdir: path.join(packageRoot, outputDir),
     bundle: true,
     platform: 'node',
-    target: 'node20',
+    target: 'node24',
     format: 'esm',
     sourcemap: target !== 'plugins/lark',
     banner: { js: nodeEsmCompatBanner },

@@ -9,6 +9,14 @@ npx tsc --noEmit
 echo "PASS"
 
 echo ""
+echo "=== Runtime version checks ==="
+node --import tsx scripts/runtime-version-smoke.ts
+
+echo ""
+echo "=== Continuation domain checks ==="
+node --import tsx scripts/continuation-domain-smoke.ts
+
+echo ""
 echo "=== Codex adapter checks ==="
 node scripts/codex-adapter-smoke.js
 echo "PASS"
