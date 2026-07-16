@@ -74,6 +74,35 @@ export class ContinuationArtifactStore {
     await visit(directory);
   }
 
+  async canonicalizeReferences(
+    jobId: string,
+    references: readonly string[],
+  ): Promise<string[]> {
+    const directory = this.jobDirectory(jobId);
+    await assertRealDirectory(directory);
+    const canonical: string[] = [];
+    const seen = new Set<string>();
+    for (const reference of references) {
+      const resolved = this.resolve(jobId, reference);
+      const metadata = await fs.lstat(resolved).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') {
+          throw new Error(`Continuation artifact does not exist: ${reference}`);
+        }
+        throw error;
+      });
+      if (metadata.isSymbolicLink() || !metadata.isFile()) {
+        throw new Error(`Continuation artifact is not a regular file: ${reference}`);
+      }
+      const normalized = path.relative(directory, resolved).split(path.sep).join('/');
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        canonical.push(normalized);
+      }
+    }
+    await this.assertWithinLimit(jobId);
+    return canonical;
+  }
+
   async remove(jobId: string): Promise<void> {
     await fs.rm(this.jobDirectory(jobId), { recursive: true, force: true });
   }

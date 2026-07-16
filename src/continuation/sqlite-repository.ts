@@ -355,7 +355,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ): Promise<void> {
     this.transaction(() => {
       const current = this.assertActiveClaim(claim);
-      const executionSessionId = result.executionSessionId ?? current.executionSessionId;
+      const executionSessionId = result.executionSessionId === undefined
+        ? current.executionSessionId
+        : result.executionSessionId ?? undefined;
       const outcome = result.outcome;
 
       if (outcome.outcome === 'continue') {

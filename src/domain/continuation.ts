@@ -146,7 +146,7 @@ export type ContinuationStepOutcome =
 
 export interface ContinuationExecutionResult {
   outcome: ContinuationStepOutcome;
-  executionSessionId?: string;
+  executionSessionId?: string | null;
 }
 
 export interface ContinuationFailure {
