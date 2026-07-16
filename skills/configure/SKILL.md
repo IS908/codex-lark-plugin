@@ -77,6 +77,14 @@ LARK_SESSION_HEALTH_COOLDOWN_MS:    1800000
 LARK_SESSION_HEALTH_MAX_COOLDOWN_MS: 21600000
 LARK_SESSION_HEALTH_MAX_NUDGES:     3
 
+=== Persistent Continuation ===
+LARK_CONTINUATION_ENABLED:          true
+LARK_CONTINUATION_MAX_CONCURRENCY:  1
+LARK_CONTINUATION_MAX_STEPS:        24
+LARK_CONTINUATION_MAX_RETRIES:      3
+LARK_CONTINUATION_MAX_AGE_HOURS:    24
+LARK_CONTINUATION_RETENTION_DAYS:   30
+
 === Acknowledgement ===
 LARK_ACK_EMOJI:                MeMeMe
 LARK_DOC_COMMENT_ACK_EMOJI:    THUMBSUP
@@ -192,6 +200,12 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_CODEX_SESSION_RETENTION_DAYS` — keep Codex exec resume-pointer records newer than this many days (default: 14)
 - `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` — periodic cleanup interval; set `0` to disable automatic cleanup (default: 24)
 - `LARK_CODEX_SESSION_RETENTION_DRY_RUN` — preview session cleanup candidates without deleting records (default: false)
+- `LARK_CONTINUATION_ENABLED` — enable durable background continuation creation and execution (default: true)
+- `LARK_CONTINUATION_MAX_CONCURRENCY` — concurrent continuation Codex runs, from 1 to 4 (default: 1)
+- `LARK_CONTINUATION_MAX_STEPS` — maximum committed steps per continuation, from 1 to 100 (default: 24)
+- `LARK_CONTINUATION_MAX_RETRIES` — retryable execution failures per step, from 0 to 10 (default: 3)
+- `LARK_CONTINUATION_MAX_AGE_HOURS` — maximum continuation lifetime, from 1 to 168 hours (default: 24)
+- `LARK_CONTINUATION_RETENTION_DAYS` — days before terminal task bodies and managed artifacts are redacted (default: 30)
 - `LARK_SESSION_HEALTH_ENABLED` — enable owner DM nudges for long-running Codex exec sessions (default: false)
 - `LARK_SESSION_HEALTH_TURN_THRESHOLD` — turns before a session-health nudge can fire (default: 80)
 - `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD` — heuristic prompt bytes threshold for session-health nudges (default: 524288)
@@ -268,7 +282,11 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD`,
    `LARK_CODEX_SESSION_RETENTION_DAYS`,
    `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS`,
-   `LARK_CODEX_SESSION_RETENTION_DRY_RUN`, `LARK_SESSION_HEALTH_ENABLED`,
+   `LARK_CODEX_SESSION_RETENTION_DRY_RUN`,
+   `LARK_CONTINUATION_ENABLED`, `LARK_CONTINUATION_MAX_CONCURRENCY`,
+   `LARK_CONTINUATION_MAX_STEPS`, `LARK_CONTINUATION_MAX_RETRIES`,
+   `LARK_CONTINUATION_MAX_AGE_HOURS`, `LARK_CONTINUATION_RETENTION_DAYS`,
+   `LARK_SESSION_HEALTH_ENABLED`,
    `LARK_SESSION_HEALTH_TURN_THRESHOLD`, `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD`,
    `LARK_SESSION_HEALTH_TOKEN_THRESHOLD`, `LARK_SESSION_HEALTH_IDLE_DELAY_MS`,
    `LARK_SESSION_HEALTH_COOLDOWN_MS`,

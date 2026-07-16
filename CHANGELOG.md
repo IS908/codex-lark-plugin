@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-17
+
+### Added
+- Added a durable continuation runtime for foreground Codex turns that need bounded background execution, with structured creation actions, dedicated Codex sessions, SQLite checkpoints/leases/attempts, crash recovery, cancellation, retries, artifact boundaries, retention, and parent-owned `/task` commands.
+- Added transactional terminal outbox delivery to the originating Feishu IM thread or document-comment thread, using stable IM UUIDs and bounded comment marker reconciliation for ambiguous provider results.
+- Added compact Job/attempt diagnostics, authorization-safe creator/owner controls, degraded continuation startup, and cross-process restart coverage.
+
+### Changed
+- Raised the required Node.js version to 24.15.0 and switched directly to the built-in `node:sqlite` implementation without a legacy continuation path or rollout mode.
+- Tightened lifecycle promises so only a successfully committed `create_continuation_job` action permits future-work language; unrelated actions and defer markers no longer do.
+
+### Security
+- Background continuation execution forces approval policy `never`, disables sandbox network access, ignores user Codex configuration, restricts writable paths, derives identity and delivery routes from trusted events, redacts credential-like values from persisted model outcomes, and omits task bodies and credentials from diagnostics.
+
 ## [1.21.4] - 2026-07-16
 
 ### Fixed
@@ -783,7 +797,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.4...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.4...v2.0.0
 [1.21.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.3...v1.21.4
 [1.21.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.2...v1.21.3
 [1.21.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.1...v1.21.2

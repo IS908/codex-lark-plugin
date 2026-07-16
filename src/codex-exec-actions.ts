@@ -40,6 +40,10 @@ import { logSafeError } from './safe-log.js';
 import type { BotMessageTracker } from './message-trackers.js';
 import type { LarkTransport } from './lark-transport-contracts.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
+import {
+  CONTINUATION_RUNTIME_UNAVAILABLE,
+  type ContinuationTaskService,
+} from './continuation/service.js';
 import { selectQuotedMessageId } from './quoted-context-loader.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
 import { queryRunTrace } from './run-trace-query.js';
@@ -49,6 +53,7 @@ import {
 } from './codex-exec-action-registry.js';
 import type {
   CodexExecAction,
+  CreateContinuationAction,
   CreateJobAction,
   DeleteJobAction,
   DisableJobAction,
@@ -74,11 +79,14 @@ export interface CodexExecActionExecutionResult {
   ok: boolean;
   action: CodexExecAction['type'] | 'action_channel';
   message: string;
+  continuation?: { jobId: string; title: string };
 }
 
 export interface CodexExecActionDispatchRequest {
   message: LarkMessage;
   actions: CodexExecAction[];
+  parentSessionId?: string | null;
+  model?: string | null;
 }
 
 export interface CodexExecActionDispatcher {
@@ -99,11 +107,18 @@ export interface CreateCodexExecActionDispatcherOptions {
   botMessageTracker?: Pick<BotMessageTracker, 'get'>;
   turnObligations?: Pick<TurnObligationTracker, 'markSatisfied'>;
   validateChatAccess?: AccessControlValidationInput['validateChatAccess'];
+  continuationService?: ContinuationTaskService;
+}
+
+interface CodexExecActionContext {
+  message: LarkMessage;
+  parentSessionId?: string | null;
+  model?: string | null;
 }
 
 type CodexExecActionHandlerRegistry = ActionHandlerRegistry<
   CodexExecAction,
-  LarkMessage,
+  CodexExecActionContext,
   CodexExecActionExecutionResult
 >;
 
@@ -271,6 +286,60 @@ async function executeCreateJob(
     action: 'create_job',
     message: `Created job "${created.job.meta.id}" (job_id: ${created.job.meta.id}, ${created.scheduleHuman}, tz=${created.timezone}). Next run: ${formatCronDateTime(created.nextRunAt, created.timezone)}`,
   };
+}
+
+async function executeCreateContinuation(
+  action: CreateContinuationAction,
+  context: CodexExecActionContext,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  if (!deps.continuationService) {
+    void audit(
+      'create_continuation_job',
+      context.message.senderId,
+      { source_message_id: context.message.messageId },
+      'error',
+    );
+    return {
+      ok: false,
+      action: 'create_continuation_job',
+      message: 'Continuation runtime is unavailable. No background task was created.',
+    };
+  }
+  try {
+    const { job } = await deps.continuationService.createFromMessage(
+      action,
+      context.message,
+      context.parentSessionId,
+      context.model,
+    );
+    void audit(
+      'create_continuation_job',
+      context.message.senderId,
+      { job_id: job.jobId, source_message_id: context.message.messageId },
+      'ok',
+    );
+    return {
+      ok: true,
+      action: 'create_continuation_job',
+      message: `Background task created: ${job.title}\nJob ID: ${job.jobId}`,
+      continuation: { jobId: job.jobId, title: job.title },
+    };
+  } catch (error) {
+    void audit(
+      'create_continuation_job',
+      context.message.senderId,
+      { source_message_id: context.message.messageId },
+      'error',
+    );
+    return {
+      ok: false,
+      action: 'create_continuation_job',
+      message: errorMessage(error) === CONTINUATION_RUNTIME_UNAVAILABLE
+        ? CONTINUATION_RUNTIME_UNAVAILABLE
+        : `Continuation job was not created: ${errorMessage(error)}`,
+    };
+  }
 }
 
 async function executeListJobs(
@@ -1030,8 +1099,15 @@ export function createCodexExecActionDispatcher(
   return {
     async execute(request) {
       const results: CodexExecActionExecutionResult[] = [];
+      const context: CodexExecActionContext = {
+        message: request.message,
+        ...(request.parentSessionId !== undefined
+          ? { parentSessionId: request.parentSessionId }
+          : {}),
+        ...(request.model !== undefined ? { model: request.model } : {}),
+      };
       for (const action of request.actions) {
-        results.push(await dispatchRegisteredAction(registry, action, request.message));
+        results.push(await dispatchRegisteredAction(registry, action, context));
       }
       return results;
     },
@@ -1042,17 +1118,18 @@ function createCodexExecActionHandlerRegistry(
   deps: CreateCodexExecActionDispatcherOptions,
 ): CodexExecActionHandlerRegistry {
   return {
-    save_memory: (action, message) => executeSaveMemory(action, message, deps),
-    create_job: (action, message) => executeCreateJob(action, message, deps),
-    list_jobs: (action, message) => executeListJobs(action, message, deps),
-    update_job: (action, message) => executeUpdateJob(action, message, deps),
-    disable_job: (action, message) => executeDisableJob(action, message, deps),
-    delete_job: (action, message) => executeDeleteJob(action, message, deps),
-    upsert_job: (action, message) => executeUpsertJob(action, message, deps),
-    run_local_cli_tool: (action, message) => executeRunLocalCliTool(action, message, deps),
-    manage_access_control: (action, message) => executeManageAccessControl(action, message, deps),
-    get_run_trace: (action, message) => executeGetRunTrace(action, message, deps),
-    send_message: (action, message) => executeSendMessage(action, message, deps),
-    recall_message: (action, message) => executeRecallMessage(action, message, deps),
+    save_memory: (action, context) => executeSaveMemory(action, context.message, deps),
+    create_job: (action, context) => executeCreateJob(action, context.message, deps),
+    list_jobs: (action, context) => executeListJobs(action, context.message, deps),
+    update_job: (action, context) => executeUpdateJob(action, context.message, deps),
+    disable_job: (action, context) => executeDisableJob(action, context.message, deps),
+    delete_job: (action, context) => executeDeleteJob(action, context.message, deps),
+    upsert_job: (action, context) => executeUpsertJob(action, context.message, deps),
+    run_local_cli_tool: (action, context) => executeRunLocalCliTool(action, context.message, deps),
+    manage_access_control: (action, context) => executeManageAccessControl(action, context.message, deps),
+    get_run_trace: (action, context) => executeGetRunTrace(action, context.message, deps),
+    send_message: (action, context) => executeSendMessage(action, context.message, deps),
+    recall_message: (action, context) => executeRecallMessage(action, context.message, deps),
+    create_continuation_job: (action, context) => executeCreateContinuation(action, context, deps),
   };
 }

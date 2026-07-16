@@ -26,6 +26,7 @@ import {
   validateAccessControlMutation,
   type AccessControlValidationInput,
 } from './access-control-validation.js';
+import { CONTINUATION_COMMAND_DEFINITION } from './continuation/command-handler.js';
 
 export interface CodexModelCommandOptions {
   message: LarkMessage;
@@ -68,7 +69,7 @@ type SimpleControlCommand =
   | { action: 'invalid'; error: string };
 
 interface ChatCommandDefinition {
-  name: 'help' | 'model' | 'access' | 'flush' | 'new';
+  name: 'help' | 'model' | 'access' | 'flush' | 'new' | 'task';
   usage: string;
   description: string;
   scope: 'user' | 'owner';
@@ -107,6 +108,7 @@ const CHAT_COMMANDS: ChatCommandDefinition[] = [
     description: 'Inspect or manage runtime access control.',
     scope: 'owner',
   },
+  CONTINUATION_COMMAND_DEFINITION,
 ];
 const CONTROL_COMMAND_PATTERN = new RegExp(
   `^/(?:${CHAT_COMMANDS.map((command) => command.name).join('|')})(?:\\s|$)`,

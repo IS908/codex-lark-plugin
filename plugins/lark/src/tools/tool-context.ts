@@ -89,6 +89,7 @@ export function createTransportProxy(resolve: () => LarkTransport): LarkTranspor
     uploadImage: (data) => resolve().uploadImage(data),
     uploadFile: (data, fileName) => resolve().uploadFile(data, fileName),
     replyDocComment: (request) => resolve().replyDocComment(request),
+    findDocCommentReplyByMarker: (request) => resolve().findDocCommentReplyByMarker(request),
     createDocComment: (request) => resolve().createDocComment(request),
     fetchMessageText: (messageId) => resolve().fetchMessageText(messageId),
     fetchMessageContext: (messageId) => resolve().fetchMessageContext(messageId),

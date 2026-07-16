@@ -133,6 +133,18 @@ function restrictedImportRules(from, to) {
   if (from.startsWith('application/') && to === 'index') {
     rules.push('application-must-not-import-entrypoint');
   }
+  if (
+    (from === 'domain/continuation' || from === 'ports/continuation')
+    && (isInfrastructureNode(to) || to.startsWith('continuation/'))
+  ) {
+    rules.push('continuation-contracts-must-not-import-infrastructure');
+  }
+  if (
+    from.startsWith('continuation/')
+    && (to === 'job-store' || to === 'job-service' || to === 'scheduler')
+  ) {
+    rules.push('continuation-must-not-import-cronjob-runtime');
+  }
   return rules;
 }
 

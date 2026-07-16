@@ -40,6 +40,10 @@ export interface CodexExecRequest {
   };
   traceLogId?: string;
   traceRunId?: string;
+  outputSchema?: Record<string, unknown>;
+  abortSignal?: AbortSignal;
+  additionalWritableDirs?: string[];
+  configOverrides?: string[];
 }
 
 export interface CodexExecResult {
@@ -76,6 +80,18 @@ export class CodexExecTimeoutError extends Error {
     super(`codex exec timed out after ${timeoutMs}ms`);
     this.name = 'CodexExecTimeoutError';
     this.timeoutMs = timeoutMs;
+    this.stdoutTail = tailText(stdout);
+    this.stderrTail = tailText(stderr);
+  }
+}
+
+export class CodexExecAbortedError extends Error {
+  readonly stdoutTail: string;
+  readonly stderrTail: string;
+
+  constructor(stdout: string, stderr: string) {
+    super('codex exec was aborted');
+    this.name = 'CodexExecAbortedError';
     this.stdoutTail = tailText(stdout);
     this.stderrTail = tailText(stderr);
   }
@@ -131,6 +147,7 @@ export function extractCodexExecSessionId(jsonl: string): string | null {
 export function buildCodexExecArgs(
   request: CodexExecRequest,
   outputFile: string,
+  schemaFile?: string,
 ): string[] {
   const args = [
     'exec',
@@ -146,6 +163,13 @@ export function buildCodexExecArgs(
   if (request.sandbox) args.push('--sandbox', request.sandbox);
   if (request.model) args.push('--model', request.model);
   if (request.profile) args.push('--profile', request.profile);
+  if (schemaFile) args.push('--output-schema', schemaFile);
+  for (const override of request.configOverrides ?? []) {
+    args.push('--config', override);
+  }
+  for (const directory of request.additionalWritableDirs ?? []) {
+    args.push('--add-dir', directory);
+  }
   for (const imagePath of request.imagePaths ?? []) {
     args.push('--image', imagePath);
   }
@@ -167,10 +191,26 @@ export function normalizeCodexExecResult(result: string | CodexExecResult): Code
 export async function runCodexExecCommand(request: CodexExecRequest): Promise<CodexExecResult> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-codex-exec-'));
   const outputFile = path.join(tmpDir, 'last-message.txt');
+  const schemaFile = request.outputSchema
+    ? path.join(tmpDir, 'outcome-schema.json')
+    : undefined;
   const command = request.command ?? 'codex';
   const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const cwd = request.cwd ?? process.cwd();
-  const args = buildCodexExecArgs(request, outputFile);
+  try {
+    if (request.abortSignal?.aborted) throw new CodexExecAbortedError('', '');
+    if (schemaFile) {
+      await fs.writeFile(schemaFile, `${JSON.stringify(request.outputSchema)}\n`, {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+      await fs.chmod(schemaFile, 0o600);
+    }
+  } catch (error) {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  const args = buildCodexExecArgs(request, outputFile, schemaFile);
 
   let stdout = '';
   let stderr = '';
@@ -178,6 +218,7 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   let sessionId: string | null = null;
   let usage: CodexExecUsage | null = null;
   let timedOut = false;
+  let aborted = false;
   const runtimeMetrics = createCodexExecRuntimeMetricsCollector();
   const toolTrace = createCodexExecToolTraceWriter(
     request.traceLogId || request.traceRunId
@@ -205,11 +246,28 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
         },
       });
 
+      let forceKillTimer: NodeJS.Timeout | undefined;
+      const removeAbortListener = (): void => {
+        request.abortSignal?.removeEventListener('abort', onAbort);
+      };
+      const terminate = (killDelayMs: number): void => {
+        child.kill('SIGTERM');
+        forceKillTimer = setTimeout(() => child.kill('SIGKILL'), killDelayMs);
+        forceKillTimer.unref();
+      };
+      const onAbort = (): void => {
+        if (timedOut || aborted) return;
+        aborted = true;
+        clearTimeout(timer);
+        terminate(10_000);
+      };
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGTERM');
-        setTimeout(() => child.kill('SIGKILL'), 5_000).unref();
+        terminate(5_000);
       }, timeoutMs);
+
+      request.abortSignal?.addEventListener('abort', onAbort, { once: true });
+      if (request.abortSignal?.aborted) onAbort();
 
       child.stdout.on('data', (chunk: Buffer) => {
         stdout = appendCapped(stdout, chunk);
@@ -225,10 +283,18 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
       });
       child.on('error', (err) => {
         clearTimeout(timer);
-        reject(err);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
+        removeAbortListener();
+        reject(aborted ? new CodexExecAbortedError(stdout, stderr) : err);
       });
       child.on('close', (code, signal) => {
         clearTimeout(timer);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
+        removeAbortListener();
+        if (aborted) {
+          reject(new CodexExecAbortedError(stdout, stderr));
+          return;
+        }
         if (timedOut) {
           reject(new CodexExecTimeoutError(timeoutMs, stdout, stderr));
           return;

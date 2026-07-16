@@ -545,13 +545,23 @@ export async function stopSingleInstanceLock(
 export function registerLockCleanup(
   lock: SingleInstanceLockHandle,
   signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'],
+  beforeExit?: () => Promise<void>,
 ): void {
   const cleanup = () => lock.release();
   process.once('exit', cleanup);
   for (const signal of signals) {
     process.once(signal, () => {
-      cleanup();
-      process.exit(0);
+      if (!beforeExit) {
+        cleanup();
+        process.exit(0);
+      }
+      void Promise.resolve()
+        .then(beforeExit)
+        .catch(() => undefined)
+        .finally(() => {
+          cleanup();
+          process.exit(0);
+        });
     });
   }
 }

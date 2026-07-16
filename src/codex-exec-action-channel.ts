@@ -15,6 +15,7 @@ export interface CodexExecActionChannelPromptInfo {
   maxActions: number;
   localCliToolNames?: string[];
   traceQueryEnabled?: boolean;
+  continuationEnabled?: boolean;
 }
 
 export interface CodexExecActionChannelOptions {
@@ -49,7 +50,8 @@ type ActionChannelRejectReason =
   | 'invalid-token'
   | 'identity-field'
   | 'empty-actions'
-  | 'too-many-actions';
+  | 'too-many-actions'
+  | 'duplicate-continuation';
 
 const IDENTITY_FIELDS = new Set([
   'chat_id',
@@ -145,6 +147,9 @@ export class CodexExecActionChannel {
       actions.push(...parsed);
       if (actions.length > this.maxActions) {
         this.reject('too-many-actions', `received ${actions.length} actions; max ${this.maxActions}`);
+      }
+      if (actions.filter((action) => action.type === 'create_continuation_job').length > 1) {
+        this.reject('duplicate-continuation', 'only one continuation job may be created per turn');
       }
     }
 
@@ -315,6 +320,12 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
           `    Configured host tools: ${localCliToolNames.join(', ')}`,
         ]
       : [];
+  const continuationLines = info.continuationEnabled
+    ? [
+        '  - {"type":"create_continuation_job","title":"...","objective":"...","acceptance_criteria":["..."],"context_snapshot":{"summary":"...","completed_steps":[],"remaining_steps":["..."],"constraints":[],"decisions":[],"references":[]},"required_tools":["..."],"working_directory":"."}',
+        '    Use this only when work must continue after the current reply. The parent derives caller, route, session, model, retry policy, and Job ID; one turn may create at most one continuation.',
+      ]
+    : [];
 
   return [
     'Structured Lark actions (optional):',
@@ -335,6 +346,7 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     '  - {"type":"manage_access_control","action":"list|add|remove","list":"allowed_user_ids|allowed_chat_ids|group_no_mention_chat_ids","value":"ou_xxx, oc_xxx, or current"}',
     '    Use value="current" for the current group chat; never guess chat IDs.',
     ...traceQueryLines,
+    ...continuationLines,
     '  - {"type":"send_message","message":{"kind":"image|file","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","text":"..."}}',
     '  - {"type":"send_message","message":{"kind":"rich","parts":[{"type":"text","text":"..."},{"type":"image","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","alt":"..."}]},"reply_in_thread":true}',
     '  - {"type":"recall_message","message_id":"..."}',

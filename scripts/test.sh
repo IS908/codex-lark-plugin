@@ -9,6 +9,46 @@ npx tsc --noEmit
 echo "PASS"
 
 echo ""
+echo "=== Runtime version checks ==="
+node --import tsx scripts/runtime-version-smoke.ts
+
+echo ""
+echo "=== Continuation domain checks ==="
+node --import tsx scripts/continuation-domain-smoke.ts
+
+echo ""
+echo "=== Continuation repository checks ==="
+node --import tsx scripts/continuation-repository-smoke.ts
+
+echo ""
+echo "=== Continuation Codex runner checks ==="
+node --import tsx scripts/continuation-codex-runner-smoke.ts
+
+echo ""
+echo "=== Continuation worker checks ==="
+node --import tsx scripts/continuation-worker-smoke.ts
+
+echo ""
+echo "=== Continuation action checks ==="
+node --import tsx scripts/continuation-action-smoke.ts
+
+echo ""
+echo "=== Continuation command checks ==="
+node --import tsx scripts/continuation-command-smoke.ts
+
+echo ""
+echo "=== Continuation delivery checks ==="
+node --import tsx scripts/continuation-delivery-smoke.ts
+
+echo ""
+echo "=== Continuation runtime checks ==="
+node --import tsx scripts/continuation-runtime-smoke.ts
+
+echo ""
+echo "=== Continuation restart process checks ==="
+node --import tsx scripts/continuation-restart-process-smoke.ts
+
+echo ""
 echo "=== Codex adapter checks ==="
 node scripts/codex-adapter-smoke.js
 echo "PASS"

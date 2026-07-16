@@ -40,10 +40,15 @@ import {
   registerCodexDeliveryHandlers,
 } from './codex-delivery-wiring.js';
 import { createChannelServicesStarter } from './channel-services.js';
+import { assertSupportedNodeVersion } from './runtime-version.js';
+import { createContinuationRuntime } from './continuation/runtime.js';
+import { debugLog } from './debug-log.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
+let closeContinuationRuntime: (() => Promise<void>) | null = null;
 
 async function main() {
+  assertSupportedNodeVersion();
   const isDryRun = process.argv.includes('--dry-run');
   await emitCodexExecConfigDiagnostics(appConfig);
   await accessControlStore.load();
@@ -102,6 +107,31 @@ async function main() {
   const turnObligations = new TurnObligationTracker();
   const sessionHealthMonitor = createConfiguredSessionHealthMonitor(channel, turnObligations);
 
+  const continuationRuntime = await createContinuationRuntime({
+    enabled: appConfig.continuationEnabled,
+    databasePath: appConfig.continuationDbPath,
+    artifactsDir: appConfig.continuationArtifactsDir,
+    allowedWorkingRoot: appConfig.codexExecCwd,
+    maxSteps: appConfig.continuationMaxSteps,
+    maxRetries: appConfig.continuationMaxRetries,
+    maxAgeHours: appConfig.continuationMaxAgeHours,
+    timeoutMs: appConfig.codexExecTimeoutMs,
+    retentionDays: appConfig.continuationRetentionDays,
+    maxConcurrency: appConfig.continuationMaxConcurrency,
+    configuredSandbox: appConfig.codexExecSandbox,
+    command: appConfig.codexExecCommand,
+    getTransport: () => channel.getLarkTransport(),
+    dryRun: isDryRun,
+    debug: debugLog,
+    reportError: (error) => logSafeError('[continuation] Runtime unavailable:', error),
+  });
+  closeContinuationRuntime = () => continuationRuntime.close();
+  console.error(
+    continuationRuntime.health.available
+      ? '[continuation] runtime available'
+      : `[continuation] runtime unavailable: ${continuationRuntime.health.reason ?? 'unknown'}`,
+  );
+
   // 4. Create conversation buffer + wire flush handler
   const buffer = new ConversationBuffer();
   let codexExecActionDispatcher: CodexExecActionDispatcher | null = null;
@@ -130,6 +160,7 @@ async function main() {
     botMessageTracker: channel.getBotMessageTracker(),
     turnObligations,
     validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
+    continuationService: continuationRuntime.service,
   });
 
   // 5. Register MCP tools (pass buffer so reply records assistant messages)
@@ -157,6 +188,8 @@ async function main() {
     sessionHealth: sessionHealthMonitor,
     turnObligations,
     actionDispatcher: codexExecActionDispatcher,
+    continuationService: continuationRuntime.service,
+    continuationAvailable: continuationRuntime.health.available,
   });
 
   if (isDryRun) {
@@ -164,6 +197,8 @@ async function main() {
     validateSdkChannelScaffold();
     console.error('[dry-run] All modules loaded successfully.');
     console.error('[dry-run] Tools registered. Exiting.');
+    await continuationRuntime.close();
+    closeContinuationRuntime = null;
     process.exit(0);
   }
 
@@ -174,7 +209,7 @@ async function main() {
 
   // 8. Acquire single-instance lock and start Lark WebSocket
   const lock = await acquireSingleInstanceLock(LOCK_FILE);
-  registerLockCleanup(lock);
+  registerLockCleanup(lock, undefined, () => continuationRuntime.close());
 
   runStartupResourceCleanup(memoryStore);
   startCodexSessionRetention();
@@ -189,6 +224,7 @@ async function main() {
     sessionHealth: sessionHealthMonitor,
     turnObligations,
     actionDispatcher: codexExecActionDispatcher,
+    continuationWorker: continuationRuntime.worker,
   });
 
   startSdkChannelRuntimeWithRetry(channel, {
@@ -199,7 +235,8 @@ async function main() {
   console.error('[index] codex-lark-plugin MCP server started; Lark runtime connecting');
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
+  await closeContinuationRuntime?.().catch(() => undefined);
   logSafeError('[index] Fatal error:', err);
   process.exit(1);
 });

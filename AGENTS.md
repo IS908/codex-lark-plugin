@@ -29,6 +29,9 @@ src/feishu-card.ts  – Card builder: markdown optimization, Schema 2.0 card ass
 src/job-store.ts    – Job CRUD: read/write JSON files, sanitizeJobId, expandScheduleAlias
 src/scheduler.ts    – JobScheduler: periodic scan (60s), trigger execution, crash recovery
 src/queue.ts        – Per-thread sequential message queue
+src/continuation/   – Persistent continuation runtime: SQLite repository, worker, Codex runner, commands, and terminal delivery
+src/domain/continuation.ts – Continuation state-machine contracts and invariants
+src/ports/continuation.ts  – Repository, runner, delivery, clock, and ID boundaries
 src/memory/
   file.ts           – MemoryStore: local markdown files under ~/.codex/channels/lark/memories/ (Episodes, tiered Profiles public.md/private.md, Skills)
   buffer.ts         – In-memory ring buffer with auto-flush on inactivity
@@ -54,6 +57,8 @@ plugin runtime identity stay centralized.
 
 **CronJob flow:** `JobScheduler.tick()` every 60s → read all job files → for each active job where `next_run_at <= now` → execute (message: direct Feishu API / prompt: in `exec` mode, run through the same `codex exec` delivery path as chat messages under a unique `thread_id` + bind session identity to `job.created_by`; in `notification` mode, fall back to `notifications/Codex/channel`) → update `runtime` in job file. On startup, `recoverMissedJobs()` runs the same check once for crash recovery.
 
+**Continuation flow (v2.0.0+):** a foreground `codex exec` turn may commit one parent-owned `create_continuation_job` action → the SQLite repository atomically persists the Job and route → a bounded worker claims it with a lease and runs structured Codex steps in a dedicated session → checkpoints and attempts are persisted transactionally → terminal state creates an outbox row → the delivery adapter sends one final IM or document-comment result. `/task list|status|cancel|retry|delete` bypass Codex and authorize against the authenticated creator or `LARK_OWNER_OPEN_ID`. The runtime requires Node.js 24.15.0 or newer for built-in `node:sqlite`.
+
 **Identity flow (v0.9.0+):** Every inbound message calls `identitySession.setCaller(chatId, threadId, senderId)` before enqueue. Sensitive MCP tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `run_local_cli_tool`) derive the caller from the session via `resolveCaller(chat_id, thread_id)` / `IdentitySession` — they never trust Codex-declared identity parameters. Terminal skills use the reserved `chat_id = "__terminal__"` outside active channel turns, which resolves to `LARK_OWNER_OPEN_ID`.
 
 ## Key Design Decisions
@@ -61,6 +66,7 @@ plugin runtime identity stay centralized.
 - **ESM-only**: `"type": "module"` in package.json; all imports use `.js` extensions.
 - **Stdio transport**: MCP server communicates via stdin/stdout; all debug logging goes to `console.error`.
 - **Single-instance lock**: PID-based lock file in `/tmp/` prevents duplicate WebSocket connections.
+- **Durable continuation runtime**: continuation Jobs use SQLite WAL, process-safe leases, bounded retries, startup recovery, and a transactional terminal outbox. Background runs cannot send intermediate messages, create nested Jobs, use network access, or publish source-control changes.
 - **Config location**: All user config lives at `~/.codex/channels/lark/.env`, not in the repo.
 - **Memory is local-only**: All memory (profiles, episodes, skills) lives as markdown files under `~/.codex/channels/lark/memories/`. No remote backends — this keeps the trust boundary at OS file permissions and avoids vector-index policy questions for sensitive content.
 - **Tiered profile memory (v0.10.0+)**: each user's profile lives at `profiles/{userId}/public.md` + `private.md`. `getProfile(ownerId, caller)` returns both tiers joined when caller === ownerId, and only public otherwise. Legacy single-file profiles lazy-migrate on first read (L1 + L2 classifier splits lines — L2 added in v0.11.1).

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import path from 'node:path';
+import { CONTINUATION_LIMITS } from './domain/continuation.js';
 import { expandSchedule, normalizeJobTimezone } from './job-store.js';
 import { ACCESS_CONTROL_LISTS } from './runtime-access-control.js';
 
@@ -158,6 +160,40 @@ export const RecallMessageActionSchema = z.object({
 });
 export type RecallMessageAction = z.infer<typeof RecallMessageActionSchema>;
 
+const ContinuationCheckpointActionSchema = z.object({
+  summary: z.string().max(CONTINUATION_LIMITS.objectiveBytes),
+  completed_steps: z.array(z.string().max(CONTINUATION_LIMITS.objectiveBytes))
+    .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  remaining_steps: z.array(z.string().max(CONTINUATION_LIMITS.objectiveBytes))
+    .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  constraints: z.array(z.string().max(CONTINUATION_LIMITS.objectiveBytes))
+    .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  decisions: z.array(z.string().max(CONTINUATION_LIMITS.objectiveBytes))
+    .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  references: z.array(z.string().max(CONTINUATION_LIMITS.objectiveBytes))
+    .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+}).strict();
+
+const RelativeContinuationDirectorySchema = z.string().min(1).refine((value) => {
+  if (path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')) {
+    return false;
+  }
+  return !value.split(/[\\/]+/).includes('..');
+}, 'working_directory must be relative and remain within the configured working root');
+
+export const CreateContinuationActionSchema = z.object({
+  type: z.literal('create_continuation_job'),
+  title: z.string().min(1).max(CONTINUATION_LIMITS.titleChars),
+  objective: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
+  acceptance_criteria: z.array(z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes))
+    .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  context_snapshot: ContinuationCheckpointActionSchema,
+  required_tools: z.array(z.string().min(1).max(500))
+    .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  working_directory: RelativeContinuationDirectorySchema.optional(),
+}).strict();
+export type CreateContinuationAction = z.infer<typeof CreateContinuationActionSchema>;
+
 export const CodexExecActionSchema = z.discriminatedUnion('type', [
   SaveMemoryActionSchema,
   CreateJobActionSchema,
@@ -171,6 +207,7 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
   GetRunTraceActionSchema,
   SendMessageActionSchema,
   RecallMessageActionSchema,
+  CreateContinuationActionSchema,
 ]).superRefine((action, ctx) => {
   if (
     (action.type === 'update_job' || action.type === 'disable_job' || action.type === 'delete_job') &&
@@ -276,6 +313,17 @@ export const CodexExecActionEnvelopeSchema = z.object({
   version: z.literal(1),
   reply: z.string().optional(),
   actions: z.array(CodexExecActionSchema).min(1).max(5),
+}).superRefine((envelope, ctx) => {
+  const continuationCount = envelope.actions.filter(
+    (action) => action.type === 'create_continuation_job',
+  ).length;
+  if (continuationCount > 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['actions'],
+      message: 'Only one continuation job may be created in one foreground turn.',
+    });
+  }
 });
 
 export type CodexExecAction = z.infer<typeof CodexExecActionSchema>;

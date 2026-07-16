@@ -1,12 +1,16 @@
 import { config } from 'dotenv';
 import path from 'node:path';
 import os from 'node:os';
+import { assertSupportedNodeVersion } from './runtime-version.js';
+
+assertSupportedNodeVersion();
 
 const envPath = path.join(os.homedir(), '.codex', 'channels', 'lark', '.env');
 config({ path: envPath });
 
 const channelHome = path.join(os.homedir(), '.codex', 'channels', 'lark');
 const runtimeConfigDir = path.join(channelHome, 'runtime-config');
+const continuationRuntimeDir = path.join(channelHome, 'runtime', 'continuations');
 const logsDir = path.join(channelHome, 'logs');
 const defaultCodexExecCwd = path.join(channelHome, 'codex-exec-workdir');
 const isDryRun = process.argv.includes('--dry-run');
@@ -46,6 +50,21 @@ function optionalPositiveNumber(key: string, fallback: number): number {
 function optionalNonNegativeNumber(key: string, fallback: number): number {
   const parsed = optionalNumber(key, fallback);
   if (parsed < 0) throw new Error(`Invalid ${key}: ${parsed}. Expected a non-negative number.`);
+  return parsed;
+}
+
+function optionalIntegerRange(
+  key: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const parsed = optionalNumber(key, fallback);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(
+      `Invalid ${key}: ${parsed}. Expected an integer between ${minimum} and ${maximum}.`,
+    );
+  }
   return parsed;
 }
 
@@ -143,6 +162,12 @@ export const appConfig = {
     24,
   ),
   codexSessionRetentionDryRun: optionalBoolean('LARK_CODEX_SESSION_RETENTION_DRY_RUN', false),
+  continuationEnabled: optionalBoolean('LARK_CONTINUATION_ENABLED', true),
+  continuationMaxConcurrency: optionalIntegerRange('LARK_CONTINUATION_MAX_CONCURRENCY', 1, 1, 4),
+  continuationMaxSteps: optionalIntegerRange('LARK_CONTINUATION_MAX_STEPS', 24, 1, 100),
+  continuationMaxRetries: optionalIntegerRange('LARK_CONTINUATION_MAX_RETRIES', 3, 0, 10),
+  continuationMaxAgeHours: optionalIntegerRange('LARK_CONTINUATION_MAX_AGE_HOURS', 24, 1, 168),
+  continuationRetentionDays: optionalIntegerRange('LARK_CONTINUATION_RETENTION_DAYS', 30, 1, 3650),
   sessionHealthEnabled: optionalBoolean('LARK_SESSION_HEALTH_ENABLED', false),
   sessionHealthTurnThreshold: optionalPositiveNumber('LARK_SESSION_HEALTH_TURN_THRESHOLD', 80),
   sessionHealthPromptBytesThreshold: optionalPositiveNumber(
@@ -220,6 +245,8 @@ export const appConfig = {
   inboxDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'inbox'),
   jobsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'jobs'),
   codexExecSessionsDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'codex-sessions'),
+  continuationDbPath: path.join(continuationRuntimeDir, 'jobs.sqlite'),
+  continuationArtifactsDir: path.join(continuationRuntimeDir, 'artifacts'),
   runtimeConfigDir,
   accessControlConfigPath: path.join(runtimeConfigDir, 'access-control.json'),
   localCliToolsConfigPath: path.join(runtimeConfigDir, 'local-cli-tools.json'),

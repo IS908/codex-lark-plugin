@@ -98,6 +98,25 @@ async function writeActionRequest(request: any, actions: any[]): Promise<void> {
   );
 }
 
+function continuationActionForDelivery(): Record<string, unknown> {
+  return {
+    type: 'create_continuation_job',
+    title: 'Finish report',
+    objective: 'Finish and verify the report.',
+    acceptance_criteria: ['report is complete'],
+    context_snapshot: {
+      summary: 'Report started.',
+      completed_steps: ['collect inputs'],
+      remaining_steps: ['write report'],
+      constraints: ['do not publish'],
+      decisions: [],
+      references: [],
+    },
+    required_tools: [],
+    working_directory: '.',
+  };
+}
+
 assert.deepEqual(
   buildCodexExecArgs(
     {
@@ -406,6 +425,7 @@ assert.match(reactionExecRequests[0].prompt, /normal user input carried by the r
 assert.match(reactionExecRequests[0].prompt, /Do not classify DONE, OK, THUMBSUP/);
 assert.match(reactionExecRequests[0].prompt, /reaction_emoji: DONE/);
 assert.match(reactionExecRequests[0].prompt, /reaction_target_message_id: om_bot_reply_reacted/);
+assert.doesNotMatch(reactionExecRequests[0].prompt, /create_continuation_job/);
 assert.equal(reactionReplies.length, 0);
 assert.equal(reactionTracker.get('om_bot_reply_reacted')?.status, 'deferred');
 reactionTracker.clear();
@@ -433,6 +453,49 @@ assert.equal(
 assert.doesNotMatch(lifecycleGuardReplies[0].text, /Codex exec|structured action|defer\/no-reply/i);
 assert.doesNotMatch(lifecycleGuardReplies[0].text, /creating the issue now/i);
 
+const unrelatedActionPromiseReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: { ...message, messageId: 'om_unrelated_action_promise' },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async (request) => {
+    await writeActionRequest(request, [{
+      type: 'save_memory',
+      memory_type: 'profile',
+      content: '- concise',
+      reason: 'preference',
+    }]);
+    return 'I am creating the issue now and will reply with the link after it is done.';
+  },
+  actionDispatcher: {
+    execute: async () => [{ ok: true, action: 'save_memory', message: 'Saved.' }],
+  },
+  sendReply: async (request) => {
+    unrelatedActionPromiseReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(
+  unrelatedActionPromiseReplies[0].text,
+  'This run could not establish a follow-up task, so no background work will continue. Please retry or use a supported scheduled task.',
+);
+
+const deferredPromiseReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: { ...message, messageId: 'om_deferred_promise_guard' },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () => '[LARK_DEFER] 我稍后继续处理并同步结果。',
+  sendReply: async (request) => {
+    deferredPromiseReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(
+  deferredPromiseReplies[0].text,
+  'This run could not establish a follow-up task, so no background work will continue. Please retry or use a supported scheduled task.',
+);
+
 const lifecycleSafeReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({
   message: {
@@ -450,6 +513,103 @@ await deliverMessageViaCodexExec({
 });
 assert.equal(lifecycleSafeReplies.length, 1);
 assert.equal(lifecycleSafeReplies[0].text, 'I cannot create the issue automatically. Here is a draft issue body.');
+
+const continuationReplies: ReplyRequest[] = [];
+const continuationDispatches: any[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_create_continuation',
+    text: '[Current Message]\n@Codex continue this in the background',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async (request) => {
+    assert.match(request.prompt, /create_continuation_job/);
+    await writeActionRequest(request, [
+      {
+        type: 'create_continuation_job',
+        title: 'Finish report',
+        objective: 'Finish and verify the report.',
+        acceptance_criteria: ['report is complete'],
+        context_snapshot: {
+          summary: 'Report started.',
+          completed_steps: ['collect inputs'],
+          remaining_steps: ['write report'],
+          constraints: ['do not publish'],
+          decisions: [],
+          references: [],
+        },
+        required_tools: [],
+        working_directory: '.',
+      },
+    ]);
+    return {
+      text: 'I will continue later and send the result.',
+      sessionId: 'session-continuation-parent',
+    };
+  },
+  actionDispatcher: {
+    execute: async (request) => {
+      continuationDispatches.push(request);
+      return [{
+        ok: true,
+        action: 'create_continuation_job',
+        message: 'model-visible action result must not become the acknowledgement',
+        continuation: {
+          jobId: 'job_0123456789abcdef01234567',
+          title: 'Finish report',
+        },
+      }];
+    },
+  },
+  sendReply: async (request) => {
+    continuationReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(continuationDispatches[0].parentSessionId, 'session-continuation-parent');
+assert.deepEqual(continuationReplies.map((reply) => reply.text), [
+  'Background task created: Finish report\nJob ID: job_0123456789abcdef01234567',
+]);
+
+const unavailableContinuationPrompts: string[] = [];
+await deliverMessageViaCodexExec({
+  message: { ...message, messageId: 'om_continuation_runtime_unavailable' },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  continuationAvailable: false,
+  runCodexExec: async (request) => {
+    unavailableContinuationPrompts.push(request.prompt);
+    return 'Continuation is unavailable.';
+  },
+  sendReply: async () => ({ sentCount: 1 }),
+});
+assert.doesNotMatch(unavailableContinuationPrompts[0], /create_continuation_job/);
+
+const continuationFailureReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: { ...message, messageId: 'om_create_continuation_failure' },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async (request) => {
+    await writeActionRequest(request, [continuationActionForDelivery()]);
+    return 'I am creating the issue now and will reply with the link after it is done.';
+  },
+  actionDispatcher: {
+    execute: async () => [{
+      ok: false,
+      action: 'create_continuation_job',
+      message: 'Continuation runtime is unavailable. No background task was created.',
+    }],
+  },
+  sendReply: async (request) => {
+    continuationFailureReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.match(continuationFailureReplies[0].text, /could not establish a follow-up task/);
+assert.match(continuationFailureReplies[0].text, /Continuation runtime is unavailable/);
 
 const visibleActionResultReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({

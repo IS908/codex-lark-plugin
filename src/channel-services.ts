@@ -14,6 +14,7 @@ import type { ConversationBuffer } from './memory/buffer.js';
 import type { BotMessageTracker, LatestMessageTracker } from './message-trackers.js';
 import { JobScheduler } from './scheduler.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
+import type { ContinuationWorker } from './continuation/worker.js';
 
 export interface ChannelServicesPorts {
   getClient(): Lark.Client;
@@ -30,6 +31,7 @@ export interface ChannelServicesOptions {
   sessionHealth: CodexDeliverySessionHealth | null;
   turnObligations: TurnObligationTracker;
   actionDispatcher: CodexExecActionDispatcher | null;
+  continuationWorker?: ContinuationWorker | null;
 }
 
 export function createChannelServicesStarter(options: ChannelServicesOptions): () => Promise<void> {
@@ -50,6 +52,7 @@ async function startChannelServices(options: ChannelServicesOptions): Promise<vo
     sessionHealth,
     turnObligations,
     actionDispatcher,
+    continuationWorker,
   } = options;
 
   await buffer.rearmFromDisk();
@@ -123,5 +126,6 @@ async function startChannelServices(options: ChannelServicesOptions): Promise<vo
     },
   });
   await scheduler.start();
+  continuationWorker?.start();
   console.error('[index] codex-lark-plugin channel services started');
 }

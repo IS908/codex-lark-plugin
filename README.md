@@ -1,8 +1,8 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-1.21.4-informational)](CHANGELOG.md)
-[![node](https://img.shields.io/badge/node-%3E%3D20.0.0-339933?logo=node.js&logoColor=white)](package.json)
+[![version](https://img.shields.io/badge/version-2.0.0-informational)](CHANGELOG.md)
+[![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 Chat with Codex in real time through Feishu (Lark). Local-file memory, scheduled jobs, rich media support.
@@ -79,6 +79,15 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Create and manage jobs through Feishu chat or the `$lark:jobs` skill
 - Crash recovery: missed jobs are executed once on restart
 - Job storage as JSON files at `~/.codex/channels/lark/jobs/`
+
+### Persistent Continuations
+
+- Codex can commit one structured `create_continuation_job` exec action when a foreground P2P, group, or document-comment turn cannot finish safely in one process run. The visible acknowledgement includes a durable Job ID.
+- Jobs, attempts, checkpoints, leases, and a terminal-delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; managed artifacts live under the sibling `artifacts/` directory.
+- Each Job owns a dedicated Codex execution session. A parent foreground session is provenance only; an unavailable resume session is replaced safely without mutating the foreground chat session.
+- `/task list|status|cancel|retry|delete` bypass Codex and remain available for direct control. Creators manage their own tasks; `LARK_OWNER_OPEN_ID` can manage every task. Retry creates a new Job ID, and only failed/cancelled tasks can be retried.
+- The background runner forces approval policy `never`, disables sandbox network access, ignores user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. There is no continuation MCP tool.
+- Terminal IM replies reuse one stable Feishu UUID inside its one-hour deduplication window. Document-comment delivery uses bounded marker read-back after an ambiguous send. Unreconciled sends become `delivery_unknown` and are not blindly repeated.
 
 ### Reliability
 
@@ -401,6 +410,11 @@ written to the audit log.
 /model reset       Clear only the chat/thread model override
 /flush             Distill buffered context now and keep the current Codex session
 /new               Distill buffered context, then start a fresh session on next turn
+/task list         List your durable background tasks
+/task status ID    Show an authorized task's execution and delivery state
+/task cancel ID    Cancel a queued/running authorized task
+/task retry ID     Clone a failed/cancelled task under a new Job ID
+/task delete ID    Redact and delete a terminal authorized task
 
 Owner-only:
 /access            Show current user/chat/no-mention access status
@@ -644,6 +658,30 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 | `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` | `24` | Periodic cleanup interval. Set `0` to disable automatic cleanup. |
 | `LARK_CODEX_SESSION_RETENTION_DRY_RUN` | `false` | Preview eligible records and emit counts without deleting files |
 
+### Persistent Continuation Runtime
+
+v2.0.0 is a direct cutover and requires Node.js 24.15.0 or newer for the built-in
+`node:sqlite` runtime. There is no legacy continuation implementation or rollout
+flag to preserve. Upgrade Node before restarting the plugin; rollback requires
+reinstalling v1.21.4 rather than enabling compatibility code.
+
+| Variable | Default | Description |
+|---|---|---|
+| `LARK_CONTINUATION_ENABLED` | `true` | Enable durable background continuation creation and execution |
+| `LARK_CONTINUATION_MAX_CONCURRENCY` | `1` | Concurrent continuation executions (`1`-`4`) |
+| `LARK_CONTINUATION_MAX_STEPS` | `24` | Maximum committed steps per Job (`1`-`100`) |
+| `LARK_CONTINUATION_MAX_RETRIES` | `3` | Retryable execution failures per step (`0`-`10`) |
+| `LARK_CONTINUATION_MAX_AGE_HOURS` | `24` | Maximum Job lifetime (`1`-`168` hours) |
+| `LARK_CONTINUATION_RETENTION_DAYS` | `30` | Days before terminal task details and managed artifacts are redacted |
+
+The SQLite database uses WAL mode, process-safe leases, transactional terminal
+outbox creation, and startup lease recovery. Initialization failure degrades
+only continuation actions and `/task`; ordinary chat and cronjob processing stay
+available. `delivery_unknown` means the provider may already have accepted the
+terminal result, so `/task retry` refuses to rerun it and the user must make a
+new foreground request after checking Lark. Diagnostic logs include Job/attempt
+IDs but omit objectives, checkpoints, result bodies, and credentials.
+
 ### Optional -- Memory
 
 | Variable | Default | Description |
@@ -804,7 +842,7 @@ The plugin registers the following MCP tools for Codex to use:
 
 ## Requirements
 
-- **Node.js** 20+ and npm
+- **Node.js** >= 24.15.0 and npm
 - **Feishu/Lark** custom app with WebSocket mode enabled
 - **lark-cli** (optional) -- for extended Feishu API access (calendar, docs, sheets, tasks, contacts)
 

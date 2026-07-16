@@ -90,6 +90,7 @@ export function createMockTransport(overrides: Partial<LarkTransport> = {}): Lar
     uploadImage: async () => 'img_key',
     uploadFile: async () => 'file_key',
     replyDocComment: async () => ({ replyId: 'reply_id' }),
+    findDocCommentReplyByMarker: async () => null,
     createDocComment: async () => ({ commentId: 'comment_id' }),
     fetchMessageText: async () => null,
     fetchMessageContext: async () => null,

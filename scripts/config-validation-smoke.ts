@@ -23,6 +23,14 @@ const code = `
     codexSessionRetentionDays: appConfig.codexSessionRetentionDays,
     codexSessionRetentionScanIntervalHours: appConfig.codexSessionRetentionScanIntervalHours,
     codexSessionRetentionDryRun: appConfig.codexSessionRetentionDryRun,
+    continuationEnabled: appConfig.continuationEnabled,
+    continuationMaxConcurrency: appConfig.continuationMaxConcurrency,
+    continuationMaxSteps: appConfig.continuationMaxSteps,
+    continuationMaxRetries: appConfig.continuationMaxRetries,
+    continuationMaxAgeHours: appConfig.continuationMaxAgeHours,
+    continuationRetentionDays: appConfig.continuationRetentionDays,
+    continuationDbPath: appConfig.continuationDbPath,
+    continuationArtifactsDir: appConfig.continuationArtifactsDir,
     quotedCardUserFetchEnabled: appConfig.quotedCardUserFetchEnabled,
     quotedCardUserFetchCommand: appConfig.quotedCardUserFetchCommand,
     quotedCardUserFetchTimeoutMs: appConfig.quotedCardUserFetchTimeoutMs,
@@ -82,6 +90,10 @@ expectFail({ LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS: '-1' }, /LARK_COD
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS: '0' }, /LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS.*positive/i);
 expectFail({ LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES: '0' }, /LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES.*positive/i);
 expectFail({ LARK_LOG_ARCHIVE_RETENTION_MONTHS: '-1' }, /LARK_LOG_ARCHIVE_RETENTION_MONTHS.*non-negative/i);
+expectFail({ LARK_CONTINUATION_MAX_CONCURRENCY: '0' }, /LARK_CONTINUATION_MAX_CONCURRENCY.*integer between 1 and 4/i);
+expectFail({ LARK_CONTINUATION_MAX_CONCURRENCY: '5' }, /LARK_CONTINUATION_MAX_CONCURRENCY.*integer between 1 and 4/i);
+expectFail({ LARK_CONTINUATION_MAX_RETRIES: '-1' }, /LARK_CONTINUATION_MAX_RETRIES.*integer between 0 and 10/i);
+expectFail({ LARK_CONTINUATION_MAX_STEPS: '2.5' }, /LARK_CONTINUATION_MAX_STEPS.*integer between 1 and 100/i);
 
 const zeroAllowed = expectOk({
   LARK_MEMORY_DEDUP_WINDOW_MS: '0',
@@ -100,6 +112,14 @@ assert.equal(defaultPaths.logArchiveRetentionMonths, 6);
 assert.equal(defaultPaths.codexSessionRetentionDays, 14);
 assert.equal(defaultPaths.codexSessionRetentionScanIntervalHours, 24);
 assert.equal(defaultPaths.codexSessionRetentionDryRun, false);
+assert.equal(defaultPaths.continuationEnabled, true);
+assert.equal(defaultPaths.continuationMaxConcurrency, 1);
+assert.equal(defaultPaths.continuationMaxSteps, 24);
+assert.equal(defaultPaths.continuationMaxRetries, 3);
+assert.equal(defaultPaths.continuationMaxAgeHours, 24);
+assert.equal(defaultPaths.continuationRetentionDays, 30);
+assert.match(defaultPaths.continuationDbPath, /runtime\/continuations\/jobs\.sqlite$/);
+assert.match(defaultPaths.continuationArtifactsDir, /runtime\/continuations\/artifacts$/);
 assert.equal(defaultPaths.codexExecTimeoutMs, 600_000);
 assert.equal(defaultPaths.queueHandlerTimeoutMs, 660_000);
 assert.equal(defaultPaths.replyObligationTimeoutMs, 660_000);

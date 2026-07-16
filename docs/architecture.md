@@ -42,6 +42,9 @@ The check currently enforces:
 - no new `job-store.ts` ↔ `cronjob-diagnostics.ts` coupling;
 - future `src/domain/**` and `src/ports/**` modules cannot import known
   infrastructure modules.
+- continuation domain/port contracts cannot import continuation or process
+  infrastructure, and `src/continuation/**` cannot import the cronjob store,
+  service, or scheduler.
 
 Temporary exceptions must be listed in `scripts/architecture-baseline.json` with
 a reason and removal phase. The current baseline is empty; adding an exception
@@ -76,6 +79,14 @@ The current baseline is empty:
 - Profile memory privacy, line identity, and merge policy live in
   `src/memory/profile-policy.ts`; `src/memory/file.ts` owns filesystem
   persistence, locks, and migration orchestration.
+- Persistent continuation is an independent bounded context. Pure state and
+  closed outcomes live in `src/domain/continuation.ts`; repository, executor,
+  delivery, clock, and audit contracts live in `src/ports/continuation.ts`.
+  SQLite/artifact persistence, the structured Codex runner, leases, commands,
+  Lark terminal delivery, and composition live under `src/continuation/`.
+  Terminal state and its outbox row commit in one SQLite transaction; remote
+  Lark delivery is reconciled separately and never claims distributed
+  exactly-once semantics.
 
 There is no active architecture baseline exception. Future hotspot work should
 continue to be driven by concrete behavior or dependency evidence rather than
