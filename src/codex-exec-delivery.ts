@@ -52,6 +52,7 @@ export interface CodexExecDeliveryOptions {
   progressVisible?: boolean;
   onProgress?: (event: CodexExecProgressEvent) => void;
   onFinalText?: (text: string) => void;
+  onLifecycleGuard?: (reason: string) => void;
   onActionResults?: (results: CodexExecActionExecutionResult[]) => void;
   actionBaseDir?: string;
   traceLogId?: string;
@@ -188,14 +189,8 @@ function isSafeNonExecutionReply(text: string): boolean {
   return SAFE_NON_EXECUTION_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-function buildLifecycleGuardReply(reason: string): string {
-  return [
-    'No background follow-up was started.',
-    '',
-    `The Codex exec output was blocked because it promised a later external action (${reason}) without a structured action, defer/no-reply marker, or scheduled job. This Lark bridge runs one Codex exec turn and cannot continue working after posting the visible reply.`,
-    '',
-    'Please retry with an enabled structured action, create a job/defer intentionally, or ask for a draft instead of automatic execution.',
-  ].join('\n');
+function buildLifecycleGuardReply(): string {
+  return 'This run could not establish a follow-up task, so no background work will continue. Please retry or use a supported scheduled task.';
 }
 
 export function guardCodexExecLifecycleReply(
@@ -215,7 +210,7 @@ export function guardCodexExecLifecycleReply(
   return {
     blocked: true,
     reason: match.reason,
-    text: buildLifecycleGuardReply(match.reason),
+    text: buildLifecycleGuardReply(),
   };
 }
 
@@ -495,6 +490,7 @@ export async function deliverMessageViaCodexExec(
     console.error(
       `[codex-exec] Blocked follow-up promise for message ${message.messageId}: ${lifecycleGuard.reason}`,
     );
+    opts.onLifecycleGuard?.(lifecycleGuard.reason ?? 'unknown-lifecycle-guard');
     text = lifecycleGuard.text;
   }
   opts.sessionHealth?.recordTurn({

@@ -662,6 +662,64 @@ function readJobFixture(id: string): JobFile {
   passed++;
 }
 
+// 12d. A delivered lifecycle-guard notice records a failed run without a second error message.
+{
+  const id = 'prompt-lifecycle-guarded';
+  const job = makeJob({
+    meta: {
+      id,
+      type: 'prompt',
+      prompt: 'build a report and follow up later',
+      content: undefined,
+      msg_type: undefined,
+    } as Partial<JobFile['meta']>,
+  });
+  writeJobFixture(job);
+  let extraMessages = 0;
+  const scheduler = new JobScheduler({
+    client: {
+      im: {
+        v1: {
+          message: {
+            create: async () => {
+              extraMessages++;
+              return { data: { message_id: 'om_unexpected_duplicate' } };
+            },
+          },
+        },
+      },
+    } as any,
+    identitySession: new IdentitySession(() => null),
+    promptRunner: async () => ({
+      report:
+        'This run could not establish a follow-up task, so no background work will continue. Please retry or use a supported scheduled task.',
+      runStatus: 'failed',
+      failureReason: 'Lifecycle guard blocked output: chinese-async-followup-promise',
+    }),
+  });
+  await (scheduler as any).executeJob(job);
+  const persisted = readJobFixture(id);
+  if (persisted.runtime.run_status !== 'failed') {
+    fail(`12d: expected failed run_status, got ${persisted.runtime.run_status}`);
+  }
+  if (persisted.runtime.delivery_status !== 'sent') {
+    fail(`12d: expected sent delivery_status, got ${persisted.runtime.delivery_status}`);
+  }
+  if (persisted.runtime.report_type !== 'error_report') {
+    fail(`12d: expected error_report, got ${persisted.runtime.report_type}`);
+  }
+  if (persisted.runtime.last_error !== 'Lifecycle guard blocked output: chinese-async-followup-promise') {
+    fail(`12d: expected lifecycle failure reason, got ${persisted.runtime.last_error}`);
+  }
+  if (!persisted.runtime.diagnostics?.stages.some((stage) => stage.name === 'codex_exec' && stage.status === 'failed')) {
+    fail(`12d: expected failed codex_exec diagnostic stage, got ${JSON.stringify(persisted.runtime.diagnostics)}`);
+  }
+  if (extraMessages !== 0) {
+    fail(`12d: expected no duplicate error message, got ${extraMessages}`);
+  }
+  passed++;
+}
+
 // 13. Pausing a job during a transient retry window cancels the next send.
 {
   const id = 'pause-before-retry';
@@ -876,4 +934,4 @@ function readJobFixture(id: string): JobFile {
 (appConfig as { cronTimezone: string }).cronTimezone = originalCronTimezone;
 rmSync(tmpJobsDir, { recursive: true, force: true });
 
-console.log(`scheduler smoke: ${passed}/18 PASS`);
+console.log(`scheduler smoke: ${passed}/19 PASS`);

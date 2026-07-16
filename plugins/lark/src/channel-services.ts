@@ -69,6 +69,7 @@ async function startChannelServices(options: ChannelServicesOptions): Promise<vo
     botMessageTracker: channel.getBotMessageTracker(),
     promptRunner: async ({ job, jobThreadId, promptContent, diagnostics, runId }) => {
       let deliveredReport = '';
+      let lifecycleGuardReason: string | null = null;
       const message: LarkMessage = {
         messageId: jobThreadId,
         chatId: job.meta.target_chat_id,
@@ -106,8 +107,19 @@ async function startChannelServices(options: ChannelServicesOptions): Promise<vo
         onProgress: (event) => {
           diagnostics.recordProgress(event.content, event.timestampMs, event.bytes);
         },
+        onLifecycleGuard: (reason) => {
+          lifecycleGuardReason = reason;
+        },
       });
-      return { report: deliveredReport };
+      return {
+        report: deliveredReport,
+        ...(lifecycleGuardReason
+          ? {
+              runStatus: 'failed' as const,
+              failureReason: `Lifecycle guard blocked output: ${lifecycleGuardReason}`,
+            }
+          : {}),
+      };
     },
   });
   await scheduler.start();
