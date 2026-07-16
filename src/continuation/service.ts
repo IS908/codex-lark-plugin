@@ -37,6 +37,31 @@ export interface ContinuationActionInput {
   working_directory?: string;
 }
 
+export interface ContinuationTaskService {
+  createFromMessage(
+    action: ContinuationActionInput,
+    message: LarkMessage,
+    parentSessionId?: string | null,
+    selectedModel?: string | null,
+  ): Promise<{ job: ContinuationJob; created: boolean }>;
+  listForActor(actorOpenId: string, ownerOpenId?: string | null, limit?: number): Promise<ContinuationJob[]>;
+  getForActor(jobId: string, actorOpenId: string, ownerOpenId?: string | null): Promise<ContinuationJob>;
+  cancelForActor(
+    jobId: string,
+    actorOpenId: string,
+    ownerOpenId?: string | null,
+  ): Promise<{ job: ContinuationJob; result: 'cancelled' | 'cancel_requested' | 'terminal' }>;
+  retryForActor(
+    jobId: string,
+    actorOpenId: string,
+    ownerOpenId: string | null | undefined,
+    requestId: string,
+  ): Promise<ContinuationJob>;
+  deleteForActor(jobId: string, actorOpenId: string, ownerOpenId?: string | null): Promise<void>;
+}
+
+export const CONTINUATION_RUNTIME_UNAVAILABLE = 'Continuation runtime is unavailable.';
+
 export type ContinuationServiceErrorCode =
   | 'not_accessible'
   | 'invalid_state'
@@ -52,7 +77,7 @@ export class ContinuationServiceError extends Error {
   }
 }
 
-export class ContinuationService {
+export class ContinuationService implements ContinuationTaskService {
   constructor(private readonly options: ContinuationServiceOptions) {}
 
   async createFromMessage(
@@ -220,6 +245,15 @@ export class ContinuationService {
   }
 }
 
+export class UnavailableContinuationService implements ContinuationTaskService {
+  async createFromMessage(): Promise<never> { throw unavailableError(); }
+  async listForActor(): Promise<never> { throw unavailableError(); }
+  async getForActor(): Promise<never> { throw unavailableError(); }
+  async cancelForActor(): Promise<never> { throw unavailableError(); }
+  async retryForActor(): Promise<never> { throw unavailableError(); }
+  async deleteForActor(): Promise<never> { throw unavailableError(); }
+}
+
 function isOwner(actorOpenId: string, ownerOpenId?: string | null): boolean {
   return Boolean(ownerOpenId && actorOpenId === ownerOpenId);
 }
@@ -229,6 +263,10 @@ function notAccessibleError(): ContinuationServiceError {
     'not_accessible',
     'Task not found or not accessible.',
   );
+}
+
+function unavailableError(): Error {
+  return new Error(CONTINUATION_RUNTIME_UNAVAILABLE);
 }
 
 function assertEligibleSource(message: LarkMessage): void {

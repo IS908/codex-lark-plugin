@@ -51,6 +51,21 @@ export function formatDiagnosticLine(parts: Array<unknown | DiagnosticRawPart>):
   return `${fields.join('  ')}\n`;
 }
 
+export function formatContinuationDiagnosticMessage(event: {
+  event: string;
+  jobId: string;
+  attemptId?: string;
+  state?: string;
+}): string {
+  return [
+    '[continuation]',
+    `event=${formatDiagnosticField(event.event, 64)}`,
+    `job_id=${formatDiagnosticField(event.jobId, 128)}`,
+    `attempt_id=${formatDiagnosticField(event.attemptId, 128)}`,
+    `state=${formatDiagnosticField(event.state, 64)}`,
+  ].join(' ');
+}
+
 export function formatZonedDiagnosticTime(date: Date, timeZone: string): string {
   try {
     const parts = new Intl.DateTimeFormat('en-US', {

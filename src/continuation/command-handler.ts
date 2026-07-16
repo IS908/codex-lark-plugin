@@ -6,8 +6,9 @@ import type { LarkMessage } from '../lark-message.js';
 import { extractMessageText } from '../message-content.js';
 import type { ReplyRequest, ReplySendResult } from '../reply-sender.js';
 import {
-  ContinuationService,
+  CONTINUATION_RUNTIME_UNAVAILABLE,
   ContinuationServiceError,
+  type ContinuationTaskService,
 } from './service.js';
 
 export const CONTINUATION_COMMAND_DEFINITION = {
@@ -35,7 +36,7 @@ type AuditFn = typeof audit;
 
 export interface ContinuationCommandHandlerOptions {
   message: LarkMessage;
-  service: ContinuationService | null;
+  service: ContinuationTaskService | null;
   ownerOpenId?: string | null;
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
   sendDocCommentReply?: (request: {
@@ -71,7 +72,7 @@ export async function handleContinuationCommand(
       text = TASK_USAGE;
     } else if (!options.service) {
       auditResult = 'error';
-      text = 'Background task runtime is unavailable.';
+      text = CONTINUATION_RUNTIME_UNAVAILABLE;
     } else {
       text = await executeTaskCommand(
         command,
@@ -131,7 +132,7 @@ function stripLeadingMentions(text: string): string {
 
 async function executeTaskCommand(
   command: Exclude<TaskCommand, { action: 'invalid' }>,
-  service: ContinuationService,
+  service: ContinuationTaskService,
   actorOpenId: string,
   ownerOpenId: string | null | undefined,
   requestId: string,

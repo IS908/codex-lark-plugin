@@ -41,6 +41,14 @@ echo "=== Continuation delivery checks ==="
 node --import tsx scripts/continuation-delivery-smoke.ts
 
 echo ""
+echo "=== Continuation runtime checks ==="
+node --import tsx scripts/continuation-runtime-smoke.ts
+
+echo ""
+echo "=== Continuation restart process checks ==="
+node --import tsx scripts/continuation-restart-process-smoke.ts
+
+echo ""
 echo "=== Codex adapter checks ==="
 node scripts/codex-adapter-smoke.js
 echo "PASS"

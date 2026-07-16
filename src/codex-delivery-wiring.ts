@@ -9,7 +9,7 @@ import { handleCodexModelCommand } from './codex-model-command.js';
 import type { CodexExecSessionHealthRecorder } from './codex-exec-delivery.js';
 import type { CodexExecSessionStore } from './codex-session-store.js';
 import { handleContinuationCommand } from './continuation/command-handler.js';
-import type { ContinuationService } from './continuation/service.js';
+import type { ContinuationTaskService } from './continuation/service.js';
 import { debugLog } from './debug-log.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import type { IdentitySession } from './identity-session.js';
@@ -74,7 +74,7 @@ export interface RegisterCodexDeliveryHandlersOptions {
   sessionHealth: CodexDeliverySessionHealth | null;
   turnObligations: TurnObligationTracker;
   actionDispatcher: CodexExecActionDispatcher | null;
-  continuationService?: ContinuationService | null;
+  continuationService?: ContinuationTaskService | null;
 }
 
 export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHandlersOptions): void {

@@ -40,7 +40,10 @@ import { logSafeError } from './safe-log.js';
 import type { BotMessageTracker } from './message-trackers.js';
 import type { LarkTransport } from './lark-transport-contracts.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
-import type { ContinuationService } from './continuation/service.js';
+import {
+  CONTINUATION_RUNTIME_UNAVAILABLE,
+  type ContinuationTaskService,
+} from './continuation/service.js';
 import { selectQuotedMessageId } from './quoted-context-loader.js';
 import { validateTrackedBotMessageScope } from './message-mutation.js';
 import { queryRunTrace } from './run-trace-query.js';
@@ -104,7 +107,7 @@ export interface CreateCodexExecActionDispatcherOptions {
   botMessageTracker?: Pick<BotMessageTracker, 'get'>;
   turnObligations?: Pick<TurnObligationTracker, 'markSatisfied'>;
   validateChatAccess?: AccessControlValidationInput['validateChatAccess'];
-  continuationService?: ContinuationService;
+  continuationService?: ContinuationTaskService;
 }
 
 interface CodexExecActionContext {
@@ -332,7 +335,9 @@ async function executeCreateContinuation(
     return {
       ok: false,
       action: 'create_continuation_job',
-      message: `Continuation job was not created: ${errorMessage(error)}`,
+      message: errorMessage(error) === CONTINUATION_RUNTIME_UNAVAILABLE
+        ? CONTINUATION_RUNTIME_UNAVAILABLE
+        : `Continuation job was not created: ${errorMessage(error)}`,
     };
   }
 }

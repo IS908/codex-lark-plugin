@@ -4,6 +4,7 @@ import type {
   ContinuationFailure,
 } from '../domain/continuation.js';
 import { ContinuationExecutionError } from '../domain/continuation.js';
+import { formatContinuationDiagnosticMessage } from '../diagnostic-log-format.js';
 import type {
   ContinuationAudit,
   ContinuationClock,
@@ -35,6 +36,7 @@ export interface ContinuationWorkerOptions {
   heartbeatIntervalMs?: number;
   leaseDurationMs?: number;
   workerId?: string;
+  debug?: (message: string) => void;
 }
 
 const DEFAULT_SCAN_INTERVAL_MS = 1_000;
@@ -148,6 +150,7 @@ export class ContinuationWorker {
       heartbeatInFlight: false,
     };
     this.active.set(claim.job.jobId, execution);
+    this.debug('claimed', claim, 'running');
 
     execution.heartbeatTimer = setInterval(() => {
       void this.maintainExecution(execution);
@@ -165,13 +168,14 @@ export class ContinuationWorker {
     }
 
     execution.promise = this.runExecution(execution)
-      .catch(async (error) => {
+      .catch(async () => {
         await this.audit(
           'continuation.execute',
           execution.claim,
           'error',
-          `worker_state_error: ${errorSummary(error)}`,
+          'worker_state_error',
         );
+        this.debug('worker_state_error', execution.claim, 'running');
       })
       .finally(() => {
         if (execution.heartbeatTimer) clearInterval(execution.heartbeatTimer);
@@ -209,7 +213,8 @@ export class ContinuationWorker {
     try {
       await this.options.repository.completeStep(execution.claim, result, this.nowIso());
       await this.audit('continuation.execute', execution.claim, 'ok');
-    } catch (error) {
+      this.debug('step_committed', execution.claim, result.outcome.outcome);
+    } catch {
       const afterFailure = await this.options.repository.get(execution.claim.job.jobId).catch(() => null);
       if (afterFailure?.status === 'cancel_requested') {
         execution.abortReason = 'cancel';
@@ -220,8 +225,9 @@ export class ContinuationWorker {
         'continuation.execute',
         execution.claim,
         'error',
-        errorSummary(error),
+        'state_commit_failed',
       );
+      this.debug('state_commit_failed', execution.claim, 'running');
     }
   }
 
@@ -254,8 +260,9 @@ export class ContinuationWorker {
         'continuation.execute',
         execution.claim,
         'error',
-        `${failure.errorCode}: ${failure.errorSummary}`,
+        'attempt_failed',
       );
+      this.debug('attempt_failed', execution.claim, 'failed');
     }
   }
 
@@ -263,6 +270,7 @@ export class ContinuationWorker {
     if (execution.abortReason === 'cancel') {
       await this.options.repository.completeCancellation(execution.claim, this.nowIso());
       await this.audit('continuation.cancel', execution.claim, 'ok');
+      this.debug('cancelled', execution.claim, 'cancelled');
       return;
     }
     if (execution.abortReason === 'expired') {
@@ -276,6 +284,7 @@ export class ContinuationWorker {
         this.nowIso(),
       );
       await this.audit('continuation.execute', execution.claim, 'error', 'continuation_expired');
+      this.debug('expired', execution.claim, 'failed');
     }
     // Shutdown and lost leases intentionally leave the active attempt to lease recovery.
   }
@@ -360,6 +369,11 @@ export class ContinuationWorker {
     }
     await this.options.repository.markDeliveryResult(claim, result, this.nowIso());
     await this.auditDelivery(claim, result.status === 'delivered' ? 'ok' : 'error', result.status);
+    this.emitDebug(formatContinuationDiagnosticMessage({
+      event: 'delivery_committed',
+      jobId: claim.jobId,
+      state: result.status,
+    }));
   }
 
   private scheduleTick(): void {
@@ -402,6 +416,31 @@ export class ContinuationWorker {
       result,
       detail,
     }).catch(() => {});
+  }
+
+  private debug(
+    event: string,
+    claim: ContinuationClaim,
+    state?: string,
+  ): void {
+    try {
+      this.emitDebug(formatContinuationDiagnosticMessage({
+        event,
+        jobId: claim.job.jobId,
+        attemptId: claim.attempt.attemptId,
+        ...(state ? { state } : {}),
+      }));
+    } catch {
+      // Diagnostics never affect continuation state.
+    }
+  }
+
+  private emitDebug(message: string): void {
+    try {
+      this.options.debug?.(message);
+    } catch {
+      // Diagnostics never affect continuation state.
+    }
   }
 }
 
