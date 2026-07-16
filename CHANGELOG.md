@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.21.4] - 2026-07-16
+
+### Fixed
+- Replaced internal lifecycle-guard diagnostics with a concise English user message when a Codex reply makes an unsupported follow-up promise.
+- Recorded guarded cronjob runs as failed after the notice is delivered, while preserving internal diagnostics and avoiding duplicate error messages.
+
 ## [1.21.3] - 2026-07-15
 
 ### Fixed
@@ -777,7 +783,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.3...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.4...HEAD
+[1.21.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.3...v1.21.4
 [1.21.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.2...v1.21.3
 [1.21.2]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.1...v1.21.2
 [1.7.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.7.3...v1.7.4
