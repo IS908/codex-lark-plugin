@@ -23,10 +23,13 @@ import {
 } from './lark-transport-resource-api.js';
 import {
   createDocCommentViaRaw,
+  findDocCommentReplyByMarkerViaRaw,
   replyDocCommentViaRaw,
 } from './lark-transport-doc-comment-api.js';
 import type {
   LarkDocCommentRequest,
+  LarkDocCommentReplyMarkerRequest,
+  LarkDocCommentReplyRequest,
   LarkFetchedMessageContext,
   LarkTransport,
   LarkTransportOptions,
@@ -153,9 +156,15 @@ class DefaultLarkTransport implements LarkTransport {
   }
 
   async replyDocComment(
-    request: Required<Pick<LarkDocCommentRequest, 'docToken' | 'commentId' | 'content' | 'fileType'>>,
+    request: LarkDocCommentReplyRequest,
   ): Promise<{ replyId?: string }> {
     return await replyDocCommentViaRaw(this.requireRawClient(), request);
+  }
+
+  async findDocCommentReplyByMarker(
+    request: LarkDocCommentReplyMarkerRequest,
+  ): Promise<{ replyId?: string } | null> {
+    return await findDocCommentReplyByMarkerViaRaw(this.requireRawClient(), request);
   }
 
   async createDocComment(request: Omit<LarkDocCommentRequest, 'commentId'>): Promise<{ commentId?: string }> {

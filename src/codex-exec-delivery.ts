@@ -54,6 +54,7 @@ export interface CodexExecDeliveryOptions {
   onFinalText?: (text: string) => void;
   onLifecycleGuard?: (reason: string) => void;
   onActionResults?: (results: CodexExecActionExecutionResult[]) => void;
+  continuationAvailable?: boolean;
   actionBaseDir?: string;
   traceLogId?: string;
   traceRunId?: string;
@@ -118,6 +119,7 @@ function resolveProgressLimits(overrides: Partial<CodexExecProgressLimits> = {})
 async function enrichCodexExecActionPromptInfo(
   info: CodexExecActionChannelPromptInfo | null,
   message: LarkMessage,
+  continuationAvailable: boolean,
 ): Promise<CodexExecActionChannelPromptInfo | null> {
   if (!info?.enabled) return info;
   const baseInfo = {
@@ -125,6 +127,7 @@ async function enrichCodexExecActionPromptInfo(
     ...(appConfig.codexExecToolTraceEnabled ? { traceQueryEnabled: true } : {}),
     continuationEnabled:
       appConfig.continuationEnabled
+      && continuationAvailable
       && message.messageType !== 'reaction'
       && ['p2p', 'group', 'doc_comment'].includes(message.chatType),
   };
@@ -366,7 +369,11 @@ export async function deliverMessageViaCodexExec(
       message,
       displayLabel,
       progressSink?.promptInfo ?? null,
-      await enrichCodexExecActionPromptInfo(actionChannel?.promptInfo ?? null, message),
+      await enrichCodexExecActionPromptInfo(
+        actionChannel?.promptInfo ?? null,
+        message,
+        opts.continuationAvailable ?? true,
+      ),
     ),
     imagePaths: collectImagePaths(message),
     command: appConfig.codexExecCommand,

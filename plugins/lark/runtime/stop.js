@@ -401,10 +401,38 @@ import path2 from "node:path";
 var import_dotenv = __toESM(require_main(), 1);
 import path from "node:path";
 import os from "node:os";
+
+// src/runtime-version.ts
+var MINIMUM_NODE_VERSION = [24, 15, 0];
+var MINIMUM_NODE_LABEL = MINIMUM_NODE_VERSION.join(".");
+function parseNodeVersion(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+function compareVersion(actual, minimum) {
+  for (let index = 0; index < Math.max(actual.length, minimum.length); index += 1) {
+    const difference = (actual[index] ?? 0) - (minimum[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+function assertSupportedNodeVersion(version = process.versions.node) {
+  const parsed = parseNodeVersion(version);
+  if (!parsed || compareVersion(parsed, MINIMUM_NODE_VERSION) < 0) {
+    throw new Error(
+      `Node.js >=${MINIMUM_NODE_LABEL} is required; current version is ${version}.`
+    );
+  }
+}
+
+// src/config.ts
+assertSupportedNodeVersion();
 var envPath = path.join(os.homedir(), ".codex", "channels", "lark", ".env");
 (0, import_dotenv.config)({ path: envPath });
 var channelHome = path.join(os.homedir(), ".codex", "channels", "lark");
 var runtimeConfigDir = path.join(channelHome, "runtime-config");
+var continuationRuntimeDir = path.join(channelHome, "runtime", "continuations");
 var logsDir = path.join(channelHome, "logs");
 var defaultCodexExecCwd = path.join(channelHome, "codex-exec-workdir");
 var isDryRun = process.argv.includes("--dry-run");
@@ -438,6 +466,15 @@ function optionalPositiveNumber(key, fallback) {
 function optionalNonNegativeNumber(key, fallback) {
   const parsed = optionalNumber(key, fallback);
   if (parsed < 0) throw new Error(`Invalid ${key}: ${parsed}. Expected a non-negative number.`);
+  return parsed;
+}
+function optionalIntegerRange(key, fallback, minimum, maximum) {
+  const parsed = optionalNumber(key, fallback);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(
+      `Invalid ${key}: ${parsed}. Expected an integer between ${minimum} and ${maximum}.`
+    );
+  }
   return parsed;
 }
 function optionalBoolean(key, fallback) {
@@ -521,6 +558,12 @@ var appConfig = {
     24
   ),
   codexSessionRetentionDryRun: optionalBoolean("LARK_CODEX_SESSION_RETENTION_DRY_RUN", false),
+  continuationEnabled: optionalBoolean("LARK_CONTINUATION_ENABLED", true),
+  continuationMaxConcurrency: optionalIntegerRange("LARK_CONTINUATION_MAX_CONCURRENCY", 1, 1, 4),
+  continuationMaxSteps: optionalIntegerRange("LARK_CONTINUATION_MAX_STEPS", 24, 1, 100),
+  continuationMaxRetries: optionalIntegerRange("LARK_CONTINUATION_MAX_RETRIES", 3, 0, 10),
+  continuationMaxAgeHours: optionalIntegerRange("LARK_CONTINUATION_MAX_AGE_HOURS", 24, 1, 168),
+  continuationRetentionDays: optionalIntegerRange("LARK_CONTINUATION_RETENTION_DAYS", 30, 1, 3650),
   sessionHealthEnabled: optionalBoolean("LARK_SESSION_HEALTH_ENABLED", false),
   sessionHealthTurnThreshold: optionalPositiveNumber("LARK_SESSION_HEALTH_TURN_THRESHOLD", 80),
   sessionHealthPromptBytesThreshold: optionalPositiveNumber(
@@ -595,6 +638,8 @@ var appConfig = {
   inboxDir: path.join(os.homedir(), ".codex", "channels", "lark", "inbox"),
   jobsDir: path.join(os.homedir(), ".codex", "channels", "lark", "jobs"),
   codexExecSessionsDir: path.join(os.homedir(), ".codex", "channels", "lark", "codex-sessions"),
+  continuationDbPath: path.join(continuationRuntimeDir, "jobs.sqlite"),
+  continuationArtifactsDir: path.join(continuationRuntimeDir, "artifacts"),
   runtimeConfigDir,
   accessControlConfigPath: path.join(runtimeConfigDir, "access-control.json"),
   localCliToolsConfigPath: path.join(runtimeConfigDir, "local-cli-tools.json"),

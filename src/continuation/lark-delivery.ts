@@ -63,7 +63,6 @@ async function deliverIm(
   if (
     claim.attemptCount > 1
     && claim.firstAttemptAt
-    && claim.lastErrorCode !== 'lark_pre_send_unavailable'
     && clock.now().getTime() - Date.parse(claim.firstAttemptAt) >= IM_UUID_WINDOW_MS
   ) {
     return {
@@ -99,7 +98,7 @@ async function deliverDocComment(
   route: Extract<ContinuationDeliveryRoute, { kind: 'comment_thread' }>,
   marker: string,
 ): Promise<ContinuationDeliveryResult> {
-  if (claim.attemptCount > 1 && claim.lastErrorCode !== 'lark_pre_send_unavailable') {
+  if (claim.attemptCount > 1) {
     return reconcileDocComment(transport, route, marker);
   }
   try {

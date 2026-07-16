@@ -209,6 +209,35 @@ try {
     'cancelled',
   );
   assert.equal((await repository.get(queuedCancel.job.jobId))?.status, 'cancelled');
+  const preSendDelivery = await repository.claimPendingDelivery(
+    'delivery-pre-send',
+    '2026-07-17T00:00:20.000Z',
+  );
+  assert.ok(preSendDelivery);
+  assert.equal(preSendDelivery.jobId, queuedCancel.job.jobId);
+  assert.equal(preSendDelivery.attemptCount, 1);
+  await repository.markDeliveryResult(
+    preSendDelivery,
+    {
+      status: 'retry',
+      errorCode: 'lark_pre_send_unavailable',
+      errorSummary: 'Lark was unavailable before sending.',
+    },
+    '2026-07-17T00:00:21.000Z',
+  );
+  const deliveryAfterPreSend = await repository.claimPendingDelivery(
+    'delivery-pre-send-retry',
+    '2026-07-17T00:00:51.000Z',
+  );
+  assert.ok(deliveryAfterPreSend);
+  assert.equal(deliveryAfterPreSend.jobId, queuedCancel.job.jobId);
+  assert.equal(deliveryAfterPreSend.attemptCount, 1);
+  assert.equal(deliveryAfterPreSend.firstAttemptAt, '2026-07-17T00:00:51.000Z');
+  await repository.markDeliveryResult(
+    deliveryAfterPreSend,
+    { status: 'delivered', messageId: 'om_cancelled' },
+    '2026-07-17T00:00:52.000Z',
+  );
 
   const runningCancel = await repository.create(createRequest('running-cancel'));
   const runningCancelClaim = await repository.claimDue(

@@ -140,15 +140,17 @@ assert.deepEqual(await delivery.deliver(imClaim({
 });
 assert.equal(sendCalls.length, beforeExpiredWindow);
 
-sendResult = { messageId: 'om_after_pre_send_outage' };
+const beforeExpiredWindowAfterPreSend = sendCalls.length;
 assert.deepEqual(await delivery.deliver(imClaim({
   attemptCount: 5,
   firstAttemptAt: new Date(now.getTime() - 2 * 60 * 60_000).toISOString(),
   lastErrorCode: 'lark_pre_send_unavailable',
 })), {
-  status: 'delivered',
-  messageId: 'om_after_pre_send_outage',
+  status: 'delivery_unknown',
+  errorCode: 'im_uuid_window_expired',
+  errorSummary: 'The prior IM delivery could not be confirmed before the UUID deduplication window expired.',
 });
+assert.equal(sendCalls.length, beforeExpiredWindowAfterPreSend);
 
 sendError = Object.assign(new Error('dns details should not escape'), { code: 'ENOTFOUND' });
 assert.deepEqual(await delivery.deliver(imClaim()), {

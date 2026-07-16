@@ -737,13 +737,21 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           now,
           retryDelayMs(Math.max(1, claim.attemptCount), this.jitter()),
         );
+        const resetKnownPreSendAttempt = claim.attemptCount === 1
+          && result.errorCode === 'lark_pre_send_unavailable';
         update = this.database.prepare(`
           UPDATE continuation_outbox
           SET status = 'pending', next_attempt_at = ?, worker_id = NULL, lease_expires_at = NULL,
+              attempt_count = CASE WHEN ? THEN 0 ELSE attempt_count END,
+              first_attempt_at = CASE WHEN ? THEN NULL ELSE first_attempt_at END,
+              last_attempt_at = CASE WHEN ? THEN NULL ELSE last_attempt_at END,
               error_code = ?, error_summary = ?, updated_at = ?
           WHERE outbox_id = ? AND status = 'sending' AND worker_id = ?
         `).run(
           nextAttemptAt,
+          resetKnownPreSendAttempt ? 1 : 0,
+          resetKnownPreSendAttempt ? 1 : 0,
+          resetKnownPreSendAttempt ? 1 : 0,
           result.errorCode,
           result.errorSummary,
           now,

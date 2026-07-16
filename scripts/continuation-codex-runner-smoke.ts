@@ -190,7 +190,7 @@ const responses = [
     text: JSON.stringify({
       outcome: 'continue',
       checkpoint: {
-        summary: 'Inspected inputs',
+        summary: 'Inspected token=super-secret-value',
         completed_steps: ['inspect'],
         remaining_steps: ['finish'],
         constraints: ['do not publish'],
@@ -205,8 +205,8 @@ const responses = [
   {
     text: JSON.stringify({
       outcome: 'completed',
-      final_message: 'Finished',
-      result_summary: 'Done',
+      final_message: 'Finished with Bearer abcdefghijklmnopqrstuvwxyz123456',
+      result_summary: 'Done password=hunter2-secret',
       artifacts: ['./reports/../summary.md'],
     }),
     sessionId: 'session-next',
@@ -249,7 +249,7 @@ assert.deepEqual(continuation, {
   outcome: {
     outcome: 'continue',
     checkpoint: {
-      summary: 'Inspected inputs',
+      summary: 'Inspected token=[redacted]',
       completedSteps: ['inspect'],
       remainingSteps: ['finish'],
       constraints: ['do not publish'],
@@ -263,8 +263,8 @@ assert.deepEqual(continuation, {
 const completed = await executor.execute(createClaim(), signal);
 assert.deepEqual(completed.outcome, {
   outcome: 'completed',
-  finalMessage: 'Finished',
-  resultSummary: 'Done',
+  finalMessage: 'Finished with Bearer [redacted]',
+  resultSummary: 'Done password=[redacted]',
   artifacts: ['summary.md'],
 });
 assert.equal((await executor.execute(createClaim(), signal)).outcome.outcome, 'failed');

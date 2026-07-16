@@ -12,6 +12,7 @@ import type {
   ContinuationRepository,
   ContinuationTerminalDelivery,
 } from '../ports/continuation.js';
+import { redactContinuationText } from './redaction.js';
 
 type AbortReason = 'cancel' | 'expired' | 'lease_lost' | 'shutdown';
 
@@ -467,11 +468,9 @@ function sanitizeText(value: string): string {
   const sanitized = value
     .replace(/\r/g, '')
     .replace(/\u001b\[[0-9;]*m/g, '')
-    .replace(/\b(?:sk|pk|api|token|secret)[-_][a-zA-Z0-9]{12,}\b/gi, '[redacted-token]')
-    .replace(/\b(Bearer|Basic)\s+[a-zA-Z0-9._~+/-]+=*/gi, '$1 [redacted]')
-    .replace(/((?:app|tenant)_access_token|authorization|secret|token|api[_-]?key)\s*[:=]\s*["']?[^"'\s,;]+/gi, '$1=[redacted]')
     .trim();
-  return sanitized.length > 1_000 ? `${sanitized.slice(0, 997)}...` : sanitized;
+  const redacted = redactContinuationText(sanitized);
+  return redacted.length > 1_000 ? `${redacted.slice(0, 997)}...` : redacted;
 }
 
 function addMilliseconds(timestamp: string, milliseconds: number): string {

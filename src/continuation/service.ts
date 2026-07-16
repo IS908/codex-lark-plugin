@@ -9,6 +9,7 @@ import type {
 import { isContinuationTerminal } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
+import { redactContinuationText } from './redaction.js';
 
 export interface ContinuationServiceOptions {
   repository: ContinuationRepository;
@@ -308,8 +309,8 @@ function continuationIdempotencyKey(sourceMessageId: string): string {
 }
 
 function sanitizeBrief(action: ContinuationActionInput) {
-  const title = sanitizeText(action.title).replace(/\s+/g, ' ').trim();
-  const objective = sanitizeText(action.objective);
+  const title = redactContinuationText(action.title).replace(/\s+/g, ' ').trim();
+  const objective = redactContinuationText(action.objective);
   if (!title) throw new Error('Continuation title is empty after normalization.');
   if (objective.replace(/\[redacted\]/g, '').trim().length < 3) {
     throw new Error('Continuation objective is not usable after credential redaction.');
@@ -317,25 +318,15 @@ function sanitizeBrief(action: ContinuationActionInput) {
   return {
     title,
     objective,
-    acceptanceCriteria: action.acceptance_criteria.map(sanitizeText),
+    acceptanceCriteria: action.acceptance_criteria.map(redactContinuationText),
     contextSnapshot: {
-      summary: sanitizeText(action.context_snapshot.summary),
-      completedSteps: action.context_snapshot.completed_steps.map(sanitizeText),
-      remainingSteps: action.context_snapshot.remaining_steps.map(sanitizeText),
-      constraints: action.context_snapshot.constraints.map(sanitizeText),
-      decisions: action.context_snapshot.decisions.map(sanitizeText),
-      references: action.context_snapshot.references.map(sanitizeText),
+      summary: redactContinuationText(action.context_snapshot.summary),
+      completedSteps: action.context_snapshot.completed_steps.map(redactContinuationText),
+      remainingSteps: action.context_snapshot.remaining_steps.map(redactContinuationText),
+      constraints: action.context_snapshot.constraints.map(redactContinuationText),
+      decisions: action.context_snapshot.decisions.map(redactContinuationText),
+      references: action.context_snapshot.references.map(redactContinuationText),
     },
-    requiredTools: action.required_tools.map(sanitizeText),
+    requiredTools: action.required_tools.map(redactContinuationText),
   };
-}
-
-function sanitizeText(value: string): string {
-  return value
-    .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, '[redacted]')
-    .replace(/\bxox[baprs]-[A-Za-z0-9-]{20,}\b/g, '[redacted]')
-    .replace(/\bAKIA[A-Z0-9]{16}\b/g, '[redacted]')
-    .replace(/\b(?:sk|pk|api|token|secret)[-_][a-zA-Z0-9]{12,}\b/gi, '[redacted]')
-    .replace(/\b(Bearer|Basic)\s+[a-zA-Z0-9._~+/-]+=*/gi, '$1 [redacted]')
-    .replace(/((?:app|tenant)_access_token|authorization|password|secret|token|api[_-]?key)\s*[:=]\s*["']?[^"'\s,;]+/gi, '$1=[redacted]');
 }

@@ -573,6 +573,20 @@ assert.deepEqual(continuationReplies.map((reply) => reply.text), [
   'Background task created: Finish report\nJob ID: job_0123456789abcdef01234567',
 ]);
 
+const unavailableContinuationPrompts: string[] = [];
+await deliverMessageViaCodexExec({
+  message: { ...message, messageId: 'om_continuation_runtime_unavailable' },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  continuationAvailable: false,
+  runCodexExec: async (request) => {
+    unavailableContinuationPrompts.push(request.prompt);
+    return 'Continuation is unavailable.';
+  },
+  sendReply: async () => ({ sentCount: 1 }),
+});
+assert.doesNotMatch(unavailableContinuationPrompts[0], /create_continuation_job/);
+
 const continuationFailureReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({
   message: { ...message, messageId: 'om_create_continuation_failure' },

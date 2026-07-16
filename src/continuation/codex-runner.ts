@@ -21,6 +21,7 @@ import {
 import type { ContinuationExecutor } from '../ports/continuation.js';
 import { untrustedDataBlock } from '../prompts.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
+import { redactContinuationText } from './redaction.js';
 
 export interface ContinuationCodexExecutorOptions {
   artifactStore: ContinuationArtifactStore;
@@ -302,39 +303,41 @@ async function parseOutcome(
     const artifacts = await artifactStore.canonicalizeReferences(jobId, value.artifacts);
     return {
       outcome: 'completed',
-      finalMessage: value.final_message,
-      ...(value.result_summary === undefined ? {} : { resultSummary: value.result_summary }),
+      finalMessage: redactContinuationText(value.final_message),
+      ...(value.result_summary === undefined
+        ? {}
+        : { resultSummary: redactContinuationText(value.result_summary) }),
       artifacts,
     };
   }
   if (value.outcome === 'failed') {
     return {
       outcome: 'failed',
-      errorCode: value.error_code,
-      errorSummary: value.error_summary,
+      errorCode: redactContinuationText(value.error_code),
+      errorSummary: redactContinuationText(value.error_summary),
       retryable: value.retryable,
-      completedWork: value.completed_work,
-      unperformedWork: value.unperformed_work,
+      completedWork: value.completed_work.map(redactContinuationText),
+      unperformedWork: value.unperformed_work.map(redactContinuationText),
     };
   }
   return {
     outcome: 'blocked',
-    errorCode: value.error_code,
-    errorSummary: value.error_summary,
-    requiredCapability: value.required_capability,
-    completedWork: value.completed_work,
-    unperformedWork: value.unperformed_work,
+    errorCode: redactContinuationText(value.error_code),
+    errorSummary: redactContinuationText(value.error_summary),
+    requiredCapability: redactContinuationText(value.required_capability),
+    completedWork: value.completed_work.map(redactContinuationText),
+    unperformedWork: value.unperformed_work.map(redactContinuationText),
   };
 }
 
 function mapCheckpoint(input: z.infer<typeof checkpointSchema>): ContinuationCheckpoint {
   return {
-    summary: input.summary,
-    completedSteps: input.completed_steps,
-    remainingSteps: input.remaining_steps,
-    constraints: input.constraints,
-    decisions: input.decisions,
-    references: input.references,
+    summary: redactContinuationText(input.summary),
+    completedSteps: input.completed_steps.map(redactContinuationText),
+    remainingSteps: input.remaining_steps.map(redactContinuationText),
+    constraints: input.constraints.map(redactContinuationText),
+    decisions: input.decisions.map(redactContinuationText),
+    references: input.references.map(redactContinuationText),
   };
 }
 

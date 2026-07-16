@@ -25,6 +25,7 @@ parent-process bridge for actions that must run safely even when the child
 | Add reaction | `react` | not supported | MCP-only |
 | Download attachment | `download_attachment` | not supported | MCP-only |
 | Doc comment reply/create | `reply_doc_comment`, `create_doc_comment` | ordinary exec text for current doc-comment reply only | no; structured doc-comment mutations remain MCP-only |
+| Persistent continuation | not exposed | `create_continuation_job` | parent validates a bounded execution brief, derives identity/route/session from the trusted event, and commits it through `ContinuationService` |
 
 ## Boundary Rules
 
@@ -44,11 +45,14 @@ parent-process bridge for actions that must run safely even when the child
   single Feishu post and fall back to ordered split messages; audio/video and
   interactive cards still need separate design slices before they are exposed as
   normal exec actions.
-- Codex exec final answers have no background continuation after the visible
-  Feishu reply is posted. If the child output promises later external work
-  without a structured side-channel action, defer/no-reply marker, or scheduled
-  job, delivery rewrites the reply into a safe notice instead of implying that
-  work will keep running.
+- Codex exec final answers have no implicit background continuation after the
+  visible Feishu reply is posted. Only a successfully committed
+  `create_continuation_job` action establishes a durable follow-up; unrelated
+  actions and defer/no-reply markers do not. Unsupported future-work prose is
+  rewritten into a safe notice.
+- `create_continuation_job` is foreground-only and is not an MCP tool. The
+  background runner cannot invoke the action bridge, send Lark messages, create
+  nested jobs, or publish source control. Terminal delivery remains parent-owned.
 - Capabilities should be added to exec actions only when there is a clear need
   for the parent-process bridge. Otherwise, prefer MCP tools.
 

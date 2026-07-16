@@ -75,6 +75,7 @@ export interface RegisterCodexDeliveryHandlersOptions {
   turnObligations: TurnObligationTracker;
   actionDispatcher: CodexExecActionDispatcher | null;
   continuationService?: ContinuationTaskService | null;
+  continuationAvailable?: boolean;
 }
 
 export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHandlersOptions): void {
@@ -87,6 +88,7 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
     turnObligations,
     actionDispatcher,
     continuationService,
+    continuationAvailable,
   } = options;
 
   const sendReplyViaFeishu = createReplySender({
@@ -168,6 +170,7 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
         sessionHealth: sessionHealth ?? undefined,
         turnObligations,
         actionDispatcher: actionDispatcher ?? undefined,
+        continuationAvailable,
       });
       if (hasReplyObligation) {
         turnObligations.requireSatisfiedOrDeferred(message.messageId);

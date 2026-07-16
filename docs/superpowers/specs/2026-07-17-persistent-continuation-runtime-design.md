@@ -472,14 +472,20 @@ Task failed: <job_id>
 <stable failure reason and completed/unperformed work>
 ```
 
-Model-produced results preserve the user's language. Plugin-produced failure,
-cancellation, permission, and delivery errors default to English.
+Model-produced results preserve the user's language, except that known
+credential-like values are redacted before checkpoints, result summaries, or
+terminal payloads are persisted. Plugin-produced failure, cancellation,
+permission, and delivery errors default to English.
 
 ### 12.1 IM delivery
 
 IM replies use a stable Feishu `uuid`. Feishu documents a one-hour duplicate
 suppression window for that UUID. The adapter may safely retry the same UUID
 inside that window.
+
+A delivery attempt that is positively classified as pre-send unavailable does
+not start this window. Once any attempt may have reached Feishu, later pre-send
+failures cannot erase that history or extend the original window.
 
 If the plugin cannot establish whether an IM send succeeded and the one-hour
 window expires, it must not send again automatically. The outbox becomes

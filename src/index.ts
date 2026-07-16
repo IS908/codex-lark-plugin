@@ -189,6 +189,7 @@ async function main() {
     turnObligations,
     actionDispatcher: codexExecActionDispatcher,
     continuationService: continuationRuntime.service,
+    continuationAvailable: continuationRuntime.health.available,
   });
 
   if (isDryRun) {
