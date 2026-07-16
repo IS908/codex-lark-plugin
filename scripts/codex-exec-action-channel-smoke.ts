@@ -8,9 +8,31 @@ process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
 
 const {
+  buildCodexExecActionChannelPrompt,
   cleanupCodexExecActionChannels,
   createCodexExecActionChannel,
 } = await import('../src/codex-exec-action-channel.js');
+
+assert.match(
+  buildCodexExecActionChannelPrompt({
+    enabled: true,
+    filePath: '/tmp/actions',
+    token: 'token',
+    maxActions: 5,
+    continuationEnabled: true,
+  }).join('\n'),
+  /create_continuation_job/,
+);
+assert.doesNotMatch(
+  buildCodexExecActionChannelPrompt({
+    enabled: true,
+    filePath: '/tmp/actions',
+    token: 'token',
+    maxActions: 5,
+    continuationEnabled: false,
+  }).join('\n'),
+  /create_continuation_job/,
+);
 
 function modeBits(mode: number): number {
   return mode & 0o777;
@@ -101,6 +123,49 @@ await writeFile(
 );
 await assert.rejects(() => unknownField.read(), /unsupported top-level field "reply"/);
 await unknownField.cleanup();
+
+const duplicateContinuation = await createCodexExecActionChannel({
+  baseDir,
+  caller: 'ou_action_user',
+  messageId: 'om_action_duplicate_continuation',
+  chatId: 'oc_action_channel',
+});
+assert.ok(duplicateContinuation);
+const continuationAction = {
+  type: 'create_continuation_job',
+  title: 'Continue',
+  objective: 'Finish the current work.',
+  acceptance_criteria: ['done'],
+  context_snapshot: {
+    summary: 'started',
+    completed_steps: [],
+    remaining_steps: ['finish'],
+    constraints: [],
+    decisions: [],
+    references: [],
+  },
+  required_tools: [],
+};
+await writeFile(
+  duplicateContinuation.filePath,
+  [
+    JSON.stringify({
+      version: 1,
+      token: duplicateContinuation.token,
+      type: 'lark_action_request',
+      actions: [continuationAction],
+    }),
+    JSON.stringify({
+      version: 1,
+      token: duplicateContinuation.token,
+      type: 'lark_action_request',
+      actions: [{ ...continuationAction, title: 'Continue again' }],
+    }),
+  ].join('\n'),
+  'utf-8',
+);
+await assert.rejects(() => duplicateContinuation.read(), /duplicate-continuation/);
+await duplicateContinuation.cleanup();
 
 const actionDir = join(baseDir, '.lark-actions');
 const oldTurn = join(actionDir, 'turn-old');

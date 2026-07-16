@@ -10,7 +10,7 @@ import {
 import { preserveConversationBoundaryFields } from './conversation-boundary.js';
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { larkReplyPresentationGuideline, untrustedDataBlock } from './prompts.js';
-import { findLarkDeferSentinel, type TurnObligationTracker } from './turn-obligation.js';
+import type { TurnObligationTracker } from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import { isFeishuOpenMessageId, shouldSendFeishuReplyForMessage } from './codex-exec-error.js';
 import {
@@ -117,11 +117,17 @@ function resolveProgressLimits(overrides: Partial<CodexExecProgressLimits> = {})
 
 async function enrichCodexExecActionPromptInfo(
   info: CodexExecActionChannelPromptInfo | null,
+  message: LarkMessage,
 ): Promise<CodexExecActionChannelPromptInfo | null> {
   if (!info?.enabled) return info;
-  const baseInfo = appConfig.codexExecToolTraceEnabled
-    ? { ...info, traceQueryEnabled: true }
-    : info;
+  const baseInfo = {
+    ...info,
+    ...(appConfig.codexExecToolTraceEnabled ? { traceQueryEnabled: true } : {}),
+    continuationEnabled:
+      appConfig.continuationEnabled
+      && message.messageType !== 'reaction'
+      && ['p2p', 'group', 'doc_comment'].includes(message.chatType),
+  };
   if (appConfig.codexExecSandbox === 'danger-full-access') return baseInfo;
 
   try {
@@ -195,9 +201,9 @@ function buildLifecycleGuardReply(): string {
 
 export function guardCodexExecLifecycleReply(
   text: string,
-  opts: { allowFollowupPromise: boolean },
+  opts: { continuationCreated: boolean },
 ): LifecycleGuardResult {
-  if (opts.allowFollowupPromise) return { blocked: false, text };
+  if (opts.continuationCreated) return { blocked: false, text };
 
   const normalized = normalizeLifecycleGuardText(text);
   if (!normalized || isSafeNonExecutionReply(normalized)) {
@@ -360,7 +366,7 @@ export async function deliverMessageViaCodexExec(
       message,
       displayLabel,
       progressSink?.promptInfo ?? null,
-      await enrichCodexExecActionPromptInfo(actionChannel?.promptInfo ?? null),
+      await enrichCodexExecActionPromptInfo(actionChannel?.promptInfo ?? null, message),
     ),
     imagePaths: collectImagePaths(message),
     command: appConfig.codexExecCommand,
@@ -453,12 +459,18 @@ export async function deliverMessageViaCodexExec(
     await actionChannel.cleanup();
   }
 
-  const deferredByText = !!findLarkDeferSentinel(result.text);
   let text = result.text.trim();
   let suppressVisibleReply = false;
+  let continuationCreated = false;
+  let continuationFailure: CodexExecActionExecutionResult | undefined;
   if (sideChannelActions.length > 0) {
     const actionResults = opts.actionDispatcher
-      ? await opts.actionDispatcher.execute({ message, actions: sideChannelActions })
+      ? await opts.actionDispatcher.execute({
+          message,
+          actions: sideChannelActions,
+          parentSessionId: result.sessionId ?? usedResumeSessionId ?? null,
+          model: sessionModel ?? appConfig.codexExecModel,
+        })
       : [
           {
             ok: false,
@@ -467,15 +479,30 @@ export async function deliverMessageViaCodexExec(
           },
         ];
     opts.onActionResults?.(actionResults);
-    const actionSummary = formatCodexExecActionResults(actionResults);
-    if (!text) {
-      if (shouldSuppressEmptyActionReply(actionResults)) {
-        suppressVisibleReply = true;
-      } else {
-        text = actionSummary;
+    const continuation = actionResults.find(
+      (actionResult) =>
+        actionResult.ok
+        && actionResult.action === 'create_continuation_job'
+        && actionResult.continuation,
+    );
+    continuationFailure = actionResults.find(
+      (actionResult) => !actionResult.ok && actionResult.action === 'create_continuation_job',
+    );
+    if (continuation?.continuation) {
+      continuationCreated = true;
+      suppressVisibleReply = false;
+      text = `Background task created: ${continuation.continuation.title}\nJob ID: ${continuation.continuation.jobId}`;
+    } else {
+      const actionSummary = formatCodexExecActionResults(actionResults);
+      if (!text) {
+        if (shouldSuppressEmptyActionReply(actionResults)) {
+          suppressVisibleReply = true;
+        } else {
+          text = actionSummary;
+        }
+      } else if (shouldShowActionSummary(actionResults)) {
+        text = `${text}\n\n[Action results]\n${actionSummary}`;
       }
-    } else if (shouldShowActionSummary(actionResults)) {
-      text = `${text}\n\n[Action results]\n${actionSummary}`;
     }
   } else {
     opts.onActionResults?.([]);
@@ -484,7 +511,7 @@ export async function deliverMessageViaCodexExec(
     text = 'Codex exec returned an empty response.';
   }
   const lifecycleGuard = guardCodexExecLifecycleReply(text, {
-    allowFollowupPromise: sideChannelActions.length > 0 || deferredByText,
+    continuationCreated,
   });
   if (lifecycleGuard.blocked) {
     console.error(
@@ -492,6 +519,9 @@ export async function deliverMessageViaCodexExec(
     );
     opts.onLifecycleGuard?.(lifecycleGuard.reason ?? 'unknown-lifecycle-guard');
     text = lifecycleGuard.text;
+    if (continuationFailure) {
+      text = `${text}\n\n${continuationFailure.message}`;
+    }
   }
   opts.sessionHealth?.recordTurn({
     sessionKey,
