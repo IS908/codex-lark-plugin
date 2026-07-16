@@ -235,6 +235,29 @@ try {
   await repository.completeCancellation(runningCancelClaim, '2026-07-17T00:00:23.000Z');
   assert.equal((await repository.get(runningCancel.job.jobId))?.status, 'cancelled');
 
+  const expiredQueued = await repository.create(createRequest('expired-queued', {
+    expiresAt: '2026-07-17T00:00:05.000Z',
+  }));
+  assert.equal(await repository.expireOverdue('2026-07-17T00:00:06.000Z'), 1);
+  assert.equal((await repository.get(expiredQueued.job.jobId))?.status, 'failed');
+  assert.equal((await repository.get(expiredQueued.job.jobId))?.deliveryStatus, 'pending');
+
+  const exhausted = await repository.create(createRequest('exhausted', { maxRetries: 0 }));
+  const exhaustedClaim = await repository.claimDue(
+    'worker-exhausted',
+    baseNow,
+    '2026-07-17T00:00:30.000Z',
+  );
+  assert.equal(exhaustedClaim?.job.jobId, exhausted.job.jobId);
+  assert.ok(exhaustedClaim);
+  await repository.failAttempt(exhaustedClaim, {
+    errorCode: 'provider_unavailable',
+    errorSummary: 'Provider unavailable.',
+    retryable: true,
+  }, '2026-07-17T00:00:24.000Z');
+  assert.equal((await repository.get(exhausted.job.jobId))?.status, 'failed');
+  assert.equal((await repository.get(exhausted.job.jobId))?.deliveryStatus, 'pending');
+
   const retry = await repository.cloneForRetry(
     queuedCancel.job.jobId,
     'manual-retry-1',

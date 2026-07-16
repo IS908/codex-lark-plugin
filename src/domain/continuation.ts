@@ -155,6 +155,18 @@ export interface ContinuationFailure {
   retryable: boolean;
 }
 
+export class ContinuationExecutionError extends Error {
+  constructor(
+    readonly errorCode: string,
+    readonly errorSummary: string,
+    readonly retryable: boolean,
+    options?: ErrorOptions,
+  ) {
+    super(errorSummary, options);
+    this.name = 'ContinuationExecutionError';
+  }
+}
+
 export interface ContinuationDeliveryClaim {
   outboxId: string;
   jobId: string;

@@ -589,6 +589,39 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     });
   }
 
+  async expireOverdue(now: string): Promise<number> {
+    return this.transaction(() => {
+      const rows = this.database.prepare(`
+        SELECT job_id
+        FROM continuation_jobs
+        WHERE status IN ('queued', 'waiting_retry')
+          AND expires_at <= ?
+          AND deleted_at IS NULL
+      `).all(now);
+      let expired = 0;
+      for (const row of rows) {
+        const jobId = stringField(row, 'job_id');
+        const current = this.readJobBy('j.job_id = ?', jobId);
+        if (!current) continue;
+        const update = this.database.prepare(`
+          UPDATE continuation_jobs
+          SET status = 'failed', error_code = 'continuation_expired',
+              error_summary = 'The continuation reached its maximum age.',
+              completed_at = ?, updated_at = ?, row_version = row_version + 1
+          WHERE job_id = ? AND status IN ('queued', 'waiting_retry') AND expires_at <= ?
+        `).run(now, now, jobId, now);
+        if (Number(update.changes) !== 1) continue;
+        expired += 1;
+        this.insertTerminalOutbox(
+          current,
+          `Task failed: ${jobId}\nThe continuation reached its maximum age.`,
+          now,
+        );
+      }
+      return expired;
+    });
+  }
+
   async cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob> {
     const source = await this.get(jobId);
     if (!source || !isContinuationTerminal(source.status) || source.deletedAt) {

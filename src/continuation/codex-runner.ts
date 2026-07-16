@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   CodexExecAbortedError,
+  CodexExecProcessError,
   isCodexExecTimeoutError,
   normalizeCodexExecResult,
   runCodexExecCommand,
@@ -10,6 +11,7 @@ import {
 } from '../codex-exec.js';
 import {
   CONTINUATION_LIMITS,
+  ContinuationExecutionError,
   type ContinuationCheckpoint,
   type ContinuationClaim,
   type ContinuationExecutionResult,
@@ -178,43 +180,47 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     claim: ContinuationClaim,
     signal: AbortSignal,
   ): Promise<ContinuationExecutionResult> {
-    const artifactDir = await this.options.artifactStore.ensure(claim.job.jobId);
-    const request: CodexExecRequest = {
-      prompt: buildContinuationPrompt(claim.job, artifactDir),
-      ...(this.options.command ? { command: this.options.command } : {}),
-      cwd: claim.job.workingDirectory,
-      timeoutMs: claim.job.timeoutSeconds * 1_000,
-      sandbox: boundedSandbox(this.options.configuredSandbox),
-      model: claim.job.model ?? null,
-      profile: null,
-      ignoreUserConfig: true,
-      skipGitRepoCheck: true,
-      resumeSessionId: claim.job.executionSessionId ?? null,
-      outputSchema: CONTINUATION_OUTPUT_SCHEMA,
-      abortSignal: signal,
-      configOverrides: [
-        'approval_policy="never"',
-        'sandbox_workspace_write.network_access=false',
-      ],
-      additionalWritableDirs: [artifactDir],
-      traceLogId: claim.job.jobId,
-      traceRunId: claim.attempt.attemptId,
-    };
+    try {
+      const artifactDir = await this.options.artifactStore.ensure(claim.job.jobId);
+      const request: CodexExecRequest = {
+        prompt: buildContinuationPrompt(claim.job, artifactDir),
+        ...(this.options.command ? { command: this.options.command } : {}),
+        cwd: claim.job.workingDirectory,
+        timeoutMs: claim.job.timeoutSeconds * 1_000,
+        sandbox: boundedSandbox(this.options.configuredSandbox),
+        model: claim.job.model ?? null,
+        profile: null,
+        ignoreUserConfig: true,
+        skipGitRepoCheck: true,
+        resumeSessionId: claim.job.executionSessionId ?? null,
+        outputSchema: CONTINUATION_OUTPUT_SCHEMA,
+        abortSignal: signal,
+        configOverrides: [
+          'approval_policy="never"',
+          'sandbox_workspace_write.network_access=false',
+        ],
+        additionalWritableDirs: [artifactDir],
+        traceLogId: claim.job.jobId,
+        traceRunId: claim.attempt.attemptId,
+      };
 
-    const { result, replacedSession } = await this.executeWithResumeFallback(request);
-    const outcome = await parseOutcome(
-      result.text,
-      claim.job.jobId,
-      this.options.artifactStore,
-    );
-    return {
-      ...(result.sessionId
-        ? { executionSessionId: result.sessionId }
-        : replacedSession
-          ? { executionSessionId: null }
-          : {}),
-      outcome,
-    };
+      const { result, replacedSession } = await this.executeWithResumeFallback(request);
+      const outcome = await parseOutcome(
+        result.text,
+        claim.job.jobId,
+        this.options.artifactStore,
+      );
+      return {
+        ...(result.sessionId
+          ? { executionSessionId: result.sessionId }
+          : replacedSession
+            ? { executionSessionId: null }
+            : {}),
+        outcome,
+      };
+    } catch (error) {
+      throw mapExecutorError(error);
+    }
   }
 
   private async executeWithResumeFallback(request: CodexExecRequest) {
@@ -257,7 +263,11 @@ async function parseOutcome(
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new Error('Continuation Codex output was not valid JSON.');
+    throw new ContinuationExecutionError(
+      'invalid_continuation_output',
+      'Continuation Codex output was not valid JSON.',
+      true,
+    );
   }
   const parsed = outcomeSchema.safeParse(raw);
   if (!parsed.success) {
@@ -265,7 +275,11 @@ async function parseOutcome(
       .slice(0, 5)
       .map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`)
       .join('; ');
-    throw new Error(`Continuation Codex output did not match the required schema: ${detail}`);
+    throw new ContinuationExecutionError(
+      'invalid_continuation_output',
+      `Continuation Codex output did not match the required schema: ${detail}`,
+      true,
+    );
   }
 
   const value = parsed.data;
@@ -365,4 +379,38 @@ function assertByteLimit(name: string, value: unknown, limit: number): void {
   if (bytes > limit) {
     throw new Error(`Continuation ${name} exceeds ${limit} bytes.`);
   }
+}
+
+function mapExecutorError(error: unknown): ContinuationExecutionError {
+  if (error instanceof ContinuationExecutionError) return error;
+  if (error instanceof CodexExecAbortedError) {
+    return new ContinuationExecutionError(
+      'continuation_aborted',
+      'The continuation step was aborted.',
+      true,
+      { cause: error },
+    );
+  }
+  if (isCodexExecTimeoutError(error)) {
+    return new ContinuationExecutionError(
+      'continuation_timeout',
+      'The continuation step timed out.',
+      true,
+      { cause: error },
+    );
+  }
+  if (error instanceof CodexExecProcessError) {
+    return new ContinuationExecutionError(
+      'codex_process_failed',
+      'The Codex process failed before producing a valid continuation outcome.',
+      true,
+      { cause: error },
+    );
+  }
+  return new ContinuationExecutionError(
+    'continuation_execution_failed',
+    'The continuation step failed before producing a valid outcome.',
+    true,
+    { cause: error },
+  );
 }

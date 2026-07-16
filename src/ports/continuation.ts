@@ -22,6 +22,7 @@ export interface ContinuationRepository {
   requestCancel(jobId: string, now: string): Promise<'cancelled' | 'cancel_requested' | 'terminal' | 'missing'>;
   completeCancellation(claim: ContinuationClaim, now: string): Promise<void>;
   recoverExpiredLeases(now: string): Promise<number>;
+  expireOverdue(now: string): Promise<number>;
   cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob>;
   redactTerminal(jobId: string, now: string): Promise<boolean>;
   claimPendingDelivery(workerId: string, now: string): Promise<ContinuationDeliveryClaim | null>;

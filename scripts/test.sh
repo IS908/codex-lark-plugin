@@ -25,6 +25,10 @@ echo "=== Continuation Codex runner checks ==="
 node --import tsx scripts/continuation-codex-runner-smoke.ts
 
 echo ""
+echo "=== Continuation worker checks ==="
+node --import tsx scripts/continuation-worker-smoke.ts
+
+echo ""
 echo "=== Codex adapter checks ==="
 node scripts/codex-adapter-smoke.js
 echo "PASS"
