@@ -37,6 +37,10 @@ echo "=== Continuation command checks ==="
 node --import tsx scripts/continuation-command-smoke.ts
 
 echo ""
+echo "=== Continuation delivery checks ==="
+node --import tsx scripts/continuation-delivery-smoke.ts
+
+echo ""
 echo "=== Codex adapter checks ==="
 node scripts/codex-adapter-smoke.js
 echo "PASS"

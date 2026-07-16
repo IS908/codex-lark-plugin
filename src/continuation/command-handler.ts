@@ -1,5 +1,6 @@
 import { audit } from '../audit-log.js';
 import { isFeishuOpenMessageId } from '../codex-exec-error.js';
+import { splitDocCommentText } from '../doc-comment-api.js';
 import type { ContinuationJob } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
 import { extractMessageText } from '../message-content.js';
@@ -184,6 +185,9 @@ function formatTaskStatus(job: ContinuationJob): string {
     ...(job.errorCode ? [`Error code: ${job.errorCode}`] : []),
     ...(job.errorSummary ? [`Error: ${job.errorSummary}`] : []),
     ...(job.resultSummary ? [`Result: ${job.resultSummary}`] : []),
+    ...(job.resultArtifacts.length > 0
+      ? [`Artifacts:\n${job.resultArtifacts.map((artifact) => `- ${artifact}`).join('\n')}`]
+      : []),
   ].join('\n');
 }
 
@@ -204,12 +208,14 @@ async function sendCommandReply(
     if (!options.sendDocCommentReply) {
       throw new Error('Document comment command replies are unavailable.');
     }
-    await options.sendDocCommentReply({
-      doc_token: comment.fileToken,
-      comment_id: comment.commentId,
-      file_type: comment.fileType,
-      content: text,
-    });
+    for (const content of splitDocCommentText(text)) {
+      await options.sendDocCommentReply({
+        doc_token: comment.fileToken,
+        comment_id: comment.commentId,
+        file_type: comment.fileType,
+        content,
+      });
+    }
     return;
   }
   await options.sendReply({

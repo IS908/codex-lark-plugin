@@ -9,6 +9,19 @@ const calls: Array<{ method: string; args: any }> = [];
 const rawClient = {
   request: async (args: any) => {
     calls.push({ method: 'raw.request', args });
+    if (args.method === 'GET' && String(args.url).includes('/comments/') && String(args.url).endsWith('/replies')) {
+      return {
+        data: {
+          items: [{
+            reply_id: 'reply_existing',
+            content: {
+              elements: [{ type: 'text_run', text_run: { text: 'Task completed: job_existing\nDone.' } }],
+            },
+          }],
+          has_more: false,
+        },
+      };
+    }
     if (String(args.url).includes('/comments/') && String(args.url).endsWith('/replies')) {
       return { data: { reply_id: 'reply_1' } };
     }
@@ -409,6 +422,76 @@ const reply = await transport.replyDocComment({
 });
 assert.deepEqual(reply, { replyId: 'reply_1' });
 assert.equal(calls.at(-1)?.method, 'raw.request');
+
+const existingReply = await transport.findDocCommentReplyByMarker({
+  docToken: 'doc_token',
+  commentId: 'comment_1',
+  fileType: 'docx',
+  marker: 'Task completed: job_existing',
+});
+assert.deepEqual(existingReply, { replyId: 'reply_existing' });
+assert.equal(calls.at(-1)?.args.method, 'GET');
+assert.equal(calls.at(-1)?.args.params.page_size, 50);
+
+let pagedReadCount = 0;
+const pagedCommentTransport = createLarkTransport({
+  rawClient: {
+    request: async ({ params }: any) => {
+      pagedReadCount += 1;
+      if (!params.page_token) {
+        return {
+          data: {
+            items: [{
+              reply_id: 'reply_prefix_only',
+              content: { elements: [{ text_run: { text: 'Prefix Task completed: job_paged' } }] },
+            }],
+            has_more: true,
+            page_token: 'page_2',
+          },
+        };
+      }
+      return {
+        data: {
+          items: [{
+            reply_id: 'reply_paged',
+            content: { elements: [{ text_run: { text: 'Task completed: job_paged\nDone.' } }] },
+          }],
+          has_more: false,
+        },
+      };
+    },
+  } as any,
+});
+assert.deepEqual(await pagedCommentTransport.findDocCommentReplyByMarker({
+  docToken: 'doc_token',
+  commentId: 'comment_1',
+  fileType: 'docx',
+  marker: 'Task completed: job_paged',
+}), { replyId: 'reply_paged' });
+assert.equal(pagedReadCount, 2);
+
+let boundedReadCount = 0;
+const boundedCommentTransport = createLarkTransport({
+  rawClient: {
+    request: async () => {
+      boundedReadCount += 1;
+      return {
+        data: {
+          items: [],
+          has_more: true,
+          page_token: `page_${boundedReadCount}`,
+        },
+      };
+    },
+  } as any,
+});
+assert.equal(await boundedCommentTransport.findDocCommentReplyByMarker({
+  docToken: 'doc_token',
+  commentId: 'comment_1',
+  fileType: 'docx',
+  marker: 'Task completed: job_missing',
+}), null);
+assert.equal(boundedReadCount, 3);
 
 const cardContext = await transport.fetchMessageText('om_card');
 assert.equal(cardContext, 'Deploy Card\nStatus green');

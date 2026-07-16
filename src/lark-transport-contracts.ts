@@ -53,6 +53,18 @@ export interface LarkDocCommentRequest {
   fileType: string;
 }
 
+export interface LarkDocCommentReplyRequest
+  extends Required<Pick<LarkDocCommentRequest, 'docToken' | 'commentId' | 'content' | 'fileType'>> {
+  retry?: FeishuRetryOptions;
+}
+
+export interface LarkDocCommentReplyMarkerRequest {
+  docToken: string;
+  commentId: string;
+  fileType: string;
+  marker: string;
+}
+
 export interface LarkTransport {
   sendMessage(request: LarkTransportSendRequest): Promise<LarkTransportSendResult>;
   editMessage(request: { messageId: string; text: string }): Promise<void>;
@@ -64,7 +76,8 @@ export interface LarkTransport {
   downloadResource(messageId: string, fileKey: string, resourceType: 'image' | 'file'): Promise<unknown>;
   uploadImage(data: Buffer): Promise<string | undefined>;
   uploadFile(data: Buffer, fileName: string): Promise<string | undefined>;
-  replyDocComment(request: Required<Pick<LarkDocCommentRequest, 'docToken' | 'commentId' | 'content' | 'fileType'>>): Promise<{ replyId?: string }>;
+  replyDocComment(request: LarkDocCommentReplyRequest): Promise<{ replyId?: string }>;
+  findDocCommentReplyByMarker(request: LarkDocCommentReplyMarkerRequest): Promise<{ replyId?: string } | null>;
   createDocComment(request: Omit<LarkDocCommentRequest, 'commentId'>): Promise<{ commentId?: string }>;
   fetchMessageText(messageId: string): Promise<string | null>;
   fetchMessageContext(messageId: string): Promise<LarkFetchedMessageContext | null>;

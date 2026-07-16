@@ -302,6 +302,14 @@ assert.equal(await run(message({
   rawContent: '{"text":"Please list tasks."}',
 })), false);
 
+for (let index = 0; index < 8; index += 1) {
+  await createJob(
+    `om_long_${index}`,
+    'ou_creator',
+    `Long task ${index} ${'x'.repeat(170)}`,
+  );
+}
+const commentReplyCountBeforeList = commentReplies.length;
 assert.equal(await run(message({
   messageId: 'om_doc_task',
   chatId: 'doc_file_token',
@@ -316,6 +324,8 @@ assert.equal(await run(message({
     fileType: 'docx',
   },
 })), true);
+assert.ok(commentReplies.length > commentReplyCountBeforeList + 1);
+assert.ok(commentReplies.slice(commentReplyCountBeforeList).every((reply) => reply.content.length <= 1_000));
 assert.equal(commentReplies.at(-1)?.doc_token, 'doc_file_token');
 assert.equal(commentReplies.at(-1)?.comment_id, 'comment_123');
 assert.equal(commentReplies.at(-1)?.file_type, 'docx');

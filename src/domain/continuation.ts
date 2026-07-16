@@ -179,6 +179,8 @@ export interface ContinuationDeliveryClaim {
   attemptCount: number;
   firstAttemptAt?: string;
   lastAttemptAt?: string;
+  lastErrorCode?: string;
+  lastErrorSummary?: string;
 }
 
 export type ContinuationDeliveryResult =

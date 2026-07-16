@@ -983,7 +983,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   private readDeliveryClaim(outboxId: string, workerId: string): ContinuationDeliveryClaim {
     const row = this.database.prepare(`
       SELECT outbox_id, job_id, worker_id, route_json, idempotency_key, payload,
-             status, attempt_count, first_attempt_at, last_attempt_at
+             status, attempt_count, first_attempt_at, last_attempt_at,
+             error_code, error_summary
       FROM continuation_outbox
       WHERE outbox_id = ? AND status = 'sending' AND worker_id = ?
     `).get(outboxId, workerId);
@@ -999,6 +1000,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       attemptCount: numberField(row, 'attempt_count'),
       firstAttemptAt: optionalStringField(row, 'first_attempt_at'),
       lastAttemptAt: optionalStringField(row, 'last_attempt_at'),
+      lastErrorCode: optionalStringField(row, 'error_code'),
+      lastErrorSummary: optionalStringField(row, 'error_summary'),
     };
   }
 
