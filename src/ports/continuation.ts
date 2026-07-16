@@ -6,7 +6,6 @@ import type {
   ContinuationExecutionResult,
   ContinuationFailure,
   ContinuationJob,
-  ContinuationStepOutcome,
 } from '../domain/continuation.js';
 
 export interface ContinuationRepository {
@@ -18,9 +17,10 @@ export interface ContinuationRepository {
   listAll(limit: number): Promise<ContinuationJob[]>;
   claimDue(workerId: string, now: string, leaseExpiresAt: string): Promise<ContinuationClaim | null>;
   heartbeat(jobId: string, workerId: string, now: string, leaseExpiresAt: string): Promise<boolean>;
-  completeStep(claim: ContinuationClaim, outcome: ContinuationStepOutcome, now: string): Promise<void>;
+  completeStep(claim: ContinuationClaim, result: ContinuationExecutionResult, now: string): Promise<void>;
   failAttempt(claim: ContinuationClaim, failure: ContinuationFailure, now: string): Promise<void>;
   requestCancel(jobId: string, now: string): Promise<'cancelled' | 'cancel_requested' | 'terminal' | 'missing'>;
+  completeCancellation(claim: ContinuationClaim, now: string): Promise<void>;
   recoverExpiredLeases(now: string): Promise<number>;
   cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob>;
   redactTerminal(jobId: string, now: string): Promise<boolean>;
