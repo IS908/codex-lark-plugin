@@ -76,6 +76,7 @@ export interface ContinuationJob extends ContinuationCreateRequest {
   status: ContinuationStatus;
   executionSessionId?: string;
   checkpoint?: ContinuationCheckpoint;
+  attemptCount?: number;
   stepCount: number;
   failureCount: number;
   nextRunAt: string;

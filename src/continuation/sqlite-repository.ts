@@ -970,7 +970,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
     const statement = this.database.prepare(`
       ${jobSelectSql()}
-      WHERE ${predicate}
+      WHERE (${predicate}) AND j.deleted_at IS NULL
       ORDER BY j.created_at DESC
       LIMIT ?
     `);
@@ -1022,7 +1022,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
 function jobSelectSql(): string {
   return `
-    SELECT j.*, o.status AS delivery_status
+    SELECT j.*, o.status AS delivery_status,
+           (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) AS attempt_count
     FROM continuation_jobs j
     LEFT JOIN continuation_outbox o ON o.job_id = j.job_id
   `;
@@ -1056,6 +1057,7 @@ function mapJob(row: SqlRow): ContinuationJob {
     checkpoint: row.checkpoint_json
       ? parseJson(row.checkpoint_json, EMPTY_CHECKPOINT)
       : undefined,
+    attemptCount: numberField(row, 'attempt_count'),
     stepCount: numberField(row, 'step_count'),
     failureCount: numberField(row, 'failure_count'),
     nextRunAt: stringField(row, 'next_run_at'),

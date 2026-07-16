@@ -98,7 +98,7 @@ assert.equal(await runCommand({
   rawContent: '{"text":"/help"}',
 }), true);
 assert.match(replies.at(-1)?.text ?? '', /User commands:/);
-for (const command of ['/help', '/model', '/flush', '/new']) {
+for (const command of ['/help', '/model', '/flush', '/new', '/task']) {
   assert.match(replies.at(-1)?.text ?? '', new RegExp(command.replace('/', '\\/')));
 }
 assert.match(replies.at(-1)?.text ?? '', /Owner-only commands:/);

@@ -8,6 +8,8 @@ import { formatCodexExecFailureReply, shouldSendCodexExecFailureReply } from './
 import { handleCodexModelCommand } from './codex-model-command.js';
 import type { CodexExecSessionHealthRecorder } from './codex-exec-delivery.js';
 import type { CodexExecSessionStore } from './codex-session-store.js';
+import { handleContinuationCommand } from './continuation/command-handler.js';
+import type { ContinuationService } from './continuation/service.js';
 import { debugLog } from './debug-log.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import type { IdentitySession } from './identity-session.js';
@@ -72,6 +74,7 @@ export interface RegisterCodexDeliveryHandlersOptions {
   sessionHealth: CodexDeliverySessionHealth | null;
   turnObligations: TurnObligationTracker;
   actionDispatcher: CodexExecActionDispatcher | null;
+  continuationService?: ContinuationService | null;
 }
 
 export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHandlersOptions): void {
@@ -83,6 +86,7 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
     sessionHealth,
     turnObligations,
     actionDispatcher,
+    continuationService,
   } = options;
 
   const sendReplyViaFeishu = createReplySender({
@@ -95,17 +99,35 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
     turnObligations,
   });
 
-  channel.setControlMessageHandler(async (message) => handleCodexModelCommand({
-    message,
-    sessionStore,
-    identitySession,
-    useCodexSessions: appConfig.codexExecUseSessions,
-    flushConversation: ({ chatId, threadId, reason, commitBeforeRemove }) =>
-      buffer.flushNow(chatId, { threadId, reason, commitBeforeRemove }),
-    resetSessionHealth: (sessionKey) => sessionHealth?.reset(sessionKey, 'manual'),
-    validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
-    sendReply: sendReplyViaFeishu,
-  }));
+  channel.setControlMessageHandler(async (message) => {
+    const handledTask = await handleContinuationCommand({
+      message,
+      service: continuationService ?? null,
+      ownerOpenId: appConfig.ownerOpenId,
+      sendReply: sendReplyViaFeishu,
+      sendDocCommentReply: async (request) => {
+        const response = await channel.getLarkTransport().replyDocComment({
+          docToken: request.doc_token,
+          commentId: request.comment_id,
+          fileType: request.file_type,
+          content: request.content,
+        });
+        return { replyId: response.replyId };
+      },
+    });
+    if (handledTask) return true;
+    return handleCodexModelCommand({
+      message,
+      sessionStore,
+      identitySession,
+      useCodexSessions: appConfig.codexExecUseSessions,
+      flushConversation: ({ chatId, threadId, reason, commitBeforeRemove }) =>
+        buffer.flushNow(chatId, { threadId, reason, commitBeforeRemove }),
+      resetSessionHealth: (sessionKey) => sessionHealth?.reset(sessionKey, 'manual'),
+      validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
+      sendReply: sendReplyViaFeishu,
+    });
+  });
 
   channel.setMessageHandler(async (message) => {
     const displayLabel = displayLabelForMessage(message);

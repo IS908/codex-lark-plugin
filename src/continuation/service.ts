@@ -6,6 +6,7 @@ import type {
   ContinuationDeliveryRoute,
   ContinuationJob,
 } from '../domain/continuation.js';
+import { isContinuationTerminal } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
 
@@ -34,6 +35,21 @@ export interface ContinuationActionInput {
   };
   required_tools: string[];
   working_directory?: string;
+}
+
+export type ContinuationServiceErrorCode =
+  | 'not_accessible'
+  | 'invalid_state'
+  | 'delivery_unknown';
+
+export class ContinuationServiceError extends Error {
+  constructor(
+    readonly code: ContinuationServiceErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ContinuationServiceError';
+  }
 }
 
 export class ContinuationService {
@@ -79,6 +95,101 @@ export class ContinuationService {
     return this.options.repository.create(request);
   }
 
+  async listForActor(
+    actorOpenId: string,
+    ownerOpenId?: string | null,
+    limit = 20,
+  ): Promise<ContinuationJob[]> {
+    return isOwner(actorOpenId, ownerOpenId)
+      ? this.options.repository.listAll(limit)
+      : this.options.repository.listByCreator(actorOpenId, limit);
+  }
+
+  async getForActor(
+    jobId: string,
+    actorOpenId: string,
+    ownerOpenId?: string | null,
+  ): Promise<ContinuationJob> {
+    return this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+  }
+
+  async cancelForActor(
+    jobId: string,
+    actorOpenId: string,
+    ownerOpenId?: string | null,
+  ): Promise<{ job: ContinuationJob; result: 'cancelled' | 'cancel_requested' | 'terminal' }> {
+    const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+    const result = await this.options.repository.requestCancel(
+      job.jobId,
+      this.options.clock.now().toISOString(),
+    );
+    if (result === 'missing') throw notAccessibleError();
+    const updated = await this.options.repository.get(job.jobId);
+    if (!updated || updated.deletedAt) throw notAccessibleError();
+    return { job: updated, result };
+  }
+
+  async retryForActor(
+    jobId: string,
+    actorOpenId: string,
+    ownerOpenId: string | null | undefined,
+    requestId: string,
+  ): Promise<ContinuationJob> {
+    const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+    if (job.deliveryStatus === 'delivery_unknown') {
+      throw new ContinuationServiceError(
+        'delivery_unknown',
+        'This task has an unknown delivery outcome. Retrying could duplicate completed work, so it was not started.',
+      );
+    }
+    if (job.status !== 'failed' && job.status !== 'cancelled') {
+      throw new ContinuationServiceError(
+        'invalid_state',
+        'Only failed or cancelled tasks can be retried.',
+      );
+    }
+    return this.options.repository.cloneForRetry(
+      job.jobId,
+      requestId,
+      this.options.clock.now().toISOString(),
+    );
+  }
+
+  async deleteForActor(
+    jobId: string,
+    actorOpenId: string,
+    ownerOpenId?: string | null,
+  ): Promise<void> {
+    const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+    if (!isContinuationTerminal(job.status)) {
+      throw new ContinuationServiceError(
+        'invalid_state',
+        'Only terminal tasks can be deleted. Cancel the task first.',
+      );
+    }
+    const deleted = await this.options.repository.redactTerminal(
+      job.jobId,
+      this.options.clock.now().toISOString(),
+    );
+    if (!deleted) throw notAccessibleError();
+  }
+
+  private async requireAuthorizedJob(
+    jobId: string,
+    actorOpenId: string,
+    ownerOpenId?: string | null,
+  ): Promise<ContinuationJob> {
+    const job = await this.options.repository.get(jobId);
+    if (
+      !job
+      || job.deletedAt
+      || (job.creatorOpenId !== actorOpenId && !isOwner(actorOpenId, ownerOpenId))
+    ) {
+      throw notAccessibleError();
+    }
+    return job;
+  }
+
   private async resolveWorkingDirectory(relativeDirectory: string): Promise<string> {
     if (
       path.isAbsolute(relativeDirectory)
@@ -107,6 +218,17 @@ export class ContinuationService {
     }
     return realCandidate;
   }
+}
+
+function isOwner(actorOpenId: string, ownerOpenId?: string | null): boolean {
+  return Boolean(ownerOpenId && actorOpenId === ownerOpenId);
+}
+
+function notAccessibleError(): ContinuationServiceError {
+  return new ContinuationServiceError(
+    'not_accessible',
+    'Task not found or not accessible.',
+  );
 }
 
 function assertEligibleSource(message: LarkMessage): void {
