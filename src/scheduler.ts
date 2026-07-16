@@ -68,6 +68,8 @@ export interface PromptJobRunnerInput {
 
 export interface PromptJobRunnerResult {
   report: string;
+  runStatus?: 'success' | 'failed';
+  failureReason?: string;
 }
 
 export type PromptJobRunner = (input: PromptJobRunnerInput) => Promise<PromptJobRunnerResult>;
@@ -613,10 +615,28 @@ export class JobScheduler {
         promptContent,
         diagnostics,
       });
-      diagnostics.completeStage('codex_exec');
       if (!result.report.trim()) {
         throw new Error('CronJob prompt produced no visible report.');
       }
+      if (result.runStatus === 'failed') {
+        const failureReason = result.failureReason?.trim() || 'CronJob prompt failed lifecycle validation.';
+        const failureError = new Error(failureReason);
+        diagnostics.failStage('codex_exec', failureError);
+        const snapshot = diagnostics.logSnapshot('failed', failureError);
+        return {
+          runStatus: 'failed',
+          outputStatus: 'generated',
+          deliveryStatus: 'sent',
+          report: result.report,
+          reportType: 'error_report',
+          deliveryError: null,
+          lastError: failureReason,
+          autoPause: false,
+          completed: true,
+          diagnostics: snapshot,
+        };
+      }
+      diagnostics.completeStage('codex_exec');
       const snapshot = diagnostics.logSnapshot('success');
       return {
         runStatus: 'success',

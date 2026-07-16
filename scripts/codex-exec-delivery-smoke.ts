@@ -324,6 +324,40 @@ assert.deepEqual(cronReplies, [
   },
 ]);
 
+const cronLifecycleGuardReplies: ReplyRequest[] = [];
+let cronLifecycleGuardReason = '';
+await deliverMessageViaCodexExec({
+  message: {
+    messageId: 'job-daily-report-abc123def456-1760000000001',
+    chatId: 'oc_cron_target',
+    chatType: 'cronjob',
+    senderId: 'ou_owner',
+    senderName: 'CronJob Daily Report',
+    text: 'Run the daily report.',
+    messageType: 'cronjob',
+    rawContent: 'Run the daily report.',
+    threadId: 'job-daily-report-abc123def456-1760000000001',
+  },
+  displayLabel: 'CronJob · Daily Report',
+  useCodexSessions: false,
+  runCodexExec: async () => '我稍后继续处理并同步结果。',
+  sendReply: async (request) => {
+    cronLifecycleGuardReplies.push(request);
+    return { sentCount: 1 };
+  },
+  onLifecycleGuard: (reason) => {
+    cronLifecycleGuardReason = reason;
+  },
+});
+assert.equal(cronLifecycleGuardReplies.length, 1);
+assert.equal(cronLifecycleGuardReason, 'chinese-async-followup-promise');
+assert.equal(
+  cronLifecycleGuardReplies[0].text,
+  'This run could not establish a follow-up task, so no background work will continue. Please retry or use a supported scheduled task.',
+);
+assert.doesNotMatch(cronLifecycleGuardReplies[0].text, /chinese-async-followup-promise/);
+assert.doesNotMatch(cronLifecycleGuardReplies[0].text, /Codex exec|structured action|defer\/no-reply/i);
+
 const reactionExecRequests: any[] = [];
 const reactionReplies: ReplyRequest[] = [];
 const reactionTracker = new TurnObligationTracker({ timeoutMs: 60_000 });
@@ -392,8 +426,11 @@ await deliverMessageViaCodexExec({
   },
 });
 assert.equal(lifecycleGuardReplies.length, 1);
-assert.match(lifecycleGuardReplies[0].text, /No background follow-up was started/);
-assert.match(lifecycleGuardReplies[0].text, /without a structured action/);
+assert.equal(
+  lifecycleGuardReplies[0].text,
+  'This run could not establish a follow-up task, so no background work will continue. Please retry or use a supported scheduled task.',
+);
+assert.doesNotMatch(lifecycleGuardReplies[0].text, /Codex exec|structured action|defer\/no-reply/i);
 assert.doesNotMatch(lifecycleGuardReplies[0].text, /creating the issue now/i);
 
 const lifecycleSafeReplies: ReplyRequest[] = [];
@@ -725,13 +762,8 @@ assert.deepEqual(docCommentLifecycleReplies, [
     doc_token: 'dox_doc_lifecycle',
     comment_id: 'cmt_doc_lifecycle',
     file_type: 'docx',
-    content: [
-      'No background follow-up was started.',
-      '',
-      'The Codex exec output was blocked because it promised a later external action (chinese-create-promise) without a structured action, defer/no-reply marker, or scheduled job. This Lark bridge runs one Codex exec turn and cannot continue working after posting the visible reply.',
-      '',
-      'Please retry with an enabled structured action, create a job/defer intentionally, or ask for a draft instead of automatic execution.',
-    ].join('\n'),
+    content:
+      'This run could not establish a follow-up task, so no background work will continue. Please retry or use a supported scheduled task.',
   },
 ]);
 
