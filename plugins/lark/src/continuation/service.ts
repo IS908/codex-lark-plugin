@@ -1,19 +1,20 @@
 import { createHash } from 'node:crypto';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import type {
   ContinuationCreateRequest,
   ContinuationDeliveryRoute,
+  ContinuationFilesystemMode,
   ContinuationJob,
 } from '../domain/continuation.js';
 import { isContinuationTerminal } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
 import { redactContinuationText } from './redaction.js';
+import { resolveContinuationWorkingDirectory } from './working-directory.js';
 
 export interface ContinuationServiceOptions {
   repository: ContinuationRepository;
   allowedWorkingRoot: string;
+  filesystemMode: ContinuationFilesystemMode;
   maxSteps: number;
   maxRetries: number;
   maxAgeHours: number;
@@ -89,7 +90,8 @@ export class ContinuationService implements ContinuationTaskService {
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     assertEligibleSource(message);
     const now = this.options.clock.now();
-    const workingDirectory = await this.resolveWorkingDirectory(
+    const resolvedWorkingDirectory = await resolveContinuationWorkingDirectory(
+      this.options.allowedWorkingRoot,
       action.working_directory ?? '.',
     );
     const route = deriveRoute(message);
@@ -105,7 +107,16 @@ export class ContinuationService implements ContinuationTaskService {
       acceptanceCriteria: brief.acceptanceCriteria,
       contextSnapshot: brief.contextSnapshot,
       requiredTools: brief.requiredTools,
-      workingDirectory,
+      workingDirectory: resolvedWorkingDirectory.workingDirectory,
+      permissions: {
+        filesystem: {
+          root: resolvedWorkingDirectory.root,
+          mode: this.options.filesystemMode,
+        },
+        hostTools: brief.requiredTools,
+        network: 'none',
+        approval: { mode: 'never' },
+      },
       ...((selectedModel ?? this.options.defaultModel)
         ? { model: (selectedModel ?? this.options.defaultModel)! }
         : {}),
@@ -216,34 +227,6 @@ export class ContinuationService implements ContinuationTaskService {
     return job;
   }
 
-  private async resolveWorkingDirectory(relativeDirectory: string): Promise<string> {
-    if (
-      path.isAbsolute(relativeDirectory)
-      || /^[A-Za-z]:[\\/]/.test(relativeDirectory)
-      || relativeDirectory.split(/[\\/]+/).includes('..')
-    ) {
-      throw new Error('Continuation working directory must remain within the configured root.');
-    }
-    const configuredRoot = path.resolve(this.options.allowedWorkingRoot);
-    const candidate = path.resolve(configuredRoot, relativeDirectory);
-    if (candidate !== configuredRoot && !candidate.startsWith(`${configuredRoot}${path.sep}`)) {
-      throw new Error('Continuation working directory must remain within the configured root.');
-    }
-    const [realRoot, realCandidate] = await Promise.all([
-      fs.realpath(configuredRoot),
-      fs.realpath(candidate),
-    ]).catch(() => {
-      throw new Error('Continuation working directory must be an existing directory.');
-    });
-    const metadata = await fs.stat(realCandidate);
-    if (!metadata.isDirectory()) {
-      throw new Error('Continuation working directory must be an existing directory.');
-    }
-    if (realCandidate !== realRoot && !realCandidate.startsWith(`${realRoot}${path.sep}`)) {
-      throw new Error('Continuation working directory resolves outside the configured root.');
-    }
-    return realCandidate;
-  }
 }
 
 export class UnavailableContinuationService implements ContinuationTaskService {
@@ -327,6 +310,6 @@ function sanitizeBrief(action: ContinuationActionInput) {
       decisions: action.context_snapshot.decisions.map(redactContinuationText),
       references: action.context_snapshot.references.map(redactContinuationText),
     },
-    requiredTools: action.required_tools.map(redactContinuationText),
+    requiredTools: [...new Set(action.required_tools.map(redactContinuationText))],
   };
 }

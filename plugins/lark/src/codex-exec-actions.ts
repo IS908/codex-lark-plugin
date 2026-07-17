@@ -42,6 +42,7 @@ import type { LarkTransport } from './lark-transport-contracts.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import {
   CONTINUATION_RUNTIME_UNAVAILABLE,
+  ContinuationServiceError,
   type ContinuationTaskService,
 } from './continuation/service.js';
 import { selectQuotedMessageId } from './quoted-context-loader.js';
@@ -692,6 +693,40 @@ async function resolveCronJobTraceLogId(
   return { ok: true, logId };
 }
 
+async function resolveContinuationTraceLogId(
+  action: GetRunTraceAction,
+  caller: string,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<{ ok: true; logId: string } | { ok: false; message: string; denied?: boolean }> {
+  const logId = action.log_id?.trim();
+  if (!logId) {
+    return { ok: false, message: 'get_run_trace(source=continuation) requires log_id.' };
+  }
+  if (!/^job_[a-f0-9]{24}$/.test(logId)) {
+    return {
+      ok: false,
+      denied: true,
+      message: 'get_run_trace(source=continuation) requires a stable continuation job ID.',
+    };
+  }
+  if (!deps.continuationService) {
+    return { ok: false, message: CONTINUATION_RUNTIME_UNAVAILABLE };
+  }
+  try {
+    await deps.continuationService.getForActor(logId, caller, appConfig.ownerOpenId);
+    return { ok: true, logId };
+  } catch (error) {
+    if (error instanceof ContinuationServiceError && error.code === 'not_accessible') {
+      return {
+        ok: false,
+        denied: true,
+        message: `get_run_trace(source=continuation) denied for job ${logId}.`,
+      };
+    }
+    return { ok: false, message: CONTINUATION_RUNTIME_UNAVAILABLE };
+  }
+}
+
 async function executeGetRunTrace(
   action: GetRunTraceAction,
   message: LarkMessage,
@@ -712,7 +747,9 @@ async function executeGetRunTrace(
 
   const resolved = action.source === 'message'
     ? resolveMessageTraceLogId(action, message)
-    : await resolveCronJobTraceLogId(action, message, caller);
+    : action.source === 'cronjob'
+      ? await resolveCronJobTraceLogId(action, message, caller)
+      : await resolveContinuationTraceLogId(action, caller, deps);
   if (!resolved.ok) {
     void audit('get_run_trace', caller, auditArgs, resolved.denied ? 'denied' : 'error');
     const status = resolved.denied

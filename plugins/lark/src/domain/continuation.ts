@@ -35,6 +35,21 @@ export interface ContinuationCheckpoint {
   references: string[];
 }
 
+export type ContinuationFilesystemMode = 'read-only' | 'workspace-write';
+export type ContinuationApprovalMode = 'never' | 'interactive';
+
+export interface ContinuationPermissionEnvelope {
+  filesystem: {
+    root: string;
+    mode: ContinuationFilesystemMode;
+  };
+  hostTools: string[];
+  network: 'none';
+  approval: {
+    mode: ContinuationApprovalMode;
+  };
+}
+
 export type ContinuationDeliveryRoute =
   | {
       kind: 'message_thread';
@@ -62,6 +77,7 @@ export interface ContinuationCreateRequest {
   contextSnapshot: ContinuationCheckpoint;
   requiredTools: string[];
   workingDirectory: string;
+  permissions: ContinuationPermissionEnvelope;
   model?: string;
   parentSessionId?: string;
   maxSteps: number;

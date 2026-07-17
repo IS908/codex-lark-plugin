@@ -84,6 +84,7 @@ LARK_CONTINUATION_MAX_STEPS:        24
 LARK_CONTINUATION_MAX_RETRIES:      3
 LARK_CONTINUATION_MAX_AGE_HOURS:    24
 LARK_CONTINUATION_RETENTION_DAYS:   30
+LARK_CONTINUATION_WORKING_ROOT:     LARK_CODEX_EXEC_CWD
 
 === Acknowledgement ===
 LARK_ACK_EMOJI:                MeMeMe
@@ -206,6 +207,7 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_CONTINUATION_MAX_RETRIES` — retryable execution failures per step, from 0 to 10 (default: 3)
 - `LARK_CONTINUATION_MAX_AGE_HOURS` — maximum continuation lifetime, from 1 to 168 hours (default: 24)
 - `LARK_CONTINUATION_RETENTION_DAYS` — days before terminal task bodies and managed artifacts are redacted (default: 30)
+- `LARK_CONTINUATION_WORKING_ROOT` — absolute root that continuation `working_directory` values may select beneath; defaults to `LARK_CODEX_EXEC_CWD`
 - `LARK_SESSION_HEALTH_ENABLED` — enable owner DM nudges for long-running Codex exec sessions (default: false)
 - `LARK_SESSION_HEALTH_TURN_THRESHOLD` — turns before a session-health nudge can fire (default: 80)
 - `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD` — heuristic prompt bytes threshold for session-health nudges (default: 524288)
@@ -286,6 +288,7 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_CONTINUATION_ENABLED`, `LARK_CONTINUATION_MAX_CONCURRENCY`,
    `LARK_CONTINUATION_MAX_STEPS`, `LARK_CONTINUATION_MAX_RETRIES`,
    `LARK_CONTINUATION_MAX_AGE_HOURS`, `LARK_CONTINUATION_RETENTION_DAYS`,
+   `LARK_CONTINUATION_WORKING_ROOT`,
    `LARK_SESSION_HEALTH_ENABLED`,
    `LARK_SESSION_HEALTH_TURN_THRESHOLD`, `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD`,
    `LARK_SESSION_HEALTH_TOKEN_THRESHOLD`, `LARK_SESSION_HEALTH_IDLE_DELAY_MS`,

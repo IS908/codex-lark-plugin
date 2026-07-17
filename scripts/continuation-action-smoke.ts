@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LarkMessage } from '../src/lark-message.js';
@@ -61,9 +61,12 @@ const repository = await SqliteContinuationRepository.open({
   jitter: () => 0,
 });
 const clock = { now: () => new Date('2026-07-17T00:00:00.000Z') };
+const childWorkingDirectory = join(root, 'repo-a');
+await mkdir(childWorkingDirectory);
 const service = new ContinuationService({
   repository,
   allowedWorkingRoot: root,
+  filesystemMode: 'workspace-write',
   maxSteps: 24,
   maxRetries: 3,
   maxAgeHours: 24,
@@ -113,6 +116,26 @@ assert.equal(firstJob?.route.kind, 'message_thread');
 assert.equal(firstJob?.parentSessionId, 'session-parent');
 assert.equal(firstJob?.model, 'gpt-5.3-codex');
 assert.equal(firstJob?.workingDirectory, await realpath(root));
+assert.deepEqual(firstJob?.permissions, {
+  filesystem: { root: await realpath(root), mode: 'workspace-write' },
+  hostTools: ['local filesystem'],
+  network: 'none',
+  approval: { mode: 'never' },
+});
+
+const childCreated = await service.createFromMessage(
+  action({ working_directory: 'repo-a' }) as any,
+  message('child-root'),
+);
+assert.equal(childCreated.job.workingDirectory, await realpath(childWorkingDirectory));
+assert.equal(childCreated.job.permissions.filesystem.root, await realpath(root));
+
+const deduplicatedTools = await service.createFromMessage(
+  action({ required_tools: ['local filesystem', 'local filesystem'] }) as any,
+  message('deduplicated-tools'),
+);
+assert.deepEqual(deduplicatedTools.job.requiredTools, ['local filesystem']);
+assert.deepEqual(deduplicatedTools.job.permissions.hostTools, ['local filesystem']);
 
 const duplicate = await dispatcher.execute({
   message: p2p,
@@ -121,7 +144,7 @@ const duplicate = await dispatcher.execute({
   model: 'gpt-5.3-codex',
 });
 assert.equal(duplicate[0].continuation?.jobId, first[0].continuation?.jobId);
-assert.equal((await repository.listAll(100)).length, 1);
+assert.equal((await repository.listAll(100)).length, 3);
 
 const group = message('group', {
   chatType: 'group',

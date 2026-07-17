@@ -10,7 +10,7 @@ import { createContinuationRuntime } from '../src/continuation/runtime.js';
 
 const root = await mkdtemp(path.join(tmpdir(), 'continuation-runtime-'));
 const clock = { now: () => new Date('2026-07-17T12:00:00.000Z') };
-const traceRequests: Array<Pick<CodexExecRequest, 'traceLogId' | 'traceRunId'>> = [];
+const traceRequests: Array<Pick<CodexExecRequest, 'traceLogId' | 'traceRunId' | 'sandbox'>> = [];
 const debugLines: string[] = [];
 const auditEvents: ContinuationAuditEvent[] = [];
 const delivered: string[] = [];
@@ -27,7 +27,7 @@ const runtime = await createContinuationRuntime({
   timeoutMs: 60_000,
   retentionDays: 30,
   maxConcurrency: 1,
-  configuredSandbox: 'workspace-write',
+  configuredSandbox: 'danger-full-access',
   toolInvoker: {
     async recover() { return null; },
     async invoke(_claim, request) {
@@ -44,6 +44,7 @@ const runtime = await createContinuationRuntime({
     traceRequests.push({
       traceLogId: request.traceLogId,
       traceRunId: request.traceRunId,
+      sandbox: request.sandbox,
     });
     return traceRequests.length === 1 ? {
       text: JSON.stringify({
@@ -101,6 +102,7 @@ const { job } = await runtime.service.createFromMessage({
   },
   required_tools: ['lark_cli'],
 }, sourceMessage);
+assert.equal(job.permissions.filesystem.mode, 'workspace-write');
 
 await runtime.worker!.tick();
 await waitFor(async () => (await runtime.service.getForActor(
@@ -113,6 +115,7 @@ assert.equal(traceRequests.length, 2);
 assert.deepEqual(invokedTools, ['lark_cli']);
 assert.equal(traceRequests[0].traceLogId, job.jobId);
 assert.match(traceRequests[0].traceRunId ?? '', /^att_/);
+assert.equal(traceRequests[0].sandbox, 'workspace-write');
 assert.ok(debugLines.some((line) => line.includes(job.jobId) && line.includes(traceRequests[0].traceRunId!)));
 assert.ok(auditEvents.some((event) => event.jobId === job.jobId && event.attemptId === traceRequests[0].traceRunId));
 const diagnostics = JSON.stringify({ debugLines, auditEvents, traceRequests });

@@ -94,7 +94,7 @@ export type ManageAccessControlAction = z.infer<typeof ManageAccessControlAction
 
 export const GetRunTraceActionSchema = z.object({
   type: z.literal('get_run_trace'),
-  source: z.enum(['message', 'cronjob']),
+  source: z.enum(['message', 'cronjob', 'continuation']),
   target: z.enum(['current', 'quoted']).optional(),
   log_id: z.string().min(1).optional(),
   run_id: z.string().min(1).optional(),

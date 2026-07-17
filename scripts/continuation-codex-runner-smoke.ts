@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ContinuationClaim, ContinuationJob } from '../src/domain/continuation.js';
@@ -7,6 +7,7 @@ import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js
 import type { CodexExecRequest } from '../src/codex-exec.js';
 
 const root = await mkdtemp(join(tmpdir(), 'continuation-codex-runner-'));
+const canonicalRoot = await realpath(root);
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
 process.env.LARK_CODEX_EXEC_TOOL_TRACE = 'false';
@@ -24,6 +25,7 @@ const artifactsDir = join(root, 'artifacts');
 const artifactStore = new ContinuationArtifactStore(artifactsDir);
 
 function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
+  const requiredTools = overrides.requiredTools ?? [];
   return {
     jobId: 'job_0123456789abcdef01234567',
     idempotencyKey: 'idem-runner',
@@ -45,8 +47,14 @@ function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
       decisions: [],
       references: [],
     },
-    requiredTools: [],
-    workingDirectory: root,
+    requiredTools,
+    workingDirectory: canonicalRoot,
+    permissions: {
+      filesystem: { root: canonicalRoot, mode: 'workspace-write' },
+      hostTools: requiredTools,
+      network: 'none',
+      approval: { mode: 'never' },
+    },
     model: 'gpt-5.4',
     parentSessionId: 'session-parent',
     maxSteps: 24,
@@ -235,6 +243,7 @@ const responses = [
 const executor = createContinuationCodexExecutor({
   artifactStore,
   configuredSandbox: 'danger-full-access',
+  currentWorkingRoot: canonicalRoot,
   runCodexExec: async (request) => {
     requests.push(request);
     const response = responses.shift();
@@ -284,10 +293,84 @@ assert.deepEqual(firstRequest.configOverrides, [
 ]);
 assert.deepEqual(firstRequest.additionalWritableDirs, [artifactRoot]);
 
+const readOnlyRequests: CodexExecRequest[] = [];
+const readOnlyExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async (request) => {
+    readOnlyRequests.push(request);
+    return {
+      text: JSON.stringify({ outcome: 'completed', final_message: 'read only', artifacts: [] }),
+    };
+  },
+});
+await readOnlyExecutor.execute(createClaim({
+  permissions: {
+    filesystem: { root: canonicalRoot, mode: 'read-only' },
+    hostTools: [],
+    network: 'none',
+    approval: { mode: 'never' },
+  },
+}), signal);
+assert.equal(readOnlyRequests[0].sandbox, 'read-only');
+
+const narrowedRoot = join(canonicalRoot, 'narrowed-current-root');
+await mkdir(narrowedRoot);
+let policyDeniedCodexCalls = 0;
+const policyDeniedExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: await realpath(narrowedRoot),
+  runCodexExec: async () => {
+    policyDeniedCodexCalls += 1;
+    return { text: JSON.stringify({ outcome: 'completed', final_message: 'unsafe', artifacts: [] }) };
+  },
+});
+const policyDenied = await policyDeniedExecutor.execute(createClaim(), signal);
+assert.equal(policyDeniedCodexCalls, 0);
+assert.deepEqual(policyDenied.outcome, {
+  outcome: 'blocked',
+  errorCode: 'continuation_working_directory_denied',
+  errorSummary: 'The continuation working directory is no longer authorized by its snapshot and current operator policy.',
+  requiredCapability: 'filesystem.workspace',
+  completedWork: [],
+  unperformedWork: ['Use an authorized continuation working directory.'],
+});
+
+let interactiveApprovalCodexCalls = 0;
+const interactiveApprovalExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async () => {
+    interactiveApprovalCodexCalls += 1;
+    return { text: JSON.stringify({ outcome: 'completed', final_message: 'unsafe', artifacts: [] }) };
+  },
+});
+const interactiveApproval = await interactiveApprovalExecutor.execute(createClaim({
+  permissions: {
+    filesystem: { root: canonicalRoot, mode: 'workspace-write' },
+    hostTools: [],
+    network: 'none',
+    approval: { mode: 'interactive' },
+  },
+}), signal);
+assert.equal(interactiveApprovalCodexCalls, 0);
+assert.deepEqual(interactiveApproval.outcome, {
+  outcome: 'blocked',
+  errorCode: 'continuation_approval_unavailable',
+  errorSummary: 'Interactive approval is reserved but is not enabled for continuation tasks.',
+  requiredCapability: 'approval.interactive',
+  completedWork: [],
+  unperformedWork: ['Obtain one-time interactive approval for this continuation step.'],
+});
+
 async function executeRaw(text: string): Promise<void> {
   const strictExecutor = createContinuationCodexExecutor({
     artifactStore,
     configuredSandbox: 'workspace-write',
+    currentWorkingRoot: canonicalRoot,
     runCodexExec: async () => ({ text }),
   });
   await strictExecutor.execute(createClaim(), signal);
@@ -330,6 +413,7 @@ const toolResponses = [
 const toolExecutor = createContinuationCodexExecutor({
   artifactStore,
   configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
   toolInvoker: {
     async recover() { return null; },
     async invoke(_claim, request) {
@@ -368,6 +452,7 @@ assert.deepEqual(toolRequests[1].configOverrides, [
 const undeclaredExecutor = createContinuationCodexExecutor({
   artifactStore,
   configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
   toolInvoker: {
     async recover() { return null; },
     async invoke() {
@@ -391,6 +476,7 @@ assert.deepEqual(undeclared.outcome, {
 const deniedExecutor = createContinuationCodexExecutor({
   artifactStore,
   configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
   toolInvoker: {
     async recover() { return null; },
     async invoke() {
@@ -415,6 +501,7 @@ let repeatedRequestCount = 0;
 const repeatedExecutor = createContinuationCodexExecutor({
   artifactStore,
   configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
   toolInvoker: {
     async recover() { return null; },
     async invoke() {
@@ -444,6 +531,7 @@ const recoveryRequests: CodexExecRequest[] = [];
 const recoveryExecutor = createContinuationCodexExecutor({
   artifactStore,
   configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
   toolInvoker: {
     async recover() {
       return {
@@ -483,6 +571,7 @@ let unknownRecoveryCodexCalls = 0;
 const unknownRecoveryExecutor = createContinuationCodexExecutor({
   artifactStore,
   configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
   toolInvoker: {
     async recover() {
       return {
@@ -516,6 +605,7 @@ const fallbackRequests: CodexExecRequest[] = [];
 const fallbackExecutor = createContinuationCodexExecutor({
   artifactStore,
   configuredSandbox: 'read-only',
+  currentWorkingRoot: canonicalRoot,
   runCodexExec: async (request) => {
     fallbackRequests.push(request);
     if (request.resumeSessionId) throw new Error('session not found');
@@ -536,6 +626,7 @@ assert.equal(fallbackRequests[0].sandbox, 'read-only');
 const clearedSessionExecutor = createContinuationCodexExecutor({
   artifactStore,
   configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
   runCodexExec: async (request) => {
     if (request.resumeSessionId) throw new Error('thread does not exist');
     return JSON.stringify({ outcome: 'completed', final_message: 'fresh', artifacts: [] });

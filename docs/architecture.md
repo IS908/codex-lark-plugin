@@ -90,6 +90,12 @@ The current baseline is empty:
   configured command. A per-job/per-step SQLite call ledger stores only a
   request fingerprint and bounded redacted result; completed calls replay the
   result, while ambiguous in-flight calls block instead of executing again.
+  Each Job also stores a server-derived permission envelope. The focused
+  working-directory policy requires the persisted root and current configured
+  root to both contain the canonical target on every run, and filesystem modes
+  use the stricter value. Approval mode `interactive` is reserved in the domain
+  schema but fails closed until a one-time, identity-bound approval coordinator
+  exists; foreground approval and user configuration are never copied.
   Terminal state and its outbox row commit in one SQLite transaction; remote
   Lark delivery is reconciled separately and never claims distributed
   exactly-once semantics.

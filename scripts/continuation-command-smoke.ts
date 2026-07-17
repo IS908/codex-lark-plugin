@@ -18,6 +18,7 @@ const repository = await SqliteContinuationRepository.open({
 const service = new ContinuationService({
   repository,
   allowedWorkingRoot: root,
+  filesystemMode: 'workspace-write',
   maxSteps: 12,
   maxRetries: 3,
   maxAgeHours: 24,

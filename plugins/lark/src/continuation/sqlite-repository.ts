@@ -14,6 +14,7 @@ import {
   type ContinuationExecutionResult,
   type ContinuationFailure,
   type ContinuationJob,
+  type ContinuationPermissionEnvelope,
   type ContinuationStatus,
   type ContinuationToolCallDecision,
   type ContinuationToolCallRecovery,
@@ -31,7 +32,7 @@ interface SqliteContinuationRepositoryOptions {
   jitter?: () => number;
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const DELIVERY_LEASE_MS = 30_000;
 const EMPTY_CHECKPOINT = {
   summary: '',
@@ -40,6 +41,12 @@ const EMPTY_CHECKPOINT = {
   constraints: [],
   decisions: [],
   references: [],
+};
+const EMPTY_PERMISSION_ENVELOPE: ContinuationPermissionEnvelope = {
+  filesystem: { root: '', mode: 'read-only' },
+  hostTools: [],
+  network: 'none',
+  approval: { mode: 'never' },
 };
 
 export class SqliteContinuationRepository implements ContinuationRepository {
@@ -109,6 +116,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         context_snapshot_json TEXT NOT NULL,
         required_tools_json TEXT NOT NULL,
         working_directory TEXT NOT NULL,
+        permissions_json TEXT NOT NULL,
         model TEXT,
         parent_session_id TEXT,
         max_steps INTEGER NOT NULL,
@@ -195,8 +203,35 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     if (existingVersion === 1) this.transaction(() => {
       this.database.exec(`
         ${toolCallSchemaSql()}
-        PRAGMA user_version = ${SCHEMA_VERSION};
+        PRAGMA user_version = 2;
       `);
+    });
+    if (existingVersion === 1 || existingVersion === 2) this.transaction(() => {
+      this.database.exec(`
+        ALTER TABLE continuation_jobs
+        ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '{}';
+      `);
+      const rows = this.database.prepare(`
+        SELECT job_id, working_directory, required_tools_json
+        FROM continuation_jobs
+      `).all();
+      const update = this.database.prepare(`
+        UPDATE continuation_jobs SET permissions_json = ? WHERE job_id = ?
+      `);
+      for (const row of rows) {
+        const workingDirectory = stringField(row, 'working_directory');
+        const requiredTools = parseJson<string[]>(row.required_tools_json, []);
+        update.run(JSON.stringify({
+          filesystem: {
+            root: workingDirectory,
+            mode: 'workspace-write',
+          },
+          hostTools: requiredTools,
+          network: 'none',
+          approval: { mode: 'never' },
+        } satisfies ContinuationPermissionEnvelope), stringField(row, 'job_id'));
+      }
+      this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     });
     await this.healthCheck();
   }
@@ -223,11 +258,11 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         job_id, idempotency_key, retry_of_job_id, creator_open_id, origin_kind, route_json,
         source_message_id, source_thread_id, title, objective,
         acceptance_criteria_json, context_snapshot_json, required_tools_json,
-        working_directory, model, parent_session_id, max_steps, max_retries,
+        working_directory, permissions_json, model, parent_session_id, max_steps, max_retries,
         timeout_seconds, created_at, expires_at, row_version, status,
         step_count, failure_count, next_run_at, result_artifacts_json, updated_at
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'queued',
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'queued',
         0, 0, ?, '[]', ?
       )
     `).run(
@@ -245,6 +280,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       JSON.stringify(request.contextSnapshot),
       JSON.stringify(request.requiredTools),
       request.workingDirectory,
+      JSON.stringify(request.permissions),
       request.model ?? null,
       request.parentSessionId ?? null,
       request.maxSteps,
@@ -749,6 +785,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       contextSnapshot: source.contextSnapshot,
       requiredTools: source.requiredTools,
       workingDirectory: source.workingDirectory,
+      permissions: source.permissions,
       model: source.model,
       parentSessionId: source.parentSessionId,
       maxSteps: source.maxSteps,
@@ -771,6 +808,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
             source_message_id = '', source_thread_id = NULL,
             title = '', objective = '', acceptance_criteria_json = '[]',
             context_snapshot_json = ?, required_tools_json = '[]', working_directory = '',
+            permissions_json = ?,
             model = NULL, parent_session_id = NULL, execution_session_id = NULL,
             checkpoint_json = NULL, result_summary = NULL, result_artifacts_json = '[]',
             error_summary = NULL, deleted_at = ?, updated_at = ?, row_version = row_version + 1
@@ -779,6 +817,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         `redacted:${jobId}`,
         JSON.stringify(emptyRoute()),
         JSON.stringify(EMPTY_CHECKPOINT),
+        JSON.stringify(EMPTY_PERMISSION_ENVELOPE),
         now,
         now,
         jobId,
@@ -1187,6 +1226,7 @@ function mapJob(row: SqlRow): ContinuationJob {
     contextSnapshot: parseJson(row.context_snapshot_json, EMPTY_CHECKPOINT),
     requiredTools: parseJson<string[]>(row.required_tools_json, []),
     workingDirectory: stringField(row, 'working_directory'),
+    permissions: parsePermissionEnvelope(row.permissions_json),
     model: optionalStringField(row, 'model'),
     parentSessionId: optionalStringField(row, 'parent_session_id'),
     maxSteps: numberField(row, 'max_steps'),
@@ -1239,6 +1279,11 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
     CONTINUATION_LIMITS.contextSnapshotBytes,
   );
   assertJsonBytes('required tools', request.requiredTools, CONTINUATION_LIMITS.objectiveBytes);
+  validatePermissionEnvelope(request.permissions, true);
+  if (!sameStringSet(request.permissions.hostTools, request.requiredTools)) {
+    throw new Error('Continuation permission host tools must match required tools.');
+  }
+  assertJsonBytes('permission envelope', request.permissions, CONTINUATION_LIMITS.contextSnapshotBytes);
   assertJsonBytes('delivery route', request.route, CONTINUATION_LIMITS.contextSnapshotBytes);
   if (!Number.isInteger(request.maxSteps) || request.maxSteps < 1) {
     throw new Error('Continuation maxSteps must be a positive integer.');
@@ -1297,6 +1342,43 @@ function parseToolResult(value: SqlRow[string] | undefined): ContinuationToolRes
     throw new Error('Invalid continuation tool result in database.');
   }
   return parsed as ContinuationToolResult;
+}
+
+function parsePermissionEnvelope(value: SqlRow[string] | undefined): ContinuationPermissionEnvelope {
+  const parsed = parseJson<unknown>(value, null);
+  validatePermissionEnvelope(parsed, false);
+  return parsed;
+}
+
+function validatePermissionEnvelope(
+  value: unknown,
+  requireAbsoluteRoot: boolean,
+): asserts value is ContinuationPermissionEnvelope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Continuation permission envelope is invalid.');
+  }
+  const envelope = value as Partial<ContinuationPermissionEnvelope>;
+  const filesystem = envelope.filesystem;
+  const approval = envelope.approval;
+  if (
+    !filesystem
+    || typeof filesystem.root !== 'string'
+    || (requireAbsoluteRoot && !path.isAbsolute(filesystem.root))
+    || (filesystem.mode !== 'read-only' && filesystem.mode !== 'workspace-write')
+    || !Array.isArray(envelope.hostTools)
+    || !envelope.hostTools.every((tool) => typeof tool === 'string' && tool.length > 0)
+    || envelope.network !== 'none'
+    || !approval
+    || (approval.mode !== 'never' && approval.mode !== 'interactive')
+  ) {
+    throw new Error('Continuation permission envelope is invalid.');
+  }
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const values = new Set(left);
+  return values.size === left.length && right.every((value) => values.has(value));
 }
 
 function boundedFailure(failure: ContinuationFailure): ContinuationFailure {

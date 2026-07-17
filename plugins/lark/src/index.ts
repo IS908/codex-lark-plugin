@@ -111,7 +111,7 @@ async function main() {
     enabled: appConfig.continuationEnabled,
     databasePath: appConfig.continuationDbPath,
     artifactsDir: appConfig.continuationArtifactsDir,
-    allowedWorkingRoot: appConfig.codexExecCwd,
+    allowedWorkingRoot: appConfig.continuationWorkingRoot,
     maxSteps: appConfig.continuationMaxSteps,
     maxRetries: appConfig.continuationMaxRetries,
     maxAgeHours: appConfig.continuationMaxAgeHours,

@@ -39,6 +39,12 @@ function createJob(suffix: string): ContinuationJob {
     },
     requiredTools: [],
     workingDirectory: '/tmp',
+    permissions: {
+      filesystem: { root: '/tmp', mode: 'workspace-write' },
+      hostTools: [],
+      network: 'none',
+      approval: { mode: 'never' },
+    },
     maxSteps: 24,
     maxRetries: 3,
     timeoutSeconds: 60,

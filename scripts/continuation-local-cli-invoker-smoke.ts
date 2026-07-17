@@ -65,6 +65,12 @@ function request(suffix: string, requiredTools: string[]): ContinuationCreateReq
     },
     requiredTools,
     workingDirectory: root,
+    permissions: {
+      filesystem: { root, mode: 'workspace-write' },
+      hostTools: requiredTools,
+      network: 'none',
+      approval: { mode: 'never' },
+    },
     maxSteps: 4,
     maxRetries: 0,
     timeoutSeconds: 30,

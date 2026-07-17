@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.1.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.2.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -460,9 +460,10 @@ source message id as `log_id`, cronjob prompt turns use the stable `job_id`, and
 lines display a compact run id (`TRACE_RUN_ID_DISPLAY_LENGTH=16`, separators
 removed) to keep logs readable, while the bridge still accepts the full
 internal `run_id` when querying. When tracing is enabled, the exec action bridge
-exposes a bounded `get_run_trace` query for the current/quoted message or an
-authorized cronjob; it returns only sanitized structured summaries for all
-matching runs unless a `run_id` is supplied, never raw `trace.log` contents.
+exposes a bounded `get_run_trace` query for the current/quoted message, an
+authorized cronjob, or a continuation Job visible to its creator/owner; it
+returns only sanitized structured summaries for all matching runs unless a
+`run_id` is supplied, never raw `trace.log` contents.
 Debug, audit, and trace logs use
 `LARK_CRON_TIMEZONE` for timestamps with an explicit UTC offset, and share the
 canonical local diagnostic text format described in
@@ -690,6 +691,24 @@ reinstalling v1.21.4 rather than enabling compatibility code.
 | `LARK_CONTINUATION_MAX_RETRIES` | `3` | Retryable execution failures per step (`0`-`10`) |
 | `LARK_CONTINUATION_MAX_AGE_HOURS` | `24` | Maximum Job lifetime (`1`-`168` hours) |
 | `LARK_CONTINUATION_RETENTION_DAYS` | `30` | Days before terminal task details and managed artifacts are redacted |
+| `LARK_CONTINUATION_WORKING_ROOT` | `LARK_CODEX_EXEC_CWD` | Absolute root authorized for continuation working directories |
+
+`working_directory` in a continuation action is relative to this root. For
+example, with `LARK_CONTINUATION_WORKING_ROOT=/Users/you/workspace`, use
+`working_directory="aitask"` to run under `/Users/you/workspace/aitask`.
+Creation and every execution require an existing directory and enforce both
+lexical and realpath containment, including symlink escape checks.
+
+Each Job persists a server-derived permission envelope. Execution uses the
+intersection of that snapshot and current operator policy: the working
+directory must remain beneath both roots, `read-only` wins over
+`workspace-write`, host tools must be declared in the Job and still pass the
+current `local-cli-tools.json` policy, network stays disabled, and foreground
+approvals/configuration are never inherited. Existing v1/v2 SQLite Jobs migrate
+conservatively. `approval.mode=interactive` is reserved in the persisted
+protocol but is not executable in v2.2.0; such a Job fails closed as blocked.
+A future coordinator must bind one-time approval to an operation digest,
+requester and approver identities, expiry, decision, and single consumption.
 
 The SQLite database uses WAL mode, process-safe leases, transactional terminal
 outbox creation, and startup lease recovery. Initialization failure degrades

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-17
+
+### Added
+- Added `LARK_CONTINUATION_WORKING_ROOT` so operators can authorize a dedicated absolute workspace tree while continuation actions select only relative existing directories beneath it.
+- Added persisted continuation permission envelopes for filesystem root/mode, declared host tools, disabled network, and reserved approval mode, with conservative SQLite v1/v2 migration.
+- Added creator/owner-authorized `get_run_trace(source=continuation)` lookup by stable continuation Job ID.
+
+### Changed
+- Revalidate continuation working directories against both the creation snapshot and current operator root before every step; the stricter filesystem mode and current host-tool policy always win.
+
+### Security
+- Reserved `approval.mode=interactive` without enabling it: Jobs carrying that future protocol value fail closed until an identity-bound, expiring, one-time approval coordinator is implemented.
+
 ## [2.1.0] - 2026-07-17
 
 ### Added
@@ -810,7 +823,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.4...v2.0.0
 [1.21.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.3...v1.21.4
