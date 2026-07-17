@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-07-17
+
+### Fixed
+- Replaced the unsupported top-level continuation `oneOf` output schema with a strict required-and-nullable wire shape accepted by Codex structured outputs, while retaining local discriminated outcome validation.
+- Classified rejected output schemas and unsupported Codex CLI schema flags as stable non-retryable failures instead of repeatedly reporting a generic process error.
+- Added sanitized process-level failure records to continuation traces so `get_run_trace(source=continuation)` can diagnose attempts that fail before any tool event is emitted.
+
 ## [2.2.0] - 2026-07-17
 
 ### Added

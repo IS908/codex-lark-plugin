@@ -89,7 +89,12 @@ to a compact lowercase alphanumeric form:
 
 - ordinary Feishu/Lark message turns use the source message id;
 - scheduled prompt jobs use the stable `job_id` when no source message id exists;
+- continuation attempts use the durable continuation Job ID and attempt ID;
 - direct host-side `codex exec` calls without a source use `-`.
+
+If `codex exec` fails before emitting tool events, the trace contains one
+sanitized `codex_exec failed` record with a stable failure stage and error code.
+Raw prompts and process stderr/stdout are not written to this record.
 
 When tracing is enabled, the exec action bridge can serve bounded
 `get_run_trace` requests. Message queries are limited to the current or quoted

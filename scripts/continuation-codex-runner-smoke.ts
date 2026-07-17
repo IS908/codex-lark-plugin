@@ -18,6 +18,7 @@ const {
 } = await import('../src/continuation/codex-runner.js');
 const {
   CodexExecAbortedError,
+  CodexExecProcessError,
   buildCodexExecArgs,
   runCodexExecCommand,
 } = await import('../src/codex-exec.js');
@@ -93,6 +94,52 @@ function createClaim(overrides: Partial<ContinuationJob> = {}): ContinuationClai
       startedAt: '2026-07-17T00:00:00.000Z',
       heartbeatAt: '2026-07-17T00:00:00.000Z',
     },
+  };
+}
+
+function assertStrictOutputSchema(schema: unknown, path = 'root'): void {
+  assert.ok(schema && typeof schema === 'object' && !Array.isArray(schema), `${path} must be an object`);
+  const record = schema as Record<string, unknown>;
+  assert.equal('oneOf' in record, false, `${path} must not use oneOf`);
+  assert.equal('anyOf' in record, false, `${path} must not use anyOf`);
+  assert.equal('allOf' in record, false, `${path} must not use allOf`);
+  const types = Array.isArray(record.type) ? record.type : [record.type];
+  if (types.includes('object')) {
+    const properties = record.properties as Record<string, unknown> | undefined;
+    assert.ok(properties, `${path}.properties must exist`);
+    assert.deepEqual(
+      [...((record.required as string[] | undefined) ?? [])].sort(),
+      Object.keys(properties).sort(),
+      `${path}.required must include every property`,
+    );
+    for (const [key, value] of Object.entries(properties)) {
+      assertStrictOutputSchema(value, `${path}.${key}`);
+    }
+  }
+  if (record.items) assertStrictOutputSchema(record.items, `${path}.items`);
+}
+
+assertStrictOutputSchema(CONTINUATION_OUTPUT_SCHEMA);
+assert.equal(CONTINUATION_OUTPUT_SCHEMA.type, 'object');
+
+function wireOutcome(fields: Record<string, unknown>): Record<string, unknown> {
+  return {
+    outcome: 'completed',
+    checkpoint: null,
+    next_step: null,
+    resume_after_seconds: null,
+    final_message: null,
+    result_summary: null,
+    artifacts: null,
+    error_code: null,
+    error_summary: null,
+    retryable: null,
+    required_capability: null,
+    completed_work: null,
+    unperformed_work: null,
+    tool: null,
+    args: null,
+    ...fields,
   };
 }
 
@@ -195,7 +242,7 @@ await writeFile(join(artifactRoot, 'summary.md'), '# Result\n', 'utf-8');
 const requests: CodexExecRequest[] = [];
 const responses = [
   {
-    text: JSON.stringify({
+    text: JSON.stringify(wireOutcome({
       outcome: 'continue',
       checkpoint: {
         summary: 'Inspected token=super-secret-value',
@@ -207,37 +254,37 @@ const responses = [
       },
       next_step: 'finish',
       resume_after_seconds: 3,
-    }),
+    })),
     sessionId: 'session-next',
   },
   {
-    text: JSON.stringify({
+    text: JSON.stringify(wireOutcome({
       outcome: 'completed',
       final_message: 'Finished with Bearer abcdefghijklmnopqrstuvwxyz123456',
       result_summary: 'Done password=hunter2-secret',
       artifacts: ['./reports/../summary.md'],
-    }),
+    })),
     sessionId: 'session-next',
   },
   {
-    text: JSON.stringify({
+    text: JSON.stringify(wireOutcome({
       outcome: 'failed',
       error_code: 'temporary_failure',
       error_summary: 'Try again later.',
       retryable: true,
       completed_work: ['inspect'],
       unperformed_work: ['finish'],
-    }),
+    })),
   },
   {
-    text: JSON.stringify({
+    text: JSON.stringify(wireOutcome({
       outcome: 'blocked',
       error_code: 'capability_unavailable',
       error_summary: 'Network access is unavailable.',
       required_capability: 'external network',
       completed_work: [],
       unperformed_work: ['fetch source'],
-    }),
+    })),
   },
 ];
 const executor = createContinuationCodexExecutor({
@@ -390,15 +437,47 @@ await assert.rejects(
   /final_message|required/i,
 );
 
+await executeRaw(JSON.stringify(wireOutcome({
+  outcome: 'completed',
+  final_message: 'wire-format complete',
+  artifacts: [],
+})));
+
+const rejectedSchemaExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async () => {
+    throw new CodexExecProcessError(
+      1,
+      null,
+      '',
+      '{"error":{"code":"invalid_json_schema","message":"oneOf is not permitted"}}',
+      'invalid_json_schema',
+    );
+  },
+});
+await assert.rejects(
+  rejectedSchemaExecutor.execute(createClaim(), signal),
+  (error: unknown) => {
+    assert.ok(error && typeof error === 'object');
+    const failure = error as { errorCode?: unknown; errorSummary?: unknown; retryable?: unknown };
+    assert.equal(failure.errorCode, 'codex_output_schema_rejected');
+    assert.equal(failure.errorSummary, 'Codex rejected the continuation output schema before execution.');
+    assert.equal(failure.retryable, false);
+    return true;
+  },
+);
+
 const toolRequests: CodexExecRequest[] = [];
 const toolInvocations: Array<{ tool: string; args: string[] }> = [];
 const toolResponses = [
   {
-    text: JSON.stringify({
+    text: JSON.stringify(wireOutcome({
       outcome: 'tool_request',
       tool: 'lark_cli',
       args: ['doc', 'get', '--token', 'doc_1'],
-    }),
+    })),
     sessionId: 'session-tool',
   },
   {

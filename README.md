@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.2.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.2.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -455,8 +455,11 @@ progress messages. `compact` mode records a short text line with tool/type,
 status, trace id, duration, and sanitized argument/error summary; `full` mode
 keeps the event shape with redaction/truncation. Trace log lines include a
 `log_id` and `run_id` near the start: ordinary Feishu message turns use the
-source message id as `log_id`, cronjob prompt turns use the stable `job_id`, and
-`run_id` distinguishes repeated executions of the same source. Local trace
+source message id as `log_id`, cronjob prompt turns use the stable `job_id`,
+continuation turns use their durable Job ID, and `run_id` distinguishes repeated
+executions of the same source. A Codex process failure also emits one sanitized
+`codex_exec failed` record with a stable stage and error code, even when no tool
+event was produced. Local trace
 lines display a compact run id (`TRACE_RUN_ID_DISPLAY_LENGTH=16`, separators
 removed) to keep logs readable, while the bridge still accepts the full
 internal `run_id` when querying. When tracing is enabled, the exec action bridge

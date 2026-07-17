@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   CodexExecAbortedError,
   CodexExecProcessError,
+  diagnoseCodexExecFailure,
   isCodexExecTimeoutError,
   normalizeCodexExecResult,
   runCodexExecCommand,
@@ -95,8 +96,26 @@ const outcomeSchema = z.discriminatedUnion('outcome', [
   toolRequestSchema,
 ]);
 
+const wireOutcomeSchema = z.object({
+  outcome: z.enum(['continue', 'completed', 'failed', 'blocked', 'tool_request']),
+  checkpoint: checkpointSchema.nullable(),
+  next_step: compactString.nullable(),
+  resume_after_seconds: z.number().int().min(0).max(24 * 60 * 60).nullable(),
+  final_message: z.string().max(CONTINUATION_LIMITS.finalMessageBytes).nullable(),
+  result_summary: compactString.nullable(),
+  artifacts: z.array(compactString).max(CONTINUATION_LIMITS.artifactCount).nullable(),
+  error_code: z.string().min(1).max(128).nullable(),
+  error_summary: compactString.nullable(),
+  retryable: z.boolean().nullable(),
+  required_capability: compactString.nullable(),
+  completed_work: compactStringList.nullable(),
+  unperformed_work: compactStringList.nullable(),
+  tool: z.string().regex(/^[A-Za-z0-9_.-]{1,80}$/).nullable(),
+  args: z.array(z.string().max(8 * 1024)).max(128).nullable(),
+}).strict();
+
 const checkpointJsonSchema = {
-  type: 'object',
+  type: ['object', 'null'],
   additionalProperties: false,
   required: [
     'summary',
@@ -116,87 +135,51 @@ const checkpointJsonSchema = {
   },
 } as const;
 
-const workProperties = {
-  error_code: { type: 'string' },
-  error_summary: { type: 'string' },
-  completed_work: { type: 'array', items: { type: 'string' } },
-  unperformed_work: { type: 'array', items: { type: 'string' } },
-} as const;
-
 export const CONTINUATION_OUTPUT_SCHEMA: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
-  oneOf: [
-    {
-      type: 'object',
-      additionalProperties: false,
-      required: ['outcome', 'tool', 'args'],
-      properties: {
-        outcome: { const: 'tool_request' },
-        tool: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,80}$' },
-        args: {
-          type: 'array',
-          maxItems: 128,
-          items: { type: 'string', maxLength: 8192 },
-        },
-      },
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      required: ['outcome', 'checkpoint', 'next_step'],
-      properties: {
-        outcome: { const: 'continue' },
-        checkpoint: checkpointJsonSchema,
-        next_step: { type: 'string' },
-        resume_after_seconds: { type: 'integer', minimum: 0, maximum: 86_400 },
-      },
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      required: ['outcome', 'final_message', 'artifacts'],
-      properties: {
-        outcome: { const: 'completed' },
-        final_message: { type: 'string' },
-        result_summary: { type: 'string' },
-        artifacts: { type: 'array', items: { type: 'string' } },
-      },
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      required: [
-        'outcome',
-        'error_code',
-        'error_summary',
-        'retryable',
-        'completed_work',
-        'unperformed_work',
-      ],
-      properties: {
-        outcome: { const: 'failed' },
-        ...workProperties,
-        retryable: { type: 'boolean' },
-      },
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      required: [
-        'outcome',
-        'error_code',
-        'error_summary',
-        'required_capability',
-        'completed_work',
-        'unperformed_work',
-      ],
-      properties: {
-        outcome: { const: 'blocked' },
-        ...workProperties,
-        required_capability: { type: 'string' },
-      },
-    },
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'outcome',
+    'checkpoint',
+    'next_step',
+    'resume_after_seconds',
+    'final_message',
+    'result_summary',
+    'artifacts',
+    'error_code',
+    'error_summary',
+    'retryable',
+    'required_capability',
+    'completed_work',
+    'unperformed_work',
+    'tool',
+    'args',
   ],
+  properties: {
+    outcome: {
+      type: 'string',
+      enum: ['continue', 'completed', 'failed', 'blocked', 'tool_request'],
+    },
+    checkpoint: checkpointJsonSchema,
+    next_step: { type: ['string', 'null'] },
+    resume_after_seconds: { type: ['integer', 'null'], minimum: 0, maximum: 86_400 },
+    final_message: { type: ['string', 'null'] },
+    result_summary: { type: ['string', 'null'] },
+    artifacts: { type: ['array', 'null'], items: { type: 'string' } },
+    error_code: { type: ['string', 'null'] },
+    error_summary: { type: ['string', 'null'] },
+    retryable: { type: ['boolean', 'null'] },
+    required_capability: { type: ['string', 'null'] },
+    completed_work: { type: ['array', 'null'], items: { type: 'string' } },
+    unperformed_work: { type: ['array', 'null'], items: { type: 'string' } },
+    tool: { type: ['string', 'null'], pattern: '^[A-Za-z0-9_.-]{1,80}$' },
+    args: {
+      type: ['array', 'null'],
+      maxItems: 128,
+      items: { type: 'string', maxLength: 8192 },
+    },
+  },
 };
 
 class ContinuationCodexExecutor implements ContinuationExecutor {
@@ -489,7 +472,9 @@ async function parseOutcome(
       true,
     );
   }
-  const parsed = outcomeSchema.safeParse(raw);
+  const wire = wireOutcomeSchema.safeParse(raw);
+  const candidate = wire.success ? compactWireOutcome(wire.data) : raw;
+  const parsed = outcomeSchema.safeParse(candidate);
   if (!parsed.success) {
     const detail = parsed.error.issues
       .slice(0, 5)
@@ -553,6 +538,47 @@ async function parseOutcome(
   };
 }
 
+function compactWireOutcome(input: z.infer<typeof wireOutcomeSchema>): unknown {
+  switch (input.outcome) {
+    case 'continue':
+      return {
+        outcome: input.outcome,
+        checkpoint: input.checkpoint,
+        next_step: input.next_step,
+        ...(input.resume_after_seconds === null
+          ? {}
+          : { resume_after_seconds: input.resume_after_seconds }),
+      };
+    case 'completed':
+      return {
+        outcome: input.outcome,
+        final_message: input.final_message,
+        ...(input.result_summary === null ? {} : { result_summary: input.result_summary }),
+        artifacts: input.artifacts,
+      };
+    case 'failed':
+      return {
+        outcome: input.outcome,
+        error_code: input.error_code,
+        error_summary: input.error_summary,
+        retryable: input.retryable,
+        completed_work: input.completed_work,
+        unperformed_work: input.unperformed_work,
+      };
+    case 'blocked':
+      return {
+        outcome: input.outcome,
+        error_code: input.error_code,
+        error_summary: input.error_summary,
+        required_capability: input.required_capability,
+        completed_work: input.completed_work,
+        unperformed_work: input.unperformed_work,
+      };
+    case 'tool_request':
+      return { outcome: input.outcome, tool: input.tool, args: input.args };
+  }
+}
+
 function mapCheckpoint(input: z.infer<typeof checkpointSchema>): ContinuationCheckpoint {
   return {
     summary: redactContinuationText(input.summary),
@@ -579,6 +605,7 @@ function buildContinuationPrompt(job: ContinuationJob, artifactDir: string): str
     '[Durable Continuation Step]',
     'Execute one bounded unattended slice of the task below.',
     'Return only one JSON object matching the supplied output schema.',
+    'Every schema field must be present. Set fields that do not apply to the selected outcome to null.',
     'Do not request approval, send messages, create jobs, or perform source-control publishing actions.',
     'Do not execute a required local CLI directly. When one configured tool is needed, return a tool_request outcome using an exact name from requiredTools; the trusted parent will validate and execute it.',
     'At most one local CLI tool can be requested in this step.',
@@ -705,10 +732,11 @@ function mapExecutorError(error: unknown): ContinuationExecutionError {
     );
   }
   if (error instanceof CodexExecProcessError) {
+    const diagnostic = diagnoseCodexExecFailure(error);
     return new ContinuationExecutionError(
-      'codex_process_failed',
-      'The Codex process failed before producing a valid continuation outcome.',
-      true,
+      diagnostic.errorCode,
+      diagnostic.errorSummary,
+      diagnostic.retryable,
       { cause: error },
     );
   }
