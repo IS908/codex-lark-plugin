@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-07-17
+
+### Fixed
+- Clarified that continuation `required_tools` contains only configured parent-owned host CLI names; routine Codex filesystem and shell capabilities are no longer suggested as declarations.
+- Reject unknown continuation host-tool names before Job persistence, while keeping exact configured tools available and revalidated at execution time.
+- Require structured continuation array fields to use `[]` when unused instead of nullable arrays, preventing otherwise valid completed outcomes from failing local validation.
+
 ## [2.2.1] - 2026-07-17
 
 ### Fixed

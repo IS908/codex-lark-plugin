@@ -85,8 +85,11 @@ The current baseline is empty:
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
   Lark terminal delivery, and composition live under `src/continuation/`.
   The local CLI continuation adapter is parent-owned: the Codex process remains
-  network-disabled, while the adapter validates the exact `requiredTools` name
-  against `local-cli-tools.json` and the persisted creator before spawning one
+  network-disabled and keeps standard Codex tools inside the sandbox. The
+  external `required_tools` declaration is reserved for additional host CLI
+  names; creation rejects names absent from `local-cli-tools.json`, while the
+  adapter revalidates the exact persisted `requiredTools` name against current
+  configuration and the persisted creator before spawning one
   configured command. A per-job/per-step SQLite call ledger stores only a
   request fingerprint and bounded redacted result; completed calls replay the
   result, while ambiguous in-flight calls block instead of executing again.

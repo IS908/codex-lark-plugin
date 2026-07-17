@@ -121,6 +121,17 @@ function assertStrictOutputSchema(schema: unknown, path = 'root'): void {
 
 assertStrictOutputSchema(CONTINUATION_OUTPUT_SCHEMA);
 assert.equal(CONTINUATION_OUTPUT_SCHEMA.type, 'object');
+const continuationOutputProperties = CONTINUATION_OUTPUT_SCHEMA.properties as Record<
+  string,
+  { type?: unknown }
+>;
+for (const key of ['artifacts', 'completed_work', 'unperformed_work', 'args']) {
+  assert.equal(
+    continuationOutputProperties[key]?.type,
+    'array',
+    `${key} must always be an array; use [] when it does not apply`,
+  );
+}
 
 function wireOutcome(fields: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -130,15 +141,15 @@ function wireOutcome(fields: Record<string, unknown>): Record<string, unknown> {
     resume_after_seconds: null,
     final_message: null,
     result_summary: null,
-    artifacts: null,
+    artifacts: [],
     error_code: null,
     error_summary: null,
     retryable: null,
     required_capability: null,
-    completed_work: null,
-    unperformed_work: null,
+    completed_work: [],
+    unperformed_work: [],
     tool: null,
-    args: null,
+    args: [],
     ...fields,
   };
 }

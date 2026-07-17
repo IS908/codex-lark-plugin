@@ -24,6 +24,16 @@ assert.match(
   }).join('\n'),
   /Configured continuation working root: "\/Users\/you\/workspace"/,
 );
+const noHostToolContinuationPrompt = buildCodexExecActionChannelPrompt({
+  enabled: true,
+  filePath: '/tmp/actions',
+  token: 'token',
+  maxActions: 5,
+  continuationEnabled: true,
+}).join('\n');
+assert.match(noHostToolContinuationPrompt, /"required_tools":\[\]/);
+assert.match(noHostToolContinuationPrompt, /No continuation host CLI tools are configured/);
+assert.match(noHostToolContinuationPrompt, /Do not declare standard Codex tools/i);
 assert.match(
   buildCodexExecActionChannelPrompt({
     enabled: true,
@@ -32,6 +42,17 @@ assert.match(
     maxActions: 5,
     continuationEnabled: true,
     localCliToolNames: ['lark_cli'],
+  }).join('\n'),
+  /required_tools must use exact configured host tool names: lark_cli/,
+);
+assert.match(
+  buildCodexExecActionChannelPrompt({
+    enabled: true,
+    filePath: '/tmp/actions',
+    token: 'token',
+    maxActions: 5,
+    continuationEnabled: true,
+    continuationHostToolNames: ['lark_cli'],
   }).join('\n'),
   /required_tools must use exact configured host tool names: lark_cli/,
 );

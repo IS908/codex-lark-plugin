@@ -250,6 +250,31 @@ await deliverMessageViaCodexExec({
 assert.doesNotMatch(hiddenBridgeRequests[0].prompt, /Sandbox host-tool bridge/);
 assert.doesNotMatch(hiddenBridgeRequests[0].prompt, /run_local_cli_tool/);
 
+const dangerContinuationRequests: any[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_danger_continuation_tools',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async (request) => {
+    dangerContinuationRequests.push(request);
+    return 'continuation host tools listed';
+  },
+  actionDispatcher: {
+    execute: async () => [],
+  },
+  sendReply: async () => ({ sentCount: 1 }),
+});
+assert.doesNotMatch(dangerContinuationRequests[0].prompt, /Sandbox host-tool bridge/);
+assert.doesNotMatch(dangerContinuationRequests[0].prompt, /run_local_cli_tool/);
+assert.match(dangerContinuationRequests[0].prompt, /create_continuation_job/);
+assert.match(
+  dangerContinuationRequests[0].prompt,
+  /required_tools must use exact configured host tool names: gh_host, lark_doc_create/,
+);
+
 (appConfig as any).codexExecSandbox = 'workspace-write';
 (appConfig as any).localCliToolsConfigPath = missingLocalCliToolsConfigPath;
 await deliverMessageViaCodexExec({

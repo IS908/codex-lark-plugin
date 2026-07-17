@@ -30,7 +30,7 @@ function action(overrides: Record<string, unknown> = {}) {
       decisions: ['use local sources'],
       references: ['notes.md'],
     },
-    required_tools: ['local filesystem'],
+    required_tools: [],
     working_directory: '.',
     ...overrides,
   };
@@ -41,6 +41,7 @@ function parse(actions: unknown[]) {
 }
 
 assert.equal(parse([action()]).ok, true);
+assert.equal(parse([action({ required_tools: ['local filesystem'] })]).ok, false);
 for (const forbidden of [
   { chat_id: 'oc_forged' },
   { open_id: 'ou_forged' },
@@ -118,7 +119,7 @@ assert.equal(firstJob?.model, 'gpt-5.3-codex');
 assert.equal(firstJob?.workingDirectory, await realpath(root));
 assert.deepEqual(firstJob?.permissions, {
   filesystem: { root: await realpath(root), mode: 'workspace-write' },
-  hostTools: ['local filesystem'],
+  hostTools: [],
   network: 'none',
   approval: { mode: 'never' },
 });
@@ -131,11 +132,11 @@ assert.equal(childCreated.job.workingDirectory, await realpath(childWorkingDirec
 assert.equal(childCreated.job.permissions.filesystem.root, await realpath(root));
 
 const deduplicatedTools = await service.createFromMessage(
-  action({ required_tools: ['local filesystem', 'local filesystem'] }) as any,
+  action({ required_tools: ['lark_cli', 'lark_cli'] }) as any,
   message('deduplicated-tools'),
 );
-assert.deepEqual(deduplicatedTools.job.requiredTools, ['local filesystem']);
-assert.deepEqual(deduplicatedTools.job.permissions.hostTools, ['local filesystem']);
+assert.deepEqual(deduplicatedTools.job.requiredTools, ['lark_cli']);
+assert.deepEqual(deduplicatedTools.job.permissions.hostTools, ['lark_cli']);
 
 const duplicate = await dispatcher.execute({
   message: p2p,

@@ -132,12 +132,17 @@ async function enrichCodexExecActionPromptInfo(
       && ['p2p', 'group', 'doc_comment'].includes(message.chatType),
     continuationWorkingRoot: appConfig.continuationWorkingRoot,
   };
-  if (appConfig.codexExecSandbox === 'danger-full-access') return baseInfo;
+  const exposeForegroundHostTools = appConfig.codexExecSandbox !== 'danger-full-access';
+  if (!exposeForegroundHostTools && !baseInfo.continuationEnabled) return baseInfo;
 
   try {
     const localCliToolNames = await listConfiguredLocalCliToolNames();
     if (localCliToolNames.length === 0) return baseInfo;
-    return { ...baseInfo, localCliToolNames };
+    return {
+      ...baseInfo,
+      ...(exposeForegroundHostTools ? { localCliToolNames } : {}),
+      ...(baseInfo.continuationEnabled ? { continuationHostToolNames: localCliToolNames } : {}),
+    };
   } catch (err) {
     logSafeError('[codex-exec-actions] local CLI host bridge config unavailable:', err);
     return baseInfo;

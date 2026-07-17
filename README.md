@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.2.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.2.2-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -86,7 +86,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Jobs, attempts, checkpoints, leases, and a terminal-delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; managed artifacts live under the sibling `artifacts/` directory.
 - Each Job owns a dedicated Codex execution session. A parent foreground session is provenance only; an unavailable resume session is replaced safely without mutating the foreground chat session.
 - `/task list|status|cancel|retry|delete` bypass Codex and remain available for direct control. Creators manage their own tasks; `LARK_OWNER_OPEN_ID` can manage every task. Retry creates a new Job ID, and only failed/cancelled tasks can be retried.
-- The background runner forces approval policy `never`, disables sandbox network access, ignores user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. There is no continuation MCP tool. A task may request one parent-owned `run_local_cli_tool` call per step only when its exact configured name appears in `required_tools`; caller/config policy and the durable no-blind-replay ledger are still enforced.
+- The background runner forces approval policy `never`, disables sandbox network access, ignores user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. There is no continuation MCP tool. Standard Codex filesystem/shell tools stay inside that sandbox and are never listed in `required_tools`. A task may request one parent-owned `run_local_cli_tool` call per step only when its exact configured host-tool name appears in `required_tools`; caller/config policy and the durable no-blind-replay ledger are still enforced.
 - Terminal IM replies reuse one stable Feishu UUID inside its one-hour deduplication window. Document-comment delivery uses bounded marker read-back after an ambiguous send. Unreconciled sends become `delivery_unknown` and are not blindly repeated.
 
 ### Reliability
@@ -590,10 +590,14 @@ such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 
 Persistent continuation tasks can use these tools without enabling network in
 the sandboxed Codex process. The `required_tools` array written when the task is
-created must contain the exact key under `tools` (for example `lark_cli`), and
-the same tool must still be configured and authorize the persisted creator when
-the task runs. `required_tools` declares task intent; it is not a second
-allowlist and never grants a command by itself. Ask the foreground turn to
+created declares only additional parent-owned host CLI tools. Standard Codex
+tools such as `exec_command` and `apply_patch` must not be included; use
+`required_tools: []` for routine repository analysis. Any non-empty entry must
+contain the exact key under `tools` (for example `lark_cli`), and
+the same tool must be configured when the task is created, then remain configured
+and authorize the persisted creator when it runs. Unknown names are rejected before the Job
+is persisted. `required_tools` declares task intent; it is not a second allowlist
+and never grants a command by itself. Ask the foreground turn to
 create a background task that requires the configured tool name. Existing jobs
 with `required_tools: []` do not gain access and must be recreated.
 

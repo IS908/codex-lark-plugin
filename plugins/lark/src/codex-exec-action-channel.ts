@@ -17,6 +17,7 @@ export interface CodexExecActionChannelPromptInfo {
   traceQueryEnabled?: boolean;
   continuationEnabled?: boolean;
   continuationWorkingRoot?: string;
+  continuationHostToolNames?: string[];
 }
 
 export interface CodexExecActionChannelOptions {
@@ -304,6 +305,9 @@ export function startCodexExecActionChannelRetention(
 export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPromptInfo | null): string[] {
   if (!info?.enabled) return [];
   const localCliToolNames = [...new Set(info.localCliToolNames ?? [])].filter(Boolean).sort();
+  const continuationHostToolNames = [
+    ...new Set(info.continuationHostToolNames ?? localCliToolNames),
+  ].filter(Boolean).sort();
   const primaryLocalCliToolName = localCliToolNames[0];
   const traceQueryLines = info.traceQueryEnabled
     ? [
@@ -324,14 +328,15 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
       : [];
   const continuationLines = info.continuationEnabled
     ? [
-        '  - {"type":"create_continuation_job","title":"...","objective":"...","acceptance_criteria":["..."],"context_snapshot":{"summary":"...","completed_steps":[],"remaining_steps":["..."],"constraints":[],"decisions":[],"references":[]},"required_tools":["..."],"working_directory":"."}',
+        '  - {"type":"create_continuation_job","title":"...","objective":"...","acceptance_criteria":["..."],"context_snapshot":{"summary":"...","completed_steps":[],"remaining_steps":["..."],"constraints":[],"decisions":[],"references":[]},"required_tools":[],"working_directory":"."}',
         '    Use this only when work must continue after the current reply. The parent derives caller, route, session, model, retry policy, and Job ID; one turn may create at most one continuation.',
+        '    required_tools declares only additional host CLI tools. Do not declare standard Codex tools such as exec_command or apply_patch; those remain governed by the continuation sandbox.',
         ...(info.continuationWorkingRoot
           ? [`    Configured continuation working root: ${JSON.stringify(info.continuationWorkingRoot)}. working_directory must be relative to this root.`]
           : []),
-        ...(localCliToolNames.length > 0
-          ? [`    For local CLI access, required_tools must use exact configured host tool names: ${localCliToolNames.join(', ')}. The declaration does not grant access; runtime config and caller policy are checked again.`]
-          : []),
+        ...(continuationHostToolNames.length > 0
+          ? [`    For local CLI access, required_tools must use exact configured host tool names: ${continuationHostToolNames.join(', ')}. The declaration does not grant access; runtime config and caller policy are checked again.`]
+          : ['    No continuation host CLI tools are configured; required_tools must remain empty.']),
       ]
     : [];
 
