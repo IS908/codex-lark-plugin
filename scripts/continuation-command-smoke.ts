@@ -19,9 +19,9 @@ const service = new ContinuationService({
   repository,
   allowedWorkingRoot: root,
   filesystemMode: 'workspace-write',
-  maxSteps: 12,
+  maxAttempts: 5,
   maxRetries: 3,
-  maxAgeHours: 24,
+  maxTotalMinutes: 30,
   timeoutMs: 60_000,
   clock: { now: () => new Date(now) },
 });
@@ -236,6 +236,7 @@ assert.equal(await run(message({
 })), true);
 assert.match(replies.at(-1)?.text ?? '', new RegExp(ownedQueued.jobId));
 assert.match(replies.at(-1)?.text ?? '', /State: completed/);
+assert.match(replies.at(-1)?.text ?? '', /Attempts: 1 \/ 5/);
 assert.match(replies.at(-1)?.text ?? '', /Completed:/);
 
 assert.equal(await run(message({

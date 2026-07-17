@@ -61,7 +61,7 @@ function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
     },
     model: 'gpt-5.4',
     parentSessionId: 'session-parent',
-    maxSteps: 24,
+    maxAttempts: 5,
     maxRetries: 3,
     timeoutSeconds: 60,
     createdAt: '2026-07-17T00:00:00.000Z',
@@ -82,7 +82,10 @@ function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
   };
 }
 
-function createClaim(overrides: Partial<ContinuationJob> = {}): ContinuationClaim {
+function createClaim(
+  overrides: Partial<ContinuationJob> = {},
+  attemptOrdinal = 1,
+): ContinuationClaim {
   const job = createJob(overrides);
   return {
     job,
@@ -91,7 +94,7 @@ function createClaim(overrides: Partial<ContinuationJob> = {}): ContinuationClai
     attempt: {
       attemptId: 'att_0123456789abcdef01234567',
       jobId: job.jobId,
-      ordinal: 1,
+      ordinal: attemptOrdinal,
       workerId: 'worker-runner',
       executionSessionId: job.executionSessionId,
       startedAt: '2026-07-17T00:00:00.000Z',
@@ -128,7 +131,15 @@ const continuationOutputProperties = CONTINUATION_OUTPUT_SCHEMA.properties as Re
   string,
   { type?: unknown }
 >;
-for (const key of ['artifacts', 'completed_work', 'unperformed_work', 'args']) {
+for (const key of [
+  'artifacts',
+  'completed_work',
+  'key_findings',
+  'unperformed_work',
+  'risks',
+  'next_steps',
+  'args',
+]) {
   assert.equal(
     continuationOutputProperties[key]?.type,
     'array',
@@ -150,7 +161,10 @@ function wireOutcome(fields: Record<string, unknown>): Record<string, unknown> {
     retryable: null,
     required_capability: null,
     completed_work: [],
+    key_findings: [],
     unperformed_work: [],
+    risks: [],
+    next_steps: [],
     tool: null,
     args: [],
     ...fields,
@@ -357,6 +371,50 @@ assert.deepEqual(completed.outcome, {
 assert.equal((await executor.execute(createClaim(), signal)).outcome.outcome, 'failed');
 assert.equal((await executor.execute(createClaim(), signal)).outcome.outcome, 'blocked');
 
+const convergenceRequests: CodexExecRequest[] = [];
+const convergenceExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async (request) => {
+    convergenceRequests.push(request);
+    return {
+      text: JSON.stringify(wireOutcome({
+        outcome: 'continue',
+        checkpoint: {
+          summary: 'Validated the current implementation.',
+          completed_steps: ['reviewed persistence'],
+          remaining_steps: ['run production validation'],
+          constraints: ['production credentials are unavailable'],
+          decisions: ['preserve the current migration'],
+          references: ['summary.md'],
+        },
+        next_step: 'run production validation',
+      })),
+      sessionId: 'session-convergence',
+    };
+  },
+});
+const penultimate = await convergenceExecutor.execute(createClaim({ maxAttempts: 5 }, 4), signal);
+assert.equal(penultimate.outcome.outcome, 'continue');
+assert.match(convergenceRequests[0].prompt, /attempt 4 of 5/i);
+assert.match(convergenceRequests[0].prompt, /penultimate attempt/i);
+const forced = await convergenceExecutor.execute(createClaim({ maxAttempts: 5 }, 5), signal);
+assert.match(convergenceRequests[1].prompt, /attempt 5 of 5/i);
+assert.match(convergenceRequests[1].prompt, /continue.*forbidden/i);
+assert.deepEqual(forced, {
+  executionSessionId: 'session-convergence',
+  outcome: {
+    outcome: 'partial',
+    completedWork: ['reviewed persistence'],
+    keyFindings: ['Validated the current implementation.'],
+    unperformedWork: ['run production validation'],
+    risks: ['production credentials are unavailable'],
+    nextSteps: ['run production validation'],
+    artifacts: [],
+  },
+});
+
 const firstRequest = requests[0];
 assert.equal(firstRequest.traceLogId, createJob().jobId);
 assert.equal(firstRequest.traceRunId, createClaim().attempt.attemptId);
@@ -371,6 +429,12 @@ assert.deepEqual(firstRequest.configOverrides, [
 ]);
 assert.deepEqual(firstRequest.additionalWritableDirs, [artifactRoot]);
 assert.equal(firstRequest.forceToolTrace, undefined);
+assert.match(firstRequest.prompt, /one bounded, highest-priority step/i);
+assert.match(firstRequest.prompt, /continue only if measurable progress was made/i);
+assert.match(firstRequest.prompt, /another attempt is available/i);
+assert.match(firstRequest.prompt, /return completed when the acceptance criteria/i);
+assert.match(firstRequest.prompt, /do not repeat completed work/i);
+assert.match(firstRequest.prompt, /do not expand scope/i);
 
 const trustedRequests: CodexExecRequest[] = [];
 const trustedExecutor = createContinuationCodexExecutor({

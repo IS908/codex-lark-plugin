@@ -17,6 +17,9 @@ dual-write path, or legacy execution branch.
   persisted `expires_at` remains the hard wall-clock deadline.
 - The penultimate attempt receives a convergence warning. The final attempt
   cannot return `continue` semantically or operationally.
+- Every attempt prompt defines the `continue`, `completed`, `partial`, `blocked`,
+  and `failed` decisions, requires one bounded highest-priority step, and
+  forbids repeating completed work or expanding scope.
 - Add terminal `partial` and `blocked` Job states. `partial` carries completed
   work, key findings, unperformed work, risks, and next steps. `blocked` keeps
   completed/unperformed work and an actionable recovery capability.
@@ -58,6 +61,8 @@ dual-write path, or legacy execution branch.
 - SQLite migrations preserve durable Jobs but immediately adopt the new
   contract. Source, plugin source, and runtime bundles remain synchronized.
 - Phase 1 and Phase 2 release together as v2.5.0 and close #289.
+- #293 is the cross-phase prompt and interaction-protocol acceptance tracker;
+  close it with v2.5.0 after Phase 1 and Phase 2 pass together.
 - Phase 3 releases as v2.6.0 and closes #288.
 
 ## Verification

@@ -73,7 +73,7 @@ function request(suffix: string, requiredTools: string[]): ContinuationCreateReq
       externalSideEffects: 'denied',
       approval: { mode: 'never' },
     },
-    maxSteps: 4,
+    maxAttempts: 4,
     maxRetries: 0,
     timeoutSeconds: 30,
     createdAt: now,

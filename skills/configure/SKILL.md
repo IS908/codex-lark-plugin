@@ -80,9 +80,9 @@ LARK_SESSION_HEALTH_MAX_NUDGES:     3
 === Persistent Continuation ===
 LARK_CONTINUATION_ENABLED:          true
 LARK_CONTINUATION_MAX_CONCURRENCY:  1
-LARK_CONTINUATION_MAX_STEPS:        24
+LARK_CONTINUATION_MAX_ATTEMPTS:     5
 LARK_CONTINUATION_MAX_RETRIES:      3
-LARK_CONTINUATION_MAX_AGE_HOURS:    24
+LARK_CONTINUATION_MAX_TOTAL_MINUTES: 30
 LARK_CONTINUATION_RETENTION_DAYS:   30
 LARK_CONTINUATION_WORKING_ROOT:     LARK_CODEX_EXEC_CWD
 
@@ -203,9 +203,9 @@ Ask if the user wants to adjust any of these advanced settings (or use defaults)
 - `LARK_CODEX_SESSION_RETENTION_DRY_RUN` — preview session cleanup candidates without deleting records (default: false)
 - `LARK_CONTINUATION_ENABLED` — enable durable background continuation creation and execution (default: true)
 - `LARK_CONTINUATION_MAX_CONCURRENCY` — concurrent continuation Codex runs, from 1 to 4 (default: 1)
-- `LARK_CONTINUATION_MAX_STEPS` — maximum committed steps per continuation, from 1 to 100 (default: 24)
+- `LARK_CONTINUATION_MAX_ATTEMPTS` — maximum execution attempts per continuation, from 1 to 20 (default: 5)
 - `LARK_CONTINUATION_MAX_RETRIES` — retryable execution failures per step, from 0 to 10 (default: 3)
-- `LARK_CONTINUATION_MAX_AGE_HOURS` — maximum continuation lifetime, from 1 to 168 hours (default: 24)
+- `LARK_CONTINUATION_MAX_TOTAL_MINUTES` — maximum continuation lifetime, from 5 to 1440 minutes (default: 30)
 - `LARK_CONTINUATION_RETENTION_DAYS` — days before terminal task bodies and managed artifacts are redacted (default: 30)
 - `LARK_CONTINUATION_WORKING_ROOT` — absolute root that continuation `working_directory` values may select beneath; defaults to `LARK_CODEX_EXEC_CWD`
 - `LARK_SESSION_HEALTH_ENABLED` — enable owner DM nudges for long-running Codex exec sessions (default: false)
@@ -286,8 +286,8 @@ If user says "use defaults" or "skip", leave these at defaults.
    `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS`,
    `LARK_CODEX_SESSION_RETENTION_DRY_RUN`,
    `LARK_CONTINUATION_ENABLED`, `LARK_CONTINUATION_MAX_CONCURRENCY`,
-   `LARK_CONTINUATION_MAX_STEPS`, `LARK_CONTINUATION_MAX_RETRIES`,
-   `LARK_CONTINUATION_MAX_AGE_HOURS`, `LARK_CONTINUATION_RETENTION_DAYS`,
+   `LARK_CONTINUATION_MAX_ATTEMPTS`, `LARK_CONTINUATION_MAX_RETRIES`,
+   `LARK_CONTINUATION_MAX_TOTAL_MINUTES`, `LARK_CONTINUATION_RETENTION_DAYS`,
    `LARK_CONTINUATION_WORKING_ROOT`,
    `LARK_SESSION_HEALTH_ENABLED`,
    `LARK_SESSION_HEALTH_TURN_THRESHOLD`, `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD`,

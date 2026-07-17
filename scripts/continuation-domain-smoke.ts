@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import {
   CONTINUATION_LIMITS,
   isContinuationTerminal,
+  partialOutcomeFromCheckpoint,
   retryDelayMs,
 } from '../src/domain/continuation.js';
 
-for (const status of ['completed', 'failed', 'cancelled'] as const) {
+for (const status of ['completed', 'partial', 'blocked', 'failed', 'cancelled'] as const) {
   assert.equal(isContinuationTerminal(status), true, `${status} should be terminal`);
 }
 for (const status of ['queued', 'running', 'waiting_retry', 'cancel_requested'] as const) {
@@ -18,6 +19,23 @@ assert.equal(retryDelayMs(3, 0), 600_000);
 assert.equal(retryDelayMs(4, 0), 600_000, 'backoff should remain capped');
 assert.equal(retryDelayMs(3, 1), 720_000, 'maximum jitter should add 20 percent');
 assert.equal(retryDelayMs(3, -1), 600_000, 'negative jitter input should clamp to zero');
+
+assert.deepEqual(partialOutcomeFromCheckpoint({
+  summary: 'Validated the migration.',
+  completedSteps: ['updated the schema'],
+  remainingSteps: ['run production validation'],
+  constraints: ['production credentials are unavailable'],
+  decisions: ['use a direct migration'],
+  references: ['report.md'],
+}, 'run production validation'), {
+  outcome: 'partial',
+  completedWork: ['updated the schema'],
+  keyFindings: ['Validated the migration.'],
+  unperformedWork: ['run production validation'],
+  risks: ['production credentials are unavailable'],
+  nextSteps: ['run production validation'],
+  artifacts: [],
+});
 
 assert.deepEqual(CONTINUATION_LIMITS, {
   titleChars: 200,

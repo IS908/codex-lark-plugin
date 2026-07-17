@@ -18,9 +18,9 @@ export interface ContinuationServiceOptions {
   repository: ContinuationRepository;
   allowedWorkingRoot: string;
   filesystemMode: ContinuationFilesystemMode;
-  maxSteps: number;
+  maxAttempts: number;
   maxRetries: number;
-  maxAgeHours: number;
+  maxTotalMinutes: number;
   timeoutMs: number;
   defaultModel?: string | null;
   canUseTrustedPersonalWorkspace?: (actorOpenId: string) => boolean;
@@ -136,12 +136,12 @@ export class ContinuationService implements ContinuationTaskService {
         ? { model: (selectedModel ?? this.options.defaultModel)! }
         : {}),
       ...(parentSessionId ? { parentSessionId } : {}),
-      maxSteps: this.options.maxSteps,
+      maxAttempts: this.options.maxAttempts,
       maxRetries: this.options.maxRetries,
       timeoutSeconds: Math.max(1, Math.ceil(this.options.timeoutMs / 1_000)),
       createdAt: now.toISOString(),
       expiresAt: new Date(
-        now.getTime() + this.options.maxAgeHours * 60 * 60 * 1_000,
+        now.getTime() + this.options.maxTotalMinutes * 60 * 1_000,
       ).toISOString(),
     };
     return this.options.repository.create(request);
@@ -210,10 +210,10 @@ export class ContinuationService implements ContinuationTaskService {
         'This task has an unknown delivery outcome. Retrying could duplicate completed work, so it was not started.',
       );
     }
-    if (job.status !== 'failed' && job.status !== 'cancelled') {
+    if (!['partial', 'blocked', 'failed', 'cancelled'].includes(job.status)) {
       throw new ContinuationServiceError(
         'invalid_state',
-        'Only failed or cancelled tasks can be retried.',
+        'Only partial, blocked, failed, or cancelled tasks can be retried.',
       );
     }
     return this.options.repository.cloneForRetry(

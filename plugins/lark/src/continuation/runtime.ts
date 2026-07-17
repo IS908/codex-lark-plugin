@@ -31,9 +31,9 @@ export interface ContinuationRuntimeOptions {
   databasePath: string;
   artifactsDir: string;
   allowedWorkingRoot: string;
-  maxSteps: number;
+  maxAttempts: number;
   maxRetries: number;
-  maxAgeHours: number;
+  maxTotalMinutes: number;
   timeoutMs: number;
   retentionDays: number;
   maxConcurrency: number;
@@ -99,9 +99,9 @@ export async function createContinuationRuntime(
       repository,
       allowedWorkingRoot: options.allowedWorkingRoot,
       filesystemMode: boundedContinuationSandbox(options.configuredSandbox),
-      maxSteps: options.maxSteps,
+      maxAttempts: options.maxAttempts,
       maxRetries: options.maxRetries,
-      maxAgeHours: options.maxAgeHours,
+      maxTotalMinutes: options.maxTotalMinutes,
       timeoutMs: options.timeoutMs,
       canUseTrustedPersonalWorkspace: options.canUseTrustedPersonalWorkspace,
       clock,
