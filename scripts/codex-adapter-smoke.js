@@ -34,6 +34,16 @@ assert.equal(plugin.skills, './skills/');
 assert.equal(plugin.interface.displayName, 'Lark');
 assert.match(plugin.description, /Codex/);
 assert.equal(plugin.version, pkg.version, 'root plugin manifest version must match package.json');
+assert.ok(fs.existsSync(path.join(root, 'PRIVACY.md')));
+assert.ok(fs.existsSync(path.join(root, 'TERMS.md')));
+assert.equal(
+  plugin.interface.privacyPolicyURL,
+  'https://github.com/IS908/codex-lark-plugin/blob/main/PRIVACY.md'
+);
+assert.equal(
+  plugin.interface.termsOfServiceURL,
+  'https://github.com/IS908/codex-lark-plugin/blob/main/TERMS.md'
+);
 
 const marketplace = readJson('.agents/plugins/marketplace.json');
 assert.equal(marketplace.name, 'codex-lark-plugin');
@@ -53,6 +63,8 @@ assert.equal(wrappedPlugin.name, 'lark');
 assert.equal(wrappedPlugin.mcpServers, './.mcp.json');
 assert.equal(wrappedPlugin.skills, './skills/');
 assert.equal(wrappedPlugin.version, pkg.version, 'wrapped plugin manifest version must match package.json');
+assert.equal(wrappedPlugin.interface.privacyPolicyURL, plugin.interface.privacyPolicyURL);
+assert.equal(wrappedPlugin.interface.termsOfServiceURL, plugin.interface.termsOfServiceURL);
 assert.equal(wrappedPackage.version, pkg.version, 'wrapped package version must match package.json');
 assert.equal(readSkillFrontmatter('configure', 'plugins/lark/skills').name, 'configure');
 assert.equal(readSkillFrontmatter('jobs', 'plugins/lark/skills').name, 'jobs');

@@ -21,8 +21,8 @@
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],
     "websiteURL": "https://github.com/IS908/codex-lark-plugin",
-    "privacyPolicyURL": "https://github.com/IS908/codex-lark-plugin",
-    "termsOfServiceURL": "https://github.com/IS908/codex-lark-plugin",
+    "privacyPolicyURL": "https://github.com/IS908/codex-lark-plugin/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/IS908/codex-lark-plugin/blob/main/TERMS.md",
     "defaultPrompt": [
       "Configure my Lark bot credentials",
       "List my Lark scheduled jobs",
