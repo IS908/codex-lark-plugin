@@ -10,7 +10,7 @@ import type {
 import type { LarkTransport } from '../lark-transport-contracts.js';
 import type {
   ContinuationClock,
-  ContinuationTerminalDelivery,
+  ContinuationDelivery,
 } from '../ports/continuation.js';
 
 const IM_UUID_WINDOW_MS = 60 * 60 * 1_000;
@@ -22,7 +22,7 @@ type DeliveryErrorKind = 'pre_send' | 'rejected' | 'ambiguous';
 export function createLarkContinuationDelivery(
   getTransport: () => LarkTransport,
   clock: ContinuationClock,
-): ContinuationTerminalDelivery {
+): ContinuationDelivery {
   return {
     deliver: async (claim) => {
       let transport: LarkTransport;
@@ -41,12 +41,12 @@ async function deliverContinuation(
   clock: ContinuationClock,
   claim: ContinuationDeliveryClaim,
 ): Promise<ContinuationDeliveryResult> {
-  const marker = terminalMarker(claim);
+  const marker = deliveryMarker(claim);
   if (!marker) {
     return {
       status: 'failed',
-      errorCode: 'invalid_terminal_payload',
-      errorSummary: 'The terminal message did not contain a valid task marker.',
+      errorCode: 'invalid_delivery_payload',
+      errorSummary: 'The delivery payload did not contain a valid task marker.',
     };
   }
   return claim.route.kind === 'message_thread'
@@ -85,7 +85,7 @@ async function deliverIm(
     return {
       status: 'delivery_unknown',
       errorCode: 'im_delivery_unconfirmed',
-      errorSummary: 'Lark returned no message ID for the terminal message.',
+      errorSummary: 'Lark returned no message ID for the task update.',
     };
   } catch (error) {
     return deliveryErrorResult(classifyDeliveryError(error), 'im');
@@ -147,10 +147,19 @@ async function reconcileDocComment(
   }
 }
 
-function terminalMarker(claim: ContinuationDeliveryClaim): string | null {
+function deliveryMarker(claim: ContinuationDeliveryClaim): string | null {
   const firstLine = claim.payload.split(/\r?\n/, 1)[0]?.trim() ?? '';
   const escapedJobId = claim.jobId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^Task (?:completed|failed|cancelled): ${escapedJobId}$`).test(firstLine)
+  if (claim.kind === 'progress') {
+    if (!claim.attemptId) return null;
+    const escapedAttemptId = claim.attemptId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^Task progress: ${escapedJobId} \\(${escapedAttemptId}\\)$`).test(firstLine)
+      ? firstLine
+      : null;
+  }
+  return new RegExp(
+    `^Task (?:completed|partially completed|blocked|failed|cancelled): ${escapedJobId}$`,
+  ).test(firstLine)
     ? firstLine
     : null;
 }
@@ -169,14 +178,14 @@ function deliveryErrorResult(
     return {
       status: 'retry',
       errorCode: 'lark_pre_send_unavailable',
-      errorSummary: 'Lark was unavailable before the terminal message could be sent.',
+      errorSummary: 'Lark was unavailable before the task update could be sent.',
     };
   }
   if (kind === 'rejected') {
     return {
       status: 'failed',
       errorCode: 'lark_delivery_rejected',
-      errorSummary: 'Lark rejected the terminal message.',
+      errorSummary: 'Lark rejected the task update.',
     };
   }
   return route === 'im'

@@ -27,7 +27,24 @@ export type ContinuationDeliveryStatus =
   | 'sending'
   | 'delivered'
   | 'delivery_unknown'
-  | 'failed';
+  | 'failed'
+  | 'superseded';
+
+export type ContinuationDeliveryKind = 'progress' | 'terminal';
+
+export interface ContinuationDeliveryRecord {
+  eventKey: string;
+  kind: ContinuationDeliveryKind;
+  attemptId?: string;
+  status: ContinuationDeliveryStatus;
+  attemptCount: number;
+  firstAttemptAt?: string;
+  lastAttemptAt?: string;
+  lastErrorCode?: string;
+  lastErrorSummary?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface ContinuationCheckpoint {
   summary: string;
@@ -116,6 +133,7 @@ export interface ContinuationJob extends ContinuationCreateRequest {
   completedAt?: string;
   deletedAt?: string;
   deliveryStatus?: ContinuationDeliveryStatus;
+  deliveryEvents?: ContinuationDeliveryRecord[];
 }
 
 export interface ContinuationAttempt {
@@ -243,6 +261,9 @@ export class ContinuationExecutionError extends Error {
 export interface ContinuationDeliveryClaim {
   outboxId: string;
   jobId: string;
+  eventKey: string;
+  kind: ContinuationDeliveryKind;
+  attemptId?: string;
   workerId: string;
   route: ContinuationDeliveryRoute;
   idempotencyKey: string;

@@ -72,7 +72,7 @@ export interface ContinuationToolInvoker {
   ): Promise<ContinuationToolInvocationResult>;
 }
 
-export interface ContinuationTerminalDelivery {
+export interface ContinuationDelivery {
   deliver(claim: ContinuationDeliveryClaim): Promise<ContinuationDeliveryResult>;
 }
 

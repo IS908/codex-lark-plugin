@@ -238,6 +238,16 @@ assert.match(replies.at(-1)?.text ?? '', new RegExp(ownedQueued.jobId));
 assert.match(replies.at(-1)?.text ?? '', /State: completed/);
 assert.match(replies.at(-1)?.text ?? '', /Attempts: 1 \/ 5/);
 assert.match(replies.at(-1)?.text ?? '', /Completed:/);
+assert.match(replies.at(-1)?.text ?? '', /Delivery events:/);
+assert.match(replies.at(-1)?.text ?? '', /terminal \| delivered \| attempts 1/);
+
+assert.equal(await run(message({
+  messageId: 'om_status_ambiguous',
+  text: `/task status ${ambiguous.jobId}`,
+  rawContent: `{"text":"/task status ${ambiguous.jobId}"}`,
+})), true);
+assert.match(replies.at(-1)?.text ?? '', /terminal \| delivery_unknown \| attempts 1/);
+assert.match(replies.at(-1)?.text ?? '', /Error: ambiguous_send: The provider result was ambiguous\./);
 
 assert.equal(await run(message({
   messageId: 'om_delete_running',

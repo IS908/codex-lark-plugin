@@ -192,11 +192,46 @@ try {
   assert.equal(checkpointed?.failureCount, 0);
   assert.equal(checkpointed?.checkpoint?.summary, 'First slice complete');
   assert.equal(checkpointed?.executionSessionId, 'session-continuation-1');
+  assert.deepEqual(checkpointed?.deliveryEvents?.map((event) => ({
+    eventKey: event.eventKey,
+    kind: event.kind,
+    attemptId: event.attemptId,
+    status: event.status,
+  })), [{
+    eventKey: `progress:${firstClaim.attempt.attemptId}`,
+    kind: 'progress',
+    attemptId: firstClaim.attempt.attemptId,
+    status: 'pending',
+  }]);
 
-  const secondClaim = await repository.claimDue(
+  assert.equal(await repository.claimDue(
     'worker-main',
     '2026-07-17T00:00:11.000Z',
     '2026-07-17T00:00:41.000Z',
+  ), null);
+  const progressDelivery = await repository.claimPendingDelivery(
+    'delivery-progress',
+    '2026-07-17T00:00:11.000Z',
+  );
+  assert.ok(progressDelivery);
+  assert.equal(progressDelivery.kind, 'progress');
+  assert.equal(progressDelivery.eventKey, `progress:${firstClaim.attempt.attemptId}`);
+  assert.equal(progressDelivery.attemptId, firstClaim.attempt.attemptId);
+  assert.match(progressDelivery.payload, new RegExp(
+    `^Task progress: ${first.job.jobId} \\(${firstClaim.attempt.attemptId}\\)`,
+  ));
+  assert.match(progressDelivery.payload, /Attempt: 1 \/ 5/);
+  assert.match(progressDelivery.payload, /First slice complete/);
+  await repository.markDeliveryResult(
+    progressDelivery,
+    { status: 'delivered', messageId: 'om_progress' },
+    '2026-07-17T00:00:11.050Z',
+  );
+
+  const secondClaim = await repository.claimDue(
+    'worker-main',
+    '2026-07-17T00:00:11.050Z',
+    '2026-07-17T00:00:41.050Z',
   );
   assert.ok(secondClaim);
   const unfinishedToolCall = await repository.beginToolCall(
@@ -229,6 +264,18 @@ try {
   const completed = await repository.get(first.job.jobId);
   assert.equal(completed?.status, 'completed');
   assert.equal(completed?.deliveryStatus, 'pending');
+  assert.deepEqual(completed?.deliveryEvents?.map((event) => ({
+    eventKey: event.eventKey,
+    kind: event.kind,
+    status: event.status,
+  })), [
+    { eventKey: 'terminal', kind: 'terminal', status: 'pending' },
+    {
+      eventKey: `progress:${firstClaim.attempt.attemptId}`,
+      kind: 'progress',
+      status: 'delivered',
+    },
+  ]);
 
   const delivery = await repository.claimPendingDelivery(
     'delivery-main',
@@ -236,6 +283,8 @@ try {
   );
   assert.ok(delivery);
   assert.equal(delivery.jobId, first.job.jobId);
+  assert.equal(delivery.eventKey, 'terminal');
+  assert.equal(delivery.kind, 'terminal');
   assert.equal(delivery.payload, `Task completed: ${first.job.jobId}\nComplete result`);
   await repository.markDeliveryResult(
     delivery,
@@ -294,6 +343,8 @@ try {
   );
   assert.ok(deliveryAfterPreSend);
   assert.equal(deliveryAfterPreSend.jobId, queuedCancel.job.jobId);
+  assert.equal(deliveryAfterPreSend.eventKey, preSendDelivery.eventKey);
+  assert.equal(deliveryAfterPreSend.idempotencyKey, preSendDelivery.idempotencyKey);
   assert.equal(deliveryAfterPreSend.attemptCount, 1);
   assert.equal(deliveryAfterPreSend.firstAttemptAt, '2026-07-17T00:00:51.000Z');
   await repository.markDeliveryResult(
@@ -483,6 +534,19 @@ try {
       (await convergenceRepository.get(convergence.job.jobId))?.status,
       ordinal < 5 ? 'waiting_retry' : 'partial',
     );
+    if (ordinal < 5) {
+      const progress = await convergenceRepository.claimPendingDelivery(
+        'delivery-convergence-progress',
+        now,
+      );
+      assert.equal(progress?.kind, 'progress');
+      assert.equal(progress?.attemptId, claim.attempt.attemptId);
+      await convergenceRepository.markDeliveryResult(
+        progress!,
+        { status: 'delivered', messageId: `om_progress_${ordinal}` },
+        now,
+      );
+    }
   }
   assert.equal(await convergenceRepository.claimDue(
     'worker-convergence',
@@ -522,6 +586,63 @@ try {
   assert.equal(blockedResult?.deliveryStatus, 'pending');
 } finally {
   convergenceRepository.close();
+}
+
+const deliveryRaceRepository = await SqliteContinuationRepository.open({
+  databasePath: join(root, 'delivery-race', 'jobs.sqlite'),
+  artifactsDir: join(root, 'delivery-race', 'artifacts'),
+  jitter: () => 0,
+});
+try {
+  const raceJob = await deliveryRaceRepository.create(createRequest('delivery-race'));
+  const raceClaim = await deliveryRaceRepository.claimDue(
+    'worker-delivery-race',
+    baseNow,
+    '2026-07-17T00:01:00.000Z',
+  );
+  assert.ok(raceClaim);
+  await deliveryRaceRepository.completeStep(raceClaim, {
+    outcome: {
+      outcome: 'continue',
+      checkpoint: {
+        summary: 'A progress delivery is in flight.',
+        completedSteps: ['completed one bounded step'],
+        remainingSteps: ['finish the task'],
+        constraints: [],
+        decisions: [],
+        references: [],
+      },
+      nextStep: 'finish the task',
+    },
+  }, '2026-07-17T00:00:01.000Z');
+  const inFlightProgress = await deliveryRaceRepository.claimPendingDelivery(
+    'delivery-race-worker',
+    '2026-07-17T00:00:02.000Z',
+  );
+  assert.equal(inFlightProgress?.kind, 'progress');
+  assert.equal(await deliveryRaceRepository.requestCancel(
+    raceJob.job.jobId,
+    '2026-07-17T00:00:03.000Z',
+  ), 'cancelled');
+  await deliveryRaceRepository.markDeliveryResult(inFlightProgress!, {
+    status: 'retry',
+    errorCode: 'lark_pre_send_unavailable',
+    errorSummary: 'The request was not sent.',
+  }, '2026-07-17T00:00:04.000Z');
+  const raceResult = await deliveryRaceRepository.get(raceJob.job.jobId);
+  assert.deepEqual(raceResult?.deliveryEvents?.map((event) => ({
+    kind: event.kind,
+    status: event.status,
+  })), [
+    { kind: 'terminal', status: 'pending' },
+    { kind: 'progress', status: 'superseded' },
+  ]);
+  assert.equal((await deliveryRaceRepository.claimPendingDelivery(
+    'delivery-race-terminal',
+    '2026-07-17T00:00:05.000Z',
+  ))?.kind, 'terminal');
+} finally {
+  deliveryRaceRepository.close();
 }
 
 const versionThreeDatabasePath = join(root, 'migration-v3', 'jobs.sqlite');
@@ -655,7 +776,13 @@ const migratedVersionThreeColumns = migratedVersionThreeDatabase
   .all() as Array<{ name: string }>;
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'max_attempts'));
 assert.equal(migratedVersionThreeColumns.some((column) => column.name === 'max_steps'), false);
-assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 4);
+assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 5);
+const migratedOutboxColumns = migratedVersionThreeDatabase
+  .prepare('PRAGMA table_info(continuation_outbox)')
+  .all() as Array<{ name: string }>;
+assert.ok(migratedOutboxColumns.some((column) => column.name === 'event_key'));
+assert.ok(migratedOutboxColumns.some((column) => column.name === 'kind'));
+assert.ok(migratedOutboxColumns.some((column) => column.name === 'attempt_id'));
 migratedVersionThreeDatabase.close();
 
 const versionTwoDatabase = new DatabaseSync(migrationDatabasePath);

@@ -11,7 +11,7 @@ import type {
   ContinuationClock,
   ContinuationExecutor,
   ContinuationRepository,
-  ContinuationTerminalDelivery,
+  ContinuationDelivery,
 } from '../src/ports/continuation.js';
 import { ContinuationWorker } from '../src/continuation/worker.js';
 
@@ -192,6 +192,8 @@ const normalHarness = createRepositoryHarness([createClaim('normal')]);
 normalHarness.deliveryClaim = {
   outboxId: 'out_normal',
   jobId: 'job_normal000000000000000000',
+  eventKey: 'terminal',
+  kind: 'terminal',
   workerId: 'continuation-worker-delivery',
   route: {
     kind: 'message_thread',
@@ -206,7 +208,7 @@ normalHarness.deliveryClaim = {
 const normalExecutor: ContinuationExecutor = {
   async execute() { return completedResult('done'); },
 };
-const normalDelivery: ContinuationTerminalDelivery = {
+const normalDelivery: ContinuationDelivery = {
   async deliver() { return { status: 'delivered', messageId: 'om_terminal' }; },
 };
 const normalWorker = new ContinuationWorker({
@@ -247,7 +249,7 @@ const concurrentExecutor: ContinuationExecutor = {
     return completedResult(claim.job.jobId);
   },
 };
-const noDelivery: ContinuationTerminalDelivery = {
+const noDelivery: ContinuationDelivery = {
   async deliver() { throw new Error('unexpected delivery'); },
 };
 const concurrentWorker = new ContinuationWorker({
@@ -364,6 +366,9 @@ const deliveryHarness = createRepositoryHarness();
 deliveryHarness.deliveryClaim = {
   outboxId: 'out_retry',
   jobId: 'job_retry0000000000000000000',
+  eventKey: 'progress:att_retry0000000000000000000',
+  kind: 'progress',
+  attemptId: 'att_retry0000000000000000000',
   workerId: 'continuation-worker-delivery',
   route: {
     kind: 'message_thread',
@@ -388,7 +393,7 @@ await waitFor(() => deliveryHarness.deliveryResults.length === 1, 'delivery retr
 assert.equal(deliveryExecutionCalls, 0);
 assert.deepEqual(deliveryHarness.deliveryResults[0], {
   status: 'retry',
-  errorCode: 'terminal_delivery_failed',
+  errorCode: 'continuation_delivery_failed',
   errorSummary: 'temporary Lark failure',
 });
 await deliveryWorker.stop();

@@ -9,7 +9,7 @@ import type {
   ContinuationClock,
   ContinuationExecutor,
   ContinuationRepository,
-  ContinuationTerminalDelivery,
+  ContinuationDelivery,
   ContinuationToolInvoker,
 } from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
@@ -47,7 +47,7 @@ export interface ContinuationRuntimeOptions {
   runCodexExec?: CodexExecRunner;
   executor?: ContinuationExecutor;
   toolInvoker?: ContinuationToolInvoker;
-  delivery?: ContinuationTerminalDelivery;
+  delivery?: ContinuationDelivery;
   audit?: ContinuationAudit;
   debug?: (message: string) => void;
   reportError?: (error: unknown) => void;

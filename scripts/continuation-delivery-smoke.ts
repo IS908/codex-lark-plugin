@@ -69,6 +69,8 @@ function imClaim(overrides: Partial<ContinuationDeliveryClaim> = {}): Continuati
   return {
     outboxId: 'out_0123456789abcdef01234567',
     jobId: 'job_0123456789abcdef01234567',
+    eventKey: 'terminal',
+    kind: 'terminal',
     workerId: 'delivery-worker',
     route: {
       kind: 'message_thread',
@@ -102,7 +104,7 @@ function commentClaim(overrides: Partial<ContinuationDeliveryClaim> = {}): Conti
 assert.deepEqual(await unavailableDelivery.deliver(imClaim()), {
   status: 'retry',
   errorCode: 'lark_pre_send_unavailable',
-  errorSummary: 'Lark was unavailable before the terminal message could be sent.',
+  errorSummary: 'Lark was unavailable before the task update could be sent.',
 });
 
 assert.deepEqual(await delivery.deliver(imClaim()), {
@@ -128,6 +130,30 @@ assert.deepEqual(await delivery.deliver(imClaim({
   messageId: 'om_terminal_retry',
 });
 assert.equal(sendCalls.at(-1)?.uuid, 'ct_0123456789abcdef0123456789abcdef');
+
+sendResult = { messageId: 'om_progress' };
+const progressClaim = imClaim({
+  outboxId: 'out_progress',
+  eventKey: 'progress:att_0123456789abcdef01234567',
+  kind: 'progress',
+  attemptId: 'att_0123456789abcdef01234567',
+  idempotencyKey: 'ct_progress_stable',
+  payload: 'Task progress: job_0123456789abcdef01234567 (att_0123456789abcdef01234567)\nAttempt: 1 / 5\nCompleted work:\n- inspected inputs\nNext attempt:\n- produce result',
+});
+assert.deepEqual(await delivery.deliver(progressClaim), {
+  status: 'delivered',
+  messageId: 'om_progress',
+});
+assert.equal(sendCalls.at(-1)?.uuid, 'ct_progress_stable');
+
+sendResult = { messageId: 'om_partial' };
+assert.equal((await delivery.deliver(imClaim({
+  payload: 'Task partially completed: job_0123456789abcdef01234567\nPartial result.',
+}))).status, 'delivered');
+sendResult = { messageId: 'om_blocked' };
+assert.equal((await delivery.deliver(imClaim({
+  payload: 'Task blocked: job_0123456789abcdef01234567\nMissing capability.',
+}))).status, 'delivered');
 
 const beforeExpiredWindow = sendCalls.length;
 assert.deepEqual(await delivery.deliver(imClaim({
@@ -156,7 +182,7 @@ sendError = Object.assign(new Error('dns details should not escape'), { code: 'E
 assert.deepEqual(await delivery.deliver(imClaim()), {
   status: 'retry',
   errorCode: 'lark_pre_send_unavailable',
-  errorSummary: 'Lark was unavailable before the terminal message could be sent.',
+  errorSummary: 'Lark was unavailable before the task update could be sent.',
 });
 sendError = undefined;
 
@@ -188,6 +214,22 @@ assert.deepEqual(markerCalls.at(-1), {
   fileType: 'docx',
   marker: 'Task completed: job_0123456789abcdef01234567',
 });
+
+markerResult = { replyId: 'reply_progress_reconciled' };
+await delivery.deliver(commentClaim({
+  ...progressClaim,
+  route: {
+    kind: 'comment_thread',
+    documentToken: 'doc_delivery',
+    commentId: 'comment_delivery',
+    fileType: 'docx',
+  },
+  attemptCount: 2,
+}));
+assert.equal(
+  markerCalls.at(-1)?.marker,
+  'Task progress: job_0123456789abcdef01234567 (att_0123456789abcdef01234567)',
+);
 
 markerResult = null;
 const beforeUnknownReply = commentCalls.length;
@@ -232,7 +274,7 @@ commentError = Object.assign(new Error('permission denied'), {
 assert.deepEqual(await delivery.deliver(commentClaim()), {
   status: 'failed',
   errorCode: 'lark_delivery_rejected',
-  errorSummary: 'Lark rejected the terminal message.',
+  errorSummary: 'Lark rejected the task update.',
 });
 
 console.log('continuation delivery smoke: PASS');

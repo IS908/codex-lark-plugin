@@ -183,6 +183,7 @@ function formatTaskStatus(job: ContinuationJob): string {
     `Next run: ${formatOptionalTime(job.nextRunAt)}`,
     `Completed: ${formatOptionalTime(job.completedAt)}`,
     `Delivery: ${job.deliveryStatus ?? 'not_started'}`,
+    formatDeliveryEvents(job),
     ...(job.errorCode ? [`Error code: ${job.errorCode}`] : []),
     ...(job.errorSummary ? [`Error: ${job.errorSummary}`] : []),
     ...(job.resultSummary ? [`Result: ${job.resultSummary}`] : []),
@@ -190,6 +191,31 @@ function formatTaskStatus(job: ContinuationJob): string {
       ? [`Artifacts:\n${job.resultArtifacts.map((artifact) => `- ${artifact}`).join('\n')}`]
       : []),
   ].join('\n');
+}
+
+function formatDeliveryEvents(job: ContinuationJob): string {
+  const events = job.deliveryEvents ?? [];
+  if (events.length === 0) return 'Delivery events: none';
+  const lines = ['Delivery events:'];
+  for (const event of events) {
+    lines.push(event.kind === 'terminal'
+      ? `- terminal | ${event.status} | attempts ${event.attemptCount}`
+      : `- progress | ${event.attemptId ?? '-'} | ${event.status} | attempts ${event.attemptCount}`);
+    if (event.lastErrorCode || event.lastErrorSummary) {
+      const detail = [event.lastErrorCode, event.lastErrorSummary]
+        .filter(Boolean)
+        .join(': ');
+      lines.push(`  Error: ${truncateDiagnostic(detail, 240)}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function truncateDiagnostic(value: string, maxCharacters: number): string {
+  const characters = Array.from(value);
+  return characters.length <= maxCharacters
+    ? value
+    : `${characters.slice(0, maxCharacters - 3).join('').trimEnd()}...`;
 }
 
 function attemptCount(job: ContinuationJob): number {

@@ -5,6 +5,10 @@ import {
   partialOutcomeFromCheckpoint,
   retryDelayMs,
 } from '../src/domain/continuation.js';
+import type { ContinuationDeliveryStatus } from '../src/domain/continuation.js';
+
+const supersededDeliveryStatus: ContinuationDeliveryStatus = 'superseded';
+assert.equal(supersededDeliveryStatus, 'superseded');
 
 for (const status of ['completed', 'partial', 'blocked', 'failed', 'cancelled'] as const) {
   assert.equal(isContinuationTerminal(status), true, `${status} should be terminal`);

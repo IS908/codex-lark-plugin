@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.4.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.5.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -83,11 +83,12 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 ### Persistent Continuations
 
 - Codex can commit one structured `create_continuation_job` exec action when a foreground P2P, group, or document-comment turn cannot finish safely in one process run. The visible acknowledgement includes a durable Job ID.
-- Jobs, attempts, checkpoints, leases, and a terminal-delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; managed artifacts live under the sibling `artifacts/` directory.
+- Jobs, attempts, checkpoints, leases, and a multi-event delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; managed artifacts live under the sibling `artifacts/` directory.
 - Each Job owns a dedicated Codex execution session. A parent foreground session is provenance only; an unavailable resume session is replaced safely without mutating the foreground chat session.
 - `/task list|status|cancel|retry|delete` bypass Codex and remain available for direct control. Creators manage their own tasks; `LARK_OWNER_OPEN_ID` can manage every task. Retry creates a new Job ID, and partial/blocked/failed/cancelled tasks can be retried.
 - The parent derives each permission profile from the authenticated sender: the owner and current `allowed_user_ids` members automatically receive `trusted_personal_workspace` for broad local reads, network access, and external operations under a trust-first policy; all other admitted users remain `bounded`. Bounded tasks force approval policy `never`, disable sandbox network access, ignore user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. Trusted attempts always write sanitized command traces keyed by Job/attempt ID. There is no continuation MCP tool. Standard Codex filesystem/shell tools stay inside the sandbox and are never listed in `required_tools`. A task may request one parent-owned `run_local_cli_tool` call per step only when its exact configured host-tool name appears in `required_tools`; caller/config policy and the durable no-blind-replay ledger are still enforced.
-- Terminal IM replies reuse one stable Feishu UUID inside its one-hour deduplication window. Document-comment delivery uses bounded marker read-back after an ambiguous send. Unreconciled sends become `delivery_unknown` and are not blindly repeated.
+- Every committed `continue` attempt queues one bounded factual progress update keyed by `progress:<attempt_id>`. A terminal event uses the reserved `terminal` key, takes delivery priority, and supersedes progress that is still safely known to be undelivered. `/task status ID` shows per-event status, attempt IDs, retry counts, and bounded errors.
+- Each IM delivery event reuses one stable Feishu UUID inside its one-hour deduplication window. Document-comment delivery uses a unique event marker and bounded read-back after an ambiguous send. Unreconciled sends become `delivery_unknown` and are not blindly repeated.
 
 ### Reliability
 

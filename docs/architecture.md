@@ -83,7 +83,7 @@ The current baseline is empty:
   closed outcomes live in `src/domain/continuation.ts`; repository, executor,
   delivery, clock, and audit contracts live in `src/ports/continuation.ts`.
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
-  Lark terminal delivery, and composition live under `src/continuation/`.
+  Lark progress/terminal delivery, and composition live under `src/continuation/`.
   The local CLI continuation adapter is parent-owned. Standard Codex tools stay
   inside the sandbox. The `bounded` continuation profile remains network-disabled.
   The parent derives authority from authenticated identity and automatically
