@@ -6,6 +6,10 @@ import type {
   ContinuationExecutionResult,
   ContinuationFailure,
   ContinuationJob,
+  ContinuationToolCallDecision,
+  ContinuationToolCallRecovery,
+  ContinuationToolRequest,
+  ContinuationToolResult,
 } from '../domain/continuation.js';
 
 export interface ContinuationRepository {
@@ -17,6 +21,18 @@ export interface ContinuationRepository {
   listAll(limit: number): Promise<ContinuationJob[]>;
   claimDue(workerId: string, now: string, leaseExpiresAt: string): Promise<ContinuationClaim | null>;
   heartbeat(jobId: string, workerId: string, now: string, leaseExpiresAt: string): Promise<boolean>;
+  inspectToolCall(claim: ContinuationClaim): Promise<ContinuationToolCallRecovery | null>;
+  beginToolCall(
+    claim: ContinuationClaim,
+    request: ContinuationToolRequest,
+    now: string,
+  ): Promise<ContinuationToolCallDecision>;
+  completeToolCall(
+    claim: ContinuationClaim,
+    callId: string,
+    result: ContinuationToolResult,
+    now: string,
+  ): Promise<void>;
   completeStep(claim: ContinuationClaim, result: ContinuationExecutionResult, now: string): Promise<void>;
   failAttempt(claim: ContinuationClaim, failure: ContinuationFailure, now: string): Promise<void>;
   requestCancel(jobId: string, now: string): Promise<'cancelled' | 'cancel_requested' | 'terminal' | 'missing'>;
@@ -37,6 +53,23 @@ export interface ContinuationRepository {
 
 export interface ContinuationExecutor {
   execute(claim: ContinuationClaim, signal: AbortSignal): Promise<ContinuationExecutionResult>;
+}
+
+export type ContinuationToolInvocationResult =
+  | { status: 'completed'; result: ContinuationToolResult }
+  | { status: 'blocked'; errorCode: string; errorSummary: string };
+
+export type ContinuationToolRecoveryResult =
+  | { status: 'completed'; tool: string; result: ContinuationToolResult }
+  | { status: 'blocked'; tool: string; errorCode: string; errorSummary: string };
+
+export interface ContinuationToolInvoker {
+  recover(claim: ContinuationClaim): Promise<ContinuationToolRecoveryResult | null>;
+  invoke(
+    claim: ContinuationClaim,
+    request: ContinuationToolRequest,
+    signal: AbortSignal,
+  ): Promise<ContinuationToolInvocationResult>;
 }
 
 export interface ContinuationTerminalDelivery {

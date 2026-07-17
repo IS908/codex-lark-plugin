@@ -15,6 +15,10 @@ import {
   type ContinuationFailure,
   type ContinuationJob,
   type ContinuationStatus,
+  type ContinuationToolCallDecision,
+  type ContinuationToolCallRecovery,
+  type ContinuationToolRequest,
+  type ContinuationToolResult,
 } from '../domain/continuation.js';
 import type { ContinuationRepository } from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
@@ -27,7 +31,7 @@ interface SqliteContinuationRepositoryOptions {
   jitter?: () => number;
 }
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DELIVERY_LEASE_MS = 30_000;
 const EMPTY_CHECKPOINT = {
   summary: '',
@@ -183,7 +187,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
       CREATE INDEX IF NOT EXISTS continuation_outbox_due_idx
         ON continuation_outbox(status, next_attempt_at, created_at);
+
+      ${toolCallSchemaSql()}
       PRAGMA user_version = ${SCHEMA_VERSION};
+      `);
+    });
+    if (existingVersion === 1) this.transaction(() => {
+      this.database.exec(`
+        ${toolCallSchemaSql()}
+        PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     });
     await this.healthCheck();
@@ -345,6 +357,102 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         `).run(now, attemptId);
       }
       return true;
+    });
+  }
+
+  async beginToolCall(
+    claim: ContinuationClaim,
+    request: ContinuationToolRequest,
+    now: string,
+  ): Promise<ContinuationToolCallDecision> {
+    validateToolRequest(request);
+    return this.transaction(() => {
+      const current = this.assertActiveClaim(claim);
+      const requestHash = toolRequestHash(request);
+      const existing = this.database.prepare(`
+        SELECT call_id, tool_name, request_hash, status, result_json
+        FROM continuation_tool_calls
+        WHERE job_id = ? AND step_index = ?
+      `).get(current.jobId, current.stepCount);
+      if (existing) {
+        const callId = stringField(existing, 'call_id');
+        if (
+          stringField(existing, 'tool_name') !== request.tool
+          || stringField(existing, 'request_hash') !== requestHash
+        ) {
+          return { status: 'conflict', callId };
+        }
+        if (stringField(existing, 'status') === 'completed') {
+          return {
+            status: 'replay',
+            callId,
+            result: parseToolResult(existing.result_json),
+          };
+        }
+        return { status: 'unknown', callId };
+      }
+
+      const callId = toolCallId(current.jobId, current.stepCount);
+      this.database.prepare(`
+        INSERT INTO continuation_tool_calls (
+          call_id, job_id, step_index, attempt_id, tool_name, request_hash,
+          status, started_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?)
+      `).run(
+        callId,
+        current.jobId,
+        current.stepCount,
+        claim.attempt.attemptId,
+        request.tool,
+        requestHash,
+        now,
+        now,
+      );
+      return { status: 'execute', callId };
+    });
+  }
+
+  async inspectToolCall(
+    claim: ContinuationClaim,
+  ): Promise<ContinuationToolCallRecovery | null> {
+    return this.transaction(() => {
+      const current = this.assertActiveClaim(claim);
+      const row = this.database.prepare(`
+        SELECT tool_name, status, result_json
+        FROM continuation_tool_calls
+        WHERE job_id = ? AND step_index = ?
+      `).get(current.jobId, current.stepCount);
+      if (!row) return null;
+      const tool = stringField(row, 'tool_name');
+      if (stringField(row, 'status') === 'completed') {
+        return { status: 'completed', tool, result: parseToolResult(row.result_json) };
+      }
+      return { status: 'unknown', tool };
+    });
+  }
+
+  async completeToolCall(
+    claim: ContinuationClaim,
+    callId: string,
+    result: ContinuationToolResult,
+    now: string,
+  ): Promise<void> {
+    validateToolResult(result);
+    this.transaction(() => {
+      const current = this.assertActiveClaim(claim);
+      const update = this.database.prepare(`
+        UPDATE continuation_tool_calls
+        SET status = 'completed', result_json = ?, completed_at = ?, updated_at = ?
+        WHERE call_id = ? AND job_id = ? AND step_index = ? AND status = 'running'
+      `).run(
+        JSON.stringify(result),
+        now,
+        now,
+        callId,
+        current.jobId,
+        current.stepCount,
+      );
+      assertOneChange(update.changes, current.jobId);
     });
   }
 
@@ -681,6 +789,11 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         SET route_json = ?, payload = '', error_summary = NULL, updated_at = ?
         WHERE job_id = ?
       `).run(JSON.stringify(emptyRoute()), now, jobId);
+      this.database.prepare(`
+        UPDATE continuation_tool_calls
+        SET tool_name = '', request_hash = '', result_json = NULL, updated_at = ?
+        WHERE job_id = ?
+      `).run(now, jobId);
       return true;
     });
   }
@@ -1040,6 +1153,25 @@ function jobSelectSql(): string {
   `;
 }
 
+function toolCallSchemaSql(): string {
+  return `
+    CREATE TABLE IF NOT EXISTS continuation_tool_calls (
+      call_id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
+      step_index INTEGER NOT NULL CHECK(step_index >= 0),
+      attempt_id TEXT NOT NULL REFERENCES continuation_attempts(attempt_id),
+      tool_name TEXT NOT NULL,
+      request_hash TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('running', 'completed')),
+      result_json TEXT,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE(job_id, step_index)
+    ) STRICT;
+  `;
+}
+
 function mapJob(row: SqlRow): ContinuationJob {
   return {
     jobId: stringField(row, 'job_id'),
@@ -1137,6 +1269,36 @@ function validateFinalResult(
   assertJsonBytes('result artifacts', artifacts, CONTINUATION_LIMITS.contextSnapshotBytes);
 }
 
+function validateToolRequest(request: ContinuationToolRequest): void {
+  if (!/^[A-Za-z0-9_.-]{1,80}$/.test(request.tool)) {
+    throw new Error('Continuation local CLI tool name is invalid.');
+  }
+  if (!Array.isArray(request.args) || !request.args.every((arg) => typeof arg === 'string')) {
+    throw new Error('Continuation local CLI tool args must be strings.');
+  }
+  assertJsonBytes('tool request', request, CONTINUATION_LIMITS.contextSnapshotBytes);
+}
+
+function validateToolResult(result: ContinuationToolResult): void {
+  if (typeof result.ok !== 'boolean' || typeof result.message !== 'string') {
+    throw new Error('Continuation local CLI tool result is invalid.');
+  }
+  assertJsonBytes('tool result', result, CONTINUATION_LIMITS.toolResultBytes);
+}
+
+function parseToolResult(value: SqlRow[string] | undefined): ContinuationToolResult {
+  const parsed = parseJson<unknown>(value, null);
+  if (
+    !parsed
+    || typeof parsed !== 'object'
+    || typeof (parsed as { ok?: unknown }).ok !== 'boolean'
+    || typeof (parsed as { message?: unknown }).message !== 'string'
+  ) {
+    throw new Error('Invalid continuation tool result in database.');
+  }
+  return parsed as ContinuationToolResult;
+}
+
 function boundedFailure(failure: ContinuationFailure): ContinuationFailure {
   return {
     errorCode: failure.errorCode.slice(0, 128) || 'continuation_failed',
@@ -1166,6 +1328,17 @@ function makeId(prefix: 'job' | 'att' | 'out'): string {
 
 function deliveryIdempotencyKey(jobId: string): string {
   return `ct_${createHash('sha256').update(jobId).digest('hex').slice(0, 32)}`;
+}
+
+function toolCallId(jobId: string, stepIndex: number): string {
+  return `call_${createHash('sha256')
+    .update(`${jobId}\0${stepIndex}`)
+    .digest('hex')
+    .slice(0, 24)}`;
+}
+
+function toolRequestHash(request: ContinuationToolRequest): string {
+  return createHash('sha256').update(JSON.stringify(request)).digest('hex');
 }
 
 function addMilliseconds(timestamp: string, milliseconds: number): string {

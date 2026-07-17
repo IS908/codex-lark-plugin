@@ -25,6 +25,7 @@ assert.deepEqual(CONTINUATION_LIMITS, {
   acceptanceCriteriaCount: 32,
   contextSnapshotBytes: 64 * 1024,
   checkpointBytes: 64 * 1024,
+  toolResultBytes: 64 * 1024,
   finalMessageBytes: 256 * 1024,
   artifactCount: 20,
   managedArtifactBytesPerJob: 100 * 1024 * 1024,

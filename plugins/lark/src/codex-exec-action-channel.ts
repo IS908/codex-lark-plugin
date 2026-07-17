@@ -324,6 +324,9 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     ? [
         '  - {"type":"create_continuation_job","title":"...","objective":"...","acceptance_criteria":["..."],"context_snapshot":{"summary":"...","completed_steps":[],"remaining_steps":["..."],"constraints":[],"decisions":[],"references":[]},"required_tools":["..."],"working_directory":"."}',
         '    Use this only when work must continue after the current reply. The parent derives caller, route, session, model, retry policy, and Job ID; one turn may create at most one continuation.',
+        ...(localCliToolNames.length > 0
+          ? [`    For local CLI access, required_tools must use exact configured host tool names: ${localCliToolNames.join(', ')}. The declaration does not grant access; runtime config and caller policy are checked again.`]
+          : []),
       ]
     : [];
 

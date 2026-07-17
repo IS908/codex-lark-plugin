@@ -6,7 +6,11 @@ import { join } from 'node:path';
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
 
-const { registerLocalCliTools } = await import('../src/local-cli-tools.js');
+const {
+  LocalCliToolAbortedError,
+  registerLocalCliTools,
+  runConfiguredLocalCliToolAsCaller,
+} = await import('../src/local-cli-tools.js');
 const { IdentitySession, SYSTEM_FLUSH_CALLER } = await import('../src/identity-session.js');
 const { appConfig } = await import('../src/config.js');
 const { accessControlStore } = await import('../src/runtime-access-control.js');
@@ -123,6 +127,16 @@ try {
     assert.equal(ok.isError, undefined);
     assert.match(text(ok), /hello; echo hacked/);
     assert.doesNotMatch(text(ok), /\nhacked\n/);
+
+    const direct = await runConfiguredLocalCliToolAsCaller({
+      caller: 'ou_owner',
+      tool: 'owner_echo',
+      args: ['doc', '--title', 'trusted parent'],
+      configPath,
+      auditContext: { job_id: 'job_direct', attempt_id: 'att_direct' },
+    });
+    assert.equal(direct.ok, true);
+    assert.match(direct.message, /trusted parent/);
   }
 
   // 3. Prototype property tool names are treated as unconfigured, not executable configs.
@@ -215,6 +229,20 @@ try {
     });
     assert.equal(timeout.isError, true);
     assert.match(text(timeout), /timedOut/);
+
+    const abortController = new AbortController();
+    const aborted = runConfiguredLocalCliToolAsCaller({
+      caller: 'ou_other',
+      tool: 'bounded',
+      args: ['--sleep'],
+      configPath,
+      abortSignal: abortController.signal,
+    });
+    setTimeout(() => abortController.abort(), 10);
+    await assert.rejects(
+      aborted,
+      (error: unknown) => error instanceof LocalCliToolAbortedError,
+    );
 
     const capped = await run!({
       tool: 'bounded',

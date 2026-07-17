@@ -84,6 +84,12 @@ The current baseline is empty:
   delivery, clock, and audit contracts live in `src/ports/continuation.ts`.
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
   Lark terminal delivery, and composition live under `src/continuation/`.
+  The local CLI continuation adapter is parent-owned: the Codex process remains
+  network-disabled, while the adapter validates the exact `requiredTools` name
+  against `local-cli-tools.json` and the persisted creator before spawning one
+  configured command. A per-job/per-step SQLite call ledger stores only a
+  request fingerprint and bounded redacted result; completed calls replay the
+  result, while ambiguous in-flight calls block instead of executing again.
   Terminal state and its outbox row commit in one SQLite transaction; remote
   Lark delivery is reconciled separately and never claims distributed
   exactly-once semantics.

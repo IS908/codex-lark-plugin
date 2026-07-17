@@ -53,6 +53,20 @@ export interface RunConfiguredLocalCliToolOptions {
   configPath?: string;
 }
 
+export interface RunConfiguredLocalCliToolAsCallerOptions {
+  caller: string;
+  tool: string;
+  args?: string[];
+  configPath?: string;
+  abortSignal?: AbortSignal;
+  auditContext?: {
+    chat_id?: string;
+    thread_id?: string;
+    job_id?: string;
+    attempt_id?: string;
+  };
+}
+
 export interface RunConfiguredLocalCliToolResult {
   ok: boolean;
   message: string;
@@ -65,6 +79,13 @@ interface ProcessResult {
   truncated: boolean;
   stdout: string;
   stderr: string;
+}
+
+export class LocalCliToolAbortedError extends Error {
+  constructor() {
+    super('Local CLI tool execution was aborted.');
+    this.name = 'LocalCliToolAbortedError';
+  }
 }
 
 const TOOL_NAME_RE = /^[A-Za-z0-9_.-]{1,80}$/;
@@ -320,7 +341,9 @@ async function runProcess(
   timeoutMs: number,
   maxOutputBytes: number,
   env: NodeJS.ProcessEnv,
+  abortSignal?: AbortSignal,
 ): Promise<ProcessResult> {
+  if (abortSignal?.aborted) throw new LocalCliToolAbortedError();
   let stdout = '';
   let stderr = '';
   const outputState = { bytes: 0, truncated: false };
@@ -333,11 +356,29 @@ async function runProcess(
       env,
     });
 
+    let forceKillTimer: NodeJS.Timeout | undefined;
+    let terminating = false;
+    const terminate = () => {
+      if (terminating) return;
+      terminating = true;
+      child.kill('SIGTERM');
+      forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+      forceKillTimer.unref();
+    };
+    const onAbort = () => terminate();
+    abortSignal?.addEventListener('abort', onAbort, { once: true });
+    if (abortSignal?.aborted) onAbort();
+
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
-      setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
+      terminate();
     }, timeoutMs);
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      abortSignal?.removeEventListener('abort', onAbort);
+    };
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdout = appendCappedOutput(stdout, chunk, outputState, maxOutputBytes);
@@ -346,11 +387,15 @@ async function runProcess(
       stderr = appendCappedOutput(stderr, chunk, outputState, maxOutputBytes);
     });
     child.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
+      cleanup();
+      reject(abortSignal?.aborted ? new LocalCliToolAbortedError() : err);
     });
     child.on('close', (code, signal) => {
-      clearTimeout(timer);
+      cleanup();
+      if (abortSignal?.aborted) {
+        reject(new LocalCliToolAbortedError());
+        return;
+      }
       resolve({
         exitCode: code,
         signal,
@@ -379,6 +424,27 @@ export async function runConfiguredLocalCliTool(
   if (!caller) {
     await audit('run_local_cli_tool', null, auditArgs, 'denied');
     return { ok: false, message: `No active identity session for chat ${chat_id}.` };
+  }
+
+  return await runConfiguredLocalCliToolAsCaller({
+    caller,
+    tool,
+    args: requestedArgs,
+    configPath,
+    auditContext: { chat_id, thread_id },
+  });
+}
+
+export async function runConfiguredLocalCliToolAsCaller(
+  options: RunConfiguredLocalCliToolAsCallerOptions,
+): Promise<RunConfiguredLocalCliToolResult> {
+  const { caller, tool, configPath, abortSignal, auditContext } = options;
+  const requestedArgs = Array.isArray(options.args) ? options.args.map(String) : [];
+  const auditArgs = { tool, ...auditContext, args: redactArgs(requestedArgs) };
+
+  if (!caller) {
+    await audit('run_local_cli_tool', null, auditArgs, 'denied');
+    return { ok: false, message: 'Caller identity is required for local CLI execution.' };
   }
   if (caller === SYSTEM_FLUSH_CALLER) {
     await audit('run_local_cli_tool', caller, auditArgs, 'denied');
@@ -415,9 +481,17 @@ export async function runConfiguredLocalCliTool(
   const finalArgs = [...config.fixedArgs, ...requestedArgs];
   let result: ProcessResult;
   try {
-    result = await runProcess(config.command, finalArgs, config.timeoutMs, config.maxOutputBytes, buildProcessEnv(config));
+    result = await runProcess(
+      config.command,
+      finalArgs,
+      config.timeoutMs,
+      config.maxOutputBytes,
+      buildProcessEnv(config),
+      abortSignal,
+    );
   } catch (err: any) {
     await audit('run_local_cli_tool', caller, auditArgs, 'error');
+    if (err instanceof LocalCliToolAbortedError) throw err;
     return { ok: false, message: `Failed to execute local CLI tool "${tool}": ${err?.message ?? String(err)}` };
   }
 

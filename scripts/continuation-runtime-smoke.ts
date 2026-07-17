@@ -14,6 +14,7 @@ const traceRequests: Array<Pick<CodexExecRequest, 'traceLogId' | 'traceRunId'>> 
 const debugLines: string[] = [];
 const auditEvents: ContinuationAuditEvent[] = [];
 const delivered: string[] = [];
+const invokedTools: string[] = [];
 
 const runtime = await createContinuationRuntime({
   enabled: true,
@@ -27,6 +28,16 @@ const runtime = await createContinuationRuntime({
   retentionDays: 30,
   maxConcurrency: 1,
   configuredSandbox: 'workspace-write',
+  toolInvoker: {
+    async recover() { return null; },
+    async invoke(_claim, request) {
+      invokedTools.push(request.tool);
+      return {
+        status: 'completed',
+        result: { ok: true, message: '{"runtime":"tool-result"}' },
+      };
+    },
+  },
   clock,
   getTransport: () => ({} as never),
   runCodexExec: async (request) => {
@@ -34,7 +45,14 @@ const runtime = await createContinuationRuntime({
       traceLogId: request.traceLogId,
       traceRunId: request.traceRunId,
     });
-    return {
+    return traceRequests.length === 1 ? {
+      text: JSON.stringify({
+        outcome: 'tool_request',
+        tool: 'lark_cli',
+        args: ['doc', 'get'],
+      }),
+      sessionId: 'session_runtime',
+    } : {
       text: JSON.stringify({
         outcome: 'completed',
         final_message: 'Sensitive result body delivered to the user.',
@@ -81,7 +99,7 @@ const { job } = await runtime.service.createFromMessage({
     decisions: [],
     references: [],
   },
-  required_tools: [],
+  required_tools: ['lark_cli'],
 }, sourceMessage);
 
 await runtime.worker!.tick();
@@ -91,7 +109,8 @@ await waitFor(async () => (await runtime.service.getForActor(
 ))?.status === 'completed', 'runtime completion');
 await waitFor(() => delivered.length === 1, 'terminal delivery');
 
-assert.equal(traceRequests.length, 1);
+assert.equal(traceRequests.length, 2);
+assert.deepEqual(invokedTools, ['lark_cli']);
 assert.equal(traceRequests[0].traceLogId, job.jobId);
 assert.match(traceRequests[0].traceRunId ?? '', /^att_/);
 assert.ok(debugLines.some((line) => line.includes(job.jobId) && line.includes(traceRequests[0].traceRunId!)));

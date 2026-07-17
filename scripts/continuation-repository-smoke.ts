@@ -125,6 +125,42 @@ try {
     true,
   );
 
+  const toolRequest = { tool: 'lark_cli', args: ['doc', 'get', '--token', 'doc_1'] };
+  const newToolCall = await repository.beginToolCall(
+    firstClaim,
+    toolRequest,
+    '2026-07-17T00:00:10.100Z',
+  );
+  assert.equal(newToolCall.status, 'execute');
+  assert.match(newToolCall.callId, /^call_[a-f0-9]{24}$/);
+  await repository.completeToolCall(
+    firstClaim,
+    newToolCall.callId,
+    { ok: true, message: '{"document":"ok"}' },
+    '2026-07-17T00:00:10.200Z',
+  );
+  assert.deepEqual(await repository.inspectToolCall(firstClaim), {
+    status: 'completed',
+    tool: 'lark_cli',
+    result: { ok: true, message: '{"document":"ok"}' },
+  });
+  assert.deepEqual(
+    await repository.beginToolCall(firstClaim, toolRequest, '2026-07-17T00:00:10.300Z'),
+    {
+      status: 'replay',
+      callId: newToolCall.callId,
+      result: { ok: true, message: '{"document":"ok"}' },
+    },
+  );
+  assert.equal(
+    (await repository.beginToolCall(
+      firstClaim,
+      { ...toolRequest, args: ['doc', 'get', '--token', 'doc_2'] },
+      '2026-07-17T00:00:10.400Z',
+    )).status,
+    'conflict',
+  );
+
   await repository.completeStep(firstClaim, {
     executionSessionId: 'session-continuation-1',
     outcome: {
@@ -154,6 +190,24 @@ try {
     '2026-07-17T00:00:41.000Z',
   );
   assert.ok(secondClaim);
+  const unfinishedToolCall = await repository.beginToolCall(
+    secondClaim,
+    { tool: 'lark_cli', args: ['message', 'send'] },
+    '2026-07-17T00:00:11.100Z',
+  );
+  assert.equal(unfinishedToolCall.status, 'execute');
+  assert.deepEqual(await repository.inspectToolCall(secondClaim), {
+    status: 'unknown',
+    tool: 'lark_cli',
+  });
+  assert.deepEqual(
+    await repository.beginToolCall(
+      secondClaim,
+      { tool: 'lark_cli', args: ['message', 'send'] },
+      '2026-07-17T00:00:11.200Z',
+    ),
+    { status: 'unknown', callId: unfinishedToolCall.callId },
+  );
   await repository.completeStep(secondClaim, {
     executionSessionId: 'session-continuation-1',
     outcome: {
@@ -327,6 +381,48 @@ try {
 } finally {
   secondRepository.close();
   repository.close();
+}
+
+const migrationDatabasePath = join(root, 'migration', 'jobs.sqlite');
+const migrationArtifactsDir = join(root, 'migration', 'artifacts');
+const migrationSeed = await SqliteContinuationRepository.open({
+  databasePath: migrationDatabasePath,
+  artifactsDir: migrationArtifactsDir,
+});
+migrationSeed.close();
+const { DatabaseSync } = await import('node:sqlite');
+const versionOneDatabase = new DatabaseSync(migrationDatabasePath);
+versionOneDatabase.exec(`
+  DROP TABLE continuation_tool_calls;
+  PRAGMA user_version = 1;
+`);
+versionOneDatabase.close();
+const migratedRepository = await SqliteContinuationRepository.open({
+  databasePath: migrationDatabasePath,
+  artifactsDir: migrationArtifactsDir,
+});
+try {
+  await migratedRepository.healthCheck();
+  const migratedJob = await migratedRepository.create(createRequest('migrated', {
+    requiredTools: ['lark_cli'],
+  }));
+  const migratedClaim = await migratedRepository.claimDue(
+    'worker-migrated',
+    baseNow,
+    '2026-07-17T00:00:30.000Z',
+  );
+  assert.equal(migratedClaim?.job.jobId, migratedJob.job.jobId);
+  assert.ok(migratedClaim);
+  assert.equal(
+    (await migratedRepository.beginToolCall(
+      migratedClaim,
+      { tool: 'lark_cli', args: [] },
+      baseNow,
+    )).status,
+    'execute',
+  );
+} finally {
+  migratedRepository.close();
 }
 
 console.log('continuation repository smoke: PASS');
