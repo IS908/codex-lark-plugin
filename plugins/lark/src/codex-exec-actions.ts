@@ -298,7 +298,7 @@ async function executeCreateContinuation(
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
   if (!deps.continuationService) {
-    void audit(
+    await audit(
       'create_continuation_job',
       context.message.senderId,
       { source_message_id: context.message.messageId },
@@ -340,10 +340,17 @@ async function executeCreateContinuation(
       context.parentSessionId,
       context.model,
     );
-    void audit(
+    await audit(
       'create_continuation_job',
       context.message.senderId,
-      { job_id: job.jobId, source_message_id: context.message.messageId },
+      {
+        job_id: job.jobId,
+        source_message_id: context.message.messageId,
+        capability_profile: job.permissions.profile,
+        requested_paths: job.permissions.filesystem.requestedPaths,
+        network: job.permissions.network,
+        external_side_effects: job.permissions.externalSideEffects,
+      },
       'ok',
     );
     return {

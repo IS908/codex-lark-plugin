@@ -119,6 +119,8 @@ async function main() {
     retentionDays: appConfig.continuationRetentionDays,
     maxConcurrency: appConfig.continuationMaxConcurrency,
     configuredSandbox: appConfig.codexExecSandbox,
+    canUseTrustedPersonalWorkspace: (actorOpenId) =>
+      actorOpenId === appConfig.ownerOpenId || accessControlStore.isAllowedUserId(actorOpenId),
     command: appConfig.codexExecCommand,
     localCliToolsConfigPath: appConfig.localCliToolsConfigPath,
     getTransport: () => channel.getLarkTransport(),

@@ -84,8 +84,13 @@ The current baseline is empty:
   delivery, clock, and audit contracts live in `src/ports/continuation.ts`.
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
   Lark terminal delivery, and composition live under `src/continuation/`.
-  The local CLI continuation adapter is parent-owned: the Codex process remains
-  network-disabled and keeps standard Codex tools inside the sandbox. The
+  The local CLI continuation adapter is parent-owned. Standard Codex tools stay
+  inside the sandbox. The default continuation profile remains network-disabled;
+  an owner or `allowed_user_ids` member can explicitly select the audited
+  `trusted_personal_workspace` profile, which requests `disk-full-read-access`,
+  enables network, and revalidates creator eligibility before every attempt
+  under the current trust-first policy. Canonical `requested_paths` are
+  admission/audit metadata rather than an initial read allowlist. The
   external `required_tools` declaration is reserved for additional host CLI
   names; creation rejects names absent from `local-cli-tools.json`, while the
   adapter revalidates the exact persisted `requiredTools` name against current

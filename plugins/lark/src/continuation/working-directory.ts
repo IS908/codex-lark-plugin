@@ -7,6 +7,8 @@ const EXISTING_DIRECTORY_ERROR =
   'Continuation working directory must be an existing directory, and configured roots must exist.';
 const OUTSIDE_ROOT_ERROR =
   'Continuation working directory resolves outside the configured continuation working root.';
+const REQUESTED_PATH_ERROR =
+  'Continuation requested path must exist and be accessible.';
 
 export class ContinuationWorkingDirectoryError extends Error {
   constructor(message: string) {
@@ -57,6 +59,36 @@ export async function validateContinuationWorkingDirectory(
   }
   for (const root of realRoots) assertLexicallyContained(root, realCandidate);
   return realCandidate;
+}
+
+export async function resolveContinuationRequestedPaths(
+  configuredRoot: string,
+  requestedPaths: string[],
+): Promise<string[]> {
+  const root = requireAbsoluteRoot(configuredRoot);
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+  for (const requestedPath of requestedPaths) {
+    const value = requestedPath.trim();
+    if (!value || value.includes('\0')) {
+      throw new ContinuationWorkingDirectoryError(REQUESTED_PATH_ERROR);
+    }
+    const candidate = path.isAbsolute(value) ? path.resolve(value) : path.resolve(root, value);
+    let canonical: string;
+    try {
+      canonical = await fs.realpath(candidate);
+      await fs.stat(canonical);
+    } catch {
+      throw new ContinuationWorkingDirectoryError(
+        `Continuation requested path does not exist or is not accessible: ${value}`,
+      );
+    }
+    if (!seen.has(canonical)) {
+      seen.add(canonical);
+      resolved.push(canonical);
+    }
+  }
+  return resolved;
 }
 
 function requireAbsoluteRoot(root: string): string {

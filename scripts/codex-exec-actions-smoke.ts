@@ -343,6 +343,12 @@ try {
           job: {
             jobId: `job_created_${continuationCreates.length}`,
             title: action.title,
+            permissions: {
+              profile: 'bounded',
+              filesystem: { requestedPaths: [] },
+              network: 'none',
+              externalSideEffects: 'denied',
+            },
           },
           created: true,
         };

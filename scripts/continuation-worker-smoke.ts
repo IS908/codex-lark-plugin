@@ -40,9 +40,11 @@ function createJob(suffix: string): ContinuationJob {
     requiredTools: [],
     workingDirectory: '/tmp',
     permissions: {
-      filesystem: { root: '/tmp', mode: 'workspace-write' },
+      profile: 'bounded',
+      filesystem: { root: '/tmp', mode: 'workspace-write', requestedPaths: [] },
       hostTools: [],
       network: 'none',
+      externalSideEffects: 'denied',
       approval: { mode: 'never' },
     },
     maxSteps: 24,
@@ -177,8 +179,12 @@ async function waitFor(predicate: () => boolean, label: string): Promise<void> {
 }
 
 const auditEvents: string[] = [];
+const auditDetails: string[] = [];
 const audit: ContinuationAudit = {
-  async record(event) { auditEvents.push(`${event.action}:${event.result}`); },
+  async record(event) {
+    auditEvents.push(`${event.action}:${event.result}`);
+    if (event.detail) auditDetails.push(`${event.action}:${event.detail}`);
+  },
 };
 
 // Normal execution and terminal delivery are independent paths.
@@ -415,5 +421,8 @@ await stopWorker.tick();
 assert.equal(stopHarness.claimCalls, claimsBeforeStop);
 
 assert.ok(auditEvents.includes('continuation.execute:ok'));
+assert.ok(auditEvents.includes('continuation.execute.start:ok'));
+assert.ok(auditDetails.some((detail) =>
+  /continuation\.execute\.start:profile=bounded network=none external_side_effects=denied/.test(detail)));
 assert.ok(auditEvents.includes('continuation.deliver:ok'));
 console.log('continuation worker smoke: PASS');

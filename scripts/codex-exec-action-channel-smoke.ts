@@ -24,6 +24,16 @@ assert.match(
   }).join('\n'),
   /Configured continuation working root: "\/Users\/you\/workspace"/,
 );
+const trustedContinuationPrompt = buildCodexExecActionChannelPrompt({
+  enabled: true,
+  filePath: '/tmp/actions',
+  token: 'token',
+  maxActions: 5,
+  continuationEnabled: true,
+  continuationTrustedPersonalWorkspaceAvailable: true,
+}).join('\n');
+assert.match(trustedContinuationPrompt, /trusted_personal_workspace/);
+assert.match(trustedContinuationPrompt, /requested_paths/);
 const noHostToolContinuationPrompt = buildCodexExecActionChannelPrompt({
   enabled: true,
   filePath: '/tmp/actions',
@@ -34,6 +44,7 @@ const noHostToolContinuationPrompt = buildCodexExecActionChannelPrompt({
 assert.match(noHostToolContinuationPrompt, /"required_tools":\[\]/);
 assert.match(noHostToolContinuationPrompt, /No continuation host CLI tools are configured/);
 assert.match(noHostToolContinuationPrompt, /Do not declare standard Codex tools/i);
+assert.doesNotMatch(noHostToolContinuationPrompt, /trusted_personal_workspace/);
 assert.match(
   buildCodexExecActionChannelPrompt({
     enabled: true,

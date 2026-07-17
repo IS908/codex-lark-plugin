@@ -41,9 +41,11 @@ function createRequest(
     requiredTools: [],
     workingDirectory: root,
     permissions: {
-      filesystem: { root, mode: 'workspace-write' },
+      profile: 'bounded',
+      filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
       hostTools: [],
       network: 'none',
+      externalSideEffects: 'denied',
       approval: { mode: 'never' },
     },
     maxSteps: 24,
@@ -363,9 +365,11 @@ try {
   assert.equal(redacted?.objective, '');
   assert.equal(redacted?.contextSnapshot.summary, '');
   assert.deepEqual(redacted?.permissions, {
-    filesystem: { root: '', mode: 'read-only' },
+    profile: 'bounded',
+    filesystem: { root: '', mode: 'read-only', requestedPaths: [] },
     hostTools: [],
     network: 'none',
+    externalSideEffects: 'denied',
     approval: { mode: 'never' },
   });
 
@@ -391,6 +395,28 @@ try {
     '2026-07-17T00:03:00.000Z',
   );
   assert.ok(purged >= 2, `expected completed/cancelled rows to be redacted, got ${purged}`);
+
+  const legacyEnvelope = await repository.create(createRequest('legacy-envelope'));
+  const { DatabaseSync } = await import('node:sqlite');
+  const rawDatabase = new DatabaseSync(databasePath);
+  rawDatabase.prepare('UPDATE continuation_jobs SET permissions_json = ? WHERE job_id = ?').run(
+    JSON.stringify({
+      filesystem: { root, mode: 'workspace-write' },
+      hostTools: [],
+      network: 'none',
+      approval: { mode: 'never' },
+    }),
+    legacyEnvelope.job.jobId,
+  );
+  rawDatabase.close();
+  assert.deepEqual((await repository.get(legacyEnvelope.job.jobId))?.permissions, {
+    profile: 'bounded',
+    filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
+    hostTools: [],
+    network: 'none',
+    externalSideEffects: 'denied',
+    approval: { mode: 'never' },
+  });
 } finally {
   secondRepository.close();
   repository.close();
@@ -408,9 +434,11 @@ const legacyV2Job = await migrationSeed.create(createRequest('legacy-v2', {
   workingDirectory: legacyWorkingDirectory,
   requiredTools: ['lark_cli'],
   permissions: {
-    filesystem: { root: root, mode: 'read-only' },
+    profile: 'bounded',
+    filesystem: { root: root, mode: 'read-only', requestedPaths: [] },
     hostTools: ['lark_cli'],
     network: 'none',
+    externalSideEffects: 'denied',
     approval: { mode: 'never' },
   },
 }));
@@ -430,17 +458,21 @@ const migratedRepository = await SqliteContinuationRepository.open({
 try {
   await migratedRepository.healthCheck();
   assert.deepEqual((await migratedRepository.get(legacyV2Job.job.jobId))?.permissions, {
-    filesystem: { root: legacyWorkingDirectory, mode: 'workspace-write' },
+    profile: 'bounded',
+    filesystem: { root: legacyWorkingDirectory, mode: 'workspace-write', requestedPaths: [] },
     hostTools: ['lark_cli'],
     network: 'none',
+    externalSideEffects: 'denied',
     approval: { mode: 'never' },
   });
   const migratedJob = await migratedRepository.create(createRequest('migrated', {
     requiredTools: ['lark_cli'],
     permissions: {
-      filesystem: { root, mode: 'workspace-write' },
+      profile: 'bounded',
+      filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
       hostTools: ['lark_cli'],
       network: 'none',
+      externalSideEffects: 'denied',
       approval: { mode: 'never' },
     },
   }));
@@ -471,9 +503,11 @@ const versionOneSeed = await SqliteContinuationRepository.open({
 const legacyV1Job = await versionOneSeed.create(createRequest('legacy-v1', {
   requiredTools: ['lark_cli'],
   permissions: {
-    filesystem: { root, mode: 'workspace-write' },
+    profile: 'bounded',
+    filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
     hostTools: ['lark_cli'],
     network: 'none',
+    externalSideEffects: 'denied',
     approval: { mode: 'never' },
   },
 }));
@@ -492,9 +526,11 @@ const migratedVersionOneRepository = await SqliteContinuationRepository.open({
 try {
   await migratedVersionOneRepository.healthCheck();
   assert.deepEqual((await migratedVersionOneRepository.get(legacyV1Job.job.jobId))?.permissions, {
-    filesystem: { root, mode: 'workspace-write' },
+    profile: 'bounded',
+    filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
     hostTools: ['lark_cli'],
     network: 'none',
+    externalSideEffects: 'denied',
     approval: { mode: 'never' },
   });
   const v1Claim = await migratedVersionOneRepository.claimDue(

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-07-17
+
+### Added
+- Added an explicit `trusted_personal_workspace` continuation profile for the configured owner and current `allowed_user_ids` members, with canonical `requested_paths`, Codex `disk-full-read-access`, sandbox network access, and trust-based external operations.
+- Force sanitized command/tool traces for trusted continuation attempts, correlated by durable Job ID and attempt ID even when ordinary exec tracing is disabled.
+
+### Changed
+- Persist semantic capability profile, requested paths, network mode, and external-side-effect mode in the existing permission envelope while reading pre-2.3.0 envelopes conservatively as `bounded`.
+- Correlate continuation audit lines by Job ID and record the permission snapshot before execution; revalidate trusted-profile creator eligibility before every attempt.
+
+### Security
+- Keep `bounded` as the implicit default with network and external effects disabled. Trusted authority requires explicit task opt-in plus owner or `allowed_user_ids` eligibility; removal from that list blocks later attempts.
+
 ## [2.2.2] - 2026-07-17
 
 ### Fixed

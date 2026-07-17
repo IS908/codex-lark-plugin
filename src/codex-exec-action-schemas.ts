@@ -194,6 +194,10 @@ export const CreateContinuationActionSchema = z.object({
   ))
     .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
   working_directory: RelativeContinuationDirectorySchema.optional(),
+  capability_profile: z.enum(['bounded', 'trusted_personal_workspace']).optional(),
+  requested_paths: z.array(z.string().trim().min(1).max(4096))
+    .max(CONTINUATION_LIMITS.requestedPathCount)
+    .optional(),
 }).strict();
 export type CreateContinuationAction = z.infer<typeof CreateContinuationActionSchema>;
 
@@ -212,6 +216,24 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
   RecallMessageActionSchema,
   CreateContinuationActionSchema,
 ]).superRefine((action, ctx) => {
+  if (action.type === 'create_continuation_job') {
+    const profile = action.capability_profile ?? 'bounded';
+    if (profile === 'trusted_personal_workspace' && !action.requested_paths?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['requested_paths'],
+        message: 'requested_paths is required for trusted_personal_workspace',
+      });
+    }
+    if (profile === 'bounded' && action.requested_paths !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['requested_paths'],
+        message: 'requested_paths is available only with trusted_personal_workspace',
+      });
+    }
+  }
+
   if (
     (action.type === 'update_job' || action.type === 'disable_job' || action.type === 'delete_job') &&
     !action.job_id &&

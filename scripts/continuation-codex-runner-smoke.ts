@@ -12,6 +12,7 @@ process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
 process.env.LARK_CODEX_EXEC_TOOL_TRACE = 'false';
 process.env.LARK_DEBUG_LOG = join(root, 'debug.log');
+process.env.LARK_CODEX_EXEC_TRACE_LOG = join(root, 'trace.log');
 const {
   CONTINUATION_OUTPUT_SCHEMA,
   createContinuationCodexExecutor,
@@ -51,9 +52,11 @@ function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
     requiredTools,
     workingDirectory: canonicalRoot,
     permissions: {
-      filesystem: { root: canonicalRoot, mode: 'workspace-write' },
+      profile: 'bounded',
+      filesystem: { root: canonicalRoot, mode: 'workspace-write', requestedPaths: [] },
       hostTools: requiredTools,
       network: 'none',
+      externalSideEffects: 'denied',
       approval: { mode: 'never' },
     },
     model: 'gpt-5.4',
@@ -189,6 +192,7 @@ await writeFile(fakeCodex, [
   '  schemaMode: fs.statSync(schemaFile).mode & 0o777,',
   '}));',
   'console.log(JSON.stringify({ type: "thread.started", thread_id: "session-schema" }));',
+  'console.log(JSON.stringify({ type: "item.completed", item: { type: "command_execution", id: "item_audit", status: "completed", command: "git status --short" } }));',
   'fs.writeFileSync(outputFile, JSON.stringify({ outcome: "completed" }));',
 ].join('\n'), 'utf-8');
 await chmod(fakeCodex, 0o755);
@@ -211,6 +215,22 @@ assert.equal(observation.schemaMode, 0o600);
 assert.ok(observation.args.includes('--output-schema'));
 const observedSchemaPath = observation.args[observation.args.indexOf('--output-schema') + 1];
 await assert.rejects(stat(observedSchemaPath), /ENOENT/);
+
+await runCodexExecCommand({
+  prompt: 'forced trace',
+  command: fakeCodex,
+  cwd: root,
+  timeoutMs: 5_000,
+  outputSchema: CONTINUATION_OUTPUT_SCHEMA,
+  traceLogId: 'job_forced_trace',
+  traceRunId: 'att_forced_trace',
+  forceToolTrace: true,
+  extraEnv: { OBSERVATION_PATH: observationPath },
+});
+const forcedTrace = await readFile(join(root, 'trace.log'), 'utf-8');
+assert.match(forcedTrace, /job_forced_trace/);
+assert.match(forcedTrace, /item_audit/);
+assert.match(forcedTrace, /git status --short/);
 
 const abortCodex = join(root, 'abort-codex.js');
 const abortReadyPath = join(root, 'abort-ready');
@@ -350,6 +370,82 @@ assert.deepEqual(firstRequest.configOverrides, [
   'sandbox_workspace_write.network_access=false',
 ]);
 assert.deepEqual(firstRequest.additionalWritableDirs, [artifactRoot]);
+assert.equal(firstRequest.forceToolTrace, undefined);
+
+const trustedRequests: CodexExecRequest[] = [];
+const trustedExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  canUseTrustedPersonalWorkspace: () => true,
+  runCodexExec: async (request) => {
+    trustedRequests.push(request);
+    return {
+      text: JSON.stringify(wireOutcome({
+        outcome: 'completed',
+        final_message: 'trusted complete',
+      })),
+    };
+  },
+});
+await trustedExecutor.execute(createClaim({
+  permissions: {
+    profile: 'trusted_personal_workspace',
+    filesystem: {
+      root: canonicalRoot,
+      mode: 'workspace-write',
+      requestedPaths: ['/tmp/example-repository'],
+    },
+    hostTools: [],
+    network: 'enabled',
+    externalSideEffects: 'allowed',
+    approval: { mode: 'never' },
+  },
+}), signal);
+assert.deepEqual(trustedRequests[0].configOverrides, [
+  'approval_policy="never"',
+  'sandbox_permissions=["disk-full-read-access"]',
+  'sandbox_workspace_write.network_access=true',
+]);
+assert.equal(trustedRequests[0].forceToolTrace, true);
+assert.match(trustedRequests[0].prompt, /trusted_personal_workspace/);
+assert.match(trustedRequests[0].prompt, /external side effects.*allowed/i);
+assert.match(trustedRequests[0].prompt, /\/tmp\/example-repository/);
+
+let revokedTrustedCodexCalls = 0;
+const revokedTrustedExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  canUseTrustedPersonalWorkspace: () => false,
+  runCodexExec: async () => {
+    revokedTrustedCodexCalls += 1;
+    return { text: JSON.stringify(wireOutcome({ final_message: 'must not run' })) };
+  },
+});
+const revokedTrusted = await revokedTrustedExecutor.execute(createClaim({
+  permissions: {
+    profile: 'trusted_personal_workspace',
+    filesystem: {
+      root: canonicalRoot,
+      mode: 'workspace-write',
+      requestedPaths: ['/tmp/example-repository'],
+    },
+    hostTools: [],
+    network: 'enabled',
+    externalSideEffects: 'allowed',
+    approval: { mode: 'never' },
+  },
+}), signal);
+assert.equal(revokedTrustedCodexCalls, 0);
+assert.deepEqual(revokedTrusted.outcome, {
+  outcome: 'blocked',
+  errorCode: 'continuation_trusted_profile_revoked',
+  errorSummary: 'The creator is no longer eligible for trusted_personal_workspace.',
+  requiredCapability: 'trusted_personal_workspace',
+  completedWork: [],
+  unperformedWork: ['Restore owner or allowed_user_ids eligibility, then retry the task.'],
+});
 
 const readOnlyRequests: CodexExecRequest[] = [];
 const readOnlyExecutor = createContinuationCodexExecutor({
@@ -365,9 +461,11 @@ const readOnlyExecutor = createContinuationCodexExecutor({
 });
 await readOnlyExecutor.execute(createClaim({
   permissions: {
-    filesystem: { root: canonicalRoot, mode: 'read-only' },
+    profile: 'bounded',
+    filesystem: { root: canonicalRoot, mode: 'read-only', requestedPaths: [] },
     hostTools: [],
     network: 'none',
+    externalSideEffects: 'denied',
     approval: { mode: 'never' },
   },
 }), signal);
@@ -408,9 +506,11 @@ const interactiveApprovalExecutor = createContinuationCodexExecutor({
 });
 const interactiveApproval = await interactiveApprovalExecutor.execute(createClaim({
   permissions: {
-    filesystem: { root: canonicalRoot, mode: 'workspace-write' },
+    profile: 'bounded',
+    filesystem: { root: canonicalRoot, mode: 'workspace-write', requestedPaths: [] },
     hostTools: [],
     network: 'none',
+    externalSideEffects: 'denied',
     approval: { mode: 'interactive' },
   },
 }), signal);

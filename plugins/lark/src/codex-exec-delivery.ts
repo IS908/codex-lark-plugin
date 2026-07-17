@@ -34,6 +34,7 @@ import {
 } from './codex-exec-action-channel.js';
 import { listConfiguredLocalCliToolNames } from './local-cli-tools.js';
 import { logSafeError } from './safe-log.js';
+import { accessControlStore } from './runtime-access-control.js';
 
 export interface CodexExecDeliveryOptions {
   message: LarkMessage;
@@ -131,6 +132,9 @@ async function enrichCodexExecActionPromptInfo(
       && message.messageType !== 'reaction'
       && ['p2p', 'group', 'doc_comment'].includes(message.chatType),
     continuationWorkingRoot: appConfig.continuationWorkingRoot,
+    continuationTrustedPersonalWorkspaceAvailable:
+      message.senderId === appConfig.ownerOpenId
+      || accessControlStore.isAllowedUserId(message.senderId),
   };
   const exposeForegroundHostTools = appConfig.codexExecSandbox !== 'danger-full-access';
   if (!exposeForegroundHostTools && !baseInfo.continuationEnabled) return baseInfo;

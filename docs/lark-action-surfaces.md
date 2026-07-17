@@ -52,15 +52,22 @@ parent-process bridge for actions that must run safely even when the child
   rewritten into a safe notice.
 - `create_continuation_job` is foreground-only and is not an MCP tool. The
   background runner cannot invoke the foreground action bridge, send Lark
-  messages, create nested jobs, or publish source control. Its only host action
-  is one `run_local_cli_tool` request per step through the dedicated continuation
-  invoker; `required_tools`, configured tool policy, persisted creator identity,
-  and the durable no-blind-replay ledger must all accept the call. Terminal
-  delivery remains parent-owned.
+  messages, or create nested jobs. The default `bounded` profile also disables
+  network and source-control publishing. The owner or an `allowed_user_ids`
+  member may explicitly request `trusted_personal_workspace` with audited
+  `requested_paths`; this enables network and trust-based external operations
+  without adding foreground bridge actions. One `run_local_cli_tool` request per
+  step remains available through the dedicated continuation invoker;
+  `required_tools`, configured tool policy, persisted creator identity, and the
+  durable no-blind-replay ledger must all accept the call. Terminal delivery
+  remains parent-owned.
 - `required_tools` is intentionally host-bridge-only. Standard Codex tools such
   as `exec_command` and `apply_patch` execute inside the continuation sandbox and
   are not declarations. Unknown host-tool names are rejected before Job
   persistence; an empty array is the normal value for repository inspection.
+- `requested_paths` is semantic preflight/audit metadata for the explicit
+  trusted profile. Canonicalization proves that the target exists; the initial
+  trust-first implementation does not treat the list as a read allowlist.
 - Capabilities should be added to exec actions only when there is a clear need
   for the parent-process bridge. Otherwise, prefer MCP tools.
 
