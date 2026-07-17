@@ -359,6 +359,8 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     '  - {"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"public|private","mode":"append|replace"}',
     '  - {"type":"create_job","name":"...","job_type":"prompt|message","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","target_chat_id":"...","model":"..."}',
     '  - {"type":"list_jobs","status":"active|paused|all"}',
+    '  - {"type":"run_job","job_id":"..."} or {"type":"run_job","name":"unique existing job name"}',
+    '    Use run_job to execute an existing cronjob immediately from its persisted definition. Do not reconstruct a cronjob rerun as a continuation.',
     '  - {"type":"update_job","job_id":"...","name":"...","new_name":"...","status":"active|paused","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","model":"..."}',
     '  - {"type":"disable_job","job_id":"..."} or {"type":"delete_job","job_id":"..."}',
     '  - {"type":"upsert_job","name":"...","job_type":"prompt|message","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","target_chat_id":"...","model":"...","status":"active|paused"}',

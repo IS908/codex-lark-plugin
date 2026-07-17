@@ -15,9 +15,13 @@ export interface LarkMessage {
   senderName?: string;
   chatName?: string;
   text: string;
+  /** Unenriched current-turn user text. Routing classifiers must not inspect stored memory or quoted content. */
+  currentUserText?: string;
   messageType: string;
   parentId?: string;
   parentContent?: string;
+  /** Trusted cronjob origin derived from locally tracked bot-message routing metadata. */
+  quotedCronJobId?: string;
   threadId?: string;
   rootMessageId?: string;
   timestampMs?: number;

@@ -32,6 +32,7 @@ export interface ChannelServicesOptions {
   turnObligations: TurnObligationTracker;
   actionDispatcher: CodexExecActionDispatcher | null;
   continuationWorker?: ContinuationWorker | null;
+  onSchedulerReady?: (scheduler: Pick<JobScheduler, 'runJobNow'>) => void;
 }
 
 export function createChannelServicesStarter(options: ChannelServicesOptions): () => Promise<void> {
@@ -53,6 +54,7 @@ async function startChannelServices(options: ChannelServicesOptions): Promise<vo
     turnObligations,
     actionDispatcher,
     continuationWorker,
+    onSchedulerReady,
   } = options;
 
   await buffer.rearmFromDisk();
@@ -87,6 +89,7 @@ async function startChannelServices(options: ChannelServicesOptions): Promise<vo
       await deliverMessageViaCodexExec({
         message,
         displayLabel: `CronJob · ${job.meta.name}`,
+        modelOverride: job.meta.model,
         sessionStore,
         traceLogId: job.meta.id,
         traceRunId: runId,
@@ -125,6 +128,7 @@ async function startChannelServices(options: ChannelServicesOptions): Promise<vo
       };
     },
   });
+  onSchedulerReady?.(scheduler);
   await scheduler.start();
   continuationWorker?.start();
   console.error('[index] codex-lark-plugin channel services started');

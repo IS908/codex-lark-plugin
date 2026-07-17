@@ -9,7 +9,11 @@ import assert from 'node:assert/strict';
 import { appendFile, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildCodexExecPrompt, deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
+import {
+  buildCodexExecPrompt,
+  deliverMessageViaCodexExec,
+  shouldExposeContinuationForMessage,
+} from '../src/codex-exec-delivery.js';
 import {
   buildCodexExecArgs,
   extractCodexExecSessionId,
@@ -68,6 +72,22 @@ const message: LarkMessage = {
 
 const execRequests: any[] = [];
 const replyRequests: ReplyRequest[] = [];
+
+assert.equal(shouldExposeContinuationForMessage({
+  ...message,
+  text: '[Memory Context]\nThe old report asked to continue in the background.\n[Current Message]\nping',
+  currentUserText: 'ping',
+}), false);
+assert.equal(shouldExposeContinuationForMessage({
+  ...message,
+  text: '帮我分析一下后台执行机制是否合理',
+  currentUserText: '帮我分析一下后台执行机制是否合理',
+}), false);
+assert.equal(shouldExposeContinuationForMessage({
+  ...message,
+  text: '把这个报告放到后台执行，完成后通知我',
+  currentUserText: '把这个报告放到后台执行，完成后通知我',
+}), true);
 
 const noMentionPrompt = buildCodexExecPrompt(
   {
@@ -210,7 +230,8 @@ assert.match(execRequests[0].prompt, /longer Lark\/Feishu replies/);
 assert.match(execRequests[0].prompt, /Keep short\/direct replies, code, logs, JSON, diffs, command output/);
 assert.match(execRequests[0].prompt, /Follow explicit user formatting first/);
 assert.match(execRequests[0].prompt, /facts, reasoning, judgments, and risks/);
-assert.match(execRequests[0].prompt, /no background continuation after the visible reply is posted/);
+assert.match(execRequests[0].prompt, /no implicit background continuation after the visible reply is posted/);
+assert.doesNotMatch(execRequests[0].prompt, /create_continuation_job/);
 assert.match(execRequests[0].prompt, /For cronjob schedule fields, use only supported recurring formats/);
 assert.match(execRequests[0].prompt, /Do not use one-off or natural-language aliases/);
 assert.match(execRequests[0].prompt, /Sandbox host-tool bridge/);
@@ -255,6 +276,7 @@ await deliverMessageViaCodexExec({
   message: {
     ...message,
     messageId: 'om_danger_continuation_tools',
+    text: '[Current Message]\n@Codex continue this in the background and notify me when done',
   },
   displayLabel: 'Kevin · Codex Test Group',
   useCodexSessions: false,
@@ -348,6 +370,7 @@ await deliverMessageViaCodexExec({
     threadId: 'job-daily-report-abc123def456-1760000000000',
   },
   displayLabel: 'CronJob · Daily Report',
+  modelOverride: 'gpt-5.2-cron',
   useCodexSessions: false,
   runCodexExec: async (request) => {
     cronExecRequests.push(request);
@@ -360,6 +383,7 @@ await deliverMessageViaCodexExec({
 });
 
 assert.equal(cronExecRequests[0].traceLogId, 'daily-report');
+assert.equal(cronExecRequests[0].model, 'gpt-5.2-cron');
 assert.deepEqual(cronReplies, [
   {
     chat_id: 'oc_cron_target',
@@ -538,6 +562,53 @@ await deliverMessageViaCodexExec({
 });
 assert.equal(lifecycleSafeReplies.length, 1);
 assert.equal(lifecycleSafeReplies[0].text, 'I cannot create the issue automatically. Here is a draft issue body.');
+
+const designDiscussionReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_followup_design_discussion',
+    text: '[Current Message]\n@Codex analyze the continuation design only',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () => '当前讨论的是系统设计；后续继续收紧 follow-up 边界即可。',
+  sendReply: async (request) => {
+    designDiscussionReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(
+  designDiscussionReplies[0].text,
+  '当前讨论的是系统设计；后续继续收紧 follow-up 边界即可。',
+);
+
+const firstPersonAnalysisReplies: ReplyRequest[] = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'om_first_person_analysis',
+    text: '[Current Message]\n@Codex analyze the routing trade-offs',
+  },
+  displayLabel: 'Kevin · Codex Test Group',
+  useCodexSessions: false,
+  runCodexExec: async () => '我认为这个处理流程应该继续收紧。',
+  sendReply: async (request) => {
+    firstPersonAnalysisReplies.push(request);
+    return { sentCount: 1 };
+  },
+});
+assert.equal(firstPersonAnalysisReplies[0].text, '我认为这个处理流程应该继续收紧。');
+
+const quotedCronPrompt = buildCodexExecPrompt({
+  ...message,
+  messageId: 'om_quoted_cron_rerun',
+  text: '重跑一下这个任务',
+  quotedCronJobId: 'covered-call',
+}, 'Kevin · Codex Test Group');
+assert.match(quotedCronPrompt, /quoted_cronjob_id: covered-call/);
+assert.match(quotedCronPrompt, /"type":"run_job","job_id":"covered-call"/);
+assert.match(quotedCronPrompt, /do not create a continuation/i);
 
 const continuationReplies: ReplyRequest[] = [];
 const continuationDispatches: any[] = [];

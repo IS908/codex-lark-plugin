@@ -74,6 +74,12 @@ export interface PromptJobRunnerResult {
 
 export type PromptJobRunner = (input: PromptJobRunnerInput) => Promise<PromptJobRunnerResult>;
 
+export interface RunJobNowResult {
+  started: boolean;
+  reason?: 'already_running';
+  outcome?: 'success' | 'failed';
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -246,6 +252,7 @@ export class JobScheduler {
   private promptRunner?: PromptJobRunner;
   private running = false;
   private ticking = false;
+  private activeJobIds = new Set<string>();
 
   constructor(opts: SchedulerOptions) {
     this.client = opts.client;
@@ -288,6 +295,11 @@ export class JobScheduler {
     }
     this.running = false;
     console.error('[scheduler] Stopped');
+  }
+
+  /** Run the persisted job definition immediately without changing its active/paused state. */
+  async runJobNow(job: JobFile): Promise<RunJobNowResult> {
+    return this.executeJob(job, { manual: true });
   }
 
   /**
@@ -355,7 +367,27 @@ export class JobScheduler {
    * - Permanent errors (permission denied, invalid params) fail immediately
    * - On final failure, records last_error and advances next_run_at
    */
-  private async executeJob(job: JobFile): Promise<void> {
+  private async executeJob(
+    job: JobFile,
+    options: { manual?: boolean } = {},
+  ): Promise<RunJobNowResult> {
+    if (this.activeJobIds.has(job.meta.id)) {
+      console.error(`[scheduler] Job ${job.meta.id} skipped: already running`);
+      return { started: false, reason: 'already_running' };
+    }
+    this.activeJobIds.add(job.meta.id);
+    try {
+      const outcome = await this.executeJobUnlocked(job, options);
+      return { started: true, outcome };
+    } finally {
+      this.activeJobIds.delete(job.meta.id);
+    }
+  }
+
+  private async executeJobUnlocked(
+    job: JobFile,
+    options: { manual?: boolean },
+  ): Promise<'success' | 'failed'> {
     const startTime = Date.now();
     const startedAt = new Date(startTime);
     const runId = String(startTime);
@@ -363,8 +395,11 @@ export class JobScheduler {
     let lastErr: any = null;
 
     for (let attempt = 0; attempt <= MAX_SCHEDULER_RETRIES; attempt++) {
-      const refreshed = await this.refreshRunnableJob(job, attempt);
-      if (!refreshed) return;
+      const refreshed = await this.refreshRunnableJob(job, attempt, options.manual ?? false);
+      if (!refreshed) {
+        if (options.manual) throw new Error(`Job ${job.meta.id} changed before the manual run could start.`);
+        return 'failed';
+      }
       if (refreshed !== job) {
         job.meta = refreshed.meta;
         job.runtime = refreshed.runtime;
@@ -397,13 +432,15 @@ export class JobScheduler {
           incrementRunCount: true,
           runId,
           outcome,
+          manual: options.manual ?? false,
         });
 
         if (!updated) {
           console.error(
             `[scheduler] Job ${job.meta.id} delivered, but runtime update was skipped because the job disappeared or was replaced`,
           );
-          return;
+          if (options.manual) throw new Error(`Job ${job.meta.id} changed while the manual run was executing.`);
+          return 'failed';
         }
         const persistedRunStatus = updated.runtime.run_status ?? outcome.runStatus;
         const persistedCompleted = updated.runtime.delivery_status !== 'pending' && persistedRunStatus !== 'started';
@@ -415,7 +452,7 @@ export class JobScheduler {
           console.error(`[scheduler] Job ${job.meta.id} ${persistedCompleted ? 'executed successfully' : 'started'} (run #${updated.runtime.run_count})`);
         }
 
-        return;
+        return persistedRunStatus === 'failed' ? 'failed' : 'success';
       } catch (err: any) {
         lastErr = err;
 
@@ -441,6 +478,7 @@ export class JobScheduler {
       startedAt,
       incrementRunCount: false,
       runId,
+      manual: options.manual ?? false,
       outcome: {
         runStatus: 'failed',
         outputStatus: cronJobReport ? 'generated' : outputStatusFor(job.meta.type === 'message' ? job.meta.content : null),
@@ -463,9 +501,11 @@ export class JobScheduler {
       console.error(
         `[scheduler] Job ${job.meta.id} failed${retryNote}, but runtime update was skipped because the job disappeared or was replaced: ${lastError}`,
       );
-      return;
+      if (options.manual) throw new Error(`Job ${job.meta.id} changed while the manual run was failing.`);
+      return 'failed';
     }
     console.error(`[scheduler] Job ${job.meta.id} failed${retryNote}${pauseNote}: ${job.runtime.last_error}`);
+    return 'failed';
   }
 
   private computeRunKey(job: JobFile, now: Date): string {
@@ -481,7 +521,11 @@ export class JobScheduler {
     }
   }
 
-  private async refreshRunnableJob(job: JobFile, attempt: number): Promise<JobFile | null> {
+  private async refreshRunnableJob(
+    job: JobFile,
+    attempt: number,
+    manual: boolean,
+  ): Promise<JobFile | null> {
     const latest = await readJob(job.meta.id);
     const label = attempt > 0 ? 'retry' : 'execution';
     if (!latest) {
@@ -492,7 +536,7 @@ export class JobScheduler {
       console.error(`[scheduler] Job ${job.meta.id} was replaced before ${label}; skipping stale run`);
       return null;
     }
-    if (latest.meta.status !== 'active') {
+    if (!manual && latest.meta.status !== 'active') {
       console.error(`[scheduler] Job ${job.meta.id} is ${latest.meta.status} before ${label}; skipping`);
       return null;
     }
@@ -506,6 +550,7 @@ export class JobScheduler {
       incrementRunCount: boolean;
       runId: string;
       outcome: JobExecutionOutcome;
+      manual: boolean;
     },
   ): Promise<JobFile | null> {
     let replaced = false;
@@ -515,7 +560,14 @@ export class JobScheduler {
         return false;
       }
       latest.runtime.last_run_at = result.startedAt.toISOString();
-      latest.runtime.next_run_at = computeNextRun(latest.meta.schedule, jobTimezone(latest.meta));
+      const existingNextRun = new Date(latest.runtime.next_run_at).getTime();
+      const shouldAdvanceSchedule = !result.manual || (
+        latest.meta.status === 'active'
+        && (!Number.isFinite(existingNextRun) || existingNextRun <= result.startedAt.getTime())
+      );
+      if (shouldAdvanceSchedule) {
+        latest.runtime.next_run_at = computeNextRun(latest.meta.schedule, jobTimezone(latest.meta));
+      }
       if (result.incrementRunCount) latest.runtime.run_count += 1;
       const alreadyRecordedDelivery =
         !result.outcome.completed &&

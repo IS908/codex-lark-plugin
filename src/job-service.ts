@@ -21,6 +21,7 @@ import {
 export type JobLifecycleAction =
   | 'create_job'
   | 'list_jobs'
+  | 'run_job'
   | 'update_job'
   | 'disable_job'
   | 'delete_job'
