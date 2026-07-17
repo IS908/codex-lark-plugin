@@ -17,8 +17,9 @@ import {
   type ContinuationExecutionResult,
   type ContinuationJob,
   type ContinuationStepOutcome,
+  type ContinuationToolRequest,
 } from '../domain/continuation.js';
-import type { ContinuationExecutor } from '../ports/continuation.js';
+import type { ContinuationExecutor, ContinuationToolInvoker } from '../ports/continuation.js';
 import { untrustedDataBlock } from '../prompts.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
 import { redactContinuationText } from './redaction.js';
@@ -28,6 +29,7 @@ export interface ContinuationCodexExecutorOptions {
   configuredSandbox: CodexExecSandbox;
   runCodexExec?: CodexExecRunner;
   command?: string;
+  toolInvoker?: ContinuationToolInvoker;
 }
 
 const compactString = z.string().max(CONTINUATION_LIMITS.objectiveBytes);
@@ -73,11 +75,18 @@ const blockedSchema = z.object({
   unperformed_work: compactStringList,
 }).strict();
 
+const toolRequestSchema = z.object({
+  outcome: z.literal('tool_request'),
+  tool: z.string().regex(/^[A-Za-z0-9_.-]{1,80}$/),
+  args: z.array(z.string().max(8 * 1024)).max(128),
+}).strict();
+
 const outcomeSchema = z.discriminatedUnion('outcome', [
   continueSchema,
   completedSchema,
   failedSchema,
   blockedSchema,
+  toolRequestSchema,
 ]);
 
 const checkpointJsonSchema = {
@@ -111,6 +120,20 @@ const workProperties = {
 export const CONTINUATION_OUTPUT_SCHEMA: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   oneOf: [
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['outcome', 'tool', 'args'],
+      properties: {
+        outcome: { const: 'tool_request' },
+        tool: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,80}$' },
+        args: {
+          type: 'array',
+          maxItems: 128,
+          items: { type: 'string', maxLength: 8192 },
+        },
+      },
+    },
     {
       type: 'object',
       additionalProperties: false,
@@ -205,23 +228,180 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         traceRunId: claim.attempt.attemptId,
       };
 
+      const recovery = await this.options.toolInvoker?.recover(claim);
+      if (recovery?.status === 'blocked') {
+        return {
+          outcome: blockedToolOutcome(
+            recovery.errorCode,
+            recovery.errorSummary,
+            recovery.tool,
+          ),
+        };
+      }
+      if (recovery?.status === 'completed') {
+        if (!recovery.result.ok) {
+          return {
+            outcome: blockedToolOutcome(
+              'continuation_tool_denied',
+              redactContinuationText(recovery.result.message),
+              recovery.tool,
+            ),
+          };
+        }
+        return await this.executeWithToolResult(
+          claim,
+          request,
+          { tool: recovery.tool, args: [] },
+          recovery.result.message,
+          claim.job.executionSessionId,
+          false,
+          true,
+          signal,
+        );
+      }
+
       const { result, replacedSession } = await this.executeWithResumeFallback(request);
       const outcome = await parseOutcome(
         result.text,
         claim.job.jobId,
         this.options.artifactStore,
       );
+      if (outcome.outcome === 'tool_request') {
+        return await this.executeToolRequest(
+          claim,
+          request,
+          outcome,
+          result.sessionId,
+          replacedSession,
+          signal,
+        );
+      }
       return {
-        ...(result.sessionId
-          ? { executionSessionId: result.sessionId }
-          : replacedSession
-            ? { executionSessionId: null }
-            : {}),
+        ...executionSessionPatch(result.sessionId, replacedSession),
         outcome,
       };
     } catch (error) {
       throw mapExecutorError(error);
     }
+  }
+
+  private async executeToolRequest(
+    claim: ContinuationClaim,
+    baseRequest: CodexExecRequest,
+    toolRequest: ContinuationToolRequest & { outcome: 'tool_request' },
+    firstSessionId: string | null | undefined,
+    firstReplacedSession: boolean,
+    signal: AbortSignal,
+  ): Promise<ContinuationExecutionResult> {
+    const firstSessionPatch = executionSessionPatch(firstSessionId, firstReplacedSession);
+    if (!claim.job.requiredTools.includes(toolRequest.tool)) {
+      return {
+        ...firstSessionPatch,
+        outcome: blockedToolOutcome(
+          'continuation_tool_not_declared',
+          `Local CLI tool "${toolRequest.tool}" was not declared in required_tools.`,
+          toolRequest.tool,
+        ),
+      };
+    }
+    if (!this.options.toolInvoker) {
+      return {
+        ...firstSessionPatch,
+        outcome: blockedToolOutcome(
+          'continuation_tool_unavailable',
+          `Local CLI tool "${toolRequest.tool}" is unavailable to continuation tasks.`,
+          toolRequest.tool,
+        ),
+      };
+    }
+
+    const invocation = await this.options.toolInvoker.invoke(
+      claim,
+      { tool: toolRequest.tool, args: toolRequest.args },
+      signal,
+    );
+    if (invocation.status === 'blocked') {
+      return {
+        ...firstSessionPatch,
+        outcome: blockedToolOutcome(
+          invocation.errorCode,
+          invocation.errorSummary,
+          toolRequest.tool,
+        ),
+      };
+    }
+    if (!invocation.result.ok) {
+      return {
+        ...firstSessionPatch,
+        outcome: blockedToolOutcome(
+          'continuation_tool_denied',
+          redactContinuationText(invocation.result.message),
+          toolRequest.tool,
+        ),
+      };
+    }
+
+    return await this.executeWithToolResult(
+      claim,
+      baseRequest,
+      toolRequest,
+      invocation.result.message,
+      firstSessionId,
+      firstReplacedSession,
+      false,
+      signal,
+    );
+  }
+
+  private async executeWithToolResult(
+    claim: ContinuationClaim,
+    baseRequest: CodexExecRequest,
+    toolRequest: ContinuationToolRequest,
+    resultMessage: string,
+    previousSessionId: string | null | undefined,
+    previousReplacedSession: boolean,
+    includeJobContext: boolean,
+    signal: AbortSignal,
+  ): Promise<ContinuationExecutionResult> {
+    const toolResultPrompt = buildContinuationToolResultPrompt(toolRequest, resultMessage);
+    const followupRequest: CodexExecRequest = {
+      ...baseRequest,
+      prompt: includeJobContext
+        ? `${baseRequest.prompt}\n\n${toolResultPrompt}`
+        : toolResultPrompt,
+      resumeSessionId: previousSessionId ?? baseRequest.resumeSessionId ?? null,
+      abortSignal: signal,
+    };
+    const followup = await this.executeWithResumeFallback(followupRequest);
+    const followupOutcome = await parseOutcome(
+      followup.result.text,
+      claim.job.jobId,
+      this.options.artifactStore,
+    );
+    if (followupOutcome.outcome === 'tool_request') {
+      return {
+        ...combinedExecutionSessionPatch(
+          followup.result.sessionId,
+          followup.replacedSession,
+          previousSessionId,
+          previousReplacedSession,
+        ),
+        outcome: blockedToolOutcome(
+          'continuation_tool_call_limit',
+          'Only one local CLI tool request is allowed per continuation step.',
+          followupOutcome.tool,
+        ),
+      };
+    }
+    return {
+      ...combinedExecutionSessionPatch(
+        followup.result.sessionId,
+        followup.replacedSession,
+        previousSessionId,
+        previousReplacedSession,
+      ),
+      outcome: followupOutcome,
+    };
   }
 
   private async executeWithResumeFallback(request: CodexExecRequest) {
@@ -259,7 +439,7 @@ async function parseOutcome(
   text: string,
   jobId: string,
   artifactStore: ContinuationArtifactStore,
-): Promise<ContinuationStepOutcome> {
+): Promise<ContinuationStepOutcome | (ContinuationToolRequest & { outcome: 'tool_request' })> {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -284,6 +464,10 @@ async function parseOutcome(
   }
 
   const value = parsed.data;
+  if (value.outcome === 'tool_request') {
+    assertByteLimit('tool request', value, CONTINUATION_LIMITS.contextSnapshotBytes);
+    return { outcome: 'tool_request', tool: value.tool, args: value.args };
+  }
   if (value.outcome === 'continue') {
     assertByteLimit('checkpoint', value.checkpoint, CONTINUATION_LIMITS.checkpointBytes);
     return {
@@ -357,6 +541,8 @@ function buildContinuationPrompt(job: ContinuationJob, artifactDir: string): str
     'Execute one bounded unattended slice of the task below.',
     'Return only one JSON object matching the supplied output schema.',
     'Do not request approval, send messages, create jobs, or perform source-control publishing actions.',
+    'Do not execute a required local CLI directly. When one configured tool is needed, return a tool_request outcome using an exact name from requiredTools; the trusted parent will validate and execute it.',
+    'At most one local CLI tool can be requested in this step.',
     'If a required capability is unavailable, return a blocked outcome instead of weakening the execution boundary.',
     `Workspace: ${job.workingDirectory}`,
     `Managed artifact directory: ${artifactDir}`,
@@ -364,6 +550,58 @@ function buildContinuationPrompt(job: ContinuationJob, artifactDir: string): str
     '',
     untrustedDataBlock('continuation-job-brief', JSON.stringify(brief, null, 2)),
   ].join('\n');
+}
+
+function buildContinuationToolResultPrompt(
+  request: ContinuationToolRequest,
+  message: string,
+): string {
+  return [
+    '[Continuation Tool Result]',
+    'The trusted parent executed the one allowed local CLI request for this step.',
+    'Use the result below to return a continue, completed, failed, or blocked outcome.',
+    'Do not request another tool in this step.',
+    '',
+    untrustedDataBlock('continuation-tool-result', JSON.stringify({
+      tool: request.tool,
+      result: redactContinuationText(message),
+    }, null, 2)),
+  ].join('\n');
+}
+
+function blockedToolOutcome(
+  errorCode: string,
+  errorSummary: string,
+  requiredCapability: string,
+): ContinuationStepOutcome {
+  return {
+    outcome: 'blocked',
+    errorCode: redactContinuationText(errorCode),
+    errorSummary: redactContinuationText(errorSummary),
+    requiredCapability: redactContinuationText(requiredCapability),
+    completedWork: [],
+    unperformedWork: ['Invoke the required local CLI tool.'],
+  };
+}
+
+function executionSessionPatch(
+  sessionId: string | null | undefined,
+  replacedSession: boolean,
+): Pick<ContinuationExecutionResult, 'executionSessionId'> | Record<string, never> {
+  if (sessionId) return { executionSessionId: sessionId };
+  if (replacedSession) return { executionSessionId: null };
+  return {};
+}
+
+function combinedExecutionSessionPatch(
+  sessionId: string | null | undefined,
+  replacedSession: boolean,
+  previousSessionId: string | null | undefined,
+  previousReplacedSession: boolean,
+): Pick<ContinuationExecutionResult, 'executionSessionId'> | Record<string, never> {
+  if (sessionId) return { executionSessionId: sessionId };
+  if (replacedSession) return { executionSessionId: null };
+  return executionSessionPatch(previousSessionId, previousReplacedSession);
 }
 
 function boundedSandbox(configured: CodexExecSandbox): Extract<CodexExecSandbox, 'read-only' | 'workspace-write'> {

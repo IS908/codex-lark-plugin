@@ -4,6 +4,7 @@ export const CONTINUATION_LIMITS = {
   acceptanceCriteriaCount: 32,
   contextSnapshotBytes: 64 * 1024,
   checkpointBytes: 64 * 1024,
+  toolResultBytes: 64 * 1024,
   finalMessageBytes: 256 * 1024,
   artifactCount: 20,
   managedArtifactBytesPerJob: 100 * 1024 * 1024,
@@ -114,6 +115,26 @@ export interface ContinuationClaim {
   workerId: string;
   claimedRowVersion: number;
 }
+
+export interface ContinuationToolRequest {
+  tool: string;
+  args: string[];
+}
+
+export interface ContinuationToolResult {
+  ok: boolean;
+  message: string;
+}
+
+export type ContinuationToolCallDecision =
+  | { status: 'execute'; callId: string }
+  | { status: 'replay'; callId: string; result: ContinuationToolResult }
+  | { status: 'unknown'; callId: string }
+  | { status: 'conflict'; callId: string };
+
+export type ContinuationToolCallRecovery =
+  | { status: 'completed'; tool: string; result: ContinuationToolResult }
+  | { status: 'unknown'; tool: string };
 
 export type ContinuationStepOutcome =
   | {

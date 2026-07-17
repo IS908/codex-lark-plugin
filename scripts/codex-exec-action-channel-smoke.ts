@@ -23,6 +23,17 @@ assert.match(
   }).join('\n'),
   /create_continuation_job/,
 );
+assert.match(
+  buildCodexExecActionChannelPrompt({
+    enabled: true,
+    filePath: '/tmp/actions',
+    token: 'token',
+    maxActions: 5,
+    continuationEnabled: true,
+    localCliToolNames: ['lark_cli'],
+  }).join('\n'),
+  /required_tools must use exact configured host tool names: lark_cli/,
+);
 assert.doesNotMatch(
   buildCodexExecActionChannelPrompt({
     enabled: true,

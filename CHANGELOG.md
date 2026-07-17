@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-17
+
+### Added
+- Added one explicitly declared `run_local_cli_tool` request per persistent continuation step. The configured command runs through the parent-owned host bridge while the Codex continuation process remains sandboxed and network-disabled.
+- Added a SQLite v2 per-job/per-step tool invocation ledger with completed-result recovery and ambiguous-outcome blocking, plus schema migration and restart coverage.
+
+### Changed
+- Bound continuation `required_tools` entries to exact names from `local-cli-tools.json`; runtime execution still revalidates the persisted creator against the current per-tool caller, argument, environment, timeout, and output policy.
+- Added structured tool-result reinjection into the same continuation Codex session and documented how to request configured tools for new background tasks.
+
+### Security
+- Persist only the tool name and a SHA-256 request fingerprint instead of raw CLI arguments. Tool output remains bounded and redacted, and calls left in progress after an interruption are never replayed automatically.
+
 ## [2.0.0] - 2026-07-17
 
 ### Added
@@ -797,7 +810,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.4...v2.0.0
 [1.21.4]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.3...v1.21.4
 [1.21.3]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.2...v1.21.3

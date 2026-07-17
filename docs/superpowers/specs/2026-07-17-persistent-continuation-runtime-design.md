@@ -118,7 +118,7 @@ The existing tokenized JSONL action channel gains one foreground-only action:
     "decisions": [],
     "references": []
   },
-  "required_tools": ["Advisory capability name"],
+  "required_tools": ["Exact local-cli-tools.json tool name"],
   "working_directory": "."
 }
 ```
@@ -131,7 +131,9 @@ authenticated channel turn and runtime configuration.
 Additional creation rules:
 
 - At most one continuation may be requested in one foreground turn.
-- `required_tools` is advisory and never grants a capability.
+- `required_tools` declares task-scoped intent and never grants a capability by
+  itself. A local CLI name is usable only when it exactly matches a current
+  `local-cli-tools.json` entry and that entry authorizes the persisted creator.
 - `working_directory` is canonicalized and must remain within the configured
   allowed working root.
 - The context snapshot is bounded and treated as untrusted data when injected
@@ -194,7 +196,7 @@ title                     bounded user-facing summary
 objective                 bounded execution objective
 acceptance_criteria_json  bounded string array
 context_snapshot_json     compact durable brief, never a full transcript
-required_tools_json       advisory strings only
+required_tools_json       task-scoped declarations; never sufficient authorization
 working_directory         canonical allowed path
 model                     selected model
 
@@ -276,6 +278,28 @@ updated_at
 
 The Job terminal transition and outbox insertion occur in the same SQLite
 transaction. This prevents a completed Job without a durable delivery record.
+
+### 7.4 continuation_tool_calls
+
+The host-tool ledger contains at most one invocation per Job step:
+
+```text
+call_id
+job_id
+step_index                unique with job_id
+attempt_id
+tool_name
+request_hash              SHA-256 fingerprint; raw arguments are not persisted
+status                    running | completed
+result_json               bounded and redacted
+started_at
+completed_at
+updated_at
+```
+
+The `running` row commits before the configured process starts. Recovery reuses
+a `completed` result and treats a remaining `running` row as an ambiguous
+external outcome, which blocks the Job instead of starting the command again.
 
 ## 8. State Machine
 
@@ -406,15 +430,17 @@ foreground execution:
   Jobs, modify access control, recall messages, send arbitrary extra messages,
   commit, push, open or merge pull requests, publish releases, or invoke an
   approval flow.
-- The background parent-action allowlist is empty in v2.0.0. A future action
-  must explicitly declare and test `unattended` and `idempotent` safety before
-  it can be added.
+- The foreground parent-action registry remains unavailable. The one background
+  host capability is a dedicated `run_local_cli_tool` protocol: one request per
+  step, exact `required_tools` name matching, current local config/caller
+  authorization, bounded redacted result reinjection, and a durable invocation
+  ledger that blocks ambiguous calls instead of replaying them.
 - Local analysis, workspace changes, and managed report artifacts are allowed
   within the configured sandbox.
 
-The MVP does not promise arbitrary external reads. A required external
-capability that is unavailable inside this boundary produces a `blocked`
-outcome instead of weakening the runner policy.
+The runtime does not promise arbitrary external reads. A required external
+capability that is not available through the configured local CLI boundary
+produces a `blocked` outcome instead of weakening the runner policy.
 
 If a Job needs new authorization or a blocked capability, it returns a
 `blocked` terminal outcome. The plugin sends an English explanation and the

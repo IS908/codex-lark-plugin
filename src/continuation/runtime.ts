@@ -10,10 +10,12 @@ import type {
   ContinuationExecutor,
   ContinuationRepository,
   ContinuationTerminalDelivery,
+  ContinuationToolInvoker,
 } from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
 import { createContinuationCodexExecutor } from './codex-runner.js';
 import { createLarkContinuationDelivery } from './lark-delivery.js';
+import { createContinuationLocalCliToolInvoker } from './local-cli-tool-invoker.js';
 import {
   ContinuationService,
   type ContinuationTaskService,
@@ -37,11 +39,13 @@ export interface ContinuationRuntimeOptions {
   maxConcurrency: number;
   configuredSandbox: CodexExecSandbox;
   command?: string;
+  localCliToolsConfigPath?: string;
   getTransport: () => LarkTransport;
   clock?: ContinuationClock;
   dryRun?: boolean;
   runCodexExec?: CodexExecRunner;
   executor?: ContinuationExecutor;
+  toolInvoker?: ContinuationToolInvoker;
   delivery?: ContinuationTerminalDelivery;
   audit?: ContinuationAudit;
   debug?: (message: string) => void;
@@ -99,9 +103,17 @@ export async function createContinuationRuntime(
       timeoutMs: options.timeoutMs,
       clock,
     });
+    const toolInvoker = options.toolInvoker ?? (options.localCliToolsConfigPath
+      ? createContinuationLocalCliToolInvoker({
+          repository,
+          configPath: options.localCliToolsConfigPath,
+          now: () => clock.now(),
+        })
+      : undefined);
     const executor = options.executor ?? createContinuationCodexExecutor({
       artifactStore,
       configuredSandbox: options.configuredSandbox,
+      ...(toolInvoker ? { toolInvoker } : {}),
       ...(options.command ? { command: options.command } : {}),
       ...(options.runCodexExec ? { runCodexExec: options.runCodexExec } : {}),
     });

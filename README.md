@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.0.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.1.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -86,7 +86,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Jobs, attempts, checkpoints, leases, and a terminal-delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; managed artifacts live under the sibling `artifacts/` directory.
 - Each Job owns a dedicated Codex execution session. A parent foreground session is provenance only; an unavailable resume session is replaced safely without mutating the foreground chat session.
 - `/task list|status|cancel|retry|delete` bypass Codex and remain available for direct control. Creators manage their own tasks; `LARK_OWNER_OPEN_ID` can manage every task. Retry creates a new Job ID, and only failed/cancelled tasks can be retried.
-- The background runner forces approval policy `never`, disables sandbox network access, ignores user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. There is no continuation MCP tool.
+- The background runner forces approval policy `never`, disables sandbox network access, ignores user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. There is no continuation MCP tool. A task may request one parent-owned `run_local_cli_tool` call per step only when its exact configured name appears in `required_tools`; caller/config policy and the durable no-blind-replay ledger are still enforced.
 - Terminal IM replies reuse one stable Feishu UUID inside its one-hour deduplication window. Document-comment delivery uses bounded marker read-back after an ambiguous send. Unreconciled sends become `delivery_unknown` and are not blindly repeated.
 
 ### Reliability
@@ -532,10 +532,12 @@ access when they are available. Missing bridge config should not by itself make
 Codex stop at a draft.
 
 The bridge does not run shell strings and does not change the general
-`codex exec` sandbox. Each invocation resolves the caller from
-`IdentitySession`, authorizes against the per-tool config, applies one parameter
-filtering mode, runs `spawn(command, args, { shell: false })`, captures bounded
-output, redacts common secrets, and writes the audit log.
+`codex exec` sandbox. Foreground invocations resolve the caller from
+`IdentitySession`; continuation invocations use the creator identity persisted
+from the authenticated source event. Each path authorizes against the same
+per-tool config, applies one parameter filtering mode, runs
+`spawn(command, args, { shell: false })`, captures bounded output, redacts
+common secrets, and writes the audit log.
 By default, the child process receives only a small runtime environment
 (`HOME`, `PATH`, temp/user/locale keys). Use `envAllowlist` for selected parent
 environment keys, literal `env` for fixed values, or `inheritEnv: true` only for
@@ -581,6 +583,21 @@ an explicit array of Feishu/Lark `open_id` values. Tool configs must set exactly
 one of `paramAllowlist` or `paramBlocklist`. Commands must be absolute paths.
 Environment keys in `envAllowlist` and `env` must use shell-compatible names
 such as `LARK_APP_ID` or `CUSTOM_SAFE`.
+
+Persistent continuation tasks can use these tools without enabling network in
+the sandboxed Codex process. The `required_tools` array written when the task is
+created must contain the exact key under `tools` (for example `lark_cli`), and
+the same tool must still be configured and authorize the persisted creator when
+the task runs. `required_tools` declares task intent; it is not a second
+allowlist and never grants a command by itself. Ask the foreground turn to
+create a background task that requires the configured tool name. Existing jobs
+with `required_tools: []` do not gain access and must be recreated.
+
+One host tool request is allowed per continuation step. The parent records a
+request fingerprint before spawning the configured command, then returns the
+bounded redacted result to the same sandboxed Codex session. A completed call
+reuses its stored result after recovery; a call left in progress has an
+ambiguous external outcome and blocks the task instead of being replayed.
 
 External tracker examples are user-owned wrappers, not plugin-provided tools or
 reserved action names. For example, `my_tracker_create_item` above would be a

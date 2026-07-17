@@ -307,6 +307,211 @@ await assert.rejects(
   /final_message|required/i,
 );
 
+const toolRequests: CodexExecRequest[] = [];
+const toolInvocations: Array<{ tool: string; args: string[] }> = [];
+const toolResponses = [
+  {
+    text: JSON.stringify({
+      outcome: 'tool_request',
+      tool: 'lark_cli',
+      args: ['doc', 'get', '--token', 'doc_1'],
+    }),
+    sessionId: 'session-tool',
+  },
+  {
+    text: JSON.stringify({
+      outcome: 'completed',
+      final_message: 'Fetched the document.',
+      artifacts: [],
+    }),
+    sessionId: 'session-tool',
+  },
+];
+const toolExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  toolInvoker: {
+    async recover() { return null; },
+    async invoke(_claim, request) {
+      toolInvocations.push(request);
+      return {
+        status: 'completed' as const,
+        result: { ok: true, message: '{"title":"Release plan"}' },
+      };
+    },
+  },
+  runCodexExec: async (request) => {
+    toolRequests.push(request);
+    const response = toolResponses.shift();
+    assert.ok(response);
+    return response;
+  },
+});
+const toolResult = await toolExecutor.execute(
+  createClaim({ requiredTools: ['lark_cli'] }),
+  signal,
+);
+assert.equal(toolResult.outcome.outcome, 'completed');
+assert.deepEqual(toolInvocations, [
+  { tool: 'lark_cli', args: ['doc', 'get', '--token', 'doc_1'] },
+]);
+assert.equal(toolRequests.length, 2);
+assert.equal(toolRequests[1].resumeSessionId, 'session-tool');
+assert.match(toolRequests[1].prompt, /Continuation Tool Result/);
+assert.match(toolRequests[1].prompt, /Release plan/);
+assert.equal(toolRequests[1].sandbox, 'workspace-write');
+assert.deepEqual(toolRequests[1].configOverrides, [
+  'approval_policy="never"',
+  'sandbox_workspace_write.network_access=false',
+]);
+
+const undeclaredExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  toolInvoker: {
+    async recover() { return null; },
+    async invoke() {
+      assert.fail('undeclared tools must not reach the host invoker');
+    },
+  },
+  runCodexExec: async () => ({
+    text: JSON.stringify({ outcome: 'tool_request', tool: 'lark_cli', args: [] }),
+  }),
+});
+const undeclared = await undeclaredExecutor.execute(createClaim(), signal);
+assert.deepEqual(undeclared.outcome, {
+  outcome: 'blocked',
+  errorCode: 'continuation_tool_not_declared',
+  errorSummary: 'Local CLI tool "lark_cli" was not declared in required_tools.',
+  requiredCapability: 'lark_cli',
+  completedWork: [],
+  unperformedWork: ['Invoke the required local CLI tool.'],
+});
+
+const deniedExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  toolInvoker: {
+    async recover() { return null; },
+    async invoke() {
+      return {
+        status: 'completed' as const,
+        result: { ok: false, message: 'Caller is not authorized.' },
+      };
+    },
+  },
+  runCodexExec: async () => ({
+    text: JSON.stringify({ outcome: 'tool_request', tool: 'lark_cli', args: [] }),
+  }),
+});
+const denied = await deniedExecutor.execute(
+  createClaim({ requiredTools: ['lark_cli'] }),
+  signal,
+);
+assert.equal(denied.outcome.outcome, 'blocked');
+assert.equal('errorCode' in denied.outcome && denied.outcome.errorCode, 'continuation_tool_denied');
+
+let repeatedRequestCount = 0;
+const repeatedExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  toolInvoker: {
+    async recover() { return null; },
+    async invoke() {
+      return { status: 'completed' as const, result: { ok: true, message: '{}' } };
+    },
+  },
+  runCodexExec: async () => {
+    repeatedRequestCount += 1;
+    return {
+      text: JSON.stringify({ outcome: 'tool_request', tool: 'lark_cli', args: [] }),
+      sessionId: 'session-repeated',
+    };
+  },
+});
+const repeated = await repeatedExecutor.execute(
+  createClaim({ requiredTools: ['lark_cli'] }),
+  signal,
+);
+assert.equal(repeatedRequestCount, 2);
+assert.equal(repeated.outcome.outcome, 'blocked');
+assert.equal(
+  'errorCode' in repeated.outcome && repeated.outcome.errorCode,
+  'continuation_tool_call_limit',
+);
+
+const recoveryRequests: CodexExecRequest[] = [];
+const recoveryExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  toolInvoker: {
+    async recover() {
+      return {
+        status: 'completed' as const,
+        tool: 'lark_cli',
+        result: { ok: true, message: '{"recovered":true}' },
+      };
+    },
+    async invoke() {
+      assert.fail('a recovered tool result must not execute again');
+    },
+  },
+  runCodexExec: async (request) => {
+    recoveryRequests.push(request);
+    return {
+      text: JSON.stringify({
+        outcome: 'completed',
+        final_message: 'Recovered without replay.',
+        artifacts: [],
+      }),
+      sessionId: 'session-recovery',
+    };
+  },
+});
+const recoveredResult = await recoveryExecutor.execute(
+  createClaim({ requiredTools: ['lark_cli'] }),
+  signal,
+);
+assert.equal(recoveredResult.outcome.outcome, 'completed');
+assert.equal(recoveryRequests.length, 1);
+assert.match(recoveryRequests[0].prompt, /Continuation Tool Result/);
+assert.match(recoveryRequests[0].prompt, /recovered/);
+assert.match(recoveryRequests[0].prompt, /Durable Continuation Step/);
+assert.match(recoveryRequests[0].prompt, /Produce a verified result/);
+
+let unknownRecoveryCodexCalls = 0;
+const unknownRecoveryExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  toolInvoker: {
+    async recover() {
+      return {
+        status: 'blocked' as const,
+        tool: 'lark_cli',
+        errorCode: 'continuation_tool_outcome_unknown',
+        errorSummary: 'The prior call has an unknown outcome.',
+      };
+    },
+    async invoke() {
+      assert.fail('unknown recovery must not execute again');
+    },
+  },
+  runCodexExec: async () => {
+    unknownRecoveryCodexCalls += 1;
+    return { text: '' };
+  },
+});
+const unknownRecovery = await unknownRecoveryExecutor.execute(
+  createClaim({ requiredTools: ['lark_cli'] }),
+  signal,
+);
+assert.equal(unknownRecoveryCodexCalls, 0);
+assert.equal(unknownRecovery.outcome.outcome, 'blocked');
+assert.equal(
+  'errorCode' in unknownRecovery.outcome && unknownRecovery.outcome.errorCode,
+  'continuation_tool_outcome_unknown',
+);
+
 const fallbackRequests: CodexExecRequest[] = [];
 const fallbackExecutor = createContinuationCodexExecutor({
   artifactStore,

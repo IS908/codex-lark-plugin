@@ -25,7 +25,7 @@ parent-process bridge for actions that must run safely even when the child
 | Add reaction | `react` | not supported | MCP-only |
 | Download attachment | `download_attachment` | not supported | MCP-only |
 | Doc comment reply/create | `reply_doc_comment`, `create_doc_comment` | ordinary exec text for current doc-comment reply only | no; structured doc-comment mutations remain MCP-only |
-| Persistent continuation | not exposed | `create_continuation_job` | parent validates a bounded execution brief, derives identity/route/session from the trusted event, and commits it through `ContinuationService` |
+| Persistent continuation | not exposed | `create_continuation_job` | parent validates a bounded execution brief, derives identity/route/session from the trusted event, and commits it through `ContinuationService`; a running task may request one configured local CLI tool per step when the exact name is present in `required_tools` and still authorized by local config |
 
 ## Boundary Rules
 
@@ -51,8 +51,12 @@ parent-process bridge for actions that must run safely even when the child
   actions and defer/no-reply markers do not. Unsupported future-work prose is
   rewritten into a safe notice.
 - `create_continuation_job` is foreground-only and is not an MCP tool. The
-  background runner cannot invoke the action bridge, send Lark messages, create
-  nested jobs, or publish source control. Terminal delivery remains parent-owned.
+  background runner cannot invoke the foreground action bridge, send Lark
+  messages, create nested jobs, or publish source control. Its only host action
+  is one `run_local_cli_tool` request per step through the dedicated continuation
+  invoker; `required_tools`, configured tool policy, persisted creator identity,
+  and the durable no-blind-replay ledger must all accept the call. Terminal
+  delivery remains parent-owned.
 - Capabilities should be added to exec actions only when there is a clear need
   for the parent-process bridge. Otherwise, prefer MCP tools.
 

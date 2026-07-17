@@ -120,6 +120,7 @@ async function main() {
     maxConcurrency: appConfig.continuationMaxConcurrency,
     configuredSandbox: appConfig.codexExecSandbox,
     command: appConfig.codexExecCommand,
+    localCliToolsConfigPath: appConfig.localCliToolsConfigPath,
     getTransport: () => channel.getLarkTransport(),
     dryRun: isDryRun,
     debug: debugLog,
