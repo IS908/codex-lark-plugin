@@ -25,6 +25,7 @@ const {
   formatTraceRunIdForDisplay,
 } = await import('../src/trace-run-id.js');
 const { runCodexExecCommand } = await import('../src/codex-exec.js');
+const { queryRunTrace } = await import('../src/run-trace-query.js');
 const { debugLog } = await import('../src/debug-log.js');
 
 function lines(path: string): string[] {
@@ -241,5 +242,45 @@ assert.match(metricsDebugLine, /input_tokens=1500 .* total_tokens=1550/);
 assert.match(integrationLog, /github\.get_issue/);
 assert.doesNotMatch(integrationLog, /should-not-appear/);
 assert.doesNotMatch(integrationLog, /final answer only/);
+
+const failedCodex = join(root, 'failed-codex.js');
+await writeFile(failedCodex, [
+  '#!/usr/bin/env node',
+  'process.stderr.write(JSON.stringify({ error: { code: "invalid_json_schema", message: "secret prompt must not appear" } }));',
+  'process.exit(1);',
+].join('\n'), 'utf-8');
+await chmod(failedCodex, 0o755);
+await assert.rejects(runCodexExecCommand({
+  prompt: 'sensitive continuation prompt',
+  command: failedCodex,
+  cwd: root,
+  timeoutMs: 5000,
+  traceLogId: 'job_trace_failure',
+  traceRunId: 'att_trace_failure',
+}));
+const processFailureLine = await waitForLine(integrationTraceLog, /job_trace_failure/);
+assertNotJsonl(processFailureLine);
+assert.match(
+  processFailureLine,
+  /job_trace_failure  atttracefailure  codex_exec  failed  process  -  .*output_schema_validation.*codex_output_schema_rejected/,
+);
+assert.doesNotMatch(processFailureLine, /secret prompt must not appear|sensitive continuation prompt/);
+const processFailureQuery = await queryRunTrace({
+  logId: 'job_trace_failure',
+  runId: 'att_trace_failure',
+  logPath: integrationTraceLog,
+  enabled: true,
+});
+assert.equal(processFailureQuery.status, 'ok');
+assert.deepEqual(processFailureQuery.tools.map((tool) => ({
+  name: tool.name,
+  status: tool.status,
+  call_id: tool.call_id,
+})), [{
+  name: 'codex_exec',
+  status: 'failed',
+  call_id: 'process',
+}]);
+assert.match(processFailureQuery.tools[0].error ?? '', /codex_output_schema_rejected/);
 
 console.log('codex-exec-trace smoke: PASS');

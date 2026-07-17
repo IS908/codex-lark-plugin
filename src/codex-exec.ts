@@ -113,6 +113,51 @@ export class CodexExecProcessError extends Error {
   }
 }
 
+export interface CodexExecFailureDiagnostic {
+  stage: 'output_schema_validation' | 'cli_compatibility' | 'process_spawn' | 'process_execution';
+  errorCode: string;
+  errorSummary: string;
+  retryable: boolean;
+}
+
+export function diagnoseCodexExecFailure(error: unknown): CodexExecFailureDiagnostic {
+  const detail = error instanceof CodexExecProcessError
+    ? `${error.message}\n${error.stdoutTail}\n${error.stderrTail}`
+    : error instanceof Error
+      ? error.message
+      : '';
+  if (/\binvalid_json_schema\b|invalid schema for response_format|oneOf.*not permitted/i.test(detail)) {
+    return {
+      stage: 'output_schema_validation',
+      errorCode: 'codex_output_schema_rejected',
+      errorSummary: 'Codex rejected the continuation output schema before execution.',
+      retryable: false,
+    };
+  }
+  if (/(?:unexpected|unknown|unrecognized).*(?:--output-schema|output-schema)|--output-schema.*(?:unexpected|unknown|unrecognized)/i.test(detail)) {
+    return {
+      stage: 'cli_compatibility',
+      errorCode: 'codex_output_schema_unsupported',
+      errorSummary: 'The installed Codex CLI does not support structured continuation output.',
+      retryable: false,
+    };
+  }
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+    return {
+      stage: 'process_spawn',
+      errorCode: 'codex_command_unavailable',
+      errorSummary: 'The Codex command could not be started.',
+      retryable: false,
+    };
+  }
+  return {
+    stage: 'process_execution',
+    errorCode: 'codex_process_failed',
+    errorSummary: 'The Codex process failed before producing a valid continuation outcome.',
+    retryable: true,
+  };
+}
+
 function appendCapped(current: string, chunk: Buffer): string {
   const next = current + chunk.toString('utf8');
   if (next.length <= OUTPUT_CAP) return next;
@@ -326,6 +371,19 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
       ...(usage ? { usage } : {}),
       runtimeMetrics: metrics,
     };
+  } catch (error) {
+    const diagnostic = diagnoseCodexExecFailure(error);
+    toolTrace?.recordLine(JSON.stringify({
+      type: 'codex_exec.failed',
+      name: 'codex_exec',
+      status: 'failed',
+      id: 'process',
+      error: {
+        stage: diagnostic.stage,
+        error_code: diagnostic.errorCode,
+      },
+    }));
+    throw error;
   } finally {
     for (const line of stdoutLineBuffer.split(/\r?\n/)) {
       if (line.trim()) {
