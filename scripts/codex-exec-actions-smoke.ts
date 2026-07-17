@@ -14,7 +14,8 @@ const { BotMessageTracker } = await import('../src/message-trackers.js');
 const { TurnObligationTracker } = await import('../src/turn-obligation.js');
 const { MemoryStore } = await import('../src/memory/file.js');
 const { accessControlStore } = await import('../src/runtime-access-control.js');
-const { createInitialJobRuntime } = await import('../src/job-store.js');
+  const { createInitialJobRuntime } = await import('../src/job-store.js');
+  const { ContinuationServiceError } = await import('../src/continuation/service.js');
 const {
   createCodexExecActionDispatcher,
   parseCodexExecActionEnvelope,
@@ -151,6 +152,13 @@ try {
   assert.equal(traceQueryParsed.kind, 'actions');
   assert.equal(traceQueryParsed.actions[0].type, 'get_run_trace');
 
+  const continuationTraceQueryParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'get_run_trace', source: 'continuation', log_id: 'job_0123456789abcdef01234567' }],
+  });
+  assert.equal(continuationTraceQueryParsed.kind, 'actions');
+  assert.equal(continuationTraceQueryParsed.actions[0].source, 'continuation');
+
   const invalidTraceQueryParsed = parseActionEnvelopeForTest({
     version: 1,
     actions: [{ type: 'get_run_trace', source: 'cronjob', target: 'quoted', log_id: 'job_daily' }],
@@ -255,6 +263,9 @@ try {
 
   const identitySession = new IdentitySession(() => 'ou_owner');
   identitySession.setCaller('oc_exec', 'thread_exec', 'ou_user');
+  identitySession.setCaller('oc_other', 'thread_other', 'ou_other');
+  const continuationJobId = 'job_0123456789abcdef01234567';
+  const continuationLookups: Array<{ jobId: string; actor: string; owner?: string | null }> = [];
   const currentImagePath = join(root, 'current-image.png');
   const localFilePath = join(root, 'report.txt');
   writeFileSync(currentImagePath, 'fake image bytes', 'utf-8');
@@ -324,6 +335,13 @@ try {
       };
     },
     larkTransport: new ThisBoundQuotedTransport(),
+    continuationService: {
+      async getForActor(jobId: string, actor: string, owner?: string | null) {
+        continuationLookups.push({ jobId, actor, owner });
+        if (jobId === continuationJobId && actor === 'ou_user') return { jobId } as any;
+        throw new ContinuationServiceError('not_accessible', 'Task not found or not accessible.');
+      },
+    } as any,
   });
 
   const traceTimestamp = new Date().toISOString();
@@ -331,6 +349,7 @@ try {
     `${traceTimestamp}  om_exec_trace  runmsg1  exec_command  completed  item_1  1000ms  {"cmd":"npm test"}`,
     `${traceTimestamp}  om_quoted_trace  runquoted1  github.get_issue  completed  call_quoted  1000ms  {"issue":248}`,
     `${traceTimestamp}  trace-job  runcron1  command_execution  completed  item_cron  1000ms  {"cmd":"cron"}`,
+    `${traceTimestamp}  ${continuationJobId}  runcontinuation1  command_execution  completed  item_continuation  1000ms  {"cmd":"continue"}`,
     '',
   ].join('\n'));
   writeFileSync(join(jobsDir, 'trace-job.json'), JSON.stringify({
@@ -417,6 +436,79 @@ try {
   });
   assert.equal(cronTraceResult[0].ok, true, JSON.stringify(cronTraceResult));
   assert.match(cronTraceResult[0].message, /"log_id": "trace-job"/);
+
+  const continuationTraceResult = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace_continuation',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'show continuation trace',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'get_run_trace', source: 'continuation', log_id: continuationJobId }],
+  });
+  assert.equal(continuationTraceResult[0].ok, true, JSON.stringify(continuationTraceResult));
+  assert.match(continuationTraceResult[0].message, /"log_id": "job_0123456789abcdef01234567"/);
+  assert.deepEqual(continuationLookups[0], {
+    jobId: continuationJobId,
+    actor: 'ou_user',
+    owner: 'ou_user',
+  });
+
+  const missingContinuationTraceIdResult = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace_continuation_missing_id',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'show continuation trace',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'get_run_trace', source: 'continuation' }],
+  });
+  assert.equal(missingContinuationTraceIdResult[0].ok, false);
+  assert.match(missingContinuationTraceIdResult[0].message, /requires log_id/i);
+
+  const deniedContinuationTraceResult = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace_continuation_denied',
+      chatId: 'oc_other',
+      threadId: 'thread_other',
+      chatType: 'group',
+      senderId: 'ou_other',
+      text: 'show another continuation trace',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'get_run_trace', source: 'continuation', log_id: continuationJobId }],
+  });
+  assert.equal(deniedContinuationTraceResult[0].ok, false);
+  assert.match(deniedContinuationTraceResult[0].message, /"status": "unauthorized"/);
+
+  const noContinuationRuntimeDispatcher = createCodexExecActionDispatcher({
+    memoryStore: new MemoryStore(memoriesDir),
+    identitySession,
+  });
+  const unavailableContinuationTraceResult = await noContinuationRuntimeDispatcher.execute({
+    message: {
+      messageId: 'om_exec_trace_continuation_unavailable',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'show continuation trace',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'get_run_trace', source: 'continuation', log_id: continuationJobId }],
+  });
+  assert.equal(unavailableContinuationTraceResult[0].ok, false);
+  assert.match(unavailableContinuationTraceResult[0].message, /continuation runtime is unavailable/i);
 
   const invalidCronTraceLogIdResult = await dispatcher.execute({
     message: {

@@ -20,8 +20,9 @@ assert.match(
     token: 'token',
     maxActions: 5,
     continuationEnabled: true,
+    continuationWorkingRoot: '/Users/you/workspace',
   }).join('\n'),
-  /create_continuation_job/,
+  /Configured continuation working root: "\/Users\/you\/workspace"/,
 );
 assert.match(
   buildCodexExecActionChannelPrompt({

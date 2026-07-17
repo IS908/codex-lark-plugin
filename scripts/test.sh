@@ -17,6 +17,10 @@ echo "=== Continuation domain checks ==="
 node --import tsx scripts/continuation-domain-smoke.ts
 
 echo ""
+echo "=== Continuation working-directory checks ==="
+node --import tsx scripts/continuation-working-directory-smoke.ts
+
+echo ""
 echo "=== Continuation repository checks ==="
 node --import tsx scripts/continuation-repository-smoke.ts
 

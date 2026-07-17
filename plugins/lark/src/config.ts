@@ -28,6 +28,12 @@ function optional(key: string, fallback: string): string {
   return process.env[key] || fallback;
 }
 
+function optionalAbsolutePath(key: string, fallback: string): string {
+  const value = optional(key, fallback);
+  if (!path.isAbsolute(value)) throw new Error(`Invalid ${key}: expected an absolute path.`);
+  return value;
+}
+
 function optionalAllowEmpty(key: string, fallback: string): string {
   const val = process.env[key];
   return val === undefined ? fallback : val;
@@ -110,6 +116,8 @@ rejectRemovedCodexDeliveryMode();
 
 const codexExecTimeoutMs = optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000);
 const codexExecReplyBufferMs = 60_000;
+const codexExecCwd = optional('LARK_CODEX_EXEC_CWD', defaultCodexExecCwd);
+const continuationWorkingRoot = optionalAbsolutePath('LARK_CONTINUATION_WORKING_ROOT', codexExecCwd);
 
 function optionalQueueHandlerTimeoutMs(): number {
   const minimumWithReplyBuffer = codexExecTimeoutMs + codexExecReplyBufferMs;
@@ -129,7 +137,7 @@ export const appConfig = {
   botMessageTrackerSize: optionalNonNegativeNumber('LARK_BOT_MESSAGE_TRACKER_SIZE', 500),
   queueHandlerTimeoutMs: optionalQueueHandlerTimeoutMs(),
   codexExecCommand: optional('LARK_CODEX_EXEC_COMMAND', 'codex'),
-  codexExecCwd: optional('LARK_CODEX_EXEC_CWD', defaultCodexExecCwd),
+  codexExecCwd,
   codexExecTimeoutMs,
   codexExecSandbox: optionalChoice(
     'LARK_CODEX_EXEC_SANDBOX',
@@ -168,6 +176,7 @@ export const appConfig = {
   continuationMaxRetries: optionalIntegerRange('LARK_CONTINUATION_MAX_RETRIES', 3, 0, 10),
   continuationMaxAgeHours: optionalIntegerRange('LARK_CONTINUATION_MAX_AGE_HOURS', 24, 1, 168),
   continuationRetentionDays: optionalIntegerRange('LARK_CONTINUATION_RETENTION_DAYS', 30, 1, 3650),
+  continuationWorkingRoot,
   sessionHealthEnabled: optionalBoolean('LARK_SESSION_HEALTH_ENABLED', false),
   sessionHealthTurnThreshold: optionalPositiveNumber('LARK_SESSION_HEALTH_TURN_THRESHOLD', 80),
   sessionHealthPromptBytesThreshold: optionalPositiveNumber(

@@ -97,6 +97,7 @@ export async function createContinuationRuntime(
     const service = new ContinuationService({
       repository,
       allowedWorkingRoot: options.allowedWorkingRoot,
+      filesystemMode: boundedContinuationSandbox(options.configuredSandbox),
       maxSteps: options.maxSteps,
       maxRetries: options.maxRetries,
       maxAgeHours: options.maxAgeHours,
@@ -113,6 +114,7 @@ export async function createContinuationRuntime(
     const executor = options.executor ?? createContinuationCodexExecutor({
       artifactStore,
       configuredSandbox: options.configuredSandbox,
+      currentWorkingRoot: options.allowedWorkingRoot,
       ...(toolInvoker ? { toolInvoker } : {}),
       ...(options.command ? { command: options.command } : {}),
       ...(options.runCodexExec ? { runCodexExec: options.runCodexExec } : {}),
@@ -168,6 +170,12 @@ export async function createContinuationRuntime(
     safeDebug(options, '[continuation] event=runtime_unavailable job_id=- attempt_id=- state=initialization_failed');
     return unavailableRuntime({ enabled: true, available: false, reason: 'initialization_failed' });
   }
+}
+
+function boundedContinuationSandbox(
+  configured: CodexExecSandbox,
+): Extract<CodexExecSandbox, 'read-only' | 'workspace-write'> {
+  return configured === 'read-only' ? 'read-only' : 'workspace-write';
 }
 
 function unavailableRuntime(health: ContinuationRuntimeHealth): ContinuationRuntime {

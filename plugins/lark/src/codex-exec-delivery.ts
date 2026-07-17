@@ -130,6 +130,7 @@ async function enrichCodexExecActionPromptInfo(
       && continuationAvailable
       && message.messageType !== 'reaction'
       && ['p2p', 'group', 'doc_comment'].includes(message.chatType),
+    continuationWorkingRoot: appConfig.continuationWorkingRoot,
   };
   if (appConfig.codexExecSandbox === 'danger-full-access') return baseInfo;
 

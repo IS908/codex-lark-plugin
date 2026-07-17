@@ -15,6 +15,7 @@ import {
   type ContinuationCheckpoint,
   type ContinuationClaim,
   type ContinuationExecutionResult,
+  type ContinuationFilesystemMode,
   type ContinuationJob,
   type ContinuationStepOutcome,
   type ContinuationToolRequest,
@@ -23,10 +24,15 @@ import type { ContinuationExecutor, ContinuationToolInvoker } from '../ports/con
 import { untrustedDataBlock } from '../prompts.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
 import { redactContinuationText } from './redaction.js';
+import {
+  ContinuationWorkingDirectoryError,
+  validateContinuationWorkingDirectory,
+} from './working-directory.js';
 
 export interface ContinuationCodexExecutorOptions {
   artifactStore: ContinuationArtifactStore;
   configuredSandbox: CodexExecSandbox;
+  currentWorkingRoot: string;
   runCodexExec?: CodexExecRunner;
   command?: string;
   toolInvoker?: ContinuationToolInvoker;
@@ -205,13 +211,43 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     signal: AbortSignal,
   ): Promise<ContinuationExecutionResult> {
     try {
+      if (claim.job.permissions.approval.mode !== 'never') {
+        return {
+          outcome: blockedCapabilityOutcome({
+            errorCode: 'continuation_approval_unavailable',
+            errorSummary: 'Interactive approval is reserved but is not enabled for continuation tasks.',
+            requiredCapability: 'approval.interactive',
+            unperformedWork: ['Obtain one-time interactive approval for this continuation step.'],
+          }),
+        };
+      }
+      let workingDirectory: string;
+      try {
+        workingDirectory = await validateContinuationWorkingDirectory(
+          [claim.job.permissions.filesystem.root, this.options.currentWorkingRoot],
+          claim.job.workingDirectory,
+        );
+      } catch (error) {
+        if (!(error instanceof ContinuationWorkingDirectoryError)) throw error;
+        return {
+          outcome: blockedCapabilityOutcome({
+            errorCode: 'continuation_working_directory_denied',
+            errorSummary: 'The continuation working directory is no longer authorized by its snapshot and current operator policy.',
+            requiredCapability: 'filesystem.workspace',
+            unperformedWork: ['Use an authorized continuation working directory.'],
+          }),
+        };
+      }
       const artifactDir = await this.options.artifactStore.ensure(claim.job.jobId);
       const request: CodexExecRequest = {
         prompt: buildContinuationPrompt(claim.job, artifactDir),
         ...(this.options.command ? { command: this.options.command } : {}),
-        cwd: claim.job.workingDirectory,
+        cwd: workingDirectory,
         timeoutMs: claim.job.timeoutSeconds * 1_000,
-        sandbox: boundedSandbox(this.options.configuredSandbox),
+        sandbox: effectiveSandbox(
+          claim.job.permissions.filesystem.mode,
+          this.options.configuredSandbox,
+        ),
         model: claim.job.model ?? null,
         profile: null,
         ignoreUserConfig: true,
@@ -294,7 +330,10 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     signal: AbortSignal,
   ): Promise<ContinuationExecutionResult> {
     const firstSessionPatch = executionSessionPatch(firstSessionId, firstReplacedSession);
-    if (!claim.job.requiredTools.includes(toolRequest.tool)) {
+    if (
+      !claim.job.requiredTools.includes(toolRequest.tool)
+      || !claim.job.permissions.hostTools.includes(toolRequest.tool)
+    ) {
       return {
         ...firstSessionPatch,
         outcome: blockedToolOutcome(
@@ -584,6 +623,22 @@ function blockedToolOutcome(
   };
 }
 
+function blockedCapabilityOutcome(input: {
+  errorCode: string;
+  errorSummary: string;
+  requiredCapability: string;
+  unperformedWork: string[];
+}): ContinuationStepOutcome {
+  return {
+    outcome: 'blocked',
+    errorCode: redactContinuationText(input.errorCode),
+    errorSummary: redactContinuationText(input.errorSummary),
+    requiredCapability: redactContinuationText(input.requiredCapability),
+    completedWork: [],
+    unperformedWork: input.unperformedWork.map(redactContinuationText),
+  };
+}
+
 function executionSessionPatch(
   sessionId: string | null | undefined,
   replacedSession: boolean,
@@ -606,6 +661,15 @@ function combinedExecutionSessionPatch(
 
 function boundedSandbox(configured: CodexExecSandbox): Extract<CodexExecSandbox, 'read-only' | 'workspace-write'> {
   return configured === 'read-only' ? 'read-only' : 'workspace-write';
+}
+
+function effectiveSandbox(
+  snapshot: ContinuationFilesystemMode,
+  configured: CodexExecSandbox,
+): ContinuationFilesystemMode {
+  return snapshot === 'read-only' || boundedSandbox(configured) === 'read-only'
+    ? 'read-only'
+    : 'workspace-write';
 }
 
 function isResumeUnavailableError(error: unknown): boolean {

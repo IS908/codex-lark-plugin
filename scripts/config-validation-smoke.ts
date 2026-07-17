@@ -29,6 +29,7 @@ const code = `
     continuationMaxRetries: appConfig.continuationMaxRetries,
     continuationMaxAgeHours: appConfig.continuationMaxAgeHours,
     continuationRetentionDays: appConfig.continuationRetentionDays,
+    continuationWorkingRoot: appConfig.continuationWorkingRoot,
     continuationDbPath: appConfig.continuationDbPath,
     continuationArtifactsDir: appConfig.continuationArtifactsDir,
     quotedCardUserFetchEnabled: appConfig.quotedCardUserFetchEnabled,
@@ -94,6 +95,7 @@ expectFail({ LARK_CONTINUATION_MAX_CONCURRENCY: '0' }, /LARK_CONTINUATION_MAX_CO
 expectFail({ LARK_CONTINUATION_MAX_CONCURRENCY: '5' }, /LARK_CONTINUATION_MAX_CONCURRENCY.*integer between 1 and 4/i);
 expectFail({ LARK_CONTINUATION_MAX_RETRIES: '-1' }, /LARK_CONTINUATION_MAX_RETRIES.*integer between 0 and 10/i);
 expectFail({ LARK_CONTINUATION_MAX_STEPS: '2.5' }, /LARK_CONTINUATION_MAX_STEPS.*integer between 1 and 100/i);
+expectFail({ LARK_CONTINUATION_WORKING_ROOT: 'relative/root' }, /LARK_CONTINUATION_WORKING_ROOT.*absolute/i);
 
 const zeroAllowed = expectOk({
   LARK_MEMORY_DEDUP_WINDOW_MS: '0',
@@ -118,6 +120,7 @@ assert.equal(defaultPaths.continuationMaxSteps, 24);
 assert.equal(defaultPaths.continuationMaxRetries, 3);
 assert.equal(defaultPaths.continuationMaxAgeHours, 24);
 assert.equal(defaultPaths.continuationRetentionDays, 30);
+assert.equal(defaultPaths.continuationWorkingRoot, defaultPaths.codexExecCwd);
 assert.match(defaultPaths.continuationDbPath, /runtime\/continuations\/jobs\.sqlite$/);
 assert.match(defaultPaths.continuationArtifactsDir, /runtime\/continuations\/artifacts$/);
 assert.equal(defaultPaths.codexExecTimeoutMs, 600_000);
@@ -138,6 +141,12 @@ assert.equal(defaultPaths.hasGithubIssueCommandConfig, false);
 
 const retentionDryRun = expectOk({ LARK_CODEX_SESSION_RETENTION_DRY_RUN: 'true' });
 assert.equal(retentionDryRun.codexSessionRetentionDryRun, true);
+
+const customContinuationRoot = expectOk({
+  LARK_CODEX_EXEC_CWD: '/tmp/foreground-root',
+  LARK_CONTINUATION_WORKING_ROOT: '/tmp/continuation-root',
+});
+assert.equal(customContinuationRoot.continuationWorkingRoot, '/tmp/continuation-root');
 
 const customLogArchiveRetention = expectOk({ LARK_LOG_ARCHIVE_RETENTION_MONTHS: '0' });
 assert.equal(customLogArchiveRetention.logArchiveRetentionMonths, 0);

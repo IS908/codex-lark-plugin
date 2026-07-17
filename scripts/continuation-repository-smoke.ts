@@ -40,6 +40,12 @@ function createRequest(
     },
     requiredTools: [],
     workingDirectory: root,
+    permissions: {
+      filesystem: { root, mode: 'workspace-write' },
+      hostTools: [],
+      network: 'none',
+      approval: { mode: 'never' },
+    },
     maxSteps: 24,
     maxRetries: 3,
     timeoutSeconds: 600,
@@ -98,6 +104,7 @@ try {
   assert.match(first.job.jobId, /^job_[a-f0-9]{24}$/);
   assert.equal(first.job.status, 'queued');
   assert.equal(first.job.rowVersion, 1);
+  assert.deepEqual(first.job.permissions, createRequest('first').permissions);
 
   const duplicate = await secondRepository.create(createRequest('first'));
   assert.equal(duplicate.created, false);
@@ -355,6 +362,12 @@ try {
   assert.equal(redacted?.deletedAt, '2026-07-17T00:02:00.000Z');
   assert.equal(redacted?.objective, '');
   assert.equal(redacted?.contextSnapshot.summary, '');
+  assert.deepEqual(redacted?.permissions, {
+    filesystem: { root: '', mode: 'read-only' },
+    hostTools: [],
+    network: 'none',
+    approval: { mode: 'never' },
+  });
 
   const artifactStore = new ContinuationArtifactStore(artifactsDir, 4);
   const artifactRoot = await artifactStore.ensure('job_artifact_test');
@@ -389,29 +402,53 @@ const migrationSeed = await SqliteContinuationRepository.open({
   databasePath: migrationDatabasePath,
   artifactsDir: migrationArtifactsDir,
 });
+const legacyWorkingDirectory = join(root, 'legacy-working-directory');
+await import('node:fs/promises').then(({ mkdir }) => mkdir(legacyWorkingDirectory));
+const legacyV2Job = await migrationSeed.create(createRequest('legacy-v2', {
+  workingDirectory: legacyWorkingDirectory,
+  requiredTools: ['lark_cli'],
+  permissions: {
+    filesystem: { root: root, mode: 'read-only' },
+    hostTools: ['lark_cli'],
+    network: 'none',
+    approval: { mode: 'never' },
+  },
+}));
 migrationSeed.close();
 const { DatabaseSync } = await import('node:sqlite');
-const versionOneDatabase = new DatabaseSync(migrationDatabasePath);
-versionOneDatabase.exec(`
-  DROP TABLE continuation_tool_calls;
-  PRAGMA user_version = 1;
-`);
-versionOneDatabase.close();
+const versionTwoDatabase = new DatabaseSync(migrationDatabasePath);
+const v2Columns = versionTwoDatabase.prepare('PRAGMA table_info(continuation_jobs)').all() as Array<{ name: string }>;
+if (v2Columns.some((column) => column.name === 'permissions_json')) {
+  versionTwoDatabase.exec('ALTER TABLE continuation_jobs DROP COLUMN permissions_json;');
+}
+versionTwoDatabase.exec('PRAGMA user_version = 2;');
+versionTwoDatabase.close();
 const migratedRepository = await SqliteContinuationRepository.open({
   databasePath: migrationDatabasePath,
   artifactsDir: migrationArtifactsDir,
 });
 try {
   await migratedRepository.healthCheck();
+  assert.deepEqual((await migratedRepository.get(legacyV2Job.job.jobId))?.permissions, {
+    filesystem: { root: legacyWorkingDirectory, mode: 'workspace-write' },
+    hostTools: ['lark_cli'],
+    network: 'none',
+    approval: { mode: 'never' },
+  });
   const migratedJob = await migratedRepository.create(createRequest('migrated', {
     requiredTools: ['lark_cli'],
+    permissions: {
+      filesystem: { root, mode: 'workspace-write' },
+      hostTools: ['lark_cli'],
+      network: 'none',
+      approval: { mode: 'never' },
+    },
   }));
   const migratedClaim = await migratedRepository.claimDue(
     'worker-migrated',
     baseNow,
     '2026-07-17T00:00:30.000Z',
   );
-  assert.equal(migratedClaim?.job.jobId, migratedJob.job.jobId);
   assert.ok(migratedClaim);
   assert.equal(
     (await migratedRepository.beginToolCall(
@@ -423,6 +460,59 @@ try {
   );
 } finally {
   migratedRepository.close();
+}
+
+const versionOneDatabasePath = join(root, 'migration-v1', 'jobs.sqlite');
+const versionOneArtifactsDir = join(root, 'migration-v1', 'artifacts');
+const versionOneSeed = await SqliteContinuationRepository.open({
+  databasePath: versionOneDatabasePath,
+  artifactsDir: versionOneArtifactsDir,
+});
+const legacyV1Job = await versionOneSeed.create(createRequest('legacy-v1', {
+  requiredTools: ['lark_cli'],
+  permissions: {
+    filesystem: { root, mode: 'workspace-write' },
+    hostTools: ['lark_cli'],
+    network: 'none',
+    approval: { mode: 'never' },
+  },
+}));
+versionOneSeed.close();
+const versionOneDatabase = new DatabaseSync(versionOneDatabasePath);
+versionOneDatabase.exec(`
+  ALTER TABLE continuation_jobs DROP COLUMN permissions_json;
+  DROP TABLE continuation_tool_calls;
+  PRAGMA user_version = 1;
+`);
+versionOneDatabase.close();
+const migratedVersionOneRepository = await SqliteContinuationRepository.open({
+  databasePath: versionOneDatabasePath,
+  artifactsDir: versionOneArtifactsDir,
+});
+try {
+  await migratedVersionOneRepository.healthCheck();
+  assert.deepEqual((await migratedVersionOneRepository.get(legacyV1Job.job.jobId))?.permissions, {
+    filesystem: { root, mode: 'workspace-write' },
+    hostTools: ['lark_cli'],
+    network: 'none',
+    approval: { mode: 'never' },
+  });
+  const v1Claim = await migratedVersionOneRepository.claimDue(
+    'worker-v1-migrated',
+    baseNow,
+    '2026-07-17T00:00:30.000Z',
+  );
+  assert.ok(v1Claim);
+  assert.equal(
+    (await migratedVersionOneRepository.beginToolCall(
+      v1Claim,
+      { tool: 'lark_cli', args: [] },
+      baseNow,
+    )).status,
+    'execute',
+  );
+} finally {
+  migratedVersionOneRepository.close();
 }
 
 console.log('continuation repository smoke: PASS');
