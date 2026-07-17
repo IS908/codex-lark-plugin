@@ -24,7 +24,10 @@ import {
   updateJob,
   upsertJob,
 } from './job-service.js';
-import { runConfiguredLocalCliTool } from './local-cli-tools.js';
+import {
+  listConfiguredLocalCliToolNames,
+  runConfiguredLocalCliTool,
+} from './local-cli-tools.js';
 import {
   accessControlStore,
   type AccessControlAction,
@@ -308,6 +311,29 @@ async function executeCreateContinuation(
     };
   }
   try {
+    const configuredHostTools = new Set(
+      await listConfiguredLocalCliToolNames(deps.localCliToolsConfigPath),
+    );
+    const unsupportedHostTools = [...new Set(action.required_tools)]
+      .filter((tool) => !configuredHostTools.has(tool))
+      .sort();
+    if (unsupportedHostTools.length > 0) {
+      void audit(
+        'create_continuation_job',
+        context.message.senderId,
+        { source_message_id: context.message.messageId },
+        'error',
+      );
+      return {
+        ok: false,
+        action: 'create_continuation_job',
+        message: [
+          'Continuation job was not created:',
+          `required_tools contains names that are not configured host CLI tools: ${unsupportedHostTools.join(', ')}.`,
+          'Standard Codex tools must not be declared in required_tools; use an empty array unless an exact configured host tool is required.',
+        ].join(' '),
+      };
+    }
     const { job } = await deps.continuationService.createFromMessage(
       action,
       context.message,

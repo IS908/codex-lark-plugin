@@ -188,7 +188,10 @@ export const CreateContinuationActionSchema = z.object({
   acceptance_criteria: z.array(z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes))
     .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
   context_snapshot: ContinuationCheckpointActionSchema,
-  required_tools: z.array(z.string().min(1).max(500))
+  required_tools: z.array(z.string().regex(
+    /^[A-Za-z0-9_.-]{1,80}$/,
+    'required_tools entries must be exact configured host CLI names',
+  ))
     .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
   working_directory: RelativeContinuationDirectorySchema.optional(),
 }).strict();

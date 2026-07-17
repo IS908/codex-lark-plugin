@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.2.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.2.2-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -82,7 +82,7 @@
 - Job、attempt、checkpoint、lease 和终态投递 outbox 事务化存储在 `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`，托管 artifact 存储在同级 `artifacts/` 目录
 - 每个 Job 使用独立 Codex execution session；前台 session 只记录来源，续跑 session 失效时会安全替换，不会改动原聊天 session
 - `/task list|status|cancel|retry|delete` 绕过 Codex 直接执行；creator 管理自己的任务，`LARK_OWNER_OPEN_ID` 可以管理全部任务。retry 会创建新 Job ID，且仅允许重试 failed/cancelled 任务
-- 后台 runner 固定 `approval_policy=never`、关闭 sandbox 网络、忽略用户 Codex config，不能发送消息、创建嵌套任务或执行源码发布；插件不提供 continuation MCP tool。每个 step 最多只能请求一次父进程托管的 `run_local_cli_tool`，且工具精确名称必须出现在 `required_tools`，执行时仍会校验 caller/config 并受不盲目重放的持久化账本保护
+- 后台 runner 固定 `approval_policy=never`、关闭 sandbox 网络、忽略用户 Codex config，不能发送消息、创建嵌套任务或执行源码发布；插件不提供 continuation MCP tool。Codex 标准文件和 shell 工具始终受该 sandbox 约束，不写入 `required_tools`。每个 step 最多只能请求一次父进程托管的 `run_local_cli_tool`，且配置中的宿主工具精确名称必须出现在 `required_tools`，执行时仍会校验 caller/config 并受不盲目重放的持久化账本保护
 - IM 终态回复在 Feishu 一小时去重窗口内复用稳定 UUID；文档评论遇到模糊发送结果时执行有界 marker 回读。无法确认的投递进入 `delivery_unknown`，不会盲目重发
 
 ### 可靠性
@@ -512,10 +512,12 @@ Feishu/Lark `open_id` 数组。每个工具必须且只能设置 `paramAllowlist
 或 `CUSTOM_SAFE`。
 
 持久化 continuation 可以使用这些工具，但 sandboxed Codex 进程仍然保持禁网。创建任务时写入的
-`required_tools` 必须包含 `tools` 下完全一致的 key（例如 `lark_cli`）；执行时该工具仍须存在，
-且其 `allowedCallers` 必须允许任务持久化的 creator。`required_tools` 只声明任务意图，不是第二份
-白名单，也不会单独授予命令权限。用户可以在前台请求中明确“创建一个需要 `lark_cli` 的后台任务”，
-由创建 action 写入该声明。已有 `required_tools: []` 的任务不会自动获得权限，需要重新创建。
+`required_tools` 只声明额外的父进程宿主 CLI；`exec_command`、`apply_patch` 等 Codex 标准工具不能
+写入，普通仓库分析应使用 `required_tools: []`。非空条目必须是 `tools` 下完全一致的 key（例如
+`lark_cli`）；未知名称会在 Job 落库前被拒绝。执行时该工具仍须存在，且其 `allowedCallers` 必须允许
+任务持久化的 creator。`required_tools` 只声明任务意图，不是第二份白名单，也不会自行授予命令
+权限。需要宿主工具时，应明确要求前台 turn 使用已配置的工具名由创建 action 写入该声明。已有
+`required_tools: []` 的任务不会自动获得权限，需要重新创建。
 
 每个 continuation step 最多请求一次宿主工具。父进程会先持久化请求指纹，再启动配置的命令，并把
 有上限且已脱敏的结果回灌给同一个 sandboxed Codex session。恢复时，已完成调用复用已存结果；仍处于

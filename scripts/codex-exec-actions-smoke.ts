@@ -266,6 +266,7 @@ try {
   identitySession.setCaller('oc_other', 'thread_other', 'ou_other');
   const continuationJobId = 'job_0123456789abcdef01234567';
   const continuationLookups: Array<{ jobId: string; actor: string; owner?: string | null }> = [];
+  const continuationCreates: any[] = [];
   const currentImagePath = join(root, 'current-image.png');
   const localFilePath = join(root, 'report.txt');
   writeFileSync(currentImagePath, 'fake image bytes', 'utf-8');
@@ -336,6 +337,16 @@ try {
     },
     larkTransport: new ThisBoundQuotedTransport(),
     continuationService: {
+      async createFromMessage(action: any) {
+        continuationCreates.push(action);
+        return {
+          job: {
+            jobId: `job_created_${continuationCreates.length}`,
+            title: action.title,
+          },
+          created: true,
+        };
+      },
       async getForActor(jobId: string, actor: string, owner?: string | null) {
         continuationLookups.push({ jobId, actor, owner });
         if (jobId === continuationJobId && actor === 'ou_user') return { jobId } as any;
@@ -343,6 +354,55 @@ try {
       },
     } as any,
   });
+
+  const continuationAction = (requiredTools: string[]) => ({
+    type: 'create_continuation_job' as const,
+    title: 'Inspect repository',
+    objective: 'Inspect the local repository and summarize its structure.',
+    acceptance_criteria: ['Return a concise repository summary.'],
+    context_snapshot: {
+      summary: 'No work completed yet.',
+      completed_steps: [],
+      remaining_steps: ['Inspect files and summarize.'],
+      constraints: ['Read-only analysis.'],
+      decisions: [],
+      references: [],
+    },
+    required_tools: requiredTools,
+    working_directory: '.',
+  });
+  const continuationMessage = {
+    messageId: 'om_continuation_tools',
+    chatId: 'oc_exec',
+    threadId: 'thread_exec',
+    chatType: 'group' as const,
+    senderId: 'ou_user',
+    text: 'continue repository analysis',
+    messageType: 'text' as const,
+    rawContent: '{}',
+  };
+  const rejectedBuiltinTools = await dispatcher.execute({
+    message: continuationMessage,
+    actions: [continuationAction(['exec_command', 'apply_patch'])],
+  });
+  assert.equal(rejectedBuiltinTools[0].ok, false);
+  assert.match(rejectedBuiltinTools[0].message, /not configured host CLI tools.*apply_patch, exec_command/i);
+  assert.match(rejectedBuiltinTools[0].message, /standard Codex tools must not be declared/i);
+  assert.equal(continuationCreates.length, 0);
+
+  const emptyHostTools = await dispatcher.execute({
+    message: { ...continuationMessage, messageId: 'om_continuation_empty_tools' },
+    actions: [continuationAction([])],
+  });
+  assert.equal(emptyHostTools[0].ok, true);
+  assert.equal(continuationCreates.length, 1);
+
+  const configuredHostTool = await dispatcher.execute({
+    message: { ...continuationMessage, messageId: 'om_continuation_echo_tool' },
+    actions: [continuationAction(['echo'])],
+  });
+  assert.equal(configuredHostTool[0].ok, true);
+  assert.deepEqual(continuationCreates[1].required_tools, ['echo']);
 
   const traceTimestamp = new Date().toISOString();
   writeFileSync(traceLogPath, [
