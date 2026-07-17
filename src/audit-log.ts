@@ -61,7 +61,7 @@ export async function audit(
 }
 
 function inferAuditLogId(args: Record<string, unknown>): string {
-  for (const key of ['message_id', 'messageId', 'reply_to', 'fallback_message_id', 'thread_id', 'threadId', 'chat_id', 'chatId']) {
+  for (const key of ['job_id', 'jobId', 'message_id', 'messageId', 'reply_to', 'fallback_message_id', 'thread_id', 'threadId', 'chat_id', 'chatId']) {
     const value = args[key];
     if (typeof value === 'string' && value.trim()) return value;
   }

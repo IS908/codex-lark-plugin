@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LarkMessage } from '../src/lark-message.js';
@@ -7,6 +7,7 @@ import type { LarkMessage } from '../src/lark-message.js';
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
 const root = await mkdtemp(join(tmpdir(), 'continuation-action-'));
+process.env.LARK_AUDIT_LOG = join(root, 'audit.log');
 const { IdentitySession } = await import('../src/identity-session.js');
 const { MemoryStore } = await import('../src/memory/file.js');
 const { SqliteContinuationRepository } = await import('../src/continuation/sqlite-repository.js');
@@ -41,6 +42,12 @@ function parse(actions: unknown[]) {
 }
 
 assert.equal(parse([action()]).ok, true);
+assert.equal(parse([action({
+  capability_profile: 'trusted_personal_workspace',
+  requested_paths: ['/tmp'],
+})]).ok, true);
+assert.equal(parse([action({ capability_profile: 'trusted_personal_workspace' })]).ok, false);
+assert.equal(parse([action({ requested_paths: ['/tmp'] })]).ok, false);
 assert.equal(parse([action({ required_tools: ['local filesystem'] })]).ok, false);
 for (const forbidden of [
   { chat_id: 'oc_forged' },
@@ -64,6 +71,7 @@ const repository = await SqliteContinuationRepository.open({
 const clock = { now: () => new Date('2026-07-17T00:00:00.000Z') };
 const childWorkingDirectory = join(root, 'repo-a');
 await mkdir(childWorkingDirectory);
+const externalRequestedPath = await mkdtemp(join(tmpdir(), 'continuation-trusted-target-'));
 const service = new ContinuationService({
   repository,
   allowedWorkingRoot: root,
@@ -73,6 +81,8 @@ const service = new ContinuationService({
   maxAgeHours: 24,
   timeoutMs: 600_000,
   defaultModel: 'gpt-5.4',
+  canUseTrustedPersonalWorkspace: (actorOpenId) =>
+    actorOpenId === 'ou_owner' || actorOpenId === 'ou_allowed',
   clock,
 });
 
@@ -118,11 +128,81 @@ assert.equal(firstJob?.parentSessionId, 'session-parent');
 assert.equal(firstJob?.model, 'gpt-5.3-codex');
 assert.equal(firstJob?.workingDirectory, await realpath(root));
 assert.deepEqual(firstJob?.permissions, {
-  filesystem: { root: await realpath(root), mode: 'workspace-write' },
+  profile: 'bounded',
+  filesystem: { root: await realpath(root), mode: 'workspace-write', requestedPaths: [] },
   hostTools: [],
   network: 'none',
+  externalSideEffects: 'denied',
   approval: { mode: 'never' },
 });
+
+const trustedOwner = await service.createFromMessage(action({
+  capability_profile: 'trusted_personal_workspace',
+  requested_paths: [externalRequestedPath, 'repo-a', externalRequestedPath],
+}) as any, message('trusted-owner', { senderId: 'ou_owner' }));
+assert.deepEqual(trustedOwner.job.permissions, {
+  profile: 'trusted_personal_workspace',
+  filesystem: {
+    root: await realpath(root),
+    mode: 'workspace-write',
+    requestedPaths: [await realpath(externalRequestedPath), await realpath(childWorkingDirectory)],
+  },
+  hostTools: [],
+  network: 'enabled',
+  externalSideEffects: 'allowed',
+  approval: { mode: 'never' },
+});
+
+const trustedAllowedUser = await service.createFromMessage(action({
+  capability_profile: 'trusted_personal_workspace',
+  requested_paths: [externalRequestedPath],
+}) as any, message('trusted-allowed', { senderId: 'ou_allowed' }));
+assert.equal(trustedAllowedUser.job.permissions.profile, 'trusted_personal_workspace');
+
+await assert.rejects(
+  service.createFromMessage(action({
+    capability_profile: 'trusted_personal_workspace',
+    requested_paths: [externalRequestedPath],
+  }) as any, message('trusted-chat-only', { senderId: 'ou_chat_only' })),
+  /owner or allowed_user_ids/i,
+);
+await assert.rejects(
+  service.createFromMessage(action({
+    capability_profile: 'trusted_personal_workspace',
+    requested_paths: [join(externalRequestedPath, 'missing')],
+  }) as any, message('trusted-missing', { senderId: 'ou_owner' })),
+  /requested path.*exist/i,
+);
+
+const trustedDispatchMessage = message('trusted-dispatch', { senderId: 'ou_owner' });
+identity.setCaller(
+  trustedDispatchMessage.chatId,
+  trustedDispatchMessage.threadId,
+  trustedDispatchMessage.senderId,
+);
+const trustedDispatch = await dispatcher.execute({
+  message: trustedDispatchMessage,
+  actions: [action({
+    capability_profile: 'trusted_personal_workspace',
+    requested_paths: [externalRequestedPath],
+  })] as any,
+});
+assert.equal(trustedDispatch[0].ok, true);
+let trustedAudit = '';
+for (let attempt = 0; attempt < 100; attempt += 1) {
+  try {
+    trustedAudit = await readFile(process.env.LARK_AUDIT_LOG, 'utf-8');
+  } catch {}
+  if (trustedAudit.includes(trustedDispatch[0].continuation!.jobId)) break;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+assert.match(trustedAudit, /create_continuation_job/);
+assert.match(trustedAudit, /trusted_personal_workspace/);
+assert.match(trustedAudit, /network.*enabled/);
+assert.match(
+  trustedAudit,
+  new RegExp(`\\s{2}${trustedDispatch[0].continuation!.jobId}\\s{2}audit\\s{2}create_continuation_job`),
+);
 
 const childCreated = await service.createFromMessage(
   action({ working_directory: 'repo-a' }) as any,
@@ -145,7 +225,7 @@ const duplicate = await dispatcher.execute({
   model: 'gpt-5.3-codex',
 });
 assert.equal(duplicate[0].continuation?.jobId, first[0].continuation?.jobId);
-assert.equal((await repository.listAll(100)).length, 3);
+assert.equal((await repository.listAll(100)).length, 6);
 
 const group = message('group', {
   chatType: 'group',

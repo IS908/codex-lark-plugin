@@ -43,9 +43,11 @@ const EMPTY_CHECKPOINT = {
   references: [],
 };
 const EMPTY_PERMISSION_ENVELOPE: ContinuationPermissionEnvelope = {
-  filesystem: { root: '', mode: 'read-only' },
+  profile: 'bounded',
+  filesystem: { root: '', mode: 'read-only', requestedPaths: [] },
   hostTools: [],
   network: 'none',
+  externalSideEffects: 'denied',
   approval: { mode: 'never' },
 };
 
@@ -222,12 +224,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         const workingDirectory = stringField(row, 'working_directory');
         const requiredTools = parseJson<string[]>(row.required_tools_json, []);
         update.run(JSON.stringify({
+          profile: 'bounded',
           filesystem: {
             root: workingDirectory,
             mode: 'workspace-write',
+            requestedPaths: [],
           },
           hostTools: requiredTools,
           network: 'none',
+          externalSideEffects: 'denied',
           approval: { mode: 'never' },
         } satisfies ContinuationPermissionEnvelope), stringField(row, 'job_id'));
       }
@@ -1346,8 +1351,28 @@ function parseToolResult(value: SqlRow[string] | undefined): ContinuationToolRes
 
 function parsePermissionEnvelope(value: SqlRow[string] | undefined): ContinuationPermissionEnvelope {
   const parsed = parseJson<unknown>(value, null);
-  validatePermissionEnvelope(parsed, false);
-  return parsed;
+  const normalized = normalizePermissionEnvelope(parsed);
+  validatePermissionEnvelope(normalized, false);
+  return normalized;
+}
+
+function normalizePermissionEnvelope(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const envelope = value as Record<string, unknown>;
+  const rawFilesystem = envelope.filesystem;
+  if (!rawFilesystem || typeof rawFilesystem !== 'object' || Array.isArray(rawFilesystem)) {
+    return value;
+  }
+  const filesystem = rawFilesystem as Record<string, unknown>;
+  return {
+    ...envelope,
+    profile: envelope.profile ?? 'bounded',
+    filesystem: {
+      ...filesystem,
+      requestedPaths: filesystem.requestedPaths ?? [],
+    },
+    externalSideEffects: envelope.externalSideEffects ?? 'denied',
+  };
 }
 
 function validatePermissionEnvelope(
@@ -1360,18 +1385,37 @@ function validatePermissionEnvelope(
   const envelope = value as Partial<ContinuationPermissionEnvelope>;
   const filesystem = envelope.filesystem;
   const approval = envelope.approval;
+  const requestedPaths = filesystem?.requestedPaths;
   if (
-    !filesystem
+    (envelope.profile !== 'bounded' && envelope.profile !== 'trusted_personal_workspace')
+    || !filesystem
     || typeof filesystem.root !== 'string'
     || (requireAbsoluteRoot && !path.isAbsolute(filesystem.root))
     || (filesystem.mode !== 'read-only' && filesystem.mode !== 'workspace-write')
+    || !Array.isArray(requestedPaths)
+    || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount
+    || !requestedPaths.every((requestedPath) =>
+      typeof requestedPath === 'string' && path.isAbsolute(requestedPath))
     || !Array.isArray(envelope.hostTools)
     || !envelope.hostTools.every((tool) => typeof tool === 'string' && tool.length > 0)
-    || envelope.network !== 'none'
+    || (envelope.network !== 'none' && envelope.network !== 'enabled')
+    || (envelope.externalSideEffects !== 'denied' && envelope.externalSideEffects !== 'allowed')
     || !approval
     || (approval.mode !== 'never' && approval.mode !== 'interactive')
   ) {
     throw new Error('Continuation permission envelope is invalid.');
+  }
+  if (
+    (envelope.profile === 'bounded'
+      && (requestedPaths.length !== 0
+        || envelope.network !== 'none'
+        || envelope.externalSideEffects !== 'denied'))
+    || (envelope.profile === 'trusted_personal_workspace'
+      && (requestedPaths.length === 0
+        || envelope.network !== 'enabled'
+        || envelope.externalSideEffects !== 'allowed'))
+  ) {
+    throw new Error('Continuation permission envelope profile is inconsistent.');
   }
 }
 

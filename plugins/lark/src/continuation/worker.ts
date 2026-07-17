@@ -189,6 +189,12 @@ export class ContinuationWorker {
   private async runExecution(execution: ActiveExecution): Promise<void> {
     let result;
     try {
+      await this.audit(
+        'continuation.execute.start',
+        execution.claim,
+        'ok',
+        permissionAuditDetail(execution.claim),
+      );
       result = await this.options.executor.execute(
         execution.claim,
         execution.controller.signal,
@@ -471,6 +477,16 @@ function sanitizeText(value: string): string {
     .trim();
   const redacted = redactContinuationText(sanitized);
   return redacted.length > 1_000 ? `${redacted.slice(0, 997)}...` : redacted;
+}
+
+function permissionAuditDetail(claim: ContinuationClaim): string {
+  const permissions = claim.job.permissions;
+  return [
+    `profile=${permissions.profile}`,
+    `network=${permissions.network}`,
+    `external_side_effects=${permissions.externalSideEffects}`,
+    `requested_paths=${permissions.filesystem.requestedPaths.join(',') || '-'}`,
+  ].join(' ');
 }
 
 function addMilliseconds(timestamp: string, milliseconds: number): string {

@@ -1,15 +1,19 @@
 import { createHash } from 'node:crypto';
 import type {
+  ContinuationCapabilityProfile,
   ContinuationCreateRequest,
   ContinuationDeliveryRoute,
   ContinuationFilesystemMode,
   ContinuationJob,
 } from '../domain/continuation.js';
-import { isContinuationTerminal } from '../domain/continuation.js';
+import { CONTINUATION_LIMITS, isContinuationTerminal } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
 import { redactContinuationText } from './redaction.js';
-import { resolveContinuationWorkingDirectory } from './working-directory.js';
+import {
+  resolveContinuationRequestedPaths,
+  resolveContinuationWorkingDirectory,
+} from './working-directory.js';
 
 export interface ContinuationServiceOptions {
   repository: ContinuationRepository;
@@ -20,6 +24,7 @@ export interface ContinuationServiceOptions {
   maxAgeHours: number;
   timeoutMs: number;
   defaultModel?: string | null;
+  canUseTrustedPersonalWorkspace?: (actorOpenId: string) => boolean;
   clock: ContinuationClock;
 }
 
@@ -37,6 +42,8 @@ export interface ContinuationActionInput {
   };
   required_tools: string[];
   working_directory?: string;
+  capability_profile?: ContinuationCapabilityProfile;
+  requested_paths?: string[];
 }
 
 export interface ContinuationTaskService {
@@ -96,6 +103,8 @@ export class ContinuationService implements ContinuationTaskService {
     );
     const route = deriveRoute(message);
     const brief = sanitizeBrief(action);
+    const profile = action.capability_profile ?? 'bounded';
+    const requestedPaths = await this.resolveRequestedPaths(profile, action, message.senderId);
     const request: ContinuationCreateRequest = {
       idempotencyKey: continuationIdempotencyKey(message.messageId),
       creatorOpenId: message.senderId,
@@ -109,12 +118,15 @@ export class ContinuationService implements ContinuationTaskService {
       requiredTools: brief.requiredTools,
       workingDirectory: resolvedWorkingDirectory.workingDirectory,
       permissions: {
+        profile,
         filesystem: {
           root: resolvedWorkingDirectory.root,
           mode: this.options.filesystemMode,
+          requestedPaths,
         },
         hostTools: brief.requiredTools,
-        network: 'none',
+        network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',
+        externalSideEffects: profile === 'trusted_personal_workspace' ? 'allowed' : 'denied',
         approval: { mode: 'never' },
       },
       ...((selectedModel ?? this.options.defaultModel)
@@ -130,6 +142,34 @@ export class ContinuationService implements ContinuationTaskService {
       ).toISOString(),
     };
     return this.options.repository.create(request);
+  }
+
+  private async resolveRequestedPaths(
+    profile: ContinuationCapabilityProfile,
+    action: ContinuationActionInput,
+    actorOpenId: string,
+  ): Promise<string[]> {
+    if (profile === 'bounded') {
+      if (action.requested_paths !== undefined) {
+        throw new Error('requested_paths is available only with trusted_personal_workspace.');
+      }
+      return [];
+    }
+    if (!this.options.canUseTrustedPersonalWorkspace?.(actorOpenId)) {
+      throw new Error(
+        'trusted_personal_workspace is available only to the owner or allowed_user_ids users.',
+      );
+    }
+    if (!action.requested_paths?.length) {
+      throw new Error('requested_paths is required for trusted_personal_workspace.');
+    }
+    if (action.requested_paths.length > CONTINUATION_LIMITS.requestedPathCount) {
+      throw new Error('Continuation requested path count exceeds the configured limit.');
+    }
+    return resolveContinuationRequestedPaths(
+      this.options.allowedWorkingRoot,
+      action.requested_paths,
+    );
   }
 
   async listForActor(

@@ -38,6 +38,7 @@ export interface ContinuationRuntimeOptions {
   retentionDays: number;
   maxConcurrency: number;
   configuredSandbox: CodexExecSandbox;
+  canUseTrustedPersonalWorkspace?: (actorOpenId: string) => boolean;
   command?: string;
   localCliToolsConfigPath?: string;
   getTransport: () => LarkTransport;
@@ -102,6 +103,7 @@ export async function createContinuationRuntime(
       maxRetries: options.maxRetries,
       maxAgeHours: options.maxAgeHours,
       timeoutMs: options.timeoutMs,
+      canUseTrustedPersonalWorkspace: options.canUseTrustedPersonalWorkspace,
       clock,
     });
     const toolInvoker = options.toolInvoker ?? (options.localCliToolsConfigPath
@@ -115,6 +117,7 @@ export async function createContinuationRuntime(
       artifactStore,
       configuredSandbox: options.configuredSandbox,
       currentWorkingRoot: options.allowedWorkingRoot,
+      canUseTrustedPersonalWorkspace: options.canUseTrustedPersonalWorkspace,
       ...(toolInvoker ? { toolInvoker } : {}),
       ...(options.command ? { command: options.command } : {}),
       ...(options.runCodexExec ? { runCodexExec: options.runCodexExec } : {}),

@@ -40,6 +40,7 @@ export interface CodexExecRequest {
   };
   traceLogId?: string;
   traceRunId?: string;
+  forceToolTrace?: boolean;
   outputSchema?: Record<string, unknown>;
   abortSignal?: AbortSignal;
   additionalWritableDirs?: string[];
@@ -267,7 +268,11 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   const runtimeMetrics = createCodexExecRuntimeMetricsCollector();
   const toolTrace = createCodexExecToolTraceWriter(
     request.traceLogId || request.traceRunId
-      ? { logId: request.traceLogId, runId: request.traceRunId }
+      ? {
+          logId: request.traceLogId,
+          runId: request.traceRunId,
+          ...(request.forceToolTrace ? { enabled: true } : {}),
+        }
       : undefined,
   );
 

@@ -18,6 +18,7 @@ export interface CodexExecActionChannelPromptInfo {
   continuationEnabled?: boolean;
   continuationWorkingRoot?: string;
   continuationHostToolNames?: string[];
+  continuationTrustedPersonalWorkspaceAvailable?: boolean;
 }
 
 export interface CodexExecActionChannelOptions {
@@ -333,6 +334,13 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
         '    required_tools declares only additional host CLI tools. Do not declare standard Codex tools such as exec_command or apply_patch; those remain governed by the continuation sandbox.',
         ...(info.continuationWorkingRoot
           ? [`    Configured continuation working root: ${JSON.stringify(info.continuationWorkingRoot)}. working_directory must be relative to this root.`]
+          : []),
+        ...(info.continuationTrustedPersonalWorkspaceAvailable
+          ? [
+              '    For a trusted background task that needs broad local reads, network, or external side effects, set capability_profile to "trusted_personal_workspace" and provide requested_paths.',
+              '    requested_paths may contain absolute paths or paths relative to the configured continuation working root. They are canonicalized and audited before creation.',
+              '    Example extension: "capability_profile":"trusted_personal_workspace","requested_paths":["/absolute/target"]',
+            ]
           : []),
         ...(continuationHostToolNames.length > 0
           ? [`    For local CLI access, required_tools must use exact configured host tool names: ${continuationHostToolNames.join(', ')}. The declaration does not grant access; runtime config and caller policy are checked again.`]

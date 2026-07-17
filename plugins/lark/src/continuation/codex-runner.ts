@@ -37,6 +37,7 @@ export interface ContinuationCodexExecutorOptions {
   runCodexExec?: CodexExecRunner;
   command?: string;
   toolInvoker?: ContinuationToolInvoker;
+  canUseTrustedPersonalWorkspace?: (actorOpenId: string) => boolean;
 }
 
 const compactString = z.string().max(CONTINUATION_LIMITS.objectiveBytes);
@@ -194,6 +195,21 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     signal: AbortSignal,
   ): Promise<ContinuationExecutionResult> {
     try {
+      if (
+        claim.job.permissions.profile === 'trusted_personal_workspace'
+        && !this.options.canUseTrustedPersonalWorkspace?.(claim.job.creatorOpenId)
+      ) {
+        return {
+          outcome: blockedCapabilityOutcome({
+            errorCode: 'continuation_trusted_profile_revoked',
+            errorSummary: 'The creator is no longer eligible for trusted_personal_workspace.',
+            requiredCapability: 'trusted_personal_workspace',
+            unperformedWork: [
+              'Restore owner or allowed_user_ids eligibility, then retry the task.',
+            ],
+          }),
+        };
+      }
       if (claim.job.permissions.approval.mode !== 'never') {
         return {
           outcome: blockedCapabilityOutcome({
@@ -240,11 +256,17 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         abortSignal: signal,
         configOverrides: [
           'approval_policy="never"',
-          'sandbox_workspace_write.network_access=false',
+          ...(claim.job.permissions.profile === 'trusted_personal_workspace'
+            ? ['sandbox_permissions=["disk-full-read-access"]']
+            : []),
+          `sandbox_workspace_write.network_access=${claim.job.permissions.network === 'enabled'}`,
         ],
         additionalWritableDirs: [artifactDir],
         traceLogId: claim.job.jobId,
         traceRunId: claim.attempt.attemptId,
+        ...(claim.job.permissions.profile === 'trusted_personal_workspace'
+          ? { forceToolTrace: true }
+          : {}),
       };
 
       const recovery = await this.options.toolInvoker?.recover(claim);
@@ -600,17 +622,29 @@ function buildContinuationPrompt(job: ContinuationJob, artifactDir: string): str
     requiredTools: job.requiredTools,
     stepCount: job.stepCount,
     maxSteps: job.maxSteps,
+    permissions: {
+      profile: job.permissions.profile,
+      requestedPaths: job.permissions.filesystem.requestedPaths,
+      network: job.permissions.network,
+      externalSideEffects: job.permissions.externalSideEffects,
+    },
   };
+  const authorityLine = job.permissions.profile === 'trusted_personal_workspace'
+    ? 'The trusted_personal_workspace profile allows broad local reads, network access, and external side effects required by the objective. Keep all actions within the authenticated user request and leave an accurate command trace.'
+    : 'Do not request approval, send messages, create jobs, or perform source-control publishing actions.';
   return [
     '[Durable Continuation Step]',
     'Execute one bounded unattended slice of the task below.',
     'Return only one JSON object matching the supplied output schema.',
     'Every schema field must be present. Set unused array fields to [] and other unused fields to null.',
-    'Do not request approval, send messages, create jobs, or perform source-control publishing actions.',
+    authorityLine,
     'Do not execute a required local CLI directly. When one configured tool is needed, return a tool_request outcome using an exact name from requiredTools; the trusted parent will validate and execute it.',
     'At most one local CLI tool can be requested in this step.',
     'If a required capability is unavailable, return a blocked outcome instead of weakening the execution boundary.',
     `Workspace: ${job.workingDirectory}`,
+    `Requested paths: ${job.permissions.filesystem.requestedPaths.join(', ') || '(none)'}`,
+    `Network access: ${job.permissions.network}`,
+    `External side effects: ${job.permissions.externalSideEffects}`,
     `Managed artifact directory: ${artifactDir}`,
     'Artifact references in a completed outcome must be relative files inside the managed artifact directory.',
     '',

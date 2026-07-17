@@ -7,6 +7,7 @@ export const CONTINUATION_LIMITS = {
   toolResultBytes: 64 * 1024,
   finalMessageBytes: 256 * 1024,
   artifactCount: 20,
+  requestedPathCount: 32,
   managedArtifactBytesPerJob: 100 * 1024 * 1024,
 } as const;
 
@@ -37,14 +38,18 @@ export interface ContinuationCheckpoint {
 
 export type ContinuationFilesystemMode = 'read-only' | 'workspace-write';
 export type ContinuationApprovalMode = 'never' | 'interactive';
+export type ContinuationCapabilityProfile = 'bounded' | 'trusted_personal_workspace';
 
 export interface ContinuationPermissionEnvelope {
+  profile: ContinuationCapabilityProfile;
   filesystem: {
     root: string;
     mode: ContinuationFilesystemMode;
+    requestedPaths: string[];
   };
   hostTools: string[];
-  network: 'none';
+  network: 'none' | 'enabled';
+  externalSideEffects: 'denied' | 'allowed';
   approval: {
     mode: ContinuationApprovalMode;
   };

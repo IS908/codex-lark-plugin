@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.2.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.3.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -86,7 +86,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Jobs, attempts, checkpoints, leases, and a terminal-delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; managed artifacts live under the sibling `artifacts/` directory.
 - Each Job owns a dedicated Codex execution session. A parent foreground session is provenance only; an unavailable resume session is replaced safely without mutating the foreground chat session.
 - `/task list|status|cancel|retry|delete` bypass Codex and remain available for direct control. Creators manage their own tasks; `LARK_OWNER_OPEN_ID` can manage every task. Retry creates a new Job ID, and only failed/cancelled tasks can be retried.
-- The background runner forces approval policy `never`, disables sandbox network access, ignores user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. There is no continuation MCP tool. Standard Codex filesystem/shell tools stay inside that sandbox and are never listed in `required_tools`. A task may request one parent-owned `run_local_cli_tool` call per step only when its exact configured host-tool name appears in `required_tools`; caller/config policy and the durable no-blind-replay ledger are still enforced.
+- The default `bounded` profile forces approval policy `never`, disables sandbox network access, ignores user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. An eligible owner or `allowed_user_ids` member may explicitly select `trusted_personal_workspace` for broad local reads, network access, and external operations under a trust-first policy. Trusted attempts always write sanitized command traces keyed by Job/attempt ID. There is no continuation MCP tool. Standard Codex filesystem/shell tools stay inside the sandbox and are never listed in `required_tools`. A task may request one parent-owned `run_local_cli_tool` call per step only when its exact configured host-tool name appears in `required_tools`; caller/config policy and the durable no-blind-replay ledger are still enforced.
 - Terminal IM replies reuse one stable Feishu UUID inside its one-hour deduplication window. Document-comment delivery uses bounded marker read-back after an ambiguous send. Unreconciled sends become `delivery_unknown` and are not blindly repeated.
 
 ### Reliability
@@ -588,8 +588,9 @@ one of `paramAllowlist` or `paramBlocklist`. Commands must be absolute paths.
 Environment keys in `envAllowlist` and `env` must use shell-compatible names
 such as `LARK_APP_ID` or `CUSTOM_SAFE`.
 
-Persistent continuation tasks can use these tools without enabling network in
-the sandboxed Codex process. The `required_tools` array written when the task is
+Bounded continuation tasks can use these tools without enabling network in
+the sandboxed Codex process. Trusted-profile tasks may enable sandbox network
+independently; the host bridge still applies its own allowlist. The `required_tools` array written when the task is
 created declares only additional parent-owned host CLI tools. Standard Codex
 tools such as `exec_command` and `apply_patch` must not be included; use
 `required_tools: []` for routine repository analysis. Any non-empty entry must
@@ -706,12 +707,36 @@ example, with `LARK_CONTINUATION_WORKING_ROOT=/Users/you/workspace`, use
 Creation and every execution require an existing directory and enforce both
 lexical and realpath containment, including symlink escape checks.
 
+The default action uses `capability_profile="bounded"` (or omits the field) and
+must not include `requested_paths`. The authenticated owner and users explicitly
+listed in the current `allowed_user_ids` access-control list may opt into
+`capability_profile="trusted_personal_workspace"`. Admission through
+`allowed_chat_ids` alone is insufficient. Trusted actions require one or more
+`requested_paths`; each path may be absolute or relative to
+`LARK_CONTINUATION_WORKING_ROOT`, must exist at creation time, and is persisted
+as a canonical absolute path. In this initial trust-first mode these paths are
+preflight and audit metadata, not a read allowlist.
+
+`trusted_personal_workspace` requests Codex CLI `disk-full-read-access`, enables
+sandbox network access, and allows the background Codex process to perform external operations required by the user
+objective. It does not yet classify or interactively approve individual remote
+effects. Use it only for trusted users. Creator eligibility is checked again at
+every attempt, so removing a user from `allowed_user_ids` blocks queued/retried
+trusted Jobs. The Job permission snapshot is recorded
+in `audit.log`, and sanitized command/tool events are forced into `trace.log`
+with Job ID and attempt ID correlation even when
+`LARK_CODEX_EXEC_TOOL_TRACE=false`. Secrets continue through the existing
+diagnostic redaction path; file contents are not copied into audit records.
+
 Each Job persists a server-derived permission envelope. Execution uses the
 intersection of that snapshot and current operator policy: the working
 directory must remain beneath both roots, `read-only` wins over
-`workspace-write`, host tools must be declared in the Job and still pass the
-current `local-cli-tools.json` policy, network stays disabled, and foreground
-approvals/configuration are never inherited. Existing v1/v2 SQLite Jobs migrate
+`workspace-write`, and host tools must be declared in the Job and still pass the
+current `local-cli-tools.json` policy. Network is disabled for `bounded` Jobs and
+enabled only by an eligible, explicit `trusted_personal_workspace` snapshot;
+foreground approvals/configuration are never inherited. Existing permission
+JSON without profile fields is read conservatively as `bounded`, so no SQLite
+schema fork is needed. Existing v1/v2 SQLite Jobs migrate
 conservatively. `approval.mode=interactive` is reserved in the persisted
 protocol but is not executable in v2.2.0; such a Job fails closed as blocked.
 A future coordinator must bind one-time approval to an operation digest,

@@ -28,6 +28,7 @@ assert.deepEqual(CONTINUATION_LIMITS, {
   toolResultBytes: 64 * 1024,
   finalMessageBytes: 256 * 1024,
   artifactCount: 20,
+  requestedPathCount: 32,
   managedArtifactBytesPerJob: 100 * 1024 * 1024,
 });
 
