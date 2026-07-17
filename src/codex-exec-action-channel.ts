@@ -18,7 +18,7 @@ export interface CodexExecActionChannelPromptInfo {
   continuationEnabled?: boolean;
   continuationWorkingRoot?: string;
   continuationHostToolNames?: string[];
-  continuationTrustedPersonalWorkspaceAvailable?: boolean;
+  continuationTrustedPersonalWorkspaceEligible?: boolean;
 }
 
 export interface CodexExecActionChannelOptions {
@@ -332,14 +332,13 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
         '  - {"type":"create_continuation_job","title":"...","objective":"...","acceptance_criteria":["..."],"context_snapshot":{"summary":"...","completed_steps":[],"remaining_steps":["..."],"constraints":[],"decisions":[],"references":[]},"required_tools":[],"working_directory":"."}',
         '    Use this only when work must continue after the current reply. The parent derives caller, route, session, model, retry policy, and Job ID; one turn may create at most one continuation.',
         '    required_tools declares only additional host CLI tools. Do not declare standard Codex tools such as exec_command or apply_patch; those remain governed by the continuation sandbox.',
+        '    requested_paths is optional. It may contain absolute paths or paths relative to the configured continuation working root; omitted values default to the canonical working_directory. Paths are canonicalized and audited before creation.',
         ...(info.continuationWorkingRoot
           ? [`    Configured continuation working root: ${JSON.stringify(info.continuationWorkingRoot)}. working_directory must be relative to this root.`]
           : []),
-        ...(info.continuationTrustedPersonalWorkspaceAvailable
+        ...(info.continuationTrustedPersonalWorkspaceEligible
           ? [
-              '    For a trusted background task that needs broad local reads, network, or external side effects, set capability_profile to "trusted_personal_workspace" and provide requested_paths.',
-              '    requested_paths may contain absolute paths or paths relative to the configured continuation working root. They are canonicalized and audited before creation.',
-              '    Example extension: "capability_profile":"trusted_personal_workspace","requested_paths":["/absolute/target"]',
+              '    Eligible callers are automatically assigned the trusted_personal_workspace profile by the parent, enabling broad local reads, network, and external side effects. Do not include capability_profile in the action.',
             ]
           : []),
         ...(continuationHostToolNames.length > 0

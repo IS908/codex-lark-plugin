@@ -1407,8 +1407,7 @@ function validatePermissionEnvelope(
   }
   if (
     (envelope.profile === 'bounded'
-      && (requestedPaths.length !== 0
-        || envelope.network !== 'none'
+      && (envelope.network !== 'none'
         || envelope.externalSideEffects !== 'denied'))
     || (envelope.profile === 'trusted_personal_workspace'
       && (requestedPaths.length === 0

@@ -85,12 +85,14 @@ The current baseline is empty:
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
   Lark terminal delivery, and composition live under `src/continuation/`.
   The local CLI continuation adapter is parent-owned. Standard Codex tools stay
-  inside the sandbox. The default continuation profile remains network-disabled;
-  an owner or `allowed_user_ids` member can explicitly select the audited
+  inside the sandbox. The `bounded` continuation profile remains network-disabled.
+  The parent derives authority from authenticated identity and automatically
+  assigns the owner or current `allowed_user_ids` members the audited
   `trusted_personal_workspace` profile, which requests `disk-full-read-access`,
   enables network, and revalidates creator eligibility before every attempt
-  under the current trust-first policy. Canonical `requested_paths` are
-  admission/audit metadata rather than an initial read allowlist. The
+  under the current trust-first policy. Canonical `requested_paths` default to
+  the working directory and remain admission/audit metadata rather than a
+  profile selector, capability grant, or initial read allowlist. The
   external `required_tools` declaration is reserved for additional host CLI
   names; creation rejects names absent from `local-cli-tools.json`, while the
   adapter revalidates the exact persisted `requiredTools` name against current
