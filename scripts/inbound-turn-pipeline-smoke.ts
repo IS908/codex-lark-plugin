@@ -70,4 +70,34 @@ assert.equal(latestRecords.at(-1)?.threadId, 'omt_group');
 assert.equal(groupAck.hasRecentInbound('om_group_pipeline'), true);
 assert.equal(chatTypes.get('oc_group_pipeline'), 'group');
 
+const quotedCronMessage: LarkMessage = {
+  messageId: 'om_quote_cron_report',
+  chatId: 'oc_group_pipeline',
+  chatType: 'group',
+  senderId: 'ou_sender',
+  text: 'rerun this task',
+  messageType: 'text',
+  parentId: 'om_cron_report',
+  rawContent: '{}',
+};
+await prepareInboundTurn(quotedCronMessage, {
+  latestMessageTracker: { record: (chatId, msg) => latestRecords.push({ chatId, ...msg }) },
+  ackReactions: new AckReactionTracker(),
+  larkTransport: transport,
+  chatTypeCache: { set: (chatId, chatType) => chatTypes.set(chatId, chatType) },
+  botMessageTracker: {
+    get: (messageId: string) => messageId === 'om_cron_report'
+      ? {
+          messageId,
+          chatId: 'oc_group_pipeline',
+          threadId: 'job-covered-call-abc123def456-1760000000000',
+          timestamp: Date.now(),
+        }
+      : undefined,
+  },
+}, {
+  resources: [],
+});
+assert.equal(quotedCronMessage.quotedCronJobId, 'covered-call');
+
 console.log('inbound-turn-pipeline smoke: PASS');

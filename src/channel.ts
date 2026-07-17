@@ -214,6 +214,7 @@ export class LarkChannel {
       ackReactions: this.ackReactions,
       larkTransport: this.larkTransport,
       chatTypeCache: this.chatTypeCache,
+      botMessageTracker: this.botMessageTracker,
     };
   }
 
@@ -273,6 +274,7 @@ export class LarkChannel {
 
     try {
       const message = bindSdkCommentIdentity(comment, this.identitySession!);
+      message.currentUserText = message.text;
       await this.addSdkCommentContext(message, comment, sdkChannel);
       this.enqueueMessage(message);
     } catch (err) {
@@ -388,7 +390,11 @@ export class LarkChannel {
     debugLog(`[channel] Memory enrichment complete for message ${messageId}`);
 
     // Forward to handler with enriched context
-    const enrichedMessage = { ...boundaryFilteredMessage, text: enrichedText };
+    const enrichedMessage = {
+      ...boundaryFilteredMessage,
+      currentUserText: boundaryFilteredMessage.currentUserText ?? boundaryFilteredMessage.text,
+      text: enrichedText,
+    };
 
     if (this.messageHandler) {
       debugLog(`[channel] Calling message handler for message ${messageId}`);

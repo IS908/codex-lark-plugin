@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-07-17
+
+### Added
+- Add creator-authorized `run_job` exec actions that immediately execute an existing cronjob through the live scheduler while preserving its persisted prompt, model, target, identity, and report-delivery path.
+- Derive a trusted `quoted_cronjob_id` from same-chat bot-message routing metadata so quoted report reruns select the original cronjob instead of reconstructing it as a continuation.
+
+### Changed
+- Hide `create_continuation_job` from ordinary and merely heavy foreground turns. The action is exposed and permitted only when the current user text explicitly requests background execution, monitoring, waiting, or completion notification.
+- Preserve future cron schedules and paused state during manual reruns, reject overlapping runs, and carry per-job model overrides through the normal scheduler execution path.
+
+### Fixed
+- Narrow follow-up promise detection to unresolved assistant commitments while ignoring quoted lines, fenced code, design discussion, and unrelated structured actions.
+
 ## [2.6.0] - 2026-07-17
 
 ### Added
@@ -883,7 +896,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.3.0...v2.4.0

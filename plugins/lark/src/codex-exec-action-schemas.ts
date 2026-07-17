@@ -38,6 +38,12 @@ export const ListJobsActionSchema = z.object({
 });
 export type ListJobsAction = z.infer<typeof ListJobsActionSchema>;
 
+export const RunJobActionSchema = z.object({
+  type: z.literal('run_job'),
+  ...JobReferenceShape,
+});
+export type RunJobAction = z.infer<typeof RunJobActionSchema>;
+
 export const UpdateJobActionSchema = z.object({
   type: z.literal('update_job'),
   ...JobReferenceShape,
@@ -204,6 +210,7 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
   SaveMemoryActionSchema,
   CreateJobActionSchema,
   ListJobsActionSchema,
+  RunJobActionSchema,
   UpdateJobActionSchema,
   DisableJobActionSchema,
   DeleteJobActionSchema,
@@ -216,7 +223,7 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
   CreateContinuationActionSchema,
 ]).superRefine((action, ctx) => {
   if (
-    (action.type === 'update_job' || action.type === 'disable_job' || action.type === 'delete_job') &&
+    (action.type === 'run_job' || action.type === 'update_job' || action.type === 'disable_job' || action.type === 'delete_job') &&
     !action.job_id &&
     !action.name
   ) {

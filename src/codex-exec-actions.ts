@@ -21,6 +21,7 @@ import {
   deleteJob,
   formatJobNextRun,
   listVisibleJobs,
+  resolveJobReference,
   updateJob,
   upsertJob,
 } from './job-service.js';
@@ -65,6 +66,7 @@ import type {
   ListJobsAction,
   ManageAccessControlAction,
   RecallMessageAction,
+  RunJobAction,
   RunLocalCliToolAction,
   SaveMemoryAction,
   SendMessageAction,
@@ -91,6 +93,7 @@ export interface CodexExecActionDispatchRequest {
   actions: CodexExecAction[];
   parentSessionId?: string | null;
   model?: string | null;
+  continuationPermitted?: boolean;
 }
 
 export interface CodexExecActionDispatcher {
@@ -112,12 +115,18 @@ export interface CreateCodexExecActionDispatcherOptions {
   turnObligations?: Pick<TurnObligationTracker, 'markSatisfied'>;
   validateChatAccess?: AccessControlValidationInput['validateChatAccess'];
   continuationService?: ContinuationTaskService;
+  runJobNow?: (job: JobFile) => Promise<{
+    started: boolean;
+    reason?: 'already_running';
+    outcome?: 'success' | 'failed';
+  }>;
 }
 
 interface CodexExecActionContext {
   message: LarkMessage;
   parentSessionId?: string | null;
   model?: string | null;
+  continuationPermitted?: boolean;
 }
 
 type CodexExecActionHandlerRegistry = ActionHandlerRegistry<
@@ -297,6 +306,19 @@ async function executeCreateContinuation(
   context: CodexExecActionContext,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
+  if (context.continuationPermitted === false) {
+    await audit(
+      'create_continuation_job',
+      context.message.senderId,
+      { source_message_id: context.message.messageId, reason: 'not_permitted_for_turn' },
+      'denied',
+    );
+    return {
+      ok: false,
+      action: 'create_continuation_job',
+      message: 'Continuation was not permitted for this foreground turn. Complete the task now or ask the user for missing input.',
+    };
+  }
   if (!deps.continuationService) {
     await audit(
       'create_continuation_job',
@@ -406,6 +428,75 @@ async function executeListJobs(
     action: 'list_jobs',
     message: visible.map((job) => formatJobForActionList(job, caller)).join('\n\n---\n\n'),
   };
+}
+
+async function executeRunJob(
+  action: RunJobAction,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'run_job');
+  const auditArgs = {
+    source_message_id: message.messageId,
+    job_id: action.job_id,
+    name: action.name,
+    quoted_cronjob_id: message.quotedCronJobId,
+    chat_id: message.chatId,
+    thread_id: message.threadId,
+  };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+
+  const resolved = await resolveJobReference({ jobId: action.job_id, name: action.name });
+  if (!resolved.ok) {
+    void audit('run_job', caller, auditArgs, 'error');
+    return { ok: false, action: 'run_job', message: resolved.message };
+  }
+  if (resolved.job.meta.created_by !== caller) {
+    void audit('run_job', caller, auditArgs, 'denied');
+    return {
+      ok: false,
+      action: 'run_job',
+      message: `You are not the owner of "${resolved.job.meta.id}". Only ${resolved.job.meta.created_by} can run it.`,
+    };
+  }
+  if (!deps.runJobNow) {
+    void audit('run_job', caller, auditArgs, 'error');
+    return { ok: false, action: 'run_job', message: 'Cronjob runner is not available.' };
+  }
+
+  try {
+    const result = await deps.runJobNow(resolved.job);
+    if (!result.started) {
+      void audit('run_job', caller, { ...auditArgs, reason: result.reason }, 'denied');
+      return {
+        ok: false,
+        action: 'run_job',
+        message: `Job "${resolved.job.meta.id}" is already running.`,
+      };
+    }
+    if (result.outcome === 'failed') {
+      void audit('run_job', caller, { ...auditArgs, job_id: resolved.job.meta.id }, 'error');
+      return {
+        ok: false,
+        action: 'run_job',
+        message: `Job "${resolved.job.meta.id}" rerun completed with a failed outcome; its error report was delivered through the cronjob path.`,
+      };
+    }
+    void audit('run_job', caller, { ...auditArgs, job_id: resolved.job.meta.id }, 'ok');
+    return {
+      ok: true,
+      action: 'run_job',
+      message: `Reran job "${resolved.job.meta.id}" using its persisted definition.`,
+    };
+  } catch (error) {
+    void audit('run_job', caller, { ...auditArgs, job_id: resolved.job.meta.id }, 'error');
+    return {
+      ok: false,
+      action: 'run_job',
+      message: `Job "${resolved.job.meta.id}" rerun failed: ${errorMessage(error)}`,
+    };
+  }
 }
 
 async function executeUpdateJob(
@@ -1175,6 +1266,9 @@ export function createCodexExecActionDispatcher(
           ? { parentSessionId: request.parentSessionId }
           : {}),
         ...(request.model !== undefined ? { model: request.model } : {}),
+        ...(request.continuationPermitted !== undefined
+          ? { continuationPermitted: request.continuationPermitted }
+          : {}),
       };
       for (const action of request.actions) {
         results.push(await dispatchRegisteredAction(registry, action, context));
@@ -1191,6 +1285,7 @@ function createCodexExecActionHandlerRegistry(
     save_memory: (action, context) => executeSaveMemory(action, context.message, deps),
     create_job: (action, context) => executeCreateJob(action, context.message, deps),
     list_jobs: (action, context) => executeListJobs(action, context.message, deps),
+    run_job: (action, context) => executeRunJob(action, context.message, deps),
     update_job: (action, context) => executeUpdateJob(action, context.message, deps),
     disable_job: (action, context) => executeDisableJob(action, context.message, deps),
     delete_job: (action, context) => executeDeleteJob(action, context.message, deps),

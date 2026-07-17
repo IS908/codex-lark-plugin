@@ -159,6 +159,13 @@ try {
   assert.equal(continuationTraceQueryParsed.kind, 'actions');
   assert.equal(continuationTraceQueryParsed.actions[0].source, 'continuation');
 
+  const runJobParsed = parseActionEnvelopeForTest({
+    version: 1,
+    actions: [{ type: 'run_job', job_id: 'exec-action-job' }],
+  });
+  assert.equal(runJobParsed.kind, 'actions');
+  assert.equal(runJobParsed.actions[0].type, 'run_job');
+
   const invalidTraceQueryParsed = parseActionEnvelopeForTest({
     version: 1,
     actions: [{ type: 'get_run_trace', source: 'cronjob', target: 'quoted', log_id: 'job_daily' }],
@@ -308,6 +315,7 @@ try {
       return Buffer.from(this.downloadMarker);
     }
   }
+  const runJobNowRequests: any[] = [];
   const dispatcher = createCodexExecActionDispatcher({
     memoryStore: new MemoryStore(memoriesDir),
     identitySession,
@@ -359,6 +367,10 @@ try {
         throw new ContinuationServiceError('not_accessible', 'Task not found or not accessible.');
       },
     } as any,
+    runJobNow: async (job: any) => {
+      runJobNowRequests.push(job);
+      return { started: true };
+    },
   });
 
   const continuationAction = (requiredTools: string[]) => ({
@@ -401,6 +413,15 @@ try {
     actions: [continuationAction([])],
   });
   assert.equal(emptyHostTools[0].ok, true);
+  assert.equal(continuationCreates.length, 1);
+
+  const hiddenContinuation = await dispatcher.execute({
+    message: { ...continuationMessage, messageId: 'om_continuation_not_permitted' },
+    actions: [continuationAction([])],
+    continuationPermitted: false,
+  });
+  assert.equal(hiddenContinuation[0].ok, false);
+  assert.match(hiddenContinuation[0].message, /not permitted for this foreground turn/i);
   assert.equal(continuationCreates.length, 1);
 
   const configuredHostTool = await dispatcher.execute({
@@ -655,6 +676,43 @@ try {
   assert.equal(existsSync(join(jobsDir, 'exec-action-job.json')), true);
   assertInitialRuntimeShape(JSON.parse(readFileSync(join(jobsDir, 'exec-action-job.json'), 'utf-8')));
   assert.match(results[2].message, /hello-from-action/);
+
+  const runJobResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_run_job',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'rerun the quoted cronjob',
+      messageType: 'text',
+      rawContent: '{}',
+      quotedCronJobId: 'exec-action-job',
+    },
+    actions: [{ type: 'run_job', job_id: 'exec-action-job' }],
+  });
+  assert.equal(runJobResults[0].ok, true, JSON.stringify(runJobResults));
+  assert.match(runJobResults[0].message, /Reran job "exec-action-job"/);
+  assert.equal(runJobNowRequests.length, 1);
+  assert.equal(runJobNowRequests[0].meta.prompt, undefined);
+  assert.equal(runJobNowRequests[0].meta.content, 'standup reminder');
+
+  const deniedRunJobResults = await dispatcher.execute({
+    message: {
+      messageId: 'om_other_run_job',
+      chatId: 'oc_other',
+      threadId: 'thread_other',
+      chatType: 'p2p',
+      senderId: 'ou_other',
+      text: 'rerun it',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{ type: 'run_job', job_id: 'exec-action-job' }],
+  });
+  assert.equal(deniedRunJobResults[0].ok, false);
+  assert.match(deniedRunJobResults[0].message, /not the owner/i);
+  assert.equal(runJobNowRequests.length, 1);
 
   const accessResults = await dispatcher.execute({
     message: {

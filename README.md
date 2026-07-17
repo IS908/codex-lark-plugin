@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.6.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.7.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -77,12 +77,13 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Prompt job failures include structured run diagnostics: run metadata, observable stage timings, diagnostic-only progress, and redacted `codex exec` stdout/stderr tails when available
 - Standard cron expressions + simplified aliases (`every 30m`, `daily at 09:00`, `weekdays at 17:00`)
 - Create and manage jobs through Feishu chat or the `$lark:jobs` skill
+- Quote a bot report and ask to rerun it: the exec bridge derives the trusted cronjob origin and uses `run_job` to execute the persisted definition immediately. Only the job creator may trigger a rerun; a manual run preserves a future schedule and does not unpause the job.
 - Crash recovery: missed jobs are executed once on restart
 - Job storage as JSON files at `~/.codex/channels/lark/jobs/`
 
 ### Persistent Continuations
 
-- Codex can commit one structured `create_continuation_job` exec action when a foreground P2P, group, or document-comment turn cannot finish safely in one process run. The visible acknowledgement includes a durable Job ID.
+- Codex can commit one structured `create_continuation_job` exec action when a foreground P2P, group, or document-comment turn explicitly requests background execution, monitoring, waiting, or completion notification. Ordinary and merely heavy turns do not see this action. The visible acknowledgement includes a durable Job ID.
 - Jobs, attempts, checkpoints, leases, and a multi-event delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; managed artifacts live under the sibling `artifacts/` directory.
 - Each Job owns a dedicated Codex execution session. A parent foreground session is provenance only; an unavailable resume session is replaced safely without mutating the foreground chat session.
 - `/task list|status|cancel|retry|retain|delete` bypass Codex and remain available for direct control. Lists accept `--status` filters; creators and the owner can toggle `retain` to exempt important Jobs from automatic cleanup. Retry creates a new Job ID, and partial/blocked/failed/cancelled tasks can be retried.
@@ -500,6 +501,12 @@ locally, and fails malformed action requests instead of recursively loading the
 Lark MCP server. `create_job` and `list_jobs` expose
 stable `job_id` values so later turns can update, pause, replace, or delete the
 exact reminder instead of recreating a duplicate name.
+Exec turns also expose `run_job` for an immediate creator-authorized execution
+of an existing cronjob. Quoted reports produced in the current runtime carry a
+trusted `quoted_cronjob_id`, so “rerun this task” reuses the stored prompt,
+model, caller, target, and scheduler/report path instead of summarizing the task
+into a continuation. Manual reruns preserve future `next_run_at` values and do
+not change paused/active state.
 `send_message` is the exec-mode media action: it can send image/file attachments
 through the plugin runtime identity using a local path, the current inbound
 message's first downloaded image, or a quoted/replied message's first image. It
@@ -519,10 +526,11 @@ outside the plugin.
 Because exec delivery is a single-turn flow, the plugin also guards against
 misleading follow-up promises. A final answer must not claim that Codex will
 create, file, post, or reply later after the visible Feishu reply is sent unless
-the same output includes a structured action, `[LARK_DEFER]` /
-`[LARK_NO_REPLY]`, or a scheduled job action. If a risky follow-up promise is
-returned without such a mechanism, the bridge replaces it with a safe notice
-instead of implying that background work will continue.
+the same turn successfully creates an explicit continuation or cronjob. Other
+structured actions and `[LARK_DEFER]` / `[LARK_NO_REPLY]` do not establish
+background work. The guard ignores fenced code, quoted lines, design discussion,
+and negative statements; a real unresolved promise is replaced with a safe
+notice instead of implying that background work will continue.
 
 For SDK migration smoke commands, rollout controls, rollback steps, and
 compatibility removal gates, see [SDK channel rollout](docs/sdk-channel-rollout.md)

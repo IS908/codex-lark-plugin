@@ -56,6 +56,7 @@ export interface CodexExecDeliveryOptions {
   onLifecycleGuard?: (reason: string) => void;
   onActionResults?: (results: CodexExecActionExecutionResult[]) => void;
   continuationAvailable?: boolean;
+  modelOverride?: string;
   actionBaseDir?: string;
   traceLogId?: string;
   traceRunId?: string;
@@ -85,6 +86,7 @@ export interface DocCommentExecReplyRequest {
 
 const VISIBLE_SUCCESS_ACTIONS = new Set<CodexExecActionExecutionResult['action']>([
   'create_job',
+  'run_job',
   'list_jobs',
   'update_job',
   'disable_job',
@@ -121,6 +123,7 @@ async function enrichCodexExecActionPromptInfo(
   info: CodexExecActionChannelPromptInfo | null,
   message: LarkMessage,
   continuationAvailable: boolean,
+  continuationPermitted: boolean,
 ): Promise<CodexExecActionChannelPromptInfo | null> {
   if (!info?.enabled) return info;
   const baseInfo = {
@@ -129,6 +132,7 @@ async function enrichCodexExecActionPromptInfo(
     continuationEnabled:
       appConfig.continuationEnabled
       && continuationAvailable
+      && continuationPermitted
       && message.messageType !== 'reaction'
       && ['p2p', 'group', 'doc_comment'].includes(message.chatType),
     continuationWorkingRoot: appConfig.continuationWorkingRoot,
@@ -174,16 +178,30 @@ const LIFECYCLE_PROMISE_PATTERNS: Array<{ reason: string; pattern: RegExp }> = [
   },
   {
     reason: 'chinese-create-promise',
-    pattern: /(?:我(?:会|将|来|现在|这边)|现在|正在|马上|稍后|后续|一会儿).{0,24}(?:补提|创建|新建|提交|发起|开|提).{0,24}(?:issue|议题|工单|pr|pull request|链接|评论|comment)/i,
+    pattern: /(?:(?:我(?:这边)?|这边)(?:会|将|来|现在|正在|马上|稍后|后续|一会儿)|(?:^|[。！？.!?]\s*)(?:现在|正在|马上|稍后|一会儿)).{0,24}(?:补提|创建|新建|提交|发起|开|提).{0,24}(?:issue|议题|工单|pr|pull request|链接|评论|comment)/i,
   },
   {
     reason: 'chinese-reply-after-action-promise',
-    pattern: /(?:提好|创建好|建好|提交后|创建后|补提后).{0,30}(?:回贴|贴|回复|发|同步).{0,24}(?:链接|url)?/i,
+    pattern: /(?:(?:我(?:这边)?|这边).{0,20}(?:提好|创建好|建好|提交后|创建后|补提后)|(?:提好|创建好|建好|提交后|创建后|补提后).{0,16}(?:我(?:这边)?|这边)(?:会|将)?).{0,24}(?:回贴|贴|回复|发|同步).{0,24}(?:链接|url)?/i,
   },
   {
     reason: 'chinese-async-followup-promise',
-    pattern: /(?:稍后|后续|一会儿).{0,20}(?:继续|处理|回贴|回复|同步)/i,
+    pattern: /(?:我(?:这边)?|这边)(?:会|将|再|稍后|后续|一会儿).{0,20}(?:继续|处理|回贴|回复|同步|通知)/i,
   },
+];
+
+const EXPLICIT_CONTINUATION_INTENT_PATTERNS = [
+  /\b(?:run|continue|finish|handle|process|do|move)\b.{0,40}\bin the background\b/i,
+  /\b(?:create|start|make)\b.{0,20}\bbackground task\b/i,
+  /\b(?:run|continue|finish|handle|process|do)\b.{0,30}\b(?:asynchronously|async)\b/i,
+  /\b(?:keep monitoring|continue monitoring|notify me when|let me know when)\b/i,
+  /\b(?:when|once)\b.{0,60}\b(?:finished|complete|completed|done|available|ready)\b.{0,40}\b(?:notify|tell|message|reply|update)\b/i,
+  /(?:把|将|让|请).{0,36}(?:放到|转到|改成|使用|用|在)?(?:后台|异步)(?:执行|处理|运行|继续(?:处理|执行|运行)?|完成|重跑|跑)/i,
+  /(?:在后台|异步).{0,16}(?:执行|处理|运行|继续(?:处理|执行|运行)?|完成|重跑|跑)(?:一下|这个|该|当前|任务|工作|报告|分析|扫描|检查|修复|吧|，|。|$)/i,
+  /(?:后台|异步)(?:执行|处理|运行|继续(?:处理|执行|运行)?|完成|重跑|跑)(?:一下|这个|该|当前|任务|工作|报告|分析|扫描|检查|修复|吧|，|。|$)/i,
+  /持续(?:监控|跟踪|观察|检查)/,
+  /(?:完成|处理好|跑完|有结果|结果出来|数据出来)后.{0,16}(?:通知|告诉|回复|同步)(?:我|一下|，|。|$)/,
+  /(?:稍后|一会儿).{0,12}(?:继续|处理|运行|重跑)/,
 ];
 
 const SAFE_NON_EXECUTION_PATTERNS = [
@@ -201,7 +219,24 @@ function resolveTraceLogId(message: LarkMessage, explicit?: string): string {
 }
 
 function normalizeLifecycleGuardText(text: string): string {
-  return text.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  let inFence = false;
+  const prose = text.split(/\r?\n/).filter((line) => {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      return false;
+    }
+    if (inFence || /^\s*>/.test(line)) return false;
+    return true;
+  }).join(' ');
+  return prose.normalize('NFKC').replace(/\s+/g, ' ').trim();
+}
+
+export function shouldExposeContinuationForMessage(message: LarkMessage): boolean {
+  if (message.quotedCronJobId) return false;
+  if (message.messageType === 'reaction' || message.chatType === 'cronjob') return false;
+  if (!['p2p', 'group', 'doc_comment'].includes(message.chatType)) return false;
+  const userText = (message.currentUserText ?? message.text).normalize('NFKC');
+  return EXPLICIT_CONTINUATION_INTENT_PATTERNS.some((pattern) => pattern.test(userText));
 }
 
 function isSafeNonExecutionReply(text: string): boolean {
@@ -249,6 +284,7 @@ export function buildCodexExecPrompt(
     `user_id: ${message.senderId}`,
     ...(message.threadId ? [`thread_id: ${message.threadId}`] : []),
     ...(message.rootMessageId ? [`root_message_id: ${message.rootMessageId}`] : []),
+    ...(message.quotedCronJobId ? [`quoted_cronjob_id: ${message.quotedCronJobId}`] : []),
     ...(message.docComment
       ? [
           `doc_token: ${message.docComment.fileToken}`,
@@ -282,6 +318,11 @@ export function buildCodexExecPrompt(
         'This group message entered through an explicit trusted-group no-mention allowlist. Reply only when the message is clearly a question, command, or relevant thread continuation for Codex; otherwise return [LARK_NO_REPLY]. Ask for confirmation before sensitive or high-risk operations when intent is ambiguous.',
       ]
     : [];
+  const quotedCronjobPrompt = message.quotedCronJobId
+    ? [
+        `The quoted bot report was produced by persisted cronjob job_id=${message.quotedCronJobId}. If the user asks to rerun that task, request {"type":"run_job","job_id":"${message.quotedCronJobId}"}. Reuse the persisted definition; do not create a continuation or reconstruct its prompt.`,
+      ]
+    : [];
 
   return [
     isDocComment
@@ -298,8 +339,9 @@ export function buildCodexExecPrompt(
     'This turn may be running inside a resumed Codex exec session for the same Feishu chat/thread. Use prior session context when available.',
     'For heavy multi-step tasks, use subagents where available so the resumed main session stays smaller.',
     ...unmentionedGroupPrompt,
+    ...quotedCronjobPrompt,
     'If the user asks for a supported built-in Lark action, request it through the structured Lark action mechanism instead of saying the MCP tool is unavailable.',
-    'This exec turn has no background continuation after the visible reply is posted. Do not promise to create, file, post, reply with a link, or continue later unless the same turn writes a structured side-channel action, creates a cronjob action, or intentionally returns [LARK_DEFER]/[LARK_NO_REPLY].',
+    'This exec turn has no implicit background continuation after the visible reply is posted. Do not promise to create, file, post, reply with a link, or continue later unless this turn successfully creates an explicit continuation or cronjob. Other structured actions and [LARK_DEFER]/[LARK_NO_REPLY] do not establish background work.',
     ...buildCodexExecActionChannelPrompt(actionInfo),
     'For cronjob schedule fields, use only supported recurring formats: "daily at 09:00", "weekdays at 09:00", "weekly on mon at 09:00", "every 5m", "every 2h", or a 5-field cron expression such as "0 9 * * *". Do not use one-off or natural-language aliases such as "once", "now", "later", "tomorrow at 09:00", or "YYYY-MM-DD HH:mm". Use timezone for an IANA timezone such as "Asia/Shanghai", "Asia/Tokyo", or "UTC"; if omitted, the plugin stores the current LARK_CRON_TIMEZONE default into the job file.',
     'For existing cronjobs, prefer the stable job_id returned by create_job/list_jobs; use name only when it is unique. If create_job reports that a job already exists, use list_jobs plus update_job, disable_job, delete_job, or upsert_job instead of retrying create_job with the same name.',
@@ -357,6 +399,7 @@ export async function deliverMessageViaCodexExec(
   if (!actionChannel) {
     throw new Error('Codex exec action side channel setup failed.');
   }
+  const continuationPermitted = shouldExposeContinuationForMessage(message);
   const progressSink = await createCodexExecProgressSink({
     baseDir: progressBaseDir,
     limits: {
@@ -383,6 +426,7 @@ export async function deliverMessageViaCodexExec(
         actionChannel?.promptInfo ?? null,
         message,
         opts.continuationAvailable ?? true,
+        continuationPermitted,
       ),
     ),
     imagePaths: collectImagePaths(message),
@@ -390,7 +434,7 @@ export async function deliverMessageViaCodexExec(
     cwd: appConfig.codexExecCwd,
     timeoutMs: appConfig.codexExecTimeoutMs,
     sandbox: appConfig.codexExecSandbox,
-    model: sessionModel ?? appConfig.codexExecModel,
+    model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
     profile: appConfig.codexExecProfile,
     ignoreUserConfig: appConfig.codexExecIgnoreUserConfig,
     skipGitRepoCheck: true,
@@ -486,7 +530,8 @@ export async function deliverMessageViaCodexExec(
           message,
           actions: sideChannelActions,
           parentSessionId: result.sessionId ?? usedResumeSessionId ?? null,
-          model: sessionModel ?? appConfig.codexExecModel,
+          model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
+          continuationPermitted,
         })
       : [
           {

@@ -43,6 +43,8 @@ import { createChannelServicesStarter } from './channel-services.js';
 import { assertSupportedNodeVersion } from './runtime-version.js';
 import { createContinuationRuntime } from './continuation/runtime.js';
 import { debugLog } from './debug-log.js';
+import type { JobFile } from './job-store.js';
+import type { RunJobNowResult } from './scheduler.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 let closeContinuationRuntime: (() => Promise<void>) | null = null;
@@ -138,6 +140,7 @@ async function main() {
   // 4. Create conversation buffer + wire flush handler
   const buffer = new ConversationBuffer();
   let codexExecActionDispatcher: CodexExecActionDispatcher | null = null;
+  let runJobNow: ((job: JobFile) => Promise<RunJobNowResult>) | null = null;
   registerConversationFlushHandler({
     buffer,
     identitySession,
@@ -164,6 +167,10 @@ async function main() {
     turnObligations,
     validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
     continuationService: continuationRuntime.service,
+    runJobNow: async (job) => {
+      if (!runJobNow) throw new Error('Cronjob scheduler is not ready.');
+      return runJobNow(job);
+    },
   });
 
   // 5. Register MCP tools (pass buffer so reply records assistant messages)
@@ -228,6 +235,9 @@ async function main() {
     turnObligations,
     actionDispatcher: codexExecActionDispatcher,
     continuationWorker: continuationRuntime.worker,
+    onSchedulerReady: (scheduler) => {
+      runJobNow = scheduler.runJobNow.bind(scheduler);
+    },
   });
 
   startSdkChannelRuntimeWithRetry(channel, {

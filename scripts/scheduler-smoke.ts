@@ -930,8 +930,73 @@ function readJobFixture(id: string): JobFile {
   passed++;
 }
 
+// 20. Manual reruns reuse the persisted definition without shifting a future
+// scheduled run, and paused jobs remain paused.
+{
+  const id = 'manual-rerun';
+  const futureNextRun = '2099-01-01T09:00:00.000Z';
+  const job = makeJob({
+    meta: { id, content: 'original persisted task', status: 'paused' },
+    runtime: { next_run_at: futureNextRun },
+  });
+  writeJobFixture(job);
+  const sent: string[] = [];
+  const scheduler = new JobScheduler({
+    client: {} as any,
+    transport: {
+      sendMessage: async (request: any) => {
+        sent.push(JSON.parse(request.input.raw.content).text);
+        return { messageId: 'om_manual_rerun' };
+      },
+    } as any,
+    identitySession: new IdentitySession(() => null),
+  });
+  const result = await scheduler.runJobNow(job);
+  const persisted = readJobFixture(id);
+  if (!result.started) fail(`20: expected manual rerun to start: ${JSON.stringify(result)}`);
+  if (sent[0] !== 'original persisted task') fail(`20: manual rerun rebuilt task content: ${JSON.stringify(sent)}`);
+  if (persisted.meta.status !== 'paused') fail(`20: manual rerun activated paused job: ${persisted.meta.status}`);
+  if (persisted.runtime.next_run_at !== futureNextRun) {
+    fail(`20: manual rerun shifted future schedule: ${persisted.runtime.next_run_at}`);
+  }
+  if (persisted.runtime.run_count !== 1) fail(`20: expected run_count=1, got ${persisted.runtime.run_count}`);
+  passed++;
+}
+
+// 21. A second manual rerun is rejected while the same job is still running.
+{
+  const id = 'manual-overlap';
+  const job = makeJob({ meta: { id }, runtime: { next_run_at: '2099-01-01T09:00:00.000Z' } });
+  writeJobFixture(job);
+  let release!: () => void;
+  let entered!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const enteredSend = new Promise<void>((resolve) => { entered = resolve; });
+  const scheduler = new JobScheduler({
+    client: {} as any,
+    transport: {
+      sendMessage: async () => {
+        entered();
+        await blocked;
+        return { messageId: 'om_manual_overlap' };
+      },
+    } as any,
+    identitySession: new IdentitySession(() => null),
+  });
+  const firstRun = scheduler.runJobNow(job);
+  await enteredSend;
+  const overlap = await scheduler.runJobNow(job);
+  if (overlap.started || overlap.reason !== 'already_running') {
+    fail(`21: expected already_running rejection, got ${JSON.stringify(overlap)}`);
+  }
+  release();
+  const first = await firstRun;
+  if (!first.started) fail(`21: first manual rerun did not complete: ${JSON.stringify(first)}`);
+  passed++;
+}
+
 (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
 (appConfig as { cronTimezone: string }).cronTimezone = originalCronTimezone;
 rmSync(tmpJobsDir, { recursive: true, force: true });
 
-console.log(`scheduler smoke: ${passed}/19 PASS`);
+console.log(`scheduler smoke: ${passed}/21 PASS`);
