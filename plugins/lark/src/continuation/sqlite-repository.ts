@@ -9,6 +9,7 @@ import {
   retryDelayMs,
   type ContinuationClaim,
   type ContinuationCheckpoint,
+  type ContinuationCleanupResult,
   type ContinuationCreateRequest,
   type ContinuationDeliveryClaim,
   type ContinuationDeliveryRecord,
@@ -37,7 +38,8 @@ interface SqliteContinuationRepositoryOptions {
 }
 
 const ATTEMPT_BUDGET_SCHEMA_VERSION = 4;
-const SCHEMA_VERSION = 5;
+const DELIVERY_OUTBOX_SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const DELIVERY_LEASE_MS = 30_000;
 const PROGRESS_PAYLOAD_MAX_CHARS = 4_000;
 const EMPTY_CHECKPOINT = {
@@ -58,6 +60,8 @@ const EMPTY_PERMISSION_ENVELOPE: ContinuationPermissionEnvelope = {
 };
 
 export class SqliteContinuationRepository implements ContinuationRepository {
+  private readonly jobMutationTails = new Map<string, Promise<void>>();
+
   private constructor(
     private readonly database: DatabaseSync,
     private readonly artifacts: ContinuationArtifactStore,
@@ -152,7 +156,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         started_at TEXT,
         updated_at TEXT NOT NULL,
         completed_at TEXT,
-        deleted_at TEXT
+        deleted_at TEXT,
+        retain INTEGER NOT NULL DEFAULT 0 CHECK(retain IN (0, 1))
       ) STRICT;
 
       CREATE INDEX IF NOT EXISTS continuation_jobs_due_idx
@@ -258,6 +263,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     }
     if (Number(this.scalar('PRAGMA user_version')) === ATTEMPT_BUDGET_SCHEMA_VERSION) {
       this.migrateDeliveryOutboxSchema();
+    }
+    if (Number(this.scalar('PRAGMA user_version')) === DELIVERY_OUTBOX_SCHEMA_VERSION) {
+      this.migrateRetentionSchema();
     }
     await this.healthCheck();
   }
@@ -394,7 +402,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   private migrateDeliveryOutboxSchema(): void {
     const columns = this.database.prepare('PRAGMA table_info(continuation_outbox)').all();
     if (columns.some((column) => stringField(column, 'name') === 'event_key')) {
-      this.transaction(() => this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`));
+      this.transaction(() => this.database.exec(
+        `PRAGMA user_version = ${DELIVERY_OUTBOX_SCHEMA_VERSION};`,
+      ));
       return;
     }
 
@@ -449,7 +459,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         ALTER TABLE continuation_outbox_v5 RENAME TO continuation_outbox;
         CREATE INDEX continuation_outbox_due_idx
           ON continuation_outbox(status, kind, next_attempt_at, created_at);
-        PRAGMA user_version = ${SCHEMA_VERSION};
+        PRAGMA user_version = ${DELIVERY_OUTBOX_SCHEMA_VERSION};
       `));
     } finally {
       this.database.exec('PRAGMA foreign_keys = ON;');
@@ -458,6 +468,19 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     if (violations.length > 0) {
       throw new Error('Continuation outbox migration failed foreign-key validation.');
     }
+  }
+
+  private migrateRetentionSchema(): void {
+    const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
+    if (columns.some((column) => stringField(column, 'name') === 'retain')) {
+      this.transaction(() => this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`));
+      return;
+    }
+    this.transaction(() => this.database.exec(`
+      ALTER TABLE continuation_jobs
+      ADD COLUMN retain INTEGER NOT NULL DEFAULT 0 CHECK(retain IN (0, 1));
+      PRAGMA user_version = ${SCHEMA_VERSION};
+    `));
   }
 
   async healthCheck(): Promise<void> {
@@ -529,12 +552,16 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return { ...job, deliveryEvents: this.readDeliveryEvents(jobId) };
   }
 
-  async listByCreator(creatorOpenId: string, limit: number): Promise<ContinuationJob[]> {
-    return this.listJobs('j.creator_open_id = ?', creatorOpenId, limit);
+  async listByCreator(
+    creatorOpenId: string,
+    limit: number,
+    statuses: ContinuationStatus[] = [],
+  ): Promise<ContinuationJob[]> {
+    return this.listJobs('j.creator_open_id = ?', creatorOpenId, limit, statuses);
   }
 
-  async listAll(limit: number): Promise<ContinuationJob[]> {
-    return this.listJobs('1 = 1', undefined, limit);
+  async listAll(limit: number, statuses: ContinuationStatus[] = []): Promise<ContinuationJob[]> {
+    return this.listJobs('1 = 1', undefined, limit, statuses);
   }
 
   async claimDue(
@@ -1060,10 +1087,47 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   async redactTerminal(jobId: string, now: string): Promise<boolean> {
+    return this.serializeJobMutation(jobId, () => this.redactTerminalInternal(jobId, now));
+  }
+
+  async setRetained(jobId: string, retained: boolean, now: string): Promise<boolean> {
+    return this.serializeJobMutation(jobId, () => {
+      const update = this.database.prepare(`
+        UPDATE continuation_jobs
+        SET retain = ?, updated_at = ?, row_version = row_version + 1
+        WHERE job_id = ? AND deleted_at IS NULL
+      `).run(retained ? 1 : 0, now, jobId);
+      return Number(update.changes) === 1;
+    });
+  }
+
+  private async redactTerminalInternal(
+    jobId: string,
+    now: string,
+    automaticRetentionCutoff?: string,
+  ): Promise<boolean> {
     const current = await this.get(jobId);
     if (!current || !isContinuationTerminal(current.status) || current.deletedAt) return false;
+    if (
+      automaticRetentionCutoff
+      && (
+        current.retained
+        || current.deliveryStatus !== 'delivered'
+        || !current.completedAt
+        || current.completedAt >= automaticRetentionCutoff
+      )
+    ) {
+      return false;
+    }
     await this.artifacts.remove(jobId);
     return this.transaction(() => {
+      const automaticGate = automaticRetentionCutoff
+        ? `AND retain = 0 AND completed_at < ? AND EXISTS (
+            SELECT 1 FROM continuation_outbox terminal
+            WHERE terminal.job_id = continuation_jobs.job_id
+              AND terminal.kind = 'terminal' AND terminal.status = 'delivered'
+          )`
+        : '';
       const update = this.database.prepare(`
         UPDATE continuation_jobs
         SET idempotency_key = ?, origin_kind = 'message_thread', route_json = ?,
@@ -1075,7 +1139,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
             checkpoint_json = NULL, result_summary = NULL, result_artifacts_json = '[]',
             error_summary = NULL, deleted_at = ?, updated_at = ?, row_version = row_version + 1
         WHERE job_id = ? AND status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')
-          AND deleted_at IS NULL
+          AND deleted_at IS NULL ${automaticGate}
       `).run(
         `redacted:${jobId}`,
         JSON.stringify(emptyRoute()),
@@ -1084,18 +1148,30 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         now,
         now,
         jobId,
+        ...(automaticRetentionCutoff ? [automaticRetentionCutoff] : []),
       );
       if (Number(update.changes) !== 1) return false;
       this.database.prepare(`
-        UPDATE continuation_outbox
-        SET route_json = ?, payload = '', error_summary = NULL, updated_at = ?
-        WHERE job_id = ?
-      `).run(JSON.stringify(emptyRoute()), now, jobId);
+        DELETE FROM continuation_outbox WHERE job_id = ? AND kind = 'progress'
+      `).run(jobId);
       this.database.prepare(`
-        UPDATE continuation_tool_calls
-        SET tool_name = '', request_hash = '', result_json = NULL, updated_at = ?
-        WHERE job_id = ?
-      `).run(now, jobId);
+        DELETE FROM continuation_tool_calls WHERE job_id = ?
+      `).run(jobId);
+      this.database.prepare(`
+        DELETE FROM continuation_attempts WHERE job_id = ?
+      `).run(jobId);
+      this.database.prepare(`
+        UPDATE continuation_outbox
+        SET route_json = ?, payload = '', worker_id = NULL, lease_expires_at = NULL,
+            error_summary = NULL,
+            status = CASE
+              WHEN status IN ('delivered', 'delivery_unknown') THEN status
+              WHEN status = 'sending' THEN 'delivery_unknown'
+              ELSE 'superseded'
+            END,
+            updated_at = ?
+        WHERE job_id = ? AND kind = 'terminal'
+      `).run(JSON.stringify(emptyRoute()), now, jobId);
       return true;
     });
   }
@@ -1233,21 +1309,47 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     });
   }
 
-  async purgeExpired(retainAfter: string, now: string): Promise<number> {
+  async purgeExpired(retainAfter: string, now: string): Promise<ContinuationCleanupResult[]> {
     const rows = this.database.prepare(`
-      SELECT job_id
-      FROM continuation_jobs
-      WHERE status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')
-        AND completed_at IS NOT NULL
-        AND completed_at < ?
-        AND deleted_at IS NULL
-      ORDER BY completed_at ASC
+      SELECT j.job_id, j.creator_open_id, j.status, j.completed_at
+      FROM continuation_jobs j
+      WHERE j.status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')
+        AND j.completed_at IS NOT NULL
+        AND j.completed_at < ?
+        AND j.deleted_at IS NULL
+        AND j.retain = 0
+        AND EXISTS (
+          SELECT 1 FROM continuation_outbox terminal
+          WHERE terminal.job_id = j.job_id
+            AND terminal.kind = 'terminal' AND terminal.status = 'delivered'
+        )
+      ORDER BY j.completed_at ASC
     `).all(retainAfter);
-    let purged = 0;
+    const results: ContinuationCleanupResult[] = [];
     for (const row of rows) {
-      if (await this.redactTerminal(stringField(row, 'job_id'), now)) purged += 1;
+      const jobId = stringField(row, 'job_id');
+      const base = {
+        jobId,
+        creatorOpenId: stringField(row, 'creator_open_id'),
+        status: stringField(row, 'status') as ContinuationCleanupResult['status'],
+        completedAt: stringField(row, 'completed_at'),
+      };
+      try {
+        if (await this.serializeJobMutation(
+          jobId,
+          () => this.redactTerminalInternal(jobId, now, retainAfter),
+        )) {
+          results.push({ ...base, result: 'cleaned' });
+        }
+      } catch (error) {
+        results.push({
+          ...base,
+          result: 'error',
+          errorSummary: cleanupErrorSummary(error),
+        });
+      }
     }
-    return purged;
+    return results;
   }
 
   close(): void {
@@ -1263,6 +1365,21 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     } catch (error) {
       this.database.exec('ROLLBACK');
       throw error;
+    }
+  }
+
+  private async serializeJobMutation<T>(jobId: string, operation: () => Promise<T> | T): Promise<T> {
+    const previous = this.jobMutationTails.get(jobId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.catch(() => {}).then(() => current);
+    this.jobMutationTails.set(jobId, tail);
+    await previous.catch(() => {});
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.jobMutationTails.get(jobId) === tail) this.jobMutationTails.delete(jobId);
     }
   }
 
@@ -1582,17 +1699,29 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return row ? mapJob(row) : null;
   }
 
-  private listJobs(predicate: string, value: string | undefined, limit: number): ContinuationJob[] {
+  private listJobs(
+    predicate: string,
+    value: string | undefined,
+    limit: number,
+    statuses: ContinuationStatus[],
+  ): ContinuationJob[] {
     const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const uniqueStatuses = [...new Set(statuses)];
+    const statusClause = uniqueStatuses.length > 0
+      ? `AND j.status IN (${uniqueStatuses.map(() => '?').join(', ')})`
+      : '';
     const statement = this.database.prepare(`
       ${jobSelectSql()}
-      WHERE (${predicate}) AND j.deleted_at IS NULL
+      WHERE (${predicate}) AND j.deleted_at IS NULL ${statusClause}
       ORDER BY j.created_at DESC
       LIMIT ?
     `);
-    const rows = value === undefined
-      ? statement.all(boundedLimit)
-      : statement.all(value, boundedLimit);
+    const bindings = [
+      ...(value === undefined ? [] : [value]),
+      ...uniqueStatuses,
+      boundedLimit,
+    ];
+    const rows = statement.all(...bindings);
     return rows.map(mapJob);
   }
 
@@ -1740,6 +1869,7 @@ function mapJob(row: SqlRow): ContinuationJob {
     updatedAt: stringField(row, 'updated_at'),
     completedAt: optionalStringField(row, 'completed_at'),
     deletedAt: optionalStringField(row, 'deleted_at'),
+    retained: numberField(row, 'retain') === 1,
     deliveryStatus: optionalStringField(row, 'delivery_status') as ContinuationJob['deliveryStatus'],
   };
 }
@@ -1869,6 +1999,13 @@ function truncateCharacters(value: string, maxCharacters: number): string {
   const characters = Array.from(value);
   if (characters.length <= maxCharacters) return value;
   return `${characters.slice(0, Math.max(0, maxCharacters - 3)).join('').trimEnd()}...`;
+}
+
+function cleanupErrorSummary(error: unknown): string {
+  const summary = error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : 'Unknown continuation cleanup error.';
+  return truncateCharacters(summary.replace(/[\r\n\t]+/g, ' '), 500);
 }
 
 function renderResultSection(title: string, values: string[]): string {

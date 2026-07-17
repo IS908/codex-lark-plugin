@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-07-17
+
+### Added
+- Add creator/owner-authorized `/task retain <job_id> on|off` and SQL-backed `/task list --status <csv>` filtering with `pending` and `running` lifecycle aliases.
+
+### Changed
+- Migrate continuation storage directly to schema v6 with a persisted retain flag. Automatic retention now requires a delivered terminal event and TTL expiry from `completed_at`.
+- Delete detailed attempts, local tool-call rows, progress events, and managed artifacts while preserving a compact terminal tombstone.
+
+### Fixed
+- Serialize retain mutations against cleanup, keep failed cleanup state retryable, and emit one sanitized audit result for every automatic cleanup attempt.
+
 ## [2.5.0] - 2026-07-17
 
 ### Added
@@ -872,6 +884,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
 [Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.0...HEAD
+[2.6.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.2...v2.3.0

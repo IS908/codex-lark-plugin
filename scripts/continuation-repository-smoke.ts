@@ -445,7 +445,10 @@ try {
     '2026-07-17T00:00:30.000Z',
     '2026-07-17T00:03:00.000Z',
   );
-  assert.ok(purged >= 2, `expected completed/cancelled rows to be redacted, got ${purged}`);
+  assert.ok(
+    purged.some((result) => result.result === 'cleaned'),
+    `expected at least one delivered terminal row to be redacted, got ${JSON.stringify(purged)}`,
+  );
 
   const legacyEnvelope = await repository.create(createRequest('legacy-envelope'));
   const { DatabaseSync } = await import('node:sqlite');
@@ -645,6 +648,196 @@ try {
   deliveryRaceRepository.close();
 }
 
+const retentionDatabasePath = join(root, 'retention', 'jobs.sqlite');
+const retentionArtifactsDir = join(root, 'retention', 'artifacts');
+const retentionRepository = await SqliteContinuationRepository.open({
+  databasePath: retentionDatabasePath,
+  artifactsDir: retentionArtifactsDir,
+  jitter: () => 0,
+});
+try {
+  const cleanupJob = await retentionRepository.create(createRequest('retention-cleanup'));
+  const cleanupClaim = await retentionRepository.claimDue(
+    'worker-retention-cleanup',
+    baseNow,
+    '2026-07-17T00:01:00.000Z',
+  );
+  assert.ok(cleanupClaim);
+  const cleanupToolCall = await retentionRepository.beginToolCall(
+    cleanupClaim,
+    { tool: 'lark_cli', args: ['doc', 'get'] },
+    '2026-07-17T00:00:01.000Z',
+  );
+  assert.equal(cleanupToolCall.status, 'execute');
+  await retentionRepository.completeToolCall(
+    cleanupClaim,
+    cleanupToolCall.callId,
+    { ok: true, message: 'done' },
+    '2026-07-17T00:00:02.000Z',
+  );
+  await retentionRepository.completeStep(cleanupClaim, {
+    outcome: { outcome: 'completed', finalMessage: 'Done.', artifacts: ['report.txt'] },
+  }, '2026-07-17T00:00:03.000Z');
+  const cleanupDelivery = await retentionRepository.claimPendingDelivery(
+    'delivery-retention-cleanup',
+    '2026-07-17T00:00:04.000Z',
+  );
+  assert.equal(cleanupDelivery?.jobId, cleanupJob.job.jobId);
+  await retentionRepository.markDeliveryResult(
+    cleanupDelivery!,
+    { status: 'delivered', messageId: 'om_retention_cleanup' },
+    '2026-07-17T00:00:05.000Z',
+  );
+  const retentionArtifacts = new ContinuationArtifactStore(retentionArtifactsDir);
+  const cleanupArtifactRoot = await retentionArtifacts.ensure(cleanupJob.job.jobId);
+  await writeFile(join(cleanupArtifactRoot, 'report.txt'), 'result', 'utf-8');
+
+  const retainedJob = await retentionRepository.create(createRequest('retention-retained'));
+  const retainedClaim = await retentionRepository.claimDue(
+    'worker-retention-retained',
+    baseNow,
+    '2026-07-17T00:01:00.000Z',
+  );
+  assert.ok(retainedClaim);
+  await retentionRepository.completeStep(retainedClaim, {
+    outcome: { outcome: 'completed', finalMessage: 'Retained.', artifacts: [] },
+  }, '2026-07-17T00:00:06.000Z');
+  const retainedDelivery = await retentionRepository.claimPendingDelivery(
+    'delivery-retention-retained',
+    '2026-07-17T00:00:07.000Z',
+  );
+  await retentionRepository.markDeliveryResult(
+    retainedDelivery!,
+    { status: 'delivered', messageId: 'om_retention_retained' },
+    '2026-07-17T00:00:08.000Z',
+  );
+  assert.equal(await retentionRepository.setRetained(
+    retainedJob.job.jobId,
+    true,
+    '2026-07-17T00:00:09.000Z',
+  ), true);
+  assert.equal((await retentionRepository.get(retainedJob.job.jobId))?.retained, true);
+
+  const undeliveredJob = await retentionRepository.create(createRequest('retention-undelivered'));
+  const undeliveredClaim = await retentionRepository.claimDue(
+    'worker-retention-undelivered',
+    baseNow,
+    '2026-07-17T00:01:00.000Z',
+  );
+  assert.ok(undeliveredClaim);
+  await retentionRepository.completeStep(undeliveredClaim, {
+    outcome: { outcome: 'completed', finalMessage: 'Not delivered.', artifacts: [] },
+  }, '2026-07-17T00:00:10.000Z');
+  const nonterminalJob = await retentionRepository.create(createRequest('retention-nonterminal'));
+
+  const cleanupResults = await retentionRepository.purgeExpired(
+    '2026-07-18T00:00:00.000Z',
+    '2026-07-20T00:00:00.000Z',
+  );
+  assert.deepEqual(cleanupResults, [{
+    jobId: cleanupJob.job.jobId,
+    creatorOpenId: 'ou_creator',
+    status: 'completed',
+    completedAt: '2026-07-17T00:00:03.000Z',
+    result: 'cleaned',
+  }]);
+  assert.equal((await retentionRepository.get(cleanupJob.job.jobId))?.deletedAt,
+    '2026-07-20T00:00:00.000Z');
+  assert.equal((await retentionRepository.get(retainedJob.job.jobId))?.deletedAt, undefined);
+  assert.equal((await retentionRepository.get(undeliveredJob.job.jobId))?.deletedAt, undefined);
+  assert.equal((await retentionRepository.get(nonterminalJob.job.jobId))?.deletedAt, undefined);
+  await assert.rejects(stat(cleanupArtifactRoot), /ENOENT/);
+
+  const retentionDatabase = new DatabaseSync(retentionDatabasePath);
+  assert.equal(Number(retentionDatabase.prepare(
+    'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
+  ).get(cleanupJob.job.jobId)?.count), 0);
+  assert.equal(Number(retentionDatabase.prepare(
+    'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
+  ).get(cleanupJob.job.jobId)?.count), 0);
+  assert.equal(Number(retentionDatabase.prepare(
+    "SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ? AND kind = 'progress'",
+  ).get(cleanupJob.job.jobId)?.count), 0);
+  assert.equal(retentionDatabase.prepare(
+    "SELECT payload FROM continuation_outbox WHERE job_id = ? AND kind = 'terminal'",
+  ).get(cleanupJob.job.jobId)?.payload, '');
+  retentionDatabase.close();
+
+  const heldUndeliveredDelivery = await retentionRepository.claimPendingDelivery(
+    'delivery-retention-held',
+    '2026-07-17T00:00:10.500Z',
+  );
+  assert.equal(heldUndeliveredDelivery?.jobId, undeliveredJob.job.jobId);
+
+  const failedCleanupJob = await retentionRepository.create(createRequest(
+    'retention-cleanup-retry',
+    {
+      createdAt: '2026-07-16T00:00:00.000Z',
+      expiresAt: '2026-07-21T00:00:00.000Z',
+    },
+  ));
+  const failedCleanupClaim = await retentionRepository.claimDue(
+    'worker-retention-cleanup-retry',
+    baseNow,
+    '2026-07-17T00:01:00.000Z',
+  );
+  assert.equal(failedCleanupClaim?.job.jobId, failedCleanupJob.job.jobId);
+  await retentionRepository.completeStep(failedCleanupClaim!, {
+    outcome: { outcome: 'completed', finalMessage: 'Retry cleanup.', artifacts: ['retry.txt'] },
+  }, '2026-07-17T00:00:11.000Z');
+  const failedCleanupDelivery = await retentionRepository.claimPendingDelivery(
+    'delivery-retention-cleanup-retry',
+    '2026-07-17T00:00:12.000Z',
+  );
+  assert.equal(failedCleanupDelivery?.jobId, failedCleanupJob.job.jobId);
+  await retentionRepository.markDeliveryResult(
+    failedCleanupDelivery!,
+    { status: 'delivered', messageId: 'om_retention_cleanup_retry' },
+    '2026-07-17T00:00:13.000Z',
+  );
+  const failedCleanupArtifactRoot = await retentionArtifacts.ensure(failedCleanupJob.job.jobId);
+  await writeFile(join(failedCleanupArtifactRoot, 'retry.txt'), 'retry', 'utf-8');
+  await chmod(retentionArtifactsDir, 0o500);
+  const failedCleanupResults = await retentionRepository.purgeExpired(
+    '2026-07-18T00:00:00.000Z',
+    '2026-07-20T00:00:00.000Z',
+  );
+  await chmod(retentionArtifactsDir, 0o700);
+  assert.equal(failedCleanupResults.length, 1);
+  assert.equal(failedCleanupResults[0]?.jobId, failedCleanupJob.job.jobId);
+  assert.equal(failedCleanupResults[0]?.result, 'error');
+  assert.equal((await retentionRepository.get(failedCleanupJob.job.jobId))?.deletedAt, undefined);
+  assert.equal((await stat(failedCleanupArtifactRoot)).isDirectory(), true);
+  assert.deepEqual((await retentionRepository.purgeExpired(
+    '2026-07-18T00:00:00.000Z',
+    '2026-07-20T00:00:01.000Z',
+  )).map((result) => ({ jobId: result.jobId, result: result.result })), [{
+    jobId: failedCleanupJob.job.jobId,
+    result: 'cleaned',
+  }]);
+
+  assert.equal(await retentionRepository.setRetained(
+    retainedJob.job.jobId,
+    false,
+    '2026-07-20T00:00:01.000Z',
+  ), true);
+  await retentionRepository.markDeliveryResult(
+    heldUndeliveredDelivery!,
+    { status: 'delivered', messageId: 'om_retention_undelivered' },
+    '2026-07-20T00:00:02.000Z',
+  );
+  assert.equal((await retentionRepository.purgeExpired(
+    '2026-07-18T00:00:00.000Z',
+    '2026-07-20T00:00:03.000Z',
+  )).length, 2);
+  assert.deepEqual(await retentionRepository.purgeExpired(
+    '2026-07-18T00:00:00.000Z',
+    '2026-07-20T00:00:04.000Z',
+  ), []);
+} finally {
+  retentionRepository.close();
+}
+
 const versionThreeDatabasePath = join(root, 'migration-v3', 'jobs.sqlite');
 const versionThreeArtifactsDir = join(root, 'migration-v3', 'artifacts');
 await import('node:fs/promises').then(({ mkdir }) => mkdir(join(root, 'migration-v3'), { recursive: true }));
@@ -767,6 +960,7 @@ try {
   const migrated = await migratedVersionThreeRepository.get('job_legacy_v3');
   assert.equal(migrated?.maxAttempts, 5);
   assert.equal(migrated?.status, 'queued');
+  assert.equal(migrated?.retained, false);
 } finally {
   migratedVersionThreeRepository.close();
 }
@@ -776,7 +970,8 @@ const migratedVersionThreeColumns = migratedVersionThreeDatabase
   .all() as Array<{ name: string }>;
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'max_attempts'));
 assert.equal(migratedVersionThreeColumns.some((column) => column.name === 'max_steps'), false);
-assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 5);
+assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'retain'));
+assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 6);
 const migratedOutboxColumns = migratedVersionThreeDatabase
   .prepare('PRAGMA table_info(continuation_outbox)')
   .all() as Array<{ name: string }>;

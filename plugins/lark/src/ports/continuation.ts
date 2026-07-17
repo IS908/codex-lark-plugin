@@ -1,11 +1,13 @@
 import type {
   ContinuationClaim,
+  ContinuationCleanupResult,
   ContinuationCreateRequest,
   ContinuationDeliveryClaim,
   ContinuationDeliveryResult,
   ContinuationExecutionResult,
   ContinuationFailure,
   ContinuationJob,
+  ContinuationStatus,
   ContinuationToolCallDecision,
   ContinuationToolCallRecovery,
   ContinuationToolRequest,
@@ -17,8 +19,12 @@ export interface ContinuationRepository {
   healthCheck(): Promise<void>;
   create(request: ContinuationCreateRequest): Promise<{ job: ContinuationJob; created: boolean }>;
   get(jobId: string): Promise<ContinuationJob | null>;
-  listByCreator(creatorOpenId: string, limit: number): Promise<ContinuationJob[]>;
-  listAll(limit: number): Promise<ContinuationJob[]>;
+  listByCreator(
+    creatorOpenId: string,
+    limit: number,
+    statuses?: ContinuationStatus[],
+  ): Promise<ContinuationJob[]>;
+  listAll(limit: number, statuses?: ContinuationStatus[]): Promise<ContinuationJob[]>;
   claimDue(workerId: string, now: string, leaseExpiresAt: string): Promise<ContinuationClaim | null>;
   heartbeat(jobId: string, workerId: string, now: string, leaseExpiresAt: string): Promise<boolean>;
   inspectToolCall(claim: ContinuationClaim): Promise<ContinuationToolCallRecovery | null>;
@@ -41,13 +47,14 @@ export interface ContinuationRepository {
   expireOverdue(now: string): Promise<number>;
   cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob>;
   redactTerminal(jobId: string, now: string): Promise<boolean>;
+  setRetained(jobId: string, retained: boolean, now: string): Promise<boolean>;
   claimPendingDelivery(workerId: string, now: string): Promise<ContinuationDeliveryClaim | null>;
   markDeliveryResult(
     claim: ContinuationDeliveryClaim,
     result: ContinuationDeliveryResult,
     now: string,
   ): Promise<void>;
-  purgeExpired(retainAfter: string, now: string): Promise<number>;
+  purgeExpired(retainAfter: string, now: string): Promise<ContinuationCleanupResult[]>;
   close(): void;
 }
 

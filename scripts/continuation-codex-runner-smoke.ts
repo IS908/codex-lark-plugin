@@ -78,6 +78,7 @@ function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
     heartbeatAt: '2026-07-17T00:00:00.000Z',
     resultArtifacts: [],
     updatedAt: '2026-07-17T00:00:00.000Z',
+    retained: false,
     ...overrides,
   };
 }

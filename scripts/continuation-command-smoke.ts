@@ -181,6 +181,11 @@ await repository.markDeliveryResult(deliveryClaim!, {
   errorCode: 'ambiguous_send',
   errorSummary: 'The provider result was ambiguous.',
 }, now.toISOString());
+const pendingFilter = await createJob(
+  'om_pending_filter',
+  'ou_creator',
+  'Pending filter task',
+);
 
 assert.equal(await run(message({
   messageId: 'om_list_creator',
@@ -193,6 +198,16 @@ assert.doesNotMatch(replies.at(-1)?.text ?? '', /Other private task/);
 assert.doesNotMatch(replies.at(-1)?.text ?? '', /Foreground work stopped/);
 assert.match(replies.at(-1)?.text ?? '', /Attempts:/);
 assert.match(replies.at(-1)?.text ?? '', /Delivery:/);
+
+assert.equal(await run(message({
+  messageId: 'om_list_filtered',
+  text: '/task list --status pending, failed',
+  rawContent: '{"text":"/task list --status pending, failed"}',
+})), true);
+assert.match(replies.at(-1)?.text ?? '', /Pending filter task/);
+assert.match(replies.at(-1)?.text ?? '', /Completed task/);
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /Owned queued task/);
+assert.doesNotMatch(replies.at(-1)?.text ?? '', /Ambiguous delivery task/);
 
 assert.equal(await run(message({
   messageId: 'om_list_owner',
@@ -248,6 +263,31 @@ assert.equal(await run(message({
 })), true);
 assert.match(replies.at(-1)?.text ?? '', /terminal \| delivery_unknown \| attempts 1/);
 assert.match(replies.at(-1)?.text ?? '', /Error: ambiguous_send: The provider result was ambiguous\./);
+
+assert.equal(await run(message({
+  messageId: 'om_retain_denied',
+  senderId: 'ou_intruder',
+  text: `/task retain ${pendingFilter.jobId} on`,
+  rawContent: `{"text":"/task retain ${pendingFilter.jobId} on"}`,
+})), true);
+assert.equal(replies.at(-1)?.text, 'Task not found or not accessible.');
+
+assert.equal(await run(message({
+  messageId: 'om_retain_on',
+  text: `/task retain ${pendingFilter.jobId} on`,
+  rawContent: `{"text":"/task retain ${pendingFilter.jobId} on"}`,
+})), true);
+assert.equal(replies.at(-1)?.text, `Task retention enabled.\nJob ID: ${pendingFilter.jobId}`);
+assert.equal((await repository.get(pendingFilter.jobId))?.retained, true);
+
+assert.equal(await run(message({
+  messageId: 'om_retain_off_owner',
+  senderId: 'ou_owner',
+  text: `/task retain ${pendingFilter.jobId} off`,
+  rawContent: `{"text":"/task retain ${pendingFilter.jobId} off"}`,
+})), true);
+assert.equal(replies.at(-1)?.text, `Task retention disabled.\nJob ID: ${pendingFilter.jobId}`);
+assert.equal((await repository.get(pendingFilter.jobId))?.retained, false);
 
 assert.equal(await run(message({
   messageId: 'om_delete_running',

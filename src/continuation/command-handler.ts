@@ -8,29 +8,42 @@ import type { ReplyRequest, ReplySendResult } from '../reply-sender.js';
 import {
   CONTINUATION_RUNTIME_UNAVAILABLE,
   ContinuationServiceError,
+  type ContinuationListStatus,
   type ContinuationTaskService,
 } from './service.js';
 
 export const CONTINUATION_COMMAND_DEFINITION = {
   name: 'task' as const,
-  usage: '/task <list|status|cancel|retry|delete>',
+  usage: '/task <list|status|cancel|retry|retain|delete>',
   description: 'List and manage durable background tasks.',
   scope: 'user' as const,
 };
 
 const TASK_USAGE = [
   'Usage:',
-  '- /task list',
+  '- /task list [--status pending,running,completed,partial,blocked,failed,cancelled]',
   '- /task status <job_id>',
   '- /task cancel <job_id>',
   '- /task retry <job_id>',
+  '- /task retain <job_id> <on|off>',
   '- /task delete <job_id>',
 ].join('\n');
 
 type TaskCommand =
-  | { action: 'list' }
+  | { action: 'list'; statuses: ContinuationListStatus[] }
   | { action: 'status' | 'cancel' | 'retry' | 'delete'; jobId: string }
+  | { action: 'retain'; jobId: string; retained: boolean }
   | { action: 'invalid' };
+
+const LIST_STATUSES = new Set<ContinuationListStatus>([
+  'pending',
+  'running',
+  'completed',
+  'partial',
+  'blocked',
+  'failed',
+  'cancelled',
+]);
 
 type AuditFn = typeof audit;
 
@@ -62,6 +75,10 @@ export async function handleContinuationCommand(
     message_id: options.message.messageId,
     command: command.action,
     ...('jobId' in command ? { job_id: command.jobId } : {}),
+    ...(command.action === 'list' && command.statuses.length > 0
+      ? { status: command.statuses.join(',') }
+      : {}),
+    ...(command.action === 'retain' ? { retain: command.retained } : {}),
   };
 
   let text: string;
@@ -105,7 +122,26 @@ function parseTaskCommand(message: LarkMessage): TaskCommand | null {
   const text = taskCommandText(message);
   const normalized = stripLeadingMentions(text.replace(/\u00a0/g, ' ').trim());
   if (!/^\/task(?:\s|$)/i.test(normalized)) return null;
-  if (/^\/task\s+list\s*$/i.test(normalized)) return { action: 'list' };
+  const listMatch = normalized.match(/^\/task\s+list(?:\s+--status\s+(.+?))?\s*$/i);
+  if (listMatch) {
+    const statuses = listMatch[1]
+      ? [...new Set(listMatch[1].split(',').map((value) => value.trim().toLowerCase()))]
+      : [];
+    if (statuses.some((status) => !LIST_STATUSES.has(status as ContinuationListStatus))) {
+      return { action: 'invalid' };
+    }
+    return { action: 'list', statuses: statuses as ContinuationListStatus[] };
+  }
+  const retainMatch = normalized.match(
+    /^\/task\s+retain\s+(job_[A-Za-z0-9_-]{8,128})\s+(on|off)\s*$/i,
+  );
+  if (retainMatch) {
+    return {
+      action: 'retain',
+      jobId: retainMatch[1],
+      retained: retainMatch[2].toLowerCase() === 'on',
+    };
+  }
   const match = normalized.match(/^\/task\s+(status|cancel|retry|delete)\s+(job_[A-Za-z0-9_-]{8,128})\s*$/i);
   if (!match) return { action: 'invalid' };
   return {
@@ -138,7 +174,11 @@ async function executeTaskCommand(
   requestId: string,
 ): Promise<string> {
   if (command.action === 'list') {
-    return formatTaskList(await service.listForActor(actorOpenId, ownerOpenId));
+    return formatTaskList(await service.listForActor(
+      actorOpenId,
+      ownerOpenId,
+      command.statuses,
+    ));
   }
   if (command.action === 'status') {
     return formatTaskStatus(await service.getForActor(command.jobId, actorOpenId, ownerOpenId));
@@ -158,6 +198,15 @@ async function executeTaskCommand(
     );
     return `Retry task created: ${job.title}\nJob ID: ${job.jobId}`;
   }
+  if (command.action === 'retain') {
+    const job = await service.setRetainedForActor(
+      command.jobId,
+      command.retained,
+      actorOpenId,
+      ownerOpenId,
+    );
+    return `Task retention ${job.retained ? 'enabled' : 'disabled'}.\nJob ID: ${job.jobId}`;
+  }
   await service.deleteForActor(command.jobId, actorOpenId, ownerOpenId);
   return `Task deleted.\nJob ID: ${command.jobId}`;
 }
@@ -169,7 +218,7 @@ function formatTaskList(jobs: ContinuationJob[]): string {
     ...jobs.map((job) => [
       `- ${job.status} | ${job.jobId} | ${job.title}`,
       `  Attempts: ${attemptCount(job)} / ${job.maxAttempts} | Next run: ${formatOptionalTime(job.nextRunAt)}`,
-      `  Completed: ${formatOptionalTime(job.completedAt)} | Delivery: ${job.deliveryStatus ?? 'not_started'}`,
+      `  Completed: ${formatOptionalTime(job.completedAt)} | Delivery: ${job.deliveryStatus ?? 'not_started'} | Retain: ${job.retained ? 'on' : 'off'}`,
     ].join('\n')),
   ].join('\n');
 }
@@ -183,6 +232,7 @@ function formatTaskStatus(job: ContinuationJob): string {
     `Next run: ${formatOptionalTime(job.nextRunAt)}`,
     `Completed: ${formatOptionalTime(job.completedAt)}`,
     `Delivery: ${job.deliveryStatus ?? 'not_started'}`,
+    `Retain: ${job.retained ? 'on' : 'off'}`,
     formatDeliveryEvents(job),
     ...(job.errorCode ? [`Error code: ${job.errorCode}`] : []),
     ...(job.errorSummary ? [`Error: ${job.errorSummary}`] : []),
