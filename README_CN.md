@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.4.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.5.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -79,11 +79,12 @@
 ### 持久化后台续跑（Continuation）
 
 - 当前台私聊、群聊或文档评论无法在单次进程内安全完成时，Codex 可以提交一个结构化 `create_continuation_job` exec action；用户会立即收到包含持久化 Job ID 的确认消息
-- Job、attempt、checkpoint、lease 和终态投递 outbox 事务化存储在 `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`，托管 artifact 存储在同级 `artifacts/` 目录
+- Job、attempt、checkpoint、lease 和多事件投递 outbox 事务化存储在 `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`，托管 artifact 存储在同级 `artifacts/` 目录
 - 每个 Job 使用独立 Codex execution session；前台 session 只记录来源，续跑 session 失效时会安全替换，不会改动原聊天 session
 - `/task list|status|cancel|retry|delete` 绕过 Codex 直接执行；creator 管理自己的任务，`LARK_OWNER_OPEN_ID` 可以管理全部任务。retry 会创建新 Job ID，可重试 partial/blocked/failed/cancelled 任务
 - 父进程根据已认证 sender 自动派生权限 profile：owner 和当前 `allowed_user_ids` 成员自动使用 `trusted_personal_workspace`，获得全盘读取、网络及信任模式下的外部操作能力；其他被允许接入的用户保持 `bounded`。bounded profile 固定 `approval_policy=never`、关闭 sandbox 网络、忽略用户 Codex config，不能发送消息、创建嵌套任务或执行源码发布。每次 trusted attempt 都会重验身份，并强制按 Job/attempt ID 写入脱敏命令 trace。插件不提供 continuation MCP tool。Codex 标准文件和 shell 工具不写入 `required_tools`；父进程宿主工具仍受精确名称、caller/config 和不盲目重放账本保护
-- IM 终态回复在 Feishu 一小时去重窗口内复用稳定 UUID；文档评论遇到模糊发送结果时执行有界 marker 回读。无法确认的投递进入 `delivery_unknown`，不会盲目重发
+- 每个成功提交的 `continue` attempt 都会排入一条有界、事实型过程消息，事件键为 `progress:<attempt_id>`；终态使用保留键 `terminal`，优先投递并取代仍可确认未发送的旧过程事件。`/task status ID` 会展示各事件状态、attempt ID、重试次数和有界错误
+- 每个 IM 投递事件都在 Feishu 一小时去重窗口内复用稳定 UUID；文档评论遇到模糊发送结果时按唯一事件 marker 执行有界回读。无法确认的投递进入 `delivery_unknown`，不会盲目重发
 
 ### 可靠性
 

@@ -11,6 +11,7 @@ import {
   type ContinuationCheckpoint,
   type ContinuationCreateRequest,
   type ContinuationDeliveryClaim,
+  type ContinuationDeliveryRecord,
   type ContinuationDeliveryResult,
   type ContinuationDeliveryRoute,
   type ContinuationExecutionResult,
@@ -35,8 +36,10 @@ interface SqliteContinuationRepositoryOptions {
   jitter?: () => number;
 }
 
-const SCHEMA_VERSION = 4;
+const ATTEMPT_BUDGET_SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const DELIVERY_LEASE_MS = 30_000;
+const PROGRESS_PAYLOAD_MAX_CHARS = 4_000;
 const EMPTY_CHECKPOINT = {
   summary: '',
   completedSteps: [],
@@ -178,12 +181,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
       CREATE TABLE IF NOT EXISTS continuation_outbox (
         outbox_id TEXT PRIMARY KEY,
-        job_id TEXT NOT NULL UNIQUE REFERENCES continuation_jobs(job_id),
+        job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
+        event_key TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('progress', 'terminal')),
+        attempt_id TEXT REFERENCES continuation_attempts(attempt_id),
         route_json TEXT NOT NULL,
         idempotency_key TEXT NOT NULL UNIQUE,
         payload TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN (
-          'pending', 'sending', 'delivered', 'delivery_unknown', 'failed'
+          'pending', 'sending', 'delivered', 'delivery_unknown', 'failed', 'superseded'
         )),
         attempt_count INTEGER NOT NULL CHECK(attempt_count >= 0),
         next_attempt_at TEXT NOT NULL,
@@ -195,11 +201,17 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         error_code TEXT,
         error_summary TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        UNIQUE(job_id, event_key),
+        CHECK(
+          (kind = 'terminal' AND event_key = 'terminal' AND attempt_id IS NULL)
+          OR
+          (kind = 'progress' AND event_key = 'progress:' || attempt_id AND attempt_id IS NOT NULL)
+        )
       ) STRICT;
 
       CREATE INDEX IF NOT EXISTS continuation_outbox_due_idx
-        ON continuation_outbox(status, next_attempt_at, created_at);
+        ON continuation_outbox(status, kind, next_attempt_at, created_at);
 
       ${toolCallSchemaSql()}
       PRAGMA user_version = ${SCHEMA_VERSION};
@@ -244,13 +256,18 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     if (existingVersion >= 1 && existingVersion <= 3) {
       this.migrateAttemptBudgetSchema();
     }
+    if (Number(this.scalar('PRAGMA user_version')) === ATTEMPT_BUDGET_SCHEMA_VERSION) {
+      this.migrateDeliveryOutboxSchema();
+    }
     await this.healthCheck();
   }
 
   private migrateAttemptBudgetSchema(): void {
     const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
     if (columns.some((column) => stringField(column, 'name') === 'max_attempts')) {
-      this.transaction(() => this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`));
+      this.transaction(() => this.database.exec(
+        `PRAGMA user_version = ${ATTEMPT_BUDGET_SCHEMA_VERSION};`,
+      ));
       return;
     }
 
@@ -363,7 +380,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         CREATE INDEX continuation_jobs_creator_idx
           ON continuation_jobs(creator_open_id, created_at DESC)
           WHERE deleted_at IS NULL;
-        PRAGMA user_version = ${SCHEMA_VERSION};
+        PRAGMA user_version = ${ATTEMPT_BUDGET_SCHEMA_VERSION};
       `));
     } finally {
       this.database.exec('PRAGMA foreign_keys = ON;');
@@ -371,6 +388,75 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     const violations = this.database.prepare('PRAGMA foreign_key_check').all();
     if (violations.length > 0) {
       throw new Error('Continuation database migration failed foreign-key validation.');
+    }
+  }
+
+  private migrateDeliveryOutboxSchema(): void {
+    const columns = this.database.prepare('PRAGMA table_info(continuation_outbox)').all();
+    if (columns.some((column) => stringField(column, 'name') === 'event_key')) {
+      this.transaction(() => this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`));
+      return;
+    }
+
+    this.database.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      this.transaction(() => this.database.exec(`
+        CREATE TABLE continuation_outbox_v5 (
+          outbox_id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
+          event_key TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('progress', 'terminal')),
+          attempt_id TEXT REFERENCES continuation_attempts(attempt_id),
+          route_json TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN (
+            'pending', 'sending', 'delivered', 'delivery_unknown', 'failed', 'superseded'
+          )),
+          attempt_count INTEGER NOT NULL CHECK(attempt_count >= 0),
+          next_attempt_at TEXT NOT NULL,
+          worker_id TEXT,
+          lease_expires_at TEXT,
+          first_attempt_at TEXT,
+          last_attempt_at TEXT,
+          message_id TEXT,
+          error_code TEXT,
+          error_summary TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(job_id, event_key),
+          CHECK(
+            (kind = 'terminal' AND event_key = 'terminal' AND attempt_id IS NULL)
+            OR
+            (kind = 'progress' AND event_key = 'progress:' || attempt_id AND attempt_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        INSERT INTO continuation_outbox_v5 (
+          outbox_id, job_id, event_key, kind, attempt_id, route_json,
+          idempotency_key, payload, status, attempt_count, next_attempt_at,
+          worker_id, lease_expires_at, first_attempt_at, last_attempt_at,
+          message_id, error_code, error_summary, created_at, updated_at
+        )
+        SELECT
+          outbox_id, job_id, 'terminal', 'terminal', NULL, route_json,
+          idempotency_key, payload, status, attempt_count, next_attempt_at,
+          worker_id, lease_expires_at, first_attempt_at, last_attempt_at,
+          message_id, error_code, error_summary, created_at, updated_at
+        FROM continuation_outbox;
+
+        DROP TABLE continuation_outbox;
+        ALTER TABLE continuation_outbox_v5 RENAME TO continuation_outbox;
+        CREATE INDEX continuation_outbox_due_idx
+          ON continuation_outbox(status, kind, next_attempt_at, created_at);
+        PRAGMA user_version = ${SCHEMA_VERSION};
+      `));
+    } finally {
+      this.database.exec('PRAGMA foreign_keys = ON;');
+    }
+    const violations = this.database.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length > 0) {
+      throw new Error('Continuation outbox migration failed foreign-key validation.');
     }
   }
 
@@ -438,7 +524,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   async get(jobId: string): Promise<ContinuationJob | null> {
-    return this.readJobBy('j.job_id = ?', jobId);
+    const job = this.readJobBy('j.job_id = ?', jobId);
+    if (!job) return null;
+    return { ...job, deliveryEvents: this.readDeliveryEvents(jobId) };
   }
 
   async listByCreator(creatorOpenId: string, limit: number): Promise<ContinuationJob[]> {
@@ -464,9 +552,18 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           AND j.next_run_at <= ?
           AND j.expires_at > ?
           AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) < j.max_attempts
+          AND NOT EXISTS (
+            SELECT 1 FROM continuation_outbox progress
+            WHERE progress.job_id = j.job_id
+              AND progress.kind = 'progress'
+              AND (
+                progress.status = 'sending'
+                OR (progress.status = 'pending' AND progress.next_attempt_at <= ?)
+              )
+          )
         ORDER BY j.next_run_at ASC, j.created_at ASC
         LIMIT 1
-      `).get(now, now);
+      `).get(now, now, now);
       if (!row) return null;
       const jobId = stringField(row, 'job_id');
       const update = this.database.prepare(`
@@ -479,7 +576,16 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           AND next_run_at <= ?
           AND expires_at > ?
           AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = continuation_jobs.job_id) < max_attempts
-      `).run(workerId, leaseExpiresAt, now, now, now, jobId, now, now);
+          AND NOT EXISTS (
+            SELECT 1 FROM continuation_outbox progress
+            WHERE progress.job_id = continuation_jobs.job_id
+              AND progress.kind = 'progress'
+              AND (
+                progress.status = 'sending'
+                OR (progress.status = 'pending' AND progress.next_attempt_at <= ?)
+              )
+          )
+      `).run(workerId, leaseExpiresAt, now, now, now, jobId, now, now, now);
       if (Number(update.changes) !== 1) return null;
 
       const ordinal = Number(this.database.prepare(`
@@ -684,6 +790,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         );
         assertOneChange(update.changes, claim.job.jobId);
         this.finishAttempt(claim, now, 'continue', executionSessionId);
+        this.insertProgressOutbox(current, claim, outcome, now);
         return;
       }
 
@@ -1006,7 +1113,16 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           OR (status = 'sending' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
         )
           AND next_attempt_at <= ?
-        ORDER BY next_attempt_at ASC, created_at ASC
+          AND (
+            kind = 'terminal'
+            OR NOT EXISTS (
+              SELECT 1 FROM continuation_outbox terminal
+              WHERE terminal.job_id = continuation_outbox.job_id
+                AND terminal.kind = 'terminal'
+            )
+          )
+        ORDER BY CASE kind WHEN 'terminal' THEN 0 ELSE 1 END,
+                 next_attempt_at ASC, created_at ASC
         LIMIT 1
       `).get(now, now);
       if (!row) return null;
@@ -1032,6 +1148,36 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     now: string,
   ): Promise<void> {
     this.transaction(() => {
+      const terminalExists = claim.kind === 'progress' && Boolean(this.database.prepare(`
+        SELECT 1 FROM continuation_outbox
+        WHERE job_id = ? AND kind = 'terminal'
+        LIMIT 1
+      `).get(claim.jobId));
+      if (
+        terminalExists
+        && (
+          result.status === 'failed'
+          || (result.status === 'retry' && result.errorCode === 'lark_pre_send_unavailable')
+        )
+      ) {
+        const superseded = this.database.prepare(`
+          UPDATE continuation_outbox
+          SET status = 'superseded', worker_id = NULL, lease_expires_at = NULL,
+              error_code = NULL, error_summary = NULL, updated_at = ?
+          WHERE outbox_id = ? AND status = 'sending' AND worker_id = ?
+        `).run(now, claim.outboxId, claim.workerId);
+        if (Number(superseded.changes) !== 1) {
+          throw new Error(`Stale continuation delivery claim for ${claim.outboxId}.`);
+        }
+        return;
+      }
+      if (terminalExists && result.status === 'retry') {
+        result = {
+          status: 'delivery_unknown',
+          errorCode: result.errorCode,
+          errorSummary: result.errorSummary,
+        };
+      }
       let update;
       if (result.status === 'delivered') {
         update = this.database.prepare(`
@@ -1371,17 +1517,56 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
   private insertTerminalOutbox(job: ContinuationJob, payload: string, now: string): void {
     this.database.prepare(`
+      UPDATE continuation_outbox
+      SET status = 'superseded', worker_id = NULL, lease_expires_at = NULL,
+          error_code = NULL, error_summary = NULL, updated_at = ?
+      WHERE job_id = ? AND kind = 'progress'
+        AND (
+          status IN ('pending', 'failed')
+          OR (status = 'sending' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
+        )
+    `).run(now, job.jobId, now);
+    this.database.prepare(`
       INSERT INTO continuation_outbox (
-        outbox_id, job_id, route_json, idempotency_key, payload, status,
+        outbox_id, job_id, event_key, kind, attempt_id,
+        route_json, idempotency_key, payload, status,
         attempt_count, next_attempt_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
-      ON CONFLICT(job_id) DO NOTHING
+      ) VALUES (?, ?, 'terminal', 'terminal', NULL, ?, ?, ?, 'pending', 0, ?, ?, ?)
+      ON CONFLICT(job_id, event_key) DO NOTHING
     `).run(
       makeId('out'),
       job.jobId,
       JSON.stringify(job.route),
-      deliveryIdempotencyKey(job.jobId),
+      deliveryIdempotencyKey(job.jobId, 'terminal'),
       payload,
+      now,
+      now,
+      now,
+    );
+  }
+
+  private insertProgressOutbox(
+    job: ContinuationJob,
+    claim: ContinuationClaim,
+    outcome: Extract<ContinuationStepOutcome, { outcome: 'continue' }>,
+    now: string,
+  ): void {
+    const eventKey = `progress:${claim.attempt.attemptId}`;
+    this.database.prepare(`
+      INSERT INTO continuation_outbox (
+        outbox_id, job_id, event_key, kind, attempt_id,
+        route_json, idempotency_key, payload, status,
+        attempt_count, next_attempt_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'progress', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+      ON CONFLICT(job_id, event_key) DO NOTHING
+    `).run(
+      makeId('out'),
+      job.jobId,
+      eventKey,
+      claim.attempt.attemptId,
+      JSON.stringify(job.route),
+      deliveryIdempotencyKey(job.jobId, eventKey),
+      renderProgressPayload(job, claim, outcome),
       now,
       now,
       now,
@@ -1413,7 +1598,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
   private readDeliveryClaim(outboxId: string, workerId: string): ContinuationDeliveryClaim {
     const row = this.database.prepare(`
-      SELECT outbox_id, job_id, worker_id, route_json, idempotency_key, payload,
+      SELECT outbox_id, job_id, event_key, kind, attempt_id, worker_id,
+             route_json, idempotency_key, payload,
              status, attempt_count, first_attempt_at, last_attempt_at,
              error_code, error_summary
       FROM continuation_outbox
@@ -1423,6 +1609,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return {
       outboxId: stringField(row, 'outbox_id'),
       jobId: stringField(row, 'job_id'),
+      eventKey: stringField(row, 'event_key'),
+      kind: stringField(row, 'kind') as ContinuationDeliveryClaim['kind'],
+      attemptId: optionalStringField(row, 'attempt_id'),
       workerId: stringField(row, 'worker_id'),
       route: parseJson<ContinuationDeliveryRoute>(row.route_json, emptyRoute()),
       idempotencyKey: stringField(row, 'idempotency_key'),
@@ -1434,6 +1623,29 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       lastErrorCode: optionalStringField(row, 'error_code'),
       lastErrorSummary: optionalStringField(row, 'error_summary'),
     };
+  }
+
+  private readDeliveryEvents(jobId: string): ContinuationDeliveryRecord[] {
+    return this.database.prepare(`
+      SELECT event_key, kind, attempt_id, status, attempt_count,
+             first_attempt_at, last_attempt_at, error_code, error_summary,
+             created_at, updated_at
+      FROM continuation_outbox
+      WHERE job_id = ?
+      ORDER BY CASE kind WHEN 'terminal' THEN 0 ELSE 1 END, created_at ASC
+    `).all(jobId).map((row) => ({
+      eventKey: stringField(row, 'event_key'),
+      kind: stringField(row, 'kind') as ContinuationDeliveryRecord['kind'],
+      attemptId: optionalStringField(row, 'attempt_id'),
+      status: stringField(row, 'status') as ContinuationDeliveryRecord['status'],
+      attemptCount: numberField(row, 'attempt_count'),
+      firstAttemptAt: optionalStringField(row, 'first_attempt_at'),
+      lastAttemptAt: optionalStringField(row, 'last_attempt_at'),
+      lastErrorCode: optionalStringField(row, 'error_code'),
+      lastErrorSummary: optionalStringField(row, 'error_summary'),
+      createdAt: stringField(row, 'created_at'),
+      updatedAt: stringField(row, 'updated_at'),
+    }));
   }
 
   private activeAttemptId(jobId: string, workerId?: string): string | undefined {
@@ -1456,10 +1668,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
 function jobSelectSql(): string {
   return `
-    SELECT j.*, o.status AS delivery_status,
+    SELECT j.*,
+           (SELECT o.status FROM continuation_outbox o
+            WHERE o.job_id = j.job_id AND o.kind = 'terminal'
+            LIMIT 1) AS delivery_status,
            (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) AS attempt_count
     FROM continuation_jobs j
-    LEFT JOIN continuation_outbox o ON o.job_id = j.job_id
   `;
 }
 
@@ -1629,6 +1843,34 @@ function renderBlockedPayload(
   ].filter(Boolean).join('\n');
 }
 
+function renderProgressPayload(
+  job: ContinuationJob,
+  claim: ContinuationClaim,
+  outcome: Extract<ContinuationStepOutcome, { outcome: 'continue' }>,
+): string {
+  const payload = [
+    `Task progress: ${job.jobId} (${claim.attempt.attemptId})`,
+    `Attempt: ${claim.attempt.ordinal} / ${job.maxAttempts}`,
+    renderResultSection('Completed work', boundedProgressValues(outcome.checkpoint.completedSteps)),
+    renderResultSection('Key findings', boundedProgressValues(
+      outcome.checkpoint.summary ? [outcome.checkpoint.summary] : [],
+    )),
+    renderResultSection('Remaining work', boundedProgressValues(outcome.checkpoint.remainingSteps)),
+    `Next attempt: ${truncateCharacters(outcome.nextStep.trim(), 500)}`,
+  ].filter(Boolean).join('\n');
+  return truncateCharacters(payload, PROGRESS_PAYLOAD_MAX_CHARS);
+}
+
+function boundedProgressValues(values: string[]): string[] {
+  return uniqueNonEmpty(values).slice(0, 3).map((value) => truncateCharacters(value, 500));
+}
+
+function truncateCharacters(value: string, maxCharacters: number): string {
+  const characters = Array.from(value);
+  if (characters.length <= maxCharacters) return value;
+  return `${characters.slice(0, Math.max(0, maxCharacters - 3)).join('').trimEnd()}...`;
+}
+
 function renderResultSection(title: string, values: string[]): string {
   const filtered = uniqueNonEmpty(values);
   return filtered.length > 0 ? `${title}:\n${filtered.map((value) => `- ${value}`).join('\n')}` : '';
@@ -1770,8 +2012,11 @@ function makeId(prefix: 'job' | 'att' | 'out'): string {
   return `${prefix}_${randomBytes(12).toString('hex')}`;
 }
 
-function deliveryIdempotencyKey(jobId: string): string {
-  return `ct_${createHash('sha256').update(jobId).digest('hex').slice(0, 32)}`;
+function deliveryIdempotencyKey(jobId: string, eventKey: string): string {
+  return `ct_${createHash('sha256')
+    .update(`${jobId}\0${eventKey}`)
+    .digest('hex')
+    .slice(0, 32)}`;
 }
 
 function toolCallId(jobId: string, stepIndex: number): string {

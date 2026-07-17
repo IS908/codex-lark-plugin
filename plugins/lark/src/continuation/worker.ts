@@ -10,7 +10,7 @@ import type {
   ContinuationClock,
   ContinuationExecutor,
   ContinuationRepository,
-  ContinuationTerminalDelivery,
+  ContinuationDelivery,
 } from '../ports/continuation.js';
 import { redactContinuationText } from './redaction.js';
 
@@ -29,7 +29,7 @@ interface ActiveExecution {
 export interface ContinuationWorkerOptions {
   repository: ContinuationRepository;
   executor: ContinuationExecutor;
-  delivery: ContinuationTerminalDelivery;
+  delivery: ContinuationDelivery;
   clock: ContinuationClock;
   audit?: ContinuationAudit;
   maxConcurrency: number;
@@ -366,12 +366,12 @@ export class ContinuationWorker {
         claim,
         {
           status: 'retry',
-          errorCode: 'terminal_delivery_failed',
+          errorCode: 'continuation_delivery_failed',
           errorSummary: summary,
         },
         this.nowIso(),
       );
-      await this.auditDelivery(claim, 'error', 'terminal_delivery_failed');
+      await this.auditDelivery(claim, 'error', 'continuation_delivery_failed');
       return;
     }
     await this.options.repository.markDeliveryResult(claim, result, this.nowIso());
@@ -420,8 +420,9 @@ export class ContinuationWorker {
     await this.options.audit?.record({
       action: 'continuation.deliver',
       jobId: claim.jobId,
+      attemptId: claim.attemptId,
       result,
-      detail,
+      detail: sanitizeText(`${claim.kind}:${claim.eventKey}:${detail}`),
     }).catch(() => {});
   }
 

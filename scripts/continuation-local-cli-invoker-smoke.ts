@@ -135,6 +135,14 @@ try {
     },
   }, now);
 
+  const progress = await repository.claimPendingDelivery('delivery-tool', now);
+  assert.equal(progress?.kind, 'progress');
+  await repository.markDeliveryResult(
+    progress!,
+    { status: 'delivered', messageId: 'om_tool_progress' },
+    now,
+  );
+
   const nextClaim = await repository.claimDue(
     'worker-tool',
     now,

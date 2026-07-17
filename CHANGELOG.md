@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-07-17
+
+### Added
+- Deliver one bounded factual progress update for each committed continuation `continue`, keyed idempotently by Job and Attempt ID, with per-event diagnostics in `/task status`.
+
+### Changed
+- Default continuation execution to at most five attempts plus the existing total-time budget, add penultimate/final convergence prompts, and convert an invalid final `continue` deterministically into a useful `partial` result.
+- Directly migrate the SQLite outbox to schema v5 multi-event records. Terminal delivery has priority and supersedes progress that is still safely known to be undelivered.
+
+### Fixed
+- Accept `partial` and `blocked` terminal markers in Lark delivery, preserve stable retry keys for every progress/terminal event, and resolve cancellation races without blindly resending stale progress.
+
 ## [2.4.0] - 2026-07-17
 
 ### Changed
@@ -860,6 +872,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
 [Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.0...HEAD
+[2.5.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.2...v2.3.0
 [2.2.2]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.1...v2.2.2
