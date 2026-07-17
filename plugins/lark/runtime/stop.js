@@ -567,9 +567,14 @@ var appConfig = {
   codexSessionRetentionDryRun: optionalBoolean("LARK_CODEX_SESSION_RETENTION_DRY_RUN", false),
   continuationEnabled: optionalBoolean("LARK_CONTINUATION_ENABLED", true),
   continuationMaxConcurrency: optionalIntegerRange("LARK_CONTINUATION_MAX_CONCURRENCY", 1, 1, 4),
-  continuationMaxSteps: optionalIntegerRange("LARK_CONTINUATION_MAX_STEPS", 24, 1, 100),
+  continuationMaxAttempts: optionalIntegerRange("LARK_CONTINUATION_MAX_ATTEMPTS", 5, 1, 20),
   continuationMaxRetries: optionalIntegerRange("LARK_CONTINUATION_MAX_RETRIES", 3, 0, 10),
-  continuationMaxAgeHours: optionalIntegerRange("LARK_CONTINUATION_MAX_AGE_HOURS", 24, 1, 168),
+  continuationMaxTotalMinutes: optionalIntegerRange(
+    "LARK_CONTINUATION_MAX_TOTAL_MINUTES",
+    30,
+    5,
+    1440
+  ),
   continuationRetentionDays: optionalIntegerRange("LARK_CONTINUATION_RETENTION_DAYS", 30, 1, 3650),
   continuationWorkingRoot,
   sessionHealthEnabled: optionalBoolean("LARK_SESSION_HEALTH_ENABLED", false),

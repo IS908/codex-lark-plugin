@@ -17,6 +17,8 @@ export type ContinuationStatus =
   | 'waiting_retry'
   | 'cancel_requested'
   | 'completed'
+  | 'partial'
+  | 'blocked'
   | 'failed'
   | 'cancelled';
 
@@ -85,7 +87,7 @@ export interface ContinuationCreateRequest {
   permissions: ContinuationPermissionEnvelope;
   model?: string;
   parentSessionId?: string;
-  maxSteps: number;
+  maxAttempts: number;
   maxRetries: number;
   timeoutSeconds: number;
   createdAt: string;
@@ -171,6 +173,15 @@ export type ContinuationStepOutcome =
       artifacts: string[];
     }
   | {
+      outcome: 'partial';
+      completedWork: string[];
+      keyFindings: string[];
+      unperformedWork: string[];
+      risks: string[];
+      nextSteps: string[];
+      artifacts: string[];
+    }
+  | {
       outcome: 'failed';
       errorCode: string;
       errorSummary: string;
@@ -186,6 +197,25 @@ export type ContinuationStepOutcome =
       completedWork: string[];
       unperformedWork: string[];
     };
+
+export function partialOutcomeFromCheckpoint(
+  checkpoint: ContinuationCheckpoint,
+  nextStep: string,
+): Extract<ContinuationStepOutcome, { outcome: 'partial' }> {
+  return {
+    outcome: 'partial',
+    completedWork: checkpoint.completedSteps,
+    keyFindings: checkpoint.summary ? [checkpoint.summary] : [],
+    unperformedWork: checkpoint.remainingSteps,
+    risks: checkpoint.constraints,
+    nextSteps: [...new Set(
+      [nextStep, ...checkpoint.remainingSteps]
+        .map((value) => value.trim())
+        .filter(Boolean),
+    )],
+    artifacts: [],
+  };
+}
 
 export interface ContinuationExecutionResult {
   outcome: ContinuationStepOutcome;
@@ -233,6 +263,8 @@ export type ContinuationDeliveryResult =
 
 const TERMINAL_STATUSES = new Set<ContinuationStatus>([
   'completed',
+  'partial',
+  'blocked',
   'failed',
   'cancelled',
 ]);

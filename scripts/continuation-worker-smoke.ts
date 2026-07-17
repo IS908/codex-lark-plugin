@@ -47,7 +47,7 @@ function createJob(suffix: string): ContinuationJob {
       externalSideEffects: 'denied',
       approval: { mode: 'never' },
     },
-    maxSteps: 24,
+    maxAttempts: 5,
     maxRetries: 3,
     timeoutSeconds: 60,
     createdAt: '2026-07-17T00:00:00.000Z',

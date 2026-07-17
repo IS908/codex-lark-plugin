@@ -25,9 +25,9 @@ const code = `
     codexSessionRetentionDryRun: appConfig.codexSessionRetentionDryRun,
     continuationEnabled: appConfig.continuationEnabled,
     continuationMaxConcurrency: appConfig.continuationMaxConcurrency,
-    continuationMaxSteps: appConfig.continuationMaxSteps,
+    continuationMaxAttempts: appConfig.continuationMaxAttempts,
     continuationMaxRetries: appConfig.continuationMaxRetries,
-    continuationMaxAgeHours: appConfig.continuationMaxAgeHours,
+    continuationMaxTotalMinutes: appConfig.continuationMaxTotalMinutes,
     continuationRetentionDays: appConfig.continuationRetentionDays,
     continuationWorkingRoot: appConfig.continuationWorkingRoot,
     continuationDbPath: appConfig.continuationDbPath,
@@ -43,7 +43,9 @@ const code = `
     hasGithubIssueActionConfig: Object.prototype.hasOwnProperty.call(appConfig, 'githubIssueActionEnabled'),
     hasGithubIssueDefaultRepoConfig: Object.prototype.hasOwnProperty.call(appConfig, 'githubIssueDefaultRepo'),
     hasGithubIssueAllowedReposConfig: Object.prototype.hasOwnProperty.call(appConfig, 'githubIssueAllowedRepos'),
-    hasGithubIssueCommandConfig: Object.prototype.hasOwnProperty.call(appConfig, 'githubIssueCommand')
+    hasGithubIssueCommandConfig: Object.prototype.hasOwnProperty.call(appConfig, 'githubIssueCommand'),
+    hasContinuationMaxStepsConfig: Object.prototype.hasOwnProperty.call(appConfig, 'continuationMaxSteps'),
+    hasContinuationMaxAgeHoursConfig: Object.prototype.hasOwnProperty.call(appConfig, 'continuationMaxAgeHours')
   }));
 `;
 
@@ -94,7 +96,10 @@ expectFail({ LARK_LOG_ARCHIVE_RETENTION_MONTHS: '-1' }, /LARK_LOG_ARCHIVE_RETENT
 expectFail({ LARK_CONTINUATION_MAX_CONCURRENCY: '0' }, /LARK_CONTINUATION_MAX_CONCURRENCY.*integer between 1 and 4/i);
 expectFail({ LARK_CONTINUATION_MAX_CONCURRENCY: '5' }, /LARK_CONTINUATION_MAX_CONCURRENCY.*integer between 1 and 4/i);
 expectFail({ LARK_CONTINUATION_MAX_RETRIES: '-1' }, /LARK_CONTINUATION_MAX_RETRIES.*integer between 0 and 10/i);
-expectFail({ LARK_CONTINUATION_MAX_STEPS: '2.5' }, /LARK_CONTINUATION_MAX_STEPS.*integer between 1 and 100/i);
+expectFail({ LARK_CONTINUATION_MAX_ATTEMPTS: '2.5' }, /LARK_CONTINUATION_MAX_ATTEMPTS.*integer between 1 and 20/i);
+expectFail({ LARK_CONTINUATION_MAX_ATTEMPTS: '21' }, /LARK_CONTINUATION_MAX_ATTEMPTS.*integer between 1 and 20/i);
+expectFail({ LARK_CONTINUATION_MAX_TOTAL_MINUTES: '4' }, /LARK_CONTINUATION_MAX_TOTAL_MINUTES.*integer between 5 and 1440/i);
+expectFail({ LARK_CONTINUATION_MAX_TOTAL_MINUTES: '1441' }, /LARK_CONTINUATION_MAX_TOTAL_MINUTES.*integer between 5 and 1440/i);
 expectFail({ LARK_CONTINUATION_WORKING_ROOT: 'relative/root' }, /LARK_CONTINUATION_WORKING_ROOT.*absolute/i);
 
 const zeroAllowed = expectOk({
@@ -116,9 +121,9 @@ assert.equal(defaultPaths.codexSessionRetentionScanIntervalHours, 24);
 assert.equal(defaultPaths.codexSessionRetentionDryRun, false);
 assert.equal(defaultPaths.continuationEnabled, true);
 assert.equal(defaultPaths.continuationMaxConcurrency, 1);
-assert.equal(defaultPaths.continuationMaxSteps, 24);
+assert.equal(defaultPaths.continuationMaxAttempts, 5);
 assert.equal(defaultPaths.continuationMaxRetries, 3);
-assert.equal(defaultPaths.continuationMaxAgeHours, 24);
+assert.equal(defaultPaths.continuationMaxTotalMinutes, 30);
 assert.equal(defaultPaths.continuationRetentionDays, 30);
 assert.equal(defaultPaths.continuationWorkingRoot, defaultPaths.codexExecCwd);
 assert.match(defaultPaths.continuationDbPath, /runtime\/continuations\/jobs\.sqlite$/);
@@ -138,6 +143,8 @@ assert.equal(defaultPaths.hasGithubIssueActionConfig, false);
 assert.equal(defaultPaths.hasGithubIssueDefaultRepoConfig, false);
 assert.equal(defaultPaths.hasGithubIssueAllowedReposConfig, false);
 assert.equal(defaultPaths.hasGithubIssueCommandConfig, false);
+assert.equal(defaultPaths.hasContinuationMaxStepsConfig, false);
+assert.equal(defaultPaths.hasContinuationMaxAgeHoursConfig, false);
 
 const retentionDryRun = expectOk({ LARK_CODEX_SESSION_RETENTION_DRY_RUN: 'true' });
 assert.equal(retentionDryRun.codexSessionRetentionDryRun, true);

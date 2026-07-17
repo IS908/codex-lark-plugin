@@ -72,9 +72,9 @@ const service = new ContinuationService({
   repository,
   allowedWorkingRoot: root,
   filesystemMode: 'workspace-write',
-  maxSteps: 24,
+  maxAttempts: 5,
   maxRetries: 3,
-  maxAgeHours: 24,
+  maxTotalMinutes: 30,
   timeoutMs: 600_000,
   defaultModel: 'gpt-5.4',
   canUseTrustedPersonalWorkspace: (actorOpenId) =>
@@ -122,6 +122,8 @@ assert.equal(firstJob?.creatorOpenId, p2p.senderId);
 assert.equal(firstJob?.route.kind, 'message_thread');
 assert.equal(firstJob?.parentSessionId, 'session-parent');
 assert.equal(firstJob?.model, 'gpt-5.3-codex');
+assert.equal(firstJob?.maxAttempts, 5);
+assert.equal(firstJob?.expiresAt, '2026-07-17T00:30:00.000Z');
 assert.equal(firstJob?.workingDirectory, await realpath(root));
 assert.deepEqual(firstJob?.permissions, {
   profile: 'bounded',

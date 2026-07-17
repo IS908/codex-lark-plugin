@@ -13,11 +13,11 @@ import {
 import {
   CONTINUATION_LIMITS,
   ContinuationExecutionError,
+  partialOutcomeFromCheckpoint,
   type ContinuationCheckpoint,
   type ContinuationClaim,
   type ContinuationExecutionResult,
   type ContinuationFilesystemMode,
-  type ContinuationJob,
   type ContinuationStepOutcome,
   type ContinuationToolRequest,
 } from '../domain/continuation.js';
@@ -65,6 +65,16 @@ const completedSchema = z.object({
   artifacts: z.array(compactString).max(CONTINUATION_LIMITS.artifactCount),
 }).strict();
 
+const partialSchema = z.object({
+  outcome: z.literal('partial'),
+  completed_work: compactStringList,
+  key_findings: compactStringList,
+  unperformed_work: compactStringList,
+  risks: compactStringList,
+  next_steps: compactStringList,
+  artifacts: z.array(compactString).max(CONTINUATION_LIMITS.artifactCount),
+}).strict();
+
 const failedSchema = z.object({
   outcome: z.literal('failed'),
   error_code: z.string().min(1).max(128),
@@ -92,13 +102,14 @@ const toolRequestSchema = z.object({
 const outcomeSchema = z.discriminatedUnion('outcome', [
   continueSchema,
   completedSchema,
+  partialSchema,
   failedSchema,
   blockedSchema,
   toolRequestSchema,
 ]);
 
 const wireOutcomeSchema = z.object({
-  outcome: z.enum(['continue', 'completed', 'failed', 'blocked', 'tool_request']),
+  outcome: z.enum(['continue', 'completed', 'partial', 'failed', 'blocked', 'tool_request']),
   checkpoint: checkpointSchema.nullable(),
   next_step: compactString.nullable(),
   resume_after_seconds: z.number().int().min(0).max(24 * 60 * 60).nullable(),
@@ -110,7 +121,10 @@ const wireOutcomeSchema = z.object({
   retryable: z.boolean().nullable(),
   required_capability: compactString.nullable(),
   completed_work: compactStringList,
+  key_findings: compactStringList,
   unperformed_work: compactStringList,
+  risks: compactStringList,
+  next_steps: compactStringList,
   tool: z.string().regex(/^[A-Za-z0-9_.-]{1,80}$/).nullable(),
   args: z.array(z.string().max(8 * 1024)).max(128),
 }).strict();
@@ -153,14 +167,17 @@ export const CONTINUATION_OUTPUT_SCHEMA: Record<string, unknown> = {
     'retryable',
     'required_capability',
     'completed_work',
+    'key_findings',
     'unperformed_work',
+    'risks',
+    'next_steps',
     'tool',
     'args',
   ],
   properties: {
     outcome: {
       type: 'string',
-      enum: ['continue', 'completed', 'failed', 'blocked', 'tool_request'],
+      enum: ['continue', 'completed', 'partial', 'failed', 'blocked', 'tool_request'],
     },
     checkpoint: checkpointJsonSchema,
     next_step: { type: ['string', 'null'] },
@@ -173,7 +190,10 @@ export const CONTINUATION_OUTPUT_SCHEMA: Record<string, unknown> = {
     retryable: { type: ['boolean', 'null'] },
     required_capability: { type: ['string', 'null'] },
     completed_work: { type: 'array', items: { type: 'string' } },
+    key_findings: { type: 'array', items: { type: 'string' } },
     unperformed_work: { type: 'array', items: { type: 'string' } },
+    risks: { type: 'array', items: { type: 'string' } },
+    next_steps: { type: 'array', items: { type: 'string' } },
     tool: { type: ['string', 'null'], pattern: '^[A-Za-z0-9_.-]{1,80}$' },
     args: {
       type: 'array',
@@ -239,7 +259,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       }
       const artifactDir = await this.options.artifactStore.ensure(claim.job.jobId);
       const request: CodexExecRequest = {
-        prompt: buildContinuationPrompt(claim.job, artifactDir),
+        prompt: buildContinuationPrompt(claim, artifactDir),
         ...(this.options.command ? { command: this.options.command } : {}),
         cwd: workingDirectory,
         timeoutMs: claim.job.timeoutSeconds * 1_000,
@@ -319,7 +339,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       }
       return {
         ...executionSessionPatch(result.sessionId, replacedSession),
-        outcome,
+        outcome: enforceAttemptConvergence(claim, outcome),
       };
     } catch (error) {
       throw mapExecutorError(error);
@@ -407,7 +427,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     includeJobContext: boolean,
     signal: AbortSignal,
   ): Promise<ContinuationExecutionResult> {
-    const toolResultPrompt = buildContinuationToolResultPrompt(toolRequest, resultMessage);
+    const toolResultPrompt = buildContinuationToolResultPrompt(claim, toolRequest, resultMessage);
     const followupRequest: CodexExecRequest = {
       ...baseRequest,
       prompt: includeJobContext
@@ -444,7 +464,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         previousSessionId,
         previousReplacedSession,
       ),
-      outcome: followupOutcome,
+      outcome: enforceAttemptConvergence(claim, followupOutcome),
     };
   }
 
@@ -540,6 +560,18 @@ async function parseOutcome(
       artifacts,
     };
   }
+  if (value.outcome === 'partial') {
+    const artifacts = await artifactStore.canonicalizeReferences(jobId, value.artifacts);
+    return {
+      outcome: 'partial',
+      completedWork: value.completed_work.map(redactContinuationText),
+      keyFindings: value.key_findings.map(redactContinuationText),
+      unperformedWork: value.unperformed_work.map(redactContinuationText),
+      risks: value.risks.map(redactContinuationText),
+      nextSteps: value.next_steps.map(redactContinuationText),
+      artifacts,
+    };
+  }
   if (value.outcome === 'failed') {
     return {
       outcome: 'failed',
@@ -578,6 +610,16 @@ function compactWireOutcome(input: z.infer<typeof wireOutcomeSchema>): unknown {
         ...(input.result_summary === null ? {} : { result_summary: input.result_summary }),
         artifacts: input.artifacts,
       };
+    case 'partial':
+      return {
+        outcome: input.outcome,
+        completed_work: input.completed_work,
+        key_findings: input.key_findings,
+        unperformed_work: input.unperformed_work,
+        risks: input.risks,
+        next_steps: input.next_steps,
+        artifacts: input.artifacts,
+      };
     case 'failed':
       return {
         outcome: input.outcome,
@@ -612,7 +654,28 @@ function mapCheckpoint(input: z.infer<typeof checkpointSchema>): ContinuationChe
   };
 }
 
-function buildContinuationPrompt(job: ContinuationJob, artifactDir: string): string {
+export function enforceAttemptConvergence(
+  claim: ContinuationClaim,
+  outcome: ContinuationStepOutcome,
+): ContinuationStepOutcome {
+  if (outcome.outcome !== 'continue' || claim.attempt.ordinal < claim.job.maxAttempts) {
+    return outcome;
+  }
+  return partialOutcomeFromCheckpoint(outcome.checkpoint, outcome.nextStep);
+}
+
+function convergenceInstruction(claim: ContinuationClaim): string {
+  if (claim.attempt.ordinal >= claim.job.maxAttempts) {
+    return '[Forced convergence] This is the final attempt. A continue outcome is forbidden. Return completed, partial, blocked, or failed with the most useful terminal result available.';
+  }
+  if (claim.attempt.ordinal === claim.job.maxAttempts - 1) {
+    return '[Convergence warning] This is the penultimate attempt. Prioritize completing the objective or preparing a useful structured partial result for the final attempt.';
+  }
+  return 'Continue only when another bounded attempt is necessary to satisfy the acceptance criteria.';
+}
+
+function buildContinuationPrompt(claim: ContinuationClaim, artifactDir: string): string {
+  const { job } = claim;
   const brief = {
     title: job.title,
     objective: job.objective,
@@ -620,8 +683,8 @@ function buildContinuationPrompt(job: ContinuationJob, artifactDir: string): str
     contextSnapshot: job.contextSnapshot,
     checkpoint: job.checkpoint ?? null,
     requiredTools: job.requiredTools,
-    stepCount: job.stepCount,
-    maxSteps: job.maxSteps,
+    attempt: claim.attempt.ordinal,
+    maxAttempts: job.maxAttempts,
     permissions: {
       profile: job.permissions.profile,
       requestedPaths: job.permissions.filesystem.requestedPaths,
@@ -634,13 +697,21 @@ function buildContinuationPrompt(job: ContinuationJob, artifactDir: string): str
     : 'Do not request approval, send messages, create jobs, or perform source-control publishing actions.';
   return [
     '[Durable Continuation Step]',
-    'Execute one bounded unattended slice of the task below.',
+    'Execute one bounded, highest-priority step of the task using the latest checkpoint.',
     'Return only one JSON object matching the supplied output schema.',
     'Every schema field must be present. Set unused array fields to [] and other unused fields to null.',
+    'Return continue only if measurable progress was made, useful work remains, and another attempt is available. Include an accurate checkpoint and one explicit next step.',
+    'Return completed when the acceptance criteria are sufficiently satisfied and include a user-facing final summary.',
+    'Return partial when useful results exist but the objective cannot be fully completed within the remaining budget.',
+    'Return blocked when an external dependency, permission, input, or capability prevents progress; include the blocker and recovery steps.',
+    'Return failed only for a non-recoverable execution error; include completed and remaining work.',
+    'Do not repeat completed work unless verification is necessary. Do not expand scope.',
     authorityLine,
     'Do not execute a required local CLI directly. When one configured tool is needed, return a tool_request outcome using an exact name from requiredTools; the trusted parent will validate and execute it.',
     'At most one local CLI tool can be requested in this step.',
     'If a required capability is unavailable, return a blocked outcome instead of weakening the execution boundary.',
+    `Attempt ${claim.attempt.ordinal} of ${job.maxAttempts}.`,
+    convergenceInstruction(claim),
     `Workspace: ${job.workingDirectory}`,
     `Requested paths: ${job.permissions.filesystem.requestedPaths.join(', ') || '(none)'}`,
     `Network access: ${job.permissions.network}`,
@@ -653,13 +724,15 @@ function buildContinuationPrompt(job: ContinuationJob, artifactDir: string): str
 }
 
 function buildContinuationToolResultPrompt(
+  claim: ContinuationClaim,
   request: ContinuationToolRequest,
   message: string,
 ): string {
   return [
     '[Continuation Tool Result]',
     'The trusted parent executed the one allowed local CLI request for this step.',
-    'Use the result below to return a continue, completed, failed, or blocked outcome.',
+    'Use the result below to return a continue, completed, partial, failed, or blocked outcome.',
+    convergenceInstruction(claim),
     'Do not request another tool in this step.',
     '',
     untrustedDataBlock('continuation-tool-result', JSON.stringify({

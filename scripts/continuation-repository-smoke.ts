@@ -48,7 +48,7 @@ function createRequest(
       externalSideEffects: 'denied',
       approval: { mode: 'never' },
     },
-    maxSteps: 24,
+    maxAttempts: 5,
     maxRetries: 3,
     timeoutSeconds: 600,
     createdAt: baseNow,
@@ -444,6 +444,220 @@ const legacyV2Job = await migrationSeed.create(createRequest('legacy-v2', {
 }));
 migrationSeed.close();
 const { DatabaseSync } = await import('node:sqlite');
+
+const convergenceDatabasePath = join(root, 'convergence', 'jobs.sqlite');
+const convergenceArtifactsDir = join(root, 'convergence', 'artifacts');
+const convergenceRepository = await SqliteContinuationRepository.open({
+  databasePath: convergenceDatabasePath,
+  artifactsDir: convergenceArtifactsDir,
+  jitter: () => 0,
+});
+try {
+  const convergence = await convergenceRepository.create(createRequest('convergence'));
+  for (let ordinal = 1; ordinal <= 5; ordinal += 1) {
+    const seconds = String(ordinal).padStart(2, '0');
+    const now = `2026-07-17T00:10:${seconds}.000Z`;
+    const claim = await convergenceRepository.claimDue(
+      'worker-convergence',
+      now,
+      `2026-07-17T00:11:${seconds}.000Z`,
+    );
+    assert.ok(claim);
+    assert.equal(claim.attempt.ordinal, ordinal);
+    await convergenceRepository.completeStep(claim, {
+      executionSessionId: 'session-convergence',
+      outcome: {
+        outcome: 'continue',
+        checkpoint: {
+          summary: `Attempt ${ordinal} checkpoint`,
+          completedSteps: [`completed ${ordinal}`],
+          remainingSteps: ['finish the remaining work'],
+          constraints: ['stay within the attempt budget'],
+          decisions: ['preserve the checkpoint'],
+          references: ['result.md'],
+        },
+        nextStep: 'finish the remaining work',
+      },
+    }, now);
+    assert.equal(
+      (await convergenceRepository.get(convergence.job.jobId))?.status,
+      ordinal < 5 ? 'waiting_retry' : 'partial',
+    );
+  }
+  assert.equal(await convergenceRepository.claimDue(
+    'worker-convergence',
+    '2026-07-17T00:12:00.000Z',
+    '2026-07-17T00:13:00.000Z',
+  ), null);
+  const partialDelivery = await convergenceRepository.claimPendingDelivery(
+    'delivery-convergence',
+    '2026-07-17T00:12:00.000Z',
+  );
+  assert.ok(partialDelivery);
+  assert.equal(partialDelivery.jobId, convergence.job.jobId);
+  assert.match(partialDelivery.payload, /^Task partially completed:/);
+  assert.match(partialDelivery.payload, /Attempt 5 checkpoint/);
+
+  const blocked = await convergenceRepository.create(createRequest('blocked'));
+  const blockedClaim = await convergenceRepository.claimDue(
+    'worker-blocked',
+    '2026-07-17T00:12:01.000Z',
+    '2026-07-17T00:13:01.000Z',
+  );
+  assert.equal(blockedClaim?.job.jobId, blocked.job.jobId);
+  assert.ok(blockedClaim);
+  await convergenceRepository.completeStep(blockedClaim, {
+    outcome: {
+      outcome: 'blocked',
+      errorCode: 'missing_capability',
+      errorSummary: 'A required capability is unavailable.',
+      requiredCapability: 'production credentials',
+      completedWork: ['validated the local implementation'],
+      unperformedWork: ['run production validation'],
+    },
+  }, '2026-07-17T00:12:02.000Z');
+  const blockedResult = await convergenceRepository.get(blocked.job.jobId);
+  assert.equal(blockedResult?.status, 'blocked');
+  assert.equal(blockedResult?.errorCode, 'missing_capability');
+  assert.equal(blockedResult?.deliveryStatus, 'pending');
+} finally {
+  convergenceRepository.close();
+}
+
+const versionThreeDatabasePath = join(root, 'migration-v3', 'jobs.sqlite');
+const versionThreeArtifactsDir = join(root, 'migration-v3', 'artifacts');
+await import('node:fs/promises').then(({ mkdir }) => mkdir(join(root, 'migration-v3'), { recursive: true }));
+const versionThreeDatabase = new DatabaseSync(versionThreeDatabasePath);
+versionThreeDatabase.exec(`
+  CREATE TABLE continuation_jobs (
+    job_id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    retry_of_job_id TEXT,
+    creator_open_id TEXT NOT NULL,
+    origin_kind TEXT NOT NULL,
+    route_json TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    source_thread_id TEXT,
+    title TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    acceptance_criteria_json TEXT NOT NULL,
+    context_snapshot_json TEXT NOT NULL,
+    required_tools_json TEXT NOT NULL,
+    working_directory TEXT NOT NULL,
+    permissions_json TEXT NOT NULL,
+    model TEXT,
+    parent_session_id TEXT,
+    max_steps INTEGER NOT NULL,
+    max_retries INTEGER NOT NULL,
+    timeout_seconds INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    row_version INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    execution_session_id TEXT,
+    checkpoint_json TEXT,
+    step_count INTEGER NOT NULL,
+    failure_count INTEGER NOT NULL,
+    next_run_at TEXT NOT NULL,
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    heartbeat_at TEXT,
+    result_summary TEXT,
+    result_artifacts_json TEXT NOT NULL,
+    error_code TEXT,
+    error_summary TEXT,
+    started_at TEXT,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    deleted_at TEXT
+  ) STRICT;
+  CREATE TABLE continuation_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    worker_id TEXT NOT NULL,
+    execution_session_id TEXT,
+    started_at TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    finished_at TEXT,
+    outcome TEXT,
+    error_code TEXT,
+    error_summary TEXT,
+    UNIQUE(job_id, ordinal)
+  ) STRICT;
+  CREATE TABLE continuation_outbox (
+    outbox_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL UNIQUE,
+    route_json TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL,
+    next_attempt_at TEXT NOT NULL,
+    worker_id TEXT,
+    lease_expires_at TEXT,
+    first_attempt_at TEXT,
+    last_attempt_at TEXT,
+    message_id TEXT,
+    error_code TEXT,
+    error_summary TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  ) STRICT;
+  CREATE TABLE continuation_tool_calls (
+    call_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    attempt_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result_json TEXT,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    UNIQUE(job_id, step_index)
+  ) STRICT;
+  INSERT INTO continuation_jobs (
+    job_id, idempotency_key, creator_open_id, origin_kind, route_json,
+    source_message_id, title, objective, acceptance_criteria_json,
+    context_snapshot_json, required_tools_json, working_directory,
+    permissions_json, max_steps, max_retries, timeout_seconds, created_at,
+    expires_at, row_version, status, step_count, failure_count, next_run_at,
+    result_artifacts_json, updated_at
+  ) VALUES (
+    'job_legacy_v3', 'idem-legacy-v3', 'ou_creator', 'message_thread',
+    '{"kind":"message_thread","conversationId":"oc_legacy","sourceMessageId":"om_legacy"}',
+    'om_legacy', 'Legacy v3', 'Migrate this job', '[]',
+    '{"summary":"","completedSteps":[],"remainingSteps":[],"constraints":[],"decisions":[],"references":[]}',
+    '[]', '${root.replaceAll("'", "''")}',
+    '{"profile":"bounded","filesystem":{"root":"${root.replaceAll("'", "''")}","mode":"workspace-write","requestedPaths":[]},"hostTools":[],"network":"none","externalSideEffects":"denied","approval":{"mode":"never"}}',
+    24, 3, 600, '${baseNow}', '2026-07-18T00:00:00.000Z', 1, 'queued',
+    0, 0, '${baseNow}', '[]', '${baseNow}'
+  );
+  PRAGMA user_version = 3;
+`);
+versionThreeDatabase.close();
+const migratedVersionThreeRepository = await SqliteContinuationRepository.open({
+  databasePath: versionThreeDatabasePath,
+  artifactsDir: versionThreeArtifactsDir,
+});
+try {
+  const migrated = await migratedVersionThreeRepository.get('job_legacy_v3');
+  assert.equal(migrated?.maxAttempts, 5);
+  assert.equal(migrated?.status, 'queued');
+} finally {
+  migratedVersionThreeRepository.close();
+}
+const migratedVersionThreeDatabase = new DatabaseSync(versionThreeDatabasePath);
+const migratedVersionThreeColumns = migratedVersionThreeDatabase
+  .prepare('PRAGMA table_info(continuation_jobs)')
+  .all() as Array<{ name: string }>;
+assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'max_attempts'));
+assert.equal(migratedVersionThreeColumns.some((column) => column.name === 'max_steps'), false);
+assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 4);
+migratedVersionThreeDatabase.close();
+
 const versionTwoDatabase = new DatabaseSync(migrationDatabasePath);
 const v2Columns = versionTwoDatabase.prepare('PRAGMA table_info(continuation_jobs)').all() as Array<{ name: string }>;
 if (v2Columns.some((column) => column.name === 'permissions_json')) {

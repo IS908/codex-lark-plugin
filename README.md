@@ -85,7 +85,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Codex can commit one structured `create_continuation_job` exec action when a foreground P2P, group, or document-comment turn cannot finish safely in one process run. The visible acknowledgement includes a durable Job ID.
 - Jobs, attempts, checkpoints, leases, and a terminal-delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; managed artifacts live under the sibling `artifacts/` directory.
 - Each Job owns a dedicated Codex execution session. A parent foreground session is provenance only; an unavailable resume session is replaced safely without mutating the foreground chat session.
-- `/task list|status|cancel|retry|delete` bypass Codex and remain available for direct control. Creators manage their own tasks; `LARK_OWNER_OPEN_ID` can manage every task. Retry creates a new Job ID, and only failed/cancelled tasks can be retried.
+- `/task list|status|cancel|retry|delete` bypass Codex and remain available for direct control. Creators manage their own tasks; `LARK_OWNER_OPEN_ID` can manage every task. Retry creates a new Job ID, and partial/blocked/failed/cancelled tasks can be retried.
 - The parent derives each permission profile from the authenticated sender: the owner and current `allowed_user_ids` members automatically receive `trusted_personal_workspace` for broad local reads, network access, and external operations under a trust-first policy; all other admitted users remain `bounded`. Bounded tasks force approval policy `never`, disable sandbox network access, ignore user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. Trusted attempts always write sanitized command traces keyed by Job/attempt ID. There is no continuation MCP tool. Standard Codex filesystem/shell tools stay inside the sandbox and are never listed in `required_tools`. A task may request one parent-owned `run_local_cli_tool` call per step only when its exact configured host-tool name appears in `required_tools`; caller/config policy and the durable no-blind-replay ledger are still enforced.
 - Terminal IM replies reuse one stable Feishu UUID inside its one-hour deduplication window. Document-comment delivery uses bounded marker read-back after an ambiguous send. Unreconciled sends become `delivery_unknown` and are not blindly repeated.
 
@@ -413,7 +413,7 @@ written to the audit log.
 /task list         List your durable background tasks
 /task status ID    Show an authorized task's execution and delivery state
 /task cancel ID    Cancel a queued/running authorized task
-/task retry ID     Clone a failed/cancelled task under a new Job ID
+/task retry ID     Clone an incomplete terminal task under a new Job ID
 /task delete ID    Redact and delete a terminal authorized task
 
 Owner-only:
@@ -695,11 +695,15 @@ reinstalling v1.21.4 rather than enabling compatibility code.
 |---|---|---|
 | `LARK_CONTINUATION_ENABLED` | `true` | Enable durable background continuation creation and execution |
 | `LARK_CONTINUATION_MAX_CONCURRENCY` | `1` | Concurrent continuation executions (`1`-`4`) |
-| `LARK_CONTINUATION_MAX_STEPS` | `24` | Maximum committed steps per Job (`1`-`100`) |
-| `LARK_CONTINUATION_MAX_RETRIES` | `3` | Retryable execution failures per step (`0`-`10`) |
-| `LARK_CONTINUATION_MAX_AGE_HOURS` | `24` | Maximum Job lifetime (`1`-`168` hours) |
+| `LARK_CONTINUATION_MAX_ATTEMPTS` | `5` | Maximum execution attempts per Job (`1`-`20`) |
+| `LARK_CONTINUATION_MAX_RETRIES` | `3` | Retryable execution failures within the attempt budget (`0`-`10`) |
+| `LARK_CONTINUATION_MAX_TOTAL_MINUTES` | `30` | Maximum Job lifetime (`5`-`1440` minutes) |
 | `LARK_CONTINUATION_RETENTION_DAYS` | `30` | Days before terminal task details and managed artifacts are redacted |
 | `LARK_CONTINUATION_WORKING_ROOT` | `LARK_CODEX_EXEC_CWD` | Absolute root authorized for continuation working directories |
+
+The penultimate attempt receives a convergence warning. The final attempt must
+return `completed`, `partial`, `blocked`, or `failed`; a model-produced
+`continue` is converted deterministically to `partial` from its checkpoint.
 
 `working_directory` in a continuation action is relative to this root. For
 example, with `LARK_CONTINUATION_WORKING_ROOT=/Users/you/workspace`, use

@@ -168,7 +168,7 @@ function formatTaskList(jobs: ContinuationJob[]): string {
     `Background tasks (${jobs.length})`,
     ...jobs.map((job) => [
       `- ${job.status} | ${job.jobId} | ${job.title}`,
-      `  Attempts: ${attemptCount(job)} | Next run: ${formatOptionalTime(job.nextRunAt)}`,
+      `  Attempts: ${attemptCount(job)} / ${job.maxAttempts} | Next run: ${formatOptionalTime(job.nextRunAt)}`,
       `  Completed: ${formatOptionalTime(job.completedAt)} | Delivery: ${job.deliveryStatus ?? 'not_started'}`,
     ].join('\n')),
   ].join('\n');
@@ -179,7 +179,7 @@ function formatTaskStatus(job: ContinuationJob): string {
     `State: ${job.status}`,
     `Job ID: ${job.jobId}`,
     `Title: ${job.title}`,
-    `Attempts: ${attemptCount(job)}`,
+    `Attempts: ${attemptCount(job)} / ${job.maxAttempts}`,
     `Next run: ${formatOptionalTime(job.nextRunAt)}`,
     `Completed: ${formatOptionalTime(job.completedAt)}`,
     `Delivery: ${job.deliveryStatus ?? 'not_started'}`,

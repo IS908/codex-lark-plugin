@@ -5,8 +5,10 @@ import type { DatabaseSync } from 'node:sqlite';
 import {
   CONTINUATION_LIMITS,
   isContinuationTerminal,
+  partialOutcomeFromCheckpoint,
   retryDelayMs,
   type ContinuationClaim,
+  type ContinuationCheckpoint,
   type ContinuationCreateRequest,
   type ContinuationDeliveryClaim,
   type ContinuationDeliveryResult,
@@ -16,6 +18,7 @@ import {
   type ContinuationJob,
   type ContinuationPermissionEnvelope,
   type ContinuationStatus,
+  type ContinuationStepOutcome,
   type ContinuationToolCallDecision,
   type ContinuationToolCallRecovery,
   type ContinuationToolRequest,
@@ -32,7 +35,7 @@ interface SqliteContinuationRepositoryOptions {
   jitter?: () => number;
 }
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const DELIVERY_LEASE_MS = 30_000;
 const EMPTY_CHECKPOINT = {
   summary: '',
@@ -121,7 +124,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         permissions_json TEXT NOT NULL,
         model TEXT,
         parent_session_id TEXT,
-        max_steps INTEGER NOT NULL,
+        max_attempts INTEGER NOT NULL CHECK(max_attempts BETWEEN 1 AND 20),
         max_retries INTEGER NOT NULL,
         timeout_seconds INTEGER NOT NULL,
         created_at TEXT NOT NULL,
@@ -129,7 +132,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         row_version INTEGER NOT NULL CHECK(row_version >= 1),
         status TEXT NOT NULL CHECK(status IN (
           'queued', 'running', 'waiting_retry', 'cancel_requested',
-          'completed', 'failed', 'cancelled'
+          'completed', 'partial', 'blocked', 'failed', 'cancelled'
         )),
         execution_session_id TEXT,
         checkpoint_json TEXT,
@@ -166,7 +169,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         heartbeat_at TEXT NOT NULL,
         finished_at TEXT,
         outcome TEXT CHECK(outcome IS NULL OR outcome IN (
-          'continue', 'completed', 'failed', 'blocked', 'error', 'cancelled'
+          'continue', 'completed', 'partial', 'failed', 'blocked', 'error', 'cancelled'
         )),
         error_code TEXT,
         error_summary TEXT,
@@ -236,9 +239,139 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           approval: { mode: 'never' },
         } satisfies ContinuationPermissionEnvelope), stringField(row, 'job_id'));
       }
-      this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+      this.database.exec('PRAGMA user_version = 3;');
     });
+    if (existingVersion >= 1 && existingVersion <= 3) {
+      this.migrateAttemptBudgetSchema();
+    }
     await this.healthCheck();
+  }
+
+  private migrateAttemptBudgetSchema(): void {
+    const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
+    if (columns.some((column) => stringField(column, 'name') === 'max_attempts')) {
+      this.transaction(() => this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`));
+      return;
+    }
+
+    this.database.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      this.transaction(() => this.database.exec(`
+        CREATE TABLE continuation_jobs_v4 (
+          job_id TEXT PRIMARY KEY,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          retry_of_job_id TEXT REFERENCES continuation_jobs_v4(job_id),
+          creator_open_id TEXT NOT NULL,
+          origin_kind TEXT NOT NULL CHECK(origin_kind IN ('message_thread', 'comment_thread')),
+          route_json TEXT NOT NULL,
+          source_message_id TEXT NOT NULL,
+          source_thread_id TEXT,
+          title TEXT NOT NULL,
+          objective TEXT NOT NULL,
+          acceptance_criteria_json TEXT NOT NULL,
+          context_snapshot_json TEXT NOT NULL,
+          required_tools_json TEXT NOT NULL,
+          working_directory TEXT NOT NULL,
+          permissions_json TEXT NOT NULL,
+          model TEXT,
+          parent_session_id TEXT,
+          max_attempts INTEGER NOT NULL CHECK(max_attempts BETWEEN 1 AND 20),
+          max_retries INTEGER NOT NULL,
+          timeout_seconds INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          row_version INTEGER NOT NULL CHECK(row_version >= 1),
+          status TEXT NOT NULL CHECK(status IN (
+            'queued', 'running', 'waiting_retry', 'cancel_requested',
+            'completed', 'partial', 'blocked', 'failed', 'cancelled'
+          )),
+          execution_session_id TEXT,
+          checkpoint_json TEXT,
+          step_count INTEGER NOT NULL CHECK(step_count >= 0),
+          failure_count INTEGER NOT NULL CHECK(failure_count >= 0),
+          next_run_at TEXT NOT NULL,
+          lease_owner TEXT,
+          lease_expires_at TEXT,
+          heartbeat_at TEXT,
+          result_summary TEXT,
+          result_artifacts_json TEXT NOT NULL,
+          error_code TEXT,
+          error_summary TEXT,
+          started_at TEXT,
+          updated_at TEXT NOT NULL,
+          completed_at TEXT,
+          deleted_at TEXT
+        ) STRICT;
+
+        CREATE TABLE continuation_attempts_v4 (
+          attempt_id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL REFERENCES continuation_jobs_v4(job_id),
+          ordinal INTEGER NOT NULL,
+          worker_id TEXT NOT NULL,
+          execution_session_id TEXT,
+          started_at TEXT NOT NULL,
+          heartbeat_at TEXT NOT NULL,
+          finished_at TEXT,
+          outcome TEXT CHECK(outcome IS NULL OR outcome IN (
+            'continue', 'completed', 'partial', 'failed', 'blocked', 'error', 'cancelled'
+          )),
+          error_code TEXT,
+          error_summary TEXT,
+          UNIQUE(job_id, ordinal)
+        ) STRICT;
+
+        INSERT INTO continuation_jobs_v4 (
+          job_id, idempotency_key, retry_of_job_id, creator_open_id, origin_kind,
+          route_json, source_message_id, source_thread_id, title, objective,
+          acceptance_criteria_json, context_snapshot_json, required_tools_json,
+          working_directory, permissions_json, model, parent_session_id,
+          max_attempts, max_retries, timeout_seconds, created_at, expires_at,
+          row_version, status, execution_session_id, checkpoint_json, step_count,
+          failure_count, next_run_at, lease_owner, lease_expires_at, heartbeat_at,
+          result_summary, result_artifacts_json, error_code, error_summary,
+          started_at, updated_at, completed_at, deleted_at
+        )
+        SELECT
+          job_id, idempotency_key, retry_of_job_id, creator_open_id, origin_kind,
+          route_json, source_message_id, source_thread_id, title, objective,
+          acceptance_criteria_json, context_snapshot_json, required_tools_json,
+          working_directory, permissions_json, model, parent_session_id,
+          MIN(MAX(max_steps, 1), 5), max_retries, timeout_seconds, created_at, expires_at,
+          row_version, status, execution_session_id, checkpoint_json, step_count,
+          failure_count, next_run_at, lease_owner, lease_expires_at, heartbeat_at,
+          result_summary, result_artifacts_json, error_code, error_summary,
+          started_at, updated_at, completed_at, deleted_at
+        FROM continuation_jobs;
+
+        INSERT INTO continuation_attempts_v4 (
+          attempt_id, job_id, ordinal, worker_id, execution_session_id, started_at,
+          heartbeat_at, finished_at, outcome, error_code, error_summary
+        )
+        SELECT
+          attempt_id, job_id, ordinal, worker_id, execution_session_id, started_at,
+          heartbeat_at, finished_at, outcome, error_code, error_summary
+        FROM continuation_attempts;
+
+        DROP TABLE continuation_attempts;
+        DROP TABLE continuation_jobs;
+        ALTER TABLE continuation_jobs_v4 RENAME TO continuation_jobs;
+        ALTER TABLE continuation_attempts_v4 RENAME TO continuation_attempts;
+
+        CREATE INDEX continuation_jobs_due_idx
+          ON continuation_jobs(status, next_run_at, created_at)
+          WHERE deleted_at IS NULL;
+        CREATE INDEX continuation_jobs_creator_idx
+          ON continuation_jobs(creator_open_id, created_at DESC)
+          WHERE deleted_at IS NULL;
+        PRAGMA user_version = ${SCHEMA_VERSION};
+      `));
+    } finally {
+      this.database.exec('PRAGMA foreign_keys = ON;');
+    }
+    const violations = this.database.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length > 0) {
+      throw new Error('Continuation database migration failed foreign-key validation.');
+    }
   }
 
   async healthCheck(): Promise<void> {
@@ -263,7 +396,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         job_id, idempotency_key, retry_of_job_id, creator_open_id, origin_kind, route_json,
         source_message_id, source_thread_id, title, objective,
         acceptance_criteria_json, context_snapshot_json, required_tools_json,
-        working_directory, permissions_json, model, parent_session_id, max_steps, max_retries,
+        working_directory, permissions_json, model, parent_session_id, max_attempts, max_retries,
         timeout_seconds, created_at, expires_at, row_version, status,
         step_count, failure_count, next_run_at, result_artifacts_json, updated_at
       ) VALUES (
@@ -288,7 +421,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       JSON.stringify(request.permissions),
       request.model ?? null,
       request.parentSessionId ?? null,
-      request.maxSteps,
+      request.maxAttempts,
       request.maxRetries,
       request.timeoutSeconds,
       request.createdAt,
@@ -322,14 +455,16 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     leaseExpiresAt: string,
   ): Promise<ContinuationClaim | null> {
     return this.transaction(() => {
+      this.finishUnclaimedAttemptBudgetExhausted(now);
       const row = this.database.prepare(`
-        SELECT job_id
-        FROM continuation_jobs
-        WHERE status IN ('queued', 'waiting_retry')
-          AND deleted_at IS NULL
-          AND next_run_at <= ?
-          AND expires_at > ?
-        ORDER BY next_run_at ASC, created_at ASC
+        SELECT j.job_id
+        FROM continuation_jobs j
+        WHERE j.status IN ('queued', 'waiting_retry')
+          AND j.deleted_at IS NULL
+          AND j.next_run_at <= ?
+          AND j.expires_at > ?
+          AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) < j.max_attempts
+        ORDER BY j.next_run_at ASC, j.created_at ASC
         LIMIT 1
       `).get(now, now);
       if (!row) return null;
@@ -343,6 +478,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           AND deleted_at IS NULL
           AND next_run_at <= ?
           AND expires_at > ?
+          AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = continuation_jobs.job_id) < max_attempts
       `).run(workerId, leaseExpiresAt, now, now, now, jobId, now, now);
       if (Number(update.changes) !== 1) return null;
 
@@ -515,18 +651,19 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           outcome.checkpoint,
           CONTINUATION_LIMITS.checkpointBytes,
         );
-        const stepCount = current.stepCount + 1;
-        if (stepCount >= current.maxSteps) {
-          this.finishTerminal(
+        if (claim.attempt.ordinal >= current.maxAttempts) {
+          this.finishPartial(
             claim,
             current,
-            'failed',
+            partialOutcomeFromCheckpoint(outcome.checkpoint, outcome.nextStep),
             now,
-            'max_steps_exceeded',
-            `Continuation reached its maximum of ${current.maxSteps} steps.`,
+            executionSessionId,
+            'attempt_budget_exhausted',
+            outcome.checkpoint,
           );
           return;
         }
+        const stepCount = current.stepCount + 1;
         const nextRunAt = addMilliseconds(now, Math.max(0, outcome.resumeAfterSeconds ?? 0) * 1_000);
         const update = this.database.prepare(`
           UPDATE continuation_jobs
@@ -583,14 +720,23 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         return;
       }
 
-      const retryable = outcome.outcome === 'failed' && outcome.retryable;
+      if (outcome.outcome === 'partial') {
+        this.finishPartial(claim, current, outcome, now, executionSessionId);
+        return;
+      }
+
+      if (outcome.outcome === 'blocked') {
+        this.finishBlocked(claim, current, outcome, now, executionSessionId);
+        return;
+      }
+
       this.finishFailure(
         claim,
         current,
         {
           errorCode: outcome.errorCode,
           errorSummary: outcome.errorSummary,
-          retryable,
+          retryable: outcome.retryable,
         },
         now,
         executionSessionId,
@@ -700,7 +846,11 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         }
 
         const failureCount = current.failureCount + 1;
-        if (failureCount <= current.maxRetries && current.expiresAt > now) {
+        if (
+          failureCount <= current.maxRetries
+          && (current.attemptCount ?? 0) < current.maxAttempts
+          && current.expiresAt > now
+        ) {
           const nextRunAt = addMilliseconds(now, retryDelayMs(failureCount, this.jitter()));
           this.database.prepare(`
             UPDATE continuation_jobs
@@ -793,7 +943,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       permissions: source.permissions,
       model: source.model,
       parentSessionId: source.parentSessionId,
-      maxSteps: source.maxSteps,
+      maxAttempts: source.maxAttempts,
       maxRetries: source.maxRetries,
       timeoutSeconds: source.timeoutSeconds,
       createdAt: now,
@@ -817,7 +967,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
             model = NULL, parent_session_id = NULL, execution_session_id = NULL,
             checkpoint_json = NULL, result_summary = NULL, result_artifacts_json = '[]',
             error_summary = NULL, deleted_at = ?, updated_at = ?, row_version = row_version + 1
-        WHERE job_id = ? AND status IN ('completed', 'failed', 'cancelled') AND deleted_at IS NULL
+        WHERE job_id = ? AND status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')
+          AND deleted_at IS NULL
       `).run(
         `redacted:${jobId}`,
         JSON.stringify(emptyRoute()),
@@ -940,7 +1091,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     const rows = this.database.prepare(`
       SELECT job_id
       FROM continuation_jobs
-      WHERE status IN ('completed', 'failed', 'cancelled')
+      WHERE status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')
         AND completed_at IS NOT NULL
         AND completed_at < ?
         AND deleted_at IS NULL
@@ -982,6 +1133,116 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return current;
   }
 
+  private finishUnclaimedAttemptBudgetExhausted(now: string): void {
+    const rows = this.database.prepare(`
+      SELECT j.job_id
+      FROM continuation_jobs j
+      WHERE j.status IN ('queued', 'waiting_retry')
+        AND j.deleted_at IS NULL
+        AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) >= j.max_attempts
+    `).all();
+    for (const row of rows) {
+      const jobId = stringField(row, 'job_id');
+      const current = this.readJobBy('j.job_id = ?', jobId);
+      if (!current) continue;
+      const checkpoint = current.checkpoint ?? current.contextSnapshot;
+      const partial = partialOutcomeFromCheckpoint(
+        checkpoint,
+        checkpoint.remainingSteps[0] ?? 'Review the partial result.',
+      );
+      validatePartialResult(partial);
+      const update = this.database.prepare(`
+        UPDATE continuation_jobs
+        SET status = 'partial', result_summary = ?, result_artifacts_json = ?,
+            error_code = 'attempt_budget_exhausted',
+            error_summary = 'The continuation exhausted its attempt budget.',
+            completed_at = ?, updated_at = ?, lease_owner = NULL,
+            lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
+        WHERE job_id = ? AND status IN ('queued', 'waiting_retry')
+      `).run(
+        partialResultSummary(partial),
+        JSON.stringify(partial.artifacts),
+        now,
+        now,
+        jobId,
+      );
+      if (Number(update.changes) !== 1) continue;
+      this.insertTerminalOutbox(current, renderPartialPayload(jobId, partial), now);
+    }
+  }
+
+  private finishPartial(
+    claim: ContinuationClaim,
+    current: ContinuationJob,
+    outcome: Extract<ContinuationStepOutcome, { outcome: 'partial' }>,
+    now: string,
+    executionSessionId?: string,
+    errorCode = 'partial_completion',
+    checkpoint?: ContinuationCheckpoint,
+  ): void {
+    validatePartialResult(outcome);
+    const update = this.database.prepare(`
+      UPDATE continuation_jobs
+      SET status = 'partial', execution_session_id = ?, checkpoint_json = ?,
+          step_count = step_count + 1, result_summary = ?, result_artifacts_json = ?,
+          error_code = ?, error_summary = 'The continuation completed with a partial result.',
+          completed_at = ?, updated_at = ?, lease_owner = NULL,
+          lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
+      WHERE job_id = ? AND status = 'running' AND lease_owner = ? AND row_version = ?
+    `).run(
+      executionSessionId ?? null,
+      checkpoint ? JSON.stringify(checkpoint) : current.checkpoint ? JSON.stringify(current.checkpoint) : null,
+      partialResultSummary(outcome),
+      JSON.stringify(outcome.artifacts),
+      errorCode,
+      now,
+      now,
+      current.jobId,
+      claim.workerId,
+      claim.claimedRowVersion,
+    );
+    assertOneChange(update.changes, current.jobId);
+    this.finishAttempt(claim, now, 'partial', executionSessionId);
+    this.insertTerminalOutbox(current, renderPartialPayload(current.jobId, outcome), now);
+  }
+
+  private finishBlocked(
+    claim: ContinuationClaim,
+    current: ContinuationJob,
+    outcome: Extract<ContinuationStepOutcome, { outcome: 'blocked' }>,
+    now: string,
+    executionSessionId?: string,
+  ): void {
+    assertJsonBytes('blocked result', outcome, CONTINUATION_LIMITS.finalMessageBytes);
+    const update = this.database.prepare(`
+      UPDATE continuation_jobs
+      SET status = 'blocked', execution_session_id = ?, step_count = step_count + 1,
+          result_summary = ?, error_code = ?, error_summary = ?, completed_at = ?,
+          updated_at = ?, lease_owner = NULL, lease_expires_at = NULL,
+          heartbeat_at = NULL, row_version = row_version + 1
+      WHERE job_id = ? AND status = 'running' AND lease_owner = ? AND row_version = ?
+    `).run(
+      executionSessionId ?? null,
+      outcome.errorSummary,
+      outcome.errorCode,
+      outcome.errorSummary,
+      now,
+      now,
+      current.jobId,
+      claim.workerId,
+      claim.claimedRowVersion,
+    );
+    assertOneChange(update.changes, current.jobId);
+    this.finishAttempt(
+      claim,
+      now,
+      'blocked',
+      executionSessionId,
+      { errorCode: outcome.errorCode, errorSummary: outcome.errorSummary, retryable: false },
+    );
+    this.insertTerminalOutbox(current, renderBlockedPayload(current.jobId, outcome), now);
+  }
+
   private finishFailure(
     claim: ContinuationClaim,
     current: ContinuationJob,
@@ -991,7 +1252,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ): void {
     failure = boundedFailure(failure);
     const failureCount = current.failureCount + 1;
-    if (failure.retryable && failureCount <= current.maxRetries && current.expiresAt > now) {
+    if (
+      failure.retryable
+      && failureCount <= current.maxRetries
+      && claim.attempt.ordinal < current.maxAttempts
+      && current.expiresAt > now
+    ) {
       const nextRunAt = addMilliseconds(now, retryDelayMs(failureCount, this.jitter()));
       const update = this.database.prepare(`
         UPDATE continuation_jobs
@@ -1068,7 +1334,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   private finishAttempt(
     claim: ContinuationClaim,
     now: string,
-    outcome: 'continue' | 'completed' | 'failed' | 'cancelled',
+    outcome: 'continue' | 'completed' | 'partial' | 'failed' | 'blocked' | 'cancelled',
     executionSessionId?: string,
     failure?: ContinuationFailure,
   ): void {
@@ -1234,7 +1500,7 @@ function mapJob(row: SqlRow): ContinuationJob {
     permissions: parsePermissionEnvelope(row.permissions_json),
     model: optionalStringField(row, 'model'),
     parentSessionId: optionalStringField(row, 'parent_session_id'),
-    maxSteps: numberField(row, 'max_steps'),
+    maxAttempts: numberField(row, 'max_attempts'),
     maxRetries: numberField(row, 'max_retries'),
     timeoutSeconds: numberField(row, 'timeout_seconds'),
     createdAt: stringField(row, 'created_at'),
@@ -1290,8 +1556,8 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
   }
   assertJsonBytes('permission envelope', request.permissions, CONTINUATION_LIMITS.contextSnapshotBytes);
   assertJsonBytes('delivery route', request.route, CONTINUATION_LIMITS.contextSnapshotBytes);
-  if (!Number.isInteger(request.maxSteps) || request.maxSteps < 1) {
-    throw new Error('Continuation maxSteps must be a positive integer.');
+  if (!Number.isInteger(request.maxAttempts) || request.maxAttempts < 1 || request.maxAttempts > 20) {
+    throw new Error('Continuation maxAttempts must be an integer between 1 and 20.');
   }
   if (!Number.isInteger(request.maxRetries) || request.maxRetries < 0) {
     throw new Error('Continuation maxRetries must be a non-negative integer.');
@@ -1317,6 +1583,59 @@ function validateFinalResult(
     throw new Error(`Continuation result exceeds ${CONTINUATION_LIMITS.artifactCount} artifacts.`);
   }
   assertJsonBytes('result artifacts', artifacts, CONTINUATION_LIMITS.contextSnapshotBytes);
+}
+
+function validatePartialResult(
+  outcome: Extract<ContinuationStepOutcome, { outcome: 'partial' }>,
+): void {
+  assertJsonBytes('partial result', outcome, CONTINUATION_LIMITS.finalMessageBytes);
+  if (outcome.artifacts.length > CONTINUATION_LIMITS.artifactCount) {
+    throw new Error(`Continuation result exceeds ${CONTINUATION_LIMITS.artifactCount} artifacts.`);
+  }
+}
+
+function partialResultSummary(
+  outcome: Extract<ContinuationStepOutcome, { outcome: 'partial' }>,
+): string {
+  return outcome.keyFindings[0]
+    ?? outcome.completedWork[0]
+    ?? 'The task produced a partial result.';
+}
+
+function renderPartialPayload(
+  jobId: string,
+  outcome: Extract<ContinuationStepOutcome, { outcome: 'partial' }>,
+): string {
+  return [
+    `Task partially completed: ${jobId}`,
+    renderResultSection('Completed work', outcome.completedWork),
+    renderResultSection('Key findings', outcome.keyFindings),
+    renderResultSection('Remaining work', outcome.unperformedWork),
+    renderResultSection('Risks', outcome.risks),
+    renderResultSection('Next steps', outcome.nextSteps),
+  ].filter(Boolean).join('\n');
+}
+
+function renderBlockedPayload(
+  jobId: string,
+  outcome: Extract<ContinuationStepOutcome, { outcome: 'blocked' }>,
+): string {
+  return [
+    `Task blocked: ${jobId}`,
+    `Reason: ${outcome.errorSummary}`,
+    `Required capability: ${outcome.requiredCapability}`,
+    renderResultSection('Completed work', outcome.completedWork),
+    renderResultSection('Remaining work', outcome.unperformedWork),
+  ].filter(Boolean).join('\n');
+}
+
+function renderResultSection(title: string, values: string[]): string {
+  const filtered = uniqueNonEmpty(values);
+  return filtered.length > 0 ? `${title}:\n${filtered.map((value) => `- ${value}`).join('\n')}` : '';
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function validateToolRequest(request: ContinuationToolRequest): void {
