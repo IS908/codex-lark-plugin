@@ -46,6 +46,15 @@ export interface ContinuationDeliveryRecord {
   updatedAt: string;
 }
 
+export interface ContinuationCleanupResult {
+  jobId: string;
+  creatorOpenId: string;
+  status: Extract<ContinuationStatus, 'completed' | 'partial' | 'blocked' | 'failed' | 'cancelled'>;
+  completedAt: string;
+  result: 'cleaned' | 'error';
+  errorSummary?: string;
+}
+
 export interface ContinuationCheckpoint {
   summary: string;
   completedSteps: string[];
@@ -132,6 +141,7 @@ export interface ContinuationJob extends ContinuationCreateRequest {
   updatedAt: string;
   completedAt?: string;
   deletedAt?: string;
+  retained: boolean;
   deliveryStatus?: ContinuationDeliveryStatus;
   deliveryEvents?: ContinuationDeliveryRecord[];
 }

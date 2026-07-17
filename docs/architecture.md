@@ -84,6 +84,8 @@ The current baseline is empty:
   delivery, clock, and audit contracts live in `src/ports/continuation.ts`.
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
   Lark progress/terminal delivery, and composition live under `src/continuation/`.
+  Retention consumes the persisted terminal delivery result, serializes cleanup
+  against retain mutations, and preserves only a compact audited tombstone.
   The local CLI continuation adapter is parent-owned. Standard Codex tools stay
   inside the sandbox. The `bounded` continuation profile remains network-disabled.
   The parent derives authority from authenticated identity and automatically

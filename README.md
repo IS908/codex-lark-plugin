@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.5.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.6.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -85,7 +85,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Codex can commit one structured `create_continuation_job` exec action when a foreground P2P, group, or document-comment turn cannot finish safely in one process run. The visible acknowledgement includes a durable Job ID.
 - Jobs, attempts, checkpoints, leases, and a multi-event delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; managed artifacts live under the sibling `artifacts/` directory.
 - Each Job owns a dedicated Codex execution session. A parent foreground session is provenance only; an unavailable resume session is replaced safely without mutating the foreground chat session.
-- `/task list|status|cancel|retry|delete` bypass Codex and remain available for direct control. Creators manage their own tasks; `LARK_OWNER_OPEN_ID` can manage every task. Retry creates a new Job ID, and partial/blocked/failed/cancelled tasks can be retried.
+- `/task list|status|cancel|retry|retain|delete` bypass Codex and remain available for direct control. Lists accept `--status` filters; creators and the owner can toggle `retain` to exempt important Jobs from automatic cleanup. Retry creates a new Job ID, and partial/blocked/failed/cancelled tasks can be retried.
 - The parent derives each permission profile from the authenticated sender: the owner and current `allowed_user_ids` members automatically receive `trusted_personal_workspace` for broad local reads, network access, and external operations under a trust-first policy; all other admitted users remain `bounded`. Bounded tasks force approval policy `never`, disable sandbox network access, ignore user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. Trusted attempts always write sanitized command traces keyed by Job/attempt ID. There is no continuation MCP tool. Standard Codex filesystem/shell tools stay inside the sandbox and are never listed in `required_tools`. A task may request one parent-owned `run_local_cli_tool` call per step only when its exact configured host-tool name appears in `required_tools`; caller/config policy and the durable no-blind-replay ledger are still enforced.
 - Every committed `continue` attempt queues one bounded factual progress update keyed by `progress:<attempt_id>`. A terminal event uses the reserved `terminal` key, takes delivery priority, and supersedes progress that is still safely known to be undelivered. `/task status ID` shows per-event status, attempt IDs, retry counts, and bounded errors.
 - Each IM delivery event reuses one stable Feishu UUID inside its one-hour deduplication window. Document-comment delivery uses a unique event marker and bounded read-back after an ambiguous send. Unreconciled sends become `delivery_unknown` and are not blindly repeated.
@@ -411,10 +411,13 @@ written to the audit log.
 /model reset       Clear only the chat/thread model override
 /flush             Distill buffered context now and keep the current Codex session
 /new               Distill buffered context, then start a fresh session on next turn
-/task list         List your durable background tasks
+/task list [--status pending,failed]
+                   List durable tasks, optionally filtered by status
 /task status ID    Show an authorized task's execution and delivery state
 /task cancel ID    Cancel a queued/running authorized task
 /task retry ID     Clone an incomplete terminal task under a new Job ID
+/task retain ID on|off
+                   Enable or disable the automatic-cleanup exemption
 /task delete ID    Redact and delete a terminal authorized task
 
 Owner-only:
@@ -705,6 +708,12 @@ reinstalling v1.21.4 rather than enabling compatibility code.
 The penultimate attempt receives a convergence warning. The final attempt must
 return `completed`, `partial`, `blocked`, or `failed`; a model-produced
 `continue` is converted deterministically to `partial` from its checkpoint.
+
+Automatic retention starts at `completed_at` and only cleans terminal Jobs whose
+terminal delivery is confirmed `delivered` and whose `retain` flag is off.
+Cleanup deletes attempt/tool-call detail, progress events, and managed artifacts,
+while preserving a compact terminal tombstone and one audit result. Nonterminal,
+retained, undelivered, or failed-cleanup Jobs remain available for a later scan.
 
 `working_directory` in a continuation action is relative to this root. For
 example, with `LARK_CONTINUATION_WORKING_ROOT=/Users/you/workspace`, use

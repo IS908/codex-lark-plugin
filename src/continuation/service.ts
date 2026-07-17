@@ -4,6 +4,7 @@ import type {
   ContinuationDeliveryRoute,
   ContinuationFilesystemMode,
   ContinuationJob,
+  ContinuationStatus,
 } from '../domain/continuation.js';
 import { CONTINUATION_LIMITS, isContinuationTerminal } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
@@ -51,7 +52,12 @@ export interface ContinuationTaskService {
     parentSessionId?: string | null,
     selectedModel?: string | null,
   ): Promise<{ job: ContinuationJob; created: boolean }>;
-  listForActor(actorOpenId: string, ownerOpenId?: string | null, limit?: number): Promise<ContinuationJob[]>;
+  listForActor(
+    actorOpenId: string,
+    ownerOpenId?: string | null,
+    statuses?: ContinuationListStatus[],
+    limit?: number,
+  ): Promise<ContinuationJob[]>;
   getForActor(jobId: string, actorOpenId: string, ownerOpenId?: string | null): Promise<ContinuationJob>;
   cancelForActor(
     jobId: string,
@@ -65,7 +71,22 @@ export interface ContinuationTaskService {
     requestId: string,
   ): Promise<ContinuationJob>;
   deleteForActor(jobId: string, actorOpenId: string, ownerOpenId?: string | null): Promise<void>;
+  setRetainedForActor(
+    jobId: string,
+    retained: boolean,
+    actorOpenId: string,
+    ownerOpenId?: string | null,
+  ): Promise<ContinuationJob>;
 }
+
+export type ContinuationListStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'partial'
+  | 'blocked'
+  | 'failed'
+  | 'cancelled';
 
 export const CONTINUATION_RUNTIME_UNAVAILABLE = 'Continuation runtime is unavailable.';
 
@@ -166,11 +187,13 @@ export class ContinuationService implements ContinuationTaskService {
   async listForActor(
     actorOpenId: string,
     ownerOpenId?: string | null,
+    statuses: ContinuationListStatus[] = [],
     limit = 20,
   ): Promise<ContinuationJob[]> {
+    const repositoryStatuses = expandListStatuses(statuses);
     return isOwner(actorOpenId, ownerOpenId)
-      ? this.options.repository.listAll(limit)
-      : this.options.repository.listByCreator(actorOpenId, limit);
+      ? this.options.repository.listAll(limit, repositoryStatuses)
+      : this.options.repository.listByCreator(actorOpenId, limit, repositoryStatuses);
   }
 
   async getForActor(
@@ -242,6 +265,24 @@ export class ContinuationService implements ContinuationTaskService {
     if (!deleted) throw notAccessibleError();
   }
 
+  async setRetainedForActor(
+    jobId: string,
+    retained: boolean,
+    actorOpenId: string,
+    ownerOpenId?: string | null,
+  ): Promise<ContinuationJob> {
+    const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+    const updated = await this.options.repository.setRetained(
+      job.jobId,
+      retained,
+      this.options.clock.now().toISOString(),
+    );
+    if (!updated) throw notAccessibleError();
+    const refreshed = await this.options.repository.get(job.jobId);
+    if (!refreshed || refreshed.deletedAt) throw notAccessibleError();
+    return refreshed;
+  }
+
   private async requireAuthorizedJob(
     jobId: string,
     actorOpenId: string,
@@ -267,6 +308,15 @@ export class UnavailableContinuationService implements ContinuationTaskService {
   async cancelForActor(): Promise<never> { throw unavailableError(); }
   async retryForActor(): Promise<never> { throw unavailableError(); }
   async deleteForActor(): Promise<never> { throw unavailableError(); }
+  async setRetainedForActor(): Promise<never> { throw unavailableError(); }
+}
+
+function expandListStatuses(statuses: ContinuationListStatus[]): ContinuationStatus[] {
+  return [...new Set(statuses.flatMap((status): ContinuationStatus[] => {
+    if (status === 'pending') return ['queued', 'waiting_retry'];
+    if (status === 'running') return ['running', 'cancel_requested'];
+    return [status];
+  }))];
 }
 
 function isOwner(actorOpenId: string, ownerOpenId?: string | null): boolean {

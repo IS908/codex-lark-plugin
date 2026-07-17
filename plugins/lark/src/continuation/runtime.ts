@@ -16,6 +16,7 @@ import { ContinuationArtifactStore } from './artifact-store.js';
 import { createContinuationCodexExecutor } from './codex-runner.js';
 import { createLarkContinuationDelivery } from './lark-delivery.js';
 import { createContinuationLocalCliToolInvoker } from './local-cli-tool-invoker.js';
+import { redactContinuationText } from './redaction.js';
 import {
   ContinuationService,
   type ContinuationTaskService,
@@ -90,9 +91,15 @@ export async function createContinuationRuntime(
     });
     await repository.healthCheck();
     const now = clock.now().toISOString();
+    const continuationAudit = options.audit ?? defaultContinuationAudit;
     await repository.recoverExpiredLeases(now);
     await repository.expireOverdue(now);
-    await repository.purgeExpired(retentionCutoff(now, options.retentionDays), now);
+    await runRetentionCleanup(
+      repository,
+      retentionCutoff(now, options.retentionDays),
+      now,
+      continuationAudit,
+    );
 
     const artifactStore = new ContinuationArtifactStore(storage.artifactsDir);
     const service = new ContinuationService({
@@ -128,7 +135,7 @@ export async function createContinuationRuntime(
       executor,
       delivery,
       clock,
-      audit: options.audit ?? defaultContinuationAudit,
+      audit: continuationAudit,
       maxConcurrency: options.maxConcurrency,
       debug: options.debug,
     });
@@ -140,8 +147,12 @@ export async function createContinuationRuntime(
     const retentionTimer = options.dryRun ? undefined : setInterval(() => {
       if (retentionPromise) return;
       const scanNow = clock.now().toISOString();
-      retentionPromise = repository!.purgeExpired(retentionCutoff(scanNow, options.retentionDays), scanNow)
-        .then(() => undefined)
+      retentionPromise = runRetentionCleanup(
+        repository!,
+        retentionCutoff(scanNow, options.retentionDays),
+        scanNow,
+        continuationAudit,
+      )
         .catch((error) => safeReportError(options, error))
         .finally(() => { retentionPromise = undefined; });
     }, retentionInterval);
@@ -212,6 +223,27 @@ async function createDryRunStorage(): Promise<{
 
 function retentionCutoff(now: string, retentionDays: number): string {
   return new Date(Date.parse(now) - retentionDays * 24 * 60 * 60 * 1_000).toISOString();
+}
+
+async function runRetentionCleanup(
+  repository: ContinuationRepository,
+  retainAfter: string,
+  now: string,
+  audit: ContinuationAudit,
+): Promise<void> {
+  const results = await repository.purgeExpired(retainAfter, now);
+  for (const cleanup of results) {
+    const detail = cleanup.result === 'cleaned'
+      ? `automatic_retention status=${cleanup.status} completed_at=${cleanup.completedAt}`
+      : `automatic_retention_failed status=${cleanup.status} completed_at=${cleanup.completedAt} error=${cleanup.errorSummary ?? 'unknown'}`;
+    await audit.record({
+      action: 'continuation.cleanup',
+      actorOpenId: cleanup.creatorOpenId,
+      jobId: cleanup.jobId,
+      result: cleanup.result === 'cleaned' ? 'ok' : 'error',
+      detail: redactContinuationText(detail),
+    }).catch(() => {});
+  }
 }
 
 function safeReportError(options: ContinuationRuntimeOptions, error: unknown): void {

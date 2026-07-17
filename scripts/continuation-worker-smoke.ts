@@ -62,6 +62,7 @@ function createJob(suffix: string): ContinuationJob {
     heartbeatAt: '2026-07-17T00:00:00.000Z',
     resultArtifacts: [],
     updatedAt: '2026-07-17T00:00:00.000Z',
+    retained: false,
   };
 }
 
@@ -158,7 +159,7 @@ function createRepositoryHarness(initialClaims: ContinuationClaim[] = []): Repos
       return claim;
     },
     async markDeliveryResult(_claim, result) { harness.deliveryResults.push(result); },
-    async purgeExpired() { return 0; },
+    async purgeExpired() { return []; },
     close() {},
   };
   return harness;

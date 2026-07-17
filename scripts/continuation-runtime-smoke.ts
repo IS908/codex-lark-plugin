@@ -125,6 +125,102 @@ assert.doesNotMatch(diagnostics, /Sensitive result body/);
 assert.doesNotMatch(diagnostics, /should-never-be-logged-token/);
 await runtime.close();
 
+const retentionRoot = path.join(root, 'retention-runtime');
+const retentionDatabasePath = path.join(retentionRoot, 'jobs.sqlite');
+const retentionArtifactsDir = path.join(retentionRoot, 'artifacts');
+const retentionSource: LarkMessage = {
+  ...sourceMessage,
+  messageId: 'om_runtime_retention',
+  chatId: 'oc_runtime_retention',
+  senderId: 'ou_runtime_retention',
+  threadId: 'omt_runtime_retention',
+};
+const seedRetentionRuntime = await createContinuationRuntime({
+  enabled: true,
+  databasePath: retentionDatabasePath,
+  artifactsDir: retentionArtifactsDir,
+  allowedWorkingRoot: root,
+  maxAttempts: 5,
+  maxRetries: 0,
+  maxTotalMinutes: 30,
+  timeoutMs: 60_000,
+  retentionDays: 30,
+  maxConcurrency: 1,
+  configuredSandbox: 'workspace-write',
+  clock: { now: () => new Date('2026-06-01T00:00:00.000Z') },
+  getTransport: () => ({} as never),
+  executor: {
+    async execute() {
+      return { outcome: { outcome: 'completed', finalMessage: 'Archived.', artifacts: [] } };
+    },
+  },
+  delivery: {
+    async deliver() { return { status: 'delivered', messageId: 'om_runtime_archived' }; },
+  },
+  retentionIntervalMs: 60_000,
+});
+const retainedRuntimeJob = (await seedRetentionRuntime.service.createFromMessage({
+  title: 'Runtime retention audit',
+  objective: 'Complete and expire.',
+  acceptance_criteria: ['complete'],
+  context_snapshot: {
+    summary: '',
+    completed_steps: [],
+    remaining_steps: ['complete'],
+    constraints: [],
+    decisions: [],
+    references: [],
+  },
+  required_tools: [],
+}, retentionSource)).job;
+await seedRetentionRuntime.worker!.tick();
+await waitFor(async () => (await seedRetentionRuntime.service.getForActor(
+  retainedRuntimeJob.jobId,
+  retentionSource.senderId,
+)).deliveryStatus === 'delivered', 'retention seed delivery');
+await seedRetentionRuntime.close();
+
+const retentionAuditEvents: ContinuationAuditEvent[] = [];
+const cleanupRuntime = await createContinuationRuntime({
+  enabled: true,
+  databasePath: retentionDatabasePath,
+  artifactsDir: retentionArtifactsDir,
+  allowedWorkingRoot: root,
+  maxAttempts: 5,
+  maxRetries: 0,
+  maxTotalMinutes: 30,
+  timeoutMs: 60_000,
+  retentionDays: 30,
+  maxConcurrency: 1,
+  configuredSandbox: 'workspace-write',
+  clock: { now: () => new Date('2026-08-01T00:00:00.000Z') },
+  getTransport: () => ({} as never),
+  executor: {
+    async execute() {
+      return { outcome: { outcome: 'completed', finalMessage: 'unused', artifacts: [] } };
+    },
+  },
+  delivery: {
+    async deliver() { return { status: 'delivered', messageId: 'om_unused' }; },
+  },
+  audit: {
+    async record(event) { retentionAuditEvents.push(event); },
+  },
+  retentionIntervalMs: 60_000,
+});
+assert.ok(retentionAuditEvents.some((event) =>
+  event.action === 'continuation.cleanup'
+  && event.jobId === retainedRuntimeJob.jobId
+  && event.result === 'ok'));
+await assert.rejects(
+  () => cleanupRuntime.service.getForActor(
+    retainedRuntimeJob.jobId,
+    retentionSource.senderId,
+  ),
+  /Task not found or not accessible/,
+);
+await cleanupRuntime.close();
+
 const degraded = await createContinuationRuntime({
   enabled: true,
   databasePath: path.join(root, 'broken.sqlite'),
