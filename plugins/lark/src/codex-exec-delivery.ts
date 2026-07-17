@@ -132,7 +132,7 @@ async function enrichCodexExecActionPromptInfo(
       && message.messageType !== 'reaction'
       && ['p2p', 'group', 'doc_comment'].includes(message.chatType),
     continuationWorkingRoot: appConfig.continuationWorkingRoot,
-    continuationTrustedPersonalWorkspaceAvailable:
+    continuationTrustedPersonalWorkspaceEligible:
       message.senderId === appConfig.ownerOpenId
       || accessControlStore.isAllowedUserId(message.senderId),
   };

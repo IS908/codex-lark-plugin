@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.3.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.4.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -82,7 +82,7 @@
 - Job、attempt、checkpoint、lease 和终态投递 outbox 事务化存储在 `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`，托管 artifact 存储在同级 `artifacts/` 目录
 - 每个 Job 使用独立 Codex execution session；前台 session 只记录来源，续跑 session 失效时会安全替换，不会改动原聊天 session
 - `/task list|status|cancel|retry|delete` 绕过 Codex 直接执行；creator 管理自己的任务，`LARK_OWNER_OPEN_ID` 可以管理全部任务。retry 会创建新 Job ID，且仅允许重试 failed/cancelled 任务
-- 默认 `bounded` profile 固定 `approval_policy=never`、关闭 sandbox 网络、忽略用户 Codex config，不能发送消息、创建嵌套任务或执行源码发布。owner 或当前 `allowed_user_ids` 成员可以显式启用 `trusted_personal_workspace`，获得全盘读取、网络及信任模式下的外部操作能力；每次 attempt 都会重验身份，并强制按 Job/attempt ID 写入脱敏命令 trace。插件不提供 continuation MCP tool。Codex 标准文件和 shell 工具不写入 `required_tools`；父进程宿主工具仍受精确名称、caller/config 和不盲目重放账本保护
+- 父进程根据已认证 sender 自动派生权限 profile：owner 和当前 `allowed_user_ids` 成员自动使用 `trusted_personal_workspace`，获得全盘读取、网络及信任模式下的外部操作能力；其他被允许接入的用户保持 `bounded`。bounded profile 固定 `approval_policy=never`、关闭 sandbox 网络、忽略用户 Codex config，不能发送消息、创建嵌套任务或执行源码发布。每次 trusted attempt 都会重验身份，并强制按 Job/attempt ID 写入脱敏命令 trace。插件不提供 continuation MCP tool。Codex 标准文件和 shell 工具不写入 `required_tools`；父进程宿主工具仍受精确名称、caller/config 和不盲目重放账本保护
 - IM 终态回复在 Feishu 一小时去重窗口内复用稳定 UUID；文档评论遇到模糊发送结果时执行有界 marker 回读。无法确认的投递进入 `delivery_unknown`，不会盲目重发
 
 ### 可靠性
@@ -614,10 +614,11 @@ continuation action 的 `working_directory` 必须相对该 root。例如配置
 `working_directory="aitask"` 会在 `/Users/you/workspace/aitask` 下运行。
 创建和每次执行都会要求目录已存在，并同时检查词法路径、realpath 和 symlink 越界。
 
-action 省略 `capability_profile` 时使用 `bounded`，且不能携带 `requested_paths`。owner 和当前
-`allowed_user_ids` 成员可以显式设置 `capability_profile="trusted_personal_workspace"`，并提供至少
-一个绝对路径或相对 working root 的 `requested_paths`。路径会在创建时验证存在性、规范化为绝对
-路径并写入审计；当前信任优先实现不把它当作读取白名单。trusted profile 请求 Codex CLI
+action 不再接受 `capability_profile`。父进程根据已认证 sender 自动派生：`LARK_OWNER_OPEN_ID` 和
+当前 `allowed_user_ids` 成员自动使用 `trusted_personal_workspace`；仅通过 `allowed_chat_ids` 放行的
+用户保持 `bounded`。`requested_paths` 可选，省略时默认使用规范化后的 `working_directory`；显式
+路径可以是绝对路径或相对 working root 的路径，并在创建时校验存在性、规范化为绝对路径后写入
+审计。它只是目标预检和审计元数据，不会额外授予能力，也不是读取白名单。trusted profile 请求 Codex CLI
 `disk-full-read-access`、开启 sandbox 网络，并允许执行用户目标需要的外部操作。它尚未逐项分类或
 交互审批外部副作用，应只授予可信用户；移出 `allowed_user_ids` 后，后续 attempt 会进入 blocked。
 权限快照写入 `audit.log`，命令与工具事件强制写入按 Job/attempt ID 关联的 `trace.log`。
@@ -625,7 +626,7 @@ action 省略 `capability_profile` 时使用 `bounded`，且不能携带 `reques
 每个 Job 都持久化由服务端生成的权限信封。执行时使用“创建快照 ∩ 当前运维策略”：
 工作目录必须同时位于两个 root 内，`read-only` 优先于 `workspace-write`，host tool
 既要在 Job 中声明，也要继续通过当前 `local-cli-tools.json` 策略。`bounded` Job 保持禁网；只有
-符合身份条件并显式选择的 `trusted_personal_workspace` 快照才开启网络，且仍不会继承前台 approval
+服务端根据身份派生且持续满足资格的 `trusted_personal_workspace` 快照才开启网络，且仍不会继承前台 approval
 或用户配置。缺少新 profile 字段的旧权限 JSON 会保守读取为 `bounded`，已有 v1/v2 SQLite Job
 继续保守迁移。
 持久化协议预留 `approval.mode=interactive`，但 v2.2.0 不执行交互审批，遇到该值会

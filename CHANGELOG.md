@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-07-17
+
+### Changed
+- Derive continuation capability profiles exclusively from the authenticated sender: the owner and current `allowed_user_ids` members now receive `trusted_personal_workspace` automatically, while users admitted only through `allowed_chat_ids` remain `bounded`.
+- Remove model-controlled `capability_profile` from the continuation action contract. `requested_paths` is now optional and defaults to the canonical working directory while remaining preflight and audit metadata rather than a capability grant.
+
+### Security
+- Preserve per-attempt trusted-identity revalidation, persisted permission snapshots, and forced sanitized Job/attempt traces while preventing action payloads from selecting their own authority.
+
 ## [2.3.0] - 2026-07-17
 
 ### Added
@@ -851,6 +860,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
 [Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.0...HEAD
+[2.4.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.3.0...v2.4.0
+[2.3.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.2...v2.3.0
+[2.2.2]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.1...v2.2.2
+[2.2.1]: https://github.com/IS908/codex-lark-plugin/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/IS908/codex-lark-plugin/compare/v1.21.4...v2.0.0

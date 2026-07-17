@@ -30,10 +30,12 @@ const trustedContinuationPrompt = buildCodexExecActionChannelPrompt({
   token: 'token',
   maxActions: 5,
   continuationEnabled: true,
-  continuationTrustedPersonalWorkspaceAvailable: true,
+  continuationTrustedPersonalWorkspaceEligible: true,
 }).join('\n');
-assert.match(trustedContinuationPrompt, /trusted_personal_workspace/);
-assert.match(trustedContinuationPrompt, /requested_paths/);
+assert.match(trustedContinuationPrompt, /automatically assigned.*trusted_personal_workspace/i);
+assert.match(trustedContinuationPrompt, /requested_paths.*optional/i);
+assert.doesNotMatch(trustedContinuationPrompt, /set capability_profile/i);
+assert.doesNotMatch(trustedContinuationPrompt, /"capability_profile"/i);
 const noHostToolContinuationPrompt = buildCodexExecActionChannelPrompt({
   enabled: true,
   filePath: '/tmp/actions',

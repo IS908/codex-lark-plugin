@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import type {
-  ContinuationCapabilityProfile,
   ContinuationCreateRequest,
   ContinuationDeliveryRoute,
   ContinuationFilesystemMode,
@@ -42,7 +41,6 @@ export interface ContinuationActionInput {
   };
   required_tools: string[];
   working_directory?: string;
-  capability_profile?: ContinuationCapabilityProfile;
   requested_paths?: string[];
 }
 
@@ -103,8 +101,13 @@ export class ContinuationService implements ContinuationTaskService {
     );
     const route = deriveRoute(message);
     const brief = sanitizeBrief(action);
-    const profile = action.capability_profile ?? 'bounded';
-    const requestedPaths = await this.resolveRequestedPaths(profile, action, message.senderId);
+    const profile = this.options.canUseTrustedPersonalWorkspace?.(message.senderId)
+      ? 'trusted_personal_workspace'
+      : 'bounded';
+    const requestedPaths = await this.resolveRequestedPaths(
+      action,
+      resolvedWorkingDirectory.workingDirectory,
+    );
     const request: ContinuationCreateRequest = {
       idempotencyKey: continuationIdempotencyKey(message.messageId),
       creatorOpenId: message.senderId,
@@ -145,30 +148,18 @@ export class ContinuationService implements ContinuationTaskService {
   }
 
   private async resolveRequestedPaths(
-    profile: ContinuationCapabilityProfile,
     action: ContinuationActionInput,
-    actorOpenId: string,
+    defaultPath: string,
   ): Promise<string[]> {
-    if (profile === 'bounded') {
-      if (action.requested_paths !== undefined) {
-        throw new Error('requested_paths is available only with trusted_personal_workspace.');
-      }
-      return [];
-    }
-    if (!this.options.canUseTrustedPersonalWorkspace?.(actorOpenId)) {
-      throw new Error(
-        'trusted_personal_workspace is available only to the owner or allowed_user_ids users.',
-      );
-    }
-    if (!action.requested_paths?.length) {
-      throw new Error('requested_paths is required for trusted_personal_workspace.');
-    }
-    if (action.requested_paths.length > CONTINUATION_LIMITS.requestedPathCount) {
+    const requestedPaths = action.requested_paths?.length
+      ? action.requested_paths
+      : [defaultPath];
+    if (requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount) {
       throw new Error('Continuation requested path count exceeds the configured limit.');
     }
     return resolveContinuationRequestedPaths(
       this.options.allowedWorkingRoot,
-      action.requested_paths,
+      requestedPaths,
     );
   }
 

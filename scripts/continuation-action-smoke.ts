@@ -42,12 +42,8 @@ function parse(actions: unknown[]) {
 }
 
 assert.equal(parse([action()]).ok, true);
-assert.equal(parse([action({
-  capability_profile: 'trusted_personal_workspace',
-  requested_paths: ['/tmp'],
-})]).ok, true);
+assert.equal(parse([action({ requested_paths: ['/tmp'] })]).ok, true);
 assert.equal(parse([action({ capability_profile: 'trusted_personal_workspace' })]).ok, false);
-assert.equal(parse([action({ requested_paths: ['/tmp'] })]).ok, false);
 assert.equal(parse([action({ required_tools: ['local filesystem'] })]).ok, false);
 for (const forbidden of [
   { chat_id: 'oc_forged' },
@@ -129,7 +125,11 @@ assert.equal(firstJob?.model, 'gpt-5.3-codex');
 assert.equal(firstJob?.workingDirectory, await realpath(root));
 assert.deepEqual(firstJob?.permissions, {
   profile: 'bounded',
-  filesystem: { root: await realpath(root), mode: 'workspace-write', requestedPaths: [] },
+  filesystem: {
+    root: await realpath(root),
+    mode: 'workspace-write',
+    requestedPaths: [await realpath(root)],
+  },
   hostTools: [],
   network: 'none',
   externalSideEffects: 'denied',
@@ -137,7 +137,6 @@ assert.deepEqual(firstJob?.permissions, {
 });
 
 const trustedOwner = await service.createFromMessage(action({
-  capability_profile: 'trusted_personal_workspace',
   requested_paths: [externalRequestedPath, 'repo-a', externalRequestedPath],
 }) as any, message('trusted-owner', { senderId: 'ou_owner' }));
 assert.deepEqual(trustedOwner.job.permissions, {
@@ -153,22 +152,28 @@ assert.deepEqual(trustedOwner.job.permissions, {
   approval: { mode: 'never' },
 });
 
-const trustedAllowedUser = await service.createFromMessage(action({
-  capability_profile: 'trusted_personal_workspace',
-  requested_paths: [externalRequestedPath],
-}) as any, message('trusted-allowed', { senderId: 'ou_allowed' }));
-assert.equal(trustedAllowedUser.job.permissions.profile, 'trusted_personal_workspace');
-
-await assert.rejects(
-  service.createFromMessage(action({
-    capability_profile: 'trusted_personal_workspace',
-    requested_paths: [externalRequestedPath],
-  }) as any, message('trusted-chat-only', { senderId: 'ou_chat_only' })),
-  /owner or allowed_user_ids/i,
+const trustedAllowedUser = await service.createFromMessage(
+  action() as any,
+  message('trusted-allowed', { senderId: 'ou_allowed' }),
 );
+assert.equal(trustedAllowedUser.job.permissions.profile, 'trusted_personal_workspace');
+assert.deepEqual(
+  trustedAllowedUser.job.permissions.filesystem.requestedPaths,
+  [await realpath(root)],
+);
+
+const boundedChatOnlyUser = await service.createFromMessage(action({
+  requested_paths: [externalRequestedPath],
+}) as any, message('bounded-chat-only', { senderId: 'ou_chat_only' }));
+assert.equal(boundedChatOnlyUser.job.permissions.profile, 'bounded');
+assert.deepEqual(
+  boundedChatOnlyUser.job.permissions.filesystem.requestedPaths,
+  [await realpath(externalRequestedPath)],
+);
+assert.equal(boundedChatOnlyUser.job.permissions.network, 'none');
+assert.equal(boundedChatOnlyUser.job.permissions.externalSideEffects, 'denied');
 await assert.rejects(
   service.createFromMessage(action({
-    capability_profile: 'trusted_personal_workspace',
     requested_paths: [join(externalRequestedPath, 'missing')],
   }) as any, message('trusted-missing', { senderId: 'ou_owner' })),
   /requested path.*exist/i,
@@ -183,7 +188,6 @@ identity.setCaller(
 const trustedDispatch = await dispatcher.execute({
   message: trustedDispatchMessage,
   actions: [action({
-    capability_profile: 'trusted_personal_workspace',
     requested_paths: [externalRequestedPath],
   })] as any,
 });
@@ -225,7 +229,7 @@ const duplicate = await dispatcher.execute({
   model: 'gpt-5.3-codex',
 });
 assert.equal(duplicate[0].continuation?.jobId, first[0].continuation?.jobId);
-assert.equal((await repository.listAll(100)).length, 6);
+assert.equal((await repository.listAll(100)).length, 7);
 
 const group = message('group', {
   chatType: 'group',
