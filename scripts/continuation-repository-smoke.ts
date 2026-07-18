@@ -2107,6 +2107,51 @@ assert.equal((await readdir(redactionRollbackOptions.artifactsDir)).some(
 ), false);
 redactionCrashRecovery.close();
 
+const concurrentRecoveryInputToken = await redactionRollbackDelegate.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+const concurrentRecoveryArtifactToken = await redactionRollbackArtifacts.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+assert.ok(concurrentRecoveryInputToken);
+assert.ok(concurrentRecoveryArtifactToken);
+const concurrentRecoveryDeadToken = `2147483646-${'e'.repeat(16)}`;
+await rename(
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${concurrentRecoveryInputToken}`,
+  ),
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${concurrentRecoveryDeadToken}`,
+  ),
+);
+await rename(
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${concurrentRecoveryArtifactToken}`,
+  ),
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${concurrentRecoveryDeadToken}`,
+  ),
+);
+const liveRedactionJobs = new Set([redactionRollbackCreated.job.jobId]);
+await Promise.all([
+  redactionRollbackDelegate.cleanupOrphans(liveRedactionJobs),
+  redactionRollbackDelegate.cleanupOrphans(liveRedactionJobs),
+  redactionRollbackArtifacts.cleanupOrphans(liveRedactionJobs),
+  redactionRollbackArtifacts.cleanupOrphans(liveRedactionJobs),
+]);
+assert.equal(await readFile(redactionRollbackDelegate.resolve(
+  redactionRollbackCreated.job.jobId,
+  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
+), 'utf8'), 'restore me after failed redaction');
+assert.equal(
+  await readFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'utf8'),
+  'restore artifact after rollback',
+);
+
 // Separate repository instances serialize redaction through the cross-process Job lock.
 // The loser must observe the committed DB state and must never restore the winner's quarantines.
 const concurrentRedactionRoot = await mkdtemp(join(tmpdir(), 'continuation-redaction-concurrent-'));

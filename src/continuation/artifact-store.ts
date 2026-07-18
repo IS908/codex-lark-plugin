@@ -177,7 +177,11 @@ export class ContinuationArtifactStore {
         try {
           await fs.rename(candidate, this.jobDirectory(quarantine.jobId));
         } catch (error) {
-          if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+          const code = (error as NodeJS.ErrnoException)?.code;
+          if (
+            (code !== 'EEXIST' && code !== 'ENOENT')
+            || !(await isRestoredDirectory(this.jobDirectory(quarantine.jobId)))
+          ) throw error;
         }
       } else {
         await removeArtifactTree(candidate);
@@ -243,5 +247,14 @@ async function assertRealDirectory(directory: string): Promise<void> {
   const metadata = await fs.lstat(directory);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Continuation artifact path is not a real directory: ${directory}`);
+  }
+}
+
+async function isRestoredDirectory(directory: string): Promise<boolean> {
+  try {
+    const metadata = await fs.lstat(directory);
+    return metadata.isDirectory() && !metadata.isSymbolicLink();
+  } catch {
+    return false;
   }
 }

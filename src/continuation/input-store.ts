@@ -381,7 +381,11 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
           try {
             await fs.rename(candidate, this.jobDirectory(redactionQuarantine.jobId));
           } catch (error) {
-            if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+            const code = (error as NodeJS.ErrnoException)?.code;
+            if (
+              (code !== 'EEXIST' && code !== 'ENOENT')
+              || !(await isRestoredDirectory(this.jobDirectory(redactionQuarantine.jobId)))
+            ) throw error;
           }
         } else {
           await removeManagedTree(candidate);
@@ -812,5 +816,14 @@ async function removeManagedTree(target: string): Promise<void> {
     await fs.rmdir(target);
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+  }
+}
+
+async function isRestoredDirectory(directory: string): Promise<boolean> {
+  try {
+    const metadata = await fs.lstat(directory);
+    return metadata.isDirectory() && !metadata.isSymbolicLink();
+  } catch {
+    return false;
   }
 }
