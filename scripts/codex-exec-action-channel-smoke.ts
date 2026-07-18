@@ -181,7 +181,13 @@ const continuationAction = {
   type: 'create_continuation_job',
   title: 'Continue',
   objective: 'Finish the current work.',
-  acceptance_criteria: ['done'],
+  deliverables: [{ id: 'result', description: 'Finished work.', required: true }],
+  acceptance_criteria: [{ id: 'done', description: 'done', deliverable_ids: ['result'] }],
+  verification_requirements: [{
+    id: 'result_evidence',
+    description: 'Reference completion evidence.',
+    kind: 'evidence_reference',
+  }],
   context_snapshot: {
     summary: 'started',
     completed_steps: [],

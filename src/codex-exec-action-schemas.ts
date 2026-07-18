@@ -187,12 +187,43 @@ const RelativeContinuationDirectorySchema = z.string().min(1).refine((value) => 
   return !value.split(/[\\/]+/).includes('..');
 }, 'working_directory must be relative and remain within the configured working root');
 
-export const CreateContinuationActionSchema = z.object({
+const ContinuationContractIdSchema = z.string().regex(
+  /^[A-Za-z0-9_.-]{1,80}$/,
+  'contract IDs must contain 1-80 letters, numbers, dots, underscores, or hyphens',
+);
+
+const ContinuationDeliverableActionSchema = z.object({
+  id: ContinuationContractIdSchema,
+  description: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
+  required: z.boolean(),
+}).strict();
+
+const ContinuationAcceptanceCriterionActionSchema = z.object({
+  id: ContinuationContractIdSchema,
+  description: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
+  deliverable_ids: z.array(ContinuationContractIdSchema)
+    .max(CONTINUATION_LIMITS.deliverableCount),
+}).strict();
+
+const ContinuationVerificationRequirementActionSchema = z.object({
+  id: ContinuationContractIdSchema,
+  description: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
+  kind: z.enum(['artifact_exists', 'artifact_sha256', 'evidence_reference']),
+}).strict();
+
+const CreateContinuationActionBaseSchema = z.object({
   type: z.literal('create_continuation_job'),
   title: z.string().min(1).max(CONTINUATION_LIMITS.titleChars),
   objective: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
-  acceptance_criteria: z.array(z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes))
+  deliverables: z.array(ContinuationDeliverableActionSchema)
+    .min(1)
+    .max(CONTINUATION_LIMITS.deliverableCount),
+  acceptance_criteria: z.array(ContinuationAcceptanceCriterionActionSchema)
+    .min(1)
     .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  verification_requirements: z.array(ContinuationVerificationRequirementActionSchema)
+    .min(1)
+    .max(CONTINUATION_LIMITS.verificationRequirementCount),
   context_snapshot: ContinuationCheckpointActionSchema,
   required_tools: z.array(z.string().regex(
     /^[A-Za-z0-9_.-]{1,80}$/,
@@ -204,6 +235,44 @@ export const CreateContinuationActionSchema = z.object({
     .max(CONTINUATION_LIMITS.requestedPathCount)
     .optional(),
 }).strict();
+
+function validateContinuationActionContract(
+  action: z.infer<typeof CreateContinuationActionBaseSchema>,
+  ctx: z.RefinementCtx,
+): void {
+  for (const [field, entries] of [
+    ['deliverables', action.deliverables],
+    ['acceptance_criteria', action.acceptance_criteria],
+    ['verification_requirements', action.verification_requirements],
+  ] as const) {
+    const ids = new Set<string>();
+    entries.forEach((entry, index) => {
+      if (ids.has(entry.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field, index, 'id'],
+          message: `duplicate ${field} id: ${entry.id}`,
+        });
+      }
+      ids.add(entry.id);
+    });
+  }
+  const deliverableIds = new Set(action.deliverables.map((entry) => entry.id));
+  action.acceptance_criteria.forEach((criterion, criterionIndex) => {
+    criterion.deliverable_ids.forEach((deliverableId, referenceIndex) => {
+      if (!deliverableIds.has(deliverableId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['acceptance_criteria', criterionIndex, 'deliverable_ids', referenceIndex],
+          message: `unknown deliverable id: ${deliverableId}`,
+        });
+      }
+    });
+  });
+}
+
+export const CreateContinuationActionSchema = CreateContinuationActionBaseSchema
+  .superRefine(validateContinuationActionContract);
 export type CreateContinuationAction = z.infer<typeof CreateContinuationActionSchema>;
 
 export const CodexExecActionSchema = z.discriminatedUnion('type', [
@@ -220,8 +289,11 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
   GetRunTraceActionSchema,
   SendMessageActionSchema,
   RecallMessageActionSchema,
-  CreateContinuationActionSchema,
+  CreateContinuationActionBaseSchema,
 ]).superRefine((action, ctx) => {
+  if (action.type === 'create_continuation_job') {
+    validateContinuationActionContract(action, ctx);
+  }
   if (
     (action.type === 'run_job' || action.type === 'update_job' || action.type === 'disable_job' || action.type === 'delete_job') &&
     !action.job_id &&

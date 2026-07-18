@@ -22,7 +22,18 @@ function action(overrides: Record<string, unknown> = {}) {
     type: 'create_continuation_job',
     title: 'Finish report',
     objective: 'Finish the report and verify the result.',
-    acceptance_criteria: ['report exists', 'checks pass'],
+    deliverables: [
+      { id: 'report', description: 'A completed report.', required: true },
+    ],
+    acceptance_criteria: [
+      { id: 'report_exists', description: 'The report exists.', deliverable_ids: ['report'] },
+      { id: 'checks_pass', description: 'All report checks pass.', deliverable_ids: ['report'] },
+    ],
+    verification_requirements: [
+      { id: 'report_file', description: 'Verify that the report file exists.', kind: 'artifact_exists' },
+      { id: 'report_hash', description: 'Record the report checksum.', kind: 'artifact_sha256' },
+      { id: 'report_evidence', description: 'Reference the report validation evidence.', kind: 'evidence_reference' },
+    ],
     context_snapshot: {
       summary: 'Inputs were inspected.',
       completed_steps: ['inspect inputs'],
@@ -45,6 +56,40 @@ assert.equal(parse([action()]).ok, true);
 assert.equal(parse([action({ requested_paths: ['/tmp'] })]).ok, true);
 assert.equal(parse([action({ capability_profile: 'trusted_personal_workspace' })]).ok, false);
 assert.equal(parse([action({ required_tools: ['local filesystem'] })]).ok, false);
+for (const invalidContract of [
+  { deliverables: [{ id: '', description: 'Missing ID.', required: true }] },
+  {
+    deliverables: [
+      { id: 'report', description: 'First.', required: true },
+      { id: 'report', description: 'Duplicate.', required: false },
+    ],
+  },
+  {
+    acceptance_criteria: [
+      { id: 'unknown_ref', description: 'Unknown deliverable.', deliverable_ids: ['missing'] },
+    ],
+  },
+  {
+    deliverables: Array.from({ length: 33 }, (_, index) => ({
+      id: `deliverable_${index}`,
+      description: 'Bounded deliverable.',
+      required: true,
+    })),
+  },
+  {
+    verification_requirements: [{
+      id: 'oversized',
+      description: 'x'.repeat(16 * 1024 + 1),
+      kind: 'evidence_reference',
+    }],
+  },
+]) {
+  assert.equal(
+    parse([action(invalidContract)]).ok,
+    false,
+    `invalid contract must fail: ${JSON.stringify(invalidContract)}`,
+  );
+}
 for (const forbidden of [
   { chat_id: 'oc_forged' },
   { open_id: 'ou_forged' },
@@ -250,9 +295,15 @@ assert.deepEqual(groupCreated.job.route, {
 
 const redacted = await service.createFromMessage(action({
   objective: 'Use token=super-secret-value to finish the local report.',
-}) as any, message('redacted'));
+}) as any, message('redacted', {
+  text: 'Use password=super-secret-password and finish the report.',
+  parentContent: 'Quoted token=quoted-secret-value.',
+}));
 assert.doesNotMatch(redacted.job.objective, /super-secret-value/);
 assert.match(redacted.job.objective, /\[redacted\]/);
+assert.doesNotMatch(redacted.job.sourceFacts.originalUserText ?? '', /super-secret-password/);
+assert.doesNotMatch(redacted.job.sourceFacts.quotedMessageText ?? '', /quoted-secret-value/);
+assert.match(redacted.job.sourceFacts.originalUserText ?? '', /\[redacted\]/);
 
 const comment = message('comment', {
   chatType: 'doc_comment',

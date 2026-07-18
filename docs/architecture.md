@@ -82,6 +82,9 @@ The current baseline is empty:
 - Persistent continuation is an independent bounded context. Pure state and
   closed outcomes live in `src/domain/continuation.ts`; repository, executor,
   delivery, clock, and audit contracts live in `src/ports/continuation.ts`.
+  Server-derived source facts and task contracts are persisted independently;
+  admitted source files live in immutable checksum-verified input trees, never
+  in the writable output artifact tree.
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
   Lark progress/terminal delivery, and composition live under `src/continuation/`.
   Retention consumes the persisted terminal delivery result, serializes cleanup

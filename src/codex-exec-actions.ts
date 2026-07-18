@@ -74,6 +74,7 @@ import type {
   UpdateJobAction,
   UpsertJobAction,
 } from './codex-exec-action-schemas.js';
+import type { AsyncTaskSourceInput } from './domain/continuation.js';
 export { parseCodexExecActionEnvelope } from './codex-exec-action-schemas.js';
 export type {
   CodexExecAction,
@@ -356,12 +357,19 @@ async function executeCreateContinuation(
         ].join(' '),
       };
     }
-    const { job } = await deps.continuationService.createFromMessage(
-      action,
-      context.message,
-      context.parentSessionId,
-      context.model,
-    );
+    const resolvedInputs = await resolveContinuationSourceInputs(context.message, deps);
+    let job;
+    try {
+      ({ job } = await deps.continuationService.createFromMessage(
+        action,
+        context.message,
+        context.parentSessionId,
+        context.model,
+        resolvedInputs.inputs,
+      ));
+    } finally {
+      await resolvedInputs.cleanup();
+    }
     await audit(
       'create_continuation_job',
       context.message.senderId,
@@ -396,6 +404,99 @@ async function executeCreateContinuation(
         : `Continuation job was not created: ${errorMessage(error)}`,
     };
   }
+}
+
+async function resolveContinuationSourceInputs(
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<{ inputs: AsyncTaskSourceInput[]; cleanup(): Promise<void> }> {
+  const inputs: AsyncTaskSourceInput[] = [];
+  const temporaryPaths: string[] = [];
+  const imagePaths = [...new Set(
+    [message.imagePath, ...(message.imagePaths ?? [])].filter((value): value is string => Boolean(value)),
+  )];
+  const descriptors = (message.attachments ?? []).filter((attachment) => attachment.fileKey);
+  if (descriptors.length === 0) {
+    return {
+      inputs: imagePaths.map((imagePath) => ({
+        sourcePath: path.resolve(imagePath),
+        fileName: path.basename(imagePath),
+        kind: 'message_image',
+      })),
+      async cleanup() {},
+    };
+  }
+  const matchedImageDescriptors = new Set<number>();
+  for (const imagePath of imagePaths) {
+    const descriptorIndex = descriptors.findIndex((attachment, index) =>
+      !matchedImageDescriptors.has(index)
+      && attachment.fileType === 'image'
+      && path.basename(imagePath).includes(`-${attachment.fileKey}-`));
+    if (descriptorIndex >= 0) matchedImageDescriptors.add(descriptorIndex);
+    inputs.push({
+      sourcePath: path.resolve(imagePath),
+      fileName: descriptorIndex >= 0
+        ? safeContinuationInputName(descriptors[descriptorIndex].fileName || `image-${descriptorIndex + 1}`)
+        : path.basename(imagePath),
+      kind: 'message_image',
+    });
+  }
+  const transport = resolveActionTransport(deps.larkTransport);
+  if (!transport?.downloadResource) {
+    throw new Error('Continuation attachment download transport is unavailable.');
+  }
+  const downloadResource = transport.downloadResource.bind(transport);
+  try {
+    for (const [index, attachment] of descriptors.entries()) {
+      if (matchedImageDescriptors.has(index)) continue;
+      const resourceType = attachment.fileType === 'image' ? 'image' : 'file';
+      const fileName = safeContinuationInputName(
+        attachment.fileName || `${resourceType}-${index + 1}`,
+      );
+      const downloaded = await downloadInboundResource({ downloadResource }, {
+        messageId: message.messageId,
+        fileKey: attachment.fileKey,
+        resourceType,
+        fileName: `${Date.now()}-${index}-${fileName}`,
+        logPrefix: '[continuation-input]',
+      });
+      if (!downloaded) {
+        throw new Error('One or more continuation attachments could not be downloaded.');
+      }
+      temporaryPaths.push(downloaded);
+      inputs.push({
+        sourcePath: path.resolve(downloaded),
+        fileName,
+        kind: resourceType === 'image' ? 'message_image' : 'message_attachment',
+      });
+    }
+  } catch (error) {
+    await Promise.all(temporaryPaths.map((filePath) => fs.rm(filePath, { force: true })));
+    throw error;
+  }
+  return {
+    inputs,
+    async cleanup() {
+      await Promise.all(temporaryPaths.map((filePath) => fs.rm(filePath, { force: true })));
+    },
+  };
+}
+
+function safeContinuationInputName(value: string): string {
+  if (
+    !value
+    || value.length > 120
+    || value === '.'
+    || value === '..'
+    || value === '.manifest.json'
+    || value.includes('/')
+    || value.includes('\\')
+    || value.includes('\0')
+    || path.basename(value) !== value
+  ) {
+    throw new Error('Continuation attachment file name is invalid.');
+  }
+  return value;
 }
 
 async function executeListJobs(

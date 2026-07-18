@@ -1,4 +1,6 @@
 import type {
+  AsyncTaskInputArtifact,
+  AsyncTaskSourceInput,
   ContinuationClaim,
   ContinuationCleanupResult,
   ContinuationCreateRequest,
@@ -13,6 +15,35 @@ import type {
   ContinuationToolRequest,
   ContinuationToolResult,
 } from '../domain/continuation.js';
+
+export interface ContinuationInputInstallResult {
+  artifacts: AsyncTaskInputArtifact[];
+  installed: boolean;
+}
+
+export type ContinuationInputVerification =
+  | { ok: true }
+  | { ok: false; reason: 'missing' | 'modified' | 'invalid' };
+
+export interface ContinuationInputStorePort {
+  ensureRoot(): Promise<void>;
+  withCreationLock<T>(jobId: string, operation: () => Promise<T>): Promise<T>;
+  install(
+    jobId: string,
+    sources: readonly AsyncTaskSourceInput[],
+    requestFingerprint?: string,
+  ): Promise<ContinuationInputInstallResult>;
+  clone(
+    sourceJobId: string,
+    targetJobId: string,
+    artifacts: readonly AsyncTaskInputArtifact[],
+    requestFingerprint?: string,
+  ): Promise<ContinuationInputInstallResult>;
+  verify(jobId: string, artifacts: readonly AsyncTaskInputArtifact[]): Promise<ContinuationInputVerification>;
+  resolve(jobId: string, relativePath: string): string;
+  remove(jobId: string): Promise<void>;
+  cleanupOrphans(jobIds: ReadonlySet<string>, nowMs?: number): Promise<void>;
+}
 
 export interface ContinuationRepository {
   initialize(): Promise<void>;

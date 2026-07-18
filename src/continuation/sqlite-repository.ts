@@ -3,10 +3,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
+  CONTINUATION_CONTRACT_ID_PATTERN,
   CONTINUATION_LIMITS,
   isContinuationTerminal,
   partialOutcomeFromCheckpoint,
   retryDelayMs,
+  type AsyncTaskContract,
+  type AsyncTaskFactSnapshot,
   type ContinuationClaim,
   type ContinuationCheckpoint,
   type ContinuationCleanupResult,
@@ -26,20 +29,25 @@ import {
   type ContinuationToolRequest,
   type ContinuationToolResult,
 } from '../domain/continuation.js';
-import type { ContinuationRepository } from '../ports/continuation.js';
+import type { ContinuationInputStorePort, ContinuationRepository } from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
+import { ContinuationInputStore, continuationJobId } from './input-store.js';
+import { redactContinuationText } from './redaction.js';
 
 type SqlRow = Record<string, null | number | bigint | string | Uint8Array>;
 
 interface SqliteContinuationRepositoryOptions {
   databasePath: string;
   artifactsDir: string;
+  inputsDir?: string;
+  inputStore?: ContinuationInputStorePort;
   jitter?: () => number;
 }
 
 const ATTEMPT_BUDGET_SCHEMA_VERSION = 4;
 const DELIVERY_OUTBOX_SCHEMA_VERSION = 5;
-const SCHEMA_VERSION = 6;
+const RETENTION_SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const DELIVERY_LEASE_MS = 30_000;
 const PROGRESS_PAYLOAD_MAX_CHARS = 4_000;
 const EMPTY_CHECKPOINT = {
@@ -65,6 +73,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   private constructor(
     private readonly database: DatabaseSync,
     private readonly artifacts: ContinuationArtifactStore,
+    private readonly inputs: ContinuationInputStorePort,
     private readonly jitter: () => number,
   ) {}
 
@@ -85,12 +94,21 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       await fs.chmod(databasePath, 0o600);
       const artifacts = new ContinuationArtifactStore(options.artifactsDir);
       await artifacts.ensureRoot();
+      const inputs = options.inputStore ?? new ContinuationInputStore(
+        options.inputsDir ?? path.join(path.dirname(path.resolve(options.artifactsDir)), 'inputs'),
+      );
+      await inputs.ensureRoot();
       const repository = new SqliteContinuationRepository(
         database,
         artifacts,
+        inputs,
         options.jitter ?? Math.random,
       );
       await repository.initialize();
+      const knownJobs = new Set(repository.database.prepare(
+        'SELECT job_id FROM continuation_jobs',
+      ).all().map((row) => stringField(row, 'job_id')));
+      await inputs.cleanupOrphans(knownJobs);
       return repository;
     } catch (error) {
       database.close();
@@ -126,6 +144,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         objective TEXT NOT NULL,
         acceptance_criteria_json TEXT NOT NULL,
         context_snapshot_json TEXT NOT NULL,
+        source_facts_json TEXT NOT NULL,
+        task_contract_json TEXT NOT NULL,
         required_tools_json TEXT NOT NULL,
         working_directory TEXT NOT NULL,
         permissions_json TEXT NOT NULL,
@@ -266,6 +286,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     }
     if (Number(this.scalar('PRAGMA user_version')) === DELIVERY_OUTBOX_SCHEMA_VERSION) {
       this.migrateRetentionSchema();
+    }
+    if (Number(this.scalar('PRAGMA user_version')) === RETENTION_SCHEMA_VERSION) {
+      this.migrateAsyncTaskFactsSchema();
     }
     await this.healthCheck();
   }
@@ -473,14 +496,46 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   private migrateRetentionSchema(): void {
     const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
     if (columns.some((column) => stringField(column, 'name') === 'retain')) {
-      this.transaction(() => this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`));
+      this.transaction(() => this.database.exec(`PRAGMA user_version = ${RETENTION_SCHEMA_VERSION};`));
       return;
     }
     this.transaction(() => this.database.exec(`
       ALTER TABLE continuation_jobs
       ADD COLUMN retain INTEGER NOT NULL DEFAULT 0 CHECK(retain IN (0, 1));
-      PRAGMA user_version = ${SCHEMA_VERSION};
+      PRAGMA user_version = ${RETENTION_SCHEMA_VERSION};
     `));
+  }
+
+  private migrateAsyncTaskFactsSchema(): void {
+    const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
+    if (!columns.some((column) => stringField(column, 'name') === 'source_facts_json')) {
+      this.transaction(() => this.database.exec(`
+        ALTER TABLE continuation_jobs ADD COLUMN source_facts_json TEXT NOT NULL DEFAULT '{}';
+        ALTER TABLE continuation_jobs ADD COLUMN task_contract_json TEXT NOT NULL DEFAULT '{}';
+      `));
+    }
+    const rows = this.database.prepare(`${jobSelectSql()} ORDER BY j.created_at ASC`).all();
+    const update = this.database.prepare(`
+      UPDATE continuation_jobs
+      SET source_facts_json = ?, task_contract_json = ?,
+          title = ?, objective = ?, acceptance_criteria_json = ?, context_snapshot_json = ?
+      WHERE job_id = ?
+    `);
+    this.transaction(() => {
+      for (const row of rows) {
+        const legacy = legacyFactsAndContract(row);
+        update.run(
+          JSON.stringify(legacy.sourceFacts),
+          JSON.stringify(legacy.taskContract),
+          legacy.taskContract.title,
+          legacy.taskContract.objective,
+          JSON.stringify(legacy.taskContract.acceptanceCriteria.map((criterion) => criterion.description)),
+          JSON.stringify(legacy.taskContract.initialContext),
+          stringField(row, 'job_id'),
+        );
+      }
+      this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+    });
   }
 
   async healthCheck(): Promise<void> {
@@ -499,51 +554,78 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     request: ContinuationCreateRequest,
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     validateCreateRequest(request);
-    const jobId = makeId('job');
-    const inserted = this.database.prepare(`
-      INSERT OR IGNORE INTO continuation_jobs (
-        job_id, idempotency_key, retry_of_job_id, creator_open_id, origin_kind, route_json,
-        source_message_id, source_thread_id, title, objective,
-        acceptance_criteria_json, context_snapshot_json, required_tools_json,
-        working_directory, permissions_json, model, parent_session_id, max_attempts, max_retries,
-        timeout_seconds, created_at, expires_at, row_version, status,
-        step_count, failure_count, next_run_at, result_artifacts_json, updated_at
-      ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'queued',
-        0, 0, ?, '[]', ?
-      )
-    `).run(
-      jobId,
-      request.idempotencyKey,
-      request.retryOfJobId ?? null,
-      request.creatorOpenId,
-      request.route.kind,
-      JSON.stringify(request.route),
-      request.sourceMessageId,
-      request.sourceThreadId ?? null,
-      request.title,
-      request.objective,
-      JSON.stringify(request.acceptanceCriteria),
-      JSON.stringify(request.contextSnapshot),
-      JSON.stringify(request.requiredTools),
-      request.workingDirectory,
-      JSON.stringify(request.permissions),
-      request.model ?? null,
-      request.parentSessionId ?? null,
-      request.maxAttempts,
-      request.maxRetries,
-      request.timeoutSeconds,
-      request.createdAt,
-      request.expiresAt,
-      request.createdAt,
-      request.createdAt,
-    );
-    const created = Number(inserted.changes) === 1;
-    const job = created
-      ? await this.get(jobId)
-      : this.readJobByIdempotencyKey(request.idempotencyKey);
-    if (!job) throw new Error('Continuation create succeeded without a readable job row.');
-    return { job, created };
+    const jobId = continuationJobId(request.idempotencyKey);
+    return this.serializeJobMutation(jobId, () => this.inputs.withCreationLock(jobId, async () => {
+      const existing = this.readJobByIdempotencyKey(request.idempotencyKey);
+      if (existing) return { job: existing, created: false };
+      const occupiedJobId = this.readJobBy('j.job_id = ?', jobId);
+      if (occupiedJobId) {
+        throw new Error('Continuation idempotency conflict: the deterministic Job ID is already retired or owned by another request.');
+      }
+      const requestFingerprint = createRequestFingerprint(request);
+      const installation = await this.inputs.install(
+        jobId,
+        request.sourceInputs,
+        requestFingerprint,
+      );
+      const persisted = projectCreateRequest(request, installation.artifacts);
+      try {
+        const inserted = this.database.prepare(`
+          INSERT OR IGNORE INTO continuation_jobs (
+            job_id, idempotency_key, retry_of_job_id, creator_open_id, origin_kind, route_json,
+            source_message_id, source_thread_id, title, objective,
+            acceptance_criteria_json, context_snapshot_json, source_facts_json,
+            task_contract_json, required_tools_json, working_directory, permissions_json,
+            model, parent_session_id, max_attempts, max_retries, timeout_seconds,
+            created_at, expires_at, row_version, status, step_count, failure_count,
+            next_run_at, result_artifacts_json, updated_at
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            1, 'queued', 0, 0, ?, '[]', ?
+          )
+        `).run(
+          jobId,
+          persisted.idempotencyKey,
+          persisted.retryOfJobId ?? null,
+          persisted.creatorOpenId,
+          persisted.route.kind,
+          JSON.stringify(persisted.route),
+          persisted.sourceMessageId,
+          persisted.sourceThreadId ?? null,
+          persisted.title,
+          persisted.objective,
+          JSON.stringify(persisted.acceptanceCriteria),
+          JSON.stringify(persisted.contextSnapshot),
+          JSON.stringify(persisted.sourceFacts),
+          JSON.stringify(persisted.taskContract),
+          JSON.stringify(persisted.requiredTools),
+          persisted.workingDirectory,
+          JSON.stringify(persisted.permissions),
+          persisted.model ?? null,
+          persisted.parentSessionId ?? null,
+          persisted.maxAttempts,
+          persisted.maxRetries,
+          persisted.timeoutSeconds,
+          persisted.createdAt,
+          persisted.expiresAt,
+          persisted.createdAt,
+          persisted.createdAt,
+        );
+        const created = Number(inserted.changes) === 1;
+        const job = created
+          ? await this.get(jobId)
+          : this.readJobByIdempotencyKey(request.idempotencyKey);
+        if (!job) {
+          throw new Error('Continuation create conflicted with an unrelated deterministic Job ID.');
+        }
+        return { job, created };
+      } catch (error) {
+        if (installation.installed && this.canConfirmJobAbsent(jobId, request.idempotencyKey)) {
+          await this.inputs.remove(jobId).catch(() => {});
+        }
+        throw error;
+      }
+    }));
   }
 
   async get(jobId: string): Promise<ContinuationJob | null> {
@@ -569,80 +651,97 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     now: string,
     leaseExpiresAt: string,
   ): Promise<ContinuationClaim | null> {
-    return this.transaction(() => {
-      this.finishUnclaimedAttemptBudgetExhausted(now);
-      const row = this.database.prepare(`
-        SELECT j.job_id
-        FROM continuation_jobs j
-        WHERE j.status IN ('queued', 'waiting_retry')
-          AND j.deleted_at IS NULL
-          AND j.next_run_at <= ?
-          AND j.expires_at > ?
-          AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) < j.max_attempts
-          AND NOT EXISTS (
-            SELECT 1 FROM continuation_outbox progress
-            WHERE progress.job_id = j.job_id
-              AND progress.kind = 'progress'
-              AND (
-                progress.status = 'sending'
-                OR (progress.status = 'pending' AND progress.next_attempt_at <= ?)
-              )
-          )
-        ORDER BY j.next_run_at ASC, j.created_at ASC
-        LIMIT 1
-      `).get(now, now, now);
-      if (!row) return null;
-      const jobId = stringField(row, 'job_id');
-      const update = this.database.prepare(`
-        UPDATE continuation_jobs
-        SET status = 'running', lease_owner = ?, lease_expires_at = ?, heartbeat_at = ?,
-            started_at = COALESCE(started_at, ?), updated_at = ?, row_version = row_version + 1
-        WHERE job_id = ?
-          AND status IN ('queued', 'waiting_retry')
-          AND deleted_at IS NULL
-          AND next_run_at <= ?
-          AND expires_at > ?
-          AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = continuation_jobs.job_id) < max_attempts
-          AND NOT EXISTS (
-            SELECT 1 FROM continuation_outbox progress
-            WHERE progress.job_id = continuation_jobs.job_id
-              AND progress.kind = 'progress'
-              AND (
-                progress.status = 'sending'
-                OR (progress.status = 'pending' AND progress.next_attempt_at <= ?)
-              )
-          )
-      `).run(workerId, leaseExpiresAt, now, now, now, jobId, now, now, now);
-      if (Number(update.changes) !== 1) return null;
+    this.transaction(() => this.finishUnclaimedAttemptBudgetExhausted(now));
+    while (true) {
+      const selected = this.selectDueCandidate(now);
+      if (!selected) return null;
+      const verification = await this.inputs.verify(
+        selected.jobId,
+        selected.sourceFacts.inputs,
+      );
+      if (!verification.ok) {
+        this.transaction(() => {
+          const update = this.database.prepare(`
+            UPDATE continuation_jobs
+            SET status = 'failed', error_code = 'continuation_input_integrity_failed',
+                error_summary = 'A managed continuation input failed integrity verification.',
+                completed_at = ?, updated_at = ?, lease_owner = NULL,
+                lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
+            WHERE job_id = ? AND row_version = ?
+              AND status IN ('queued', 'waiting_retry')
+              AND deleted_at IS NULL AND next_run_at <= ? AND expires_at > ?
+          `).run(now, now, selected.jobId, selected.rowVersion, now, now);
+          if (Number(update.changes) === 1) {
+            this.insertTerminalOutbox(
+              selected,
+              `Task failed: ${selected.jobId}\nA managed task input failed integrity verification.`,
+              now,
+            );
+          }
+        });
+        continue;
+      }
 
-      const ordinal = Number(this.database.prepare(`
-        SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal
-        FROM continuation_attempts WHERE job_id = ?
-      `).get(jobId)?.ordinal ?? 1);
-      const attemptId = makeId('att');
-      this.database.prepare(`
-        INSERT INTO continuation_attempts (
-          attempt_id, job_id, ordinal, worker_id, started_at, heartbeat_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-      `).run(attemptId, jobId, ordinal, workerId, now, now);
-
-      const job = this.readJobBy('j.job_id = ?', jobId);
-      if (!job) throw new Error(`Claimed continuation job ${jobId} disappeared.`);
-      return {
-        job,
-        workerId,
-        claimedRowVersion: job.rowVersion,
-        attempt: {
-          attemptId,
-          jobId,
-          ordinal,
+      const claim = this.transaction(() => {
+        const update = this.database.prepare(`
+          UPDATE continuation_jobs
+          SET status = 'running', lease_owner = ?, lease_expires_at = ?, heartbeat_at = ?,
+              started_at = COALESCE(started_at, ?), updated_at = ?, row_version = row_version + 1
+          WHERE job_id = ? AND row_version = ?
+            AND status IN ('queued', 'waiting_retry')
+            AND deleted_at IS NULL AND next_run_at <= ? AND expires_at > ?
+            AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = continuation_jobs.job_id) < max_attempts
+            AND NOT EXISTS (
+              SELECT 1 FROM continuation_outbox progress
+              WHERE progress.job_id = continuation_jobs.job_id
+                AND progress.kind = 'progress'
+                AND (
+                  progress.status = 'sending'
+                  OR (progress.status = 'pending' AND progress.next_attempt_at <= ?)
+                )
+            )
+        `).run(
           workerId,
-          executionSessionId: job.executionSessionId,
-          startedAt: now,
-          heartbeatAt: now,
-        },
-      };
-    });
+          leaseExpiresAt,
+          now,
+          now,
+          now,
+          selected.jobId,
+          selected.rowVersion,
+          now,
+          now,
+          now,
+        );
+        if (Number(update.changes) !== 1) return null;
+        const ordinal = Number(this.database.prepare(`
+          SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal
+          FROM continuation_attempts WHERE job_id = ?
+        `).get(selected.jobId)?.ordinal ?? 1);
+        const attemptId = makeId('att');
+        this.database.prepare(`
+          INSERT INTO continuation_attempts (
+            attempt_id, job_id, ordinal, worker_id, started_at, heartbeat_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(attemptId, selected.jobId, ordinal, workerId, now, now);
+        const job = this.readJobBy('j.job_id = ?', selected.jobId);
+        if (!job) throw new Error(`Claimed continuation job ${selected.jobId} disappeared.`);
+        return {
+          job,
+          workerId,
+          claimedRowVersion: job.rowVersion,
+          attempt: {
+            attemptId,
+            jobId: selected.jobId,
+            ordinal,
+            workerId,
+            executionSessionId: job.executionSessionId,
+            startedAt: now,
+            heartbeatAt: now,
+          },
+        } satisfies ContinuationClaim;
+      });
+      if (claim) return claim;
+    }
   }
 
   async heartbeat(
@@ -1061,8 +1160,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       throw new Error(`Continuation ${jobId} is not an available terminal job.`);
     }
     const lifetimeMs = Math.max(1, Date.parse(source.expiresAt) - Date.parse(source.createdAt));
-    const { job } = await this.create({
-      idempotencyKey: `manual-retry:${jobId}:${requestId}`,
+    const idempotencyKey = `manual-retry:${jobId}:${requestId}`;
+    const verification = await this.inputs.verify(source.jobId, source.sourceFacts.inputs);
+    if (!verification.ok) {
+      throw new Error('Continuation input integrity check failed; retry input copy was not created.');
+    }
+    const retryRequest: ContinuationCreateRequest = {
+      idempotencyKey,
       retryOfJobId: jobId,
       creatorOpenId: source.creatorOpenId,
       route: source.route,
@@ -1072,6 +1176,17 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       objective: source.objective,
       acceptanceCriteria: source.acceptanceCriteria,
       contextSnapshot: source.contextSnapshot,
+      sourceFacts: {
+        ...source.sourceFacts,
+        inputs: [],
+        model: source.model ?? null,
+      },
+      taskContract: source.taskContract,
+      sourceInputs: source.sourceFacts.inputs.map((input) => ({
+        sourcePath: this.inputs.resolve(source.jobId, input.relativePath),
+        fileName: input.fileName,
+        kind: input.kind,
+      })),
       requiredTools: source.requiredTools,
       workingDirectory: source.workingDirectory,
       permissions: source.permissions,
@@ -1082,7 +1197,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       timeoutSeconds: source.timeoutSeconds,
       createdAt: now,
       expiresAt: new Date(Date.parse(now) + lifetimeMs).toISOString(),
-    });
+    };
+    const { job } = await this.create(retryRequest);
     return job;
   }
 
@@ -1120,6 +1236,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       return false;
     }
     await this.artifacts.remove(jobId);
+    await this.inputs.remove(jobId);
     return this.transaction(() => {
       const automaticGate = automaticRetentionCutoff
         ? `AND retain = 0 AND completed_at < ? AND EXISTS (
@@ -1133,7 +1250,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         SET idempotency_key = ?, origin_kind = 'message_thread', route_json = ?,
             source_message_id = '', source_thread_id = NULL,
             title = '', objective = '', acceptance_criteria_json = '[]',
-            context_snapshot_json = ?, required_tools_json = '[]', working_directory = '',
+            context_snapshot_json = ?, source_facts_json = ?, task_contract_json = ?,
+            required_tools_json = '[]', working_directory = '',
             permissions_json = ?,
             model = NULL, parent_session_id = NULL, execution_session_id = NULL,
             checkpoint_json = NULL, result_summary = NULL, result_artifacts_json = '[]',
@@ -1144,6 +1262,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         `redacted:${jobId}`,
         JSON.stringify(emptyRoute()),
         JSON.stringify(EMPTY_CHECKPOINT),
+        JSON.stringify(redactedLegacyFacts()),
+        JSON.stringify(redactedLegacyContract()),
         JSON.stringify(EMPTY_PERMISSION_ENVELOPE),
         now,
         now,
@@ -1380,6 +1500,17 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     } finally {
       release();
       if (this.jobMutationTails.get(jobId) === tail) this.jobMutationTails.delete(jobId);
+    }
+  }
+
+  private canConfirmJobAbsent(jobId: string, idempotencyKey: string): boolean {
+    try {
+      return !this.database.prepare(`
+        SELECT 1 FROM continuation_jobs WHERE job_id = ? OR idempotency_key = ? LIMIT 1
+      `).get(jobId, idempotencyKey);
+    } catch {
+      // On an uncertain database outcome, preserve the installed tree for startup reconciliation.
+      return false;
     }
   }
 
@@ -1694,6 +1825,29 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return this.readJobBy('j.idempotency_key = ?', idempotencyKey);
   }
 
+  private selectDueCandidate(now: string): ContinuationJob | null {
+    const row = this.database.prepare(`
+      ${jobSelectSql()}
+      WHERE j.status IN ('queued', 'waiting_retry')
+        AND j.deleted_at IS NULL
+        AND j.next_run_at <= ?
+        AND j.expires_at > ?
+        AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) < j.max_attempts
+        AND NOT EXISTS (
+          SELECT 1 FROM continuation_outbox progress
+          WHERE progress.job_id = j.job_id
+            AND progress.kind = 'progress'
+            AND (
+              progress.status = 'sending'
+              OR (progress.status = 'pending' AND progress.next_attempt_at <= ?)
+            )
+        )
+      ORDER BY j.next_run_at ASC, j.created_at ASC
+      LIMIT 1
+    `).get(now, now, now);
+    return row ? mapJob(row) : null;
+  }
+
   private readJobBy(predicate: string, value: string): ContinuationJob | null {
     const row = this.database.prepare(`${jobSelectSql()} WHERE ${predicate}`).get(value);
     return row ? mapJob(row) : null;
@@ -1838,6 +1992,8 @@ function mapJob(row: SqlRow): ContinuationJob {
     objective: stringField(row, 'objective'),
     acceptanceCriteria: parseJson<string[]>(row.acceptance_criteria_json, []),
     contextSnapshot: parseJson(row.context_snapshot_json, EMPTY_CHECKPOINT),
+    sourceFacts: parseJson<AsyncTaskFactSnapshot>(row.source_facts_json, redactedLegacyFacts()),
+    taskContract: parseJson<AsyncTaskContract>(row.task_contract_json, redactedLegacyContract()),
     requiredTools: parseJson<string[]>(row.required_tools_json, []),
     workingDirectory: stringField(row, 'working_directory'),
     permissions: parsePermissionEnvelope(row.permissions_json),
@@ -1874,6 +2030,177 @@ function mapJob(row: SqlRow): ContinuationJob {
   };
 }
 
+function projectCreateRequest(
+  request: ContinuationCreateRequest,
+  inputs: AsyncTaskFactSnapshot['inputs'],
+): ContinuationCreateRequest {
+  const taskContract: AsyncTaskContract = {
+    ...request.taskContract,
+    title: redactContinuationText(request.taskContract.title),
+    objective: redactContinuationText(request.taskContract.objective),
+    deliverables: request.taskContract.deliverables.map((deliverable) => ({
+      ...deliverable,
+      description: redactContinuationText(deliverable.description),
+    })),
+    acceptanceCriteria: request.taskContract.acceptanceCriteria.map((criterion) => ({
+      ...criterion,
+      description: redactContinuationText(criterion.description),
+      deliverableIds: [...criterion.deliverableIds],
+    })),
+    verificationRequirements: request.taskContract.verificationRequirements.map((requirement) => ({
+      ...requirement,
+      description: redactContinuationText(requirement.description),
+    })),
+    initialContext: redactCheckpoint(request.taskContract.initialContext),
+  };
+  const sourceFacts: AsyncTaskFactSnapshot = {
+    ...request.sourceFacts,
+    originalUserText: request.sourceFacts.originalUserText === null
+      ? null
+      : redactContinuationText(request.sourceFacts.originalUserText),
+    quotedMessageText: request.sourceFacts.quotedMessageText === null
+      ? null
+      : redactContinuationText(request.sourceFacts.quotedMessageText),
+    route: request.route,
+    creatorOpenId: request.creatorOpenId,
+    sourceMessageId: request.sourceMessageId,
+    ...(request.sourceThreadId ? { sourceThreadId: request.sourceThreadId } : {}),
+    inputs: inputs.map((input) => ({ ...input })),
+    workingDirectory: request.workingDirectory,
+    model: request.model ?? null,
+    permissions: request.permissions,
+  };
+  return {
+    ...request,
+    title: taskContract.title,
+    objective: taskContract.objective,
+    acceptanceCriteria: taskContract.acceptanceCriteria.map((criterion) => criterion.description),
+    contextSnapshot: taskContract.initialContext,
+    sourceFacts,
+    taskContract,
+  };
+}
+
+function createRequestFingerprint(request: ContinuationCreateRequest): string {
+  const sourceInputDescriptors = request.sourceInputs.map((input) => ({
+    kind: input.kind,
+    fileName: input.fileName,
+  }));
+  return createHash('sha256').update(JSON.stringify({
+    idempotencyKey: request.idempotencyKey,
+    retryOfJobId: request.retryOfJobId ?? null,
+    creatorOpenId: request.creatorOpenId,
+    route: request.route,
+    sourceMessageId: request.sourceMessageId,
+    sourceThreadId: request.sourceThreadId ?? null,
+    sourceFacts: { ...request.sourceFacts, inputs: [] },
+    taskContract: request.taskContract,
+    sourceInputDescriptors,
+    requiredTools: request.requiredTools,
+    workingDirectory: request.workingDirectory,
+    permissions: request.permissions,
+    model: request.model ?? null,
+    parentSessionId: request.parentSessionId ?? null,
+    maxAttempts: request.maxAttempts,
+    maxRetries: request.maxRetries,
+    timeoutSeconds: request.timeoutSeconds,
+    createdAt: request.createdAt,
+    expiresAt: request.expiresAt,
+  })).digest('hex');
+}
+
+function redactCheckpoint(checkpoint: ContinuationCheckpoint): ContinuationCheckpoint {
+  return {
+    summary: redactContinuationText(checkpoint.summary),
+    completedSteps: checkpoint.completedSteps.map(redactContinuationText),
+    remainingSteps: checkpoint.remainingSteps.map(redactContinuationText),
+    constraints: checkpoint.constraints.map(redactContinuationText),
+    decisions: checkpoint.decisions.map(redactContinuationText),
+    references: checkpoint.references.map(redactContinuationText),
+  };
+}
+
+function legacyFactsAndContract(row: SqlRow): {
+  sourceFacts: AsyncTaskFactSnapshot;
+  taskContract: AsyncTaskContract;
+} {
+  const route = parseJson<ContinuationDeliveryRoute>(row.route_json, emptyRoute());
+  const permissions = parsePermissionEnvelope(row.permissions_json);
+  const criteria = parseJson<string[]>(row.acceptance_criteria_json, []);
+  const initialContext = parseJson<ContinuationCheckpoint>(row.context_snapshot_json, EMPTY_CHECKPOINT);
+  return {
+    sourceFacts: {
+      schemaVersion: 1,
+      provenance: 'legacy_unavailable',
+      originalUserText: null,
+      quotedMessageText: null,
+      creatorOpenId: stringField(row, 'creator_open_id'),
+      chatId: route.kind === 'message_thread'
+        ? route.conversationId
+        : `doc:${route.documentToken}`,
+      chatType: route.kind === 'comment_thread' ? 'doc_comment' : '',
+      route,
+      sourceMessageId: stringField(row, 'source_message_id'),
+      sourceThreadId: optionalStringField(row, 'source_thread_id'),
+      sourceMessageType: null,
+      sourceTimestamp: null,
+      inputs: [],
+      workingDirectory: stringField(row, 'working_directory'),
+      model: optionalStringField(row, 'model') ?? null,
+      permissions,
+    },
+    taskContract: {
+      schemaVersion: 1,
+      title: stringField(row, 'title'),
+      objective: stringField(row, 'objective'),
+      deliverables: [],
+      acceptanceCriteria: criteria.map((description, index) => ({
+        id: legacyCriterionId(description, index),
+        description,
+        deliverableIds: [],
+      })),
+      verificationRequirements: [],
+      initialContext,
+    },
+  };
+}
+
+function legacyCriterionId(description: string, index: number): string {
+  return `criterion_${index + 1}_${createHash('sha256').update(description).digest('hex').slice(0, 12)}`;
+}
+
+function redactedLegacyFacts(): AsyncTaskFactSnapshot {
+  return {
+    schemaVersion: 1,
+    provenance: 'legacy_unavailable',
+    originalUserText: null,
+    quotedMessageText: null,
+    creatorOpenId: '',
+    chatId: '',
+    chatType: '',
+    route: emptyRoute(),
+    sourceMessageId: '',
+    sourceMessageType: null,
+    sourceTimestamp: null,
+    inputs: [],
+    workingDirectory: '',
+    model: null,
+    permissions: EMPTY_PERMISSION_ENVELOPE,
+  };
+}
+
+function redactedLegacyContract(): AsyncTaskContract {
+  return {
+    schemaVersion: 1,
+    title: '',
+    objective: '',
+    deliverables: [],
+    acceptanceCriteria: [],
+    verificationRequirements: [],
+    initialContext: EMPTY_CHECKPOINT,
+  };
+}
+
 function validateCreateRequest(request: ContinuationCreateRequest): void {
   if (!request.idempotencyKey) throw new Error('Continuation idempotency key is required.');
   if (request.title.length > CONTINUATION_LIMITS.titleChars) {
@@ -1900,6 +2227,18 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
   }
   assertJsonBytes('permission envelope', request.permissions, CONTINUATION_LIMITS.contextSnapshotBytes);
   assertJsonBytes('delivery route', request.route, CONTINUATION_LIMITS.contextSnapshotBytes);
+  validateTaskContract(request.taskContract);
+  if (request.sourceFacts.schemaVersion !== 1) {
+    throw new Error('Continuation source facts schema version is invalid.');
+  }
+  if (request.sourceFacts.provenance !== 'captured' && request.sourceFacts.provenance !== 'legacy_unavailable') {
+    throw new Error('Continuation source facts provenance is invalid.');
+  }
+  assertJsonBytes('source facts', request.sourceFacts, CONTINUATION_LIMITS.contextSnapshotBytes);
+  assertJsonBytes('source inputs', request.sourceInputs.map((input) => ({
+    kind: input.kind,
+    fileName: input.fileName,
+  })), CONTINUATION_LIMITS.contextSnapshotBytes);
   if (!Number.isInteger(request.maxAttempts) || request.maxAttempts < 1 || request.maxAttempts > 20) {
     throw new Error('Continuation maxAttempts must be an integer between 1 and 20.');
   }
@@ -1912,6 +2251,41 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
   if (!Number.isFinite(Date.parse(request.createdAt)) || !Number.isFinite(Date.parse(request.expiresAt))) {
     throw new Error('Continuation timestamps must be valid ISO timestamps.');
   }
+}
+
+function validateTaskContract(contract: AsyncTaskContract): void {
+  if (contract.schemaVersion !== 1) throw new Error('Continuation task contract schema version is invalid.');
+  if (contract.deliverables.length > CONTINUATION_LIMITS.deliverableCount) {
+    throw new Error('Continuation deliverable count exceeds the configured limit.');
+  }
+  if (contract.acceptanceCriteria.length > CONTINUATION_LIMITS.acceptanceCriteriaCount) {
+    throw new Error('Continuation acceptance criteria count exceeds the configured limit.');
+  }
+  if (contract.verificationRequirements.length > CONTINUATION_LIMITS.verificationRequirementCount) {
+    throw new Error('Continuation verification requirement count exceeds the configured limit.');
+  }
+  const validateIds = (label: string, entries: Array<{ id: string }>): Set<string> => {
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      if (!CONTINUATION_CONTRACT_ID_PATTERN.test(entry.id)) {
+        throw new Error(`Continuation ${label} id is invalid.`);
+      }
+      if (ids.has(entry.id)) throw new Error(`Continuation ${label} ids must be unique.`);
+      ids.add(entry.id);
+    }
+    return ids;
+  };
+  const deliverableIds = validateIds('deliverable', contract.deliverables);
+  validateIds('acceptance criterion', contract.acceptanceCriteria);
+  validateIds('verification requirement', contract.verificationRequirements);
+  for (const criterion of contract.acceptanceCriteria) {
+    for (const deliverableId of criterion.deliverableIds) {
+      if (!deliverableIds.has(deliverableId)) {
+        throw new Error(`Continuation acceptance criterion references unknown deliverable ${deliverableId}.`);
+      }
+    }
+  }
+  assertJsonBytes('task contract', contract, CONTINUATION_LIMITS.contextSnapshotBytes);
 }
 
 function validateFinalResult(

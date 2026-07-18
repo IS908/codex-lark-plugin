@@ -274,6 +274,7 @@ try {
   const continuationJobId = 'job_0123456789abcdef01234567';
   const continuationLookups: Array<{ jobId: string; actor: string; owner?: string | null }> = [];
   const continuationCreates: any[] = [];
+  const continuationInputBatches: any[][] = [];
   const currentImagePath = join(root, 'current-image.png');
   const localFilePath = join(root, 'report.txt');
   writeFileSync(currentImagePath, 'fake image bytes', 'utf-8');
@@ -309,9 +310,13 @@ try {
     }
 
     async downloadResource(messageId: string, fileKey: string, resourceType: 'image' | 'file'): Promise<Buffer> {
-      assert.equal(messageId, 'om_quoted_image');
-      assert.equal(fileKey, 'img_quoted');
-      assert.equal(resourceType, 'image');
+      if (messageId === 'om_quoted_image') {
+        assert.equal(fileKey, 'img_quoted');
+        assert.equal(resourceType, 'image');
+        return Buffer.from(this.downloadMarker);
+      }
+      if (fileKey === 'file_failure') throw new Error('attachment download failed');
+      assert.match(messageId, /^om_continuation_/);
       return Buffer.from(this.downloadMarker);
     }
   }
@@ -345,8 +350,9 @@ try {
     },
     larkTransport: new ThisBoundQuotedTransport(),
     continuationService: {
-      async createFromMessage(action: any) {
+      async createFromMessage(action: any, _message: any, _parent: any, _model: any, sourceInputs: any[] = []) {
         continuationCreates.push(action);
+        continuationInputBatches.push(sourceInputs);
         return {
           job: {
             jobId: `job_created_${continuationCreates.length}`,
@@ -377,7 +383,17 @@ try {
     type: 'create_continuation_job' as const,
     title: 'Inspect repository',
     objective: 'Inspect the local repository and summarize its structure.',
-    acceptance_criteria: ['Return a concise repository summary.'],
+    deliverables: [{ id: 'summary', description: 'A concise repository summary.', required: true }],
+    acceptance_criteria: [{
+      id: 'summary_returned',
+      description: 'Return a concise repository summary.',
+      deliverable_ids: ['summary'],
+    }],
+    verification_requirements: [{
+      id: 'summary_evidence',
+      description: 'Reference inspected repository evidence.',
+      kind: 'evidence_reference' as const,
+    }],
     context_snapshot: {
       summary: 'No work completed yet.',
       completed_steps: [],
@@ -414,6 +430,77 @@ try {
   });
   assert.equal(emptyHostTools[0].ok, true);
   assert.equal(continuationCreates.length, 1);
+  assert.deepEqual(continuationInputBatches[0], []);
+
+  const continuationImagePath = join(root, 'continuation-current.png');
+  writeFileSync(continuationImagePath, 'current continuation image', 'utf8');
+  const attachmentContinuation = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_attachments',
+      imagePath: continuationImagePath,
+      attachments: [{ fileKey: 'file_report', fileName: 'report.pdf', fileType: 'file' }],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(attachmentContinuation[0].ok, true);
+  assert.equal(continuationCreates.length, 2);
+  assert.deepEqual(
+    continuationInputBatches[1].map((input) => ({ kind: input.kind, fileName: input.fileName })),
+    [
+      { kind: 'message_image', fileName: 'continuation-current.png' },
+      { kind: 'message_attachment', fileName: 'report.pdf' },
+    ],
+  );
+  assert.equal(existsSync(continuationInputBatches[1][0].sourcePath), true);
+  assert.equal(existsSync(continuationInputBatches[1][1].sourcePath), false);
+
+  const createsBeforeFailedAttachment = continuationCreates.length;
+  const failedAttachmentContinuation = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_attachment_failure',
+      attachments: [
+        { fileKey: 'file_ok', fileName: 'ok.txt', fileType: 'file' },
+        { fileKey: 'file_failure', fileName: 'failure.txt', fileType: 'file' },
+      ],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(failedAttachmentContinuation[0].ok, false);
+  assert.match(failedAttachmentContinuation[0].message, /attachment.*download/i);
+  assert.equal(continuationCreates.length, createsBeforeFailedAttachment);
+
+  const unsafeAttachmentContinuation = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_unsafe_attachment_name',
+      attachments: [{ fileKey: 'file_report', fileName: '../secret.txt', fileType: 'file' }],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(unsafeAttachmentContinuation[0].ok, false);
+  assert.match(unsafeAttachmentContinuation[0].message, /file name.*invalid/i);
+  assert.equal(continuationCreates.length, createsBeforeFailedAttachment);
+
+  const partiallyDownloadedImage = join(root, '1784364188000-img_pre-pre.png');
+  writeFileSync(partiallyDownloadedImage, 'already downloaded image', 'utf8');
+  const partialImageContinuation = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_partial_images',
+      imagePath: partiallyDownloadedImage,
+      attachments: [
+        { fileKey: 'img_pre', fileName: 'pre.png', fileType: 'image' },
+        { fileKey: 'file_failure', fileName: 'missing.png', fileType: 'image' },
+      ],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(partialImageContinuation[0].ok, false);
+  assert.match(partialImageContinuation[0].message, /attachment.*download/i);
+  assert.equal(continuationCreates.length, createsBeforeFailedAttachment);
+  assert.equal(existsSync(partiallyDownloadedImage), true);
 
   const hiddenContinuation = await dispatcher.execute({
     message: { ...continuationMessage, messageId: 'om_continuation_not_permitted' },
@@ -422,14 +509,14 @@ try {
   });
   assert.equal(hiddenContinuation[0].ok, false);
   assert.match(hiddenContinuation[0].message, /not permitted for this foreground turn/i);
-  assert.equal(continuationCreates.length, 1);
+  assert.equal(continuationCreates.length, 2);
 
   const configuredHostTool = await dispatcher.execute({
     message: { ...continuationMessage, messageId: 'om_continuation_echo_tool' },
     actions: [continuationAction(['echo'])],
   });
   assert.equal(configuredHostTool[0].ok, true);
-  assert.deepEqual(continuationCreates[1].required_tools, ['echo']);
+  assert.deepEqual(continuationCreates[2].required_tools, ['echo']);
 
   const traceTimestamp = new Date().toISOString();
   writeFileSync(traceLogPath, [

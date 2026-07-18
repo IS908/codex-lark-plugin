@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ContinuationClaim, ContinuationJob } from '../src/domain/continuation.js';
 import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js';
+import { ContinuationInputStore } from '../src/continuation/input-store.js';
 import type { CodexExecRequest } from '../src/codex-exec.js';
 
 const root = await mkdtemp(join(tmpdir(), 'continuation-codex-runner-'));
@@ -28,37 +29,74 @@ const artifactStore = new ContinuationArtifactStore(artifactsDir);
 
 function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
   const requiredTools = overrides.requiredTools ?? [];
+  const route = {
+    kind: 'message_thread' as const,
+    conversationId: 'oc_runner',
+    sourceMessageId: 'om_runner',
+  };
+  const contextSnapshot = {
+    summary: 'Foreground work is incomplete.',
+    completedSteps: [],
+    remainingSteps: ['finish the work'],
+    constraints: ['do not publish'],
+    decisions: [],
+    references: [],
+  };
+  const permissions = {
+    profile: 'bounded' as const,
+    filesystem: { root: canonicalRoot, mode: 'workspace-write' as const, requestedPaths: [] },
+    hostTools: requiredTools,
+    network: 'none' as const,
+    externalSideEffects: 'denied' as const,
+    approval: { mode: 'never' as const },
+  };
   return {
     jobId: 'job_0123456789abcdef01234567',
     idempotencyKey: 'idem-runner',
     creatorOpenId: 'ou_creator',
-    route: {
-      kind: 'message_thread',
-      conversationId: 'oc_runner',
-      sourceMessageId: 'om_runner',
-    },
+    route,
     sourceMessageId: 'om_runner',
     title: 'Runner smoke',
     objective: 'Produce a verified result',
     acceptanceCriteria: ['return a structured outcome'],
-    contextSnapshot: {
-      summary: 'Foreground work is incomplete.',
-      completedSteps: [],
-      remainingSteps: ['finish the work'],
-      constraints: ['do not publish'],
-      decisions: [],
-      references: [],
+    contextSnapshot,
+    sourceFacts: {
+      schemaVersion: 1,
+      provenance: 'captured',
+      originalUserText: 'Produce a verified result.',
+      quotedMessageText: null,
+      creatorOpenId: 'ou_creator',
+      chatId: 'oc_runner',
+      chatType: 'p2p',
+      route,
+      sourceMessageId: 'om_runner',
+      sourceMessageType: 'text',
+      sourceTimestamp: null,
+      inputs: [],
+      workingDirectory: canonicalRoot,
+      model: 'gpt-5.4',
+      permissions,
+    },
+    taskContract: {
+      schemaVersion: 1,
+      title: 'Runner smoke',
+      objective: 'Produce a verified result',
+      deliverables: [{ id: 'result', description: 'A verified result.', required: true }],
+      acceptanceCriteria: [{
+        id: 'structured_outcome',
+        description: 'return a structured outcome',
+        deliverableIds: ['result'],
+      }],
+      verificationRequirements: [{
+        id: 'result_evidence',
+        description: 'Reference result evidence.',
+        kind: 'evidence_reference',
+      }],
+      initialContext: contextSnapshot,
     },
     requiredTools,
     workingDirectory: canonicalRoot,
-    permissions: {
-      profile: 'bounded',
-      filesystem: { root: canonicalRoot, mode: 'workspace-write', requestedPaths: [] },
-      hostTools: requiredTools,
-      network: 'none',
-      externalSideEffects: 'denied',
-      approval: { mode: 'never' },
-    },
+    permissions,
     model: 'gpt-5.4',
     parentSessionId: 'session-parent',
     maxAttempts: 5,
@@ -436,6 +474,44 @@ assert.match(firstRequest.prompt, /another attempt is available/i);
 assert.match(firstRequest.prompt, /return completed when the acceptance criteria/i);
 assert.match(firstRequest.prompt, /do not repeat completed work/i);
 assert.match(firstRequest.prompt, /do not expand scope/i);
+
+const managedInputSource = join(root, 'managed-input-source.txt');
+await writeFile(managedInputSource, 'runner input', 'utf8');
+const inputStore = new ContinuationInputStore(join(root, 'inputs'));
+const managedInstallation = await inputStore.install(createJob().jobId, [{
+  sourcePath: managedInputSource,
+  fileName: 'runner-input.txt',
+  kind: 'message_attachment',
+}]);
+const managedInputRequests: CodexExecRequest[] = [];
+const managedInputExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  inputStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async (request) => {
+    managedInputRequests.push(request);
+    return {
+      text: JSON.stringify(wireOutcome({
+        outcome: 'completed',
+        final_message: 'managed input complete',
+      })),
+    };
+  },
+});
+const managedInputJob = createJob();
+managedInputJob.sourceFacts = {
+  ...managedInputJob.sourceFacts,
+  inputs: managedInstallation.artifacts,
+};
+await managedInputExecutor.execute(createClaim(managedInputJob), signal);
+const managedInputPath = inputStore.resolve(
+  managedInputJob.jobId,
+  managedInstallation.artifacts[0].relativePath,
+);
+assert.match(managedInputRequests[0].prompt, new RegExp(managedInputPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+assert.match(managedInputRequests[0].prompt, /managed input.*read-only/i);
+assert.deepEqual(managedInputRequests[0].additionalWritableDirs, [artifactRoot]);
 
 const trustedRequests: CodexExecRequest[] = [];
 const trustedExecutor = createContinuationCodexExecutor({

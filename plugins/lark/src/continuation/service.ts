@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type {
+  AsyncTaskSourceInput,
   ContinuationCreateRequest,
   ContinuationDeliveryRoute,
   ContinuationFilesystemMode,
@@ -31,7 +32,13 @@ export interface ContinuationServiceOptions {
 export interface ContinuationActionInput {
   title: string;
   objective: string;
-  acceptance_criteria: string[];
+  deliverables: Array<{ id: string; description: string; required: boolean }>;
+  acceptance_criteria: Array<{ id: string; description: string; deliverable_ids: string[] }>;
+  verification_requirements: Array<{
+    id: string;
+    description: string;
+    kind: 'artifact_exists' | 'artifact_sha256' | 'evidence_reference';
+  }>;
   context_snapshot: {
     summary: string;
     completed_steps: string[];
@@ -51,6 +58,7 @@ export interface ContinuationTaskService {
     message: LarkMessage,
     parentSessionId?: string | null,
     selectedModel?: string | null,
+    sourceInputs?: AsyncTaskSourceInput[],
   ): Promise<{ job: ContinuationJob; created: boolean }>;
   listForActor(
     actorOpenId: string,
@@ -113,6 +121,7 @@ export class ContinuationService implements ContinuationTaskService {
     message: LarkMessage,
     parentSessionId?: string | null,
     selectedModel?: string | null,
+    sourceInputs: AsyncTaskSourceInput[] = [],
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     assertEligibleSource(message);
     const now = this.options.clock.now();
@@ -139,6 +148,49 @@ export class ContinuationService implements ContinuationTaskService {
       objective: brief.objective,
       acceptanceCriteria: brief.acceptanceCriteria,
       contextSnapshot: brief.contextSnapshot,
+      sourceFacts: {
+        schemaVersion: 1,
+        provenance: 'captured',
+        originalUserText: boundedFactText(message.currentUserText ?? message.text),
+        quotedMessageText: message.parentContent
+          ? boundedFactText(message.parentContent)
+          : null,
+        creatorOpenId: message.senderId,
+        chatId: message.chatId,
+        chatType: message.chatType,
+        route,
+        sourceMessageId: message.messageId,
+        ...(message.threadId ? { sourceThreadId: message.threadId } : {}),
+        sourceMessageType: message.messageType || null,
+        sourceTimestamp: message.timestampMs === undefined
+          ? null
+          : new Date(message.timestampMs).toISOString(),
+        inputs: [],
+        workingDirectory: resolvedWorkingDirectory.workingDirectory,
+        model: selectedModel ?? this.options.defaultModel ?? null,
+        permissions: {
+          profile,
+          filesystem: {
+            root: resolvedWorkingDirectory.root,
+            mode: this.options.filesystemMode,
+            requestedPaths,
+          },
+          hostTools: brief.requiredTools,
+          network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',
+          externalSideEffects: profile === 'trusted_personal_workspace' ? 'allowed' : 'denied',
+          approval: { mode: 'never' },
+        },
+      },
+      taskContract: {
+        schemaVersion: 1,
+        title: brief.title,
+        objective: brief.objective,
+        deliverables: brief.deliverables,
+        acceptanceCriteria: brief.structuredAcceptanceCriteria,
+        verificationRequirements: brief.verificationRequirements,
+        initialContext: brief.contextSnapshot,
+      },
+      sourceInputs,
       requiredTools: brief.requiredTools,
       workingDirectory: resolvedWorkingDirectory.workingDirectory,
       permissions: {
@@ -382,7 +434,21 @@ function sanitizeBrief(action: ContinuationActionInput) {
   return {
     title,
     objective,
-    acceptanceCriteria: action.acceptance_criteria.map(redactContinuationText),
+    deliverables: action.deliverables.map((deliverable) => ({
+      ...deliverable,
+      description: redactContinuationText(deliverable.description),
+    })),
+    acceptanceCriteria: action.acceptance_criteria.map((criterion) =>
+      redactContinuationText(criterion.description)),
+    structuredAcceptanceCriteria: action.acceptance_criteria.map((criterion) => ({
+      id: criterion.id,
+      description: redactContinuationText(criterion.description),
+      deliverableIds: [...criterion.deliverable_ids],
+    })),
+    verificationRequirements: action.verification_requirements.map((requirement) => ({
+      ...requirement,
+      description: redactContinuationText(requirement.description),
+    })),
     contextSnapshot: {
       summary: redactContinuationText(action.context_snapshot.summary),
       completedSteps: action.context_snapshot.completed_steps.map(redactContinuationText),
@@ -393,4 +459,18 @@ function sanitizeBrief(action: ContinuationActionInput) {
     },
     requiredTools: [...new Set(action.required_tools.map(redactContinuationText))],
   };
+}
+
+function boundedFactText(value: string): string {
+  const redacted = redactContinuationText(value);
+  if (Buffer.byteLength(redacted, 'utf8') <= CONTINUATION_LIMITS.objectiveBytes) return redacted;
+  const suffix = '\n[truncated]';
+  let end = Math.min(redacted.length, CONTINUATION_LIMITS.objectiveBytes - suffix.length);
+  while (
+    end > 0
+    && Buffer.byteLength(`${redacted.slice(0, end)}${suffix}`, 'utf8') > CONTINUATION_LIMITS.objectiveBytes
+  ) {
+    end -= 1;
+  }
+  return `${redacted.slice(0, end)}${suffix}`;
 }

@@ -21,7 +21,11 @@ import {
   type ContinuationStepOutcome,
   type ContinuationToolRequest,
 } from '../domain/continuation.js';
-import type { ContinuationExecutor, ContinuationToolInvoker } from '../ports/continuation.js';
+import type {
+  ContinuationExecutor,
+  ContinuationInputStorePort,
+  ContinuationToolInvoker,
+} from '../ports/continuation.js';
 import { untrustedDataBlock } from '../prompts.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
 import { redactContinuationText } from './redaction.js';
@@ -32,6 +36,7 @@ import {
 
 export interface ContinuationCodexExecutorOptions {
   artifactStore: ContinuationArtifactStore;
+  inputStore?: ContinuationInputStorePort;
   configuredSandbox: CodexExecSandbox;
   currentWorkingRoot: string;
   runCodexExec?: CodexExecRunner;
@@ -258,8 +263,20 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         };
       }
       const artifactDir = await this.options.artifactStore.ensure(claim.job.jobId);
+      const managedInputs = claim.job.sourceFacts.inputs.map((input) => {
+        if (!this.options.inputStore) {
+          throw new Error('Continuation input storage is unavailable for a Job with managed inputs.');
+        }
+        return {
+          id: input.id,
+          fileName: input.fileName,
+          path: this.options.inputStore.resolve(claim.job.jobId, input.relativePath),
+          sha256: input.sha256,
+          sizeBytes: input.sizeBytes,
+        };
+      });
       const request: CodexExecRequest = {
-        prompt: buildContinuationPrompt(claim, artifactDir),
+        prompt: buildContinuationPrompt(claim, artifactDir, managedInputs),
         ...(this.options.command ? { command: this.options.command } : {}),
         cwd: workingDirectory,
         timeoutMs: claim.job.timeoutSeconds * 1_000,
@@ -674,7 +691,17 @@ function convergenceInstruction(claim: ContinuationClaim): string {
   return 'Continue only when another bounded attempt is necessary to satisfy the acceptance criteria.';
 }
 
-function buildContinuationPrompt(claim: ContinuationClaim, artifactDir: string): string {
+function buildContinuationPrompt(
+  claim: ContinuationClaim,
+  artifactDir: string,
+  managedInputs: Array<{
+    id: string;
+    fileName: string;
+    path: string;
+    sha256: string;
+    sizeBytes: number;
+  }>,
+): string {
   const { job } = claim;
   const brief = {
     title: job.title,
@@ -691,6 +718,7 @@ function buildContinuationPrompt(claim: ContinuationClaim, artifactDir: string):
       network: job.permissions.network,
       externalSideEffects: job.permissions.externalSideEffects,
     },
+    managedInputs,
   };
   const authorityLine = job.permissions.profile === 'trusted_personal_workspace'
     ? 'The trusted_personal_workspace profile allows broad local reads, network access, and external side effects required by the objective. Keep all actions within the authenticated user request and leave an accurate command trace.'
@@ -718,6 +746,9 @@ function buildContinuationPrompt(claim: ContinuationClaim, artifactDir: string):
     `External side effects: ${job.permissions.externalSideEffects}`,
     `Managed artifact directory: ${artifactDir}`,
     'Artifact references in a completed outcome must be relative files inside the managed artifact directory.',
+    managedInputs.length > 0
+      ? 'Managed input files are immutable read-only evidence. Read them from the exact paths in managedInputs; never write to or replace them.'
+      : 'Managed input files: (none)',
     '',
     untrustedDataBlock('continuation-job-brief', JSON.stringify(brief, null, 2)),
   ].join('\n');

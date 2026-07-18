@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { appendFile, mkdtemp, readFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ContinuationClock, ContinuationExecutor } from '../src/ports/continuation.js';
@@ -48,6 +48,8 @@ async function runParent(): Promise<void> {
 }
 
 async function runCheckpointChild(root: string): Promise<void> {
+  const sourceInput = path.join(root, 'restart-source.txt');
+  await writeFile(sourceInput, 'restart managed input', 'utf8');
   const runtime = await makeRuntime(root, fixedClock('2026-07-17T10:00:00.000Z'), {
     async execute(claim) {
       return {
@@ -71,7 +73,17 @@ async function runCheckpointChild(root: string): Promise<void> {
   const { job } = await runtime.service.createFromMessage({
     title: 'Restart task',
     objective: 'Complete across a process restart.',
-    acceptance_criteria: ['One terminal delivery.'],
+    deliverables: [{ id: 'result', description: 'A terminal task result.', required: true }],
+    acceptance_criteria: [{
+      id: 'terminal_delivery',
+      description: 'One terminal delivery.',
+      deliverable_ids: ['result'],
+    }],
+    verification_requirements: [{
+      id: 'result_evidence',
+      description: 'Reference the terminal result evidence.',
+      kind: 'evidence_reference',
+    }],
     context_snapshot: {
       summary: 'Ready.',
       completed_steps: [],
@@ -89,7 +101,12 @@ async function runCheckpointChild(root: string): Promise<void> {
     text: 'Start restart task.',
     messageType: 'text',
     rawContent: '{"text":"Start restart task."}',
-  });
+  }, undefined, undefined, [{
+    sourcePath: sourceInput,
+    fileName: 'restart-source.txt',
+    kind: 'message_attachment',
+  }]);
+  await rm(sourceInput);
   await runtime.worker!.tick();
   await waitFor(async () => (await runtime.service.getForActor(job.jobId, 'ou_restart')).status === 'waiting_retry');
   process.stdout.write('CHECKPOINT_COMMITTED\n');
@@ -101,6 +118,12 @@ async function runResumeChild(root: string): Promise<void> {
     async execute(claim) {
       assert.equal(claim.job.checkpoint?.summary, 'Checkpoint committed.');
       assert.equal(claim.job.executionSessionId, 'session_checkpoint');
+      assert.equal(claim.job.sourceFacts.provenance, 'captured');
+      assert.equal(claim.job.sourceFacts.originalUserText, 'Start restart task.');
+      assert.equal(claim.job.sourceFacts.inputs.length, 1);
+      assert.equal(claim.job.taskContract.acceptanceCriteria[0].id, 'terminal_delivery');
+      assert.deepEqual(claim.job.acceptanceCriteria, ['One terminal delivery.']);
+      assert.equal(claim.job.objective, 'Complete across a process restart.');
       return {
         executionSessionId: 'session_checkpoint',
         outcome: {

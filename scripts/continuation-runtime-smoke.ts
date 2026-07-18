@@ -91,7 +91,17 @@ const sourceMessage: LarkMessage = {
 const { job } = await runtime.service.createFromMessage({
   title: 'Runtime smoke task',
   objective: 'Finish objective with Bearer should-never-be-logged-token.',
-  acceptance_criteria: ['Complete once.'],
+  deliverables: [{ id: 'result', description: 'A completed result.', required: true }],
+  acceptance_criteria: [{
+    id: 'complete_once',
+    description: 'Complete once.',
+    deliverable_ids: ['result'],
+  }],
+  verification_requirements: [{
+    id: 'result_evidence',
+    description: 'Reference completion evidence.',
+    kind: 'evidence_reference',
+  }],
   context_snapshot: {
     summary: 'Sensitive checkpoint body.',
     completed_steps: [],
@@ -162,7 +172,13 @@ const seedRetentionRuntime = await createContinuationRuntime({
 const retainedRuntimeJob = (await seedRetentionRuntime.service.createFromMessage({
   title: 'Runtime retention audit',
   objective: 'Complete and expire.',
-  acceptance_criteria: ['complete'],
+  deliverables: [{ id: 'result', description: 'A completed result.', required: true }],
+  acceptance_criteria: [{ id: 'complete', description: 'complete', deliverable_ids: ['result'] }],
+  verification_requirements: [{
+    id: 'result_evidence',
+    description: 'Reference completion evidence.',
+    kind: 'evidence_reference',
+  }],
   context_snapshot: {
     summary: '',
     completed_steps: [],

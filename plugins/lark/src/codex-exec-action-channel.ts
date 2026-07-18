@@ -329,7 +329,7 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
       : [];
   const continuationLines = info.continuationEnabled
     ? [
-        '  - {"type":"create_continuation_job","title":"...","objective":"...","acceptance_criteria":["..."],"context_snapshot":{"summary":"...","completed_steps":[],"remaining_steps":["..."],"constraints":[],"decisions":[],"references":[]},"required_tools":[],"working_directory":"."}',
+        '  - {"type":"create_continuation_job","title":"...","objective":"...","deliverables":[{"id":"result","description":"...","required":true}],"acceptance_criteria":[{"id":"result_complete","description":"...","deliverable_ids":["result"]}],"verification_requirements":[{"id":"result_evidence","description":"...","kind":"evidence_reference"}],"context_snapshot":{"summary":"...","completed_steps":[],"remaining_steps":["..."],"constraints":[],"decisions":[],"references":[]},"required_tools":[],"working_directory":"."}',
         '    Use this only when work must continue after the current reply. The parent derives caller, route, session, model, retry policy, and Job ID; one turn may create at most one continuation.',
         '    required_tools declares only additional host CLI tools. Do not declare standard Codex tools such as exec_command or apply_patch; those remain governed by the continuation sandbox.',
         '    requested_paths is optional. It may contain absolute paths or paths relative to the configured continuation working root; omitted values default to the canonical working_directory. Paths are canonicalized and audited before creation.',

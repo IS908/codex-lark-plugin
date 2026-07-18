@@ -123,7 +123,17 @@ function continuationActionForDelivery(): Record<string, unknown> {
     type: 'create_continuation_job',
     title: 'Finish report',
     objective: 'Finish and verify the report.',
-    acceptance_criteria: ['report is complete'],
+    deliverables: [{ id: 'report', description: 'A completed report.', required: true }],
+    acceptance_criteria: [{
+      id: 'report_complete',
+      description: 'report is complete',
+      deliverable_ids: ['report'],
+    }],
+    verification_requirements: [{
+      id: 'report_evidence',
+      description: 'Reference report completion evidence.',
+      kind: 'evidence_reference',
+    }],
     context_snapshot: {
       summary: 'Report started.',
       completed_steps: ['collect inputs'],
@@ -627,7 +637,17 @@ await deliverMessageViaCodexExec({
         type: 'create_continuation_job',
         title: 'Finish report',
         objective: 'Finish and verify the report.',
-        acceptance_criteria: ['report is complete'],
+        deliverables: [{ id: 'report', description: 'A completed report.', required: true }],
+        acceptance_criteria: [{
+          id: 'report_complete',
+          description: 'report is complete',
+          deliverable_ids: ['report'],
+        }],
+        verification_requirements: [{
+          id: 'report_evidence',
+          description: 'Reference report completion evidence.',
+          kind: 'evidence_reference',
+        }],
         context_snapshot: {
           summary: 'Report started.',
           completed_steps: ['collect inputs'],
