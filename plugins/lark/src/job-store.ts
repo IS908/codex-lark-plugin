@@ -157,8 +157,15 @@ export function expandSchedule(input: string, timezone = appConfig.cronTimezone)
  * Job callers should pass meta.timezone so cron hours match that job's
  * persisted wall-clock semantics.
  */
-export function computeNextRun(cronExpr: string, timezone = appConfig.cronTimezone): string {
-  const expr = CronExpressionParser.parse(cronExpr, { tz: normalizeJobTimezone(timezone) });
+export function computeNextRun(
+  cronExpr: string,
+  timezone = appConfig.cronTimezone,
+  currentDate?: Date,
+): string {
+  const expr = CronExpressionParser.parse(cronExpr, {
+    tz: normalizeJobTimezone(timezone),
+    ...(currentDate ? { currentDate } : {}),
+  });
   return expr.next().toISOString()!;
 }
 

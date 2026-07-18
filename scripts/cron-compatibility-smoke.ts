@@ -5,7 +5,6 @@
  * the durable-run migration replaces the JSON runtime projection.
  */
 import { createHash } from 'node:crypto';
-import { CronExpressionParser } from 'cron-parser';
 import { JobScheduler } from '../src/scheduler.js';
 import { appConfig } from '../src/config.js';
 import {
@@ -269,9 +268,13 @@ let passed = 0;
   if (fallLatest !== '2026-11-01T06:00:00.000Z') {
     fail(`6: fall-back latest occurrence changed: ${fallLatest}`);
   }
-  const expectedNext = CronExpressionParser.parse('0 2 * * *', { tz: timezone }).next().toISOString();
-  if (computeNextRun('0 2 * * *', timezone) !== expectedNext) {
-    fail('6: computeNextRun no longer preserves cron-parser timezone behavior');
+  const springNext = computeNextRun('0 2 * * *', timezone, springNow);
+  if (springNext !== '2026-03-09T06:00:00.000Z') {
+    fail(`6: spring-forward next occurrence changed: ${springNext}`);
+  }
+  const fallNext = computeNextRun('0 1 * * *', timezone, fallNow);
+  if (fallNext !== '2026-11-02T06:00:00.000Z') {
+    fail(`6: fall-back next occurrence changed: ${fallNext}`);
   }
 
   const originalCronTimezone = appConfig.cronTimezone;

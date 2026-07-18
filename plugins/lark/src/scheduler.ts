@@ -56,6 +56,18 @@ export interface SchedulerOptions {
   identitySession: IdentitySession;
   botMessageTracker?: BotMessageTracker;
   promptRunner?: PromptJobRunner;
+  /** Test seam. Defaults to the wall clock used by production scheduling. */
+  clock?: () => Date;
+  /** Test seam. Defaults to the configured production scan interval. */
+  scanIntervalMs?: number;
+  /** Test seam. Defaults to the JSON Job repository. */
+  repository?: Partial<SchedulerRepository>;
+}
+
+export interface SchedulerRepository {
+  listAllJobs: typeof listAllJobs;
+  readJob: typeof readJob;
+  mutateJob: typeof mutateJob;
 }
 
 export interface PromptJobRunnerInput {
@@ -250,6 +262,9 @@ export class JobScheduler {
   private identitySession: IdentitySession;
   private botMessageTracker?: BotMessageTracker;
   private promptRunner?: PromptJobRunner;
+  private clock: () => Date;
+  private scanIntervalMs: number;
+  private repository: SchedulerRepository;
   private running = false;
   private ticking = false;
   private activeJobIds = new Set<string>();
@@ -262,6 +277,13 @@ export class JobScheduler {
     this.identitySession = opts.identitySession;
     this.botMessageTracker = opts.botMessageTracker;
     this.promptRunner = opts.promptRunner;
+    this.clock = opts.clock ?? (() => new Date());
+    this.scanIntervalMs = opts.scanIntervalMs ?? appConfig.cronScanInterval * 1000;
+    this.repository = {
+      listAllJobs: opts.repository?.listAllJobs ?? listAllJobs,
+      readJob: opts.repository?.readJob ?? readJob,
+      mutateJob: opts.repository?.mutateJob ?? mutateJob,
+    };
   }
 
   /**
@@ -275,12 +297,11 @@ export class JobScheduler {
     await this.recoverMissedJobs();
 
     // Start periodic scan
-    const intervalMs = appConfig.cronScanInterval * 1000;
     this.timer = setInterval(() => {
       this.tick().catch((err) => {
         logSafeError('[scheduler] Tick error:', err);
       });
-    }, intervalMs);
+    }, this.scanIntervalMs);
 
     console.error(`[scheduler] Started (scan every ${appConfig.cronScanInterval}s)`);
   }
@@ -307,8 +328,8 @@ export class JobScheduler {
    * and execute them once (most recent missed execution only).
    */
   private async recoverMissedJobs(): Promise<void> {
-    const jobs = await listAllJobs();
-    const now = Date.now();
+    const jobs = await this.repository.listAllJobs();
+    const now = this.clock().getTime();
 
     for (const job of jobs) {
       if (job.meta.status !== 'active') continue;
@@ -337,8 +358,8 @@ export class JobScheduler {
     try {
       this.identitySession.cleanup();
 
-      const jobs = await listAllJobs();
-      const now = Date.now();
+      const jobs = await this.repository.listAllJobs();
+      const now = this.clock().getTime();
 
       for (const job of jobs) {
         if (job.meta.status !== 'active') continue;
@@ -388,8 +409,8 @@ export class JobScheduler {
     job: JobFile,
     options: { manual?: boolean },
   ): Promise<'success' | 'failed'> {
-    const startTime = Date.now();
-    const startedAt = new Date(startTime);
+    const startedAt = this.clock();
+    const startTime = startedAt.getTime();
     const runId = String(startTime);
     const runKey = this.computeRunKey(job, new Date(startTime));
     let lastErr: any = null;
@@ -526,7 +547,7 @@ export class JobScheduler {
     attempt: number,
     manual: boolean,
   ): Promise<JobFile | null> {
-    const latest = await readJob(job.meta.id);
+    const latest = await this.repository.readJob(job.meta.id);
     const label = attempt > 0 ? 'retry' : 'execution';
     if (!latest) {
       console.error(`[scheduler] Job ${job.meta.id} was deleted before ${label}; skipping`);
@@ -554,7 +575,7 @@ export class JobScheduler {
     },
   ): Promise<JobFile | null> {
     let replaced = false;
-    const updated = await mutateJob(job.meta.id, (latest) => {
+    const updated = await this.repository.mutateJob(job.meta.id, (latest) => {
       if (latest.meta.created_at !== job.meta.created_at) {
         replaced = true;
         return false;

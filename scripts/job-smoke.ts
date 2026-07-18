@@ -215,6 +215,22 @@ const fallBackDue = computeLatestDueRun(
 if (fallBackDue !== '2026-11-01T06:00:00.000Z') {
   fail(`24e: fall-back latest due run changed: ${fallBackDue}`);
 }
+const springForwardNext = computeNextRun(
+  '0 2 * * *',
+  'America/New_York',
+  new Date('2026-03-08T07:00:00.000Z'),
+);
+if (springForwardNext !== '2026-03-09T06:00:00.000Z') {
+  fail(`24e: spring-forward next occurrence changed: ${springForwardNext}`);
+}
+const fallBackNext = computeNextRun(
+  '0 1 * * *',
+  'America/New_York',
+  new Date('2026-11-01T06:00:00.000Z'),
+);
+if (fallBackNext !== '2026-11-02T06:00:00.000Z') {
+  fail(`24e: fall-back next occurrence changed: ${fallBackNext}`);
+}
 
 // ── Backfill tests (v0.9.0) ─────────────────────────────────
 
