@@ -83,8 +83,11 @@ The current baseline is empty:
   closed outcomes live in `src/domain/continuation.ts`; repository, executor,
   delivery, clock, and audit contracts live in `src/ports/continuation.ts`.
   Server-derived source facts and task contracts are persisted independently;
-  admitted source files live in immutable checksum-verified input trees, never
-  in the writable output artifact tree.
+  admitted source files live in logically immutable, checksum-verified input
+  trees that are read-only to Codex and the sandbox, never in the writable
+  output artifact tree. Processes running under the same OS uid remain inside
+  the local trust boundary and can bypass file mode bits; checksum validation
+  detects mutation but is not an OS-adversary-proof isolation boundary.
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
   Lark progress/terminal delivery, and composition live under `src/continuation/`.
   Retention consumes the persisted terminal delivery result, serializes cleanup

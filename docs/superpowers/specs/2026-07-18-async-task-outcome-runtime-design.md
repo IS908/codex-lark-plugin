@@ -65,6 +65,12 @@ Job has at most one logical terminal delivery event even though no execution
 attempt exists. Physical network delivery remains reconciled and does not claim
 distributed exactly-once semantics. Missing or unreadable inputs fail creation.
 
+This is logical immutability within the Codex sandbox boundary. Processes under
+the same OS uid are trusted: they can bypass `chmod` and can mutate a path after
+a checksum gate. The implementation narrows that window with pre-claim and
+pre-spawn verification, but does not claim descriptor-bound snapshots or
+OS-adversary-proof immutability.
+
 Creation derives a deterministic Job ID from the source-message idempotency key,
 serializes same-ID creation in-process, stages input files, atomically renames the
 complete manifest, and then commits the SQLite row. A database failure removes the
@@ -224,7 +230,8 @@ effects and delivery.
 
 ## Delivery Plan
 
-1. #303 persists immutable facts, managed input artifacts, and task contracts.
+1. #303 persists immutable facts, logically read-only managed input artifacts,
+   and task contracts.
 2. #300 introduces CheckpointV2, attempt deltas, event history, and no-progress
    convergence.
 3. #299 introduces normalized failure policy, recovery budgets, `waiting_user`,
@@ -236,7 +243,7 @@ effects and delivery.
 
 ## Acceptance
 
-- A restart preserves immutable source facts, managed inputs, contracts,
+- A restart preserves immutable source facts, checksum-verified managed inputs, contracts,
   checkpoints, recovery history, and delivery state.
 - Models cannot rewrite source facts or parent-owned operation receipts.
 - Attempts stop early on completion and stop safely on repeated no progress.

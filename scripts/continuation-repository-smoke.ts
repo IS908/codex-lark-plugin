@@ -18,6 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { seedHistoricalContinuationDatabase } from './fixtures/continuation-historical-schema.js';
 import type {
   AsyncTaskFactSnapshot,
   AsyncTaskContract,
@@ -42,6 +43,16 @@ if (process.argv[2] === '--reclaim-dead-creation-lock') {
   const store = new ContinuationInputStore(childInputsRoot);
   await store.withCreationLock(childJobId, async () => {});
   process.stdout.write('DEAD_LOCK_RECLAIMED\n');
+  process.exit(0);
+}
+if (process.argv[2] === '--hold-creation-lock') {
+  const [childInputsRoot, childJobId] = process.argv.slice(3);
+  if (!childInputsRoot || !childJobId) throw new Error('Missing creation-lock child arguments.');
+  const store = new ContinuationInputStore(childInputsRoot);
+  await store.withCreationLock(childJobId, async () => {
+    process.stdout.write('CREATION_LOCK_HELD\n');
+    await new Promise(() => {});
+  });
   process.exit(0);
 }
 if (process.argv[2] === '--reject-blocking-input') {
@@ -1214,103 +1225,28 @@ async function verifyIntermediateMigration(version: 4 | 5): Promise<void> {
     databasePath: join(migrationRoot, 'jobs.sqlite'),
     artifactsDir: join(migrationRoot, 'artifacts'),
   };
-  const permissions = {
-    profile: 'bounded' as const,
-    filesystem: { root, mode: 'workspace-write' as const, requestedPaths: [] },
-    hostTools: ['lark_cli'],
-    network: 'none' as const,
-    externalSideEffects: 'denied' as const,
-    approval: { mode: 'never' as const },
-  };
-  const request = createRequest(`legacy-v${version}`);
-  request.requiredTools = ['lark_cli'];
-  request.permissions = permissions;
-  request.sourceFacts = { ...request.sourceFacts, permissions };
-  const seed = await SqliteContinuationRepository.open(migrationOptions);
-  const created = await seed.create(request);
-  const claim = await seed.claimDue(
-    `worker-v${version}`,
-    baseNow,
-    '2026-07-17T00:01:00.000Z',
-  );
-  assert.equal(claim?.job.jobId, created.job.jobId);
-  const toolCall = await seed.beginToolCall(
-    claim!,
-    { tool: 'lark_cli', args: ['doc', 'get'] },
-    '2026-07-17T00:00:01.000Z',
-  );
-  assert.equal(toolCall.status, 'execute');
-  await seed.completeToolCall(
-    claim!,
-    toolCall.callId,
-    { ok: true, message: `v${version} tool result` },
-    '2026-07-17T00:00:02.000Z',
-  );
-  await seed.completeStep(claim!, {
-    outcome: { outcome: 'completed', finalMessage: `v${version} terminal payload`, artifacts: [] },
-  }, '2026-07-17T00:00:03.000Z');
-  seed.close();
-
-  const downgraded = new DatabaseSync(migrationOptions.databasePath);
-  downgraded.exec('PRAGMA foreign_keys = OFF;');
-  if (version === 4) {
-    downgraded.exec(`
-      CREATE TABLE continuation_outbox_v4 (
-        outbox_id TEXT PRIMARY KEY,
-        job_id TEXT NOT NULL UNIQUE REFERENCES continuation_jobs(job_id),
-        route_json TEXT NOT NULL,
-        idempotency_key TEXT NOT NULL UNIQUE,
-        payload TEXT NOT NULL,
-        status TEXT NOT NULL,
-        attempt_count INTEGER NOT NULL,
-        next_attempt_at TEXT NOT NULL,
-        worker_id TEXT,
-        lease_expires_at TEXT,
-        first_attempt_at TEXT,
-        last_attempt_at TEXT,
-        message_id TEXT,
-        error_code TEXT,
-        error_summary TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      ) STRICT;
-      INSERT INTO continuation_outbox_v4 (
-        outbox_id, job_id, route_json, idempotency_key, payload, status,
-        attempt_count, next_attempt_at, worker_id, lease_expires_at,
-        first_attempt_at, last_attempt_at, message_id, error_code, error_summary,
-        created_at, updated_at
-      )
-      SELECT
-        outbox_id, job_id, route_json, idempotency_key, payload, status,
-        attempt_count, next_attempt_at, worker_id, lease_expires_at,
-        first_attempt_at, last_attempt_at, message_id, error_code, error_summary,
-        created_at, updated_at
-      FROM continuation_outbox WHERE kind = 'terminal';
-      DROP TABLE continuation_outbox;
-      ALTER TABLE continuation_outbox_v4 RENAME TO continuation_outbox;
-    `);
-  }
-  downgraded.exec(`
-    ALTER TABLE continuation_jobs DROP COLUMN source_facts_json;
-    ALTER TABLE continuation_jobs DROP COLUMN task_contract_json;
-    ALTER TABLE continuation_jobs DROP COLUMN retain;
-    PRAGMA user_version = ${version};
-    PRAGMA foreign_keys = ON;
-  `);
-  downgraded.close();
+  // v4/v5 are seeded from the exact historical DDL, not reconstructed by
+  // deleting newer columns from a v7 database.
+  const fixture = await seedHistoricalContinuationDatabase({
+    databasePath: migrationOptions.databasePath,
+    now: baseNow,
+    version,
+    workingDirectory: root,
+  });
 
   const migrated = await SqliteContinuationRepository.open(migrationOptions);
   try {
-    const job = await migrated.get(created.job.jobId);
+    const job = await migrated.get(fixture.terminalJobId);
+    assert.equal(job?.maxAttempts, 5);
     assert.equal(job?.attemptCount, 1);
-    assert.equal(job?.deliveryEvents?.length, 1);
-    assert.equal(job?.deliveryEvents?.[0]?.kind, 'terminal');
+    assert.equal(job?.deliveryEvents?.length, fixture.expectedOutboxCount);
+    assert.equal(job?.deliveryEvents?.some((event) => event.kind === 'terminal'), true);
     assert.equal(job?.sourceFacts.provenance, 'legacy_unavailable');
     const delivery = await migrated.claimPendingDelivery(
       `delivery-v${version}`,
       '2026-07-17T00:00:04.000Z',
     );
-    assert.equal(delivery?.jobId, created.job.jobId);
+    assert.equal(delivery?.jobId, fixture.terminalJobId);
     assert.match(delivery?.payload ?? '', new RegExp(`v${version} terminal payload$`));
   } finally {
     migrated.close();
@@ -1319,13 +1255,13 @@ async function verifyIntermediateMigration(version: 4 | 5): Promise<void> {
   assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 7);
   assert.equal(Number(migratedDatabase.prepare(
     'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
-  ).get(created.job.jobId)?.count), 1);
+  ).get(fixture.terminalJobId)?.count), fixture.expectedAttemptCount);
   assert.equal(Number(migratedDatabase.prepare(
     'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
-  ).get(created.job.jobId)?.count), 1);
+  ).get(fixture.terminalJobId)?.count), 1);
   assert.equal(Number(migratedDatabase.prepare(
     'SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ?',
-  ).get(created.job.jobId)?.count), 1);
+  ).get(fixture.terminalJobId)?.count), fixture.expectedOutboxCount);
   assert.deepEqual(migratedDatabase.prepare('PRAGMA foreign_key_check').all(), []);
   migratedDatabase.close();
 }
@@ -1385,36 +1321,22 @@ try {
 
 const versionOneDatabasePath = join(root, 'migration-v1', 'jobs.sqlite');
 const versionOneArtifactsDir = join(root, 'migration-v1', 'artifacts');
-const versionOneSeed = await SqliteContinuationRepository.open({
+const versionOneFixture = await seedHistoricalContinuationDatabase({
   databasePath: versionOneDatabasePath,
-  artifactsDir: versionOneArtifactsDir,
+  now: baseNow,
+  version: 1,
+  workingDirectory: root,
 });
-const legacyV1Job = await versionOneSeed.create(createRequest('legacy-v1', {
-  requiredTools: ['lark_cli'],
-  permissions: {
-    profile: 'bounded',
-    filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
-    hostTools: ['lark_cli'],
-    network: 'none',
-    externalSideEffects: 'denied',
-    approval: { mode: 'never' },
-  },
-}));
-versionOneSeed.close();
-const versionOneDatabase = new DatabaseSync(versionOneDatabasePath);
-versionOneDatabase.exec(`
-  ALTER TABLE continuation_jobs DROP COLUMN permissions_json;
-  DROP TABLE continuation_tool_calls;
-  PRAGMA user_version = 1;
-`);
-versionOneDatabase.close();
 const migratedVersionOneRepository = await SqliteContinuationRepository.open({
   databasePath: versionOneDatabasePath,
   artifactsDir: versionOneArtifactsDir,
 });
 try {
   await migratedVersionOneRepository.healthCheck();
-  assert.deepEqual((await migratedVersionOneRepository.get(legacyV1Job.job.jobId))?.permissions, {
+  const migratedV1Due = await migratedVersionOneRepository.get(versionOneFixture.dueJobId!);
+  assert.equal(migratedV1Due?.maxAttempts, 5);
+  assert.equal(migratedV1Due?.attemptCount, 1);
+  assert.deepEqual(migratedV1Due?.permissions, {
     profile: 'bounded',
     filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
     hostTools: ['lark_cli'],
@@ -1428,6 +1350,8 @@ try {
     '2026-07-17T00:00:30.000Z',
   );
   assert.ok(v1Claim);
+  assert.equal(v1Claim.job.jobId, versionOneFixture.dueJobId);
+  assert.equal(v1Claim.attempt.ordinal, 2);
   assert.equal(
     (await migratedVersionOneRepository.beginToolCall(
       v1Claim,
@@ -1436,9 +1360,28 @@ try {
     )).status,
     'execute',
   );
+  const v1Delivery = await migratedVersionOneRepository.claimPendingDelivery(
+    'delivery-v1-migrated',
+    baseNow,
+  );
+  assert.equal(v1Delivery?.jobId, versionOneFixture.terminalJobId);
+  assert.equal(v1Delivery?.payload, 'legacy v1 terminal payload');
 } finally {
   migratedVersionOneRepository.close();
 }
+const migratedVersionOneDatabase = new DatabaseSync(versionOneDatabasePath);
+assert.equal(Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version), 7);
+assert.equal(Number(migratedVersionOneDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_attempts',
+).get()?.count), 3);
+assert.equal(Number(migratedVersionOneDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
+).get(versionOneFixture.dueJobId)?.count), 1);
+assert.equal(Number(migratedVersionOneDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ?',
+).get(versionOneFixture.terminalJobId)?.count), versionOneFixture.expectedOutboxCount);
+assert.deepEqual(migratedVersionOneDatabase.prepare('PRAGMA foreign_key_check').all(), []);
+migratedVersionOneDatabase.close();
 
 const versionSixRoot = join(root, 'migration-v6');
 const versionSixDatabasePath = join(versionSixRoot, 'jobs.sqlite');
@@ -1732,8 +1675,10 @@ assert.equal((await readdir(redactionRollbackOptions.inputsDir)).some(
 ), false);
 redactionCrashRecovery.close();
 
-// A crash after input rename but before DB commit is immediately adoptable on restart even when
-// execution timestamps/session budgets differ from the original create attempt.
+// A crash after input rename but before DB commit leaves exactly a committed input tree and no
+// database row. Construct that durable state directly: pausing in the few instructions between
+// rename and INSERT would require a production fault-injection hook, while killing earlier/later
+// would be nondeterministic and would not improve state-transition coverage.
 const crashAdoptionRoot = await mkdtemp(join(tmpdir(), 'continuation-crash-adoption-'));
 const crashAdoptionOptions = {
   databasePath: join(crashAdoptionRoot, 'jobs.sqlite'),
@@ -1884,6 +1829,42 @@ const deadLockChild = spawn(process.execPath, [
   deadLockJobId,
 ], { stdio: ['ignore', 'pipe', 'pipe'] });
 await waitForChildMarker(deadLockChild, 'DEAD_LOCK_RECLAIMED', 1_000);
+
+// Exercise the actual crash path: the first process owns the lock directory and
+// owner.json, then dies without cleanup. A fresh process must reclaim it without
+// waiting for the normal lock timeout.
+const killedLockJobId = continuationJobId('killed-creation-lock-recovery');
+const killedLockOwner = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--hold-creation-lock',
+  deadLockInputsRoot,
+  killedLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+const killedLockStderr = await waitForChildMarker(
+  killedLockOwner,
+  'CREATION_LOCK_HELD',
+  1_000,
+);
+const killedLockExit = new Promise<{
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}>((resolve) => killedLockOwner.once('exit', (code, signal) => resolve({ code, signal })));
+assert.equal(killedLockOwner.kill('SIGKILL'), true);
+const killedLockResult = await killedLockExit;
+assert.equal(killedLockResult.signal, 'SIGKILL', killedLockStderr);
+const reclaimStartedAt = Date.now();
+const killedLockReclaimer = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  killedLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(killedLockReclaimer, 'DEAD_LOCK_RECLAIMED', 1_000);
+assert.ok(Date.now() - reclaimStartedAt < 1_000, 'dead process lock is reclaimed promptly');
 
 const fifoPath = join(managedRoot, 'blocking-input.pipe');
 const mkfifo = spawn('mkfifo', [fifoPath], { stdio: ['ignore', 'pipe', 'pipe'] });

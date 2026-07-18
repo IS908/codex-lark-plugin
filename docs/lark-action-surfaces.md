@@ -67,8 +67,10 @@ parent-process bridge for actions that must run safely even when the child
   `required_tools`, configured tool policy, persisted creator identity, and the
   durable no-blind-replay ledger must all accept the call. Terminal delivery
   remains parent-owned.
-- Managed source files are immutable read-only inputs, checksum-validated before
-  every claim; a failed integrity gate creates no lease or attempt and emits one
+- Managed source files are logically immutable, read-only sandbox inputs,
+  checksum-validated before every claim; processes running under the same OS uid
+  are trusted and can bypass mode bits, so this is not an OS-adversary-proof
+  guarantee. A failed integrity gate creates no lease or attempt and emits one
   idempotent terminal outbox event. Retry physically copies those inputs into the
   new Job rather than sharing paths or hard links.
 - `required_tools` is intentionally host-bridge-only. Standard Codex tools such

@@ -43,7 +43,7 @@
 - Test: `scripts/continuation-worker-smoke.ts`
 
 **Interfaces:**
-- Produces: `AsyncTaskFactSnapshot`, `AsyncTaskContract`, `AsyncTaskInputArtifact`, deterministic `continuationJobId(idempotencyKey)`, and staged input installation under a read-only input store.
+- Produces: `AsyncTaskFactSnapshot`, `AsyncTaskContract`, `AsyncTaskInputArtifact`, deterministic `continuationJobId(idempotencyKey)`, and staged input installation under a logically read-only input store. The same-OS-uid account remains trusted; checksum validation detects mutation but does not make the tree OS-adversary-proof.
 - Consumes: authenticated `LarkMessage`, canonical working-directory resolution, existing repository creation transaction.
 
 - [ ] **Step 1: Add failing action tests for explicit deliverables and verification requirements**
