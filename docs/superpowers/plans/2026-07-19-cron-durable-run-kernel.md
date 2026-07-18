@@ -121,9 +121,9 @@ Expected: PASS.
       kind: string
       parseInput(value: unknown, version: number): Input
       parseState(value: unknown, version: number): State
-      preflight(run: DurableRunRecord): Promise<DurableRunPreflight>
-      execute(claim: DurableRunClaim, signal: AbortSignal): Promise<Result>
-      reduce(claim: DurableRunClaim, result: Result): DurableRunTransition
+      preflight(context: DurableRunWorkloadContext<Input, State>): Promise<DurableRunPreflight>
+      execute(claim: DurableRunWorkloadClaim<Input, State>, signal: AbortSignal): Promise<Result>
+      reduce(claim: DurableRunWorkloadClaim<Input, State>, result: Result): DurableRunTransition
       recoverInterruptedAttempt(context: DurableRunInterruptedAttempt): DurableRunTransition
     }
 
@@ -136,7 +136,7 @@ Expected: PASS.
       heartbeat(claim: DurableRunClaim, now: string, leaseExpiresAt: string): Promise<boolean>
       commitTransition(claim: DurableRunClaim, transition: DurableRunTransition, now: string): Promise<void>
       failAttempt(claim: DurableRunClaim, failure: DurableRunFailure, now: string): Promise<void>
-      recoverExpiredLeases(now: string): Promise<number>
+      recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]>
       claimDelivery(workloadKinds: readonly string[], workerId: string, now: string): Promise<DurableRunDeliveryClaim | null>
       commitDelivery(claim: DurableRunDeliveryClaim, result: DurableRunDeliveryResult, now: string): Promise<void>
       close(): void
@@ -144,8 +144,10 @@ Expected: PASS.
 
 - [ ] **Step 1: Write failing domain tests**
 
-Test terminal-state recognition, transition validation, bounded workload JSON,
-stable Cron idempotency keys, and rejection of unknown workload kinds.
+Test terminal-state recognition, the complete legal transition matrix, typed
+workload materialization, transition validation, bounded workload JSON, stable
+collision-free Cron idempotency keys, structured expired-lease recovery, and
+rejection of unknown workload kinds.
 
 - [ ] **Step 2: Run the domain test**
 
@@ -156,7 +158,11 @@ Expected: FAIL because the generic types and validators are missing.
 - [ ] **Step 3: Implement the contracts and pure validators**
 
 Keep all domain and port files free of config, SQLite, Codex, Lark, Scheduler,
-and continuation infrastructure imports.
+and continuation infrastructure imports. Canonicalize Cron key components with
+delimiter-safe encoding and normalize scheduled occurrences to ISO timestamps.
+Snapshot JSON in one traversal before measuring and serializing it. Validate
+transition timestamps and bounded failure/error fields, cap delivery intents,
+and reject duplicate delivery idempotency keys.
 
 - [ ] **Step 4: Run domain and architecture tests**
 

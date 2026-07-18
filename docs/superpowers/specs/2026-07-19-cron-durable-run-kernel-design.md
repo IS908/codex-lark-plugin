@@ -163,11 +163,16 @@ readable but do not cause new execution.
 
 Scheduled Runs use:
 
-    cron:<job-id>:<definition-revision>:<scheduled-occurrence>
+    cron:<canonical-job-id>:<definition-revision>:<canonical-occurrence>
 
 Manual Runs use a trusted request ID:
 
-    cron-manual:<job-id>:<definition-revision>:<request-id>
+    cron-manual:<canonical-job-id>:<definition-revision>:<canonical-request-id>
+
+Each string component uses a reversible delimiter-safe canonical encoding.
+Scheduled occurrences are parsed and normalized to an ISO timestamp before
+encoding. This preserves readable workload prefixes without allowing component
+boundaries or equivalent timestamps to produce ambiguous keys.
 
 Feishu delivery uses a stable outbox delivery key derived from the Run and
 delivery kind. A retry reuses the same key.
@@ -189,6 +194,10 @@ The existing continuation schema is migrated in one SQLite transaction:
 
 Active Attempts retain their leases. Startup recovery applies the existing
 opaque-execution rule after lease expiry; migration never resets them to queued.
+Lease recovery returns structured interrupted-Attempt records to the worker.
+The registered workload converts each record into a recovery transition; a
+repository-level count is insufficient because it would discard the execution
+phase and side-effect risk needed to prevent blind replay.
 
 Migration failure rolls back the transaction and marks the Durable Run runtime
 unavailable. No legacy runtime starts.
