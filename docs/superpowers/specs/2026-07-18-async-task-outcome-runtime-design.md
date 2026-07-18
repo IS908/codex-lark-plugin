@@ -59,8 +59,10 @@ redacted integrity event and atomically terminates the still-due Job as
 `failed/continuation_input_integrity_failed`, with zero new attempts, no lease,
 and no Codex invocation. The gate uses the selected Job's row version when it
 commits either failure or claim, so cancellation and concurrent workers cannot
-race the filesystem result into an invalid transition. Missing or unreadable
-inputs fail creation.
+race the filesystem result into an invalid transition. The integrity-failure
+transaction also inserts the normal idempotent terminal outbox row, so the
+delivery worker reports the failure exactly once even though no execution attempt
+exists. Missing or unreadable inputs fail creation.
 
 Creation derives a deterministic Job ID from the source-message idempotency key,
 serializes same-ID creation in-process, stages input files, atomically renames the

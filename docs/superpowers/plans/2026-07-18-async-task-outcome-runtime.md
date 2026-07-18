@@ -76,7 +76,9 @@ paths outside the admitted set. Add failures for unreadable input and download
 failure. After reopening SQLite, tamper with and remove managed inputs; assert the
 repository pre-claim gate atomically records
 `continuation_input_integrity_failed`, creates zero attempts and no lease, and
-never invokes Codex. Include a cancellation/concurrent-claim row-version race.
+never invokes Codex. The same transaction must create the normal idempotent
+terminal outbox row; assert the delivery worker sends exactly one redacted failure
+message. Include a cancellation/concurrent-claim row-version race.
 Retry a terminal Job after deleting its original source, then assert the new Job
 owns a staged copy whose validity and cleanup are independent from the old tree.
 
@@ -112,9 +114,10 @@ continues to execute after migration and restart. Make `claimDue` select a due
 candidate, verify its immutable manifest before the claim transaction, then use
 the selected row version to atomically commit either the failed integrity result
 or the running lease plus attempt. A mismatch must create no attempt or lease;
-the selection loop may continue to another due Job. Clone retry inputs into a
+the failure transaction inserts the standard terminal outbox event and the
+selection loop may continue to another due Job. Clone retry inputs into a
 separately owned staged tree. Add duplicate/concurrent create, staging failure,
-DB failure, integrity, projection, retry-isolation, and cleanup tests.
+DB failure, integrity delivery, projection, retry-isolation, and cleanup tests.
 
 - [ ] **Step 7: Verify issue #303 targeted tests**
 
@@ -306,13 +309,19 @@ same-conversation quoted reply admitted by normal mention policy; document comme
 require the command. Atomic first-input-wins rejects duplicate/stale input and
 restart preserves correlation.
 
-- [ ] **Step 5: Run command/inbound tests and verify failure**
+- [ ] **Step 5: Run all new behavior smoke tests and verify failure**
 
 Run: `npx tsx scripts/continuation-command-smoke.ts`
 Expected: FAIL because `/task resume` is unknown.
 
 Run: `npx tsx scripts/inbound-turn-pipeline-smoke.ts`
 Expected: FAIL because quoted interrupt routing is not resolved.
+
+Run: `npx tsx scripts/continuation-repository-smoke.ts`
+Expected: FAIL because persisted interrupts and atomic resume do not exist.
+
+Run: `npx tsx scripts/continuation-restart-process-smoke.ts`
+Expected: FAIL because interrupt delivery correlation is not restored after restart.
 
 - [ ] **Step 6: Implement persisted recovery, interrupt delivery, and same-Job resume**
 
