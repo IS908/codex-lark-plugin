@@ -264,14 +264,10 @@ export class DurableRunWorker {
       workloadClaim = materializeDurableRunWorkloadClaim(execution.claim, context);
       const preflight = await execution.workload.preflight(context);
       if (preflight.action === 'transition') {
-        await this.options.repository.commitTransition(
-          execution.claim,
-          preflight.transition,
-          this.nowIso(),
-        );
+        await this.commitExecutionTransition(execution, preflight.transition);
         return;
       }
-      if (execution.abortReason) {
+      if (await this.executionCannotCommit(execution)) {
         await this.finishAbortedExecution(execution);
         return;
       }
@@ -282,20 +278,40 @@ export class DurableRunWorker {
       return;
     }
 
-    if (execution.abortReason) {
-      await this.finishAbortedExecution(execution);
-      return;
-    }
-    const latest = await this.options.repository.get(execution.claim.run.runId);
-    if (latest?.status === 'cancel_requested') {
-      execution.abortReason = 'cancel';
-      await this.finishAbortedExecution(execution);
-      return;
-    }
-    if (!latest || latest.status !== 'running') return;
-
     const transition = execution.workload.reduce(workloadClaim, result);
+    await this.commitExecutionTransition(execution, transition);
+  }
+
+  private async commitExecutionTransition(
+    execution: ActiveExecution,
+    transition: DurableRunTransition,
+  ): Promise<void> {
+    if (await this.executionCannotCommit(execution)) {
+      await this.finishAbortedExecution(execution);
+      return;
+    }
     await this.options.repository.commitTransition(execution.claim, transition, this.nowIso());
+  }
+
+  private async executionCannotCommit(execution: ActiveExecution): Promise<boolean> {
+    this.abortIfWorkerCannotOwnClaim(execution);
+    if (execution.abortReason || execution.controller.signal.aborted) return true;
+
+    const latest = await this.options.repository.get(execution.claim.run.runId);
+    if (latest?.status === 'cancel_requested') this.abortExecution(execution, 'cancel');
+    else if (!latest || latest.status !== 'running') this.abortExecution(execution, 'lease_lost');
+
+    this.abortIfWorkerCannotOwnClaim(execution);
+    return Boolean(execution.abortReason || execution.controller.signal.aborted);
+  }
+
+  private abortIfWorkerCannotOwnClaim(execution: ActiveExecution): void {
+    if (execution.abortReason || execution.controller.signal.aborted) return;
+    if (this.stopping) {
+      this.abortExecution(execution, 'shutdown');
+    } else if (execution.confirmedLeaseExpiresAt <= this.nowIso()) {
+      this.abortExecution(execution, 'lease_lost');
+    }
   }
 
   private async handleExecutionError(

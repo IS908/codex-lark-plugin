@@ -300,3 +300,70 @@ All tests passed.
   `task-3-review.md` remain applicable: structured recovery and full persisted
   Async Task envelope validation must switch atomically with generic
   persistence.
+
+---
+
+## Issue #315 Task 3 Final Critical Remediation
+
+### Status
+
+PASS. The final remaining Critical from the Task 3 re-review is closed. No
+persistence schema changed and no GitHub operation was performed.
+
+### Fix
+
+- `DurableRunWorker` now routes both preflight transitions and post-execution
+  reduced transitions through `commitExecutionTransition`.
+- The shared gate rejects a result when shutdown, a prior abort, the last
+  confirmed lease deadline, cancellation, or a non-running/missing claimed run
+  makes the worker ineligible to commit. It rechecks local ownership after the
+  asynchronous repository status read before committing.
+- The execute path also uses the same gate before marking execution started.
+- The worker smoke adds delayed-preflight regressions for a confirmed lease
+  deadline passing and for `stop()` beginning; both transitions include a
+  delivery intent and assert that no transition, replayable failure, or
+  delivery result is produced.
+
+### RED Evidence
+
+Before the worker change, the new lease-deadline regression failed:
+
+```text
+node --import tsx scripts/durable-run-worker-smoke.ts
+AssertionError: delayed preflight committed a completed transition after its
+confirmed lease expired.
+```
+
+### GREEN Evidence
+
+```text
+node --import tsx scripts/durable-run-worker-smoke.ts
+durable run worker smoke: PASS
+
+node --import tsx scripts/continuation-worker-smoke.ts
+continuation worker smoke: PASS
+
+node --import tsx scripts/continuation-runtime-smoke.ts
+continuation runtime smoke: PASS
+
+npm run --silent typecheck
+exit 0
+
+npm run --silent check:architecture
+architecture check ok: 0 baseline cycle component(s), 0 baseline restricted import(s)
+
+npm run --silent check:plugin-src-sync
+plugin source sync check ok
+
+npm run --silent build
+[build-runtime] bundled ./dist
+[build-runtime] bundled plugins/lark/runtime
+
+npm test
+All tests passed.
+```
+
+### Remaining Concern
+
+- The Task 4 structured-recovery and persisted Async Task envelope-validation
+  cautions remain unchanged; they are outside this Task 3 worker fix.

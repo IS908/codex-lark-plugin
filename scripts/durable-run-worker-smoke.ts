@@ -205,7 +205,11 @@ interface WorkloadHarness {
 
 function createWorkloadHarness(
   kind: string,
-  options: { hold?: boolean; preflightTransition?: DurableRunTransition } = {},
+  options: {
+    hold?: boolean;
+    holdPreflight?: boolean;
+    preflightTransition?: DurableRunTransition;
+  } = {},
 ): WorkloadHarness {
   const harness = {
     parseInputCalls: 0,
@@ -231,6 +235,11 @@ function createWorkloadHarness(
     },
     async preflight(context) {
       harness.preflightCalls.push(context.runId);
+      if (options.holdPreflight) {
+        await new Promise<void>((resolve) => {
+          harness.releases.push(resolve);
+        });
+      }
       return options.preflightTransition
         ? { action: 'transition', transition: options.preflightTransition }
         : { action: 'execute' };
@@ -345,6 +354,75 @@ await waitFor(() => preflightRepository.transitions.length === 1, 'preflight tra
 assert.deepEqual(preflightRepository.executionStarts, []);
 assert.deepEqual(preflightWorkload.executeCalls, []);
 await preflightWorker.stop();
+
+// A delayed preflight transition cannot commit after its confirmed lease expires.
+const expiredPreflightClaim = createShortLeaseClaim('async_task', 'preflight-expired', 60);
+const expiredPreflightRepository = createRepositoryHarness([expiredPreflightClaim]);
+const expiredPreflightWorkload = createWorkloadHarness('async_task', {
+  holdPreflight: true,
+  preflightTransition: {
+    status: 'completed',
+    stateVersion: 1,
+    state: { steps: 1 },
+    deliveries: [{
+      kind: 'terminal',
+      idempotencyKey: `terminal:${expiredPreflightClaim.run.runId}`,
+      route: expiredPreflightClaim.run.route,
+      payload: { message: 'must not commit after lease loss' },
+    }],
+  },
+});
+const expiredPreflightWorker = new DurableRunWorker({
+  repository: expiredPreflightRepository.repository,
+  workloads: [expiredPreflightWorkload.workload],
+  delivery,
+  clock: new SystemClock(),
+  maxConcurrencyByWorkload: { async_task: 1 },
+  heartbeatIntervalMs: 1_000,
+  leaseDurationMs: 1_000,
+});
+await expiredPreflightWorker.tick();
+await waitFor(() => expiredPreflightWorkload.preflightCalls.length === 1, 'delayed preflight entry');
+await new Promise((resolve) => setTimeout(resolve, 80));
+expiredPreflightWorkload.releases.shift()?.();
+await waitFor(() => expiredPreflightWorker.activeCount === 0, 'expired delayed preflight completion');
+assert.deepEqual(expiredPreflightRepository.transitions, []);
+assert.deepEqual(expiredPreflightRepository.failedAttempts, []);
+assert.deepEqual(expiredPreflightRepository.deliveryResults, []);
+await expiredPreflightWorker.stop();
+
+// A delayed preflight transition cannot commit after stop aborts its claim.
+const stoppedPreflightClaim = createClaim('async_task', 'preflight-stopped');
+const stoppedPreflightRepository = createRepositoryHarness([stoppedPreflightClaim]);
+const stoppedPreflightWorkload = createWorkloadHarness('async_task', {
+  holdPreflight: true,
+  preflightTransition: {
+    status: 'completed',
+    stateVersion: 1,
+    state: { steps: 1 },
+    deliveries: [{
+      kind: 'terminal',
+      idempotencyKey: `terminal:${stoppedPreflightClaim.run.runId}`,
+      route: stoppedPreflightClaim.run.route,
+      payload: { message: 'must not commit after shutdown' },
+    }],
+  },
+});
+const stoppedPreflightWorker = new DurableRunWorker({
+  repository: stoppedPreflightRepository.repository,
+  workloads: [stoppedPreflightWorkload.workload],
+  delivery,
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await stoppedPreflightWorker.tick();
+await waitFor(() => stoppedPreflightWorkload.preflightCalls.length === 1, 'stoppable preflight entry');
+const stoppingPreflight = stoppedPreflightWorker.stop();
+stoppedPreflightWorkload.releases.shift()?.();
+await stoppingPreflight;
+assert.deepEqual(stoppedPreflightRepository.transitions, []);
+assert.deepEqual(stoppedPreflightRepository.failedAttempts, []);
+assert.deepEqual(stoppedPreflightRepository.deliveryResults, []);
 
 // Structured interrupted attempts are reduced by their workload and never blindly replayed.
 const recoveredClaim = createClaim('async_task', 'recovered');
