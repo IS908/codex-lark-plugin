@@ -2478,7 +2478,7 @@ function mapJob(row: SqlRow): ContinuationJob {
     status: stringField(row, 'status') as ContinuationStatus,
     executionSessionId: optionalStringField(row, 'execution_session_id'),
     checkpoint: row.checkpoint_json
-      ? parseJson(row.checkpoint_json, EMPTY_CHECKPOINT)
+      ? parseTrustedCheckpoint(row.checkpoint_json, 'checkpoint_json')
       : undefined,
     attemptCount: numberField(row, 'attempt_count'),
     stepCount: numberField(row, 'step_count'),
@@ -2488,7 +2488,10 @@ function mapJob(row: SqlRow): ContinuationJob {
     leaseExpiresAt: optionalStringField(row, 'lease_expires_at'),
     heartbeatAt: optionalStringField(row, 'heartbeat_at'),
     resultSummary: optionalStringField(row, 'result_summary'),
-    resultArtifacts: parseJson<string[]>(row.result_artifacts_json, []),
+    resultArtifacts: parseTrustedStringArray(
+      row.result_artifacts_json,
+      'result_artifacts_json',
+    ),
     errorCode: optionalStringField(row, 'error_code'),
     errorSummary: optionalStringField(row, 'error_summary'),
     startedAt: optionalStringField(row, 'started_at'),

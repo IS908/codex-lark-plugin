@@ -15,6 +15,11 @@ import type {
   ContinuationInputStorePort,
   ContinuationInputVerification,
 } from '../ports/continuation.js';
+import {
+  currentProcessStartedAt,
+  isProcessAlive,
+  isProcessInstanceAlive,
+} from '../process-identity.js';
 import { continuationJobId } from './idempotency.js';
 
 export { continuationJobId } from './idempotency.js';
@@ -46,6 +51,7 @@ const ACTIVE_REDACTION_QUARANTINES = new Set<string>();
 
 interface CreationLockOwner {
   pid: number;
+  startedAt: number | null;
   nonce: string | null;
   createdAt: string;
 }
@@ -81,6 +87,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       const nonce = randomBytes(16).toString('hex');
       const owner: CreationLockOwner = {
         pid: process.pid,
+        startedAt: currentProcessStartedAt(),
         nonce,
         createdAt: new Date().toISOString(),
       };
@@ -204,6 +211,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       const existing = await this.readManifestIfPresent(finalDirectory, jobId);
       if (existing) {
         assertEquivalentManifest(existing, manifest);
+        await this.assertReusableTree(jobId, existing);
         return { artifacts: existing.inputs, installed: false };
       }
       try {
@@ -215,6 +223,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         const winner = await this.readManifestIfPresent(finalDirectory, jobId);
         if (!winner) throw error;
         assertEquivalentManifest(winner, manifest);
+        await this.assertReusableTree(jobId, winner);
         return { artifacts: winner.inputs, installed: false };
       }
     } catch (error) {
@@ -303,7 +312,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
 
   async quarantine(jobId: string): Promise<string | null> {
     const source = this.jobDirectory(jobId);
-    const token = `${process.pid}-${randomBytes(8).toString('hex')}`;
+    const token = `${process.pid}.${currentProcessStartedAt()}-${randomBytes(8).toString('hex')}`;
     const destination = this.quarantineDirectory(jobId, token);
     let metadata;
     try {
@@ -373,8 +382,15 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       if (redactionQuarantine) {
         const candidate = path.join(this.rootDir, entry.name);
         if (jobIds.has(redactionQuarantine.jobId)) {
+          const ownerIsActive = redactionQuarantine.ownerStartedAt === null
+            ? isProcessAlive(redactionQuarantine.ownerPid)
+              && Date.now() - (await fs.lstat(candidate)).mtimeMs < OWNERLESS_LOCK_GRACE_MS
+            : await isProcessInstanceAlive(
+              redactionQuarantine.ownerPid,
+              redactionQuarantine.ownerStartedAt,
+            );
           if (
-            isProcessAlive(redactionQuarantine.ownerPid)
+            ownerIsActive
             && (redactionQuarantine.ownerPid !== process.pid
               || ACTIVE_REDACTION_QUARANTINES.has(entry.name))
           ) continue;
@@ -383,7 +399,8 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
           } catch (error) {
             const code = (error as NodeJS.ErrnoException)?.code;
             if (
-              (code !== 'EEXIST' && code !== 'ENOENT')
+              !['EEXIST', 'ENOENT', 'EACCES'].includes(code ?? '')
+              || await pathExists(candidate)
               || !(await isRestoredDirectory(this.jobDirectory(redactionQuarantine.jobId)))
             ) throw error;
           }
@@ -413,15 +430,11 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     if (sources.length > this.maxFiles) {
       throw new Error(`Continuation input file count exceeds ${this.maxFiles}.`);
     }
-    const names = new Set<string>();
     for (const source of sources) {
       if (!['message_image', 'message_attachment'].includes(source.kind)) {
         throw new Error('Continuation input kind is invalid.');
       }
       validateFileName(source.fileName);
-      const key = source.fileName.normalize('NFC').toLocaleLowerCase('en-US');
-      if (names.has(key)) throw new Error('Duplicate continuation input file name collision.');
-      names.add(key);
       if (!path.isAbsolute(source.sourcePath)) {
         throw new Error('Continuation input source path must be absolute and server-admitted.');
       }
@@ -451,7 +464,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
 
   private quarantineDirectory(jobId: string, token: string): string {
     assertJobId(jobId);
-    if (!/^[1-9]\d*-[a-f0-9]{16}$/.test(token)) {
+    if (!/^[1-9]\d*\.[1-9]\d*-[a-f0-9]{16}$/.test(token)) {
       throw new Error('Continuation input quarantine token is invalid.');
     }
     return path.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
@@ -477,6 +490,15 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
       throw error;
+    }
+  }
+
+  private async assertReusableTree(jobId: string, manifest: InputManifest): Promise<void> {
+    const verification = await this.verify(jobId, manifest.inputs);
+    if (!verification.ok) {
+      throw new InvalidManagedInputError(
+        `Continuation managed input integrity check failed during recovery: ${verification.reason}.`,
+      );
     }
   }
 }
@@ -636,6 +658,7 @@ async function readCreationOwner(lockDirectory: string): Promise<CreationLockOwn
       pid?: unknown;
       nonce?: unknown;
       createdAt?: unknown;
+      startedAt?: unknown;
     };
     if (
       !Number.isInteger(parsed.pid)
@@ -645,18 +668,15 @@ async function readCreationOwner(lockDirectory: string): Promise<CreationLockOwn
     const nonce = typeof parsed.nonce === 'string' && /^[a-f0-9]{32}$/.test(parsed.nonce)
       ? parsed.nonce
       : null;
-    return { pid: Number(parsed.pid), nonce, createdAt: parsed.createdAt };
+    const startedAt = Number(parsed.startedAt);
+    return {
+      pid: Number(parsed.pid),
+      startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null,
+      nonce,
+      createdAt: parsed.createdAt,
+    };
   } catch {
     return null;
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException)?.code === 'EPERM';
   }
 }
 
@@ -674,7 +694,11 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
   const owner = await readCreationOwner(lockDirectory);
   if (owner === null) {
     if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
-  } else if (isProcessAlive(owner.pid)) return false;
+  } else if (owner.startedAt === null) {
+    if (isProcessAlive(owner.pid) && Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) {
+      return false;
+    }
+  } else if (await isProcessInstanceAlive(owner.pid, owner.startedAt)) return false;
 
   const quarantine = path.join(
     rootDir,
@@ -750,9 +774,12 @@ function assertEquivalentManifest(existing: InputManifest, candidate: InputManif
   }
 }
 
-function parseRedactionQuarantine(name: string): { jobId: string; ownerPid: number } | null {
+function parseRedactionQuarantine(
+  name: string,
+): { jobId: string; ownerPid: number; ownerStartedAt: number | null } | null {
   if (!name.startsWith(REDACTION_QUARANTINE_PREFIX)) return null;
-  const match = /^\.redacting-(.+)-([1-9]\d*)-([a-f0-9]{16})$/.exec(name);
+  const match = /^\.redacting-(.+)-([1-9]\d*)\.([1-9]\d*)-([a-f0-9]{16})$/.exec(name)
+    ?? /^\.redacting-(.+)-([1-9]\d*)-([a-f0-9]{16})$/.exec(name);
   if (!match) return null;
   try {
     assertJobId(match[1]);
@@ -761,7 +788,9 @@ function parseRedactionQuarantine(name: string): { jobId: string; ownerPid: numb
   }
   const ownerPid = Number(match[2]);
   if (!Number.isSafeInteger(ownerPid)) return null;
-  return { jobId: match[1], ownerPid };
+  const ownerStartedAt = match.length === 5 ? Number(match[3]) : null;
+  if (ownerStartedAt !== null && !Number.isSafeInteger(ownerStartedAt)) return null;
+  return { jobId: match[1], ownerPid, ownerStartedAt };
 }
 
 async function removeManagedTree(target: string): Promise<void> {
@@ -825,5 +854,15 @@ async function isRestoredDirectory(directory: string): Promise<boolean> {
     return metadata.isDirectory() && !metadata.isSymbolicLink();
   } catch {
     return false;
+  }
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.lstat(target);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    throw error;
   }
 }

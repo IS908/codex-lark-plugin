@@ -2,9 +2,15 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CONTINUATION_LIMITS } from '../domain/continuation.js';
+import {
+  currentProcessStartedAt,
+  isProcessAlive,
+  isProcessInstanceAlive,
+} from '../process-identity.js';
 
 const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const ACTIVE_REDACTION_QUARANTINES = new Set<string>();
+const LEGACY_QUARANTINE_GRACE_MS = 30_000;
 
 export class ContinuationArtifactStore {
   readonly rootDir: string;
@@ -114,7 +120,7 @@ export class ContinuationArtifactStore {
   async quarantine(jobId: string): Promise<string | null> {
     await this.ensureRoot();
     const source = this.jobDirectory(jobId);
-    const token = `${process.pid}-${randomBytes(8).toString('hex')}`;
+    const token = `${process.pid}.${currentProcessStartedAt()}-${randomBytes(8).toString('hex')}`;
     const destination = this.quarantineDirectory(jobId, token);
     let sourceMetadata;
     try {
@@ -169,8 +175,12 @@ export class ContinuationArtifactStore {
       if (!quarantine) continue;
       const candidate = path.join(this.rootDir, entry.name);
       if (jobIds.has(quarantine.jobId)) {
+        const ownerIsActive = quarantine.ownerStartedAt === null
+          ? isProcessAlive(quarantine.ownerPid)
+            && Date.now() - (await fs.lstat(candidate)).mtimeMs < LEGACY_QUARANTINE_GRACE_MS
+          : await isProcessInstanceAlive(quarantine.ownerPid, quarantine.ownerStartedAt);
         if (
-          isProcessAlive(quarantine.ownerPid)
+          ownerIsActive
           && (quarantine.ownerPid !== process.pid
             || ACTIVE_REDACTION_QUARANTINES.has(entry.name))
         ) continue;
@@ -179,7 +189,8 @@ export class ContinuationArtifactStore {
         } catch (error) {
           const code = (error as NodeJS.ErrnoException)?.code;
           if (
-            (code !== 'EEXIST' && code !== 'ENOENT')
+            !['EEXIST', 'ENOENT', 'EACCES'].includes(code ?? '')
+            || await pathExists(candidate)
             || !(await isRestoredDirectory(this.jobDirectory(quarantine.jobId)))
           ) throw error;
         }
@@ -206,29 +217,25 @@ export class ContinuationArtifactStore {
 
   private quarantineDirectory(jobId: string, token: string): string {
     this.jobDirectory(jobId);
-    if (!/^[1-9]\d*-[a-f0-9]{16}$/.test(token)) {
+    if (!/^[1-9]\d*\.[1-9]\d*-[a-f0-9]{16}$/.test(token)) {
       throw new Error('Continuation artifact quarantine token is invalid.');
     }
     return path.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
   }
 }
 
-function parseRedactionQuarantine(name: string): { jobId: string; ownerPid: number } | null {
+function parseRedactionQuarantine(
+  name: string,
+): { jobId: string; ownerPid: number; ownerStartedAt: number | null } | null {
   if (!name.startsWith(REDACTION_QUARANTINE_PREFIX)) return null;
-  const match = /^\.redacting-(.+)-([1-9]\d*)-[a-f0-9]{16}$/.exec(name);
+  const match = /^\.redacting-(.+)-([1-9]\d*)\.([1-9]\d*)-[a-f0-9]{16}$/.exec(name)
+    ?? /^\.redacting-(.+)-([1-9]\d*)-[a-f0-9]{16}$/.exec(name);
   if (!match || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(match[1])) return null;
   const ownerPid = Number(match[2]);
   if (!Number.isSafeInteger(ownerPid)) return null;
-  return { jobId: match[1], ownerPid };
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException)?.code === 'EPERM';
-  }
+  const ownerStartedAt = match.length === 4 ? Number(match[3]) : null;
+  if (ownerStartedAt !== null && !Number.isSafeInteger(ownerStartedAt)) return null;
+  return { jobId: match[1], ownerPid, ownerStartedAt };
 }
 
 async function removeArtifactTree(directory: string): Promise<void> {
@@ -256,5 +263,15 @@ async function isRestoredDirectory(directory: string): Promise<boolean> {
     return metadata.isDirectory() && !metadata.isSymbolicLink();
   } catch {
     return false;
+  }
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.lstat(target);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    throw error;
   }
 }

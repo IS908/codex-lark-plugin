@@ -2069,7 +2069,7 @@ const crashArtifactRedactionToken = await redactionRollbackArtifacts.quarantine(
 );
 assert.ok(crashRedactionToken);
 assert.ok(crashArtifactRedactionToken);
-const deadRedactionToken = `2147483647-${'f'.repeat(16)}`;
+const deadRedactionToken = `${process.pid}.1-${'f'.repeat(16)}`;
 await rename(
   join(
     redactionRollbackOptions.inputsDir,
@@ -2115,7 +2115,7 @@ const concurrentRecoveryArtifactToken = await redactionRollbackArtifacts.quarant
 );
 assert.ok(concurrentRecoveryInputToken);
 assert.ok(concurrentRecoveryArtifactToken);
-const concurrentRecoveryDeadToken = `2147483646-${'e'.repeat(16)}`;
+const concurrentRecoveryDeadToken = `2147483646.1-${'e'.repeat(16)}`;
 await rename(
   join(
     redactionRollbackOptions.inputsDir,
@@ -2334,12 +2334,42 @@ await assert.rejects(
   }]),
   /regular file/i,
 );
+const duplicateNames = await inputValidationStore.install('job_duplicate_names', [
+  { sourcePath: shortA, fileName: 'same.txt', kind: 'message_attachment' },
+  { sourcePath: shortB, fileName: 'same.txt', kind: 'message_image' },
+]);
+assert.deepEqual(
+  duplicateNames.artifacts.map((artifact) => artifact.relativePath),
+  ['input_001.txt', 'input_002.txt'],
+);
+assert.equal(await readFile(inputValidationStore.resolve(
+  'job_duplicate_names',
+  duplicateNames.artifacts[0].relativePath,
+), 'utf8'), 'aaaa');
+assert.equal(await readFile(inputValidationStore.resolve(
+  'job_duplicate_names',
+  duplicateNames.artifacts[1].relativePath,
+), 'utf8'), 'bbbb');
+
+const corruptAdoption = await inputValidationStore.install('job_corrupt_adoption', [{
+  sourcePath: shortA,
+  fileName: 'source.txt',
+  kind: 'message_attachment',
+}], 'corrupt-adoption-fingerprint');
+const corruptAdoptionPath = inputValidationStore.resolve(
+  'job_corrupt_adoption',
+  corruptAdoption.artifacts[0].relativePath,
+);
+await chmod(corruptAdoptionPath, 0o600);
+await writeFile(corruptAdoptionPath, 'zzzz', 'utf8');
+await chmod(corruptAdoptionPath, 0o400);
 await assert.rejects(
-  inputValidationStore.install('job_collision', [
-    { sourcePath: shortA, fileName: 'same.txt', kind: 'message_attachment' },
-    { sourcePath: shortB, fileName: 'same.txt', kind: 'message_image' },
-  ]),
-  /duplicate.*file name|collision/i,
+  inputValidationStore.install('job_corrupt_adoption', [{
+    sourcePath: shortA,
+    fileName: 'source.txt',
+    kind: 'message_attachment',
+  }], 'corrupt-adoption-fingerprint'),
+  /integrity|modified|managed input/i,
 );
 await assert.rejects(
   inputValidationStore.install('job_bad_name', [{
@@ -2444,23 +2474,12 @@ const reusedPidNonce = 'a'.repeat(32);
 await mkdir(reusedPidLockDirectory);
 await writeFile(join(reusedPidLockDirectory, 'owner.json'), JSON.stringify({
   pid: process.pid,
+  startedAt: 1,
   nonce: reusedPidNonce,
   createdAt: new Date().toISOString(),
 }), 'utf8');
-const reusedPidReclaimer = spawn(process.execPath, [
-  '--import',
-  'tsx',
-  new URL(import.meta.url).pathname,
-  '--reclaim-dead-creation-lock',
-  deadLockInputsRoot,
-  reusedPidLockJobId,
-], { stdio: ['ignore', 'pipe', 'pipe'] });
-await assert.rejects(
-  waitForChildMarker(reusedPidReclaimer, 'DEAD_LOCK_RECLAIMED', 500),
-  /timed out/i,
-);
-assert.equal((await lstat(reusedPidLockDirectory)).isDirectory(), true);
-await rm(reusedPidLockDirectory, { recursive: true, force: true });
+await deadLockStore.withCreationLock(reusedPidLockJobId, async () => {});
+await assert.rejects(lstat(reusedPidLockDirectory), /ENOENT/);
 
 // Exercise the actual crash path: the first process owns the lock directory and
 // owner.json, then dies without cleanup. A fresh process must reclaim it without
@@ -2616,6 +2635,14 @@ const corruptStateRepository = await SqliteContinuationRepository.open({
   inputsDir: join(corruptStateRoot, 'inputs'),
   jitter: () => 0,
 });
+const corruptCheckpointJob = await corruptStateRepository.create(createRequest(
+  'corrupt-checkpoint-state',
+  { createdAt: '2026-07-16T23:59:56.000Z' },
+));
+const corruptArtifactsJob = await corruptStateRepository.create(createRequest(
+  'corrupt-artifacts-state',
+  { createdAt: '2026-07-16T23:59:57.000Z' },
+));
 const corruptStateJob = await corruptStateRepository.create(createRequest('corrupt-state', {
   createdAt: '2026-07-16T23:59:58.000Z',
 }));
@@ -2623,6 +2650,22 @@ const healthyStateJob = await corruptStateRepository.create(createRequest('healt
   createdAt: '2026-07-16T23:59:59.000Z',
 }));
 const corruptStateDatabase = new DatabaseSync(corruptStateDatabasePath);
+corruptStateDatabase.prepare(`
+  UPDATE continuation_jobs SET checkpoint_json = ? WHERE job_id = ?
+`).run('{"summary":', corruptCheckpointJob.job.jobId);
+corruptStateDatabase.prepare(`
+  UPDATE continuation_jobs SET result_artifacts_json = ? WHERE job_id = ?
+`).run('{"unexpected":true}', corruptArtifactsJob.job.jobId);
+assert.equal(
+  (await corruptStateRepository.get(corruptCheckpointJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await corruptStateRepository.listAll(10)).find(
+    (job) => job.jobId === corruptArtifactsJob.job.jobId,
+  )?.errorCode,
+  'continuation_persisted_state_invalid',
+);
 const corruptFactsJson = corruptStateDatabase.prepare(`
   SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
 `).get(corruptStateJob.job.jobId) as { source_facts_json: string };

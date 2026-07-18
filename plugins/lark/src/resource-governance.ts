@@ -17,6 +17,12 @@ import { constants, existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { gzip } from 'node:zlib';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import {
+  currentProcessStartedAt,
+  getProcessStartedAt,
+  isProcessAlive,
+  isSameProcessStart,
+} from './process-identity.js';
 
 const execFileAsync = promisify(execFile);
 const gzipAsync = promisify(gzip);
@@ -92,34 +98,8 @@ interface OwnedFileSnapshot {
   ino: number | bigint;
 }
 
-function currentProcessStartedAt(): number {
-  return Math.floor(Date.now() - process.uptime() * 1000);
-}
-
-function defaultProcessExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: any) {
-    return err?.code === 'EPERM';
-  }
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function defaultProcessStartedAt(pid: number): Promise<number | null> {
-  if (pid === process.pid) return currentProcessStartedAt();
-  try {
-    const { stdout } = await execFileAsync('ps', ['-o', 'lstart=', '-p', String(pid)]);
-    const raw = String(stdout).trim();
-    if (!raw) return null;
-    const parsed = Date.parse(raw);
-    return Number.isFinite(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 async function defaultProcessCommand(pid: number): Promise<string | null> {
@@ -157,10 +137,6 @@ function parseLock(raw: string): LockRecord | null {
 
 function serializeLock(record: LockRecord): string {
   return `${JSON.stringify(record)}\n`;
-}
-
-function sameStartTime(a: number, b: number): boolean {
-  return Math.abs(a - b) <= 1000;
 }
 
 function sameLockOwner(a: LockRecord | null, b: LockRecord): boolean {
@@ -252,7 +228,7 @@ async function isLockStateStale(
   if (!alive) return true;
   if (existing.startedAt) {
     const actualStartedAt = await getProcessStartedAt(existing.pid);
-    return actualStartedAt !== null && !sameStartTime(actualStartedAt, existing.startedAt);
+    return actualStartedAt !== null && !isSameProcessStart(actualStartedAt, existing.startedAt);
   }
   return false;
 }
@@ -323,7 +299,7 @@ async function readTakeoverSnapshot(
     return {
       identity,
       owner,
-      stale: actualStartedAt !== null && !sameStartTime(actualStartedAt, owner.startedAt),
+      stale: actualStartedAt !== null && !isSameProcessStart(actualStartedAt, owner.startedAt),
     };
   }
   return { identity, owner, stale: false };
@@ -456,27 +432,27 @@ export async function acquireSingleInstanceLock(
   const pid = options.pid ?? process.pid;
   const startedAt = options.startedAt ?? currentProcessStartedAt();
   const record: LockRecord = { pid, startedAt, createdAt: new Date().toISOString() };
-  const processExists = options.processExists ?? defaultProcessExists;
-  const getProcessStartedAt = options.getProcessStartedAt ?? defaultProcessStartedAt;
+  const processExists = options.processExists ?? isProcessAlive;
+  const resolveProcessStartedAt = options.getProcessStartedAt ?? getProcessStartedAt;
   const expectedUid = options.expectedUid;
   const takeoverPath = `${lockPath}.takeover`;
 
   await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
 
   for (let attempt = 0; attempt < LOCK_ACQUIRE_ATTEMPTS; attempt++) {
-    await waitForTakeoverToClear(takeoverPath, processExists, getProcessStartedAt, expectedUid);
+    await waitForTakeoverToClear(takeoverPath, processExists, resolveProcessStartedAt, expectedUid);
     if (await writeLockFileAtomically(lockPath, serializeLock(record))) {
       return makeHandle(lockPath, pid, startedAt);
     }
 
     const existing = await readLockState(lockPath, expectedUid);
-    if (!(await isLockStateStale(existing, processExists, getProcessStartedAt))) throw activeLockError(existing);
+    if (!(await isLockStateStale(existing, processExists, resolveProcessStartedAt))) throw activeLockError(existing);
 
     const claimed = await claimTakeover(
       takeoverPath,
       record,
       processExists,
-      getProcessStartedAt,
+      resolveProcessStartedAt,
       expectedUid,
     );
     if (!claimed) {
@@ -486,7 +462,7 @@ export async function acquireSingleInstanceLock(
 
     try {
       const current = await readLockState(lockPath, expectedUid);
-      if (!(await isLockStateStale(current, processExists, getProcessStartedAt))) throw activeLockError(current);
+      if (!(await isLockStateStale(current, processExists, resolveProcessStartedAt))) throw activeLockError(current);
       await removePathIfExists(lockPath);
       if (await writeLockFileAtomically(lockPath, serializeLock(record))) {
         return makeHandle(lockPath, pid, startedAt);
@@ -503,8 +479,8 @@ export async function stopSingleInstanceLock(
   lockPath: string,
   options: StopSingleInstanceLockOptions = {},
 ): Promise<StopSingleInstanceLockResult> {
-  const processExists = options.processExists ?? defaultProcessExists;
-  const getProcessStartedAt = options.getProcessStartedAt ?? defaultProcessStartedAt;
+  const processExists = options.processExists ?? isProcessAlive;
+  const resolveProcessStartedAt = options.getProcessStartedAt ?? getProcessStartedAt;
   const getProcessCommand = options.getProcessCommand ?? defaultProcessCommand;
   const killProcess = options.killProcess ?? defaultKillProcess;
   const isExpectedProcess = options.isExpectedProcess ?? isCodexLarkProcessCommand;
@@ -549,8 +525,8 @@ export async function stopSingleInstanceLock(
   }
 
   if (record.startedAt) {
-    const actualStartedAt = await getProcessStartedAt(record.pid);
-    if (actualStartedAt !== null && !sameStartTime(actualStartedAt, record.startedAt)) {
+    const actualStartedAt = await resolveProcessStartedAt(record.pid);
+    if (actualStartedAt !== null && !isSameProcessStart(actualStartedAt, record.startedAt)) {
       const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
       return {
         ...base,
@@ -614,8 +590,8 @@ export async function stopSingleInstanceLock(
     }
 
     if (record.startedAt) {
-      const actualStartedAt = await getProcessStartedAt(record.pid);
-      if (actualStartedAt !== null && !sameStartTime(actualStartedAt, record.startedAt)) {
+      const actualStartedAt = await resolveProcessStartedAt(record.pid);
+      if (actualStartedAt !== null && !isSameProcessStart(actualStartedAt, record.startedAt)) {
         const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
         return {
           ...base,
