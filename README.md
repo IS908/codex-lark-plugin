@@ -86,9 +86,10 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Codex can commit one structured `create_continuation_job` exec action when a foreground P2P, group, or document-comment turn explicitly requests background execution, monitoring, waiting, or completion notification. Ordinary and merely heavy turns do not see this action. The visible acknowledgement includes a durable Job ID.
 - Jobs, immutable redacted source facts, validated task contracts, attempts, checkpoints, leases, and a multi-event delivery outbox are transactionally stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`. Source facts retain the unenriched user request, quoted message text, and the bounded document-comment source envelope (including fetched selected/parent context) as distinct data from model-authored task fields. Source images and attachments are copied into checksum-verified, read-only Job-owned trees under the sibling `inputs/` directory; model outputs remain isolated under writable `artifacts/` trees. Managed inputs are logically immutable to Codex and the sandbox, not hardened against another process running as the same OS user: that local account is inside the trust boundary and can bypass mode bits, with checksum gates providing detection rather than OS-adversary isolation.
 - Each Job owns a dedicated Codex execution session. A parent foreground session is provenance only; an unavailable resume session is replaced safely without mutating the foreground chat session.
-- `/task list|status|cancel|retry|retain|delete` bypass Codex and remain available for direct control. Lists accept `--status` filters; creators and the owner can toggle `retain` to exempt important Jobs from automatic cleanup. Retry creates a new Job ID and copies managed inputs into an independently owned tree; partial/blocked/failed/cancelled tasks can be retried.
+- `/task list|status|cancel|retry|resume|retain|delete` bypass Codex and remain available for direct control. Lists accept `--status` filters; creators and the owner can toggle `retain` to exempt important Jobs from automatic cleanup. Retry creates a new Job ID and copies managed inputs into an independently owned tree; partial/blocked/failed/cancelled tasks can be retried. A `waiting_user` task resumes the same Job with `/task resume ID <input>` from its original conversation; IM users may instead reply to the delivered interrupt message.
 - The parent derives each permission profile from the authenticated sender: the owner and current `allowed_user_ids` members automatically receive `trusted_personal_workspace` for broad local reads, network access, and external operations under a trust-first policy; all other admitted users remain `bounded`. Bounded tasks force approval policy `never`, disable sandbox network access, ignore user Codex config, and cannot send messages, create nested jobs, or perform source-control publishing actions. Trusted attempts always write sanitized command traces keyed by Job/attempt ID. There is no continuation MCP tool. Standard Codex filesystem/shell tools stay inside the sandbox and are never listed in `required_tools`. A task may request one parent-owned `run_local_cli_tool` call per step only when its exact configured host-tool name appears in `required_tools`; caller/config policy and the durable no-blind-replay ledger are still enforced.
 - Every committed `continue` attempt queues one bounded factual progress update keyed by `progress:<attempt_id>`. A terminal event uses the reserved `terminal` key, takes delivery priority, and supersedes progress that is still safely known to be undelivered. `/task status ID` shows per-event status, attempt IDs, retry counts, and bounded errors.
+- Host-tool failures are normalized into invocation, transient, authentication, permission, unavailable-capability, terminal, or unknown categories. Safe repairs use bounded per-failure and per-Job recovery budgets; authentication, permission, or ambiguous side-effect outcomes enter durable `waiting_user` instead of being mislabeled as missing capabilities. Completed checkpoints and external-call deduplication records remain attached to the same Job across recovery.
 - Each IM delivery event reuses one stable Feishu UUID inside its one-hour deduplication window. Document-comment delivery uses a unique event marker and bounded read-back after an ambiguous send. Unreconciled sends become `delivery_unknown` and are not blindly repeated.
 
 ### Reliability
@@ -420,6 +421,8 @@ written to the audit log.
 /task status ID    Show an authorized task's execution and delivery state
 /task cancel ID    Cancel a queued/running authorized task
 /task retry ID     Clone an incomplete terminal task under a new Job ID
+/task resume ID INPUT
+                   Resume a waiting task in its original conversation
 /task retain ID on|off
                    Enable or disable the automatic-cleanup exemption
 /task delete ID    Redact and delete a terminal authorized task
@@ -574,6 +577,7 @@ Config file: `~/.codex/channels/lark/runtime-config/local-cli-tools.json`.
       "envAllowlist": ["LARK_APP_ID"],
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
+      "retrySafeStructuredValidation": true,
       "allowedCallers": "owners"
     },
     "lark_doc_create": {
@@ -602,6 +606,10 @@ an explicit array of Feishu/Lark `open_id` values. Tool configs must set exactly
 one of `paramAllowlist` or `paramBlocklist`. Commands must be absolute paths.
 Environment keys in `envAllowlist` and `env` must use shell-compatible names
 such as `LARK_APP_ID` or `CUSTOM_SAFE`.
+`retrySafeStructuredValidation` defaults to `false`. Enable it only for a trusted
+CLI whose exit-code-2 JSON validation envelope is contractually emitted before
+any side effect; it allows the continuation runner to repair and retry that
+invocation automatically.
 
 Bounded continuation tasks can use these tools without enabling network in
 the sandboxed Codex process. Trusted-profile tasks may enable sandbox network

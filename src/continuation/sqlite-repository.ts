@@ -24,7 +24,9 @@ import {
   type ContinuationExecutionResult,
   type ContinuationFailure,
   type ContinuationJob,
+  type ContinuationPendingInterruptRoute,
   type ContinuationPermissionEnvelope,
+  type ContinuationRecoveryState,
   type ContinuationStatus,
   type ContinuationStepOutcome,
   type ContinuationToolCallDecision,
@@ -52,6 +54,7 @@ import {
 } from './idempotency.js';
 import { ContinuationInputStore } from './input-store.js';
 import { redactContinuationText } from './redaction.js';
+import type { DurableRunFailure } from '../domain/durable-run.js';
 
 type SqlRow = Record<string, null | number | bigint | string | Uint8Array>;
 
@@ -72,10 +75,13 @@ const ATTEMPT_BUDGET_SCHEMA_VERSION = 4;
 const DELIVERY_OUTBOX_SCHEMA_VERSION = 5;
 const RETENTION_SCHEMA_VERSION = 6;
 const ASYNC_TASK_FACTS_SCHEMA_VERSION = 7;
-const SCHEMA_VERSION = 8;
+const OUTCOME_DRIVEN_SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 const ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
 const DELIVERY_LEASE_MS = 30_000;
 const PROGRESS_PAYLOAD_MAX_CHARS = 4_000;
+const MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT = 2;
+const MAX_TOTAL_RECOVERY_ATTEMPTS = 4;
 const EMPTY_CHECKPOINT = {
   summary: '',
   completedSteps: [],
@@ -192,12 +198,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         row_version INTEGER NOT NULL CHECK(row_version >= 1),
         status TEXT NOT NULL CHECK(status IN (
           'queued', 'running', 'waiting_retry', 'cancel_requested',
-          'recovering',
+          'recovering', 'waiting_user',
           'completed', 'partial', 'blocked', 'failed', 'cancelled'
         )),
         execution_session_id TEXT,
         checkpoint_json TEXT,
         no_progress_count INTEGER NOT NULL DEFAULT 0 CHECK(no_progress_count >= 0),
+        recovery_json TEXT,
+        recovery_total_count INTEGER NOT NULL DEFAULT 0 CHECK(recovery_total_count >= 0),
+        recovery_fingerprint_counts_json TEXT NOT NULL DEFAULT '{}',
         step_count INTEGER NOT NULL CHECK(step_count >= 0),
         failure_count INTEGER NOT NULL CHECK(failure_count >= 0),
         next_run_at TEXT NOT NULL,
@@ -232,10 +241,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         heartbeat_at TEXT NOT NULL,
         finished_at TEXT,
         outcome TEXT CHECK(outcome IS NULL OR outcome IN (
-          'continue', 'completed', 'partial', 'failed', 'blocked', 'error', 'cancelled'
+          'continue', 'recovering', 'waiting_user', 'completed', 'partial',
+          'failed', 'blocked', 'error', 'cancelled'
         )),
         error_code TEXT,
         error_summary TEXT,
+        execution_phase TEXT NOT NULL DEFAULT 'claimed' CHECK(execution_phase IN ('claimed', 'execution_started')),
+        recovery_json TEXT,
         step_id TEXT,
         delta_json TEXT,
         verification_json TEXT,
@@ -246,7 +258,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         outbox_id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
         event_key TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK(kind IN ('progress', 'terminal')),
+        kind TEXT NOT NULL CHECK(kind IN ('progress', 'interrupt', 'terminal')),
         attempt_id TEXT REFERENCES continuation_attempts(attempt_id),
         route_json TEXT NOT NULL,
         idempotency_key TEXT NOT NULL UNIQUE,
@@ -270,6 +282,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           (kind = 'terminal' AND event_key = 'terminal' AND attempt_id IS NULL)
           OR
           (kind = 'progress' AND event_key = 'progress:' || attempt_id AND attempt_id IS NOT NULL)
+          OR
+          (kind = 'interrupt' AND event_key LIKE 'interrupt:%' AND attempt_id IS NOT NULL)
         )
       ) STRICT;
 
@@ -277,6 +291,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         ON continuation_outbox(status, kind, next_attempt_at, created_at);
 
       ${toolCallSchemaSql()}
+      ${interruptSchemaSql()}
       PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     });
@@ -299,6 +314,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       else if (version === DELIVERY_OUTBOX_SCHEMA_VERSION) this.migrateRetentionSchema();
       else if (version === RETENTION_SCHEMA_VERSION) await this.migrateAsyncTaskFactsSchema();
       else if (version === ASYNC_TASK_FACTS_SCHEMA_VERSION) this.migrateOutcomeDrivenSchema();
+      else if (version === OUTCOME_DRIVEN_SCHEMA_VERSION) this.migrateRecoverySchema();
     }
     await this.healthCheck();
   }
@@ -636,7 +652,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
   private async resumeAsyncTaskFactsMigration(): Promise<void> {
     const version = Number(this.scalar('PRAGMA user_version'));
-    if (version === SCHEMA_VERSION || version === ASYNC_TASK_FACTS_SCHEMA_VERSION) return;
+    if (version >= ASYNC_TASK_FACTS_SCHEMA_VERSION && version <= SCHEMA_VERSION) return;
     if (version !== ASYNC_TASK_FACTS_MIGRATION_VERSION) {
       throw new Error(`Unexpected continuation facts migration version ${version}.`);
     }
@@ -659,8 +675,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     this.transaction(() => {
       const currentVersion = Number(this.scalar('PRAGMA user_version'));
       if (
-        currentVersion === SCHEMA_VERSION
-        || currentVersion === ASYNC_TASK_FACTS_SCHEMA_VERSION
+        currentVersion >= ASYNC_TASK_FACTS_SCHEMA_VERSION
+        && currentVersion <= SCHEMA_VERSION
       ) return;
       if (currentVersion !== ASYNC_TASK_FACTS_MIGRATION_VERSION) {
         throw new Error(`Unexpected continuation facts migration version ${currentVersion}.`);
@@ -674,7 +690,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     try {
       this.transaction(() => {
         const version = Number(this.scalar('PRAGMA user_version'));
-        if (version >= SCHEMA_VERSION) return;
+        if (version >= OUTCOME_DRIVEN_SCHEMA_VERSION) return;
         if (version !== ASYNC_TASK_FACTS_SCHEMA_VERSION) {
           throw new Error(`Unexpected continuation schema version ${version}.`);
         }
@@ -797,7 +813,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         CREATE INDEX continuation_jobs_creator_idx
           ON continuation_jobs(creator_open_id, created_at DESC)
           WHERE deleted_at IS NULL;
-        PRAGMA user_version = ${SCHEMA_VERSION};
+        PRAGMA user_version = ${OUTCOME_DRIVEN_SCHEMA_VERSION};
         `);
         const checkpointRows = this.database.prepare(`
           SELECT job_id, checkpoint_json FROM continuation_jobs WHERE checkpoint_json IS NOT NULL
@@ -821,6 +837,253 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     const violations = this.database.prepare('PRAGMA foreign_key_check').all();
     if (violations.length > 0) {
       throw new Error('Continuation outcome migration failed foreign-key validation.');
+    }
+  }
+
+  private migrateRecoverySchema(): void {
+    this.database.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      this.transaction(() => {
+        const version = Number(this.scalar('PRAGMA user_version'));
+        if (version >= SCHEMA_VERSION) return;
+        if (version !== OUTCOME_DRIVEN_SCHEMA_VERSION) {
+          throw new Error(`Unexpected continuation schema version ${version}.`);
+        }
+        this.database.exec(`
+        CREATE TABLE continuation_jobs_v9 (
+          job_id TEXT PRIMARY KEY,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          retry_of_job_id TEXT REFERENCES continuation_jobs_v9(job_id),
+          creator_open_id TEXT NOT NULL,
+          origin_kind TEXT NOT NULL CHECK(origin_kind IN ('message_thread', 'comment_thread')),
+          route_json TEXT NOT NULL,
+          source_message_id TEXT NOT NULL,
+          source_thread_id TEXT,
+          title TEXT NOT NULL,
+          objective TEXT NOT NULL,
+          acceptance_criteria_json TEXT NOT NULL,
+          context_snapshot_json TEXT NOT NULL,
+          source_facts_json TEXT NOT NULL,
+          task_contract_json TEXT NOT NULL,
+          required_tools_json TEXT NOT NULL,
+          working_directory TEXT NOT NULL,
+          permissions_json TEXT NOT NULL,
+          model TEXT,
+          parent_session_id TEXT,
+          max_attempts INTEGER NOT NULL CHECK(max_attempts BETWEEN 1 AND 20),
+          max_retries INTEGER NOT NULL,
+          timeout_seconds INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          row_version INTEGER NOT NULL CHECK(row_version >= 1),
+          status TEXT NOT NULL CHECK(status IN (
+            'queued', 'running', 'waiting_retry', 'recovering', 'waiting_user',
+            'cancel_requested', 'completed', 'partial', 'blocked', 'failed', 'cancelled'
+          )),
+          execution_session_id TEXT,
+          checkpoint_json TEXT,
+          no_progress_count INTEGER NOT NULL DEFAULT 0 CHECK(no_progress_count >= 0),
+          recovery_json TEXT,
+          recovery_total_count INTEGER NOT NULL DEFAULT 0 CHECK(recovery_total_count >= 0),
+          recovery_fingerprint_counts_json TEXT NOT NULL DEFAULT '{}',
+          step_count INTEGER NOT NULL CHECK(step_count >= 0),
+          failure_count INTEGER NOT NULL CHECK(failure_count >= 0),
+          next_run_at TEXT NOT NULL,
+          lease_owner TEXT,
+          lease_expires_at TEXT,
+          heartbeat_at TEXT,
+          result_summary TEXT,
+          result_artifacts_json TEXT NOT NULL,
+          error_code TEXT,
+          error_summary TEXT,
+          started_at TEXT,
+          updated_at TEXT NOT NULL,
+          completed_at TEXT,
+          deleted_at TEXT,
+          retain INTEGER NOT NULL DEFAULT 0 CHECK(retain IN (0, 1))
+        ) STRICT;
+
+        CREATE TABLE continuation_attempts_v9 (
+          attempt_id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL REFERENCES continuation_jobs_v9(job_id),
+          ordinal INTEGER NOT NULL,
+          worker_id TEXT NOT NULL,
+          execution_session_id TEXT,
+          started_at TEXT NOT NULL,
+          heartbeat_at TEXT NOT NULL,
+          finished_at TEXT,
+          outcome TEXT CHECK(outcome IS NULL OR outcome IN (
+            'continue', 'recovering', 'waiting_user', 'completed', 'partial',
+            'failed', 'blocked', 'error', 'cancelled'
+          )),
+          error_code TEXT,
+          error_summary TEXT,
+          execution_phase TEXT NOT NULL DEFAULT 'claimed' CHECK(execution_phase IN ('claimed', 'execution_started')),
+          recovery_json TEXT,
+          step_id TEXT,
+          delta_json TEXT,
+          verification_json TEXT,
+          UNIQUE(job_id, ordinal)
+        ) STRICT;
+
+        CREATE TABLE continuation_tool_calls_v9 (
+          call_id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL REFERENCES continuation_jobs_v9(job_id),
+          step_index INTEGER NOT NULL CHECK(step_index >= 0),
+          step_id TEXT NOT NULL,
+          attempt_id TEXT NOT NULL REFERENCES continuation_attempts_v9(attempt_id),
+          tool_name TEXT NOT NULL,
+          request_hash TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('running', 'completed')),
+          result_json TEXT,
+          started_at TEXT NOT NULL,
+          completed_at TEXT,
+          updated_at TEXT NOT NULL,
+          UNIQUE(job_id, step_id, request_hash)
+        ) STRICT;
+
+        CREATE UNIQUE INDEX continuation_tool_calls_running_step_idx_v9
+          ON continuation_tool_calls_v9(job_id, step_id) WHERE status = 'running';
+
+        CREATE TABLE continuation_outbox_v9 (
+          outbox_id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL REFERENCES continuation_jobs_v9(job_id),
+          event_key TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('progress', 'interrupt', 'terminal')),
+          attempt_id TEXT REFERENCES continuation_attempts_v9(attempt_id),
+          route_json TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN (
+            'pending', 'sending', 'delivered', 'delivery_unknown', 'failed', 'superseded'
+          )),
+          attempt_count INTEGER NOT NULL CHECK(attempt_count >= 0),
+          next_attempt_at TEXT NOT NULL,
+          worker_id TEXT,
+          lease_expires_at TEXT,
+          first_attempt_at TEXT,
+          last_attempt_at TEXT,
+          message_id TEXT,
+          error_code TEXT,
+          error_summary TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(job_id, event_key),
+          CHECK(
+            (kind = 'terminal' AND event_key = 'terminal' AND attempt_id IS NULL)
+            OR (kind = 'progress' AND event_key = 'progress:' || attempt_id AND attempt_id IS NOT NULL)
+            OR (kind = 'interrupt' AND event_key LIKE 'interrupt:%' AND attempt_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE TABLE continuation_interrupts_v9 (
+          interrupt_id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL REFERENCES continuation_jobs_v9(job_id),
+          attempt_id TEXT NOT NULL REFERENCES continuation_attempts_v9(attempt_id),
+          status TEXT NOT NULL CHECK(status IN ('pending', 'resolved')),
+          prompt TEXT NOT NULL,
+          response_text TEXT,
+          created_at TEXT NOT NULL,
+          resolved_at TEXT,
+          UNIQUE(job_id, attempt_id)
+        ) STRICT;
+
+        INSERT INTO continuation_jobs_v9 (
+          job_id, idempotency_key, retry_of_job_id, creator_open_id, origin_kind,
+          route_json, source_message_id, source_thread_id, title, objective,
+          acceptance_criteria_json, context_snapshot_json, source_facts_json,
+          task_contract_json, required_tools_json, working_directory,
+          permissions_json, model, parent_session_id, max_attempts, max_retries,
+          timeout_seconds, created_at, expires_at, row_version, status,
+          execution_session_id, checkpoint_json, no_progress_count, recovery_json,
+          recovery_total_count, recovery_fingerprint_counts_json, step_count,
+          failure_count, next_run_at, lease_owner, lease_expires_at, heartbeat_at,
+          result_summary, result_artifacts_json, error_code, error_summary,
+          started_at, updated_at, completed_at, deleted_at, retain
+        )
+        SELECT
+          job_id, idempotency_key, retry_of_job_id, creator_open_id, origin_kind,
+          route_json, source_message_id, source_thread_id, title, objective,
+          acceptance_criteria_json, context_snapshot_json, source_facts_json,
+          task_contract_json, required_tools_json, working_directory,
+          permissions_json, model, parent_session_id, max_attempts, max_retries,
+          timeout_seconds, created_at, expires_at, row_version, status,
+          execution_session_id, checkpoint_json, no_progress_count, NULL,
+          0, '{}', step_count, failure_count, next_run_at, lease_owner,
+          lease_expires_at, heartbeat_at, result_summary, result_artifacts_json,
+          error_code, error_summary, started_at, updated_at, completed_at, deleted_at, retain
+        FROM continuation_jobs;
+
+        INSERT INTO continuation_attempts_v9 (
+          attempt_id, job_id, ordinal, worker_id, execution_session_id, started_at,
+          heartbeat_at, finished_at, outcome, error_code, error_summary,
+          execution_phase, recovery_json, step_id, delta_json, verification_json
+        )
+        SELECT attempt_id, job_id, ordinal, worker_id, execution_session_id, started_at,
+               heartbeat_at, finished_at, outcome, error_code, error_summary,
+               CASE WHEN finished_at IS NULL THEN 'execution_started' ELSE 'claimed' END,
+               NULL, step_id, delta_json, verification_json
+        FROM continuation_attempts;
+
+        INSERT INTO continuation_tool_calls_v9 (
+          call_id, job_id, step_index, step_id, attempt_id, tool_name, request_hash,
+          status, result_json, started_at, completed_at, updated_at
+        )
+        SELECT tc.call_id, tc.job_id, tc.step_index,
+               CASE
+                 WHEN tc.step_index = j.step_count
+                   AND j.checkpoint_json IS NOT NULL
+                   AND json_valid(j.checkpoint_json)
+                 THEN COALESCE(
+                   json_extract(j.checkpoint_json, '$.nextAction.id'),
+                   json_extract(j.checkpoint_json, '$.currentStepId'),
+                   'initial-step'
+                 )
+                 WHEN tc.step_index = j.step_count THEN 'initial-step'
+                 ELSE 'legacy-step-' || tc.step_index
+               END,
+               tc.attempt_id, tc.tool_name, tc.request_hash, tc.status, tc.result_json,
+               tc.started_at, tc.completed_at, tc.updated_at
+        FROM continuation_tool_calls tc
+        JOIN continuation_jobs j ON j.job_id = tc.job_id;
+
+        INSERT INTO continuation_outbox_v9 SELECT * FROM continuation_outbox;
+
+        DROP INDEX IF EXISTS continuation_outbox_due_idx;
+        DROP INDEX IF EXISTS continuation_jobs_due_idx;
+        DROP INDEX IF EXISTS continuation_jobs_creator_idx;
+        DROP TABLE continuation_outbox;
+        DROP TABLE continuation_tool_calls;
+        DROP TABLE continuation_attempts;
+        DROP TABLE continuation_jobs;
+        DROP TABLE IF EXISTS continuation_interrupts;
+        ALTER TABLE continuation_jobs_v9 RENAME TO continuation_jobs;
+        ALTER TABLE continuation_attempts_v9 RENAME TO continuation_attempts;
+        ALTER TABLE continuation_tool_calls_v9 RENAME TO continuation_tool_calls;
+        ALTER TABLE continuation_outbox_v9 RENAME TO continuation_outbox;
+        ALTER TABLE continuation_interrupts_v9 RENAME TO continuation_interrupts;
+        CREATE UNIQUE INDEX continuation_tool_calls_running_step_idx
+          ON continuation_tool_calls(job_id, step_id) WHERE status = 'running';
+        DROP INDEX continuation_tool_calls_running_step_idx_v9;
+        CREATE INDEX continuation_jobs_due_idx
+          ON continuation_jobs(status, next_run_at, created_at) WHERE deleted_at IS NULL;
+        CREATE INDEX continuation_jobs_creator_idx
+          ON continuation_jobs(creator_open_id, created_at DESC) WHERE deleted_at IS NULL;
+        CREATE INDEX continuation_outbox_due_idx
+          ON continuation_outbox(status, kind, next_attempt_at, created_at);
+        CREATE UNIQUE INDEX continuation_interrupts_active_job_idx
+          ON continuation_interrupts(job_id) WHERE status = 'pending';
+        CREATE UNIQUE INDEX continuation_outbox_message_id_idx
+          ON continuation_outbox(message_id) WHERE message_id IS NOT NULL;
+        PRAGMA user_version = ${SCHEMA_VERSION};
+        `);
+      });
+    } finally {
+      this.database.exec('PRAGMA foreign_keys = ON;');
+    }
+    const violations = this.database.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length > 0) {
+      throw new Error('Continuation recovery migration failed foreign-key validation.');
     }
   }
 
@@ -1075,6 +1338,24 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     });
   }
 
+  async markExecutionStarted(claim: ContinuationClaim, now: string): Promise<void> {
+    this.transaction(() => {
+      this.assertActiveClaim(claim);
+      const update = this.database.prepare(`
+        UPDATE continuation_attempts
+        SET execution_phase = 'execution_started', heartbeat_at = ?
+        WHERE attempt_id = ? AND job_id = ? AND worker_id = ?
+          AND finished_at IS NULL AND execution_phase = 'claimed'
+      `).run(
+        now,
+        claim.attempt.attemptId,
+        claim.job.jobId,
+        claim.workerId,
+      );
+      assertOneChange(update.changes, claim.job.jobId);
+    });
+  }
+
   async beginToolCall(
     claim: ContinuationClaim,
     request: ContinuationToolRequest,
@@ -1084,39 +1365,69 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return this.transaction(() => {
       const current = this.assertActiveClaim(claim);
       const requestHash = toolRequestHash(request);
+      const stepId = continuationStepId(current);
+      const running = this.database.prepare(`
+        SELECT call_id, tool_name, request_hash, status, result_json
+        FROM continuation_tool_calls
+        WHERE job_id = ? AND step_id = ? AND status = 'running'
+      `).get(current.jobId, stepId);
+      if (running) {
+        return { status: 'unknown', callId: stringField(running, 'call_id') };
+      }
       const existing = this.database.prepare(`
         SELECT call_id, tool_name, request_hash, status, result_json
         FROM continuation_tool_calls
-        WHERE job_id = ? AND step_index = ?
-      `).get(current.jobId, current.stepCount);
+        WHERE job_id = ? AND step_id = ? AND request_hash = ?
+      `).get(current.jobId, stepId, requestHash);
       if (existing) {
         const callId = stringField(existing, 'call_id');
-        if (
-          stringField(existing, 'tool_name') !== request.tool
-          || stringField(existing, 'request_hash') !== requestHash
-        ) {
-          return { status: 'conflict', callId };
-        }
         if (stringField(existing, 'status') === 'completed') {
+          const result = parseToolResult(existing.result_json);
+          if (!result.ok && result.failure && canReexecuteSameToolRequest(current, result.failure)) {
+            const reopened = this.database.prepare(`
+              UPDATE continuation_tool_calls
+              SET status = 'running', attempt_id = ?, result_json = NULL,
+                  completed_at = NULL, started_at = ?, updated_at = ?
+              WHERE call_id = ? AND status = 'completed'
+            `).run(claim.attempt.attemptId, now, now, callId);
+            assertOneChange(reopened.changes, current.jobId);
+            return { status: 'execute', callId };
+          }
           return {
             status: 'replay',
             callId,
-            result: parseToolResult(existing.result_json),
+            result,
           };
         }
         return { status: 'unknown', callId };
       }
 
-      const callId = toolCallId(current.jobId, current.stepCount);
+      const completedForStep = this.database.prepare(`
+        SELECT call_id, result_json
+        FROM continuation_tool_calls
+        WHERE job_id = ? AND step_id = ? AND status = 'completed'
+        ORDER BY completed_at DESC LIMIT 1
+      `).get(current.jobId, stepId);
+      if (completedForStep) {
+        const prior = parseToolResult(completedForStep.result_json);
+        if (
+          prior.ok
+          || !prior.failure
+          || !canReplaceCompletedToolFailure(current, prior.failure)
+        ) return { status: 'conflict', callId: stringField(completedForStep, 'call_id') };
+      }
+
+      const callId = toolCallId(current.jobId, stepId, requestHash);
       this.database.prepare(`
         INSERT INTO continuation_tool_calls (
-          call_id, job_id, step_index, attempt_id, tool_name, request_hash,
+          call_id, job_id, step_index, step_id, attempt_id, tool_name, request_hash,
           status, started_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)
       `).run(
         callId,
         current.jobId,
         current.stepCount,
+        stepId,
         claim.attempt.attemptId,
         request.tool,
         requestHash,
@@ -1132,11 +1443,14 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ): Promise<ContinuationToolCallRecovery | null> {
     return this.transaction(() => {
       const current = this.assertActiveClaim(claim);
+      const stepId = continuationStepId(current);
       const row = this.database.prepare(`
         SELECT tool_name, status, result_json
         FROM continuation_tool_calls
-        WHERE job_id = ? AND step_index = ?
-      `).get(current.jobId, current.stepCount);
+        WHERE job_id = ? AND step_id = ?
+        ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, updated_at DESC
+        LIMIT 1
+      `).get(current.jobId, stepId);
       if (!row) return null;
       const tool = stringField(row, 'tool_name');
       if (stringField(row, 'status') === 'completed') {
@@ -1158,14 +1472,14 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       const update = this.database.prepare(`
         UPDATE continuation_tool_calls
         SET status = 'completed', result_json = ?, completed_at = ?, updated_at = ?
-        WHERE call_id = ? AND job_id = ? AND step_index = ? AND status = 'running'
+        WHERE call_id = ? AND job_id = ? AND step_id = ? AND status = 'running'
       `).run(
         JSON.stringify(result),
         now,
         now,
         callId,
         current.jobId,
-        current.stepCount,
+        continuationStepId(current),
       );
       assertOneChange(update.changes, current.jobId);
     });
@@ -1234,6 +1548,11 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         return;
       }
 
+      if (outcome.outcome === 'recovering' || outcome.outcome === 'waiting_user') {
+        this.finishDurableRecovery(claim, current, outcome, now, executionSessionId);
+        return;
+      }
+
       if (outcome.outcome === 'continue') {
         if (!progress) throw new Error('Continuation progress evaluation is missing.');
         if (progress.decision === 'recover') {
@@ -1283,7 +1602,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           SET status = 'waiting_retry', execution_session_id = ?, checkpoint_json = ?,
               no_progress_count = ?, step_count = ?, failure_count = 0, next_run_at = ?, lease_owner = NULL,
               lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?,
-              row_version = row_version + 1, error_code = NULL, error_summary = NULL
+              row_version = row_version + 1, recovery_json = NULL,
+              error_code = NULL, error_summary = NULL
           WHERE job_id = ? AND status = 'running' AND lease_owner = ? AND row_version = ?
         `).run(
           executionSessionId ?? null,
@@ -1317,7 +1637,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
               no_progress_count = ?, step_count = step_count + 1,
               result_summary = ?, result_artifacts_json = ?, completed_at = ?, updated_at = ?,
               lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
-              row_version = row_version + 1
+              row_version = row_version + 1, recovery_json = NULL,
+              error_code = NULL, error_summary = NULL
           WHERE job_id = ? AND status = 'running' AND lease_owner = ? AND row_version = ?
         `).run(
           executionSessionId ?? null,
@@ -1359,6 +1680,37 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         return;
       }
 
+      if (outcome.retryable && hasOpaqueExecutionEffects(current)) {
+        const failedStep = outcome.checkpoint.currentStepId || continuationStepId(current);
+        const failure: DurableRunFailure = {
+          category: 'unknown',
+          retrySafety: 'unknown',
+          capabilityAvailable: true,
+          operationRisk: 'external_side_effect',
+          hints: ['Confirm the effects of the failed step before resuming.'],
+          failedStep,
+          diagnostic: outcome.errorSummary,
+          fingerprint: createHash('sha256')
+            .update(`model-retryable\0${outcome.errorCode}\0${failedStep}`)
+            .digest('hex')
+            .slice(0, 32),
+        };
+        this.finishDurableRecovery(
+          claim,
+          current,
+          {
+            outcome: 'waiting_user',
+            checkpoint: outcome.checkpoint,
+            failure,
+            prompt: 'Confirm what the failed step changed, then resume with the observed result.',
+            reason: 'The model requested a retry after opaque execution, so automatic replay is unsafe.',
+          },
+          now,
+          executionSessionId,
+        );
+        return;
+      }
+
       this.finishFailure(
         claim,
         current,
@@ -1370,6 +1722,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         now,
         executionSessionId,
         outcome.checkpoint,
+        outcome.recoveryFailure,
       );
     });
   }
@@ -1381,6 +1734,45 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ): Promise<void> {
     this.transaction(() => {
       const current = this.assertActiveClaim(claim);
+      const attempt = this.database.prepare(`
+        SELECT execution_phase FROM continuation_attempts
+        WHERE attempt_id = ? AND job_id = ? AND worker_id = ? AND finished_at IS NULL
+      `).get(claim.attempt.attemptId, current.jobId, claim.workerId);
+      if (
+        failure.retryable
+        && attempt
+        && stringField(attempt, 'execution_phase') === 'execution_started'
+        && hasOpaqueExecutionEffects(current)
+      ) {
+        const failedStep = continuationStepId(current);
+        const durableFailure: DurableRunFailure = {
+          category: 'unknown',
+          retrySafety: 'unknown',
+          capabilityAvailable: true,
+          operationRisk: 'external_side_effect',
+          hints: ['Confirm the effects of the interrupted step before resuming.'],
+          failedStep,
+          diagnostic: failure.errorSummary,
+          fingerprint: createHash('sha256')
+            .update(`execution-unknown\0${failure.errorCode}\0${failedStep}`)
+            .digest('hex')
+            .slice(0, 32),
+        };
+        this.finishDurableRecovery(
+          claim,
+          current,
+          {
+            outcome: 'waiting_user',
+            checkpoint: current.checkpoint ?? checkpointFromInitialContext(current.contextSnapshot),
+            failure: durableFailure,
+            prompt: 'Confirm what the interrupted step changed, then resume with the observed result.',
+            reason: 'The execution ended after an opaque operation started, so automatic replay is unsafe.',
+          },
+          now,
+          current.executionSessionId,
+        );
+        return;
+      }
       this.finishFailure(claim, current, failure, now, current.executionSessionId);
     });
   }
@@ -1408,7 +1800,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         SET status = 'cancelled', completed_at = ?, updated_at = ?,
             lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
             row_version = row_version + 1
-        WHERE job_id = ? AND status IN ('queued', 'waiting_retry', 'recovering')
+        WHERE job_id = ? AND status IN ('queued', 'waiting_retry', 'recovering', 'waiting_user')
       `).run(now, now, jobId);
       if (Number(update.changes) !== 1) return 'terminal';
       this.insertTerminalOutbox(
@@ -1462,7 +1854,14 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           corruptJobIds.push(jobId);
           continue;
         }
-        const attemptId = this.activeAttemptId(jobId, current.leaseOwner);
+        const attemptRow = this.database.prepare(`
+          SELECT attempt_id, ordinal, worker_id, execution_session_id, started_at, heartbeat_at,
+                 execution_phase
+          FROM continuation_attempts
+          WHERE job_id = ? AND worker_id = ? AND finished_at IS NULL
+          ORDER BY ordinal DESC LIMIT 1
+        `).get(jobId, current.leaseOwner ?? '');
+        const attemptId = attemptRow ? stringField(attemptRow, 'attempt_id') : undefined;
         if (current.status === 'cancel_requested') {
           this.database.prepare(`
             UPDATE continuation_jobs
@@ -1476,6 +1875,52 @@ export class SqliteContinuationRepository implements ContinuationRepository {
             current,
             `Task cancelled: ${jobId}\nThe background task was cancelled.`,
             now,
+          );
+          continue;
+        }
+
+        if (
+          attemptRow
+          && stringField(attemptRow, 'execution_phase') === 'execution_started'
+          && hasOpaqueExecutionEffects(current)
+        ) {
+          const failedStep = continuationStepId(current);
+          const failure: DurableRunFailure = {
+            category: 'unknown',
+            retrySafety: 'unknown',
+            capabilityAvailable: true,
+            operationRisk: 'external_side_effect',
+            hints: ['Confirm whether the interrupted operation completed before resuming.'],
+            failedStep,
+            diagnostic: 'The worker lease expired after opaque execution started, so the external outcome is unknown.',
+            fingerprint: `lease-expired:${failedStep}`,
+          };
+          const expiredClaim: ContinuationClaim = {
+            job: current,
+            workerId: current.leaseOwner!,
+            claimedRowVersion: current.rowVersion,
+            attempt: {
+              attemptId: stringField(attemptRow, 'attempt_id'),
+              jobId,
+              ordinal: numberField(attemptRow, 'ordinal'),
+              workerId: stringField(attemptRow, 'worker_id'),
+              executionSessionId: optionalStringField(attemptRow, 'execution_session_id'),
+              startedAt: stringField(attemptRow, 'started_at'),
+              heartbeatAt: stringField(attemptRow, 'heartbeat_at'),
+            },
+          };
+          this.finishDurableRecovery(
+            expiredClaim,
+            current,
+            {
+              outcome: 'waiting_user',
+              checkpoint: current.checkpoint ?? checkpointFromInitialContext(current.contextSnapshot),
+              failure,
+              prompt: 'Confirm whether the interrupted operation completed, then resume with the observed result.',
+              reason: failure.diagnostic,
+            },
+            now,
+            current.executionSessionId,
           );
           continue;
         }
@@ -1532,7 +1977,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     let expiredCount = this.transaction(() => {
       const rows = this.database.prepare(`
         ${jobSelectSql()}
-        WHERE j.status IN ('queued', 'waiting_retry', 'recovering')
+        WHERE j.status IN ('queued', 'waiting_retry', 'recovering', 'waiting_user')
           AND j.expires_at <= ?
           AND j.deleted_at IS NULL
       `).all(now);
@@ -1551,7 +1996,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           SET status = 'failed', error_code = 'continuation_expired',
               error_summary = 'The continuation reached its maximum age.',
               completed_at = ?, updated_at = ?, row_version = row_version + 1
-          WHERE job_id = ? AND status IN ('queued', 'waiting_retry', 'recovering') AND expires_at <= ?
+          WHERE job_id = ? AND status IN ('queued', 'waiting_retry', 'recovering', 'waiting_user') AND expires_at <= ?
         `).run(now, now, jobId, now);
         if (Number(update.changes) !== 1) continue;
         expired += 1;
@@ -1866,7 +2311,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     now: string,
   ): Promise<void> {
     this.transaction(() => {
-      const terminalExists = claim.kind === 'progress' && Boolean(this.database.prepare(`
+      const terminalExists = claim.kind !== 'terminal' && Boolean(this.database.prepare(`
         SELECT 1 FROM continuation_outbox
         WHERE job_id = ? AND kind = 'terminal'
         LIMIT 1
@@ -1948,6 +2393,107 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       if (Number(update.changes) !== 1) {
         throw new Error(`Stale continuation delivery claim for ${claim.outboxId}.`);
       }
+    });
+  }
+
+  async listPendingInterrupts(): Promise<ContinuationPendingInterruptRoute[]> {
+    return this.database.prepare(`
+      SELECT i.interrupt_id, i.job_id, j.route_json, o.message_id
+      FROM continuation_interrupts i
+      JOIN continuation_jobs j ON j.job_id = i.job_id
+      JOIN continuation_outbox o
+        ON o.job_id = i.job_id AND o.event_key = 'interrupt:' || i.interrupt_id
+      WHERE i.status = 'pending' AND j.status = 'waiting_user'
+        AND j.deleted_at IS NULL AND o.status = 'delivered' AND o.message_id IS NOT NULL
+      ORDER BY i.created_at ASC
+    `).all().map(mapPendingInterruptRoute);
+  }
+
+  async findPendingInterruptByDeliveryMessage(
+    messageId: string,
+  ): Promise<ContinuationPendingInterruptRoute | null> {
+    if (!messageId) return null;
+    const row = this.database.prepare(`
+      SELECT i.interrupt_id, i.job_id, j.route_json, o.message_id
+      FROM continuation_interrupts i
+      JOIN continuation_jobs j ON j.job_id = i.job_id
+      JOIN continuation_outbox o
+        ON o.job_id = i.job_id AND o.event_key = 'interrupt:' || i.interrupt_id
+      WHERE i.status = 'pending' AND j.status = 'waiting_user'
+        AND j.deleted_at IS NULL AND o.status = 'delivered' AND o.message_id = ?
+      LIMIT 1
+    `).get(messageId);
+    return row ? mapPendingInterruptRoute(row) : null;
+  }
+
+  async findPendingInterrupt(
+    jobId: string,
+    interruptId: string,
+  ): Promise<ContinuationPendingInterruptRoute | null> {
+    const row = this.database.prepare(`
+      SELECT i.interrupt_id, i.job_id, j.route_json, o.message_id
+      FROM continuation_interrupts i
+      JOIN continuation_jobs j ON j.job_id = i.job_id
+      JOIN continuation_outbox o
+        ON o.job_id = i.job_id AND o.event_key = 'interrupt:' || i.interrupt_id
+      WHERE i.interrupt_id = ? AND i.job_id = ? AND i.status = 'pending'
+        AND j.status = 'waiting_user' AND j.deleted_at IS NULL
+      LIMIT 1
+    `).get(interruptId, jobId);
+    return row ? mapPendingInterruptRoute(row) : null;
+  }
+
+  async resumeWaitingUser(
+    jobId: string,
+    interruptId: string,
+    input: string,
+    now: string,
+  ): Promise<'resumed' | 'stale' | 'missing'> {
+    const normalizedInput = redactContinuationText(input).trim();
+    if (!normalizedInput || Array.from(normalizedInput).length > CONTINUATION_LIMITS.resumeInputChars) {
+      throw new Error(`Continuation resume input must be 1-${CONTINUATION_LIMITS.resumeInputChars} characters.`);
+    }
+    return this.transaction(() => {
+      const schemaVersion = Number(this.scalar('PRAGMA user_version'));
+      const row = this.database.prepare(
+        `${jobSelectSql(
+          schemaVersion >= OUTCOME_DRIVEN_SCHEMA_VERSION,
+          schemaVersion >= SCHEMA_VERSION,
+        )} WHERE j.job_id = ?`,
+      ).get(jobId);
+      if (!row) return 'missing';
+      const current = mapJob(row);
+      if (
+        current.status !== 'waiting_user'
+        || current.currentInterrupt?.interruptId !== interruptId
+        || current.currentInterrupt.status === 'resolved'
+        || !current.recovery
+      ) return 'stale';
+      const recovery: ContinuationRecoveryState = {
+        ...current.recovery,
+        lastDecision: 'retry',
+        userInput: normalizedInput,
+      };
+      assertJsonBytes('recovery state', recovery, CONTINUATION_LIMITS.contextSnapshotBytes);
+      const interrupt = this.database.prepare(`
+        UPDATE continuation_interrupts
+        SET status = 'resolved', response_text = ?, resolved_at = ?
+        WHERE interrupt_id = ? AND job_id = ? AND status = 'pending'
+      `).run(normalizedInput, now, interruptId, jobId);
+      if (Number(interrupt.changes) !== 1) return 'stale';
+      const update = this.database.prepare(`
+        UPDATE continuation_jobs
+        SET status = 'recovering', recovery_json = ?, next_run_at = ?,
+            updated_at = ?, row_version = row_version + 1
+        WHERE job_id = ? AND status = 'waiting_user'
+      `).run(JSON.stringify(recovery), now, now, jobId);
+      if (Number(update.changes) !== 1) throw new Error(`Stale continuation resume for ${jobId}.`);
+      this.database.prepare(`
+        UPDATE continuation_outbox
+        SET status = 'superseded', worker_id = NULL, lease_expires_at = NULL, updated_at = ?
+        WHERE job_id = ? AND event_key = ? AND status IN ('pending', 'failed')
+      `).run(now, jobId, `interrupt:${interruptId}`);
+      return 'resumed';
     });
   }
 
@@ -2250,6 +2796,99 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     );
   }
 
+  private finishDurableRecovery(
+    claim: ContinuationClaim,
+    current: ContinuationJob,
+    outcome: Extract<ContinuationStepOutcome, { outcome: 'recovering' | 'waiting_user' }>,
+    now: string,
+    executionSessionId?: string,
+  ): void {
+    const failure = boundedDurableRunFailure(outcome.failure);
+    const counts = { ...current.recoveryFingerprintCounts };
+    const fingerprintAttempts = (counts[failure.fingerprint] ?? 0) + 1;
+    const totalAttempts = current.recoveryTotalCount + 1;
+    if (
+      fingerprintAttempts > MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT
+      || totalAttempts > MAX_TOTAL_RECOVERY_ATTEMPTS
+      || claim.attempt.ordinal >= current.maxAttempts
+    ) {
+      this.finishTerminal(
+        claim,
+        current,
+        'failed',
+        now,
+        'continuation_recovery_budget_exhausted',
+        'The bounded recovery budget was exhausted.',
+        executionSessionId,
+        current.failureCount,
+        outcome.checkpoint,
+        current.noProgressCount,
+        failure,
+      );
+      return;
+    }
+    counts[failure.fingerprint] = fingerprintAttempts;
+    const recovery = {
+      failure,
+      fingerprintAttempts,
+      totalAttempts,
+      lastDecision: outcome.outcome === 'recovering' ? 'retry' as const : 'wait_user' as const,
+    };
+    const nextRunAt = outcome.outcome === 'recovering'
+      ? addMilliseconds(now, Math.max(0, outcome.delaySeconds) * 1_000)
+      : current.nextRunAt;
+    const update = this.database.prepare(`
+      UPDATE continuation_jobs
+      SET status = ?, execution_session_id = ?, checkpoint_json = ?, recovery_json = ?,
+          recovery_total_count = ?, recovery_fingerprint_counts_json = ?, next_run_at = ?,
+          error_code = ?, error_summary = ?, lease_owner = NULL, lease_expires_at = NULL,
+          heartbeat_at = NULL, updated_at = ?, row_version = row_version + 1
+      WHERE job_id = ? AND status = 'running' AND lease_owner = ? AND row_version = ?
+    `).run(
+      outcome.outcome,
+      executionSessionId ?? null,
+      JSON.stringify(outcome.checkpoint),
+      JSON.stringify(recovery),
+      totalAttempts,
+      JSON.stringify(counts),
+      nextRunAt,
+      `continuation_${failure.category}`,
+      outcome.reason,
+      now,
+      current.jobId,
+      claim.workerId,
+      claim.claimedRowVersion,
+    );
+    assertOneChange(update.changes, current.jobId);
+    this.database.prepare(`
+      UPDATE continuation_attempts
+      SET recovery_json = ?
+      WHERE attempt_id = ? AND finished_at IS NULL
+    `).run(JSON.stringify(recovery), claim.attempt.attemptId);
+    this.finishAttempt(
+      claim,
+      now,
+      outcome.outcome,
+      executionSessionId,
+      {
+        errorCode: `continuation_${failure.category}`,
+        errorSummary: outcome.reason,
+        retryable: outcome.outcome === 'recovering',
+      },
+    );
+    if (outcome.outcome === 'waiting_user') {
+      this.insertInterrupt(
+        current,
+        claim,
+        failure,
+        recovery,
+        outcome.checkpoint,
+        outcome.prompt,
+        now,
+      );
+    }
+  }
+
   private finishPartial(
     claim: ContinuationClaim,
     current: ContinuationJob,
@@ -2293,10 +2932,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     executionSessionId?: string,
   ): void {
     assertJsonBytes('blocked result', outcome, CONTINUATION_LIMITS.finalMessageBytes);
+    const terminalRecovery = outcome.recoveryFailure
+      ? this.recordTerminalRecovery(claim, current, outcome.recoveryFailure, 'block')
+      : null;
     const update = this.database.prepare(`
       UPDATE continuation_jobs
       SET status = 'blocked', execution_session_id = ?, checkpoint_json = ?,
           step_count = step_count + 1,
+          recovery_json = ?, recovery_total_count = ?,
+          recovery_fingerprint_counts_json = ?,
           result_summary = ?, error_code = ?, error_summary = ?, completed_at = ?,
           updated_at = ?, lease_owner = NULL, lease_expires_at = NULL,
           heartbeat_at = NULL, row_version = row_version + 1
@@ -2304,6 +2948,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     `).run(
       executionSessionId ?? null,
       JSON.stringify(outcome.checkpoint),
+      terminalRecovery ? JSON.stringify(terminalRecovery.state) : null,
+      terminalRecovery?.totalAttempts ?? current.recoveryTotalCount,
+      JSON.stringify(terminalRecovery?.counts ?? current.recoveryFingerprintCounts),
       outcome.errorSummary,
       outcome.errorCode,
       outcome.errorSummary,
@@ -2321,7 +2968,41 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       executionSessionId,
       { errorCode: outcome.errorCode, errorSummary: outcome.errorSummary, retryable: false },
     );
-    this.insertTerminalOutbox(current, renderBlockedPayload(current.jobId, outcome), now);
+    this.insertTerminalOutbox(
+      current,
+      renderBlockedPayload(current.jobId, outcome, terminalRecovery?.state),
+      now,
+    );
+  }
+
+  private recordTerminalRecovery(
+    claim: ContinuationClaim,
+    current: ContinuationJob,
+    recoveryFailure: DurableRunFailure,
+    lastDecision: Extract<ContinuationRecoveryState['lastDecision'], 'block' | 'fail'>,
+  ): {
+    state: ContinuationRecoveryState;
+    totalAttempts: number;
+    counts: Record<string, number>;
+  } {
+    const failure = boundedDurableRunFailure(recoveryFailure);
+    const counts = { ...current.recoveryFingerprintCounts };
+    const fingerprintAttempts = (counts[failure.fingerprint] ?? 0) + 1;
+    const totalAttempts = current.recoveryTotalCount + 1;
+    counts[failure.fingerprint] = fingerprintAttempts;
+    const state: ContinuationRecoveryState = {
+      failure,
+      fingerprintAttempts,
+      totalAttempts,
+      lastDecision,
+    };
+    assertJsonBytes('recovery state', state, CONTINUATION_LIMITS.contextSnapshotBytes);
+    this.database.prepare(`
+      UPDATE continuation_attempts
+      SET recovery_json = ?
+      WHERE attempt_id = ? AND job_id = ? AND finished_at IS NULL
+    `).run(JSON.stringify(state), claim.attempt.attemptId, current.jobId);
+    return { state, totalAttempts, counts };
   }
 
   private finishFailure(
@@ -2331,6 +3012,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     now: string,
     executionSessionId?: string,
     checkpoint?: ContinuationCheckpointV2,
+    recoveryFailure?: DurableRunFailure,
   ): void {
     failure = boundedFailure(failure);
     const failureCount = current.failureCount + 1;
@@ -2374,6 +3056,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       executionSessionId,
       failureCount,
       checkpoint,
+      current.noProgressCount,
+      recoveryFailure,
     );
   }
 
@@ -2388,11 +3072,17 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     failureCount = current.failureCount,
     checkpoint?: ContinuationCheckpointV2,
     noProgressCount = current.noProgressCount,
+    recoveryFailure?: DurableRunFailure,
   ): void {
+    const terminalRecovery = recoveryFailure
+      ? this.recordTerminalRecovery(claim, current, recoveryFailure, 'fail')
+      : null;
     const update = this.database.prepare(`
       UPDATE continuation_jobs
       SET status = ?, execution_session_id = ?, checkpoint_json = ?, failure_count = ?,
           no_progress_count = ?, error_code = ?,
+          recovery_json = ?, recovery_total_count = ?,
+          recovery_fingerprint_counts_json = ?,
           error_summary = ?, completed_at = ?, updated_at = ?, lease_owner = NULL,
           lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
       WHERE job_id = ? AND status = 'running' AND lease_owner = ? AND row_version = ?
@@ -2403,6 +3093,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       failureCount,
       noProgressCount,
       errorCode,
+      terminalRecovery ? JSON.stringify(terminalRecovery.state) : null,
+      terminalRecovery?.totalAttempts ?? current.recoveryTotalCount,
+      JSON.stringify(terminalRecovery?.counts ?? current.recoveryFingerprintCounts),
       errorSummary,
       now,
       now,
@@ -2418,13 +3111,17 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       executionSessionId,
       { errorCode, errorSummary, retryable: false },
     );
-    this.insertTerminalOutbox(current, `Task failed: ${current.jobId}\n${errorSummary}`, now);
+    this.insertTerminalOutbox(
+      current,
+      renderFailedPayload(current.jobId, errorSummary, terminalRecovery?.state),
+      now,
+    );
   }
 
   private finishAttempt(
     claim: ContinuationClaim,
     now: string,
-    outcome: 'continue' | 'completed' | 'partial' | 'failed' | 'blocked' | 'cancelled',
+    outcome: 'continue' | 'recovering' | 'waiting_user' | 'completed' | 'partial' | 'failed' | 'blocked' | 'cancelled',
     executionSessionId?: string,
     failure?: ContinuationFailure,
   ): void {
@@ -2478,7 +3175,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       UPDATE continuation_outbox
       SET status = 'superseded', worker_id = NULL, lease_expires_at = NULL,
           error_code = NULL, error_summary = NULL, updated_at = ?
-      WHERE job_id = ? AND kind = 'progress'
+      WHERE job_id = ? AND kind IN ('progress', 'interrupt')
         AND (
           status IN ('pending', 'failed')
           OR (status = 'sending' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
@@ -2525,6 +3222,48 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       JSON.stringify(job.route),
       deliveryIdempotencyKey(job.jobId, eventKey),
       renderProgressPayload(job, claim, outcome),
+      now,
+      now,
+      now,
+    );
+  }
+
+  private insertInterrupt(
+    job: ContinuationJob,
+    claim: ContinuationClaim,
+    failure: DurableRunFailure,
+    recovery: ContinuationRecoveryState,
+    checkpoint: ContinuationCheckpointV2,
+    prompt: string,
+    now: string,
+  ): void {
+    const interruptId = `int_${createHash('sha256')
+      .update(`${job.jobId}\0${claim.attempt.attemptId}\0${failure.fingerprint}`)
+      .digest('hex')
+      .slice(0, 24)}`;
+    const boundedPrompt = truncateCharacters(redactContinuationText(prompt), 2_000);
+    this.database.prepare(`
+      INSERT INTO continuation_interrupts (
+        interrupt_id, job_id, attempt_id, status, prompt, created_at
+      ) VALUES (?, ?, ?, 'pending', ?, ?)
+      ON CONFLICT(job_id, attempt_id) DO NOTHING
+    `).run(interruptId, job.jobId, claim.attempt.attemptId, boundedPrompt, now);
+    const eventKey = `interrupt:${interruptId}`;
+    this.database.prepare(`
+      INSERT INTO continuation_outbox (
+        outbox_id, job_id, event_key, kind, attempt_id,
+        route_json, idempotency_key, payload, status,
+        attempt_count, next_attempt_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'interrupt', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+      ON CONFLICT(job_id, event_key) DO NOTHING
+    `).run(
+      makeId('out'),
+      job.jobId,
+      eventKey,
+      claim.attempt.attemptId,
+      JSON.stringify(job.route),
+      deliveryIdempotencyKey(job.jobId, eventKey),
+      renderInterruptPayload(job, claim, interruptId, boundedPrompt, failure, recovery, checkpoint),
       now,
       now,
       now,
@@ -2727,7 +3466,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     storageLockHeld = false,
   ): Promise<boolean> {
     return this.withJobStorageLock(jobId, storageLockHeld, async () => {
-      const row = this.database.prepare(`${jobSelectSql()} WHERE j.job_id = ?`).get(jobId);
+      const schemaVersion = Number(this.scalar('PRAGMA user_version'));
+      const row = this.database.prepare(
+        `${jobSelectSql(
+          schemaVersion >= OUTCOME_DRIVEN_SCHEMA_VERSION,
+          schemaVersion >= SCHEMA_VERSION,
+        )} WHERE j.job_id = ?`,
+      ).get(jobId);
       if (!row) return false;
       try {
         const current = mapJob(row);
@@ -2810,6 +3555,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       eventKey: stringField(row, 'event_key'),
       kind: stringField(row, 'kind') as ContinuationDeliveryClaim['kind'],
       attemptId: optionalStringField(row, 'attempt_id'),
+      ...(stringField(row, 'kind') === 'interrupt'
+        ? { interruptId: stringField(row, 'event_key').slice('interrupt:'.length) }
+        : {}),
       workerId: stringField(row, 'worker_id'),
       route,
       idempotencyKey: stringField(row, 'idempotency_key'),
@@ -2864,7 +3612,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 }
 
-function jobSelectSql(includeOutcomeState = true): string {
+function jobSelectSql(includeOutcomeState = true, includeInterruptState = includeOutcomeState): string {
   const outcomeState = includeOutcomeState
     ? `(SELECT a.delta_json FROM continuation_attempts a
             WHERE a.job_id = j.job_id AND a.finished_at IS NOT NULL AND a.delta_json IS NOT NULL
@@ -2873,15 +3621,53 @@ function jobSelectSql(includeOutcomeState = true): string {
             WHERE a.job_id = j.job_id AND a.finished_at IS NOT NULL AND a.verification_json IS NOT NULL
             ORDER BY a.ordinal DESC LIMIT 1) AS last_verification_json`
     : `0 AS no_progress_count, NULL AS last_delta_json, NULL AS last_verification_json`;
+  const interruptState = includeInterruptState
+    ? `(SELECT i.interrupt_id FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_id,
+           (SELECT i.attempt_id FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_attempt_id,
+           (SELECT i.status FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_status,
+           (SELECT i.prompt FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_prompt,
+           (SELECT i.response_text FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_response,
+           (SELECT i.created_at FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_created_at,
+           (SELECT i.resolved_at FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_resolved_at,
+           (SELECT o.message_id FROM continuation_outbox o
+            WHERE o.job_id = j.job_id AND o.kind = 'interrupt'
+            ORDER BY o.created_at DESC LIMIT 1) AS current_interrupt_message_id,
+           (SELECT o.updated_at FROM continuation_outbox o
+            WHERE o.job_id = j.job_id AND o.kind = 'interrupt' AND o.status = 'delivered'
+            ORDER BY o.created_at DESC LIMIT 1) AS current_interrupt_delivered_at`
+    : `NULL AS current_interrupt_id, NULL AS current_interrupt_attempt_id,
+       NULL AS current_interrupt_status, NULL AS current_interrupt_prompt,
+       NULL AS current_interrupt_response, NULL AS current_interrupt_created_at,
+       NULL AS current_interrupt_resolved_at, NULL AS current_interrupt_message_id,
+       NULL AS current_interrupt_delivered_at`;
   return `
     SELECT j.*,
            (SELECT o.status FROM continuation_outbox o
             WHERE o.job_id = j.job_id AND o.kind = 'terminal'
             LIMIT 1) AS delivery_status,
            (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) AS attempt_count,
+           ${interruptState},
            ${outcomeState}
     FROM continuation_jobs j
   `;
+}
+
+function mapPendingInterruptRoute(row: SqlRow): ContinuationPendingInterruptRoute {
+  const route = parseTrustedJson(row.route_json, 'continuation interrupt route');
+  if (!isDeliveryRoute(route)) throw new Error('Continuation interrupt route is invalid.');
+  return {
+    interruptId: stringField(row, 'interrupt_id'),
+    jobId: stringField(row, 'job_id'),
+    route,
+    deliveredMessageId: optionalStringField(row, 'message_id'),
+  };
 }
 
 function toolCallSchemaSql(): string {
@@ -2890,6 +3676,7 @@ function toolCallSchemaSql(): string {
       call_id TEXT PRIMARY KEY,
       job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
       step_index INTEGER NOT NULL CHECK(step_index >= 0),
+      step_id TEXT NOT NULL,
       attempt_id TEXT NOT NULL REFERENCES continuation_attempts(attempt_id),
       tool_name TEXT NOT NULL,
       request_hash TEXT NOT NULL,
@@ -2898,8 +3685,30 @@ function toolCallSchemaSql(): string {
       started_at TEXT NOT NULL,
       completed_at TEXT,
       updated_at TEXT NOT NULL,
-      UNIQUE(job_id, step_index)
+      UNIQUE(job_id, step_id, request_hash)
     ) STRICT;
+    CREATE UNIQUE INDEX IF NOT EXISTS continuation_tool_calls_running_step_idx
+      ON continuation_tool_calls(job_id, step_id) WHERE status = 'running';
+  `;
+}
+
+function interruptSchemaSql(): string {
+  return `
+    CREATE TABLE IF NOT EXISTS continuation_interrupts (
+      interrupt_id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
+      attempt_id TEXT NOT NULL REFERENCES continuation_attempts(attempt_id),
+      status TEXT NOT NULL CHECK(status IN ('pending', 'resolved')),
+      prompt TEXT NOT NULL,
+      response_text TEXT,
+      created_at TEXT NOT NULL,
+      resolved_at TEXT,
+      UNIQUE(job_id, attempt_id)
+    ) STRICT;
+    CREATE UNIQUE INDEX IF NOT EXISTS continuation_interrupts_active_job_idx
+      ON continuation_interrupts(job_id) WHERE status = 'pending';
+    CREATE UNIQUE INDEX IF NOT EXISTS continuation_outbox_message_id_idx
+      ON continuation_outbox(message_id) WHERE message_id IS NOT NULL;
   `;
 }
 
@@ -2930,6 +3739,16 @@ function mapJob(row: SqlRow): ContinuationJob {
     throw new Error('Continuation persisted host tools are inconsistent.');
   }
   const model = optionalStringField(row, 'model');
+  const recovery = row.recovery_json
+    ? parseTrustedRecoveryState(row.recovery_json, 'recovery_json')
+    : undefined;
+  const recoveryFingerprintCounts = row.recovery_fingerprint_counts_json === undefined
+    ? {}
+    : parseTrustedCountRecord(
+        row.recovery_fingerprint_counts_json,
+        'recovery_fingerprint_counts_json',
+      );
+  const interruptId = optionalStringField(row, 'current_interrupt_id');
   validatePersistedFactProjection(row, {
     route: routeValue,
     sourceFacts: sourceFactsValue,
@@ -2981,6 +3800,27 @@ function mapJob(row: SqlRow): ContinuationJob {
     lastVerification: row.last_verification_json
       ? parseTrustedVerification(row.last_verification_json, 'last_verification_json')
       : undefined,
+    recovery,
+    recoveryTotalCount: row.recovery_total_count === undefined
+      ? 0
+      : numberField(row, 'recovery_total_count'),
+    recoveryFingerprintCounts,
+    currentInterrupt: interruptId ? {
+      interruptId,
+      jobId: stringField(row, 'job_id'),
+      attemptId: stringField(row, 'current_interrupt_attempt_id'),
+      status: optionalStringField(row, 'current_interrupt_status') === 'resolved'
+        ? 'resolved'
+        : optionalStringField(row, 'current_interrupt_message_id')
+          ? 'delivered'
+          : 'pending',
+      prompt: stringField(row, 'current_interrupt_prompt'),
+      deliveredMessageId: optionalStringField(row, 'current_interrupt_message_id'),
+      responseText: optionalStringField(row, 'current_interrupt_response'),
+      createdAt: stringField(row, 'current_interrupt_created_at'),
+      deliveredAt: optionalStringField(row, 'current_interrupt_delivered_at'),
+      resolvedAt: optionalStringField(row, 'current_interrupt_resolved_at'),
+    } : undefined,
     noProgressCount: numberField(row, 'no_progress_count'),
     attemptCount: numberField(row, 'attempt_count'),
     stepCount: numberField(row, 'step_count'),
@@ -3645,13 +4485,37 @@ function renderPartialPayload(
 function renderBlockedPayload(
   jobId: string,
   outcome: Extract<ContinuationStepOutcome, { outcome: 'blocked' }>,
+  recovery?: ContinuationRecoveryState,
 ): string {
   return [
     `Task blocked: ${jobId}`,
     `Reason: ${outcome.errorSummary}`,
     `Required capability: ${outcome.requiredCapability}`,
+    recovery ? `Failed step: ${recovery.failure.failedStep}` : '',
+    recovery ? `Failure category: ${recovery.failure.category}` : '',
+    recovery
+      ? `Recovery attempts: ${recovery.fingerprintAttempts} for this failure, ${recovery.totalAttempts} total`
+      : '',
+    recovery ? `Diagnostic: ${recovery.failure.diagnostic}` : '',
     renderResultSection('Completed work', outcome.completedWork),
     renderResultSection('Remaining work', outcome.unperformedWork),
+  ].filter(Boolean).join('\n');
+}
+
+function renderFailedPayload(
+  jobId: string,
+  errorSummary: string,
+  recovery?: ContinuationRecoveryState,
+): string {
+  return [
+    `Task failed: ${jobId}`,
+    `Reason: ${errorSummary}`,
+    recovery ? `Failed step: ${recovery.failure.failedStep}` : '',
+    recovery ? `Failure category: ${recovery.failure.category}` : '',
+    recovery
+      ? `Recovery attempts: ${recovery.fingerprintAttempts} for this failure, ${recovery.totalAttempts} total`
+      : '',
+    recovery ? `Diagnostic: ${recovery.failure.diagnostic}` : '',
   ].filter(Boolean).join('\n');
 }
 
@@ -3676,6 +4540,28 @@ function renderProgressPayload(
       : '',
   ].filter(Boolean).join('\n');
   return truncateCharacters(payload, PROGRESS_PAYLOAD_MAX_CHARS);
+}
+
+function renderInterruptPayload(
+  job: ContinuationJob,
+  claim: ContinuationClaim,
+  interruptId: string,
+  prompt: string,
+  failure: DurableRunFailure,
+  recovery: ContinuationRecoveryState,
+  checkpoint: ContinuationCheckpointV2,
+): string {
+  return [
+    `Task waiting for input: ${job.jobId} (${interruptId})`,
+    `Attempt: ${claim.attempt.ordinal} / ${job.maxAttempts}`,
+    `Failed step: ${failure.failedStep}`,
+    `Failure category: ${failure.category}`,
+    `Recovery attempts: ${recovery.fingerprintAttempts} for this failure, ${recovery.totalAttempts} total`,
+    `Diagnostic: ${failure.diagnostic}`,
+    `Action needed: ${prompt}`,
+    renderResultSection('Completed work', boundedProgressValues(checkpoint.completedStepIds)),
+    `Resume: /task resume ${job.jobId} <input>`,
+  ].filter(Boolean).join('\n');
 }
 
 function boundedProgressValues(values: string[]): string[] {
@@ -3718,6 +4604,9 @@ function validateToolResult(result: ContinuationToolResult): void {
   if (typeof result.ok !== 'boolean' || typeof result.message !== 'string') {
     throw new Error('Continuation local CLI tool result is invalid.');
   }
+  if (result.failure !== undefined && !isDurableRunFailure(result.failure)) {
+    throw new Error('Continuation local CLI tool failure is invalid.');
+  }
   assertJsonBytes('tool result', result, CONTINUATION_LIMITS.toolResultBytes);
 }
 
@@ -3731,6 +4620,10 @@ function parseToolResult(value: SqlRow[string] | undefined): ContinuationToolRes
   ) {
     throw new Error('Invalid continuation tool result in database.');
   }
+  if (
+    (parsed as { failure?: unknown }).failure !== undefined
+    && !isDurableRunFailure((parsed as { failure?: unknown }).failure)
+  ) throw new Error('Invalid continuation tool failure in database.');
   return parsed as ContinuationToolResult;
 }
 
@@ -3868,6 +4761,27 @@ function boundedFailure(failure: ContinuationFailure): ContinuationFailure {
   };
 }
 
+function boundedDurableRunFailure(failure: DurableRunFailure): DurableRunFailure {
+  const bounded: DurableRunFailure = {
+    category: failure.category,
+    retrySafety: failure.retrySafety,
+    capabilityAvailable: failure.capabilityAvailable,
+    operationRisk: failure.operationRisk,
+    hints: failure.hints.slice(0, 8).map((hint) => truncateCharacters(
+      redactContinuationText(hint),
+      500,
+    )),
+    failedStep: truncateCharacters(failure.failedStep, 80),
+    diagnostic: truncateCharacters(redactContinuationText(failure.diagnostic), 1_000),
+    fingerprint: failure.fingerprint.slice(0, 128),
+  };
+  if (!bounded.fingerprint || !bounded.failedStep) {
+    throw new Error('Continuation durable failure identity is invalid.');
+  }
+  assertJsonBytes('durable failure', bounded, CONTINUATION_LIMITS.contextSnapshotBytes);
+  return bounded;
+}
+
 function truncateUtf8(value: string, maxBytes: number): string {
   if (Buffer.byteLength(value, 'utf-8') <= maxBytes) return value;
   const suffix = '...';
@@ -3888,7 +4802,7 @@ function assertUtf8Bytes(name: string, value: string, limit: number): void {
   }
 }
 
-function makeId(prefix: 'job' | 'att' | 'out'): string {
+function makeId(prefix: 'job' | 'att' | 'out' | 'int'): string {
   return `${prefix}_${randomBytes(12).toString('hex')}`;
 }
 
@@ -3899,11 +4813,48 @@ function deliveryIdempotencyKey(jobId: string, eventKey: string): string {
     .slice(0, 32)}`;
 }
 
-function toolCallId(jobId: string, stepIndex: number): string {
+function toolCallId(jobId: string, stepId: string, requestHash: string): string {
   return `call_${createHash('sha256')
-    .update(`${jobId}\0${stepIndex}`)
+    .update(`${jobId}\0${stepId}\0${requestHash}`)
     .digest('hex')
     .slice(0, 24)}`;
+}
+
+function continuationStepId(job: ContinuationJob): string {
+  return job.checkpoint?.nextAction?.id
+    ?? job.checkpoint?.currentStepId
+    ?? 'initial-step';
+}
+
+function canReexecuteSameToolRequest(
+  job: ContinuationJob,
+  failure: DurableRunFailure,
+): boolean {
+  const userResolvedAccess = Boolean(
+    job.recovery?.userInput
+    && ['authentication_required', 'permission_required'].includes(failure.category),
+  );
+  const boundedAutomaticRetry = Boolean(
+    job.recovery?.lastDecision === 'retry'
+    && job.recovery.failure.fingerprint === failure.fingerprint
+    && failure.retrySafety === 'safe'
+    && ['transient', 'unknown'].includes(failure.category),
+  );
+  return userResolvedAccess || boundedAutomaticRetry;
+}
+
+function canReplaceCompletedToolFailure(
+  job: ContinuationJob,
+  failure: DurableRunFailure,
+): boolean {
+  return (failure.category === 'invalid_invocation' && failure.retrySafety === 'safe')
+    || canReexecuteSameToolRequest(job, failure);
+}
+
+function hasOpaqueExecutionEffects(job: ContinuationJob): boolean {
+  return job.permissions.filesystem.mode === 'workspace-write'
+    || job.permissions.network === 'enabled'
+    || job.permissions.externalSideEffects === 'allowed';
 }
 
 function toolRequestHash(request: ContinuationToolRequest): string {
@@ -4012,6 +4963,53 @@ function parseTrustedVerification(
     throw new Error(`Invalid continuation verification field: ${field}.`);
   }
   return parsed;
+}
+
+function parseTrustedRecoveryState(
+  value: SqlRow[string] | undefined,
+  field: string,
+): ContinuationRecoveryState {
+  const parsed = parseTrustedJson(value, field);
+  if (
+    !isRecord(parsed)
+    || !isDurableRunFailure(parsed.failure)
+    || !Number.isInteger(parsed.fingerprintAttempts)
+    || Number(parsed.fingerprintAttempts) < 1
+    || !Number.isInteger(parsed.totalAttempts)
+    || Number(parsed.totalAttempts) < 1
+    || !['retry', 'wait_user', 'block', 'fail'].includes(String(parsed.lastDecision))
+    || (parsed.userInput !== undefined && typeof parsed.userInput !== 'string')
+  ) throw new Error(`Invalid continuation recovery field: ${field}.`);
+  assertJsonBytes(field, parsed, CONTINUATION_LIMITS.contextSnapshotBytes);
+  return parsed as unknown as ContinuationRecoveryState;
+}
+
+function parseTrustedCountRecord(
+  value: SqlRow[string] | undefined,
+  field: string,
+): Record<string, number> {
+  const parsed = parseTrustedJson(value, field);
+  if (
+    !isRecord(parsed)
+    || Object.entries(parsed).some(([key, count]) =>
+      !key || !Number.isInteger(count) || Number(count) < 0)
+  ) throw new Error(`Invalid continuation count record: ${field}.`);
+  return parsed as Record<string, number>;
+}
+
+function isDurableRunFailure(value: unknown): value is DurableRunFailure {
+  return isRecord(value)
+    && ['invalid_invocation', 'transient', 'authentication_required', 'permission_required',
+      'capability_unavailable', 'terminal', 'unknown'].includes(String(value.category))
+    && ['safe', 'unsafe', 'unknown'].includes(String(value.retrySafety))
+    && typeof value.capabilityAvailable === 'boolean'
+    && ['pure', 'read_only', 'idempotent_write', 'external_side_effect', 'unknown']
+      .includes(String(value.operationRisk))
+    && Array.isArray(value.hints)
+    && value.hints.every((hint) => typeof hint === 'string')
+    && typeof value.failedStep === 'string'
+    && typeof value.diagnostic === 'string'
+    && typeof value.fingerprint === 'string';
 }
 
 function parseTrustedResultArtifacts(

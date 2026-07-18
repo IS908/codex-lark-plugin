@@ -22,6 +22,7 @@ interface LocalCliToolConfig {
   timeoutMs: number;
   maxOutputBytes: number;
   allowedCallers: CallerMode;
+  retrySafeStructuredValidation: boolean;
 }
 
 interface LoadedConfig {
@@ -70,6 +71,15 @@ export interface RunConfiguredLocalCliToolAsCallerOptions {
 export interface RunConfiguredLocalCliToolResult {
   ok: boolean;
   message: string;
+  execution?: ProcessResult;
+  failure?: {
+    type: string;
+    subtype?: string;
+    message: string;
+    hints?: string[];
+    phase: 'pre_execution' | 'execution' | 'unknown';
+    retrySafe: boolean;
+  };
 }
 
 interface ProcessResult {
@@ -216,6 +226,11 @@ function parseToolConfig(name: string, raw: any): LocalCliToolConfig {
     timeoutMs: parsePositiveNumber(raw.timeoutMs, `Tool ${name} timeoutMs`, 30_000),
     maxOutputBytes: parsePositiveNumber(raw.maxOutputBytes, `Tool ${name} maxOutputBytes`, 64 * 1024),
     allowedCallers: parseAllowedCallers(raw.allowedCallers),
+    retrySafeStructuredValidation: parseBoolean(
+      raw.retrySafeStructuredValidation,
+      `Tool ${name} retrySafeStructuredValidation`,
+      false,
+    ),
   };
 }
 
@@ -444,11 +459,11 @@ export async function runConfiguredLocalCliToolAsCaller(
 
   if (!caller) {
     await audit('run_local_cli_tool', null, auditArgs, 'denied');
-    return { ok: false, message: 'Caller identity is required for local CLI execution.' };
+    return structuredFailure('authentication', 'Caller identity is required for local CLI execution.');
   }
   if (caller === SYSTEM_FLUSH_CALLER) {
     await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-    return { ok: false, message: 'System flush identity is not authorized for local CLI execution.' };
+    return structuredFailure('permission', 'System flush identity is not authorized for local CLI execution.');
   }
 
   let loaded: LoadedConfig;
@@ -456,7 +471,7 @@ export async function runConfiguredLocalCliToolAsCaller(
     loaded = await loadConfig(configPath);
   } catch (err: any) {
     await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-    return { ok: false, message: `Invalid local CLI config: ${err?.message ?? String(err)}` };
+    return structuredFailure('capability_unavailable', `Invalid local CLI config: ${err?.message ?? String(err)}`);
   }
 
   const config = Object.prototype.hasOwnProperty.call(loaded.tools, tool)
@@ -464,18 +479,18 @@ export async function runConfiguredLocalCliToolAsCaller(
     : undefined;
   if (!config) {
     await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-    return { ok: false, message: `Local CLI tool "${tool}" is not configured.` };
+    return structuredFailure('capability_unavailable', `Local CLI tool "${tool}" is not configured.`);
   }
 
   if (!isCallerAllowed(caller, config.allowedCallers)) {
     await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-    return { ok: false, message: `Caller ${caller} is not authorized for local CLI tool "${tool}".` };
+    return structuredFailure('permission', `Caller ${caller} is not authorized for local CLI tool "${tool}".`);
   }
 
   const validationError = validateExecution(config, requestedArgs);
   if (validationError) {
     await audit('run_local_cli_tool', caller, auditArgs, 'denied');
-    return { ok: false, message: validationError };
+    return structuredFailure('validation', validationError, 'invalid_argument', true);
   }
 
   const finalArgs = [...config.fixedArgs, ...requestedArgs];
@@ -492,13 +507,23 @@ export async function runConfiguredLocalCliToolAsCaller(
   } catch (err: any) {
     await audit('run_local_cli_tool', caller, auditArgs, 'error');
     if (err instanceof LocalCliToolAbortedError) throw err;
-    return { ok: false, message: `Failed to execute local CLI tool "${tool}": ${err?.message ?? String(err)}` };
+    return structuredFailure(
+      err?.code === 'ENOENT' ? 'capability_unavailable' : 'transient',
+      `Failed to execute local CLI tool "${tool}": ${err?.message ?? String(err)}`,
+      err?.code === 'ENOENT' ? 'executable_not_found' : 'spawn_failed',
+      err?.code !== 'ENOENT',
+    );
   }
 
   const ok = !result.timedOut && result.exitCode === 0;
   await audit('run_local_cli_tool', caller, auditArgs, ok ? 'ok' : 'error');
+  const failure = ok
+    ? undefined
+    : structuredProcessFailure(result, config.retrySafeStructuredValidation);
   return {
     ok,
+    execution: result,
+    ...(failure ? { failure } : {}),
     message: JSON.stringify(
       {
         tool,
@@ -512,6 +537,68 @@ export async function runConfiguredLocalCliToolAsCaller(
       null,
       2,
     ),
+  };
+}
+
+function structuredProcessFailure(
+  result: ProcessResult,
+  retrySafeStructuredValidation: boolean,
+): NonNullable<RunConfiguredLocalCliToolResult['failure']> | undefined {
+  if (
+    !retrySafeStructuredValidation
+    || result.exitCode !== 2
+    || result.signal !== null
+    || result.timedOut
+    || result.truncated
+    || result.stdout.trim() !== ''
+  ) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stderr);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const envelope = parsed as Record<string, unknown>;
+  if (envelope.ok !== false || !envelope.error || typeof envelope.error !== 'object') {
+    return undefined;
+  }
+  const error = envelope.error as Record<string, unknown>;
+  if (
+    error.type !== 'validation'
+    || error.subtype !== 'invalid_argument'
+    || typeof error.message !== 'string'
+    || !error.message.trim()
+  ) return undefined;
+  const declaredHints = Array.isArray(error.hints)
+    ? error.hints.filter((hint): hint is string => typeof hint === 'string' && Boolean(hint.trim()))
+    : [];
+  return {
+    type: error.type,
+    subtype: error.subtype,
+    message: error.message,
+    hints: declaredHints.slice(0, 8),
+    phase: 'execution',
+    retrySafe: true,
+  };
+}
+
+function structuredFailure(
+  type: string,
+  message: string,
+  subtype?: string,
+  retrySafe = false,
+): RunConfiguredLocalCliToolResult {
+  return {
+    ok: false,
+    message,
+    failure: {
+      type,
+      ...(subtype ? { subtype } : {}),
+      message,
+      phase: 'pre_execution',
+      retrySafe,
+    },
   };
 }
 

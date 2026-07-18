@@ -85,8 +85,9 @@ async function createJob(
     fileName: string;
     kind: 'message_image' | 'message_attachment';
   }> = [],
+  targetService = service,
 ) {
-  return (await service.createFromMessage({
+  return (await targetService.createFromMessage({
     title,
     objective: `Complete ${title}`,
     deliverables: [{ id: 'result', description: 'The completed task result.', required: true }],
@@ -462,4 +463,171 @@ assert.equal(commentReplies.at(-1)?.file_type, 'docx');
 assert.equal(replies.at(-1)?.chat_id, 'oc_task_chat');
 
 repository.close();
+
+const resumeRoot = await mkdtemp(path.join(tmpdir(), 'continuation-command-resume-'));
+const resumeRepository = await SqliteContinuationRepository.open({
+  databasePath: path.join(resumeRoot, 'jobs.sqlite'),
+  artifactsDir: path.join(resumeRoot, 'artifacts'),
+  jitter: () => 0,
+});
+const resumeService = new ContinuationService({
+  repository: resumeRepository,
+  allowedWorkingRoot: resumeRoot,
+  filesystemMode: 'workspace-write',
+  maxAttempts: 5,
+  maxRetries: 3,
+  maxTotalMinutes: 30,
+  timeoutMs: 60_000,
+  clock: { now: () => new Date(now) },
+});
+const resumeReplies: ReplyRequest[] = [];
+const runResume = (commandMessage: LarkMessage) => handleContinuationCommand({
+  message: commandMessage,
+  service: resumeService,
+  ownerOpenId: 'ou_owner',
+  sendReply: async (request) => {
+    resumeReplies.push(request);
+    return { sentCount: 1 };
+  },
+  auditCommand: async () => {},
+});
+
+async function createWaitingTask(suffix: string, commitDelivery = true): Promise<{
+  jobId: string;
+  interruptMessageId: string;
+  interruptPayload: string;
+}> {
+  const job = await createJob(
+    `om_waiting_${suffix}`,
+    'ou_creator',
+    `Waiting task ${suffix}`,
+    [],
+    resumeService,
+  );
+  const claim = await resumeRepository.claimDue(
+    `worker-waiting-${suffix}`,
+    now.toISOString(),
+    new Date(now.getTime() + 60_000).toISOString(),
+  );
+  assert.equal(claim?.job.jobId, job.jobId);
+  await resumeRepository.completeStep(claim!, {
+    outcome: {
+      outcome: 'waiting_user',
+      checkpoint: taskCheckpoint(false),
+      failure: {
+        category: 'permission_required',
+        retrySafety: 'unsafe',
+        capabilityAvailable: true,
+        operationRisk: 'external_side_effect',
+        hints: ['Authorize the requested operation.'],
+        failedStep: 'complete-task',
+        diagnostic: 'The operation requires user authorization.',
+        fingerprint: `permission-required-${suffix}`,
+      },
+      prompt: 'Authorize the requested operation, then resume the task.',
+      reason: 'The operation requires user authorization.',
+    },
+  }, now.toISOString());
+  const delivery = await resumeRepository.claimPendingDelivery(
+    `delivery-waiting-${suffix}`,
+    now.toISOString(),
+  );
+  assert.equal(delivery?.kind, 'interrupt');
+  const interruptMessageId = `om_interrupt_${suffix}`;
+  if (commitDelivery) {
+    await resumeRepository.markDeliveryResult(
+      delivery!,
+      { status: 'delivered', messageId: interruptMessageId },
+      now.toISOString(),
+    );
+  }
+  return {
+    jobId: job.jobId,
+    interruptMessageId,
+    interruptPayload: delivery!.payload,
+  };
+}
+
+const explicitResume = await createWaitingTask('explicit');
+assert.equal(await runResume(message({
+  messageId: 'om_status_waiting',
+  text: `/task status ${explicitResume.jobId}`,
+  rawContent: `{"text":"/task status ${explicitResume.jobId}"}`,
+})), true);
+assert.match(resumeReplies.at(-1)?.text ?? '', /Recovery: permission_required \| step complete-task \| wait_user/);
+assert.match(resumeReplies.at(-1)?.text ?? '', /Action needed: Authorize the requested operation/);
+assert.equal(await runResume(message({
+  messageId: 'om_resume_wrong_actor',
+  senderId: 'ou_intruder',
+  text: `/task resume ${explicitResume.jobId} approved`,
+  rawContent: `{"text":"/task resume ${explicitResume.jobId} approved"}`,
+})), true);
+assert.equal(resumeReplies.at(-1)?.text, 'Task not found or not accessible.');
+assert.equal(await runResume(message({
+  messageId: 'om_resume_wrong_route',
+  chatId: 'oc_other_chat',
+  text: `/task resume ${explicitResume.jobId} approved`,
+  rawContent: `{"text":"/task resume ${explicitResume.jobId} approved"}`,
+})), true);
+assert.equal(resumeReplies.at(-1)?.text, 'Task not found or not accessible.');
+assert.equal(await runResume(message({
+  messageId: 'om_resume_explicit',
+  text: `/task resume ${explicitResume.jobId} approved`,
+  rawContent: `{"text":"/task resume ${explicitResume.jobId} approved"}`,
+})), true);
+assert.match(resumeReplies.at(-1)?.text ?? '', /Task resumed/);
+assert.equal((await resumeRepository.get(explicitResume.jobId))?.status, 'recovering');
+assert.equal(
+  (await resumeRepository.get(explicitResume.jobId))?.recovery?.userInput,
+  'approved',
+);
+assert.equal(await runResume(message({
+  messageId: 'om_resume_duplicate',
+  text: `/task resume ${explicitResume.jobId} second input`,
+  rawContent: `{"text":"/task resume ${explicitResume.jobId} second input"}`,
+})), true);
+assert.equal(resumeReplies.at(-1)?.text, 'This task is not waiting for user input.');
+assert.equal(
+  (await resumeRepository.get(explicitResume.jobId))?.recovery?.userInput,
+  'approved',
+);
+
+const quotedResume = await createWaitingTask('quoted');
+assert.equal(await runResume(message({
+  messageId: 'om_resume_quote_wrong_route',
+  chatId: 'oc_other_chat',
+  parentId: quotedResume.interruptMessageId,
+  text: 'approved from wrong route',
+  currentUserText: 'approved from wrong route',
+  rawContent: '{"text":"approved from wrong route"}',
+})), false);
+assert.equal(await runResume(message({
+  messageId: 'om_resume_quote',
+  parentId: quotedResume.interruptMessageId,
+  text: 'approved from quoted reply',
+  currentUserText: 'approved from quoted reply',
+  rawContent: '{"text":"approved from quoted reply"}',
+})), true);
+assert.match(resumeReplies.at(-1)?.text ?? '', /Task resumed/);
+assert.equal(
+  (await resumeRepository.get(quotedResume.jobId))?.recovery?.userInput,
+  'approved from quoted reply',
+);
+
+const fastQuotedResume = await createWaitingTask('fast-quoted', false);
+assert.equal(await runResume(message({
+  messageId: 'om_resume_quote_before_commit',
+  parentId: fastQuotedResume.interruptMessageId,
+  parentContent: fastQuotedResume.interruptPayload,
+  text: 'approved before delivery commit',
+  currentUserText: 'approved before delivery commit',
+  rawContent: '{"text":"approved before delivery commit"}',
+})), true);
+assert.equal((await resumeRepository.get(fastQuotedResume.jobId))?.status, 'recovering');
+assert.equal(
+  (await resumeRepository.get(fastQuotedResume.jobId))?.recovery?.userInput,
+  'approved before delivery commit',
+);
+
+resumeRepository.close();
 console.log('continuation command smoke: PASS');

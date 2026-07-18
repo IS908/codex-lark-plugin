@@ -143,6 +143,7 @@ function createRepositoryHarness(initialClaims: ContinuationClaim[] = []): Repos
       harness.heartbeats.push(jobId);
       return harness.getStatus === 'running';
     },
+    async markExecutionStarted() {},
     async completeStep(claim, result) {
       harness.completed.push({ claim, result });
     },

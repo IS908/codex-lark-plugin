@@ -29,6 +29,8 @@ import type {
 import { untrustedDataBlock } from '../prompts.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
 import { redactContinuationText } from './redaction.js';
+import { decideRecovery } from './recovery-policy.js';
+import type { DurableRunFailure } from '../domain/durable-run.js';
 import {
   ContinuationWorkingDirectoryError,
   validateContinuationWorkingDirectory,
@@ -444,6 +446,11 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       };
 
       const recovery = await this.options.toolInvoker?.recover(claim);
+      if (recovery?.status === 'failed') {
+        return {
+          outcome: recoveryOutcome(claim, recovery.failure, recovery.tool),
+        };
+      }
       if (recovery?.status === 'blocked') {
         return {
           outcome: blockedToolOutcome(claim,
@@ -585,6 +592,12 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       { tool: toolRequest.tool, args: toolRequest.args },
       signal,
     );
+    if (invocation.status === 'failed') {
+      return {
+        ...firstSessionPatch,
+        outcome: recoveryOutcome(claim, invocation.failure, toolRequest.tool),
+      };
+    }
     if (invocation.status === 'blocked') {
       return {
         ...firstSessionPatch,
@@ -964,6 +977,7 @@ function buildContinuationPrompt(
     checkpoint: job.checkpoint ?? null,
     previousAttemptDelta: job.lastAttemptDelta ?? null,
     previousVerification: job.lastVerification ?? null,
+    recovery: job.recovery ?? null,
     requiredTools: job.requiredTools,
     attempt: claim.attempt.ordinal,
     maxAttempts: job.maxAttempts,
@@ -1013,6 +1027,59 @@ function buildContinuationPrompt(
   ].join('\n');
 }
 
+function recoveryOutcome(
+  claim: ContinuationClaim,
+  failure: DurableRunFailure,
+  requiredCapability: string,
+): ContinuationStepOutcome {
+  const decision = decideRecovery(failure, {
+    fingerprintAttempts: claim.job.recoveryFingerprintCounts[failure.fingerprint] ?? 0,
+    totalAttempts: claim.job.recoveryTotalCount,
+    maxFingerprintAttempts: 2,
+    maxTotalAttempts: 4,
+  });
+  const checkpoint = checkpointForClaim(claim);
+  if (decision.action === 'retry') {
+    return {
+      outcome: 'recovering',
+      checkpoint,
+      failure,
+      delaySeconds: decision.delaySeconds,
+      reason: decision.reason,
+    };
+  }
+  if (decision.action === 'wait_user') {
+    return {
+      outcome: 'waiting_user',
+      checkpoint,
+      failure,
+      prompt: decision.prompt,
+      reason: decision.reason,
+    };
+  }
+  if (decision.action === 'block') {
+    return {
+      ...blockedToolOutcome(
+        claim,
+        `continuation_${failure.category}`,
+        decision.reason,
+        requiredCapability,
+      ),
+      recoveryFailure: failure,
+    };
+  }
+  return {
+    outcome: 'failed',
+    checkpoint,
+    errorCode: 'continuation_recovery_failed',
+    errorSummary: decision.reason,
+    retryable: false,
+    completedWork: checkpoint.completedStepIds,
+    unperformedWork: checkpoint.remainingSteps.map((step) => step.description),
+    recoveryFailure: failure,
+  };
+}
+
 function buildContinuationToolResultPrompt(
   claim: ContinuationClaim,
   request: ContinuationToolRequest,
@@ -1037,7 +1104,7 @@ function blockedToolOutcome(
   errorCode: string,
   errorSummary: string,
   requiredCapability: string,
-): ContinuationStepOutcome {
+): Extract<ContinuationStepOutcome, { outcome: 'blocked' }> {
   return {
     outcome: 'blocked',
     checkpoint: checkpointForClaim(claim),

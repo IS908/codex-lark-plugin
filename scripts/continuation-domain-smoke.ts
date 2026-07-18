@@ -17,7 +17,7 @@ assert.equal(supersededDeliveryStatus, 'superseded');
 for (const status of ['completed', 'partial', 'blocked', 'failed', 'cancelled'] as const) {
   assert.equal(isContinuationTerminal(status), true, `${status} should be terminal`);
 }
-for (const status of ['queued', 'running', 'waiting_retry', 'recovering', 'cancel_requested'] as const) {
+for (const status of ['queued', 'running', 'waiting_retry', 'recovering', 'waiting_user', 'cancel_requested'] as const) {
   assert.equal(isContinuationTerminal(status), false, `${status} should not be terminal`);
 }
 
@@ -180,6 +180,7 @@ assert.deepEqual(CONTINUATION_LIMITS, {
   managedArtifactBytesPerJob: 100 * 1024 * 1024,
   managedArtifactEntriesPerJob: 256,
   managedArtifactDirectoryDepth: 8,
+  resumeInputChars: 4_096,
 });
 
 console.log('continuation domain smoke: PASS');

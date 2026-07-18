@@ -584,6 +584,99 @@ try {
   assert.equal(recovered, 1);
   assert.equal((await repository.get(concurrent.job.jobId))?.status, 'waiting_retry');
 
+  const opaqueExecution = await repository.create(createRequest('opaque-execution-lease'));
+  const opaqueClaim = await repository.claimDue(
+    'worker-opaque',
+    '2026-07-17T00:00:31.000Z',
+    '2026-07-17T00:00:40.000Z',
+  );
+  assert.equal(opaqueClaim?.job.jobId, opaqueExecution.job.jobId);
+  await repository.markExecutionStarted(opaqueClaim!, '2026-07-17T00:00:31.100Z');
+  assert.equal(await repository.recoverExpiredLeases('2026-07-17T00:00:41.000Z'), 1);
+  const interruptedOpaqueExecution = await repository.get(opaqueExecution.job.jobId);
+  assert.equal(interruptedOpaqueExecution?.status, 'waiting_user');
+  assert.equal(interruptedOpaqueExecution?.recovery?.failure.category, 'unknown');
+  assert.equal(interruptedOpaqueExecution?.recovery?.failure.retrySafety, 'unknown');
+  assert.equal(interruptedOpaqueExecution?.currentInterrupt?.status, 'pending');
+  assert.equal(await repository.claimDue(
+    'worker-opaque-replay',
+    '2026-07-17T00:00:41.000Z',
+    '2026-07-17T00:01:11.000Z',
+  ), null);
+
+  const opaqueFailure = await repository.create(createRequest('opaque-execution-failure'));
+  const opaqueFailureClaim = await repository.claimDue(
+    'worker-opaque-failure',
+    '2026-07-17T00:00:41.000Z',
+    '2026-07-17T00:01:11.000Z',
+  );
+  assert.equal(opaqueFailureClaim?.job.jobId, opaqueFailure.job.jobId);
+  await repository.markExecutionStarted(opaqueFailureClaim!, '2026-07-17T00:00:41.100Z');
+  await repository.failAttempt(opaqueFailureClaim!, {
+    errorCode: 'continuation_timeout',
+    errorSummary: 'The continuation step timed out.',
+    retryable: true,
+  }, '2026-07-17T00:00:42.000Z');
+  const interruptedOpaqueFailure = await repository.get(opaqueFailure.job.jobId);
+  assert.equal(interruptedOpaqueFailure?.status, 'waiting_user');
+  assert.equal(interruptedOpaqueFailure?.recovery?.failure.category, 'unknown');
+  assert.equal(interruptedOpaqueFailure?.recovery?.failure.retrySafety, 'unknown');
+
+  const readOnlyRequest = createRequest('read-only-execution-failure');
+  const readOnlyPermissions = {
+    ...readOnlyRequest.permissions,
+    filesystem: { ...readOnlyRequest.permissions.filesystem, mode: 'read-only' as const },
+  };
+  readOnlyRequest.permissions = readOnlyPermissions;
+  readOnlyRequest.sourceFacts = {
+    ...readOnlyRequest.sourceFacts,
+    permissions: readOnlyPermissions,
+  };
+  const readOnlyFailure = await repository.create(readOnlyRequest);
+  const readOnlyFailureClaim = await repository.claimDue(
+    'worker-read-only-failure',
+    '2026-07-17T00:00:42.000Z',
+    '2026-07-17T00:01:12.000Z',
+  );
+  assert.equal(readOnlyFailureClaim?.job.jobId, readOnlyFailure.job.jobId);
+  await repository.markExecutionStarted(readOnlyFailureClaim!, '2026-07-17T00:00:42.100Z');
+  await repository.failAttempt(readOnlyFailureClaim!, {
+    errorCode: 'continuation_timeout',
+    errorSummary: 'The read-only continuation step timed out.',
+    retryable: true,
+  }, '2026-07-17T00:00:43.000Z');
+  assert.equal((await repository.get(readOnlyFailure.job.jobId))?.status, 'waiting_retry');
+
+  const modelRetry = await repository.create(createRequest('model-retry-opaque'));
+  const modelRetryClaim = await repository.claimDue(
+    'worker-model-retry',
+    '2026-07-17T00:00:43.000Z',
+    '2026-07-17T00:01:13.000Z',
+  );
+  assert.equal(modelRetryClaim?.job.jobId, modelRetry.job.jobId);
+  await repository.markExecutionStarted(modelRetryClaim!, '2026-07-17T00:00:43.100Z');
+  await repository.completeStep(modelRetryClaim!, {
+    outcome: {
+      outcome: 'failed',
+      checkpoint: progressCheckpoint({
+        summary: 'The publish step returned a retryable error.',
+        currentStepId: 'publish-result',
+        remainingSteps: [{ id: 'publish-result', description: 'Publish the result.' }],
+        nextAction: { id: 'publish-result', description: 'Publish the result.' },
+      }),
+      errorCode: 'temporary_publish_failure',
+      errorSummary: 'The model requested another publish attempt.',
+      retryable: true,
+      completedWork: [],
+      unperformedWork: ['Publish the result.'],
+    },
+  }, '2026-07-17T00:00:44.000Z');
+  const guardedModelRetry = await repository.get(modelRetry.job.jobId);
+  assert.equal(guardedModelRetry?.status, 'waiting_user');
+  assert.equal(guardedModelRetry?.recovery?.failure.category, 'unknown');
+  assert.equal(guardedModelRetry?.recovery?.failure.retrySafety, 'unknown');
+  assert.equal(guardedModelRetry?.recovery?.failure.failedStep, 'publish-result');
+
   const queuedCancel = await repository.create(createRequest('queued-cancel'));
   assert.equal(
     await repository.requestCancel(queuedCancel.job.jobId, '2026-07-17T00:00:20.000Z'),
@@ -1616,6 +1709,26 @@ versionThreeDatabase.exec(`
 `);
 versionThreeDatabase.close();
 
+// Historical schema upgrades remain process-safe when two plugin instances start together.
+for (let index = 0; index < 4; index += 1) {
+  const concurrentMigrationRoot = join(root, `migration-concurrent-v3-${index}`);
+  const concurrentMigrationDatabasePath = join(concurrentMigrationRoot, 'jobs.sqlite');
+  await mkdir(concurrentMigrationRoot, { recursive: true });
+  await copyFile(versionThreeDatabasePath, concurrentMigrationDatabasePath);
+  const concurrentMigrationOptions = {
+    databasePath: concurrentMigrationDatabasePath,
+    artifactsDir: join(concurrentMigrationRoot, 'artifacts'),
+  };
+  const [migrationA, migrationB] = await Promise.all([
+    SqliteContinuationRepository.open(concurrentMigrationOptions),
+    SqliteContinuationRepository.open(concurrentMigrationOptions),
+  ]);
+  assert.equal((await migrationA.get('job_legacy_v3'))?.status, 'queued');
+  assert.equal((await migrationB.get('job_legacy_v3'))?.status, 'queued');
+  migrationA.close();
+  migrationB.close();
+}
+
 // Preserve a byte-for-byte v3 database before migrating it, then remove the v3-only
 // permissions column to exercise the independently deployable v2 -> v7 chain.
 const authenticVersionTwoRoot = join(root, 'migration-authentic-v2');
@@ -1650,6 +1763,9 @@ assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
 assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
   'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
 ).get('job_legacy_v3')?.count), 1);
+assert.equal(authenticVersionTwoMigratedDatabase.prepare(
+  'SELECT step_id FROM continuation_tool_calls WHERE job_id = ?',
+).get('job_legacy_v3')?.step_id, 'initial-step');
 assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
   'SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ?',
 ).get('job_legacy_v3')?.count), 1);
@@ -1680,7 +1796,7 @@ const migratedVersionThreeColumns = migratedVersionThreeDatabase
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'max_attempts'));
 assert.equal(migratedVersionThreeColumns.some((column) => column.name === 'max_steps'), false);
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'retain'));
-assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 8);
+assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 9);
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'no_progress_count'));
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'source_facts_json'));
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'task_contract_json'));
@@ -1732,7 +1848,7 @@ async function verifyIntermediateMigration(version: 4 | 5): Promise<void> {
     migrated.close();
   }
   const migratedDatabase = new DatabaseSync(migrationOptions.databasePath);
-  assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 8);
+  assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 9);
   assert.equal(Number(migratedDatabase.prepare(
     'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
   ).get(fixture.terminalJobId)?.count), fixture.expectedAttemptCount);
@@ -1783,7 +1899,7 @@ async function verifyConcurrentHistoricalMigration(version: 1 | 4 | 5): Promise<
     repository.close();
   }
   const database = new DatabaseSync(databasePath);
-  assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 8);
+  assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 9);
   assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
   database.close();
 }
@@ -1893,7 +2009,7 @@ try {
   migratedVersionOneRepository.close();
 }
 const migratedVersionOneDatabase = new DatabaseSync(versionOneDatabasePath);
-assert.equal(Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version), 8);
+assert.equal(Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version), 9);
 assert.equal(Number(migratedVersionOneDatabase.prepare(
   'SELECT COUNT(*) AS count FROM continuation_attempts',
 ).get()?.count), 3);
@@ -2039,7 +2155,7 @@ try {
   const resumedFactsMigrationDatabase = new DatabaseSync(versionSixDatabasePath);
   assert.equal(
     Number(resumedFactsMigrationDatabase.prepare('PRAGMA user_version').get()?.user_version),
-    8,
+    9,
   );
   resumedFactsMigrationDatabase.close();
 } finally {
@@ -4124,5 +4240,395 @@ const toctouTargetJobId = continuationJobId(`manual-retry:${toctouJob.job.jobId}
 assert.equal(await toctouRepository.get(toctouTargetJobId), null);
 await assert.rejects(lstat(join(toctouOptions.inputsDir, toctouTargetJobId)));
 toctouRepository.close();
+
+// Recoverable user interrupts are durable, delivered once, and resume the same Job atomically.
+const interruptRoot = await mkdtemp(join(tmpdir(), 'continuation-interrupt-'));
+const interruptOptions = {
+  databasePath: join(interruptRoot, 'jobs.sqlite'),
+  artifactsDir: join(interruptRoot, 'artifacts'),
+  jitter: () => 0,
+};
+let interruptRepository = await SqliteContinuationRepository.open(interruptOptions);
+const interrupted = await interruptRepository.create(createRequest('waiting-user'));
+const interruptedClaim = await interruptRepository.claimDue(
+  'worker-interrupt',
+  baseNow,
+  '2026-07-17T00:01:00.000Z',
+);
+assert.equal(interruptedClaim?.job.jobId, interrupted.job.jobId);
+await interruptRepository.completeStep(interruptedClaim!, {
+  outcome: {
+    outcome: 'waiting_user',
+    checkpoint: progressCheckpoint({
+      summary: 'Publication needs authorization.',
+      currentStepId: 'publish-result',
+      remainingSteps: [{ id: 'publish-result', description: 'Publish the result.' }],
+      nextAction: { id: 'publish-result', description: 'Publish the result.' },
+    }),
+    failure: {
+      category: 'permission_required',
+      retrySafety: 'unsafe',
+      capabilityAvailable: true,
+      operationRisk: 'external_side_effect',
+      hints: ['Authorize publication, then resume.'],
+      failedStep: 'publish-result',
+      diagnostic: 'Publication requires authorization.',
+      fingerprint: 'permission-publish',
+    },
+    prompt: 'Authorize publication, then resume with the approval result.',
+    reason: 'Publication requires authorization.',
+  },
+}, '2026-07-17T00:00:01.000Z');
+let waitingUser = await interruptRepository.get(interrupted.job.jobId);
+assert.equal(waitingUser?.status, 'waiting_user');
+assert.equal(waitingUser?.recovery?.totalAttempts, 1);
+assert.equal(waitingUser?.recovery?.fingerprintAttempts, 1);
+assert.equal(waitingUser?.currentInterrupt?.status, 'pending');
+const interruptId = waitingUser?.currentInterrupt?.interruptId;
+assert.ok(interruptId);
+
+const interruptDelivery = await interruptRepository.claimPendingDelivery(
+  'delivery-interrupt',
+  '2026-07-17T00:00:02.000Z',
+);
+assert.equal(interruptDelivery?.kind, 'interrupt');
+assert.equal(interruptDelivery?.interruptId, interruptId);
+assert.match(interruptDelivery?.payload ?? '', /Failed step: publish-result/);
+assert.match(interruptDelivery?.payload ?? '', /Failure category: permission_required/);
+assert.match(interruptDelivery?.payload ?? '', /Recovery attempts: 1 for this failure, 1 total/);
+assert.match(interruptDelivery?.payload ?? '', /Diagnostic: Publication requires authorization\./);
+await interruptRepository.markDeliveryResult(
+  interruptDelivery!,
+  { status: 'delivered', messageId: 'om_interrupt_prompt' },
+  '2026-07-17T00:00:03.000Z',
+);
+interruptRepository.close();
+
+interruptRepository = await SqliteContinuationRepository.open(interruptOptions);
+waitingUser = await interruptRepository.get(interrupted.job.jobId);
+assert.equal(waitingUser?.currentInterrupt?.deliveredMessageId, 'om_interrupt_prompt');
+assert.deepEqual(await interruptRepository.listPendingInterrupts(), [{
+  interruptId,
+  jobId: interrupted.job.jobId,
+  route: interrupted.job.route,
+  deliveredMessageId: 'om_interrupt_prompt',
+}]);
+const maxResumeInput = '😀'.repeat(4_096);
+assert.equal(await interruptRepository.resumeWaitingUser(
+  interrupted.job.jobId,
+  interruptId!,
+  maxResumeInput,
+  '2026-07-17T00:00:04.000Z',
+), 'resumed');
+assert.equal(await interruptRepository.resumeWaitingUser(
+  interrupted.job.jobId,
+  interruptId!,
+  'Duplicate input must lose.',
+  '2026-07-17T00:00:05.000Z',
+), 'stale');
+const resumed = await interruptRepository.get(interrupted.job.jobId);
+assert.equal(resumed?.status, 'recovering');
+assert.equal(resumed?.recovery?.userInput, maxResumeInput);
+assert.equal(resumed?.recovery?.lastDecision, 'retry');
+const resumedClaim = await interruptRepository.claimDue(
+  'worker-resumed',
+  '2026-07-17T00:00:04.000Z',
+  '2026-07-17T00:01:04.000Z',
+);
+assert.equal(resumedClaim?.job.jobId, interrupted.job.jobId);
+await interruptRepository.completeStep(resumedClaim!, {
+  outcome: {
+    outcome: 'completed',
+    checkpoint: await completedCheckpoint(
+      interrupted.job.jobId,
+      'publish-result',
+      'artifact.json',
+      new ContinuationArtifactStore(interruptOptions.artifactsDir),
+    ),
+    finalMessage: 'Publication completed after authorization.',
+    artifacts: ['artifact.json'],
+  },
+}, '2026-07-17T00:00:05.000Z');
+const completedAfterResume = await interruptRepository.get(interrupted.job.jobId);
+assert.equal(completedAfterResume?.status, 'completed');
+assert.equal(completedAfterResume?.recovery, undefined);
+assert.equal(completedAfterResume?.recoveryTotalCount, 1);
+interruptRepository.close();
+
+// v8 did not persist execution phase. Treat unfinished attempts as execution_started
+// so migration never blindly replays a potentially completed external operation.
+const activeMigrationRoot = await mkdtemp(join(tmpdir(), 'continuation-v8-active-migration-'));
+const activeMigrationOptions = {
+  databasePath: join(activeMigrationRoot, 'jobs.sqlite'),
+  artifactsDir: join(activeMigrationRoot, 'artifacts'),
+  jitter: () => 0,
+};
+let activeMigrationRepository = await SqliteContinuationRepository.open(activeMigrationOptions);
+const activeMigrationJob = await activeMigrationRepository.create(createRequest('v8-active-migration'));
+const activeMigrationClaim = await activeMigrationRepository.claimDue(
+  'worker-v8-active',
+  baseNow,
+  '2026-07-17T00:00:05.000Z',
+);
+assert.equal(activeMigrationClaim?.job.jobId, activeMigrationJob.job.jobId);
+await activeMigrationRepository.markExecutionStarted(
+  activeMigrationClaim!,
+  '2026-07-17T00:00:01.000Z',
+);
+activeMigrationRepository.close();
+const activeMigrationDatabase = new DatabaseSync(activeMigrationOptions.databasePath);
+activeMigrationDatabase.exec('PRAGMA user_version = 8;');
+activeMigrationDatabase.close();
+activeMigrationRepository = await SqliteContinuationRepository.open(activeMigrationOptions);
+assert.equal(
+  await activeMigrationRepository.recoverExpiredLeases('2026-07-17T00:00:06.000Z'),
+  1,
+);
+assert.equal((await activeMigrationRepository.get(activeMigrationJob.job.jobId))?.status, 'waiting_user');
+activeMigrationRepository.close();
+
+const failedToolRoot = await mkdtemp(join(tmpdir(), 'continuation-failed-tool-replay-'));
+const failedToolRepository = await SqliteContinuationRepository.open({
+  databasePath: join(failedToolRoot, 'jobs.sqlite'),
+  artifactsDir: join(failedToolRoot, 'artifacts'),
+});
+const failedToolRequest = createRequest('failed-tool-replay');
+const failedToolPermissions = {
+  ...failedToolRequest.permissions,
+  hostTools: ['generic_cli'],
+};
+failedToolRequest.requiredTools = ['generic_cli'];
+failedToolRequest.permissions = failedToolPermissions;
+failedToolRequest.sourceFacts = {
+  ...failedToolRequest.sourceFacts,
+  permissions: failedToolPermissions,
+};
+const failedToolJob = await failedToolRepository.create(failedToolRequest);
+const failedToolClaim = await failedToolRepository.claimDue(
+  'worker-failed-tool',
+  baseNow,
+  '2026-07-17T00:01:00.000Z',
+);
+assert.equal(failedToolClaim?.job.jobId, failedToolJob.job.jobId);
+const staleToolRequest = { tool: 'generic_cli', args: ['stale-form'] };
+const firstFailedCall = await failedToolRepository.beginToolCall(
+  failedToolClaim!,
+  staleToolRequest,
+  '2026-07-17T00:00:01.000Z',
+);
+assert.equal(firstFailedCall.status, 'execute');
+const persistedInvalidInvocation = {
+  ok: false,
+  message: 'The invocation was rejected before execution.',
+  failure: {
+    category: 'invalid_invocation' as const,
+    retrySafety: 'safe' as const,
+    capabilityAvailable: true,
+    operationRisk: 'external_side_effect' as const,
+    hints: ['Use corrected-form.'],
+    failedStep: 'initial-step',
+    diagnostic: 'The invocation was rejected before execution.',
+    fingerprint: 'failed-tool-replay',
+  },
+};
+await failedToolRepository.completeToolCall(
+  failedToolClaim!,
+  firstFailedCall.status === 'execute' ? firstFailedCall.callId : '',
+  persistedInvalidInvocation,
+  '2026-07-17T00:00:02.000Z',
+);
+assert.deepEqual(await failedToolRepository.beginToolCall(
+  failedToolClaim!,
+  staleToolRequest,
+  '2026-07-17T00:00:03.000Z',
+), {
+  status: 'replay',
+  callId: firstFailedCall.status === 'execute' ? firstFailedCall.callId : '',
+  result: persistedInvalidInvocation,
+});
+assert.equal((await failedToolRepository.beginToolCall(
+  failedToolClaim!,
+  { tool: 'generic_cli', args: ['corrected-form'] },
+  '2026-07-17T00:00:04.000Z',
+)).status, 'execute');
+failedToolRepository.close();
+
+// A safe transient recovery retries the same request, while invalid invocations require correction.
+const transientToolRoot = await mkdtemp(join(tmpdir(), 'continuation-transient-tool-retry-'));
+const transientToolRepository = await SqliteContinuationRepository.open({
+  databasePath: join(transientToolRoot, 'jobs.sqlite'),
+  artifactsDir: join(transientToolRoot, 'artifacts'),
+  jitter: () => 0,
+});
+const transientRequest = createRequest('transient-tool-retry');
+const transientPermissions = {
+  ...transientRequest.permissions,
+  hostTools: ['generic_cli'],
+};
+transientRequest.requiredTools = ['generic_cli'];
+transientRequest.permissions = transientPermissions;
+transientRequest.sourceFacts = {
+  ...transientRequest.sourceFacts,
+  permissions: transientPermissions,
+};
+const transientJob = await transientToolRepository.create(transientRequest);
+const firstTransientClaim = await transientToolRepository.claimDue(
+  'worker-transient-tool-1',
+  baseNow,
+  '2026-07-17T00:01:00.000Z',
+);
+assert.equal(firstTransientClaim?.job.jobId, transientJob.job.jobId);
+const repeatedTransientRequest = { tool: 'generic_cli', args: ['fetch'] };
+const firstTransientCall = await transientToolRepository.beginToolCall(
+  firstTransientClaim!,
+  repeatedTransientRequest,
+  '2026-07-17T00:00:01.000Z',
+);
+assert.equal(firstTransientCall.status, 'execute');
+const transientFailure = {
+  category: 'transient' as const,
+  retrySafety: 'safe' as const,
+  capabilityAvailable: true,
+  operationRisk: 'read_only' as const,
+  hints: ['Retry after a short delay.'],
+  failedStep: 'initial-step',
+  diagnostic: 'The upstream service temporarily failed.',
+  fingerprint: 'transient-tool-retry',
+};
+await transientToolRepository.completeToolCall(
+  firstTransientClaim!,
+  firstTransientCall.status === 'execute' ? firstTransientCall.callId : '',
+  { ok: false, message: 'Temporary upstream failure.', failure: transientFailure },
+  '2026-07-17T00:00:02.000Z',
+);
+await transientToolRepository.completeStep(firstTransientClaim!, {
+  outcome: {
+    outcome: 'recovering',
+    checkpoint: progressCheckpoint({
+      summary: 'The read-only fetch will be retried.',
+      currentStepId: 'initial-step',
+      remainingSteps: [{ id: 'initial-step', description: 'Fetch the upstream data.' }],
+      nextAction: { id: 'initial-step', description: 'Fetch the upstream data.' },
+    }),
+    failure: transientFailure,
+    delaySeconds: 0,
+    reason: 'The transient failure is safe to retry.',
+  },
+}, '2026-07-17T00:00:03.000Z');
+const secondTransientClaim = await transientToolRepository.claimDue(
+  'worker-transient-tool-2',
+  '2026-07-17T00:00:03.000Z',
+  '2026-07-17T00:01:03.000Z',
+);
+assert.equal(secondTransientClaim?.job.jobId, transientJob.job.jobId);
+const retriedTransientCall = await transientToolRepository.beginToolCall(
+  secondTransientClaim!,
+  repeatedTransientRequest,
+  '2026-07-17T00:00:04.000Z',
+);
+assert.equal(retriedTransientCall.status, 'execute');
+assert.equal(
+  retriedTransientCall.status === 'execute' ? retriedTransientCall.callId : '',
+  firstTransientCall.status === 'execute' ? firstTransientCall.callId : '',
+);
+transientToolRepository.close();
+
+// Terminal recovery decisions retain normalized diagnostics in both Job state and final delivery.
+for (const terminalCase of [
+  {
+    suffix: 'terminal-recovery-blocked',
+    expectedStatus: 'blocked',
+    expectedDecision: 'block',
+    failure: {
+      category: 'capability_unavailable' as const,
+      retrySafety: 'safe' as const,
+      capabilityAvailable: false,
+      operationRisk: 'read_only' as const,
+      hints: ['Install the configured capability.'],
+      failedStep: 'inspect-result',
+      diagnostic: 'The configured capability is unavailable.',
+      fingerprint: 'capability-inspect-result',
+    },
+  },
+  {
+    suffix: 'terminal-recovery-failed',
+    expectedStatus: 'failed',
+    expectedDecision: 'fail',
+    failure: {
+      category: 'terminal' as const,
+      retrySafety: 'unsafe' as const,
+      capabilityAvailable: true,
+      operationRisk: 'external_side_effect' as const,
+      hints: ['Inspect the terminal failure before retrying.'],
+      failedStep: 'publish-result',
+      diagnostic: 'The operation failed terminally.',
+      fingerprint: 'terminal-publish-result',
+    },
+  },
+] as const) {
+  const terminalRoot = await mkdtemp(join(tmpdir(), `${terminalCase.suffix}-`));
+  const terminalRepository = await SqliteContinuationRepository.open({
+    databasePath: join(terminalRoot, 'jobs.sqlite'),
+    artifactsDir: join(terminalRoot, 'artifacts'),
+    jitter: () => 0,
+  });
+  const terminalJob = await terminalRepository.create(createRequest(terminalCase.suffix));
+  const terminalClaim = await terminalRepository.claimDue(
+    `worker-${terminalCase.suffix}`,
+    baseNow,
+    '2026-07-17T00:01:00.000Z',
+  );
+  assert.equal(terminalClaim?.job.jobId, terminalJob.job.jobId);
+  const checkpoint = progressCheckpoint({
+    summary: 'Work stopped at a durable terminal failure.',
+    currentStepId: terminalCase.failure.failedStep,
+    remainingSteps: [{
+      id: terminalCase.failure.failedStep,
+      description: 'Resolve the terminal failure.',
+    }],
+    nextAction: {
+      id: terminalCase.failure.failedStep,
+      description: 'Resolve the terminal failure.',
+    },
+  });
+  await terminalRepository.completeStep(terminalClaim!, {
+    outcome: terminalCase.expectedStatus === 'blocked'
+      ? {
+          outcome: 'blocked',
+          checkpoint,
+          errorCode: 'continuation_capability_unavailable',
+          errorSummary: 'The required capability is unavailable.',
+          requiredCapability: 'generic_cli',
+          completedWork: [],
+          unperformedWork: ['Resolve the terminal failure.'],
+          recoveryFailure: terminalCase.failure,
+        }
+      : {
+          outcome: 'failed',
+          checkpoint,
+          errorCode: 'continuation_recovery_failed',
+          errorSummary: 'The operation cannot be recovered automatically.',
+          retryable: false,
+          completedWork: [],
+          unperformedWork: ['Resolve the terminal failure.'],
+          recoveryFailure: terminalCase.failure,
+        },
+  }, '2026-07-17T00:00:01.000Z');
+  const persistedTerminal = await terminalRepository.get(terminalJob.job.jobId);
+  assert.equal(persistedTerminal?.status, terminalCase.expectedStatus);
+  assert.equal(persistedTerminal?.recovery?.lastDecision, terminalCase.expectedDecision);
+  assert.equal(persistedTerminal?.recovery?.failure.category, terminalCase.failure.category);
+  assert.equal(persistedTerminal?.recoveryTotalCount, 1);
+  const terminalDelivery = await terminalRepository.claimPendingDelivery(
+    `delivery-${terminalCase.suffix}`,
+    '2026-07-17T00:00:02.000Z',
+  );
+  assert.equal(terminalDelivery?.kind, 'terminal');
+  assert.match(terminalDelivery?.payload ?? '', new RegExp(`Failed step: ${terminalCase.failure.failedStep}`));
+  assert.match(terminalDelivery?.payload ?? '', new RegExp(`Failure category: ${terminalCase.failure.category}`));
+  assert.match(terminalDelivery?.payload ?? '', /Recovery attempts: 1 for this failure, 1 total/);
+  assert.match(terminalDelivery?.payload ?? '', new RegExp(`Diagnostic: ${terminalCase.failure.diagnostic}`));
+  terminalRepository.close();
+}
 
 console.log('continuation repository smoke: PASS');

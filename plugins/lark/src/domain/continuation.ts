@@ -1,3 +1,5 @@
+import type { DurableRunFailure } from './durable-run.js';
+
 export const CONTINUATION_LIMITS = {
   titleChars: 200,
   objectiveBytes: 16 * 1024,
@@ -16,6 +18,7 @@ export const CONTINUATION_LIMITS = {
   managedArtifactBytesPerJob: 100 * 1024 * 1024,
   managedArtifactEntriesPerJob: 256,
   managedArtifactDirectoryDepth: 8,
+  resumeInputChars: 4_096,
 } as const;
 
 export const CONTINUATION_CONTRACT_ID_PATTERN = /^[A-Za-z0-9_.-]{1,80}$/;
@@ -48,6 +51,7 @@ export type ContinuationStatus =
   | 'running'
   | 'waiting_retry'
   | 'recovering'
+  | 'waiting_user'
   | 'cancel_requested'
   | 'completed'
   | 'partial'
@@ -63,7 +67,7 @@ export type ContinuationDeliveryStatus =
   | 'failed'
   | 'superseded';
 
-export type ContinuationDeliveryKind = 'progress' | 'terminal';
+export type ContinuationDeliveryKind = 'progress' | 'interrupt' | 'terminal';
 
 export interface ContinuationDeliveryRecord {
   eventKey: string;
@@ -138,6 +142,36 @@ export interface ContinuationCheckpointV2 {
   decisions: string[];
   nextAction: ContinuationCheckpointStep | null;
   stopReason: string;
+}
+
+export interface ContinuationRecoveryState {
+  failure: DurableRunFailure;
+  fingerprintAttempts: number;
+  totalAttempts: number;
+  lastDecision: 'retry' | 'wait_user' | 'block' | 'fail';
+  userInput?: string;
+}
+
+export type ContinuationInterruptStatus = 'pending' | 'delivered' | 'resolved';
+
+export interface ContinuationInterrupt {
+  interruptId: string;
+  jobId: string;
+  attemptId: string;
+  status: ContinuationInterruptStatus;
+  prompt: string;
+  deliveredMessageId?: string;
+  responseText?: string;
+  createdAt: string;
+  deliveredAt?: string;
+  resolvedAt?: string;
+}
+
+export interface ContinuationPendingInterruptRoute {
+  interruptId: string;
+  jobId: string;
+  route: ContinuationDeliveryRoute;
+  deliveredMessageId?: string;
 }
 
 export interface ContinuationAttemptDelta {
@@ -276,6 +310,10 @@ export interface ContinuationJob extends Omit<ContinuationCreateRequest, 'source
   checkpoint?: ContinuationCheckpointV2;
   lastAttemptDelta?: ContinuationAttemptDelta;
   lastVerification?: ContinuationVerificationVerdict;
+  recovery?: ContinuationRecoveryState;
+  recoveryTotalCount: number;
+  recoveryFingerprintCounts: Record<string, number>;
+  currentInterrupt?: ContinuationInterrupt;
   noProgressCount: number;
   attemptCount?: number;
   stepCount: number;
@@ -329,6 +367,7 @@ export interface ContinuationToolRequest {
 export interface ContinuationToolResult {
   ok: boolean;
   message: string;
+  failure?: DurableRunFailure;
 }
 
 export type ContinuationToolCallDecision =
@@ -365,6 +404,20 @@ export type ContinuationStepOutcome =
       artifacts: string[];
     }
   | {
+      outcome: 'recovering';
+      checkpoint: ContinuationCheckpointV2;
+      failure: DurableRunFailure;
+      delaySeconds: number;
+      reason: string;
+    }
+  | {
+      outcome: 'waiting_user';
+      checkpoint: ContinuationCheckpointV2;
+      failure: DurableRunFailure;
+      prompt: string;
+      reason: string;
+    }
+  | {
       outcome: 'failed';
       checkpoint: ContinuationCheckpointV2;
       errorCode: string;
@@ -372,6 +425,7 @@ export type ContinuationStepOutcome =
       retryable: boolean;
       completedWork: string[];
       unperformedWork: string[];
+      recoveryFailure?: DurableRunFailure;
     }
   | {
       outcome: 'blocked';
@@ -381,6 +435,7 @@ export type ContinuationStepOutcome =
       requiredCapability: string;
       completedWork: string[];
       unperformedWork: string[];
+      recoveryFailure?: DurableRunFailure;
     };
 
 export function partialOutcomeFromCheckpoint(
@@ -431,6 +486,7 @@ export interface ContinuationDeliveryClaim {
   eventKey: string;
   kind: ContinuationDeliveryKind;
   attemptId?: string;
+  interruptId?: string;
   workerId: string;
   route: ContinuationDeliveryRoute;
   idempotencyKey: string;

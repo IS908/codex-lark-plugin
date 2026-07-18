@@ -9,6 +9,7 @@ import type {
   ContinuationExecutionResult,
   ContinuationFailure,
   ContinuationJob,
+  ContinuationPendingInterruptRoute,
   ContinuationStatus,
   ContinuationToolCallDecision,
   ContinuationToolCallRecovery,
@@ -64,6 +65,7 @@ export interface ContinuationRepository {
   ): Promise<ContinuationJob[]>;
   listAll(limit: number, statuses?: ContinuationStatus[]): Promise<ContinuationJob[]>;
   claimDue(workerId: string, now: string, leaseExpiresAt: string): Promise<ContinuationClaim | null>;
+  markExecutionStarted(claim: ContinuationClaim, now: string): Promise<void>;
   heartbeat(jobId: string, workerId: string, now: string, leaseExpiresAt: string): Promise<boolean>;
   inspectToolCall(claim: ContinuationClaim): Promise<ContinuationToolCallRecovery | null>;
   beginToolCall(
@@ -92,6 +94,20 @@ export interface ContinuationRepository {
     result: ContinuationDeliveryResult,
     now: string,
   ): Promise<void>;
+  listPendingInterrupts(): Promise<ContinuationPendingInterruptRoute[]>;
+  findPendingInterruptByDeliveryMessage(
+    messageId: string,
+  ): Promise<ContinuationPendingInterruptRoute | null>;
+  findPendingInterrupt(
+    jobId: string,
+    interruptId: string,
+  ): Promise<ContinuationPendingInterruptRoute | null>;
+  resumeWaitingUser(
+    jobId: string,
+    interruptId: string,
+    input: string,
+    now: string,
+  ): Promise<'resumed' | 'stale' | 'missing'>;
   purgeExpired(retainAfter: string, now: string): Promise<ContinuationCleanupResult[]>;
   close(): void;
 }
@@ -102,10 +118,12 @@ export interface ContinuationExecutor {
 
 export type ContinuationToolInvocationResult =
   | { status: 'completed'; result: ContinuationToolResult }
+  | { status: 'failed'; failure: import('../domain/durable-run.js').DurableRunFailure }
   | { status: 'blocked'; errorCode: string; errorSummary: string };
 
 export type ContinuationToolRecoveryResult =
   | { status: 'completed'; tool: string; result: ContinuationToolResult }
+  | { status: 'failed'; tool: string; failure: import('../domain/durable-run.js').DurableRunFailure }
   | { status: 'blocked'; tool: string; errorCode: string; errorSummary: string };
 
 export interface ContinuationToolInvoker {

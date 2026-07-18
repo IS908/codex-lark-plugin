@@ -14,17 +14,18 @@ import {
 
 export const CONTINUATION_COMMAND_DEFINITION = {
   name: 'task' as const,
-  usage: '/task <list|status|cancel|retry|retain|delete>',
+  usage: '/task <list|status|cancel|retry|resume|retain|delete>',
   description: 'List and manage durable background tasks.',
   scope: 'user' as const,
 };
 
 const TASK_USAGE = [
   'Usage:',
-  '- /task list [--status pending,running,completed,partial,blocked,failed,cancelled]',
+  '- /task list [--status pending,running,waiting_user,completed,partial,blocked,failed,cancelled]',
   '- /task status <job_id>',
   '- /task cancel <job_id>',
   '- /task retry <job_id>',
+  '- /task resume <job_id> <input>',
   '- /task retain <job_id> <on|off>',
   '- /task delete <job_id>',
 ].join('\n');
@@ -32,12 +33,14 @@ const TASK_USAGE = [
 type TaskCommand =
   | { action: 'list'; statuses: ContinuationListStatus[] }
   | { action: 'status' | 'cancel' | 'retry' | 'delete'; jobId: string }
+  | { action: 'resume'; jobId: string; input: string }
   | { action: 'retain'; jobId: string; retained: boolean }
   | { action: 'invalid' };
 
 const LIST_STATUSES = new Set<ContinuationListStatus>([
   'pending',
   'running',
+  'waiting_user',
   'completed',
   'partial',
   'blocked',
@@ -65,7 +68,28 @@ export async function handleContinuationCommand(
   options: ContinuationCommandHandlerOptions,
 ): Promise<boolean> {
   const command = parseTaskCommand(options.message);
-  if (!command) return false;
+  if (!command) {
+    if (!options.service || !options.message.parentId) return false;
+    const resumed = await options.service.resumeFromQuotedMessage(
+      options.message,
+      options.ownerOpenId,
+    );
+    if (!resumed) return false;
+    await sendCommandReply(options, `Task resumed: ${resumed.title}\nJob ID: ${resumed.jobId}`);
+    await (options.auditCommand ?? audit)(
+      'lark_task_command',
+      options.message.senderId,
+      {
+        chat_id: options.message.chatId,
+        thread_id: options.message.threadId,
+        message_id: options.message.messageId,
+        command: 'resume_quoted',
+        job_id: resumed.jobId,
+      },
+      'ok',
+    );
+    return true;
+  }
 
   const actorOpenId = options.message.senderId;
   const auditCommand = options.auditCommand ?? audit;
@@ -96,7 +120,7 @@ export async function handleContinuationCommand(
         options.service,
         actorOpenId,
         options.ownerOpenId,
-        options.message.messageId,
+        options.message,
       );
     }
   } catch (error) {
@@ -142,6 +166,14 @@ function parseTaskCommand(message: LarkMessage): TaskCommand | null {
       retained: retainMatch[2].toLowerCase() === 'on',
     };
   }
+  const resumeMatch = normalized.match(
+    /^\/task\s+resume\s+(job_[A-Za-z0-9_-]{8,128})\s+([\s\S]+)$/i,
+  );
+  if (resumeMatch) {
+    const input = resumeMatch[2].trim();
+    if (!input || Array.from(input).length > 4_096) return { action: 'invalid' };
+    return { action: 'resume', jobId: resumeMatch[1], input };
+  }
   const match = normalized.match(/^\/task\s+(status|cancel|retry|delete)\s+(job_[A-Za-z0-9_-]{8,128})\s*$/i);
   if (!match) return { action: 'invalid' };
   return {
@@ -171,7 +203,7 @@ async function executeTaskCommand(
   service: ContinuationTaskService,
   actorOpenId: string,
   ownerOpenId: string | null | undefined,
-  requestId: string,
+  message: LarkMessage,
 ): Promise<string> {
   if (command.action === 'list') {
     return formatTaskList(await service.listForActor(
@@ -194,9 +226,19 @@ async function executeTaskCommand(
       command.jobId,
       actorOpenId,
       ownerOpenId,
-      requestId,
+      message.messageId,
     );
     return `Retry task created: ${job.title}\nJob ID: ${job.jobId}`;
+  }
+  if (command.action === 'resume') {
+    const job = await service.resumeForActor(
+      command.jobId,
+      command.input,
+      actorOpenId,
+      message,
+      ownerOpenId,
+    );
+    return `Task resumed: ${job.title}\nJob ID: ${job.jobId}`;
   }
   if (command.action === 'retain') {
     const job = await service.setRetainedForActor(
@@ -230,6 +272,14 @@ function formatTaskStatus(job: ContinuationJob): string {
     `Title: ${job.title}`,
     `Attempts: ${attemptCount(job)} / ${job.maxAttempts}`,
     `Consecutive no-progress attempts: ${job.noProgressCount}`,
+    ...(job.recovery ? [
+      `Recovery: ${job.recovery.failure.category} | step ${job.recovery.failure.failedStep} | ${job.recovery.lastDecision}`,
+      `Recovery attempts: ${job.recovery.fingerprintAttempts} for this failure, ${job.recovery.totalAttempts} total`,
+      `Recovery diagnostic: ${truncateDiagnostic(job.recovery.failure.diagnostic, 500)}`,
+    ] : []),
+    ...(job.status === 'waiting_user' && job.currentInterrupt
+      ? [`Action needed: ${truncateDiagnostic(job.currentInterrupt.prompt, 500)}`]
+      : []),
     ...(job.lastAttemptDelta ? [
       `Last step: ${job.lastAttemptDelta.stepId} | Material change: ${job.lastAttemptDelta.stateChanged ? 'yes' : 'no'}`,
     ] : []),
@@ -261,7 +311,7 @@ function formatDeliveryEvents(job: ContinuationJob): string {
   for (const event of events) {
     lines.push(event.kind === 'terminal'
       ? `- terminal | ${event.status} | attempts ${event.attemptCount}`
-      : `- progress | ${event.attemptId ?? '-'} | ${event.status} | attempts ${event.attemptCount}`);
+      : `- ${event.kind} | ${event.attemptId ?? '-'} | ${event.status} | attempts ${event.attemptCount}`);
     if (event.lastErrorCode || event.lastErrorSummary) {
       const detail = [event.lastErrorCode, event.lastErrorSummary]
         .filter(Boolean)

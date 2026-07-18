@@ -100,11 +100,23 @@ export interface ContinuationTaskService {
     actorOpenId: string,
     ownerOpenId?: string | null,
   ): Promise<ContinuationJob>;
+  resumeForActor(
+    jobId: string,
+    input: string,
+    actorOpenId: string,
+    message: LarkMessage,
+    ownerOpenId?: string | null,
+  ): Promise<ContinuationJob>;
+  resumeFromQuotedMessage(
+    message: LarkMessage,
+    ownerOpenId?: string | null,
+  ): Promise<ContinuationJob | null>;
 }
 
 export type ContinuationListStatus =
   | 'pending'
   | 'running'
+  | 'waiting_user'
   | 'completed'
   | 'partial'
   | 'blocked'
@@ -451,6 +463,57 @@ export class ContinuationService implements ContinuationTaskService {
     return refreshed;
   }
 
+  async resumeForActor(
+    jobId: string,
+    input: string,
+    actorOpenId: string,
+    message: LarkMessage,
+    ownerOpenId?: string | null,
+  ): Promise<ContinuationJob> {
+    const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+    if (!sameConversationRoute(job.route, message)) throw notAccessibleError();
+    if (job.status !== 'waiting_user' || !job.currentInterrupt) {
+      throw new ContinuationServiceError('invalid_state', 'This task is not waiting for user input.');
+    }
+    const result = await this.options.repository.resumeWaitingUser(
+      job.jobId,
+      job.currentInterrupt.interruptId,
+      input,
+      this.options.clock.now().toISOString(),
+    );
+    if (result !== 'resumed') {
+      throw new ContinuationServiceError('invalid_state', 'This task interrupt is stale or already resolved.');
+    }
+    return this.requireAuthorizedJob(job.jobId, actorOpenId, ownerOpenId);
+  }
+
+  async resumeFromQuotedMessage(
+    message: LarkMessage,
+    ownerOpenId?: string | null,
+  ): Promise<ContinuationJob | null> {
+    if (!message.parentId || !['p2p', 'group'].includes(message.chatType)) return null;
+    let pending = await this.options.repository.findPendingInterruptByDeliveryMessage(message.parentId);
+    if (!pending) {
+      const marker = parseInterruptMarker(message.parentContent);
+      if (marker) {
+        pending = await this.options.repository.findPendingInterrupt(
+          marker.jobId,
+          marker.interruptId,
+        );
+      }
+    }
+    if (!pending || !sameConversationRoute(pending.route, message)) return null;
+    const job = await this.requireAuthorizedJob(pending.jobId, message.senderId, ownerOpenId);
+    if (job.currentInterrupt?.interruptId !== pending.interruptId) return null;
+    return this.resumeForActor(
+      job.jobId,
+      (message.currentUserText ?? message.text).trim(),
+      message.senderId,
+      message,
+      ownerOpenId,
+    );
+  }
+
   private async requireAuthorizedJob(
     jobId: string,
     actorOpenId: string,
@@ -469,6 +532,15 @@ export class ContinuationService implements ContinuationTaskService {
 
 }
 
+function parseInterruptMarker(
+  parentContent: string | undefined,
+): { jobId: string; interruptId: string } | null {
+  const match = parentContent?.match(
+    /^Task waiting for input: (job_[A-Za-z0-9_-]{8,128}) \((int_[a-f0-9]{24})\)(?:\n|$)/,
+  );
+  return match ? { jobId: match[1], interruptId: match[2] } : null;
+}
+
 export class UnavailableContinuationService implements ContinuationTaskService {
   async findExistingFromMessage(): Promise<never> { throw unavailableError(); }
   async preflightFromMessage(): Promise<never> { throw unavailableError(); }
@@ -479,14 +551,30 @@ export class UnavailableContinuationService implements ContinuationTaskService {
   async retryForActor(): Promise<never> { throw unavailableError(); }
   async deleteForActor(): Promise<never> { throw unavailableError(); }
   async setRetainedForActor(): Promise<never> { throw unavailableError(); }
+  async resumeForActor(): Promise<never> { throw unavailableError(); }
+  async resumeFromQuotedMessage(): Promise<never> { throw unavailableError(); }
 }
 
 function expandListStatuses(statuses: ContinuationListStatus[]): ContinuationStatus[] {
   return [...new Set(statuses.flatMap((status): ContinuationStatus[] => {
-    if (status === 'pending') return ['queued', 'waiting_retry', 'recovering'];
+    if (status === 'pending') return ['queued', 'waiting_retry', 'recovering', 'waiting_user'];
     if (status === 'running') return ['running', 'cancel_requested'];
     return [status];
   }))];
+}
+
+function sameConversationRoute(
+  route: ContinuationDeliveryRoute,
+  message: LarkMessage,
+): boolean {
+  if (route.kind === 'message_thread') {
+    return route.conversationId === message.chatId
+      && (route.threadId ?? '') === (message.threadId ?? '');
+  }
+  return message.chatType === 'doc_comment'
+    && route.documentToken === message.docComment?.fileToken
+    && route.commentId === message.docComment.commentId
+    && route.fileType === message.docComment.fileType;
 }
 
 function isOwner(actorOpenId: string, ownerOpenId?: string | null): boolean {
