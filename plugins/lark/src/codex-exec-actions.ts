@@ -75,7 +75,10 @@ import type {
   UpdateJobAction,
   UpsertJobAction,
 } from './codex-exec-action-schemas.js';
-import type { AsyncTaskSourceInput } from './domain/continuation.js';
+import {
+  CONTINUATION_LIMITS,
+  type AsyncTaskSourceInput,
+} from './domain/continuation.js';
 export { parseCodexExecActionEnvelope } from './codex-exec-action-schemas.js';
 export type {
   CodexExecAction,
@@ -436,6 +439,20 @@ async function resolveContinuationSourceInputs(
     [message.imagePath, ...(message.imagePaths ?? [])].filter((value): value is string => Boolean(value)),
   )];
   const descriptors = (message.attachments ?? []).filter((attachment) => attachment.fileKey);
+  if (imagePaths.length > CONTINUATION_LIMITS.inputFileCount) {
+    throw new Error(`Continuation input file count exceeds ${CONTINUATION_LIMITS.inputFileCount}.`);
+  }
+  let totalBytes = 0;
+  for (const imagePath of imagePaths) {
+    const sizeBytes = (await fs.stat(imagePath)).size;
+    if (sizeBytes > CONTINUATION_LIMITS.inputBytesPerFile) {
+      throw new Error('A continuation input exceeds the per-file byte limit.');
+    }
+    totalBytes += sizeBytes;
+    if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
+      throw new Error('Continuation inputs exceed the total byte limit.');
+    }
+  }
   if (descriptors.length === 0) {
     return {
       inputs: imagePaths.map((imagePath) => ({
@@ -461,6 +478,10 @@ async function resolveContinuationSourceInputs(
       kind: 'message_image',
     });
   }
+  const unresolvedDescriptorCount = descriptors.length - matchedImageDescriptors.size;
+  if (inputs.length + unresolvedDescriptorCount > CONTINUATION_LIMITS.inputFileCount) {
+    throw new Error(`Continuation input file count exceeds ${CONTINUATION_LIMITS.inputFileCount}.`);
+  }
   const transport = resolveActionTransport(deps.larkTransport);
   if (!transport?.downloadResource) {
     throw new Error('Continuation attachment download transport is unavailable.');
@@ -482,11 +503,17 @@ async function resolveContinuationSourceInputs(
           .digest('hex')
           .slice(0, 16)}.bin`,
         logPrefix: '[continuation-input]',
+      }, {
+        maxBytes: CONTINUATION_LIMITS.inputBytesPerFile,
       });
       if (!downloaded) {
         throw new Error('One or more continuation attachments could not be downloaded.');
       }
       temporaryPaths.push(downloaded);
+      totalBytes += (await fs.stat(downloaded)).size;
+      if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
+        throw new Error('Continuation inputs exceed the total byte limit.');
+      }
       inputs.push({
         sourcePath: path.resolve(downloaded),
         fileName,

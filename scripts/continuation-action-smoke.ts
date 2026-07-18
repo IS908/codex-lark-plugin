@@ -345,6 +345,7 @@ const comment = message('comment', {
   chatId: 'doc:dox_report',
   senderId: 'ou_comment_creator',
   threadId: 'cmt_report',
+  timestampMs: Date.parse('2026-07-18T08:30:00.000Z'),
   currentUserText: 'Please update this section.',
   sourceContextText: [
     'Document comment: Please update this section.',
@@ -367,6 +368,7 @@ assert.deepEqual(commentCreated.job.route, {
   fileType: 'docx',
 });
 assert.equal(commentCreated.job.sourceFacts.originalUserText, 'Please update this section.');
+assert.equal(commentCreated.job.sourceFacts.sourceTimestamp, '2026-07-18T08:30:00.000Z');
 assert.match(commentCreated.job.sourceFacts.sourceContextText ?? '', /Quarterly revenue was \$42/);
 assert.match(commentCreated.job.sourceFacts.sourceContextText ?? '', /Please verify the source/);
 

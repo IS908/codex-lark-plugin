@@ -9,6 +9,7 @@ process.env.LARK_APP_SECRET ||= 'test_app_secret';
 process.env.LARK_CRON_TIMEZONE = 'Asia/Shanghai';
 
 const { appConfig } = await import('../src/config.js');
+const { CONTINUATION_LIMITS } = await import('../src/domain/continuation.js');
 const { IdentitySession } = await import('../src/identity-session.js');
 const { BotMessageTracker } = await import('../src/message-trackers.js');
 const { TurnObligationTracker } = await import('../src/turn-obligation.js');
@@ -282,6 +283,7 @@ try {
   writeFileSync(localFilePath, 'report bytes', 'utf-8');
   const sendReplyRequests: any[] = [];
   class ThisBoundQuotedTransport {
+    downloadCalls = 0;
     private readonly contexts = new Map<string, any>([
       ['om_quoted_image', {
         messageId: 'om_quoted_image',
@@ -311,6 +313,7 @@ try {
     }
 
     async downloadResource(messageId: string, fileKey: string, resourceType: 'image' | 'file'): Promise<Buffer> {
+      this.downloadCalls += 1;
       if (messageId === 'om_quoted_image') {
         assert.equal(fileKey, 'img_quoted');
         assert.equal(resourceType, 'image');
@@ -321,6 +324,7 @@ try {
       return Buffer.from(this.downloadMarker);
     }
   }
+  const actionTransport = new ThisBoundQuotedTransport();
   const runJobNowRequests: any[] = [];
   const dispatcher = createCodexExecActionDispatcher({
     memoryStore: new MemoryStore(memoriesDir),
@@ -349,7 +353,7 @@ try {
         statusText: `Sent ${textSentCount + fileSentCount} message(s)`,
       };
     },
-    larkTransport: new ThisBoundQuotedTransport(),
+    larkTransport: actionTransport,
     continuationService: {
       async findExistingFromMessage(message: any) {
         return existingContinuationJobs.get(message.messageId) ?? null;
@@ -512,6 +516,26 @@ try {
   assert.equal(unsafeAttachmentContinuation[0].ok, false);
   assert.match(unsafeAttachmentContinuation[0].message, /file name.*invalid/i);
   assert.equal(continuationCreates.length, createsBeforeFailedAttachment);
+
+  const downloadsBeforeExcessiveAttachments = actionTransport.downloadCalls;
+  const excessiveAttachmentContinuation = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_excessive_attachments',
+      attachments: Array.from(
+        { length: CONTINUATION_LIMITS.inputFileCount + 1 },
+        (_, index) => ({
+          fileKey: `file_excessive_${index}`,
+          fileName: `attachment-${index}.txt`,
+          fileType: 'file',
+        }),
+      ),
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(excessiveAttachmentContinuation[0].ok, false);
+  assert.match(excessiveAttachmentContinuation[0].message, /input file count|attachments|32/i);
+  assert.equal(actionTransport.downloadCalls, downloadsBeforeExcessiveAttachments);
 
   const partiallyDownloadedImage = join(root, '1784364188000-img_pre-pre.png');
   writeFileSync(partiallyDownloadedImage, 'already downloaded image', 'utf8');

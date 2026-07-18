@@ -412,6 +412,7 @@ function makeDeps(overrides: any = {}) {
   const channel = new LarkChannel();
   const session = new IdentitySession(() => null);
   const handled: any[] = [];
+  const sdkCommentTimestamp = Date.parse('2026-07-18T08:30:00.000Z');
   channel.setIdentitySession(session);
   channel.setMessageHandler(async (message: any) => { handled.push(message); });
   await channel.handleSdkCommentEvent({
@@ -421,7 +422,7 @@ function makeDeps(overrides: any = {}) {
     replyId: 'rpl_child',
     operator: { openId: 'ou_sdk_commenter' },
     mentionedBot: true,
-    timestamp: Date.now(),
+    timestamp: sdkCommentTimestamp,
   } as any, {
     comments: {
       resolveTarget: async () => ({ fileToken: 'dox_sdk_context', fileType: 'docx' }),
@@ -444,6 +445,7 @@ function makeDeps(overrides: any = {}) {
   } as any);
   await flush();
   assert.equal(handled.length, 1);
+  assert.equal(handled[0].timestampMs, sdkCommentTimestamp);
   assert.equal(handled[0].currentUserText, 'Please update this section.');
   assert.match(handled[0].sourceContextText, /Selected quarterly revenue/);
   assert.match(handled[0].sourceContextText, /Verify the source/);

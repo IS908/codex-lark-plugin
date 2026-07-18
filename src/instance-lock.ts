@@ -104,17 +104,16 @@ async function compatibleLegacyLockPaths(
   }
   const currentPath = legacyLarkInstanceLockPath(appId, lockRoot);
   const currentMetadata = await lstat(currentPath).catch(() => null);
-  const foreignRegularFile = Boolean(
-    currentMetadata?.isFile()
-    && !currentMetadata.isSymbolicLink()
+  const foreignOccupiedPath = Boolean(
+    currentMetadata
     && currentUid !== undefined
     && currentMetadata.uid !== currentUid,
   );
   // Always reserve this app's legacy filename so an old same-app runtime
   // started after us cannot bypass the private global lock. Unrelated legacy
-  // locks remain UID-scoped; a foreign regular file already occupies its own
+  // locks remain UID-scoped; any foreign-owned object already reserves its own
   // shared-temp namespace and also prevents an old runtime from claiming it.
-  if (!foreignRegularFile) ownedPaths.push(currentPath);
+  if (!foreignOccupiedPath) ownedPaths.push(currentPath);
   return [...new Set(ownedPaths.sort())];
 }
 

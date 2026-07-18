@@ -953,10 +953,10 @@ async function compatibleLegacyLockPaths(appId, lockRoot, scanAll, currentUid) {
   }
   const currentPath = legacyLarkInstanceLockPath(appId, lockRoot);
   const currentMetadata = await lstat2(currentPath).catch(() => null);
-  const foreignRegularFile = Boolean(
-    currentMetadata?.isFile() && !currentMetadata.isSymbolicLink() && currentUid !== void 0 && currentMetadata.uid !== currentUid
+  const foreignOccupiedPath = Boolean(
+    currentMetadata && currentUid !== void 0 && currentMetadata.uid !== currentUid
   );
-  if (!foreignRegularFile) ownedPaths.push(currentPath);
+  if (!foreignOccupiedPath) ownedPaths.push(currentPath);
   return [...new Set(ownedPaths.sort())];
 }
 

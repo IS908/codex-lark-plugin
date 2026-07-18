@@ -1752,6 +1752,7 @@ const managedRequest = createRequest('managed-input', {
   idempotencyKey: 'idem-managed-stable',
   sourceFacts: {
     ...managedBaseRequest.sourceFacts,
+    sourceTimestamp: '2026-07-18T08:30:00.000Z',
     originalUserText: 'Use github_pat_123456789012345678901234567890 to process the admitted file.',
     quotedMessageText: 'Quoted xapp-123456789012345678901234567890.',
   },
@@ -1851,7 +1852,9 @@ const reopenedManagedRepository = await SqliteContinuationRepository.open({
   inputsDir: managedInputsDir,
   jitter: () => 0,
 });
-assert.equal((await reopenedManagedRepository.get(expectedManagedJobId))?.jobId, expectedManagedJobId);
+const reopenedManagedJob = await reopenedManagedRepository.get(expectedManagedJobId);
+assert.equal(reopenedManagedJob?.jobId, expectedManagedJobId);
+assert.equal(reopenedManagedJob?.sourceFacts.sourceTimestamp, '2026-07-18T08:30:00.000Z');
 const managedDatabase = new DatabaseSync(managedDatabasePath);
 const managedRaw = managedDatabase.prepare(`
   SELECT source_facts_json, task_contract_json FROM continuation_jobs WHERE job_id = ?
@@ -2627,6 +2630,21 @@ await Promise.all([
 ]);
 await assert.rejects(lstat(concurrentOrphan), /ENOENT/);
 
+const adoptedOrphanJobId = continuationJobId('adopted-orphan-recheck');
+const adoptedOrphan = await concurrentStore.install(adoptedOrphanJobId, [{
+  sourcePath: concurrentCreateSource,
+  fileName: 'adopted.txt',
+  kind: 'message_attachment',
+}], 'adopted-orphan-fingerprint');
+const adoptedOrphanDirectory = join(concurrentCreateRoot, 'inputs', adoptedOrphanJobId);
+await utimes(adoptedOrphanDirectory, agedOrphan, agedOrphan);
+await concurrentStore.cleanupOrphans(
+  new Set(),
+  Date.now(),
+  async (jobId) => jobId === adoptedOrphanJobId,
+);
+assert.deepEqual(await concurrentStore.verify(adoptedOrphanJobId, adoptedOrphan.artifacts), { ok: true });
+
 // One corrupt trusted snapshot must fail closed without blocking the next due Job.
 const corruptStateRoot = await mkdtemp(join(tmpdir(), 'continuation-corrupt-state-'));
 const corruptStateDatabasePath = join(corruptStateRoot, 'jobs.sqlite');
@@ -2636,6 +2654,18 @@ const corruptStateRepository = await SqliteContinuationRepository.open({
   inputsDir: join(corruptStateRoot, 'inputs'),
   jitter: () => 0,
 });
+const corruptInputCountJob = await corruptStateRepository.create(createRequest(
+  'corrupt-input-count-state',
+  { createdAt: '2026-07-16T23:59:53.000Z' },
+));
+const corruptInputDuplicateJob = await corruptStateRepository.create(createRequest(
+  'corrupt-input-duplicate-state',
+  { createdAt: '2026-07-16T23:59:54.000Z' },
+));
+const corruptInputSizeJob = await corruptStateRepository.create(createRequest(
+  'corrupt-input-size-state',
+  { createdAt: '2026-07-16T23:59:55.000Z' },
+));
 const corruptCheckpointJob = await corruptStateRepository.create(createRequest(
   'corrupt-checkpoint-state',
   { createdAt: '2026-07-16T23:59:56.000Z' },
@@ -2651,6 +2681,43 @@ const healthyStateJob = await corruptStateRepository.create(createRequest('healt
   createdAt: '2026-07-16T23:59:59.000Z',
 }));
 const corruptStateDatabase = new DatabaseSync(corruptStateDatabasePath);
+const persistedInput = (index: number, sizeBytes = 1) => ({
+  id: `input_${String(index).padStart(3, '0')}`,
+  kind: 'message_attachment',
+  fileName: `input_${String(index).padStart(3, '0')}.bin`,
+  relativePath: `input_${String(index).padStart(3, '0')}.bin`,
+  sha256: 'a'.repeat(64),
+  sizeBytes,
+});
+const overwritePersistedInputs = (jobId: string, inputs: unknown[]) => {
+  const row = corruptStateDatabase.prepare(`
+    SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+  `).get(jobId) as { source_facts_json: string };
+  corruptStateDatabase.prepare(`
+    UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+  `).run(JSON.stringify({
+    ...JSON.parse(row.source_facts_json) as Record<string, unknown>,
+    inputs,
+  }), jobId);
+};
+overwritePersistedInputs(corruptInputCountJob.job.jobId, Array.from(
+  { length: CONTINUATION_LIMITS.inputFileCount + 1 },
+  (_, index) => persistedInput(index + 1),
+));
+overwritePersistedInputs(corruptInputDuplicateJob.job.jobId, [persistedInput(1), persistedInput(1)]);
+overwritePersistedInputs(corruptInputSizeJob.job.jobId, [
+  persistedInput(1, CONTINUATION_LIMITS.inputBytesPerFile + 1),
+]);
+assert.equal(
+  (await corruptStateRepository.get(corruptInputDuplicateJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await corruptStateRepository.listAll(20)).find(
+    (job) => job.jobId === corruptInputSizeJob.job.jobId,
+  )?.errorCode,
+  'continuation_persisted_state_invalid',
+);
 corruptStateDatabase.prepare(`
   UPDATE continuation_jobs SET checkpoint_json = ? WHERE job_id = ?
 `).run(JSON.stringify({
@@ -2692,6 +2759,10 @@ const healthyStateClaim = await corruptStateRepository.claimDue(
   '2026-07-17T00:00:30.000Z',
 );
 assert.equal(healthyStateClaim?.job.jobId, healthyStateJob.job.jobId);
+assert.equal(
+  (await corruptStateRepository.get(corruptInputCountJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
 const corruptStateRow = corruptStateDatabase.prepare(`
   SELECT status, error_code, lease_owner FROM continuation_jobs WHERE job_id = ?
 `).get(corruptStateJob.job.jobId) as {
@@ -2975,8 +3046,10 @@ const integrityDatabasePath = join(integrityRoot, 'jobs.sqlite');
 const integrityArtifactsDir = join(integrityRoot, 'artifacts');
 const integrityInputsDir = join(integrityRoot, 'inputs');
 const corruptSource = join(integrityRoot, 'corrupt-source.txt');
+const unreadableSource = join(integrityRoot, 'unreadable-source.txt');
 const healthySource = join(integrityRoot, 'healthy-source.txt');
 await writeFile(corruptSource, 'before tamper', 'utf8');
+await writeFile(unreadableSource, 'unreadable', 'utf8');
 await writeFile(healthySource, 'healthy', 'utf8');
 const integrityRepository = await SqliteContinuationRepository.open({
   databasePath: integrityDatabasePath,
@@ -2984,6 +3057,14 @@ const integrityRepository = await SqliteContinuationRepository.open({
   inputsDir: integrityInputsDir,
   jitter: () => 0,
 });
+const unreadableCreated = await integrityRepository.create(createRequest('integrity-unreadable', {
+  createdAt: '2026-07-16T23:59:57.000Z',
+  sourceInputs: [{
+    sourcePath: unreadableSource,
+    fileName: 'unreadable.txt',
+    kind: 'message_attachment',
+  }],
+}));
 const corruptCreated = await integrityRepository.create(createRequest('integrity-corrupt', {
   createdAt: '2026-07-16T23:59:58.000Z',
   sourceInputs: [{ sourcePath: corruptSource, fileName: 'corrupt.txt', kind: 'message_attachment' }],
@@ -2997,6 +3078,11 @@ const corruptManagedPath = integrityStore.resolve(
   corruptCreated.job.jobId,
   corruptCreated.job.sourceFacts.inputs[0].relativePath,
 );
+const unreadableManagedPath = integrityStore.resolve(
+  unreadableCreated.job.jobId,
+  unreadableCreated.job.sourceFacts.inputs[0].relativePath,
+);
+await chmod(unreadableManagedPath, 0o000);
 await chmod(corruptManagedPath, 0o600);
 await writeFile(corruptManagedPath, 'tampered', 'utf8');
 await chmod(corruptManagedPath, 0o400);
@@ -3013,6 +3099,9 @@ const healthyClaim = await reopenedIntegrityRepository.claimDue(
   '2026-07-17T00:00:30.000Z',
 );
 assert.equal(healthyClaim?.job.jobId, healthyCreated.job.jobId);
+const unreadableJob = await reopenedIntegrityRepository.get(unreadableCreated.job.jobId);
+assert.equal(unreadableJob?.status, 'failed');
+assert.equal(unreadableJob?.errorCode, 'continuation_input_integrity_failed');
 const corruptedJob = await reopenedIntegrityRepository.get(corruptCreated.job.jobId);
 assert.equal(corruptedJob?.status, 'failed');
 assert.equal(corruptedJob?.errorCode, 'continuation_input_integrity_failed');
@@ -3020,6 +3109,16 @@ assert.equal(corruptedJob?.attemptCount, 0);
 assert.equal(corruptedJob?.leaseOwner, undefined);
 assert.equal(corruptedJob?.leaseExpiresAt, undefined);
 assert.equal(corruptedJob?.deliveryEvents?.filter((event) => event.kind === 'terminal').length, 1);
+const unreadableDelivery = await reopenedIntegrityRepository.claimPendingDelivery(
+  'delivery-unreadable-input',
+  baseNow,
+);
+assert.equal(unreadableDelivery?.jobId, unreadableCreated.job.jobId);
+await reopenedIntegrityRepository.markDeliveryResult(
+  unreadableDelivery!,
+  { status: 'delivered', messageId: 'om_unreadable_input_failure' },
+  baseNow,
+);
 const integrityOutboxDatabase = new DatabaseSync(integrityDatabasePath);
 integrityOutboxDatabase.prepare(`
   UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
@@ -3130,7 +3229,7 @@ await assert.rejects(
 );
 reopenedIntegrityRepository.close();
 
-// Unexpected input I/O failures are retryable scan failures, not terminal integrity verdicts.
+// Persistent input I/O failures become terminal integrity failures instead of starving scans.
 const unavailableRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-unavailable-'));
 const unavailableSource = join(unavailableRoot, 'source.txt');
 await writeFile(unavailableSource, 'temporarily unreadable', 'utf8');
@@ -3149,14 +3248,19 @@ const unavailableManagedPath = unavailableStore.resolve(
   unavailableJob.job.sourceFacts.inputs[0].relativePath,
 );
 await chmod(unavailableManagedPath, 0o000);
-await assert.rejects(
-  unavailableRepository.claimDue('worker-unavailable', baseNow, '2026-07-17T00:00:30.000Z'),
-  /EACCES|permission denied/i,
+assert.equal(
+  await unavailableRepository.claimDue(
+    'worker-unavailable',
+    baseNow,
+    '2026-07-17T00:00:30.000Z',
+  ),
+  null,
 );
-const stillDueAfterIoFailure = await unavailableRepository.get(unavailableJob.job.jobId);
-assert.equal(stillDueAfterIoFailure?.status, 'queued');
-assert.equal(stillDueAfterIoFailure?.attemptCount, 0);
-assert.equal(stillDueAfterIoFailure?.deliveryEvents?.length, 0);
+const failedAfterIoFailure = await unavailableRepository.get(unavailableJob.job.jobId);
+assert.equal(failedAfterIoFailure?.status, 'failed');
+assert.equal(failedAfterIoFailure?.errorCode, 'continuation_input_integrity_failed');
+assert.equal(failedAfterIoFailure?.attemptCount, 0);
+assert.equal(failedAfterIoFailure?.deliveryEvents?.length, 1);
 await chmod(unavailableManagedPath, 0o400);
 unavailableRepository.close();
 

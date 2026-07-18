@@ -382,6 +382,40 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
+// Foreign-owned non-regular legacy paths reserve the shared-temp compatibility name.
+{
+  const stateDir = tmpRoot('resource-lark-foreign-nonregular-state-');
+  const sharedLegacyDir = tmpRoot('resource-lark-foreign-nonregular-legacy-');
+  const appId = 'cli_foreign_nonregular_owner';
+  const legacyPath = legacyLarkInstanceLockPath(appId, sharedLegacyDir);
+  const simulatedCurrentUid = (process.getuid?.() ?? 0) + 1;
+  const target = join(sharedLegacyDir, 'foreign-target');
+  writeFileSync(target, 'foreign target', 'utf8');
+  symlinkSync(target, legacyPath);
+  const symlinkScopedLock = await acquireLarkInstanceLock(
+    appId,
+    stateDir,
+    sharedLegacyDir,
+    simulatedCurrentUid,
+  );
+  assert.equal(existsSync(legacyPath), true);
+  symlinkScopedLock.release();
+  rmSync(legacyPath);
+
+  mkdirSync(legacyPath);
+  const directoryScopedLock = await acquireLarkInstanceLock(
+    appId,
+    stateDir,
+    sharedLegacyDir,
+    simulatedCurrentUid,
+  );
+  assert.equal(statSync(legacyPath).isDirectory(), true);
+  directoryScopedLock.release();
+  cleanup(stateDir);
+  cleanup(sharedLegacyDir);
+  passed++;
+}
+
 // 7. Rotating logs keep current + configured backups and preserve new writes.
 {
   const dir = tmpRoot('resource-log-');
@@ -832,4 +866,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/35 PASS`);
+console.log(`resource-governance smoke: ${passed}/36 PASS`);

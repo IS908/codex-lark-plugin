@@ -45,7 +45,11 @@ export interface ContinuationInputStorePort {
   quarantine(jobId: string): Promise<string | null>;
   restoreQuarantine(jobId: string, token: string): Promise<void>;
   discardQuarantine(jobId: string, token: string): Promise<void>;
-  cleanupOrphans(jobIds: ReadonlySet<string>, nowMs?: number): Promise<void>;
+  cleanupOrphans(
+    jobIds: ReadonlySet<string>,
+    nowMs?: number,
+    isJobKnown?: (jobId: string) => boolean | Promise<boolean>,
+  ): Promise<void>;
 }
 
 export interface ContinuationRepository {

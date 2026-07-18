@@ -279,10 +279,11 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       try {
         digest = await sha256File(filePath);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (code === 'ENOENT') {
           return { ok: false, reason: 'missing' };
         }
-        if ((error as NodeJS.ErrnoException)?.code === 'ELOOP') {
+        if (['ELOOP', 'EACCES', 'EPERM', 'EIO', 'ENOTDIR'].includes(code ?? '')) {
           return { ok: false, reason: 'invalid' };
         }
         if (error instanceof InvalidManagedInputError) {
@@ -365,7 +366,11 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     }
   }
 
-  async cleanupOrphans(jobIds: ReadonlySet<string>, nowMs = Date.now()): Promise<void> {
+  async cleanupOrphans(
+    jobIds: ReadonlySet<string>,
+    nowMs = Date.now(),
+    isJobKnown?: (jobId: string) => boolean | Promise<boolean>,
+  ): Promise<void> {
     await this.ensureRoot();
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
     const liveCreationJobs = new Set<string>();
@@ -425,13 +430,14 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       if (isStaging && [...liveCreationJobs].some((jobId) =>
         entry.name.startsWith(`.staging-${jobId}-`))) continue;
       const candidate = path.join(this.rootDir, entry.name);
-      const metadata = await fs.stat(candidate).catch((error) => {
-        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-        throw error;
-      });
-      if (!metadata) continue;
-      if (nowMs - metadata.mtimeMs < this.orphanAgeMs) continue;
-      await removeManagedTree(candidate);
+      if (!isStaging && isValidJobId(entry.name)) {
+        await this.withCreationLock(entry.name, async () => {
+          if (jobIds.has(entry.name) || await isJobKnown?.(entry.name)) return;
+          await removeAgedOrphan(candidate, nowMs, this.orphanAgeMs);
+        });
+        continue;
+      }
+      await removeAgedOrphan(candidate, nowMs, this.orphanAgeMs);
     }
   }
 
@@ -632,6 +638,15 @@ async function assertDirectory(directory: string): Promise<void> {
 function assertJobId(jobId: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(jobId)) {
     throw new Error(`Invalid continuation job id for input storage: ${jobId}`);
+  }
+}
+
+function isValidJobId(jobId: string): boolean {
+  try {
+    assertJobId(jobId);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -879,4 +894,17 @@ async function pathExists(target: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
     throw error;
   }
+}
+
+async function removeAgedOrphan(
+  candidate: string,
+  nowMs: number,
+  orphanAgeMs: number,
+): Promise<void> {
+  const metadata = await fs.stat(candidate).catch((error) => {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!metadata || nowMs - metadata.mtimeMs < orphanAgeMs) return;
+  await removeManagedTree(candidate);
 }

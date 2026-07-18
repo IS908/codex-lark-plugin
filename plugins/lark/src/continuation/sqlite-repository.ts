@@ -30,7 +30,11 @@ import {
   type ContinuationToolRequest,
   type ContinuationToolResult,
 } from '../domain/continuation.js';
-import type { ContinuationInputStorePort, ContinuationRepository } from '../ports/continuation.js';
+import type {
+  ContinuationInputStorePort,
+  ContinuationInputVerification,
+  ContinuationRepository,
+} from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
 import {
   continuationJobId,
@@ -732,10 +736,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         continue;
       }
       const selected = selection.job;
-      const verification = await this.inputs.verify(
-        selected.jobId,
-        selected.sourceFacts.inputs,
-      );
+      let verification: ContinuationInputVerification;
+      try {
+        verification = await this.inputs.verify(
+          selected.jobId,
+          selected.sourceFacts.inputs,
+        );
+      } catch {
+        verification = { ok: false, reason: 'invalid' };
+      }
       if (!verification.ok) {
         this.transaction(() => {
           const update = this.database.prepare(`
@@ -1727,9 +1736,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     const knownJobs = new Set(rows
       .filter((row) => optionalStringField(row, 'error_code') !== 'continuation_persisted_state_invalid')
       .map((row) => stringField(row, 'job_id')));
+    const isJobKnown = (jobId: string): boolean => Boolean(this.database.prepare(`
+      SELECT 1 FROM continuation_jobs WHERE job_id = ? AND deleted_at IS NULL
+    `).get(jobId));
     const results = await Promise.allSettled([
       this.artifacts.cleanupOrphans(knownJobs),
-      this.inputs.cleanupOrphans(knownJobs),
+      this.inputs.cleanupOrphans(knownJobs, Date.now(), isJobKnown),
     ]);
     const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
     if (errors.length > 0) {
@@ -3064,8 +3076,34 @@ function validateSourceFacts(value: unknown): asserts value is AsyncTaskFactSnap
   ) {
     throw new Error('Continuation source facts are invalid.');
   }
+  validateManagedInputArtifacts(facts.inputs);
   validatePermissionEnvelope(facts.permissions, false);
   assertJsonBytes('source facts', facts, CONTINUATION_LIMITS.contextSnapshotBytes);
+}
+
+function validateManagedInputArtifacts(
+  inputs: AsyncTaskFactSnapshot['inputs'],
+): void {
+  if (inputs.length > CONTINUATION_LIMITS.inputFileCount) {
+    throw new Error('Continuation persisted input file count is invalid.');
+  }
+  const ids = new Set<string>();
+  const paths = new Set<string>();
+  let totalBytes = 0;
+  for (const input of inputs) {
+    if (ids.has(input.id) || paths.has(input.relativePath)) {
+      throw new Error('Continuation persisted input identities must be unique.');
+    }
+    ids.add(input.id);
+    paths.add(input.relativePath);
+    if (input.sizeBytes > CONTINUATION_LIMITS.inputBytesPerFile) {
+      throw new Error('Continuation persisted input file size is invalid.');
+    }
+    totalBytes += input.sizeBytes;
+    if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
+      throw new Error('Continuation persisted input total size is invalid.');
+    }
+  }
 }
 
 function validateFinalResult(
