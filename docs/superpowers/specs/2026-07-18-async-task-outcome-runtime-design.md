@@ -40,12 +40,23 @@ immutable after creation:
 - managed input artifact references for downloaded images and attachments;
 - canonical working directory, selected model, and permission envelope.
 
+The permission envelope is an immutable admission-time audit snapshot, not a
+durable grant of authority. Before every attempt and resume, the parent computes
+effective permissions as the intersection of that snapshot and current policy,
+including the current trusted-workspace, sandbox-root, and local-tool rules. A
+later revocation or narrowing can never preserve broader authority. It blocks the
+run immediately, or becomes `waiting_user` after #299 when an authenticated user
+action can restore the missing authorization.
+
 It never contains the memory-enriched prompt or a raw credential-bearing message.
 Downloaded source paths are staged, hashed, and atomically renamed into a separate
 read-only `inputs/<job-id>/` tree; they are never placed in the writable artifact
 tree. The Codex sandbox receives the input paths as readable references but only
 the sibling artifact tree as an additional writable directory. Checksums are
-revalidated before each attempt. Missing or unreadable inputs fail creation.
+revalidated before each attempt, after restart and before invoking Codex. A
+missing or modified admitted input records a redacted integrity event and
+terminates as `failed/continuation_input_integrity_failed` without starting the
+attempt. Missing or unreadable inputs fail creation.
 
 Creation derives a deterministic Job ID from the source-message idempotency key,
 serializes same-ID creation in-process, stages input files, atomically renames the
@@ -58,7 +69,11 @@ Legacy rows cannot reconstruct facts that v6 never stored. Migration marks their
 fact snapshot `provenance: legacy_unavailable`, keeps unavailable text and input
 fields null/empty, and derives stable criterion IDs from the stored criterion
 ordinal plus hash. It never fabricates original user text or quoted context. The
-existing v1-v6 migration chain remains supported.
+existing v1-v6 migration chain remains supported. Schema v7 also retains the
+existing flattened `objective`, `acceptanceCriteria`, and `contextSnapshot`
+execution projection, derived from the new contract, so #303 remains independently
+deployable with the v6 runner. #300 removes that runner dependency when it starts
+consuming facts and contracts directly.
 
 `AsyncTaskContract` is a validated model interpretation:
 
@@ -100,8 +115,11 @@ preserves no-blind-replay while allowing bounded invocation repair.
 A non-terminal attempt emits a structured delta. Another attempt is scheduled only
 when acceptance remains unmet, the next action is concrete, the total budget
 allows it, and the committed checkpoint contains a material change. Material
-change is determined from canonical evidence, artifact, completed-step, decision,
-or current-step fields rather than model confidence alone.
+change is limited to parent-verifiable state: new evidence content/checksums,
+changed output artifact checksums, newly completed stable criterion/deliverable/
+step IDs, or a repository-authorized current-step transition backed by completion
+of the prior step. Free-form summaries, decisions, constraints, stop reasons,
+confidence, and next-action prose cannot reset the no-progress counter.
 
 Two consecutive no-progress deltas terminate with
 `failed/continuation_stalled`. Maximum attempts remain a safety ceiling, not an
@@ -150,7 +168,11 @@ task-level repair with a new validated request/evidence path. `waiting_user` is 
 non-runnable interrupt. Per-error and total recovery budgets are parent-owned.
 Exhaustion produces a terminal failure with completed work and recovery history.
 Existing `/task retry` remains a terminal-job clone; only automatic recovery and
-`/task resume` continue the same Job.
+`/task resume` continue the same Job. A retry clones each managed input through
+the same staged installation protocol into the new deterministic Job-owned input
+tree. The clone does not refer to the original tree: either Job can be retained or
+deleted without invalidating the other, and the retry still works after the
+original source file has disappeared.
 
 ## Human Resume
 

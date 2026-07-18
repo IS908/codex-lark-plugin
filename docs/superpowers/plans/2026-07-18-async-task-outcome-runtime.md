@@ -24,16 +24,22 @@
 **Files:**
 - Modify: `src/domain/continuation.ts`
 - Modify: `src/continuation/artifact-store.ts`
+- Create: `src/continuation/input-store.ts`
+- Modify: `src/continuation/codex-runner.ts`
 - Modify: `src/continuation/runtime.ts`
 - Modify: `src/continuation/service.ts`
 - Modify: `src/continuation/sqlite-repository.ts`
+- Modify: `src/continuation/worker.ts`
 - Modify: `src/codex-exec-action-schemas.ts`
 - Modify: `src/codex-exec-action-channel.ts`
 - Modify: `src/codex-exec-actions.ts`
 - Test: `scripts/continuation-action-smoke.ts`
 - Test: `scripts/codex-exec-actions-smoke.ts`
+- Test: `scripts/continuation-codex-runner-smoke.ts`
+- Test: `scripts/continuation-command-smoke.ts`
 - Test: `scripts/continuation-repository-smoke.ts`
 - Test: `scripts/continuation-restart-process-smoke.ts`
+- Test: `scripts/continuation-worker-smoke.ts`
 
 **Interfaces:**
 - Produces: `AsyncTaskFactSnapshot`, `AsyncTaskContract`, `AsyncTaskInputArtifact`, deterministic `continuationJobId(idempotencyKey)`, and staged input installation under a read-only input store.
@@ -66,7 +72,10 @@ Create image/file fixtures. Existing downloaded images are admitted directly;
 current Lark transport only after the continuation action is accepted. Assert
 managed references survive source deletion, have a SHA-256 checksum, and reject
 paths outside the admitted set. Add failures for unreadable input and download
-failure.
+failure. After reopening SQLite, tamper with and remove managed inputs; assert the
+worker records `continuation_input_integrity_failed` and never invokes Codex.
+Retry a terminal Job after deleting its original source, then assert the new Job
+owns a staged copy whose validity and cleanup are independent from the old tree.
 
 - [ ] **Step 5: Run repository and restart smoke tests and verify failure**
 
@@ -85,8 +94,13 @@ rename it to `inputs/<job-id>`, and then persist `source_facts_json` plus
 matching row exists; clean aged orphan staging/final trees at startup. Preserve the
 v1-v6 migration chain. Legacy rows use `provenance: legacy_unavailable`, null/empty
 unrecoverable facts, and deterministic criterion IDs instead of fabricated source
-text. Add duplicate/concurrent create, staging failure, DB failure, and cleanup
-tests.
+text. Keep the v7 flattened `objective`, `acceptanceCriteria`, and
+`contextSnapshot` projection derived from the contract so the existing runner
+continues to execute after migration and restart. Before every execution, verify
+the immutable manifest and fail closed before invoking Codex on a missing or
+modified input. Clone retry inputs into a separately owned staged tree. Add
+duplicate/concurrent create, staging failure, DB failure, integrity, projection,
+retry-isolation, and cleanup tests.
 
 - [ ] **Step 7: Verify issue #303 targeted tests**
 
@@ -101,6 +115,15 @@ Expected: PASS.
 
 Run: `npx tsx scripts/continuation-restart-process-smoke.ts`
 Expected: PASS.
+
+Run: `npx tsx scripts/continuation-worker-smoke.ts`
+Expected: PASS with pre-execution input-integrity enforcement.
+
+Run: `npx tsx scripts/continuation-codex-runner-smoke.ts`
+Expected: PASS with the v7 flattened compatibility projection.
+
+Run: `npx tsx scripts/continuation-command-smoke.ts`
+Expected: PASS with independently owned managed inputs on `/task retry`.
 
 - [ ] **Step 8: Mirror, self-review, commit, PR, and merge #303**
 
@@ -118,9 +141,12 @@ PR with `Closes #303`, inspect checks/comments, fix findings, and squash merge.
 - Modify: `src/ports/continuation.ts`
 - Modify: `src/continuation/codex-runner.ts`
 - Modify: `src/continuation/sqlite-repository.ts`
+- Modify: `src/continuation/service.ts`
+- Modify: `src/continuation/command-handler.ts`
 - Modify: `src/continuation/worker.ts`
 - Test: `scripts/continuation-domain-smoke.ts`
 - Test: `scripts/continuation-codex-runner-smoke.ts`
+- Test: `scripts/continuation-command-smoke.ts`
 - Test: `scripts/continuation-repository-smoke.ts`
 - Test: `scripts/continuation-restart-process-smoke.ts`
 - Test: `scripts/continuation-worker-smoke.ts`
@@ -131,9 +157,12 @@ PR with `Closes #303`, inspect checks/comments, fix findings, and squash merge.
 
 - [ ] **Step 1: Add failing pure policy tests**
 
-Cover material evidence/artifact/completed-step changes, missing next action,
-duplicate deltas, acceptance completion below max attempts, and two consecutive
-no-progress attempts.
+Cover parent-verifiable evidence content/checksums, output artifact checksum,
+completed stable criterion/deliverable/step IDs, and repository-authorized
+current-step transitions. Assert free-form summaries, decisions, constraints,
+stop reasons, confidence, or next-action prose alone are not material. Also cover
+missing next action, duplicate deltas, acceptance completion below max attempts,
+and two consecutive no-progress attempts.
 
 - [ ] **Step 2: Run domain smoke and verify policy tests fail**
 
@@ -154,7 +183,11 @@ ID. Add completion candidates with criterion evidence. Assert structural verifie
 acceptance commits completion, verifier rejection moves to `recovering` with
 bounded findings, output checksum mismatch is rejected, and `delivery_unknown`
 remains distinct from execution/verification state. Restart must preserve the
-latest valid checkpoint, verdict, and no-progress count.
+latest valid checkpoint, verdict, and no-progress count. Assert each attempt
+intersects the immutable admission snapshot with current policy: trusted-profile
+revocation and sandbox/root narrowing cannot retain prior authority and block
+before execution. `/task list` and `/task status` must classify `recovering` as
+pending/runnable rather than terminal.
 
 - [ ] **Step 5: Run runner/repository smoke and verify failure**
 
@@ -172,6 +205,10 @@ deltas, stable step IDs, verification verdicts, and parent-owned state-transitio
 events. Convert legacy checkpoints once without inventing facts. Invoke the
 verifier before terminal completion; revision returns to `recovering`. Terminate
 with `continuation_stalled` after the configured consecutive no-progress limit.
+Update command/service projections so `recovering` is consistently listed as a
+pending runnable state. Recompute effective permission from current policy for
+every claim instead of treating the immutable source-fact envelope as authority;
+#299 may later turn a user-fixable authorization block into `waiting_user`.
 
 - [ ] **Step 7: Verify, review, PR, and merge #300**
 
