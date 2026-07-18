@@ -90,6 +90,20 @@ for (const invalidContract of [
     `invalid contract must fail: ${JSON.stringify(invalidContract)}`,
   );
 }
+for (const credentialShapedId of [
+  'github_pat_123456789012345678901234567890',
+  'xapp-123456789012345678901234567890',
+  'sk-proj-123456789012345678901234567890',
+]) {
+  assert.equal(
+    parse([action({
+      deliverables: [{ id: credentialShapedId, description: 'Credential-shaped ID.', required: true }],
+      acceptance_criteria: [],
+    })]).ok,
+    false,
+    `credential-shaped contract ID must fail: ${credentialShapedId}`,
+  );
+}
 for (const forbidden of [
   { chat_id: 'oc_forged' },
   { open_id: 'ou_forged' },
@@ -294,15 +308,25 @@ assert.deepEqual(groupCreated.job.route, {
 });
 
 const redacted = await service.createFromMessage(action({
-  objective: 'Use token=super-secret-value to finish the local report.',
+  objective: [
+    'Use github_pat_123456789012345678901234567890',
+    'xapp-123456789012345678901234567890',
+    'sk-proj-123456789012345678901234567890',
+    'AWS_SECRET_ACCESS_KEY=aws-secret-access-key-value',
+    'AWS_SESSION_TOKEN=aws-session-token-value',
+    'to finish the local report.',
+  ].join(' '),
 }) as any, message('redacted', {
-  text: 'Use password=super-secret-password and finish the report.',
-  parentContent: 'Quoted token=quoted-secret-value.',
+  text: 'Use AWS_SESSION_TOKEN=source-session-secret and finish the report.',
+  parentContent: 'Quoted xapp-abcdefghijklmnopqrstuvwxyz1234567890.',
 }));
-assert.doesNotMatch(redacted.job.objective, /super-secret-value/);
+assert.doesNotMatch(
+  redacted.job.objective,
+  /github_pat_|xapp-|sk-proj-|aws-secret-access-key-value|aws-session-token-value/i,
+);
 assert.match(redacted.job.objective, /\[redacted\]/);
-assert.doesNotMatch(redacted.job.sourceFacts.originalUserText ?? '', /super-secret-password/);
-assert.doesNotMatch(redacted.job.sourceFacts.quotedMessageText ?? '', /quoted-secret-value/);
+assert.doesNotMatch(redacted.job.sourceFacts.originalUserText ?? '', /source-session-secret/);
+assert.doesNotMatch(redacted.job.sourceFacts.quotedMessageText ?? '', /xapp-/);
 assert.match(redacted.job.sourceFacts.originalUserText ?? '', /\[redacted\]/);
 
 const comment = message('comment', {

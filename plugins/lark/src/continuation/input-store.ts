@@ -30,10 +30,15 @@ interface InputManifest {
   inputs: AsyncTaskInputArtifact[];
 }
 
+class InvalidManagedInputError extends Error {}
+
 const MANIFEST_FILE = '.manifest.json';
 const DEFAULT_ORPHAN_AGE_MS = 60 * 60 * 1_000;
 const CREATION_LOCK_PREFIX = '.creating-';
+const CREATION_RECLAIM_PREFIX = '.reclaim-';
+const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
+const OWNERLESS_LOCK_GRACE_MS = 1_000;
 
 export function continuationJobId(idempotencyKey: string): string {
   if (!idempotencyKey) throw new Error('Continuation idempotency key is required.');
@@ -82,6 +87,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         break;
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+        if (await tryReclaimCreationLock(lockDirectory, this.rootDir)) continue;
         if (Date.now() >= deadline) {
           throw new Error('Continuation creation is already in progress for this idempotency key.');
         }
@@ -116,12 +122,24 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       for (let index = 0; index < sources.length; index += 1) {
         const source = sources[index];
         const id = `input_${String(index + 1).padStart(3, '0')}`;
-        const relativePath = `${id}-${source.fileName}`;
+        const relativePath = neutralInputFileName(id, source.fileName);
         const copied = await copyRegularFile(
           source.sourcePath,
           path.join(stagingDirectory, relativePath),
           this.maxFileBytes,
         );
+        if (
+          source.expectedSizeBytes !== undefined
+          && copied.sizeBytes !== source.expectedSizeBytes
+        ) {
+          throw new Error('Continuation input integrity check failed: copied size differs from the verified source.');
+        }
+        if (
+          source.expectedSha256 !== undefined
+          && copied.sha256 !== source.expectedSha256
+        ) {
+          throw new Error('Continuation input integrity check failed: copied checksum differs from the verified source.');
+        }
         totalBytes += copied.sizeBytes;
         if (totalBytes > this.maxTotalBytes) {
           throw new Error(`Continuation input total byte limit exceeded: ${totalBytes} > ${this.maxTotalBytes}.`);
@@ -129,7 +147,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         artifacts.push({
           id,
           kind: source.kind,
-          fileName: source.fileName,
+          fileName: relativePath,
           relativePath,
           sha256: copied.sha256,
           sizeBytes: copied.sizeBytes,
@@ -180,6 +198,8 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       sourcePath: this.resolve(sourceJobId, artifact.relativePath),
       fileName: artifact.fileName,
       kind: artifact.kind,
+      expectedSha256: artifact.sha256,
+      expectedSizeBytes: artifact.sizeBytes,
     })), requestFingerprint);
   }
 
@@ -188,23 +208,41 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     artifacts: readonly AsyncTaskInputArtifact[],
   ): Promise<ContinuationInputVerification> {
     if (artifacts.length === 0) return { ok: true };
-    try {
-      const directory = this.jobDirectory(jobId);
-      await assertDirectory(directory);
-      for (const artifact of artifacts) {
-        validateArtifact(artifact);
-        const filePath = this.resolve(jobId, artifact.relativePath);
-        const metadata = await fs.lstat(filePath);
-        if (metadata.isSymbolicLink() || !metadata.isFile()) return { ok: false, reason: 'invalid' };
-        if (metadata.size !== artifact.sizeBytes) return { ok: false, reason: 'modified' };
-        const digest = await sha256File(filePath);
-        if (digest !== artifact.sha256) return { ok: false, reason: 'modified' };
-      }
-      return { ok: true };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { ok: false, reason: 'missing' };
+    const directory = this.jobDirectory(jobId);
+    const directoryMetadata = await lstatForVerification(directory);
+    if (!directoryMetadata) return { ok: false, reason: 'missing' };
+    if (directoryMetadata.isSymbolicLink() || !directoryMetadata.isDirectory()) {
       return { ok: false, reason: 'invalid' };
     }
+    for (const artifact of artifacts) {
+      try {
+        validateArtifact(artifact);
+      } catch {
+        return { ok: false, reason: 'invalid' };
+      }
+      const filePath = this.resolve(jobId, artifact.relativePath);
+      const metadata = await lstatForVerification(filePath);
+      if (!metadata) return { ok: false, reason: 'missing' };
+      if (metadata.isSymbolicLink() || !metadata.isFile()) return { ok: false, reason: 'invalid' };
+      if (metadata.size !== artifact.sizeBytes) return { ok: false, reason: 'modified' };
+      let digest: string;
+      try {
+        digest = await sha256File(filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+          return { ok: false, reason: 'missing' };
+        }
+        if ((error as NodeJS.ErrnoException)?.code === 'ELOOP') {
+          return { ok: false, reason: 'invalid' };
+        }
+        if (error instanceof InvalidManagedInputError) {
+          return { ok: false, reason: 'invalid' };
+        }
+        throw error;
+      }
+      if (digest !== artifact.sha256) return { ok: false, reason: 'modified' };
+    }
+    return { ok: true };
   }
 
   resolve(jobId: string, relativePath: string): string {
@@ -221,6 +259,42 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
 
   async remove(jobId: string): Promise<void> {
     await removeManagedTree(this.jobDirectory(jobId));
+  }
+
+  async quarantine(jobId: string): Promise<string | null> {
+    const source = this.jobDirectory(jobId);
+    const token = `${process.pid}-${randomBytes(8).toString('hex')}`;
+    const destination = this.quarantineDirectory(jobId, token);
+    let metadata;
+    try {
+      metadata = await fs.lstat(source);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      throw error;
+    }
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      throw new Error('Continuation input path is not a real directory.');
+    }
+    try {
+      await fs.rename(source, destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      throw error;
+    }
+    const moved = await fs.lstat(destination);
+    if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
+      await fs.rename(destination, source).catch(() => {});
+      throw new Error('Continuation input quarantine identity changed during rename.');
+    }
+    return token;
+  }
+
+  async restoreQuarantine(jobId: string, token: string): Promise<void> {
+    await fs.rename(this.quarantineDirectory(jobId, token), this.jobDirectory(jobId));
+  }
+
+  async discardQuarantine(jobId: string, token: string): Promise<void> {
+    await removeManagedTree(this.quarantineDirectory(jobId, token));
   }
 
   async cleanupOrphans(jobIds: ReadonlySet<string>, nowMs = Date.now()): Promise<void> {
@@ -243,6 +317,21 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     }
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      const redactionQuarantine = parseRedactionQuarantine(entry.name);
+      if (redactionQuarantine) {
+        const candidate = path.join(this.rootDir, entry.name);
+        if (isProcessAlive(redactionQuarantine.ownerPid)) continue;
+        if (jobIds.has(redactionQuarantine.jobId)) {
+          try {
+            await fs.rename(candidate, this.jobDirectory(redactionQuarantine.jobId));
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+          }
+        } else {
+          await removeManagedTree(candidate);
+        }
+        continue;
+      }
       const isStaging = entry.name.startsWith('.staging-');
       if (entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
       if (!isStaging && jobIds.has(entry.name)) continue;
@@ -272,6 +361,18 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       if (!path.isAbsolute(source.sourcePath)) {
         throw new Error('Continuation input source path must be absolute and server-admitted.');
       }
+      if (
+        source.expectedSha256 !== undefined
+        && !/^[a-f0-9]{64}$/.test(source.expectedSha256)
+      ) {
+        throw new Error('Continuation input expected checksum is invalid.');
+      }
+      if (
+        source.expectedSizeBytes !== undefined
+        && (!Number.isSafeInteger(source.expectedSizeBytes) || source.expectedSizeBytes < 0)
+      ) {
+        throw new Error('Continuation input expected size is invalid.');
+      }
     }
   }
 
@@ -282,6 +383,14 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       throw new Error('Continuation input job directory escapes the input root.');
     }
     return resolved;
+  }
+
+  private quarantineDirectory(jobId: string, token: string): string {
+    assertJobId(jobId);
+    if (!/^[1-9]\d*-[a-f0-9]{16}$/.test(token)) {
+      throw new Error('Continuation input quarantine token is invalid.');
+    }
+    return path.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
   }
 
   private async readManifestIfPresent(
@@ -313,7 +422,14 @@ async function copyRegularFile(
   destinationPath: string,
   maxFileBytes: number,
 ): Promise<{ sha256: string; sizeBytes: number }> {
-  const source = await fs.open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const pathMetadata = await fs.lstat(sourcePath);
+  if (pathMetadata.isSymbolicLink() || !pathMetadata.isFile()) {
+    throw new Error('Continuation input source must be a regular file.');
+  }
+  const source = await fs.open(
+    sourcePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
   try {
     const before = await source.stat();
     if (!before.isFile()) throw new Error('Continuation input source must be a regular file.');
@@ -348,10 +464,25 @@ async function copyRegularFile(
   }
 }
 
+async function lstatForVerification(filePath: string): Promise<Awaited<ReturnType<typeof fs.lstat>> | null> {
+  try {
+    return await fs.lstat(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 async function sha256File(filePath: string): Promise<string> {
   const digest = createHash('sha256');
-  const file = await fs.open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const file = await fs.open(
+    filePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
   try {
+    if (!(await file.stat()).isFile()) {
+      throw new InvalidManagedInputError('Continuation managed input is not a regular file.');
+    }
     for await (const chunk of file.createReadStream({ autoClose: false })) digest.update(chunk);
     return digest.digest('hex');
   } finally {
@@ -373,6 +504,11 @@ function validateFileName(fileName: string): void {
   ) {
     throw new Error('Continuation input file name is invalid.');
   }
+}
+
+function neutralInputFileName(id: string, originalFileName: string): string {
+  const extension = path.extname(originalFileName).toLowerCase();
+  return /^\.[a-z0-9]{1,8}$/.test(extension) ? `${id}${extension}` : id;
 }
 
 function validateArtifact(artifact: AsyncTaskInputArtifact): void {
@@ -442,6 +578,40 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): Promise<boolean> {
+  let metadata;
+  try {
+    metadata = await fs.lstat(lockDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return true;
+    throw error;
+  }
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error('Continuation creation lock state is invalid.');
+  }
+  const owner = await readCreationOwner(lockDirectory);
+  if (owner !== null && isProcessAlive(owner)) return false;
+  if (owner === null && Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
+
+  const quarantine = path.join(
+    rootDir,
+    `${CREATION_RECLAIM_PREFIX}${path.basename(lockDirectory)}-${process.pid}-${randomBytes(8).toString('hex')}`,
+  );
+  try {
+    await fs.rename(lockDirectory, quarantine);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return true;
+    throw error;
+  }
+  const moved = await fs.lstat(quarantine);
+  if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
+    await fs.rename(quarantine, lockDirectory).catch(() => {});
+    return false;
+  }
+  await removeManagedTree(quarantine);
+  return true;
+}
+
 function assertEquivalentManifest(existing: InputManifest, candidate: InputManifest): void {
   if (
     existing.requestFingerprint !== candidate.requestFingerprint
@@ -449,6 +619,20 @@ function assertEquivalentManifest(existing: InputManifest, candidate: InputManif
   ) {
     throw new Error('Continuation idempotency conflict: managed inputs or task facts differ from the first write.');
   }
+}
+
+function parseRedactionQuarantine(name: string): { jobId: string; ownerPid: number } | null {
+  if (!name.startsWith(REDACTION_QUARANTINE_PREFIX)) return null;
+  const match = /^\.redacting-(.+)-([1-9]\d*)-([a-f0-9]{16})$/.exec(name);
+  if (!match) return null;
+  try {
+    assertJobId(match[1]);
+  } catch {
+    return null;
+  }
+  const ownerPid = Number(match[2]);
+  if (!Number.isSafeInteger(ownerPid)) return null;
+  return { jobId: match[1], ownerPid };
 }
 
 async function removeManagedTree(target: string): Promise<void> {

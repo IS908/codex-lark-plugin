@@ -471,15 +471,19 @@ async function resolveContinuationSourceInputs(
       });
     }
   } catch (error) {
-    await Promise.all(temporaryPaths.map((filePath) => fs.rm(filePath, { force: true })));
+    await cleanupContinuationTemporaryInputs(temporaryPaths);
     throw error;
   }
   return {
     inputs,
     async cleanup() {
-      await Promise.all(temporaryPaths.map((filePath) => fs.rm(filePath, { force: true })));
+      await cleanupContinuationTemporaryInputs(temporaryPaths);
     },
   };
+}
+
+async function cleanupContinuationTemporaryInputs(temporaryPaths: readonly string[]): Promise<void> {
+  await Promise.allSettled(temporaryPaths.map((filePath) => fs.rm(filePath, { force: true })));
 }
 
 function safeContinuationInputName(value: string): string {

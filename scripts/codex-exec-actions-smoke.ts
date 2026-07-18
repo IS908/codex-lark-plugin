@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -353,6 +353,18 @@ try {
       async createFromMessage(action: any, _message: any, _parent: any, _model: any, sourceInputs: any[] = []) {
         continuationCreates.push(action);
         continuationInputBatches.push(sourceInputs);
+        if (
+          ['om_continuation_cleanup_failure', 'om_continuation_admission_cleanup_failure']
+            .includes(_message.messageId)
+          && sourceInputs[0]
+        ) {
+          rmSync(sourceInputs[0].sourcePath, { force: true });
+          mkdirSync(sourceInputs[0].sourcePath);
+          writeFileSync(join(sourceInputs[0].sourcePath, 'keep.txt'), 'force cleanup failure', 'utf8');
+        }
+        if (_message.messageId === 'om_continuation_admission_cleanup_failure') {
+          throw new Error('managed input admission failed');
+        }
         return {
           job: {
             jobId: `job_created_${continuationCreates.length}`,
@@ -517,6 +529,29 @@ try {
   });
   assert.equal(configuredHostTool[0].ok, true);
   assert.deepEqual(continuationCreates[2].required_tools, ['echo']);
+
+  const createsBeforeCleanupFailure = continuationCreates.length;
+  const cleanupFailureAfterCreate = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_cleanup_failure',
+      attachments: [{ fileKey: 'file_cleanup', fileName: 'cleanup.txt', fileType: 'file' }],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(cleanupFailureAfterCreate[0].ok, true);
+  assert.equal(continuationCreates.length, createsBeforeCleanupFailure + 1);
+
+  const admissionFailureWithCleanupFailure = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_admission_cleanup_failure',
+      attachments: [{ fileKey: 'file_cleanup', fileName: 'cleanup.txt', fileType: 'file' }],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(admissionFailureWithCleanupFailure[0].ok, false);
+  assert.match(admissionFailureWithCleanupFailure[0].message, /managed input admission failed/);
 
   const traceTimestamp = new Date().toISOString();
   writeFileSync(traceLogPath, [

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { CONTINUATION_LIMITS } from './domain/continuation.js';
 import { expandSchedule, normalizeJobTimezone } from './job-store.js';
 import { ACCESS_CONTROL_LISTS } from './runtime-access-control.js';
+import { redactContinuationText } from './continuation/redaction.js';
 
 export const SaveMemoryActionSchema = z.object({
   type: z.literal('save_memory'),
@@ -190,6 +191,9 @@ const RelativeContinuationDirectorySchema = z.string().min(1).refine((value) => 
 const ContinuationContractIdSchema = z.string().regex(
   /^[A-Za-z0-9_.-]{1,80}$/,
   'contract IDs must contain 1-80 letters, numbers, dots, underscores, or hyphens',
+).refine(
+  (value) => redactContinuationText(value) === value,
+  'contract IDs must not contain credential-shaped values',
 );
 
 const ContinuationDeliverableActionSchema = z.object({

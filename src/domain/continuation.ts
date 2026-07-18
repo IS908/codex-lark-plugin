@@ -109,6 +109,8 @@ export interface AsyncTaskSourceInput {
   kind: AsyncTaskInputKind;
   fileName: string;
   sourcePath: string;
+  expectedSha256?: string;
+  expectedSizeBytes?: number;
 }
 
 export type ContinuationFilesystemMode = 'read-only' | 'workspace-write';

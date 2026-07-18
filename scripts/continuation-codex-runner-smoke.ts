@@ -480,7 +480,7 @@ await writeFile(managedInputSource, 'runner input', 'utf8');
 const inputStore = new ContinuationInputStore(join(root, 'inputs'));
 const managedInstallation = await inputStore.install(createJob().jobId, [{
   sourcePath: managedInputSource,
-  fileName: 'runner-input.txt',
+  fileName: 'runner-github_pat_123456789012345678901234567890.txt',
   kind: 'message_attachment',
 }]);
 const managedInputRequests: CodexExecRequest[] = [];
@@ -511,7 +511,37 @@ const managedInputPath = inputStore.resolve(
 );
 assert.match(managedInputRequests[0].prompt, new RegExp(managedInputPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 assert.match(managedInputRequests[0].prompt, /managed input.*read-only/i);
+assert.match(managedInputRequests[0].prompt, /sourceFacts/);
+assert.match(managedInputRequests[0].prompt, /originalUserText.*Produce a verified result\./s);
+assert.match(managedInputRequests[0].prompt, /taskContract/);
+assert.match(managedInputRequests[0].prompt, /deliverables/);
+assert.doesNotMatch(managedInputRequests[0].prompt, /github_pat_|runner-github_pat_/);
 assert.deepEqual(managedInputRequests[0].additionalWritableDirs, [artifactRoot]);
+
+await chmod(managedInputPath, 0o600);
+await writeFile(managedInputPath, 'tampered before executor spawn', 'utf8');
+await chmod(managedInputPath, 0o400);
+let lateIntegrityCodexCalls = 0;
+const lateIntegrityExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  inputStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async () => {
+    lateIntegrityCodexCalls += 1;
+    return { text: JSON.stringify(wireOutcome({ final_message: 'must not run' })) };
+  },
+});
+const lateIntegrityResult = await lateIntegrityExecutor.execute(createClaim(managedInputJob), signal);
+assert.equal(lateIntegrityCodexCalls, 0);
+assert.deepEqual(lateIntegrityResult.outcome, {
+  outcome: 'failed',
+  errorCode: 'continuation_input_integrity_failed',
+  errorSummary: 'A managed continuation input failed integrity verification.',
+  retryable: false,
+  completedWork: [],
+  unperformedWork: ['Recreate the task from trusted source inputs.'],
+});
 
 const trustedRequests: CodexExecRequest[] = [];
 const trustedExecutor = createContinuationCodexExecutor({

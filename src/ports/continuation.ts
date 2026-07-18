@@ -42,6 +42,9 @@ export interface ContinuationInputStorePort {
   verify(jobId: string, artifacts: readonly AsyncTaskInputArtifact[]): Promise<ContinuationInputVerification>;
   resolve(jobId: string, relativePath: string): string;
   remove(jobId: string): Promise<void>;
+  quarantine(jobId: string): Promise<string | null>;
+  restoreQuarantine(jobId: string, token: string): Promise<void>;
+  discardQuarantine(jobId: string, token: string): Promise<void>;
   cleanupOrphans(jobIds: ReadonlySet<string>, nowMs?: number): Promise<void>;
 }
 

@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import {
   chmod,
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   symlink,
@@ -32,6 +34,31 @@ if (process.argv[2] === '--hold-managed-input-create') {
   const [childRoot, childJobId, childSource] = process.argv.slice(3);
   if (!childRoot || !childJobId || !childSource) throw new Error('Missing managed-input child arguments.');
   await holdManagedInputCreate(childRoot, childJobId, childSource);
+  process.exit(0);
+}
+if (process.argv[2] === '--reclaim-dead-creation-lock') {
+  const [childInputsRoot, childJobId] = process.argv.slice(3);
+  if (!childInputsRoot || !childJobId) throw new Error('Missing dead-lock child arguments.');
+  const store = new ContinuationInputStore(childInputsRoot);
+  await store.withCreationLock(childJobId, async () => {});
+  process.stdout.write('DEAD_LOCK_RECLAIMED\n');
+  process.exit(0);
+}
+if (process.argv[2] === '--reject-blocking-input') {
+  const [childInputsRoot, childJobId, childSource] = process.argv.slice(3);
+  if (!childInputsRoot || !childJobId || !childSource) throw new Error('Missing FIFO child arguments.');
+  const store = new ContinuationInputStore(childInputsRoot);
+  try {
+    await store.install(childJobId, [{
+      sourcePath: childSource,
+      fileName: 'blocking.pipe',
+      kind: 'message_attachment',
+    }]);
+    throw new Error('FIFO input was unexpectedly admitted.');
+  } catch (error) {
+    if (error instanceof Error && error.message === 'FIFO input was unexpectedly admitted.') throw error;
+    process.stdout.write('BLOCKING_INPUT_REJECTED\n');
+  }
   process.exit(0);
 }
 
@@ -62,17 +89,28 @@ async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath
 async function waitForChildMarker(
   child: ReturnType<typeof spawn>,
   marker: string,
+  timeoutMs = 5_000,
 ): Promise<string> {
   let stdout = '';
   let stderr = '';
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`child timed out before ${marker}: ${stderr}`));
+    }, timeoutMs);
     child.stdout?.on('data', (chunk) => {
       stdout += String(chunk);
-      if (stdout.includes(marker)) resolve(stderr);
+      if (stdout.includes(marker)) {
+        clearTimeout(timeout);
+        resolve(stderr);
+      }
     });
     child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
     child.once('exit', (code) => {
-      if (!stdout.includes(marker)) reject(new Error(stderr || `child exited ${code} before ${marker}`));
+      if (!stdout.includes(marker)) {
+        clearTimeout(timeout);
+        reject(new Error(stderr || `child exited ${code} before ${marker}`));
+      }
     });
   });
 }
@@ -998,7 +1036,7 @@ versionThreeDatabase.exec(`
   ) STRICT;
   CREATE TABLE continuation_attempts (
     attempt_id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL,
+    job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
     ordinal INTEGER NOT NULL,
     worker_id TEXT NOT NULL,
     execution_session_id TEXT,
@@ -1012,7 +1050,7 @@ versionThreeDatabase.exec(`
   ) STRICT;
   CREATE TABLE continuation_outbox (
     outbox_id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL UNIQUE,
+    job_id TEXT NOT NULL UNIQUE REFERENCES continuation_jobs(job_id),
     route_json TEXT NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE,
     payload TEXT NOT NULL,
@@ -1031,9 +1069,9 @@ versionThreeDatabase.exec(`
   ) STRICT;
   CREATE TABLE continuation_tool_calls (
     call_id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL,
+    job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
     step_index INTEGER NOT NULL,
-    attempt_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL REFERENCES continuation_attempts(attempt_id),
     tool_name TEXT NOT NULL,
     request_hash TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -1060,9 +1098,77 @@ versionThreeDatabase.exec(`
     24, 3, 600, '${baseNow}', '2026-07-18T00:00:00.000Z', 1, 'queued',
     0, 0, '${baseNow}', '[]', '${baseNow}'
   );
+  INSERT INTO continuation_attempts (
+    attempt_id, job_id, ordinal, worker_id, started_at, heartbeat_at,
+    finished_at, outcome
+  ) VALUES (
+    'attempt_legacy_v3', 'job_legacy_v3', 1, 'worker_legacy', '${baseNow}',
+    '${baseNow}', '${baseNow}', 'continue'
+  );
+  INSERT INTO continuation_tool_calls (
+    call_id, job_id, step_index, attempt_id, tool_name, request_hash,
+    status, result_json, started_at, completed_at, updated_at
+  ) VALUES (
+    'call_legacy_v3', 'job_legacy_v3', 0, 'attempt_legacy_v3', 'lark_cli',
+    'hash_legacy_v3', 'completed', '{"ok":true,"message":"legacy"}',
+    '${baseNow}', '${baseNow}', '${baseNow}'
+  );
+  INSERT INTO continuation_outbox (
+    outbox_id, job_id, route_json, idempotency_key, payload, status,
+    attempt_count, next_attempt_at, created_at, updated_at
+  ) VALUES (
+    'outbox_legacy_v3', 'job_legacy_v3',
+    '{"kind":"message_thread","conversationId":"oc_legacy","sourceMessageId":"om_legacy"}',
+    'continuation:job_legacy_v3:terminal', 'legacy terminal payload', 'pending',
+    0, '${baseNow}', '${baseNow}', '${baseNow}'
+  );
   PRAGMA user_version = 3;
 `);
 versionThreeDatabase.close();
+
+// Preserve a byte-for-byte v3 database before migrating it, then remove the v3-only
+// permissions column to exercise the independently deployable v2 -> v7 chain.
+const authenticVersionTwoRoot = join(root, 'migration-authentic-v2');
+const authenticVersionTwoDatabasePath = join(authenticVersionTwoRoot, 'jobs.sqlite');
+const authenticVersionTwoArtifactsDir = join(authenticVersionTwoRoot, 'artifacts');
+await mkdir(authenticVersionTwoRoot, { recursive: true });
+await copyFile(versionThreeDatabasePath, authenticVersionTwoDatabasePath);
+const authenticVersionTwoDatabase = new DatabaseSync(authenticVersionTwoDatabasePath);
+authenticVersionTwoDatabase.exec(`
+  ALTER TABLE continuation_jobs DROP COLUMN permissions_json;
+  PRAGMA user_version = 2;
+`);
+authenticVersionTwoDatabase.close();
+
+const authenticVersionTwoRepository = await SqliteContinuationRepository.open({
+  databasePath: authenticVersionTwoDatabasePath,
+  artifactsDir: authenticVersionTwoArtifactsDir,
+});
+try {
+  const migrated = await authenticVersionTwoRepository.get('job_legacy_v3');
+  assert.equal(migrated?.maxAttempts, 5);
+  assert.equal(migrated?.attemptCount, 1);
+  assert.equal(migrated?.deliveryEvents?.[0]?.kind, 'terminal');
+  assert.equal(migrated?.permissions.filesystem.root, root);
+} finally {
+  authenticVersionTwoRepository.close();
+}
+const authenticVersionTwoMigratedDatabase = new DatabaseSync(authenticVersionTwoDatabasePath);
+assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.equal(authenticVersionTwoMigratedDatabase.prepare(
+  'SELECT payload FROM continuation_outbox WHERE job_id = ?',
+).get('job_legacy_v3')?.payload, 'legacy terminal payload');
+assert.deepEqual(authenticVersionTwoMigratedDatabase.prepare('PRAGMA foreign_key_check').all(), []);
+authenticVersionTwoMigratedDatabase.close();
+
 const migratedVersionThreeRepository = await SqliteContinuationRepository.open({
   databasePath: versionThreeDatabasePath,
   artifactsDir: versionThreeArtifactsDir,
@@ -1072,6 +1178,8 @@ try {
   assert.equal(migrated?.maxAttempts, 5);
   assert.equal(migrated?.status, 'queued');
   assert.equal(migrated?.retained, false);
+  assert.equal(migrated?.attemptCount, 1);
+  assert.equal(migrated?.deliveryEvents?.[0]?.kind, 'terminal');
 } finally {
   migratedVersionThreeRepository.close();
 }
@@ -1091,7 +1199,139 @@ const migratedOutboxColumns = migratedVersionThreeDatabase
 assert.ok(migratedOutboxColumns.some((column) => column.name === 'event_key'));
 assert.ok(migratedOutboxColumns.some((column) => column.name === 'kind'));
 assert.ok(migratedOutboxColumns.some((column) => column.name === 'attempt_id'));
+assert.equal(Number(migratedVersionThreeDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.equal(Number(migratedVersionThreeDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.deepEqual(migratedVersionThreeDatabase.prepare('PRAGMA foreign_key_check').all(), []);
 migratedVersionThreeDatabase.close();
+
+async function verifyIntermediateMigration(version: 4 | 5): Promise<void> {
+  const migrationRoot = join(root, `migration-v${version}`);
+  const migrationOptions = {
+    databasePath: join(migrationRoot, 'jobs.sqlite'),
+    artifactsDir: join(migrationRoot, 'artifacts'),
+  };
+  const permissions = {
+    profile: 'bounded' as const,
+    filesystem: { root, mode: 'workspace-write' as const, requestedPaths: [] },
+    hostTools: ['lark_cli'],
+    network: 'none' as const,
+    externalSideEffects: 'denied' as const,
+    approval: { mode: 'never' as const },
+  };
+  const request = createRequest(`legacy-v${version}`);
+  request.requiredTools = ['lark_cli'];
+  request.permissions = permissions;
+  request.sourceFacts = { ...request.sourceFacts, permissions };
+  const seed = await SqliteContinuationRepository.open(migrationOptions);
+  const created = await seed.create(request);
+  const claim = await seed.claimDue(
+    `worker-v${version}`,
+    baseNow,
+    '2026-07-17T00:01:00.000Z',
+  );
+  assert.equal(claim?.job.jobId, created.job.jobId);
+  const toolCall = await seed.beginToolCall(
+    claim!,
+    { tool: 'lark_cli', args: ['doc', 'get'] },
+    '2026-07-17T00:00:01.000Z',
+  );
+  assert.equal(toolCall.status, 'execute');
+  await seed.completeToolCall(
+    claim!,
+    toolCall.callId,
+    { ok: true, message: `v${version} tool result` },
+    '2026-07-17T00:00:02.000Z',
+  );
+  await seed.completeStep(claim!, {
+    outcome: { outcome: 'completed', finalMessage: `v${version} terminal payload`, artifacts: [] },
+  }, '2026-07-17T00:00:03.000Z');
+  seed.close();
+
+  const downgraded = new DatabaseSync(migrationOptions.databasePath);
+  downgraded.exec('PRAGMA foreign_keys = OFF;');
+  if (version === 4) {
+    downgraded.exec(`
+      CREATE TABLE continuation_outbox_v4 (
+        outbox_id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL UNIQUE REFERENCES continuation_jobs(job_id),
+        route_json TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL,
+        next_attempt_at TEXT NOT NULL,
+        worker_id TEXT,
+        lease_expires_at TEXT,
+        first_attempt_at TEXT,
+        last_attempt_at TEXT,
+        message_id TEXT,
+        error_code TEXT,
+        error_summary TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO continuation_outbox_v4 (
+        outbox_id, job_id, route_json, idempotency_key, payload, status,
+        attempt_count, next_attempt_at, worker_id, lease_expires_at,
+        first_attempt_at, last_attempt_at, message_id, error_code, error_summary,
+        created_at, updated_at
+      )
+      SELECT
+        outbox_id, job_id, route_json, idempotency_key, payload, status,
+        attempt_count, next_attempt_at, worker_id, lease_expires_at,
+        first_attempt_at, last_attempt_at, message_id, error_code, error_summary,
+        created_at, updated_at
+      FROM continuation_outbox WHERE kind = 'terminal';
+      DROP TABLE continuation_outbox;
+      ALTER TABLE continuation_outbox_v4 RENAME TO continuation_outbox;
+    `);
+  }
+  downgraded.exec(`
+    ALTER TABLE continuation_jobs DROP COLUMN source_facts_json;
+    ALTER TABLE continuation_jobs DROP COLUMN task_contract_json;
+    ALTER TABLE continuation_jobs DROP COLUMN retain;
+    PRAGMA user_version = ${version};
+    PRAGMA foreign_keys = ON;
+  `);
+  downgraded.close();
+
+  const migrated = await SqliteContinuationRepository.open(migrationOptions);
+  try {
+    const job = await migrated.get(created.job.jobId);
+    assert.equal(job?.attemptCount, 1);
+    assert.equal(job?.deliveryEvents?.length, 1);
+    assert.equal(job?.deliveryEvents?.[0]?.kind, 'terminal');
+    assert.equal(job?.sourceFacts.provenance, 'legacy_unavailable');
+    const delivery = await migrated.claimPendingDelivery(
+      `delivery-v${version}`,
+      '2026-07-17T00:00:04.000Z',
+    );
+    assert.equal(delivery?.jobId, created.job.jobId);
+    assert.match(delivery?.payload ?? '', new RegExp(`v${version} terminal payload$`));
+  } finally {
+    migrated.close();
+  }
+  const migratedDatabase = new DatabaseSync(migrationOptions.databasePath);
+  assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 7);
+  assert.equal(Number(migratedDatabase.prepare(
+    'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
+  ).get(created.job.jobId)?.count), 1);
+  assert.equal(Number(migratedDatabase.prepare(
+    'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
+  ).get(created.job.jobId)?.count), 1);
+  assert.equal(Number(migratedDatabase.prepare(
+    'SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ?',
+  ).get(created.job.jobId)?.count), 1);
+  assert.deepEqual(migratedDatabase.prepare('PRAGMA foreign_key_check').all(), []);
+  migratedDatabase.close();
+}
+
+await verifyIntermediateMigration(4);
+await verifyIntermediateMigration(5);
 
 const versionTwoDatabase = new DatabaseSync(migrationDatabasePath);
 const v2Columns = versionTwoDatabase.prepare('PRAGMA table_info(continuation_jobs)').all() as Array<{ name: string }>;
@@ -1259,15 +1499,25 @@ const managedRepository = await SqliteContinuationRepository.open({
   inputsDir: managedInputsDir,
   jitter: () => 0,
 });
+const managedBaseRequest = createRequest('managed-input');
 const managedRequest = createRequest('managed-input', {
   idempotencyKey: 'idem-managed-stable',
   sourceFacts: {
-    ...createRequest('managed-input').sourceFacts,
-    originalUserText: 'Use token=[redacted] to process the admitted file.',
+    ...managedBaseRequest.sourceFacts,
+    originalUserText: 'Use github_pat_123456789012345678901234567890 to process the admitted file.',
+    quotedMessageText: 'Quoted xapp-123456789012345678901234567890.',
+  },
+  taskContract: {
+    ...managedBaseRequest.taskContract,
+    objective: 'Use sk-proj-123456789012345678901234567890 without persisting it.',
+    deliverables: [{
+      ...managedBaseRequest.taskContract.deliverables[0],
+      description: 'Do not expose AWS_SECRET_ACCESS_KEY=managed-db-secret.',
+    }],
   },
   sourceInputs: [{
     sourcePath: admittedSource,
-    fileName: 'report.txt',
+    fileName: 'quarterly-github_pat_123456789012345678901234567890.pdf',
     kind: 'message_attachment',
   }],
 });
@@ -1278,10 +1528,13 @@ assert.equal(managedCreated.job.jobId, expectedManagedJobId);
 assert.equal(managedCreated.job.sourceFacts.provenance, 'captured');
 assert.equal(managedCreated.job.sourceFacts.inputs.length, 1);
 assert.match(managedCreated.job.sourceFacts.inputs[0].sha256, /^[a-f0-9]{64}$/);
-assert.equal(managedCreated.job.sourceFacts.inputs[0].fileName, 'report.txt');
+assert.equal(managedCreated.job.sourceFacts.inputs[0].fileName, 'input_001.pdf');
+assert.equal(managedCreated.job.sourceFacts.inputs[0].relativePath, 'input_001.pdf');
 assert.equal('sourcePath' in managedCreated.job.sourceFacts.inputs[0], false);
 assert.equal(managedCreated.job.taskContract.acceptanceCriteria[0].id, 'result_persisted');
 assert.deepEqual(managedCreated.job.acceptanceCriteria, ['terminal result is persisted']);
+assert.doesNotMatch(JSON.stringify(managedCreated.job.sourceFacts), /github_pat_|xapp-/);
+assert.doesNotMatch(JSON.stringify(managedCreated.job.taskContract), /sk-proj-|managed-db-secret/);
 const managedInputStore = new ContinuationInputStore(managedInputsDir);
 const managedPath = managedInputStore.resolve(
   managedCreated.job.jobId,
@@ -1311,6 +1564,39 @@ assert.equal(sameWrite.job.jobId, managedCreated.job.jobId);
 assert.equal(sameWrite.job.title, managedCreated.job.title, 'same idempotency key is first-write-wins');
 managedRepository.close();
 
+const existingRowDelegate = new ContinuationInputStore(managedInputsDir);
+let existingRowLockCalls = 0;
+const existingRowRepository = await SqliteContinuationRepository.open({
+  databasePath: managedDatabasePath,
+  artifactsDir: managedArtifactsDir,
+  inputsDir: managedInputsDir,
+  inputStore: {
+    ensureRoot: () => existingRowDelegate.ensureRoot(),
+    async withCreationLock() {
+      existingRowLockCalls += 1;
+      throw new Error('existing same-key row must bypass the filesystem lock');
+    },
+    install: (...args: Parameters<ContinuationInputStore['install']>) => existingRowDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) => existingRowDelegate.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) => existingRowDelegate.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => existingRowDelegate.resolve(...args),
+    remove: (...args: Parameters<ContinuationInputStore['remove']>) => existingRowDelegate.remove(...args),
+    quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+      existingRowDelegate.quarantine(...args),
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      existingRowDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      existingRowDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      existingRowDelegate.cleanupOrphans(...args),
+  },
+});
+const existingWithoutLock = await existingRowRepository.create(managedRequest);
+assert.equal(existingWithoutLock.created, false);
+assert.equal(existingWithoutLock.job.jobId, expectedManagedJobId);
+assert.equal(existingRowLockCalls, 0);
+existingRowRepository.close();
+
 const reopenedManagedRepository = await SqliteContinuationRepository.open({
   databasePath: managedDatabasePath,
   artifactsDir: managedArtifactsDir,
@@ -1323,10 +1609,167 @@ const managedRaw = managedDatabase.prepare(`
   SELECT source_facts_json, task_contract_json FROM continuation_jobs WHERE job_id = ?
 `).get(expectedManagedJobId) as { source_facts_json: string; task_contract_json: string };
 assert.doesNotMatch(managedRaw.source_facts_json, new RegExp(managedRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-assert.doesNotMatch(managedRaw.source_facts_json, /super-secret|source-report/);
-assert.doesNotMatch(managedRaw.task_contract_json, /super-secret|source-report/);
+assert.doesNotMatch(managedRaw.source_facts_json, /github_pat_|xapp-|quarterly-|super-secret|source-report/);
+assert.doesNotMatch(
+  managedRaw.task_contract_json,
+  /github_pat_|xapp-|sk-proj-|managed-db-secret|quarterly-|super-secret|source-report/,
+);
+const managedManifest = await readFile(join(
+  managedInputsDir,
+  expectedManagedJobId,
+  '.manifest.json',
+), 'utf8');
+assert.doesNotMatch(managedManifest, /github_pat_|quarterly-|source-report/);
+assert.match(managedManifest, /input_001\.pdf/);
 managedDatabase.close();
 reopenedManagedRepository.close();
+
+// A failed redaction CAS must not strand a still-visible Job without its managed inputs.
+const redactionRollbackRoot = await mkdtemp(join(tmpdir(), 'continuation-redaction-rollback-'));
+const redactionRollbackOptions = {
+  databasePath: join(redactionRollbackRoot, 'jobs.sqlite'),
+  artifactsDir: join(redactionRollbackRoot, 'artifacts'),
+  inputsDir: join(redactionRollbackRoot, 'inputs'),
+};
+const redactionRollbackSource = join(redactionRollbackRoot, 'source.txt');
+await writeFile(redactionRollbackSource, 'restore me after failed redaction', 'utf8');
+const redactionRollbackSeed = await SqliteContinuationRepository.open(redactionRollbackOptions);
+const redactionRollbackCreated = await redactionRollbackSeed.create(createRequest('redaction-rollback', {
+  sourceInputs: [{
+    sourcePath: redactionRollbackSource,
+    fileName: 'source.txt',
+    kind: 'message_attachment',
+  }],
+}));
+assert.equal(await redactionRollbackSeed.requestCancel(
+  redactionRollbackCreated.job.jobId,
+  '2026-07-17T00:00:01.000Z',
+), 'cancelled');
+redactionRollbackSeed.close();
+
+const redactionRollbackDelegate = new ContinuationInputStore(redactionRollbackOptions.inputsDir);
+let redactionRaceInjected = false;
+const injectRedactionRace = (): void => {
+  if (redactionRaceInjected) return;
+  redactionRaceInjected = true;
+  const concurrent = new DatabaseSync(redactionRollbackOptions.databasePath);
+  concurrent.prepare(`
+    UPDATE continuation_jobs SET status = 'queued' WHERE job_id = ?
+  `).run(redactionRollbackCreated.job.jobId);
+  concurrent.close();
+};
+const redactionRollbackRepository = await SqliteContinuationRepository.open({
+  ...redactionRollbackOptions,
+  inputStore: {
+    ensureRoot: () => redactionRollbackDelegate.ensureRoot(),
+    withCreationLock: (...args: Parameters<ContinuationInputStore['withCreationLock']>) =>
+      redactionRollbackDelegate.withCreationLock(...args),
+    install: (...args: Parameters<ContinuationInputStore['install']>) =>
+      redactionRollbackDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) =>
+      redactionRollbackDelegate.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) =>
+      redactionRollbackDelegate.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) =>
+      redactionRollbackDelegate.resolve(...args),
+    remove: (...args: Parameters<ContinuationInputStore['remove']>) =>
+      redactionRollbackDelegate.remove(...args),
+    async quarantine(...args: Parameters<ContinuationInputStore['quarantine']>) {
+      const token = await redactionRollbackDelegate.quarantine(...args);
+      injectRedactionRace();
+      return token;
+    },
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      redactionRollbackDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      redactionRollbackDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      redactionRollbackDelegate.cleanupOrphans(...args),
+  },
+});
+assert.equal(await redactionRollbackRepository.redactTerminal(
+  redactionRollbackCreated.job.jobId,
+  '2026-07-17T00:00:02.000Z',
+), false);
+const redactionRollbackJob = await redactionRollbackRepository.get(redactionRollbackCreated.job.jobId);
+assert.equal(redactionRollbackJob?.deletedAt, undefined);
+assert.equal(redactionRollbackJob?.sourceFacts.inputs.length, 1);
+assert.equal(await readFile(redactionRollbackDelegate.resolve(
+  redactionRollbackCreated.job.jobId,
+  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
+), 'utf8'), 'restore me after failed redaction');
+redactionRollbackRepository.close();
+
+// Restart restores a quarantine left by a crash before the database redaction committed.
+const liveRedactionToken = await redactionRollbackDelegate.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+assert.ok(liveRedactionToken);
+await redactionRollbackDelegate.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+await assert.rejects(lstat(join(
+  redactionRollbackOptions.inputsDir,
+  redactionRollbackCreated.job.jobId,
+)));
+await redactionRollbackDelegate.restoreQuarantine(
+  redactionRollbackCreated.job.jobId,
+  liveRedactionToken!,
+);
+const deadRedactionToken = `2147483647-${'f'.repeat(16)}`;
+await rename(
+  join(redactionRollbackOptions.inputsDir, redactionRollbackCreated.job.jobId),
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${deadRedactionToken}`,
+  ),
+);
+const redactionCrashRecovery = await SqliteContinuationRepository.open(redactionRollbackOptions);
+assert.equal(await readFile(redactionRollbackDelegate.resolve(
+  redactionRollbackCreated.job.jobId,
+  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
+), 'utf8'), 'restore me after failed redaction');
+assert.equal((await readdir(redactionRollbackOptions.inputsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${redactionRollbackCreated.job.jobId}-`),
+), false);
+redactionCrashRecovery.close();
+
+// A crash after input rename but before DB commit is immediately adoptable on restart even when
+// execution timestamps/session budgets differ from the original create attempt.
+const crashAdoptionRoot = await mkdtemp(join(tmpdir(), 'continuation-crash-adoption-'));
+const crashAdoptionOptions = {
+  databasePath: join(crashAdoptionRoot, 'jobs.sqlite'),
+  artifactsDir: join(crashAdoptionRoot, 'artifacts'),
+  inputsDir: join(crashAdoptionRoot, 'inputs'),
+};
+const crashAdoptionSource = join(crashAdoptionRoot, 'source.txt');
+await writeFile(crashAdoptionSource, 'crash adoption bytes', 'utf8');
+const crashAdoptionRequest = createRequest('crash-adoption', {
+  sourceInputs: [{ sourcePath: crashAdoptionSource, fileName: 'source.txt', kind: 'message_attachment' }],
+});
+const crashAdoptionSeed = await SqliteContinuationRepository.open(crashAdoptionOptions);
+const crashAdoptionCreated = await crashAdoptionSeed.create(crashAdoptionRequest);
+crashAdoptionSeed.close();
+const crashAdoptionDatabase = new DatabaseSync(crashAdoptionOptions.databasePath);
+crashAdoptionDatabase.prepare('DELETE FROM continuation_jobs WHERE job_id = ?').run(
+  crashAdoptionCreated.job.jobId,
+);
+crashAdoptionDatabase.close();
+const crashAdoptionRepository = await SqliteContinuationRepository.open(crashAdoptionOptions);
+const crashAdopted = await crashAdoptionRepository.create({
+  ...crashAdoptionRequest,
+  sourceInputs: [{
+    ...crashAdoptionRequest.sourceInputs[0],
+    fileName: 'source-downloaded-after-restart.txt',
+  }],
+  parentSessionId: 'session-after-restart',
+  maxAttempts: crashAdoptionRequest.maxAttempts + 1,
+  maxRetries: crashAdoptionRequest.maxRetries + 1,
+  timeoutSeconds: crashAdoptionRequest.timeoutSeconds + 1,
+  createdAt: '2026-07-17T00:01:00.000Z',
+  expiresAt: '2026-07-18T00:01:00.000Z',
+});
+assert.equal(crashAdopted.created, true);
+assert.equal(crashAdopted.job.jobId, crashAdoptionCreated.job.jobId);
+crashAdoptionRepository.close();
 
 // Input admission rejects unsafe files, collisions, and quota overflow without a partial final tree.
 const inputValidationRoot = join(managedRoot, 'input-validation');
@@ -1411,6 +1854,51 @@ await assert.rejects(
   /input|ENOENT|read/i,
 );
 await assert.rejects(lstat(join(inputValidationRoot, 'job_all_or_nothing')));
+
+const deadLockInputsRoot = join(managedRoot, 'dead-lock-inputs');
+const deadLockStore = new ContinuationInputStore(deadLockInputsRoot);
+await deadLockStore.ensureRoot();
+const ownerlessLockJobId = continuationJobId('ownerless-lock-grace');
+await mkdir(join(deadLockInputsRoot, `.creating-${ownerlessLockJobId}`));
+let ownerlessLockEntered = false;
+const ownerlessLockAcquisition = deadLockStore.withCreationLock(ownerlessLockJobId, async () => {
+  ownerlessLockEntered = true;
+});
+await new Promise((resolve) => setTimeout(resolve, 50));
+assert.equal(ownerlessLockEntered, false, 'a newly ownerless creation lock receives a grace period');
+await ownerlessLockAcquisition;
+assert.equal(ownerlessLockEntered, true);
+const deadLockJobId = continuationJobId('dead-lock-immediate-recovery');
+const deadLockDirectory = join(deadLockInputsRoot, `.creating-${deadLockJobId}`);
+await mkdir(deadLockDirectory);
+await writeFile(join(deadLockDirectory, 'owner.json'), JSON.stringify({
+  pid: 2_147_483_647,
+  createdAt: new Date().toISOString(),
+}), 'utf8');
+const deadLockChild = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  deadLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(deadLockChild, 'DEAD_LOCK_RECLAIMED', 1_000);
+
+const fifoPath = join(managedRoot, 'blocking-input.pipe');
+const mkfifo = spawn('mkfifo', [fifoPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+const mkfifoExit = await new Promise<number | null>((resolve) => mkfifo.once('close', resolve));
+assert.equal(mkfifoExit, 0);
+const fifoChild = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reject-blocking-input',
+  join(managedRoot, 'fifo-inputs'),
+  'job_fifo_rejection',
+  fifoPath,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(fifoChild, 'BLOCKING_INPUT_REJECTED', 1_000);
 
 // If managed input admission succeeds but the database insert fails, creation compensates by
 // removing only the tree installed by this request and leaves no partial staging directory.
@@ -1563,6 +2051,36 @@ assert.equal(
 );
 reopenedIntegrityRepository.close();
 
+// Unexpected input I/O failures are retryable scan failures, not terminal integrity verdicts.
+const unavailableRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-unavailable-'));
+const unavailableSource = join(unavailableRoot, 'source.txt');
+await writeFile(unavailableSource, 'temporarily unreadable', 'utf8');
+const unavailableInputsDir = join(unavailableRoot, 'inputs');
+const unavailableRepository = await SqliteContinuationRepository.open({
+  databasePath: join(unavailableRoot, 'jobs.sqlite'),
+  artifactsDir: join(unavailableRoot, 'artifacts'),
+  inputsDir: unavailableInputsDir,
+});
+const unavailableJob = await unavailableRepository.create(createRequest('integrity-unavailable', {
+  sourceInputs: [{ sourcePath: unavailableSource, fileName: 'source.txt', kind: 'message_attachment' }],
+}));
+const unavailableStore = new ContinuationInputStore(unavailableInputsDir);
+const unavailableManagedPath = unavailableStore.resolve(
+  unavailableJob.job.jobId,
+  unavailableJob.job.sourceFacts.inputs[0].relativePath,
+);
+await chmod(unavailableManagedPath, 0o000);
+await assert.rejects(
+  unavailableRepository.claimDue('worker-unavailable', baseNow, '2026-07-17T00:00:30.000Z'),
+  /EACCES|permission denied/i,
+);
+const stillDueAfterIoFailure = await unavailableRepository.get(unavailableJob.job.jobId);
+assert.equal(stillDueAfterIoFailure?.status, 'queued');
+assert.equal(stillDueAfterIoFailure?.attemptCount, 0);
+assert.equal(stillDueAfterIoFailure?.deliveryEvents?.length, 0);
+await chmod(unavailableManagedPath, 0o400);
+unavailableRepository.close();
+
 async function makeDelayedInputStore(rootDir: string) {
   const delegate = new ContinuationInputStore(rootDir);
   let releaseVerification!: () => void;
@@ -1583,6 +2101,12 @@ async function makeDelayedInputStore(rootDir: string) {
       },
       resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => delegate.resolve(...args),
       remove: (...args: Parameters<ContinuationInputStore['remove']>) => delegate.remove(...args),
+      quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+        delegate.quarantine(...args),
+      restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+        delegate.restoreQuarantine(...args),
+      discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+        delegate.discardQuarantine(...args),
       cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
         delegate.cleanupOrphans(...args),
     },
@@ -1802,5 +2326,66 @@ await assert.rejects(
   /integrity/i,
 );
 retryRepository.close();
+
+// Retry binds the copy to the checksum/size verified before creation, so a verify/copy race fails.
+const toctouRoot = await mkdtemp(join(tmpdir(), 'continuation-retry-toctou-'));
+const toctouSource = join(toctouRoot, 'source.txt');
+await writeFile(toctouSource, 'toctou original', 'utf8');
+const toctouOptions = {
+  databasePath: join(toctouRoot, 'jobs.sqlite'),
+  artifactsDir: join(toctouRoot, 'artifacts'),
+  inputsDir: join(toctouRoot, 'inputs'),
+};
+const toctouSeed = await SqliteContinuationRepository.open(toctouOptions);
+const toctouJob = await toctouSeed.create(createRequest('retry-toctou', {
+  sourceInputs: [{ sourcePath: toctouSource, fileName: 'source.txt', kind: 'message_attachment' }],
+}));
+assert.equal(await toctouSeed.requestCancel(toctouJob.job.jobId, baseNow), 'cancelled');
+toctouSeed.close();
+const toctouDelegate = new ContinuationInputStore(toctouOptions.inputsDir);
+let toctouTampered = false;
+const toctouRepository = await SqliteContinuationRepository.open({
+  ...toctouOptions,
+  inputStore: {
+    ensureRoot: () => toctouDelegate.ensureRoot(),
+    withCreationLock: <T>(jobId: string, operation: () => Promise<T>) =>
+      toctouDelegate.withCreationLock(jobId, operation),
+    install: (...args: Parameters<ContinuationInputStore['install']>) => toctouDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) => toctouDelegate.clone(...args),
+    async verify(jobId, artifacts) {
+      const result = await toctouDelegate.verify(jobId, artifacts);
+      if (result.ok && !toctouTampered && artifacts[0]) {
+        const managedPath = toctouDelegate.resolve(jobId, artifacts[0].relativePath);
+        await chmod(managedPath, 0o600);
+        await writeFile(managedPath, 'toctou mutated after verify', 'utf8');
+        await chmod(managedPath, 0o400);
+        toctouTampered = true;
+      }
+      return result;
+    },
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => toctouDelegate.resolve(...args),
+    remove: (...args: Parameters<ContinuationInputStore['remove']>) => toctouDelegate.remove(...args),
+    quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+      toctouDelegate.quarantine(...args),
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      toctouDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      toctouDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      toctouDelegate.cleanupOrphans(...args),
+  },
+});
+await assert.rejects(
+  toctouRepository.cloneForRetry(
+    toctouJob.job.jobId,
+    'toctou-copy-request',
+    '2026-07-17T00:00:05.000Z',
+  ),
+  /integrity|checksum|size/i,
+);
+const toctouTargetJobId = continuationJobId(`manual-retry:${toctouJob.job.jobId}:toctou-copy-request`);
+assert.equal(await toctouRepository.get(toctouTargetJobId), null);
+await assert.rejects(lstat(join(toctouOptions.inputsDir, toctouTargetJobId)));
+toctouRepository.close();
 
 console.log('continuation repository smoke: PASS');

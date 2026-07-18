@@ -262,6 +262,27 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           }),
         };
       }
+      if (claim.job.sourceFacts.inputs.length > 0) {
+        if (!this.options.inputStore) {
+          throw new Error('Continuation input storage is unavailable for a Job with managed inputs.');
+        }
+        const verification = await this.options.inputStore.verify(
+          claim.job.jobId,
+          claim.job.sourceFacts.inputs,
+        );
+        if (!verification.ok) {
+          return {
+            outcome: {
+              outcome: 'failed',
+              errorCode: 'continuation_input_integrity_failed',
+              errorSummary: 'A managed continuation input failed integrity verification.',
+              retryable: false,
+              completedWork: [],
+              unperformedWork: ['Recreate the task from trusted source inputs.'],
+            },
+          };
+        }
+      }
       const artifactDir = await this.options.artifactStore.ensure(claim.job.jobId);
       const managedInputs = claim.job.sourceFacts.inputs.map((input) => {
         if (!this.options.inputStore) {
@@ -718,6 +739,8 @@ function buildContinuationPrompt(
       network: job.permissions.network,
       externalSideEffects: job.permissions.externalSideEffects,
     },
+    sourceFacts: job.sourceFacts,
+    taskContract: job.taskContract,
     managedInputs,
   };
   const authorityLine = job.permissions.profile === 'trusted_personal_workspace'

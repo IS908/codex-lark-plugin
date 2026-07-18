@@ -106,7 +106,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       );
       await repository.initialize();
       const knownJobs = new Set(repository.database.prepare(
-        'SELECT job_id FROM continuation_jobs',
+        'SELECT job_id FROM continuation_jobs WHERE deleted_at IS NULL',
       ).all().map((row) => stringField(row, 'job_id')));
       await inputs.cleanupOrphans(knownJobs);
       return repository;
@@ -555,6 +555,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     validateCreateRequest(request);
     const jobId = continuationJobId(request.idempotencyKey);
+    const existing = this.readJobByIdempotencyKey(request.idempotencyKey);
+    if (existing) return { job: existing, created: false };
     return this.serializeJobMutation(jobId, () => this.inputs.withCreationLock(jobId, async () => {
       const existing = this.readJobByIdempotencyKey(request.idempotencyKey);
       if (existing) return { job: existing, created: false };
@@ -1186,6 +1188,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         sourcePath: this.inputs.resolve(source.jobId, input.relativePath),
         fileName: input.fileName,
         kind: input.kind,
+        expectedSha256: input.sha256,
+        expectedSizeBytes: input.sizeBytes,
       })),
       requiredTools: source.requiredTools,
       workingDirectory: source.workingDirectory,
@@ -1236,64 +1240,88 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       return false;
     }
     await this.artifacts.remove(jobId);
-    await this.inputs.remove(jobId);
-    return this.transaction(() => {
-      const automaticGate = automaticRetentionCutoff
-        ? `AND retain = 0 AND completed_at < ? AND EXISTS (
+    const inputQuarantine = await this.inputs.quarantine(jobId);
+    let committed = false;
+    try {
+      const redacted = this.transaction(() => {
+        const automaticGate = automaticRetentionCutoff
+          ? `AND retain = 0 AND completed_at < ? AND EXISTS (
             SELECT 1 FROM continuation_outbox terminal
             WHERE terminal.job_id = continuation_jobs.job_id
               AND terminal.kind = 'terminal' AND terminal.status = 'delivered'
           )`
-        : '';
-      const update = this.database.prepare(`
-        UPDATE continuation_jobs
-        SET idempotency_key = ?, origin_kind = 'message_thread', route_json = ?,
-            source_message_id = '', source_thread_id = NULL,
-            title = '', objective = '', acceptance_criteria_json = '[]',
-            context_snapshot_json = ?, source_facts_json = ?, task_contract_json = ?,
-            required_tools_json = '[]', working_directory = '',
-            permissions_json = ?,
-            model = NULL, parent_session_id = NULL, execution_session_id = NULL,
-            checkpoint_json = NULL, result_summary = NULL, result_artifacts_json = '[]',
-            error_summary = NULL, deleted_at = ?, updated_at = ?, row_version = row_version + 1
-        WHERE job_id = ? AND status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')
-          AND deleted_at IS NULL ${automaticGate}
-      `).run(
-        `redacted:${jobId}`,
-        JSON.stringify(emptyRoute()),
-        JSON.stringify(EMPTY_CHECKPOINT),
-        JSON.stringify(redactedLegacyFacts()),
-        JSON.stringify(redactedLegacyContract()),
-        JSON.stringify(EMPTY_PERMISSION_ENVELOPE),
-        now,
-        now,
-        jobId,
-        ...(automaticRetentionCutoff ? [automaticRetentionCutoff] : []),
-      );
-      if (Number(update.changes) !== 1) return false;
-      this.database.prepare(`
-        DELETE FROM continuation_outbox WHERE job_id = ? AND kind = 'progress'
-      `).run(jobId);
-      this.database.prepare(`
-        DELETE FROM continuation_tool_calls WHERE job_id = ?
-      `).run(jobId);
-      this.database.prepare(`
-        DELETE FROM continuation_attempts WHERE job_id = ?
-      `).run(jobId);
-      this.database.prepare(`
-        UPDATE continuation_outbox
-        SET route_json = ?, payload = '', worker_id = NULL, lease_expires_at = NULL,
-            error_summary = NULL,
-            status = CASE
-              WHEN status IN ('delivered', 'delivery_unknown') THEN status
-              WHEN status = 'sending' THEN 'delivery_unknown'
-              ELSE 'superseded'
-            END,
-            updated_at = ?
-        WHERE job_id = ? AND kind = 'terminal'
-      `).run(JSON.stringify(emptyRoute()), now, jobId);
+          : '';
+        const update = this.database.prepare(`
+          UPDATE continuation_jobs
+          SET idempotency_key = ?, origin_kind = 'message_thread', route_json = ?,
+              source_message_id = '', source_thread_id = NULL,
+              title = '', objective = '', acceptance_criteria_json = '[]',
+              context_snapshot_json = ?, source_facts_json = ?, task_contract_json = ?,
+              required_tools_json = '[]', working_directory = '',
+              permissions_json = ?,
+              model = NULL, parent_session_id = NULL, execution_session_id = NULL,
+              checkpoint_json = NULL, result_summary = NULL, result_artifacts_json = '[]',
+              error_summary = NULL, deleted_at = ?, updated_at = ?, row_version = row_version + 1
+          WHERE job_id = ? AND status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')
+            AND deleted_at IS NULL ${automaticGate}
+        `).run(
+          `redacted:${jobId}`,
+          JSON.stringify(emptyRoute()),
+          JSON.stringify(EMPTY_CHECKPOINT),
+          JSON.stringify(redactedLegacyFacts()),
+          JSON.stringify(redactedLegacyContract()),
+          JSON.stringify(EMPTY_PERMISSION_ENVELOPE),
+          now,
+          now,
+          jobId,
+          ...(automaticRetentionCutoff ? [automaticRetentionCutoff] : []),
+        );
+        if (Number(update.changes) !== 1) return false;
+        this.database.prepare(`
+          DELETE FROM continuation_outbox WHERE job_id = ? AND kind = 'progress'
+        `).run(jobId);
+        this.database.prepare(`
+          DELETE FROM continuation_tool_calls WHERE job_id = ?
+        `).run(jobId);
+        this.database.prepare(`
+          DELETE FROM continuation_attempts WHERE job_id = ?
+        `).run(jobId);
+        this.database.prepare(`
+          UPDATE continuation_outbox
+          SET route_json = ?, payload = '', worker_id = NULL, lease_expires_at = NULL,
+              error_summary = NULL,
+              status = CASE
+                WHEN status IN ('delivered', 'delivery_unknown') THEN status
+                WHEN status = 'sending' THEN 'delivery_unknown'
+                ELSE 'superseded'
+              END,
+              updated_at = ?
+          WHERE job_id = ? AND kind = 'terminal'
+        `).run(JSON.stringify(emptyRoute()), now, jobId);
+        return true;
+      });
+      if (!redacted) {
+        if (inputQuarantine) await this.inputs.restoreQuarantine(jobId, inputQuarantine);
+        return false;
+      }
+      committed = true;
+      if (inputQuarantine) {
+        await this.inputs.discardQuarantine(jobId, inputQuarantine).catch(() => {});
+      }
       return true;
-    });
+    } catch (error) {
+      if (!committed && inputQuarantine) {
+        try {
+          await this.inputs.restoreQuarantine(jobId, inputQuarantine);
+        } catch (restoreError) {
+          throw new AggregateError(
+            [error, restoreError],
+            'Continuation redaction failed and managed inputs could not be restored.',
+          );
+        }
+      }
+      throw error;
+    }
   }
 
   async claimPendingDelivery(
@@ -2084,7 +2112,6 @@ function projectCreateRequest(
 function createRequestFingerprint(request: ContinuationCreateRequest): string {
   const sourceInputDescriptors = request.sourceInputs.map((input) => ({
     kind: input.kind,
-    fileName: input.fileName,
   }));
   return createHash('sha256').update(JSON.stringify({
     idempotencyKey: request.idempotencyKey,
@@ -2096,16 +2123,6 @@ function createRequestFingerprint(request: ContinuationCreateRequest): string {
     sourceFacts: { ...request.sourceFacts, inputs: [] },
     taskContract: request.taskContract,
     sourceInputDescriptors,
-    requiredTools: request.requiredTools,
-    workingDirectory: request.workingDirectory,
-    permissions: request.permissions,
-    model: request.model ?? null,
-    parentSessionId: request.parentSessionId ?? null,
-    maxAttempts: request.maxAttempts,
-    maxRetries: request.maxRetries,
-    timeoutSeconds: request.timeoutSeconds,
-    createdAt: request.createdAt,
-    expiresAt: request.expiresAt,
   })).digest('hex');
 }
 
@@ -2269,6 +2286,9 @@ function validateTaskContract(contract: AsyncTaskContract): void {
     for (const entry of entries) {
       if (!CONTINUATION_CONTRACT_ID_PATTERN.test(entry.id)) {
         throw new Error(`Continuation ${label} id is invalid.`);
+      }
+      if (redactContinuationText(entry.id) !== entry.id) {
+        throw new Error(`Continuation ${label} id must not contain a credential-shaped value.`);
       }
       if (ids.has(entry.id)) throw new Error(`Continuation ${label} ids must be unique.`);
       ids.add(entry.id);
