@@ -2,6 +2,7 @@ import type {
   ContinuationClaim,
   ContinuationDeliveryClaim,
   ContinuationFailure,
+  ContinuationJob,
 } from '../domain/continuation.js';
 import { ContinuationExecutionError } from '../domain/continuation.js';
 import { formatContinuationDiagnosticMessage } from '../diagnostic-log-format.js';
@@ -195,6 +196,10 @@ export class ContinuationWorker {
         'ok',
         permissionAuditDetail(execution.claim),
       );
+      await this.options.repository.markExecutionStarted(
+        execution.claim,
+        this.nowIso(),
+      );
       result = await this.options.executor.execute(
         execution.claim,
         execution.controller.signal,
@@ -265,16 +270,19 @@ export class ContinuationWorker {
     }
     if (!latest || latest.status !== 'running') return;
     const failure = classifyExecutionFailure(error);
+    let committedState: ContinuationJob['status'] = 'failed';
     try {
       await this.options.repository.failAttempt(execution.claim, failure, this.nowIso());
+      committedState = (await this.options.repository.get(execution.claim.job.jobId))?.status
+        ?? committedState;
     } finally {
       await this.audit(
         'continuation.execute',
         execution.claim,
         'error',
-        'attempt_failed',
+        `attempt_failed;state=${committedState}`,
       );
-      this.debug('attempt_failed', execution.claim, 'failed');
+      this.debug('attempt_failed', execution.claim, committedState);
     }
   }
 

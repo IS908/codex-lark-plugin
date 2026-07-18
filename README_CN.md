@@ -489,6 +489,7 @@ bridge 配置不应直接导致 Codex 停在草稿。
       "envAllowlist": ["LARK_APP_ID"],
       "timeoutMs": 30000,
       "maxOutputBytes": 65536,
+      "retrySafeStructuredValidation": true,
       "allowedCallers": "owners"
     },
     "lark_doc_create": {
@@ -517,6 +518,9 @@ Feishu/Lark `open_id` 数组。每个工具必须且只能设置 `paramAllowlist
 `paramBlocklist` 其中一个。`command` 必须是绝对路径。
 `envAllowlist` 和 `env` 里的环境变量名必须是 shell 兼容名称，例如 `LARK_APP_ID`
 或 `CUSTOM_SAFE`。
+`retrySafeStructuredValidation` 默认为 `false`。仅当可信 CLI 明确保证 exit code 2
+的 JSON validation envelope 在任何副作用发生前返回时才启用；启用后 continuation
+可以自动修正并重试该调用。
 
 默认 bounded continuation 可以在 sandboxed Codex 进程保持禁网时使用这些工具；trusted profile
 可以独立启用 sandbox 网络，但父进程宿主 bridge 仍执行自身白名单。创建任务时写入的

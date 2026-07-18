@@ -157,6 +157,15 @@ function deliveryMarker(claim: ContinuationDeliveryClaim): string | null {
       ? firstLine
       : null;
   }
+  if (claim.kind === 'interrupt') {
+    if (!claim.interruptId) return null;
+    const escapedInterruptId = claim.interruptId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(
+      `^Task waiting for input: ${escapedJobId} \\(${escapedInterruptId}\\)$`,
+    ).test(firstLine)
+      ? firstLine
+      : null;
+  }
   return new RegExp(
     `^Task (?:completed|partially completed|blocked|failed|cancelled): ${escapedJobId}$`,
   ).test(firstLine)

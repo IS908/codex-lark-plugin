@@ -109,6 +109,8 @@ function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
     status: 'running',
     executionSessionId: 'session-background',
     checkpoint: undefined,
+    recoveryTotalCount: 0,
+    recoveryFingerprintCounts: {},
     noProgressCount: 0,
     stepCount: 0,
     failureCount: 0,
@@ -1140,6 +1142,112 @@ const denied = await deniedExecutor.execute(
 );
 assert.equal(denied.outcome.outcome, 'blocked');
 assert.equal('errorCode' in denied.outcome && denied.outcome.errorCode, 'continuation_tool_denied');
+
+for (const scenario of [
+  {
+    tool: 'generic_cli_a',
+    failure: {
+      category: 'invalid_invocation' as const,
+      retrySafety: 'safe' as const,
+      capabilityAvailable: true,
+      operationRisk: 'external_side_effect' as const,
+      hints: ['Use the plural operation.'],
+      failedStep: 'publish-result',
+      diagnostic: 'The invocation was rejected before execution.',
+      fingerprint: 'invalid-publish-result',
+    },
+    expected: 'recovering',
+  },
+  {
+    tool: 'generic_cli_b',
+    failure: {
+      category: 'permission_required' as const,
+      retrySafety: 'unsafe' as const,
+      capabilityAvailable: true,
+      operationRisk: 'external_side_effect' as const,
+      hints: ['Authorize publication, then resume.'],
+      failedStep: 'publish-result',
+      diagnostic: 'Publication requires authorization.',
+      fingerprint: 'permission-publish-result',
+    },
+    expected: 'waiting_user',
+  },
+] as const) {
+  const executor = createContinuationCodexExecutor({
+    artifactStore,
+    configuredSandbox: 'workspace-write',
+    currentWorkingRoot: canonicalRoot,
+    toolInvoker: {
+      async recover() { return null; },
+      async invoke() { return { status: 'failed' as const, failure: scenario.failure }; },
+    },
+    runCodexExec: async () => ({
+      text: JSON.stringify({ outcome: 'tool_request', tool: scenario.tool, args: ['stale-form'] }),
+    }),
+  });
+  const result = await executor.execute(
+    createClaim({ requiredTools: [scenario.tool] }),
+    signal,
+  );
+  assert.equal(result.outcome.outcome, scenario.expected);
+  assert.equal(
+    'failure' in result.outcome && result.outcome.failure.category,
+    scenario.failure.category,
+  );
+}
+
+for (const scenario of [
+  {
+    tool: 'generic_cli_unavailable',
+    failure: {
+      category: 'capability_unavailable' as const,
+      retrySafety: 'safe' as const,
+      capabilityAvailable: false,
+      operationRisk: 'read_only' as const,
+      hints: ['Install the configured capability.'],
+      failedStep: 'inspect-result',
+      diagnostic: 'The configured capability is unavailable.',
+      fingerprint: 'capability-inspect-result',
+    },
+    expected: 'blocked',
+  },
+  {
+    tool: 'generic_cli_terminal',
+    failure: {
+      category: 'terminal' as const,
+      retrySafety: 'unsafe' as const,
+      capabilityAvailable: true,
+      operationRisk: 'external_side_effect' as const,
+      hints: ['Inspect the terminal failure before retrying.'],
+      failedStep: 'publish-result',
+      diagnostic: 'The operation failed terminally.',
+      fingerprint: 'terminal-publish-result',
+    },
+    expected: 'failed',
+  },
+] as const) {
+  const executor = createContinuationCodexExecutor({
+    artifactStore,
+    configuredSandbox: 'workspace-write',
+    currentWorkingRoot: canonicalRoot,
+    toolInvoker: {
+      async recover() { return null; },
+      async invoke() { return { status: 'failed' as const, failure: scenario.failure }; },
+    },
+    runCodexExec: async () => ({
+      text: JSON.stringify({ outcome: 'tool_request', tool: scenario.tool, args: [] }),
+    }),
+  });
+  const result = await executor.execute(
+    createClaim({ requiredTools: [scenario.tool] }),
+    signal,
+  );
+  assert.equal(result.outcome.outcome, scenario.expected);
+  assert.equal(
+    'recoveryFailure' in result.outcome && result.outcome.recoveryFailure?.category,
+    scenario.failure.category,
+  );
+}
 
 let repeatedRequestCount = 0;
 const repeatedExecutor = createContinuationCodexExecutor({

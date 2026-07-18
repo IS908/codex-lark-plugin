@@ -27,6 +27,10 @@ writeFileSync(
     'if (args.includes("--sleep")) setTimeout(() => {}, 1000);',
     'else if (args[0] === "--print-env") console.log(`${args[1]}=${process.env[args[1]] ?? "<missing>"}`);',
     'else if (args[0] === "--has-env") console.log(`env-present=${process.env[args[1]] === undefined ? "no" : "yes"}`);',
+    'else if (args[0] === "--validation-error") {',
+    '  console.error(JSON.stringify({ ok: false, error: { type: "validation", subtype: "invalid_argument", message: "Unknown operation.", hints: ["Use the plural operation."] } }));',
+    '  process.exitCode = 2;',
+    '}',
     'else {',
     '  console.log(args.join("|"));',
     '  console.error("stderr token=should-hide");',
@@ -308,6 +312,51 @@ try {
     });
     assert.equal(literal.isError, undefined);
     assert.match(text(literal), /CUSTOM_SAFE=ok/);
+  }
+
+  // 9. A strict structured validation envelope certifies a safe invocation repair.
+  writeConfig({
+    tools: {
+      validating_cli: {
+        command: process.execPath,
+        fixedArgs: [helperPath],
+        paramBlocklist: ['--token'],
+        allowedCallers: 'public',
+        retrySafeStructuredValidation: true,
+      },
+      untrusted_validating_cli: {
+        command: process.execPath,
+        fixedArgs: [helperPath],
+        paramBlocklist: ['--token'],
+        allowedCallers: 'public',
+      },
+    },
+  });
+  {
+    const validation = await runConfiguredLocalCliToolAsCaller({
+      caller: 'ou_other',
+      tool: 'validating_cli',
+      args: ['--validation-error'],
+      configPath,
+    });
+    assert.equal(validation.ok, false);
+    assert.equal(validation.execution?.exitCode, 2);
+    assert.deepEqual(validation.failure, {
+      type: 'validation',
+      subtype: 'invalid_argument',
+      message: 'Unknown operation.',
+      hints: ['Use the plural operation.'],
+      phase: 'execution',
+      retrySafe: true,
+    });
+    const untrustedValidation = await runConfiguredLocalCliToolAsCaller({
+      caller: 'ou_other',
+      tool: 'untrusted_validating_cli',
+      args: ['--validation-error'],
+      configPath,
+    });
+    assert.equal(untrustedValidation.ok, false);
+    assert.equal(untrustedValidation.failure, undefined);
   }
 
   const audit = readFileSync(auditPath, 'utf-8');

@@ -18,7 +18,7 @@ export class ContinuationVerifier {
     job: ContinuationJob;
     previous: ContinuationCheckpointV2 | null;
     candidate: ContinuationCheckpointV2;
-    requestedOutcome: 'continue' | 'completed' | 'partial' | 'failed' | 'blocked';
+    requestedOutcome: 'continue' | 'recovering' | 'waiting_user' | 'completed' | 'partial' | 'failed' | 'blocked';
     resultArtifacts?: string[];
   }): Promise<ContinuationVerificationVerdict> {
     const findings: string[] = [];
@@ -38,7 +38,7 @@ export class ContinuationVerifier {
       validateContinuity(
         input.previous,
         input.candidate,
-        input.requestedOutcome !== 'blocked' && input.requestedOutcome !== 'failed',
+        !['blocked', 'failed', 'recovering', 'waiting_user'].includes(input.requestedOutcome),
         add,
       );
     } catch {
@@ -126,7 +126,7 @@ function validateShape(
 function validateContractReferences(
   contract: AsyncTaskContract,
   checkpoint: ContinuationCheckpointV2,
-  requestedOutcome: 'continue' | 'completed' | 'partial' | 'failed' | 'blocked',
+  requestedOutcome: 'continue' | 'recovering' | 'waiting_user' | 'completed' | 'partial' | 'failed' | 'blocked',
   add: (finding: string) => void,
 ): void {
   const deliverables = new Map(contract.deliverables.map((item) => [item.id, item]));

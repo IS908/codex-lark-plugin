@@ -146,6 +146,22 @@ assert.deepEqual(await delivery.deliver(progressClaim), {
 });
 assert.equal(sendCalls.at(-1)?.uuid, 'ct_progress_stable');
 
+sendResult = { messageId: 'om_interrupt' };
+const interruptClaim = imClaim({
+  outboxId: 'out_interrupt',
+  eventKey: 'interrupt:int_0123456789abcdef01234567',
+  kind: 'interrupt',
+  attemptId: 'att_0123456789abcdef01234567',
+  interruptId: 'int_0123456789abcdef01234567',
+  idempotencyKey: 'ct_interrupt_stable',
+  payload: 'Task waiting for input: job_0123456789abcdef01234567 (int_0123456789abcdef01234567)\nAuthorize the operation, then reply to this message.',
+});
+assert.deepEqual(await delivery.deliver(interruptClaim), {
+  status: 'delivered',
+  messageId: 'om_interrupt',
+});
+assert.equal(sendCalls.at(-1)?.uuid, 'ct_interrupt_stable');
+
 sendResult = { messageId: 'om_partial' };
 assert.equal((await delivery.deliver(imClaim({
   payload: 'Task partially completed: job_0123456789abcdef01234567\nPartial result.',
@@ -229,6 +245,22 @@ await delivery.deliver(commentClaim({
 assert.equal(
   markerCalls.at(-1)?.marker,
   'Task progress: job_0123456789abcdef01234567 (att_0123456789abcdef01234567)',
+);
+
+markerResult = { replyId: 'reply_interrupt_reconciled' };
+await delivery.deliver(commentClaim({
+  ...interruptClaim,
+  route: {
+    kind: 'comment_thread',
+    documentToken: 'doc_delivery',
+    commentId: 'comment_delivery',
+    fileType: 'docx',
+  },
+  attemptCount: 2,
+}));
+assert.equal(
+  markerCalls.at(-1)?.marker,
+  'Task waiting for input: job_0123456789abcdef01234567 (int_0123456789abcdef01234567)',
 );
 
 markerResult = null;

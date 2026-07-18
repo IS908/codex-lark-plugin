@@ -101,6 +101,15 @@ The current baseline is empty:
   consecutive attempts without verified material change terminate early as
   `continuation_stalled`. Checkpoints, deltas, verdicts, and no-progress counts
   are restored from SQLite after restart and are exposed through `/task status`.
+  Parent-owned adapters normalize host-tool failures into stable orchestration
+  categories. A generic recovery policy combines those categories with explicit
+  retry safety, operation risk, and persisted per-fingerprint/total budgets.
+  Safe repair retries remain `recovering`; authentication, permission, and
+  ambiguous external outcomes create a durable `waiting_user` interrupt. The
+  creator or owner may resume the same Job only from its original route, using
+  `/task resume` or an IM reply to the delivered interrupt. Tool-call identity is
+  `(job_id, step_id, request_hash)`, so completed side effects are never blindly
+  replayed after retries, restarts, or schema migration.
   Retention consumes the persisted terminal delivery result, serializes cleanup
   against retain mutations, and preserves only a compact audited tombstone.
   The local CLI continuation adapter is parent-owned. Standard Codex tools stay

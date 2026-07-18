@@ -13,6 +13,7 @@ const { SqliteContinuationRepository } = await import('../src/continuation/sqlit
 const { createContinuationLocalCliToolInvoker } = await import(
   '../src/continuation/local-cli-tool-invoker.js'
 );
+const { normalizeLocalCliFailure } = await import('../src/continuation/local-cli-tool-invoker.js');
 
 const databasePath = join(root, 'jobs.sqlite');
 const artifactsDir = join(root, 'artifacts');
@@ -20,6 +21,106 @@ const configPath = join(root, 'local-cli-tools.json');
 const helperPath = join(root, 'helper.js');
 const countPath = join(root, 'count.txt');
 const now = '2026-07-17T00:00:00.000Z';
+
+const invalidInvocation = normalizeLocalCliFailure({
+  ok: false,
+  message: JSON.stringify({
+    tool: 'generic_cli',
+    exitCode: 2,
+    signal: null,
+    timedOut: false,
+    truncated: false,
+    stdout: '',
+    stderr: JSON.stringify({
+      ok: false,
+      error: {
+        type: 'validation',
+        subtype: 'invalid_argument',
+        message: 'Unknown operation.',
+        hints: ['Use the plural operation.'],
+      },
+    }),
+  }),
+}, {
+  failedStep: 'create-document',
+  operationRisk: 'external_side_effect',
+});
+assert.equal(invalidInvocation.category, 'invalid_invocation');
+assert.equal(invalidInvocation.retrySafety, 'unknown');
+assert.equal(invalidInvocation.capabilityAvailable, true);
+assert.deepEqual(invalidInvocation.hints, ['Use the plural operation.']);
+assert.equal(invalidInvocation.failedStep, 'create-document');
+assert.doesNotMatch(invalidInvocation.diagnostic, /generic_cli/);
+
+const adapterValidatedInvocation = normalizeLocalCliFailure({
+  ok: false,
+  message: 'The configured invocation was rejected before process execution.',
+  failure: {
+    type: 'validation',
+    subtype: 'invalid_argument',
+    message: 'The configured invocation was rejected before process execution.',
+    hints: ['Use the supported operation.'],
+    phase: 'pre_execution',
+    retrySafe: true,
+  },
+}, {
+  failedStep: 'create-document',
+  operationRisk: 'external_side_effect',
+});
+assert.equal(adapterValidatedInvocation.category, 'invalid_invocation');
+assert.equal(adapterValidatedInvocation.retrySafety, 'safe');
+
+const executedValidatedInvocation = normalizeLocalCliFailure({
+  ok: false,
+  message: 'The process returned a structured validation error.',
+  failure: {
+    type: 'validation',
+    subtype: 'invalid_argument',
+    message: 'Unknown operation.',
+    hints: ['Use the plural operation.'],
+    phase: 'execution',
+    retrySafe: true,
+  },
+}, {
+  failedStep: 'create-document',
+  operationRisk: 'external_side_effect',
+});
+assert.equal(executedValidatedInvocation.category, 'invalid_invocation');
+assert.equal(executedValidatedInvocation.retrySafety, 'safe');
+assert.deepEqual(executedValidatedInvocation.hints, ['Use the plural operation.']);
+
+const transientTimeout = normalizeLocalCliFailure({
+  ok: false,
+  message: JSON.stringify({
+    tool: 'generic_cli',
+    exitCode: null,
+    signal: 'SIGTERM',
+    timedOut: true,
+    truncated: false,
+    stdout: '',
+    stderr: '',
+  }),
+}, { failedStep: 'fetch-data', operationRisk: 'read_only' });
+assert.equal(transientTimeout.category, 'transient');
+assert.equal(transientTimeout.retrySafety, 'safe');
+
+const permissionFailure = normalizeLocalCliFailure({
+  ok: false,
+  message: JSON.stringify({
+    exitCode: 1,
+    timedOut: false,
+    stderr: JSON.stringify({ error: { type: 'permission', message: 'Approval required.' } }),
+  }),
+}, { failedStep: 'publish', operationRisk: 'external_side_effect' });
+assert.equal(permissionFailure.category, 'permission_required');
+assert.equal(permissionFailure.retrySafety, 'unsafe');
+
+const unavailable = normalizeLocalCliFailure({
+  ok: false,
+  message: 'Local CLI tool is not configured.',
+}, { failedStep: 'publish', operationRisk: 'external_side_effect' });
+assert.equal(unavailable.category, 'capability_unavailable');
+assert.equal(unavailable.capabilityAvailable, false);
 
 await writeFile(helperPath, [
   '#!/usr/bin/env node',
