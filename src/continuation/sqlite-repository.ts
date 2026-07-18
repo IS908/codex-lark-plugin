@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { isDeepStrictEqual } from 'node:util';
 import {
   CONTINUATION_CONTRACT_ID_PATTERN,
   CONTINUATION_LIMITS,
@@ -49,6 +50,11 @@ interface SqliteContinuationRepositoryOptions {
   inputStore?: ContinuationInputStorePort;
   jitter?: () => number;
 }
+
+type DueCandidateSelection =
+  | { kind: 'job'; job: ContinuationJob }
+  | { kind: 'corrupt'; jobId: string }
+  | null;
 
 const ATTEMPT_BUDGET_SCHEMA_VERSION = 4;
 const DELIVERY_OUTBOX_SCHEMA_VERSION = 5;
@@ -695,8 +701,16 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ): Promise<ContinuationClaim | null> {
     this.transaction(() => this.finishUnclaimedAttemptBudgetExhausted(now));
     while (true) {
-      const selected = this.selectDueCandidate(now);
-      if (!selected) return null;
+      const selection = this.selectDueCandidate(now);
+      if (!selection) return null;
+      if (selection.kind === 'corrupt') {
+        await Promise.allSettled([
+          this.inputs.remove(selection.jobId),
+          this.artifacts.remove(selection.jobId),
+        ]);
+        continue;
+      }
+      const selected = selection.job;
       const verification = await this.inputs.verify(
         selected.jobId,
         selected.sourceFacts.inputs,
@@ -1282,7 +1296,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       automaticRetentionCutoff
       && (
         current.retained
-        || current.deliveryStatus !== 'delivered'
+        || (
+          current.errorCode !== 'continuation_persisted_state_invalid'
+          && current.deliveryStatus !== 'delivered'
+        )
         || !current.completedAt
         || current.completedAt >= automaticRetentionCutoff
       )
@@ -1297,10 +1314,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       quarantines.input = await this.inputs.quarantine(jobId);
       const redacted = this.transaction(() => {
         const automaticGate = automaticRetentionCutoff
-          ? `AND retain = 0 AND completed_at < ? AND EXISTS (
-            SELECT 1 FROM continuation_outbox terminal
-            WHERE terminal.job_id = continuation_jobs.job_id
-              AND terminal.kind = 'terminal' AND terminal.status = 'delivered'
+          ? `AND retain = 0 AND completed_at < ? AND (
+            error_code = 'continuation_persisted_state_invalid'
+            OR EXISTS (
+              SELECT 1 FROM continuation_outbox terminal
+              WHERE terminal.job_id = continuation_jobs.job_id
+                AND terminal.kind = 'terminal' AND terminal.status = 'delivered'
+            )
           )`
           : '';
         const update = this.database.prepare(`
@@ -1406,40 +1426,61 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     now: string,
   ): Promise<ContinuationDeliveryClaim | null> {
     return this.transaction(() => {
-      const row = this.database.prepare(`
-        SELECT outbox_id
-        FROM continuation_outbox
-        WHERE (
-          status = 'pending'
-          OR (status = 'sending' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
-        )
-          AND next_attempt_at <= ?
-          AND (
-            kind = 'terminal'
-            OR NOT EXISTS (
-              SELECT 1 FROM continuation_outbox terminal
-              WHERE terminal.job_id = continuation_outbox.job_id
-                AND terminal.kind = 'terminal'
-            )
+      while (true) {
+        const row = this.database.prepare(`
+          SELECT o.outbox_id, o.route_json,
+                 j.route_json AS job_route_json,
+                 j.source_facts_json AS job_source_facts_json,
+                 j.origin_kind AS job_origin_kind,
+                 j.source_message_id AS job_source_message_id,
+                 j.source_thread_id AS job_source_thread_id
+          FROM continuation_outbox o
+          JOIN continuation_jobs j ON j.job_id = o.job_id
+          WHERE (
+            o.status = 'pending'
+            OR (o.status = 'sending' AND o.lease_expires_at IS NOT NULL AND o.lease_expires_at <= ?)
           )
-        ORDER BY CASE kind WHEN 'terminal' THEN 0 ELSE 1 END,
-                 next_attempt_at ASC, created_at ASC
-        LIMIT 1
-      `).get(now, now);
-      if (!row) return null;
-      const outboxId = stringField(row, 'outbox_id');
-      const leaseExpiresAt = addMilliseconds(now, DELIVERY_LEASE_MS);
-      const update = this.database.prepare(`
-        UPDATE continuation_outbox
-        SET status = 'sending', worker_id = ?, lease_expires_at = ?,
-            attempt_count = attempt_count + 1,
-            first_attempt_at = COALESCE(first_attempt_at, ?), last_attempt_at = ?, updated_at = ?
-        WHERE outbox_id = ?
-          AND (status = 'pending' OR (status = 'sending' AND lease_expires_at <= ?))
-          AND next_attempt_at <= ?
-      `).run(workerId, leaseExpiresAt, now, now, now, outboxId, now, now);
-      if (Number(update.changes) !== 1) return null;
-      return this.readDeliveryClaim(outboxId, workerId);
+            AND o.next_attempt_at <= ?
+            AND (
+              o.kind = 'terminal'
+              OR NOT EXISTS (
+                SELECT 1 FROM continuation_outbox terminal
+                WHERE terminal.job_id = o.job_id
+                  AND terminal.kind = 'terminal'
+              )
+            )
+          ORDER BY CASE o.kind WHEN 'terminal' THEN 0 ELSE 1 END,
+                   o.next_attempt_at ASC, o.created_at ASC
+          LIMIT 1
+        `).get(now, now);
+        if (!row) return null;
+        const outboxId = stringField(row, 'outbox_id');
+        if (!trustedOutboxRoute(row)) {
+          const failed = this.database.prepare(`
+            UPDATE continuation_outbox
+            SET status = 'failed', worker_id = NULL, lease_expires_at = NULL,
+                error_code = 'continuation_delivery_route_invalid',
+                error_summary = 'Stored task delivery route failed integrity validation.',
+                updated_at = ?
+            WHERE outbox_id = ?
+              AND (status = 'pending' OR (status = 'sending' AND lease_expires_at <= ?))
+          `).run(now, outboxId, now);
+          if (Number(failed.changes) !== 1) return null;
+          continue;
+        }
+        const leaseExpiresAt = addMilliseconds(now, DELIVERY_LEASE_MS);
+        const update = this.database.prepare(`
+          UPDATE continuation_outbox
+          SET status = 'sending', worker_id = ?, lease_expires_at = ?,
+              attempt_count = attempt_count + 1,
+              first_attempt_at = COALESCE(first_attempt_at, ?), last_attempt_at = ?, updated_at = ?
+          WHERE outbox_id = ?
+            AND (status = 'pending' OR (status = 'sending' AND lease_expires_at <= ?))
+            AND next_attempt_at <= ?
+        `).run(workerId, leaseExpiresAt, now, now, now, outboxId, now, now);
+        if (Number(update.changes) !== 1) return null;
+        return this.readDeliveryClaim(outboxId, workerId);
+      }
     });
   }
 
@@ -1544,10 +1585,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         AND j.completed_at < ?
         AND j.deleted_at IS NULL
         AND j.retain = 0
-        AND EXISTS (
-          SELECT 1 FROM continuation_outbox terminal
-          WHERE terminal.job_id = j.job_id
-            AND terminal.kind = 'terminal' AND terminal.status = 'delivered'
+        AND (
+          j.error_code = 'continuation_persisted_state_invalid'
+          OR EXISTS (
+            SELECT 1 FROM continuation_outbox terminal
+            WHERE terminal.job_id = j.job_id
+              AND terminal.kind = 'terminal' AND terminal.status = 'delivered'
+          )
         )
       ORDER BY j.completed_at ASC
     `).all(retainAfter);
@@ -1962,7 +2006,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return this.readJobBy('j.idempotency_key = ?', idempotencyKey);
   }
 
-  private selectDueCandidate(now: string): ContinuationJob | null {
+  private selectDueCandidate(now: string): DueCandidateSelection {
     while (true) {
       const row = this.database.prepare(`
         ${jobSelectSql()}
@@ -1985,34 +2029,73 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       `).get(now, now, now);
       if (!row) return null;
       try {
-        return mapJob(row);
+        return { kind: 'job', job: mapJob(row) };
       } catch {
-        this.transaction(() => this.failCorruptDueJob(row, now));
+        const failedJobId = this.transaction(() => this.failCorruptDueJob(row, now));
+        if (failedJobId) return { kind: 'corrupt', jobId: failedJobId };
       }
     }
   }
 
-  private failCorruptDueJob(row: SqlRow, now: string): void {
+  private failCorruptDueJob(row: SqlRow, now: string): string | null {
     const jobId = stringField(row, 'job_id');
-    const routeJson = stringField(row, 'route_json');
     const rowVersion = numberField(row, 'row_version');
+    const trustedRoute = trustedRouteFromCorruptRow(row);
+    const tombstoneRoute = trustedRoute ?? emptyRoute();
+    const tombstoneSourceMessageId = trustedRoute ? stringField(row, 'source_message_id') : '';
+    const tombstoneSourceThreadId = trustedRoute
+      ? optionalStringField(row, 'source_thread_id')
+      : undefined;
+    const tombstoneFacts = corruptTombstoneFacts(
+      row,
+      tombstoneRoute,
+      tombstoneSourceMessageId,
+      tombstoneSourceThreadId,
+    );
+    const tombstoneContract = corruptTombstoneContract();
     const update = this.database.prepare(`
       UPDATE continuation_jobs
       SET status = 'failed', error_code = 'continuation_persisted_state_invalid',
           error_summary = 'Stored task state failed integrity validation.',
+          origin_kind = ?, route_json = ?, source_message_id = ?, source_thread_id = ?,
+          title = ?, objective = ?, acceptance_criteria_json = '[]',
+          context_snapshot_json = ?, source_facts_json = ?, task_contract_json = ?,
+          required_tools_json = '[]', working_directory = '', permissions_json = ?,
+          model = NULL, parent_session_id = NULL, execution_session_id = NULL,
+          checkpoint_json = NULL, result_summary = NULL, result_artifacts_json = '[]',
           completed_at = ?, updated_at = ?, lease_owner = NULL,
           lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
       WHERE job_id = ? AND row_version = ?
         AND status IN ('queued', 'waiting_retry')
         AND deleted_at IS NULL AND next_run_at <= ? AND expires_at > ?
-    `).run(now, now, jobId, rowVersion, now, now);
-    if (Number(update.changes) !== 1) return;
-    this.insertTerminalOutboxFromRoute(
+    `).run(
+      tombstoneRoute.kind,
+      JSON.stringify(tombstoneRoute),
+      tombstoneSourceMessageId,
+      tombstoneSourceThreadId ?? null,
+      tombstoneContract.title,
+      tombstoneContract.objective,
+      JSON.stringify(EMPTY_CHECKPOINT),
+      JSON.stringify(tombstoneFacts),
+      JSON.stringify(tombstoneContract),
+      JSON.stringify(EMPTY_PERMISSION_ENVELOPE),
+      now,
+      now,
       jobId,
-      routeJson,
-      `Task failed: ${jobId}\nStored task state failed integrity validation.`,
+      rowVersion,
+      now,
       now,
     );
+    if (Number(update.changes) !== 1) return null;
+    if (trustedRoute) {
+      this.insertTerminalOutboxFromRoute(
+        jobId,
+        JSON.stringify(trustedRoute),
+        `Task failed: ${jobId}\nStored task state failed integrity validation.`,
+        now,
+      );
+    }
+    return jobId;
   }
 
   private readJobBy(predicate: string, value: string): ContinuationJob | null {
@@ -2056,6 +2139,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       WHERE outbox_id = ? AND status = 'sending' AND worker_id = ?
     `).get(outboxId, workerId);
     if (!row) throw new Error(`Continuation delivery claim ${outboxId} disappeared.`);
+    const route = parseTrustedJson(row.route_json, 'continuation_outbox.route_json');
+    if (!isDeliveryRoute(route)) throw new Error('Continuation outbox delivery route is invalid.');
     return {
       outboxId: stringField(row, 'outbox_id'),
       jobId: stringField(row, 'job_id'),
@@ -2063,7 +2148,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       kind: stringField(row, 'kind') as ContinuationDeliveryClaim['kind'],
       attemptId: optionalStringField(row, 'attempt_id'),
       workerId: stringField(row, 'worker_id'),
-      route: parseJson<ContinuationDeliveryRoute>(row.route_json, emptyRoute()),
+      route,
       idempotencyKey: stringField(row, 'idempotency_key'),
       payload: stringField(row, 'payload'),
       status: 'sending',
@@ -2147,28 +2232,65 @@ function toolCallSchemaSql(): string {
 }
 
 function mapJob(row: SqlRow): ContinuationJob {
+  const routeValue = parseTrustedJson(row.route_json, 'route_json');
+  if (!isDeliveryRoute(routeValue)) throw new Error('Continuation delivery route is invalid.');
   const sourceFactsValue = parseTrustedJson(row.source_facts_json, 'source_facts_json');
   validateSourceFacts(sourceFactsValue);
   const taskContractValue = parseTrustedJson(row.task_contract_json, 'task_contract_json');
-  validateTaskContract(taskContractValue);
+  validateTaskContract(taskContractValue, sourceFactsValue.provenance === 'captured');
+  const creatorOpenId = stringField(row, 'creator_open_id');
+  const sourceMessageId = stringField(row, 'source_message_id');
+  const sourceThreadId = optionalStringField(row, 'source_thread_id');
+  const title = stringField(row, 'title');
+  const objective = stringField(row, 'objective');
+  const acceptanceCriteria = parseTrustedStringArray(
+    row.acceptance_criteria_json,
+    'acceptance_criteria_json',
+  );
+  const contextSnapshot = parseTrustedCheckpoint(
+    row.context_snapshot_json,
+    'context_snapshot_json',
+  );
+  const workingDirectory = stringField(row, 'working_directory');
+  const permissions = parsePermissionEnvelope(row.permissions_json);
+  const requiredTools = parseTrustedStringArray(row.required_tools_json, 'required_tools_json');
+  if (!sameStringSet(requiredTools, permissions.hostTools)) {
+    throw new Error('Continuation persisted host tools are inconsistent.');
+  }
+  const model = optionalStringField(row, 'model');
+  validatePersistedFactProjection(row, {
+    route: routeValue,
+    sourceFacts: sourceFactsValue,
+    taskContract: taskContractValue,
+    creatorOpenId,
+    sourceMessageId,
+    sourceThreadId,
+    title,
+    objective,
+    acceptanceCriteria,
+    contextSnapshot,
+    workingDirectory,
+    permissions,
+    model,
+  });
   return {
     jobId: stringField(row, 'job_id'),
     idempotencyKey: stringField(row, 'idempotency_key'),
     retryOfJobId: optionalStringField(row, 'retry_of_job_id'),
-    creatorOpenId: stringField(row, 'creator_open_id'),
-    route: parseJson<ContinuationDeliveryRoute>(row.route_json, emptyRoute()),
-    sourceMessageId: stringField(row, 'source_message_id'),
-    sourceThreadId: optionalStringField(row, 'source_thread_id'),
-    title: stringField(row, 'title'),
-    objective: stringField(row, 'objective'),
-    acceptanceCriteria: parseJson<string[]>(row.acceptance_criteria_json, []),
-    contextSnapshot: parseJson(row.context_snapshot_json, EMPTY_CHECKPOINT),
+    creatorOpenId,
+    route: routeValue,
+    sourceMessageId,
+    sourceThreadId,
+    title,
+    objective,
+    acceptanceCriteria,
+    contextSnapshot,
     sourceFacts: sourceFactsValue,
     taskContract: taskContractValue,
-    requiredTools: parseJson<string[]>(row.required_tools_json, []),
-    workingDirectory: stringField(row, 'working_directory'),
-    permissions: parsePermissionEnvelope(row.permissions_json),
-    model: optionalStringField(row, 'model'),
+    requiredTools,
+    workingDirectory,
+    permissions,
+    model,
     parentSessionId: optionalStringField(row, 'parent_session_id'),
     maxAttempts: numberField(row, 'max_attempts'),
     maxRetries: numberField(row, 'max_retries'),
@@ -2199,6 +2321,65 @@ function mapJob(row: SqlRow): ContinuationJob {
     retained: numberField(row, 'retain') === 1,
     deliveryStatus: optionalStringField(row, 'delivery_status') as ContinuationJob['deliveryStatus'],
   };
+}
+
+function validatePersistedFactProjection(
+  row: SqlRow,
+  value: {
+    route: ContinuationDeliveryRoute;
+    sourceFacts: AsyncTaskFactSnapshot;
+    taskContract: AsyncTaskContract;
+    creatorOpenId: string;
+    sourceMessageId: string;
+    sourceThreadId: string | undefined;
+    title: string;
+    objective: string;
+    acceptanceCriteria: string[];
+    contextSnapshot: ContinuationCheckpoint;
+    workingDirectory: string;
+    permissions: ContinuationPermissionEnvelope;
+    model: string | undefined;
+  },
+): void {
+  const {
+    route,
+    sourceFacts,
+    taskContract,
+    creatorOpenId,
+    sourceMessageId,
+    sourceThreadId,
+    title,
+    objective,
+    acceptanceCriteria,
+    contextSnapshot,
+    workingDirectory,
+    permissions,
+    model,
+  } = value;
+  const expectedChatId = route.kind === 'message_thread'
+    ? route.conversationId
+    : `doc:${route.documentToken}`;
+  if (
+    stringField(row, 'origin_kind') !== route.kind
+    || !isDeepStrictEqual(route, sourceFacts.route)
+    || sourceFacts.sourceMessageId !== sourceMessageId
+    || sourceFacts.sourceThreadId !== sourceThreadId
+    || sourceFacts.chatId !== expectedChatId
+    || sourceFacts.workingDirectory !== workingDirectory
+    || sourceFacts.model !== (model ?? null)
+    || !isDeepStrictEqual(sourceFacts.permissions, permissions)
+    || taskContract.title !== title
+    || taskContract.objective !== objective
+    || !isDeepStrictEqual(
+      taskContract.acceptanceCriteria.map((criterion) => criterion.description),
+      acceptanceCriteria,
+    )
+    || !isDeepStrictEqual(taskContract.initialContext, contextSnapshot)
+    || (route.kind === 'message_thread' && route.sourceMessageId !== sourceMessageId)
+    || (sourceFacts.provenance === 'captured' && sourceFacts.creatorOpenId !== creatorOpenId)
+  ) {
+    throw new Error('Continuation persisted facts and execution projection are inconsistent.');
+  }
 }
 
 function projectCreateRequest(
@@ -2294,10 +2475,11 @@ function legacyFactsAndContract(row: SqlRow): {
   sourceFacts: AsyncTaskFactSnapshot;
   taskContract: AsyncTaskContract;
 } {
-  const route = parseJson<ContinuationDeliveryRoute>(row.route_json, emptyRoute());
+  const route = parseTrustedJson(row.route_json, 'route_json');
+  if (!isDeliveryRoute(route)) throw new Error('Continuation delivery route is invalid.');
   const permissions = parsePermissionEnvelope(row.permissions_json);
-  const criteria = parseJson<string[]>(row.acceptance_criteria_json, []);
-  const initialContext = parseJson<ContinuationCheckpoint>(row.context_snapshot_json, EMPTY_CHECKPOINT);
+  const criteria = parseTrustedStringArray(row.acceptance_criteria_json, 'acceptance_criteria_json');
+  const initialContext = parseTrustedCheckpoint(row.context_snapshot_json, 'context_snapshot_json');
   return {
     sourceFacts: {
       schemaVersion: 1,
@@ -2373,6 +2555,104 @@ function redactedLegacyContract(): AsyncTaskContract {
   };
 }
 
+function trustedRouteFromCorruptRow(row: SqlRow): ContinuationDeliveryRoute | null {
+  try {
+    const route = parseTrustedJson(row.route_json, 'route_json');
+    const rawFacts = parseTrustedJson(row.source_facts_json, 'source_facts_json');
+    if (!isDeliveryRoute(route) || !isRecord(rawFacts) || !isDeliveryRoute(rawFacts.route)) {
+      return null;
+    }
+    const sourceMessageId = stringField(row, 'source_message_id');
+    const sourceThreadId = optionalStringField(row, 'source_thread_id');
+    const expectedChatId = route.kind === 'message_thread'
+      ? route.conversationId
+      : `doc:${route.documentToken}`;
+    if (
+      stringField(row, 'origin_kind') !== route.kind
+      || !isDeepStrictEqual(route, rawFacts.route)
+      || rawFacts.sourceMessageId !== sourceMessageId
+      || rawFacts.sourceThreadId !== sourceThreadId
+      || rawFacts.chatId !== expectedChatId
+      || (route.kind === 'message_thread' && route.sourceMessageId !== sourceMessageId)
+    ) return null;
+    return route;
+  } catch {
+    return null;
+  }
+}
+
+function trustedOutboxRoute(row: SqlRow): boolean {
+  try {
+    const outboxRoute = parseTrustedJson(row.route_json, 'continuation_outbox.route_json');
+    const jobRoute = parseTrustedJson(row.job_route_json, 'continuation_jobs.route_json');
+    const rawFacts = parseTrustedJson(
+      row.job_source_facts_json,
+      'continuation_jobs.source_facts_json',
+    );
+    if (
+      !isDeliveryRoute(outboxRoute)
+      || !isDeliveryRoute(jobRoute)
+      || !isRecord(rawFacts)
+      || !isDeliveryRoute(rawFacts.route)
+    ) return false;
+    const sourceMessageId = stringField(row, 'job_source_message_id');
+    const sourceThreadId = optionalStringField(row, 'job_source_thread_id');
+    const expectedChatId = jobRoute.kind === 'message_thread'
+      ? jobRoute.conversationId
+      : `doc:${jobRoute.documentToken}`;
+    return stringField(row, 'job_origin_kind') === jobRoute.kind
+      && isDeepStrictEqual(outboxRoute, jobRoute)
+      && isDeepStrictEqual(jobRoute, rawFacts.route)
+      && rawFacts.sourceMessageId === sourceMessageId
+      && rawFacts.sourceThreadId === sourceThreadId
+      && rawFacts.chatId === expectedChatId
+      && (jobRoute.kind !== 'message_thread' || jobRoute.sourceMessageId === sourceMessageId);
+  } catch {
+    return false;
+  }
+}
+
+function corruptTombstoneFacts(
+  row: SqlRow,
+  route: ContinuationDeliveryRoute,
+  sourceMessageId: string,
+  sourceThreadId: string | undefined,
+): AsyncTaskFactSnapshot {
+  return {
+    schemaVersion: 1,
+    provenance: 'legacy_unavailable',
+    originalUserText: null,
+    sourceContextText: null,
+    quotedMessageText: null,
+    creatorOpenId: stringField(row, 'creator_open_id'),
+    chatId: route.kind === 'message_thread'
+      ? route.conversationId
+      : `doc:${route.documentToken}`,
+    chatType: route.kind === 'comment_thread' ? 'doc_comment' : '',
+    route,
+    sourceMessageId,
+    ...(sourceThreadId ? { sourceThreadId } : {}),
+    sourceMessageType: null,
+    sourceTimestamp: null,
+    inputs: [],
+    workingDirectory: '',
+    model: null,
+    permissions: EMPTY_PERMISSION_ENVELOPE,
+  };
+}
+
+function corruptTombstoneContract(): AsyncTaskContract {
+  return {
+    schemaVersion: 1,
+    title: 'Unavailable task state',
+    objective: 'Stored task state failed integrity validation.',
+    deliverables: [],
+    acceptanceCriteria: [],
+    verificationRequirements: [],
+    initialContext: EMPTY_CHECKPOINT,
+  };
+}
+
 function validateCreateRequest(request: ContinuationCreateRequest): void {
   if (!request.idempotencyKey) throw new Error('Continuation idempotency key is required.');
   if (request.title.length > CONTINUATION_LIMITS.titleChars) {
@@ -2400,8 +2680,8 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
   assertJsonBytes('permission envelope', request.permissions, CONTINUATION_LIMITS.contextSnapshotBytes);
   if (!isDeliveryRoute(request.route)) throw new Error('Continuation delivery route is invalid.');
   assertJsonBytes('delivery route', request.route, CONTINUATION_LIMITS.contextSnapshotBytes);
-  validateTaskContract(request.taskContract);
   validateSourceFacts(request.sourceFacts);
+  validateTaskContract(request.taskContract, request.sourceFacts.provenance === 'captured');
   assertJsonBytes('source inputs', request.sourceInputs.map((input) => ({
     kind: input.kind,
     fileName: input.fileName,
@@ -2420,7 +2700,10 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
   }
 }
 
-function validateTaskContract(value: unknown): asserts value is AsyncTaskContract {
+function validateTaskContract(
+  value: unknown,
+  requireRequirements = false,
+): asserts value is AsyncTaskContract {
   if (!isRecord(value) || !hasExactKeys(value, [
     'schemaVersion',
     'title',
@@ -2463,6 +2746,24 @@ function validateTaskContract(value: unknown): asserts value is AsyncTaskContrac
     throw new Error('Continuation task contract is invalid.');
   }
   if (contract.schemaVersion !== 1) throw new Error('Continuation task contract schema version is invalid.');
+  if (
+    requireRequirements
+    && (
+      contract.title.trim().length === 0
+      || contract.objective.trim().length === 0
+      || contract.deliverables.length === 0
+      || !contract.deliverables.some((deliverable) => deliverable.required)
+      || contract.deliverables.some((deliverable) => deliverable.description.trim().length === 0)
+      || contract.acceptanceCriteria.length === 0
+      || contract.acceptanceCriteria.some((criterion) =>
+        criterion.description.trim().length === 0 || criterion.deliverableIds.length === 0)
+      || contract.verificationRequirements.length === 0
+      || contract.verificationRequirements.some((requirement) =>
+        requirement.description.trim().length === 0)
+    )
+  ) {
+    throw new Error('Captured continuation task contract requirements must not be empty.');
+  }
   if (contract.deliverables.length > CONTINUATION_LIMITS.deliverableCount) {
     throw new Error('Continuation deliverable count exceeds the configured limit.');
   }
@@ -2896,6 +3197,26 @@ function parseTrustedJson(value: SqlRow[string] | undefined, field: string): unk
   } catch (error) {
     throw new Error(`Invalid trusted continuation JSON field: ${field}.`, { cause: error });
   }
+}
+
+function parseTrustedStringArray(
+  value: SqlRow[string] | undefined,
+  field: string,
+): string[] {
+  const parsed = parseTrustedJson(value, field);
+  if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === 'string')) {
+    throw new Error(`Invalid continuation string-array field: ${field}.`);
+  }
+  return parsed;
+}
+
+function parseTrustedCheckpoint(
+  value: SqlRow[string] | undefined,
+  field: string,
+): ContinuationCheckpoint {
+  const parsed = parseTrustedJson(value, field);
+  if (!isCheckpoint(parsed)) throw new Error(`Invalid continuation checkpoint field: ${field}.`);
+  return parsed;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

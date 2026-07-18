@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LARK_INSTANCE_LOCK_PATH } from '../src/instance-lock.js';
 
-assert.equal(LARK_INSTANCE_LOCK_PATH, join(tmpdir(), 'codex-lark-plugin.lock'));
+assert.equal(LARK_INSTANCE_LOCK_PATH, join(
+  homedir(),
+  '.codex',
+  'channels',
+  'lark',
+  'runtime',
+  'continuations',
+  '.instance.lock',
+));
 
 const home = mkdtempSync(join(tmpdir(), 'lark-stop-smoke-home-'));
 try {

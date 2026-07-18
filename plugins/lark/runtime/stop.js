@@ -664,6 +664,7 @@ var appConfig = {
 // src/instance-lock.ts
 import os2 from "node:os";
 import path2 from "node:path";
+import { readdir as readdir2, stat as stat2 } from "node:fs/promises";
 
 // src/resource-governance.ts
 import { execFile } from "node:child_process";
@@ -889,18 +890,46 @@ async function stopSingleInstanceLock(lockPath, options = {}) {
 }
 
 // src/instance-lock.ts
-var LARK_INSTANCE_LOCK_PATH = path2.join(os2.tmpdir(), "codex-lark-plugin.lock");
-async function stopLarkInstances(appId, lockRoot = os2.tmpdir()) {
+var LARK_INSTANCE_LOCK_PATH = path2.join(
+  os2.homedir(),
+  ".codex",
+  "channels",
+  "lark",
+  "runtime",
+  "continuations",
+  ".instance.lock"
+);
+async function stopLarkInstances(appId, stateRoot = path2.dirname(LARK_INSTANCE_LOCK_PATH), legacyLockRoot = os2.tmpdir()) {
   const results = [];
   const paths = [
-    path2.join(lockRoot, path2.basename(LARK_INSTANCE_LOCK_PATH)),
-    legacyLarkInstanceLockPath(appId, lockRoot)
+    path2.join(stateRoot, path2.basename(LARK_INSTANCE_LOCK_PATH)),
+    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, false)
   ];
   for (const lockPath of paths) results.push(await stopSingleInstanceLock(lockPath));
   return results;
 }
 function legacyLarkInstanceLockPath(appId, lockRoot = os2.tmpdir()) {
   return path2.join(lockRoot, `codex-lark-${appId}.lock`);
+}
+async function compatibleLegacyLockPaths(appId, lockRoot, scanAll) {
+  const currentUid = process.getuid?.();
+  const names = await readdir2(lockRoot).catch(() => []);
+  const candidates = names.filter((name) => /^codex-lark-.+\.lock$/.test(name)).filter((name) => scanAll || name === path2.basename(legacyLarkInstanceLockPath(appId, lockRoot)));
+  const ownedPaths = [];
+  for (const name of candidates) {
+    const candidate = path2.join(lockRoot, name);
+    const metadata = await stat2(candidate).catch(() => null);
+    if (metadata && (currentUid === void 0 || metadata.uid === currentUid)) {
+      ownedPaths.push(candidate);
+    }
+  }
+  const currentPath = legacyLarkInstanceLockPath(appId, lockRoot);
+  const rootMetadata = await stat2(lockRoot).catch(() => null);
+  const privateLegacyRoot = Boolean(
+    rootMetadata && (currentUid === void 0 || rootMetadata.uid === currentUid) && (rootMetadata.mode & 18) === 0
+  );
+  if (privateLegacyRoot) ownedPaths.push(currentPath);
+  return [...new Set(ownedPaths.sort())];
 }
 
 // src/stop.ts

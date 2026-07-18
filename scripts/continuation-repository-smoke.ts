@@ -1490,7 +1490,7 @@ const legacyV6Job = await versionSixSeed.create(createRequest('legacy-v6', {
     acceptanceCriteria: [{
       id: 'old_id_not_available_to_v6',
       description: 'Legacy criterion text.',
-      deliverableIds: [],
+      deliverableIds: ['result'],
     }],
   },
 }));
@@ -1705,6 +1705,17 @@ const requestWithUnknownPermission = createRequest('unknown-permission-field');
 await assert.rejects(
   reopenedManagedRepository.create(requestWithUnknownPermission),
   /permission envelope is invalid/i,
+);
+const requestWithoutEvidenceContract = createRequest('missing-evidence-contract');
+requestWithoutEvidenceContract.taskContract = {
+  ...requestWithoutEvidenceContract.taskContract,
+  deliverables: [],
+  acceptanceCriteria: [],
+  verificationRequirements: [],
+};
+await assert.rejects(
+  reopenedManagedRepository.create(requestWithoutEvidenceContract),
+  /contract requirements must not be empty/i,
 );
 const managedManifest = await readFile(join(
   managedInputsDir,
@@ -2383,14 +2394,117 @@ const corruptStateRow = corruptStateDatabase.prepare(`
 assert.equal(corruptStateRow.status, 'failed');
 assert.equal(corruptStateRow.error_code, 'continuation_persisted_state_invalid');
 assert.equal(corruptStateRow.lease_owner, null);
+const corruptStateTombstone = await corruptStateRepository.get(corruptStateJob.job.jobId);
+assert.equal(corruptStateTombstone?.status, 'failed');
+assert.equal(corruptStateTombstone?.sourceFacts.provenance, 'legacy_unavailable');
+assert.equal(corruptStateTombstone?.sourceFacts.originalUserText, null);
+assert.deepEqual(corruptStateTombstone?.sourceFacts.inputs, []);
+assert.ok((await corruptStateRepository.listAll(10)).some(
+  (job) => job.jobId === corruptStateJob.job.jobId,
+));
+const tombstoneRaw = corruptStateDatabase.prepare(`
+  SELECT source_facts_json, task_contract_json FROM continuation_jobs WHERE job_id = ?
+`).get(corruptStateJob.job.jobId) as {
+  source_facts_json: string;
+  task_contract_json: string;
+};
+assert.doesNotMatch(
+  `${tombstoneRaw.source_facts_json}\n${tombstoneRaw.task_contract_json}`,
+  /github_pat|unexpected|must_not_leak/i,
+);
 const corruptStateDelivery = await corruptStateRepository.claimPendingDelivery(
   'delivery-corrupt-state',
   baseNow,
 );
 assert.equal(corruptStateDelivery?.jobId, corruptStateJob.job.jobId);
 assert.doesNotMatch(corruptStateDelivery?.payload ?? '', /github_pat|unexpected|source_facts/i);
+await corruptStateRepository.markDeliveryResult(
+  corruptStateDelivery!,
+  { status: 'delivered', messageId: 'om_corrupt_state_failure' },
+  baseNow,
+);
+const corruptStateCleanup = await corruptStateRepository.purgeExpired(
+  '2026-07-17T00:00:01.000Z',
+  '2026-07-17T00:02:00.000Z',
+);
+assert.ok(corruptStateCleanup.some((entry) =>
+  entry.jobId === corruptStateJob.job.jobId && entry.result === 'cleaned'));
+assert.equal((await corruptStateRepository.get(corruptStateJob.job.jobId))?.deletedAt,
+  '2026-07-17T00:02:00.000Z');
 corruptStateDatabase.close();
 corruptStateRepository.close();
+
+// Divergent route copies are never used for remote delivery; the Job becomes a local tombstone.
+const routeMismatchRoot = await mkdtemp(join(tmpdir(), 'continuation-route-mismatch-'));
+const routeMismatchDatabasePath = join(routeMismatchRoot, 'jobs.sqlite');
+const routeMismatchInputsDir = join(routeMismatchRoot, 'inputs');
+const routeMismatchArtifactsDir = join(routeMismatchRoot, 'artifacts');
+const routeMismatchSource = join(routeMismatchRoot, 'source.txt');
+await writeFile(routeMismatchSource, 'sensitive managed input', 'utf8');
+const routeMismatchRepository = await SqliteContinuationRepository.open({
+  databasePath: routeMismatchDatabasePath,
+  artifactsDir: routeMismatchArtifactsDir,
+  inputsDir: routeMismatchInputsDir,
+  jitter: () => 0,
+});
+const routeMismatchJob = await routeMismatchRepository.create(createRequest('route-mismatch', {
+  createdAt: '2026-07-16T23:59:58.000Z',
+  sourceInputs: [{
+    sourcePath: routeMismatchSource,
+    fileName: 'source.txt',
+    kind: 'message_attachment',
+  }],
+}));
+const routeMismatchArtifactStore = new ContinuationArtifactStore(routeMismatchArtifactsDir);
+await writeFile(
+  join(await routeMismatchArtifactStore.ensure(routeMismatchJob.job.jobId), 'result.txt'),
+  'sensitive result',
+  'utf8',
+);
+const routeMismatchHealthy = await routeMismatchRepository.create(createRequest(
+  'healthy-after-route-mismatch',
+  { createdAt: '2026-07-16T23:59:59.000Z' },
+));
+const routeMismatchDatabase = new DatabaseSync(routeMismatchDatabasePath);
+routeMismatchDatabase.prepare(`
+  UPDATE continuation_jobs SET route_json = ? WHERE job_id = ?
+`).run(JSON.stringify({
+  kind: 'message_thread',
+  conversationId: 'oc_wrong_destination',
+  sourceMessageId: routeMismatchJob.job.sourceMessageId,
+  threadId: routeMismatchJob.job.sourceThreadId,
+}), routeMismatchJob.job.jobId);
+await assert.rejects(
+  routeMismatchRepository.get(routeMismatchJob.job.jobId),
+  /facts and execution projection are inconsistent/i,
+);
+const routeMismatchHealthyClaim = await routeMismatchRepository.claimDue(
+  'worker-after-route-mismatch',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+assert.equal(routeMismatchHealthyClaim?.job.jobId, routeMismatchHealthy.job.jobId);
+const routeMismatchTombstone = await routeMismatchRepository.get(routeMismatchJob.job.jobId);
+assert.equal(routeMismatchTombstone?.status, 'failed');
+assert.deepEqual(routeMismatchTombstone?.route, {
+  kind: 'message_thread',
+  conversationId: '',
+  sourceMessageId: '',
+});
+assert.equal(await routeMismatchRepository.claimPendingDelivery(
+  'delivery-route-mismatch',
+  baseNow,
+), null);
+await assert.rejects(lstat(join(routeMismatchInputsDir, routeMismatchJob.job.jobId)), /ENOENT/);
+await assert.rejects(lstat(join(routeMismatchArtifactsDir, routeMismatchJob.job.jobId)), /ENOENT/);
+assert.doesNotMatch(String(routeMismatchDatabase.prepare(`
+  SELECT route_json FROM continuation_jobs WHERE job_id = ?
+`).get(routeMismatchJob.job.jobId)?.route_json ?? ''), /oc_wrong_destination/);
+assert.ok((await routeMismatchRepository.listAll(10)).some(
+  (job) => job.jobId === routeMismatchJob.job.jobId,
+));
+routeMismatchDatabase.close();
+routeMismatchRepository.close();
 
 // A corrupt due input terminates before an attempt/lease, emits one logical terminal event,
 // and does not prevent the next healthy due Job from being claimed.
@@ -2444,6 +2558,30 @@ assert.equal(corruptedJob?.attemptCount, 0);
 assert.equal(corruptedJob?.leaseOwner, undefined);
 assert.equal(corruptedJob?.leaseExpiresAt, undefined);
 assert.equal(corruptedJob?.deliveryEvents?.filter((event) => event.kind === 'terminal').length, 1);
+const integrityOutboxDatabase = new DatabaseSync(integrityDatabasePath);
+integrityOutboxDatabase.prepare(`
+  UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
+`).run(JSON.stringify({
+  kind: 'message_thread',
+  conversationId: 'oc_wrong_outbox_destination',
+  sourceMessageId: corruptCreated.job.sourceMessageId,
+  threadId: corruptCreated.job.sourceThreadId,
+}), corruptCreated.job.jobId);
+assert.equal(await reopenedIntegrityRepository.claimPendingDelivery(
+  'delivery-invalid-route',
+  baseNow,
+), null);
+const invalidRouteOutbox = integrityOutboxDatabase.prepare(`
+  SELECT status, error_code FROM continuation_outbox WHERE job_id = ? AND kind = 'terminal'
+`).get(corruptCreated.job.jobId) as { status: string; error_code: string };
+assert.equal(invalidRouteOutbox.status, 'failed');
+assert.equal(invalidRouteOutbox.error_code, 'continuation_delivery_route_invalid');
+integrityOutboxDatabase.prepare(`
+  UPDATE continuation_outbox
+  SET route_json = ?, status = 'pending', error_code = NULL, error_summary = NULL
+  WHERE job_id = ? AND kind = 'terminal'
+`).run(JSON.stringify(corruptCreated.job.route), corruptCreated.job.jobId);
+integrityOutboxDatabase.close();
 const integrityDelivery = await reopenedIntegrityRepository.claimPendingDelivery(
   'delivery-integrity',
   baseNow,

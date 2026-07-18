@@ -126,14 +126,20 @@ export class ContinuationArtifactStore {
     if (sourceMetadata.isSymbolicLink() || !sourceMetadata.isDirectory()) {
       throw new Error('Continuation artifact quarantine source is not a real directory.');
     }
-    await fs.rename(source, destination);
-    const moved = await fs.lstat(destination);
-    if (moved.dev !== sourceMetadata.dev || moved.ino !== sourceMetadata.ino) {
-      await fs.rename(destination, source).catch(() => {});
-      throw new Error('Continuation artifact quarantine identity changed during rename.');
+    const quarantineName = path.basename(destination);
+    ACTIVE_REDACTION_QUARANTINES.add(quarantineName);
+    try {
+      await fs.rename(source, destination);
+      const moved = await fs.lstat(destination);
+      if (moved.dev !== sourceMetadata.dev || moved.ino !== sourceMetadata.ino) {
+        await fs.rename(destination, source).catch(() => {});
+        throw new Error('Continuation artifact quarantine identity changed during rename.');
+      }
+      return token;
+    } catch (error) {
+      ACTIVE_REDACTION_QUARANTINES.delete(quarantineName);
+      throw error;
     }
-    ACTIVE_REDACTION_QUARANTINES.add(path.basename(destination));
-    return token;
   }
 
   async restoreQuarantine(jobId: string, token: string): Promise<void> {

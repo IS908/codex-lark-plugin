@@ -315,19 +315,26 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
       throw new Error('Continuation input path is not a real directory.');
     }
+    const quarantineName = path.basename(destination);
+    ACTIVE_REDACTION_QUARANTINES.add(quarantineName);
     try {
       await fs.rename(source, destination);
     } catch (error) {
+      ACTIVE_REDACTION_QUARANTINES.delete(quarantineName);
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
       throw error;
     }
-    const moved = await fs.lstat(destination);
-    if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
-      await fs.rename(destination, source).catch(() => {});
-      throw new Error('Continuation input quarantine identity changed during rename.');
+    try {
+      const moved = await fs.lstat(destination);
+      if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
+        await fs.rename(destination, source).catch(() => {});
+        throw new Error('Continuation input quarantine identity changed during rename.');
+      }
+      return token;
+    } catch (error) {
+      ACTIVE_REDACTION_QUARANTINES.delete(quarantineName);
+      throw error;
     }
-    ACTIVE_REDACTION_QUARANTINES.add(path.basename(destination));
-    return token;
   }
 
   async restoreQuarantine(jobId: string, token: string): Promise<void> {

@@ -214,18 +214,41 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   const legacyPath = legacyLarkInstanceLockPath(appId, dir);
   const legacyLock = await acquireSingleInstanceLock(legacyPath);
   await assert.rejects(
-    acquireLarkInstanceLock('cli_new_runtime', dir),
+    acquireLarkInstanceLock('cli_new_runtime', dir, dir),
     /Another instance is running/i,
   );
   legacyLock.release();
 
-  const compatibleLock = await acquireLarkInstanceLock(appId, dir);
+  const compatibleLock = await acquireLarkInstanceLock(appId, dir, dir);
   assert.equal(existsSync(legacyPath), true);
-  assert.equal(existsSync(join(dir, 'codex-lark-plugin.lock')), true);
+  assert.equal(existsSync(join(dir, '.instance.lock')), true);
   compatibleLock.release();
   assert.equal(existsSync(legacyPath), false);
-  assert.equal(existsSync(join(dir, 'codex-lark-plugin.lock')), false);
+  assert.equal(existsSync(join(dir, '.instance.lock')), false);
   cleanup(dir);
+  passed++;
+}
+
+// 6b. Shared legacy roots detect owned old locks but never publish new unscoped locks.
+{
+  const stateDir = tmpRoot('resource-lark-private-state-');
+  const sharedLegacyDir = tmpRoot('resource-lark-shared-legacy-');
+  await chmod(sharedLegacyDir, 0o777);
+  const appId = 'cli_shared_legacy_root';
+  const legacyPath = legacyLarkInstanceLockPath(appId, sharedLegacyDir);
+  const oldLock = await acquireSingleInstanceLock(legacyPath);
+  await assert.rejects(
+    acquireLarkInstanceLock(appId, stateDir, sharedLegacyDir),
+    /Another instance is running/i,
+  );
+  oldLock.release();
+
+  const scopedLock = await acquireLarkInstanceLock(appId, stateDir, sharedLegacyDir);
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), true);
+  assert.equal(existsSync(legacyPath), false);
+  scopedLock.release();
+  cleanup(stateDir);
+  cleanup(sharedLegacyDir);
   passed++;
 }
 
@@ -679,4 +702,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/29 PASS`);
+console.log(`resource-governance smoke: ${passed}/30 PASS`);

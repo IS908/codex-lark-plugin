@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import {
   acquireSingleInstanceLock,
   stopSingleInstanceLock,
@@ -10,13 +10,26 @@ import {
 
 // Continuation state is shared across configured Lark app identities, so the
 // process lock must cover the whole plugin runtime rather than one app id.
-export const LARK_INSTANCE_LOCK_PATH = path.join(os.tmpdir(), 'codex-lark-plugin.lock');
+export const LARK_INSTANCE_LOCK_PATH = path.join(
+  os.homedir(),
+  '.codex',
+  'channels',
+  'lark',
+  'runtime',
+  'continuations',
+  '.instance.lock',
+);
 
 export async function acquireLarkInstanceLock(
   appId: string,
-  lockRoot = os.tmpdir(),
+  stateRoot = path.dirname(LARK_INSTANCE_LOCK_PATH),
+  legacyLockRoot = os.tmpdir(),
 ): Promise<SingleInstanceLockHandle> {
-  const paths = await compatibleLockPaths(appId, lockRoot);
+  const globalPath = path.join(stateRoot, path.basename(LARK_INSTANCE_LOCK_PATH));
+  const paths = [
+    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, true),
+    globalPath,
+  ];
   const acquired: SingleInstanceLockHandle[] = [];
   try {
     for (const lockPath of paths) acquired.push(await acquireSingleInstanceLock(lockPath));
@@ -30,7 +43,6 @@ export async function acquireLarkInstanceLock(
     }
     throw error;
   }
-  const globalPath = path.join(lockRoot, path.basename(LARK_INSTANCE_LOCK_PATH));
   return {
     path: globalPath,
     pid: process.pid,
@@ -44,12 +56,13 @@ export async function acquireLarkInstanceLock(
 
 export async function stopLarkInstances(
   appId: string,
-  lockRoot = os.tmpdir(),
+  stateRoot = path.dirname(LARK_INSTANCE_LOCK_PATH),
+  legacyLockRoot = os.tmpdir(),
 ): Promise<StopSingleInstanceLockResult[]> {
   const results: StopSingleInstanceLockResult[] = [];
   const paths = [
-    path.join(lockRoot, path.basename(LARK_INSTANCE_LOCK_PATH)),
-    legacyLarkInstanceLockPath(appId, lockRoot),
+    path.join(stateRoot, path.basename(LARK_INSTANCE_LOCK_PATH)),
+    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, false),
   ];
   for (const lockPath of paths) results.push(await stopSingleInstanceLock(lockPath));
   return results;
@@ -59,14 +72,36 @@ export function legacyLarkInstanceLockPath(appId: string, lockRoot = os.tmpdir()
   return path.join(lockRoot, `codex-lark-${appId}.lock`);
 }
 
-async function compatibleLockPaths(appId: string, lockRoot: string): Promise<string[]> {
-  const globalPath = path.join(lockRoot, path.basename(LARK_INSTANCE_LOCK_PATH));
-  const legacyNames = await readdir(lockRoot).catch(() => []);
-  const legacyPaths = legacyNames
-    .filter((name) => /^codex-lark-.+\.lock$/.test(name) && name !== path.basename(globalPath))
-    .map((name) => path.join(lockRoot, name));
-  legacyPaths.push(legacyLarkInstanceLockPath(appId, lockRoot));
-  return [...new Set([...legacyPaths.sort(), globalPath])];
+async function compatibleLegacyLockPaths(
+  appId: string,
+  lockRoot: string,
+  scanAll: boolean,
+): Promise<string[]> {
+  const currentUid = process.getuid?.();
+  const names = await readdir(lockRoot).catch(() => []);
+  const candidates = names
+    .filter((name) => /^codex-lark-.+\.lock$/.test(name))
+    .filter((name) => scanAll || name === path.basename(legacyLarkInstanceLockPath(appId, lockRoot)));
+  const ownedPaths: string[] = [];
+  for (const name of candidates) {
+    const candidate = path.join(lockRoot, name);
+    const metadata = await stat(candidate).catch(() => null);
+    if (metadata && (currentUid === undefined || metadata.uid === currentUid)) {
+      ownedPaths.push(candidate);
+    }
+  }
+  const currentPath = legacyLarkInstanceLockPath(appId, lockRoot);
+  const rootMetadata = await stat(lockRoot).catch(() => null);
+  // Old releases used an unscoped filename. Publish it only inside a private
+  // temp root; on shared /tmp we can safely detect owned old locks but must not
+  // create a cross-user compatibility lock.
+  const privateLegacyRoot = Boolean(
+    rootMetadata
+    && (currentUid === undefined || rootMetadata.uid === currentUid)
+    && (rootMetadata.mode & 0o022) === 0,
+  );
+  if (privateLegacyRoot) ownedPaths.push(currentPath);
+  return [...new Set(ownedPaths.sort())];
 }
 
 function releaseLocks(locks: readonly SingleInstanceLockHandle[]): unknown[] {
