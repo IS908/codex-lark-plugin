@@ -171,7 +171,16 @@ async function removeLockIfStillOwned(
 
 export function isCodexLarkProcessCommand(command: string): boolean {
   const normalized = command.toLowerCase();
+  const tokens = Array.from(command.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g), (match) =>
+    match[1] ?? match[2] ?? match[3],
+  );
+  const executable = tokens[0] ? basename(tokens[0].replaceAll('\\', '/')).toLowerCase() : '';
+  const entrypoint = tokens[1]?.replaceAll('\\', '/').toLowerCase();
+  const isPackagedRuntime =
+    (executable === 'node' || executable === 'node.exe') && entrypoint === 'runtime/index.js';
+
   return (
+    isPackagedRuntime ||
     normalized.includes('codex-lark-plugin') ||
     normalized.includes('scripts/start.sh') ||
     (normalized.includes('src/index.ts') && normalized.includes('tsx'))
