@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.8.2] - 2026-07-19
+
+### Changed
+- Reserve the final two Async Task attempts for artifact finalization, verification, and delivery instead of allowing exploratory work to consume the entire budget.
+- Expose execution, artifact, and delivery state independently in task diagnostics, including precise terminal reasons, unmet criteria, resume availability, and the next best action.
+
+### Fixed
+- Preserve verified checkpoints and copy SHA-256-validated managed artifacts when retrying partial, blocked, or failed tasks.
+
 ## [2.8.1] - 2026-07-19
 
 ### Fixed
@@ -916,7 +925,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.1...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.2...HEAD
+[2.8.2]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.6.0...v2.7.0
