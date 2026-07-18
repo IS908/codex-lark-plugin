@@ -31,6 +31,10 @@ import { BotMessageTracker, LatestMessageTracker } from '../src/message-trackers
 import { MemoryStore } from '../src/memory/file.js';
 import { appConfig } from '../src/config.js';
 import { sendFeishuReply } from '../src/reply-sender.js';
+import {
+  acquireLarkInstanceLock,
+  legacyLarkInstanceLockPath,
+} from '../src/instance-lock.js';
 
 let passed = 0;
 
@@ -200,6 +204,28 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
     assert.equal(existsSync(`${lockPath}.takeover`), false);
     cleanup(dir);
   }
+  passed++;
+}
+
+// 6a. The global lock rejects a live legacy per-app runtime during an upgrade.
+{
+  const dir = tmpRoot('resource-lark-lock-upgrade-');
+  const appId = 'cli_upgrade_compatibility';
+  const legacyPath = legacyLarkInstanceLockPath(appId, dir);
+  const legacyLock = await acquireSingleInstanceLock(legacyPath);
+  await assert.rejects(
+    acquireLarkInstanceLock('cli_new_runtime', dir),
+    /Another instance is running/i,
+  );
+  legacyLock.release();
+
+  const compatibleLock = await acquireLarkInstanceLock(appId, dir);
+  assert.equal(existsSync(legacyPath), true);
+  assert.equal(existsSync(join(dir, 'codex-lark-plugin.lock')), true);
+  compatibleLock.release();
+  assert.equal(existsSync(legacyPath), false);
+  assert.equal(existsSync(join(dir, 'codex-lark-plugin.lock')), false);
+  cleanup(dir);
   passed++;
 }
 
@@ -653,4 +679,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/28 PASS`);
+console.log(`resource-governance smoke: ${passed}/29 PASS`);

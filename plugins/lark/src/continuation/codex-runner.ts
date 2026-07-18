@@ -463,13 +463,19 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     signal: AbortSignal,
   ): Promise<ContinuationExecutionResult> {
     const toolResultPrompt = buildContinuationToolResultPrompt(claim, toolRequest, resultMessage);
+    const freshSessionPrompt = `${baseRequest.prompt}\n\n${toolResultPrompt}`;
+    const resumeSessionId = previousSessionId ?? baseRequest.resumeSessionId ?? null;
     const followupRequest: CodexExecRequest = {
       ...baseRequest,
-      prompt: `${baseRequest.prompt}\n\n${toolResultPrompt}`,
-      resumeSessionId: previousSessionId ?? baseRequest.resumeSessionId ?? null,
+      prompt: resumeSessionId ? toolResultPrompt : freshSessionPrompt,
+      resumeSessionId,
       abortSignal: signal,
     };
-    const followup = await this.executeWithResumeFallback(claim, followupRequest);
+    const followup = await this.executeWithResumeFallback(
+      claim,
+      followupRequest,
+      freshSessionPrompt,
+    );
     const followupOutcome = await parseOutcome(
       followup.result.text,
       claim.job.jobId,
@@ -504,6 +510,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
   private async executeWithResumeFallback(
     claim: ContinuationClaim,
     request: CodexExecRequest,
+    freshSessionPrompt = request.prompt,
   ) {
     try {
       await this.verifyManagedInputsBeforeLaunch(claim);
@@ -523,7 +530,11 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       await this.verifyManagedInputsBeforeLaunch(claim);
       return {
         result: normalizeCodexExecResult(
-          await this.runCodexExec({ ...request, resumeSessionId: null }),
+          await this.runCodexExec({
+            ...request,
+            prompt: freshSessionPrompt,
+            resumeSessionId: null,
+          }),
         ),
         replacedSession: true,
       };

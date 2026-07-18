@@ -1686,6 +1686,26 @@ managedDatabase.prepare(`
   UPDATE continuation_jobs SET task_contract_json = ? WHERE job_id = ?
 `).run(managedRaw.task_contract_json, expectedManagedJobId);
 assert.equal((await reopenedManagedRepository.get(expectedManagedJobId))?.jobId, expectedManagedJobId);
+const managedFactsWithUnknownField = {
+  ...JSON.parse(managedRaw.source_facts_json) as Record<string, unknown>,
+  unexpected: 'must not reach the runner prompt',
+};
+managedDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run(JSON.stringify(managedFactsWithUnknownField), expectedManagedJobId);
+await assert.rejects(
+  reopenedManagedRepository.get(expectedManagedJobId),
+  /source facts are invalid/i,
+);
+managedDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run(managedRaw.source_facts_json, expectedManagedJobId);
+const requestWithUnknownPermission = createRequest('unknown-permission-field');
+(requestWithUnknownPermission.permissions as unknown as Record<string, unknown>).unexpected = true;
+await assert.rejects(
+  reopenedManagedRepository.create(requestWithUnknownPermission),
+  /permission envelope is invalid/i,
+);
 const managedManifest = await readFile(join(
   managedInputsDir,
   expectedManagedJobId,
@@ -1790,14 +1810,6 @@ const liveArtifactRedactionToken = await redactionRollbackArtifacts.quarantine(
 );
 assert.ok(liveRedactionToken);
 assert.ok(liveArtifactRedactionToken);
-const liveInputQuarantine = join(
-  redactionRollbackOptions.inputsDir,
-  `.redacting-${redactionRollbackCreated.job.jobId}-${liveRedactionToken}`,
-);
-const liveArtifactQuarantine = join(
-  redactionRollbackOptions.artifactsDir,
-  `.redacting-${redactionRollbackCreated.job.jobId}-${liveArtifactRedactionToken}`,
-);
 await redactionRollbackDelegate.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
 await redactionRollbackArtifacts.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
 await assert.rejects(lstat(join(
@@ -1805,16 +1817,67 @@ await assert.rejects(lstat(join(
   redactionRollbackCreated.job.jobId,
 )));
 await assert.rejects(lstat(redactionRollbackArtifactRoot));
+await mkdir(join(redactionRollbackOptions.inputsDir, redactionRollbackCreated.job.jobId));
+await mkdir(redactionRollbackArtifactRoot);
+await writeFile(join(
+  redactionRollbackOptions.inputsDir,
+  redactionRollbackCreated.job.jobId,
+  'restore-blocker',
+), 'block replacement', 'utf8');
+await writeFile(join(redactionRollbackArtifactRoot, 'restore-blocker'), 'block replacement', 'utf8');
+await assert.rejects(
+  redactionRollbackDelegate.restoreQuarantine(
+    redactionRollbackCreated.job.jobId,
+    liveRedactionToken,
+  ),
+  /EACCES|EEXIST|exist|not empty|permission denied/i,
+);
+await assert.rejects(
+  redactionRollbackArtifacts.restoreQuarantine(
+    redactionRollbackCreated.job.jobId,
+    liveArtifactRedactionToken,
+  ),
+  /EACCES|EEXIST|exist|not empty|permission denied/i,
+);
+await rm(join(redactionRollbackOptions.inputsDir, redactionRollbackCreated.job.jobId), {
+  recursive: true,
+  force: true,
+});
+await rm(redactionRollbackArtifactRoot, { recursive: true, force: true });
+await redactionRollbackDelegate.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+await redactionRollbackArtifacts.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+assert.equal(await readFile(redactionRollbackDelegate.resolve(
+  redactionRollbackCreated.job.jobId,
+  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
+), 'utf8'), 'restore me after failed redaction');
+assert.equal(
+  await readFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'utf8'),
+  'restore artifact after rollback',
+);
+const crashRedactionToken = await redactionRollbackDelegate.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+const crashArtifactRedactionToken = await redactionRollbackArtifacts.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+assert.ok(crashRedactionToken);
+assert.ok(crashArtifactRedactionToken);
 const deadRedactionToken = `2147483647-${'f'.repeat(16)}`;
 await rename(
-  liveInputQuarantine,
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${crashRedactionToken}`,
+  ),
   join(
     redactionRollbackOptions.inputsDir,
     `.redacting-${redactionRollbackCreated.job.jobId}-${deadRedactionToken}`,
   ),
 );
 await rename(
-  liveArtifactQuarantine,
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${crashArtifactRedactionToken}`,
+  ),
   join(
     redactionRollbackOptions.artifactsDir,
     `.redacting-${redactionRollbackCreated.job.jobId}-${deadRedactionToken}`,
@@ -2083,7 +2146,29 @@ await assert.rejects(
   waitForChildMarker(ownerlessReclaimer, 'DEAD_LOCK_RECLAIMED', 500),
   /timed out/i,
 );
-await rm(join(deadLockInputsRoot, `.creating-${ownerlessLockJobId}`), { recursive: true, force: true });
+const staleOwnerlessTime = new Date(Date.now() - 60_000);
+await utimes(
+  join(deadLockInputsRoot, `.creating-${ownerlessLockJobId}`),
+  staleOwnerlessTime,
+  staleOwnerlessTime,
+);
+const staleOwnerlessReclaimer = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  ownerlessLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(staleOwnerlessReclaimer, 'DEAD_LOCK_RECLAIMED', 1_000);
+
+const atomicLockJobId = continuationJobId('atomic-lock-owner');
+await deadLockStore.withCreationLock(atomicLockJobId, async () => {
+  const lockMetadata = await lstat(join(deadLockInputsRoot, `.creating-${atomicLockJobId}`));
+  assert.equal(lockMetadata.isFile(), true);
+});
+await assert.rejects(lstat(join(deadLockInputsRoot, `.creating-${atomicLockJobId}`)), /ENOENT/);
+
 const deadLockJobId = continuationJobId('dead-lock-immediate-recovery');
 const deadLockDirectory = join(deadLockInputsRoot, `.creating-${deadLockJobId}`);
 await mkdir(deadLockDirectory);
@@ -2256,6 +2341,56 @@ assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', liveCleanupJobId)
 const liveCreateExit = new Promise<number | null>((resolve) => liveCreateChild.once('close', resolve));
 await writeFile(join(concurrentCreateRoot, `.release-${liveCleanupJobId}`), 'release', 'utf8');
 assert.equal(await liveCreateExit, 0, liveCreateStderr);
+
+// One corrupt trusted snapshot must fail closed without blocking the next due Job.
+const corruptStateRoot = await mkdtemp(join(tmpdir(), 'continuation-corrupt-state-'));
+const corruptStateDatabasePath = join(corruptStateRoot, 'jobs.sqlite');
+const corruptStateRepository = await SqliteContinuationRepository.open({
+  databasePath: corruptStateDatabasePath,
+  artifactsDir: join(corruptStateRoot, 'artifacts'),
+  inputsDir: join(corruptStateRoot, 'inputs'),
+  jitter: () => 0,
+});
+const corruptStateJob = await corruptStateRepository.create(createRequest('corrupt-state', {
+  createdAt: '2026-07-16T23:59:58.000Z',
+}));
+const healthyStateJob = await corruptStateRepository.create(createRequest('healthy-after-corrupt-state', {
+  createdAt: '2026-07-16T23:59:59.000Z',
+}));
+const corruptStateDatabase = new DatabaseSync(corruptStateDatabasePath);
+const corruptFactsJson = corruptStateDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(corruptStateJob.job.jobId) as { source_facts_json: string };
+corruptStateDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run(JSON.stringify({
+  ...JSON.parse(corruptFactsJson.source_facts_json) as Record<string, unknown>,
+  unexpected: 'github_pat_must_not_leak',
+}), corruptStateJob.job.jobId);
+const healthyStateClaim = await corruptStateRepository.claimDue(
+  'worker-after-corrupt-state',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+assert.equal(healthyStateClaim?.job.jobId, healthyStateJob.job.jobId);
+const corruptStateRow = corruptStateDatabase.prepare(`
+  SELECT status, error_code, lease_owner FROM continuation_jobs WHERE job_id = ?
+`).get(corruptStateJob.job.jobId) as {
+  status: string;
+  error_code: string;
+  lease_owner: string | null;
+};
+assert.equal(corruptStateRow.status, 'failed');
+assert.equal(corruptStateRow.error_code, 'continuation_persisted_state_invalid');
+assert.equal(corruptStateRow.lease_owner, null);
+const corruptStateDelivery = await corruptStateRepository.claimPendingDelivery(
+  'delivery-corrupt-state',
+  baseNow,
+);
+assert.equal(corruptStateDelivery?.jobId, corruptStateJob.job.jobId);
+assert.doesNotMatch(corruptStateDelivery?.payload ?? '', /github_pat|unexpected|source_facts/i);
+corruptStateDatabase.close();
+corruptStateRepository.close();
 
 // A corrupt due input terminates before an attempt/lease, emits one logical terminal event,
 // and does not prevent the next healthy due Job from being claimed.

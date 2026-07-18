@@ -17,7 +17,6 @@ import { TurnObligationTracker } from './turn-obligation.js';
 import { logSafeError } from './safe-log.js';
 import { packageName, packageVersion } from './package-metadata.js';
 import {
-  acquireSingleInstanceLock,
   registerLockCleanup,
 } from './resource-governance.js';
 import { emitCodexExecConfigDiagnostics } from './codex-exec-config.js';
@@ -43,14 +42,14 @@ import { createContinuationRuntime } from './continuation/runtime.js';
 import { debugLog } from './debug-log.js';
 import type { JobFile } from './job-store.js';
 import type { RunJobNowResult } from './scheduler.js';
-import { LARK_INSTANCE_LOCK_PATH } from './instance-lock.js';
+import { acquireLarkInstanceLock } from './instance-lock.js';
 
 let closeContinuationRuntime: (() => Promise<void>) | null = null;
 
 async function main() {
   assertSupportedNodeVersion();
   const isDryRun = process.argv.includes('--dry-run');
-  const lock = isDryRun ? null : await acquireSingleInstanceLock(LARK_INSTANCE_LOCK_PATH);
+  const lock = isDryRun ? null : await acquireLarkInstanceLock(appConfig.appId);
   if (lock) {
     registerLockCleanup(lock, undefined, async () => {
       await closeContinuationRuntime?.();

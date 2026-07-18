@@ -41,6 +41,8 @@ const CREATION_LOCK_PREFIX = '.creating-';
 const CREATION_RECLAIM_PREFIX = '.reclaim-';
 const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
+const OWNERLESS_LOCK_GRACE_MS = 30_000;
+const ACTIVE_REDACTION_QUARANTINES = new Set<string>();
 
 interface CreationLockOwner {
   pid: number;
@@ -76,34 +78,39 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
     let ownerNonce: string | undefined;
     while (true) {
+      const nonce = randomBytes(16).toString('hex');
+      const owner: CreationLockOwner = {
+        pid: process.pid,
+        nonce,
+        createdAt: new Date().toISOString(),
+      };
       try {
-        await fs.mkdir(lockDirectory, { mode: 0o700 });
-        const nonce = randomBytes(16).toString('hex');
-        const owner: CreationLockOwner = {
-          pid: process.pid,
-          nonce,
-          createdAt: new Date().toISOString(),
-        };
+        await fs.writeFile(lockDirectory, `${JSON.stringify(owner)}\n`, {
+          mode: 0o600,
+          flag: 'wx',
+        });
         ownerNonce = nonce;
-        try {
-          await fs.writeFile(
-            path.join(lockDirectory, 'owner.json'),
-            `${JSON.stringify(owner)}\n`,
-            { mode: 0o600, flag: 'wx' },
-          );
-          if (await hasCompetingCreationReclaim(this.rootDir, lockDirectory)) {
-            await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce);
-            ownerNonce = undefined;
-            await new Promise((resolve) => setTimeout(resolve, 20));
-            continue;
-          }
-        } catch (error) {
-          await removeManagedTree(lockDirectory).catch(() => {});
-          throw error;
+        if (await hasCompetingCreationReclaim(this.rootDir, lockDirectory)) {
+          await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce);
+          ownerNonce = undefined;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          continue;
         }
         break;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+        if (ownerNonce) {
+          const nonce = ownerNonce;
+          ownerNonce = undefined;
+          try {
+            await releaseCreationLock(lockDirectory, this.rootDir, nonce);
+          } catch (releaseError) {
+            throw new AggregateError(
+              [error, releaseError],
+              'Continuation creation-lock setup and cleanup both failed.',
+            );
+          }
+        }
+        if (!isCreationLockContention(error)) throw error;
         if (await tryReclaimCreationLock(lockDirectory, this.rootDir)) continue;
         if (Date.now() >= deadline) {
           throw new Error('Continuation creation is already in progress for this idempotency key.');
@@ -111,10 +118,26 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
+    let operationError: unknown;
     try {
       return await operation();
+    } catch (error) {
+      operationError = error;
+      throw error;
     } finally {
-      if (ownerNonce) await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce).catch(() => {});
+      if (ownerNonce) {
+        try {
+          await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce);
+        } catch (releaseError) {
+          if (operationError) {
+            throw new AggregateError(
+              [operationError, releaseError],
+              'Continuation operation and creation-lock release both failed.',
+            );
+          }
+          throw releaseError;
+        }
+      }
     }
   }
 
@@ -303,15 +326,26 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       await fs.rename(destination, source).catch(() => {});
       throw new Error('Continuation input quarantine identity changed during rename.');
     }
+    ACTIVE_REDACTION_QUARANTINES.add(path.basename(destination));
     return token;
   }
 
   async restoreQuarantine(jobId: string, token: string): Promise<void> {
-    await fs.rename(this.quarantineDirectory(jobId, token), this.jobDirectory(jobId));
+    const source = this.quarantineDirectory(jobId, token);
+    try {
+      await fs.rename(source, this.jobDirectory(jobId));
+    } finally {
+      ACTIVE_REDACTION_QUARANTINES.delete(path.basename(source));
+    }
   }
 
   async discardQuarantine(jobId: string, token: string): Promise<void> {
-    await removeManagedTree(this.quarantineDirectory(jobId, token));
+    const source = this.quarantineDirectory(jobId, token);
+    try {
+      await removeManagedTree(source);
+    } finally {
+      ACTIVE_REDACTION_QUARANTINES.delete(path.basename(source));
+    }
   }
 
   async cleanupOrphans(jobIds: ReadonlySet<string>, nowMs = Date.now()): Promise<void> {
@@ -319,7 +353,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
     const liveCreationJobs = new Set<string>();
     for (const entry of entries) {
-      if (!entry.isDirectory() || !entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
+      if (!entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
       const lockDirectory = path.join(this.rootDir, entry.name);
       const jobId = entry.name.slice(CREATION_LOCK_PREFIX.length);
       if (!(await tryReclaimCreationLock(lockDirectory, this.rootDir))) {
@@ -332,7 +366,11 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       if (redactionQuarantine) {
         const candidate = path.join(this.rootDir, entry.name);
         if (jobIds.has(redactionQuarantine.jobId)) {
-          if (isProcessAlive(redactionQuarantine.ownerPid)) continue;
+          if (
+            isProcessAlive(redactionQuarantine.ownerPid)
+            && (redactionQuarantine.ownerPid !== process.pid
+              || ACTIVE_REDACTION_QUARANTINES.has(entry.name))
+          ) continue;
           try {
             await fs.rename(candidate, this.jobDirectory(redactionQuarantine.jobId));
           } catch (error) {
@@ -555,6 +593,10 @@ function isInstallRace(error: unknown): boolean {
   return ['EACCES', 'EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException)?.code ?? '');
 }
 
+function isCreationLockContention(error: unknown): boolean {
+  return ['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException)?.code ?? '');
+}
+
 function safeAdmissionError(error: unknown): Error {
   if (error instanceof Error && error.message.startsWith('Continuation idempotency conflict:')) {
     return error;
@@ -571,7 +613,11 @@ function safeAdmissionError(error: unknown): Error {
 
 async function readCreationOwner(lockDirectory: string): Promise<CreationLockOwner | null> {
   try {
-    const parsed = JSON.parse(await fs.readFile(path.join(lockDirectory, 'owner.json'), 'utf8')) as {
+    const metadata = await fs.lstat(lockDirectory);
+    const ownerPath = metadata.isDirectory()
+      ? path.join(lockDirectory, 'owner.json')
+      : lockDirectory;
+    const parsed = JSON.parse(await fs.readFile(ownerPath, 'utf8')) as {
       pid?: unknown;
       nonce?: unknown;
       createdAt?: unknown;
@@ -607,11 +653,13 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return true;
     throw error;
   }
-  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+  if (metadata.isSymbolicLink() || (!metadata.isDirectory() && !metadata.isFile())) {
     throw new Error('Continuation creation lock state is invalid.');
   }
   const owner = await readCreationOwner(lockDirectory);
-  if (owner === null || isProcessAlive(owner.pid)) return false;
+  if (owner === null) {
+    if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
+  } else if (isProcessAlive(owner.pid)) return false;
 
   const quarantine = path.join(
     rootDir,
@@ -649,7 +697,9 @@ async function releaseCreationLock(
   nonce: string,
 ): Promise<void> {
   const owner = await readCreationOwner(lockDirectory);
-  if (owner?.nonce !== nonce) return;
+  if (owner?.nonce !== nonce) {
+    throw new Error('Continuation creation lock ownership changed before release.');
+  }
   const releaseDirectory = path.join(
     rootDir,
     `${CREATION_RECLAIM_PREFIX}release-${path.basename(lockDirectory)}-${process.pid}-${nonce}`,
@@ -657,13 +707,21 @@ async function releaseCreationLock(
   try {
     await fs.rename(lockDirectory, releaseDirectory);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      throw new Error('Continuation creation lock disappeared before release.', { cause: error });
+    }
     throw error;
   }
   const movedOwner = await readCreationOwner(releaseDirectory);
   if (movedOwner?.nonce !== nonce) {
-    await fs.rename(releaseDirectory, lockDirectory).catch(() => {});
-    return;
+    try {
+      await fs.rename(releaseDirectory, lockDirectory);
+    } catch (error) {
+      throw new Error('Continuation creation lock changed during release and could not be restored.', {
+        cause: error,
+      });
+    }
+    throw new Error('Continuation creation lock ownership changed during release.');
   }
   await removeManagedTree(releaseDirectory);
 }

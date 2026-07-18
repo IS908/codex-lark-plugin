@@ -129,9 +129,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     this.database.exec(`
       PRAGMA busy_timeout = 5000;
       PRAGMA foreign_keys = ON;
-      PRAGMA journal_mode = WAL;
-      PRAGMA synchronous = NORMAL;
     `);
+    await retrySqliteBusy(() => this.database.exec('PRAGMA journal_mode = WAL;'), 5_000);
+    this.database.exec('PRAGMA synchronous = NORMAL;');
     if (existingVersion === 0) this.transaction(() => {
       if (Number(this.scalar('PRAGMA user_version')) !== 0) return;
       this.database.exec(`
@@ -1887,6 +1887,20 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   private insertTerminalOutbox(job: ContinuationJob, payload: string, now: string): void {
+    this.insertTerminalOutboxFromRoute(
+      job.jobId,
+      JSON.stringify(job.route),
+      payload,
+      now,
+    );
+  }
+
+  private insertTerminalOutboxFromRoute(
+    jobId: string,
+    routeJson: string,
+    payload: string,
+    now: string,
+  ): void {
     this.database.prepare(`
       UPDATE continuation_outbox
       SET status = 'superseded', worker_id = NULL, lease_expires_at = NULL,
@@ -1896,7 +1910,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           status IN ('pending', 'failed')
           OR (status = 'sending' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
         )
-    `).run(now, job.jobId, now);
+    `).run(now, jobId, now);
     this.database.prepare(`
       INSERT INTO continuation_outbox (
         outbox_id, job_id, event_key, kind, attempt_id,
@@ -1906,9 +1920,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       ON CONFLICT(job_id, event_key) DO NOTHING
     `).run(
       makeId('out'),
-      job.jobId,
-      JSON.stringify(job.route),
-      deliveryIdempotencyKey(job.jobId, 'terminal'),
+      jobId,
+      routeJson,
+      deliveryIdempotencyKey(jobId, 'terminal'),
       payload,
       now,
       now,
@@ -1949,26 +1963,56 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   private selectDueCandidate(now: string): ContinuationJob | null {
-    const row = this.database.prepare(`
-      ${jobSelectSql()}
-      WHERE j.status IN ('queued', 'waiting_retry')
-        AND j.deleted_at IS NULL
-        AND j.next_run_at <= ?
-        AND j.expires_at > ?
-        AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) < j.max_attempts
-        AND NOT EXISTS (
-          SELECT 1 FROM continuation_outbox progress
-          WHERE progress.job_id = j.job_id
-            AND progress.kind = 'progress'
-            AND (
-              progress.status = 'sending'
-              OR (progress.status = 'pending' AND progress.next_attempt_at <= ?)
-            )
-        )
-      ORDER BY j.next_run_at ASC, j.created_at ASC
-      LIMIT 1
-    `).get(now, now, now);
-    return row ? mapJob(row) : null;
+    while (true) {
+      const row = this.database.prepare(`
+        ${jobSelectSql()}
+        WHERE j.status IN ('queued', 'waiting_retry')
+          AND j.deleted_at IS NULL
+          AND j.next_run_at <= ?
+          AND j.expires_at > ?
+          AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) < j.max_attempts
+          AND NOT EXISTS (
+            SELECT 1 FROM continuation_outbox progress
+            WHERE progress.job_id = j.job_id
+              AND progress.kind = 'progress'
+              AND (
+                progress.status = 'sending'
+                OR (progress.status = 'pending' AND progress.next_attempt_at <= ?)
+              )
+          )
+        ORDER BY j.next_run_at ASC, j.created_at ASC
+        LIMIT 1
+      `).get(now, now, now);
+      if (!row) return null;
+      try {
+        return mapJob(row);
+      } catch {
+        this.transaction(() => this.failCorruptDueJob(row, now));
+      }
+    }
+  }
+
+  private failCorruptDueJob(row: SqlRow, now: string): void {
+    const jobId = stringField(row, 'job_id');
+    const routeJson = stringField(row, 'route_json');
+    const rowVersion = numberField(row, 'row_version');
+    const update = this.database.prepare(`
+      UPDATE continuation_jobs
+      SET status = 'failed', error_code = 'continuation_persisted_state_invalid',
+          error_summary = 'Stored task state failed integrity validation.',
+          completed_at = ?, updated_at = ?, lease_owner = NULL,
+          lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
+      WHERE job_id = ? AND row_version = ?
+        AND status IN ('queued', 'waiting_retry')
+        AND deleted_at IS NULL AND next_run_at <= ? AND expires_at > ?
+    `).run(now, now, jobId, rowVersion, now, now);
+    if (Number(update.changes) !== 1) return;
+    this.insertTerminalOutboxFromRoute(
+      jobId,
+      routeJson,
+      `Task failed: ${jobId}\nStored task state failed integrity validation.`,
+      now,
+    );
   }
 
   private readJobBy(predicate: string, value: string): ContinuationJob | null {
@@ -2162,26 +2206,29 @@ function projectCreateRequest(
   inputs: AsyncTaskFactSnapshot['inputs'],
 ): ContinuationCreateRequest {
   const taskContract: AsyncTaskContract = {
-    ...request.taskContract,
+    schemaVersion: 1,
     title: redactContinuationText(request.taskContract.title),
     objective: redactContinuationText(request.taskContract.objective),
     deliverables: request.taskContract.deliverables.map((deliverable) => ({
-      ...deliverable,
+      id: deliverable.id,
       description: redactContinuationText(deliverable.description),
+      required: deliverable.required,
     })),
     acceptanceCriteria: request.taskContract.acceptanceCriteria.map((criterion) => ({
-      ...criterion,
+      id: criterion.id,
       description: redactContinuationText(criterion.description),
       deliverableIds: [...criterion.deliverableIds],
     })),
     verificationRequirements: request.taskContract.verificationRequirements.map((requirement) => ({
-      ...requirement,
+      id: requirement.id,
       description: redactContinuationText(requirement.description),
+      kind: requirement.kind,
     })),
     initialContext: redactCheckpoint(request.taskContract.initialContext),
   };
   const sourceFacts: AsyncTaskFactSnapshot = {
-    ...request.sourceFacts,
+    schemaVersion: 1,
+    provenance: request.sourceFacts.provenance,
     originalUserText: request.sourceFacts.originalUserText === null
       ? null
       : redactContinuationText(request.sourceFacts.originalUserText),
@@ -2193,8 +2240,12 @@ function projectCreateRequest(
       : redactContinuationText(request.sourceFacts.quotedMessageText),
     route: request.route,
     creatorOpenId: request.creatorOpenId,
+    chatId: request.sourceFacts.chatId,
+    chatType: request.sourceFacts.chatType,
     sourceMessageId: request.sourceMessageId,
     ...(request.sourceThreadId ? { sourceThreadId: request.sourceThreadId } : {}),
+    sourceMessageType: request.sourceFacts.sourceMessageType,
+    sourceTimestamp: request.sourceFacts.sourceTimestamp,
     inputs: inputs.map((input) => ({ ...input })),
     workingDirectory: request.workingDirectory,
     model: request.model ?? null,
@@ -2347,6 +2398,7 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
     throw new Error('Continuation permission host tools must match required tools.');
   }
   assertJsonBytes('permission envelope', request.permissions, CONTINUATION_LIMITS.contextSnapshotBytes);
+  if (!isDeliveryRoute(request.route)) throw new Error('Continuation delivery route is invalid.');
   assertJsonBytes('delivery route', request.route, CONTINUATION_LIMITS.contextSnapshotBytes);
   validateTaskContract(request.taskContract);
   validateSourceFacts(request.sourceFacts);
@@ -2369,7 +2421,15 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
 }
 
 function validateTaskContract(value: unknown): asserts value is AsyncTaskContract {
-  if (!isRecord(value)) throw new Error('Continuation task contract is invalid.');
+  if (!isRecord(value) || !hasExactKeys(value, [
+    'schemaVersion',
+    'title',
+    'objective',
+    'deliverables',
+    'acceptanceCriteria',
+    'verificationRequirements',
+    'initialContext',
+  ])) throw new Error('Continuation task contract is invalid.');
   const contract = value as Partial<AsyncTaskContract>;
   if (
     typeof contract.title !== 'string'
@@ -2380,17 +2440,20 @@ function validateTaskContract(value: unknown): asserts value is AsyncTaskContrac
     || !isCheckpoint(contract.initialContext)
     || !contract.deliverables.every((entry) =>
       isRecord(entry)
+      && hasExactKeys(entry, ['id', 'description', 'required'])
       && typeof entry.id === 'string'
       && typeof entry.description === 'string'
       && typeof entry.required === 'boolean')
     || !contract.acceptanceCriteria.every((entry) =>
       isRecord(entry)
+      && hasExactKeys(entry, ['id', 'description', 'deliverableIds'])
       && typeof entry.id === 'string'
       && typeof entry.description === 'string'
       && Array.isArray(entry.deliverableIds)
       && entry.deliverableIds.every((id) => typeof id === 'string'))
     || !contract.verificationRequirements.every((entry) =>
       isRecord(entry)
+      && hasExactKeys(entry, ['id', 'description', 'kind'])
       && typeof entry.id === 'string'
       && typeof entry.description === 'string'
       && (entry.kind === 'artifact_exists'
@@ -2437,7 +2500,25 @@ function validateTaskContract(value: unknown): asserts value is AsyncTaskContrac
 }
 
 function validateSourceFacts(value: unknown): asserts value is AsyncTaskFactSnapshot {
-  if (!isRecord(value)) throw new Error('Continuation source facts are invalid.');
+  if (!isRecord(value) || !hasExactKeys(value, [
+    'schemaVersion',
+    'provenance',
+    'originalUserText',
+    'sourceContextText',
+    'quotedMessageText',
+    'creatorOpenId',
+    'chatId',
+    'chatType',
+    'route',
+    'sourceMessageId',
+    'sourceThreadId',
+    'sourceMessageType',
+    'sourceTimestamp',
+    'inputs',
+    'workingDirectory',
+    'model',
+    'permissions',
+  ])) throw new Error('Continuation source facts are invalid.');
   const facts = value as Partial<AsyncTaskFactSnapshot>;
   if (
     facts.schemaVersion !== 1
@@ -2630,6 +2711,14 @@ function validatePermissionEnvelope(
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Continuation permission envelope is invalid.');
   }
+  if (!hasExactKeys(value as Record<string, unknown>, [
+    'profile',
+    'filesystem',
+    'hostTools',
+    'network',
+    'externalSideEffects',
+    'approval',
+  ])) throw new Error('Continuation permission envelope is invalid.');
   const envelope = value as Partial<ContinuationPermissionEnvelope>;
   const filesystem = envelope.filesystem;
   const approval = envelope.approval;
@@ -2637,6 +2726,9 @@ function validatePermissionEnvelope(
   if (
     (envelope.profile !== 'bounded' && envelope.profile !== 'trusted_personal_workspace')
     || !filesystem
+    || !hasExactKeys(filesystem as unknown as Record<string, unknown>, [
+      'root', 'mode', 'requestedPaths',
+    ])
     || typeof filesystem.root !== 'string'
     || (requireAbsoluteRoot && !path.isAbsolute(filesystem.root))
     || (filesystem.mode !== 'read-only' && filesystem.mode !== 'workspace-write')
@@ -2649,6 +2741,7 @@ function validatePermissionEnvelope(
     || (envelope.network !== 'none' && envelope.network !== 'enabled')
     || (envelope.externalSideEffects !== 'denied' && envelope.externalSideEffects !== 'allowed')
     || !approval
+    || !hasExactKeys(approval as unknown as Record<string, unknown>, ['mode'])
     || (approval.mode !== 'never' && approval.mode !== 'interactive')
   ) {
     throw new Error('Continuation permission envelope is invalid.');
@@ -2760,6 +2853,23 @@ function addMilliseconds(timestamp: string, milliseconds: number): string {
   return new Date(Date.parse(timestamp) + milliseconds).toISOString();
 }
 
+async function retrySqliteBusy(operation: () => void, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      operation();
+      return;
+    } catch (error) {
+      const sqliteError = error as Error & { errcode?: number };
+      if (
+        Date.now() >= deadline
+        || (sqliteError.errcode !== 5 && !/database is (?:locked|busy)/i.test(sqliteError.message))
+      ) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+}
+
 function emptyRoute(): ContinuationDeliveryRoute {
   return {
     kind: 'message_thread',
@@ -2792,12 +2902,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasExactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const accepted = new Set(allowed);
+  return Object.keys(value).every((key) => accepted.has(key));
+}
+
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === 'string';
 }
 
 function isCheckpoint(value: unknown): value is ContinuationCheckpoint {
-  if (!isRecord(value) || typeof value.summary !== 'string') return false;
+  if (
+    !isRecord(value)
+    || !hasExactKeys(value, [
+      'summary',
+      'completedSteps',
+      'remainingSteps',
+      'constraints',
+      'decisions',
+      'references',
+    ])
+    || typeof value.summary !== 'string'
+  ) return false;
   return ['completedSteps', 'remainingSteps', 'constraints', 'decisions', 'references']
     .every((field) => Array.isArray(value[field])
       && (value[field] as unknown[]).every((entry) => typeof entry === 'string'));
@@ -2806,18 +2932,22 @@ function isCheckpoint(value: unknown): value is ContinuationCheckpoint {
 function isDeliveryRoute(value: unknown): value is ContinuationDeliveryRoute {
   if (!isRecord(value)) return false;
   if (value.kind === 'message_thread') {
-    return typeof value.conversationId === 'string'
+    return hasExactKeys(value, ['kind', 'conversationId', 'sourceMessageId', 'threadId'])
+      && typeof value.conversationId === 'string'
       && typeof value.sourceMessageId === 'string'
       && (value.threadId === undefined || typeof value.threadId === 'string');
   }
-  return value.kind === 'comment_thread'
+  return hasExactKeys(value, ['kind', 'documentToken', 'commentId', 'fileType'])
+    && value.kind === 'comment_thread'
     && typeof value.documentToken === 'string'
     && typeof value.commentId === 'string'
     && typeof value.fileType === 'string';
 }
 
 function isManagedInputArtifact(value: unknown): value is AsyncTaskFactSnapshot['inputs'][number] {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value) || !hasExactKeys(value, [
+    'id', 'kind', 'fileName', 'relativePath', 'sha256', 'sizeBytes',
+  ])) return false;
   return /^input_\d{3}$/.test(String(value.id ?? ''))
     && (value.kind === 'message_image' || value.kind === 'message_attachment')
     && typeof value.fileName === 'string'

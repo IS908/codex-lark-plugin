@@ -890,14 +890,59 @@ assert.equal(toolInputVerifications, 3);
 assert.equal(toolRequests[1].resumeSessionId, 'session-tool');
 assert.match(toolRequests[1].prompt, /Continuation Tool Result/);
 assert.match(toolRequests[1].prompt, /Release plan/);
-assert.match(toolRequests[1].prompt, /Durable Continuation Step/);
-assert.match(toolRequests[1].prompt, /sourceFacts/);
-assert.match(toolRequests[1].prompt, /taskContract/);
+assert.doesNotMatch(toolRequests[1].prompt, /Durable Continuation Step/);
+assert.doesNotMatch(toolRequests[1].prompt, /sourceFacts|taskContract/);
 assert.equal(toolRequests[1].sandbox, 'workspace-write');
 assert.deepEqual(toolRequests[1].configOverrides, [
   'approval_policy="never"',
   'sandbox_workspace_write.network_access=false',
 ]);
+
+const toolFallbackRequests: CodexExecRequest[] = [];
+let toolFallbackInvocationCount = 0;
+const toolFallbackExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  toolInvoker: {
+    async recover() { return null; },
+    async invoke() {
+      toolFallbackInvocationCount += 1;
+      return { status: 'completed' as const, result: { ok: true, message: '{"fallback":true}' } };
+    },
+  },
+  runCodexExec: async (request) => {
+    toolFallbackRequests.push(request);
+    if (toolFallbackRequests.length === 1) {
+      return {
+        text: JSON.stringify({ outcome: 'tool_request', tool: 'lark_cli', args: [] }),
+        sessionId: 'session-tool-fallback',
+      };
+    }
+    if (request.resumeSessionId) throw new Error('session not found');
+    return {
+      text: JSON.stringify({ outcome: 'completed', final_message: 'Recovered context.', artifacts: [] }),
+      sessionId: 'session-tool-fresh',
+    };
+  },
+});
+const toolFallbackResult = await toolFallbackExecutor.execute(
+  createClaim({ requiredTools: ['lark_cli'] }),
+  signal,
+);
+assert.equal(toolFallbackResult.outcome.outcome, 'completed');
+assert.equal(toolFallbackInvocationCount, 1);
+assert.deepEqual(toolFallbackRequests.map((request) => request.resumeSessionId), [
+  'session-background',
+  'session-tool-fallback',
+  null,
+]);
+assert.match(toolFallbackRequests[1].prompt, /Continuation Tool Result/);
+assert.doesNotMatch(toolFallbackRequests[1].prompt, /Durable Continuation Step/);
+assert.match(toolFallbackRequests[2].prompt, /Durable Continuation Step/);
+assert.match(toolFallbackRequests[2].prompt, /sourceFacts/);
+assert.match(toolFallbackRequests[2].prompt, /taskContract/);
+assert.match(toolFallbackRequests[2].prompt, /Continuation Tool Result/);
 
 const undeclaredExecutor = createContinuationCodexExecutor({
   artifactStore,
@@ -1014,8 +1059,8 @@ assert.equal(recoveredResult.outcome.outcome, 'completed');
 assert.equal(recoveryRequests.length, 1);
 assert.match(recoveryRequests[0].prompt, /Continuation Tool Result/);
 assert.match(recoveryRequests[0].prompt, /recovered/);
-assert.match(recoveryRequests[0].prompt, /Durable Continuation Step/);
-assert.match(recoveryRequests[0].prompt, /Produce a verified result/);
+assert.doesNotMatch(recoveryRequests[0].prompt, /Durable Continuation Step/);
+assert.doesNotMatch(recoveryRequests[0].prompt, /Produce a verified result/);
 
 let unknownRecoveryCodexCalls = 0;
 const unknownRecoveryExecutor = createContinuationCodexExecutor({
