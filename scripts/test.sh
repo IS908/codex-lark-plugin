@@ -25,6 +25,14 @@ echo "=== Durable run worker checks ==="
 node --import tsx scripts/durable-run-worker-smoke.ts
 
 echo ""
+echo "=== Durable run SQLite repository checks ==="
+node --import tsx scripts/durable-run-repository-smoke.ts
+
+echo ""
+echo "=== Durable run SQLite migration checks ==="
+node --import tsx scripts/durable-run-migration-smoke.ts
+
+echo ""
 echo "=== Continuation recovery policy unit checks ==="
 node --import tsx scripts/continuation-recovery-policy-smoke.ts
 

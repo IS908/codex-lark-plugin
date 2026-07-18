@@ -2,12 +2,16 @@ import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-export type HistoricalContinuationSchemaVersion = 1 | 4 | 5;
+export type HistoricalContinuationSchemaVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export interface HistoricalContinuationFixture {
   dueJobId?: string;
   terminalJobId: string;
   terminalAttemptId: string;
+  operationReceiptId?: string;
+  interruptId?: string;
+  deliveredOutboxId?: string;
+  deliveredMessageId?: string;
   expectedAttemptCount: number;
   expectedOutboxCount: number;
 }
@@ -47,11 +51,58 @@ export async function seedHistoricalContinuationDatabase(
     enableForeignKeyConstraints: true,
   });
   try {
-    if (options.version === 1) return seedVersionOne(database, options);
-    return seedVersionFourOrFive(database, options);
+    if (options.version <= 3) return seedVersionOneThroughThree(database, options);
+    if (options.version <= 5) return seedVersionFourOrFive(database, options);
+    return seedVersionSixThroughNine(database, options);
   } finally {
     database.close();
   }
+}
+
+function seedVersionOneThroughThree(
+  database: DatabaseSync,
+  options: FixtureOptions,
+): HistoricalContinuationFixture {
+  const fixture = seedVersionOne(database, { ...options, version: 1 });
+  if (options.version === 1) return fixture;
+
+  database.exec(toolCallSchema());
+  const operationReceiptId = `call_authentic_v${options.version}`;
+  database.prepare(`
+    INSERT INTO continuation_tool_calls (
+      call_id, job_id, step_index, attempt_id, tool_name, request_hash,
+      status, result_json, started_at, completed_at, updated_at
+    ) VALUES (?, ?, 0, ?, 'lark_cli', ?, 'completed', ?, ?, ?, ?)
+  `).run(
+    operationReceiptId,
+    fixture.terminalJobId,
+    fixture.terminalAttemptId,
+    `hash-v${options.version}`,
+    JSON.stringify({ ok: true, message: `v${options.version} tool result` }),
+    options.now,
+    '2026-07-17T00:00:02.000Z',
+    '2026-07-17T00:00:02.000Z',
+  );
+  database.exec('PRAGMA user_version = 2;');
+  if (options.version === 2) return { ...fixture, operationReceiptId };
+
+  database.exec(`
+    ALTER TABLE continuation_jobs ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '{}';
+  `);
+  database.prepare('UPDATE continuation_jobs SET permissions_json = ?').run(JSON.stringify({
+    profile: 'bounded',
+    filesystem: {
+      root: options.workingDirectory,
+      mode: 'workspace-write',
+      requestedPaths: [],
+    },
+    hostTools: ['lark_cli'],
+    network: 'none',
+    externalSideEffects: 'denied',
+    approval: { mode: 'never' },
+  }));
+  database.exec('PRAGMA user_version = 3;');
+  return { ...fixture, operationReceiptId };
 }
 
 function seedVersionOne(
@@ -267,8 +318,11 @@ function insertVersionOneJob(
 
 function seedVersionFourOrFive(
   database: DatabaseSync,
-  options: FixtureOptions & { version: 4 | 5 },
+  options: FixtureOptions,
 ): HistoricalContinuationFixture {
+  if (options.version !== 4 && options.version !== 5) {
+    throw new Error(`Expected a v4/v5 fixture, received v${options.version}.`);
+  }
   database.exec(`
     PRAGMA foreign_keys = ON;
     ${versionFourJobAndAttemptSchema()}
@@ -406,13 +460,156 @@ function seedVersionFourOrFive(
       options.now,
       options.now,
     );
+    database.prepare(`
+      UPDATE continuation_outbox
+      SET message_id = 'om_delivered_v5_progress'
+      WHERE outbox_id = 'outbox_authentic_v5_progress'
+    `).run();
   }
   return {
     terminalJobId: jobId,
     terminalAttemptId: attemptId,
+    operationReceiptId: `call_authentic_v${options.version}`,
+    ...(options.version === 5
+      ? {
+          deliveredOutboxId: 'outbox_authentic_v5_progress',
+          deliveredMessageId: 'om_delivered_v5_progress',
+        }
+      : {}),
     expectedAttemptCount: 1,
     expectedOutboxCount: options.version === 4 ? 1 : 2,
   };
+}
+
+function seedVersionSixThroughNine(
+  database: DatabaseSync,
+  options: FixtureOptions,
+): HistoricalContinuationFixture {
+  if (options.version < 6) {
+    throw new Error(`Expected a v6-v9 fixture, received v${options.version}.`);
+  }
+  const fixture = seedVersionFourOrFive(database, { ...options, version: 5 });
+  const deliveredMessageId = `om_delivered_v${options.version}_progress`;
+  database.prepare(`
+    UPDATE continuation_outbox
+    SET message_id = ?, updated_at = ?
+    WHERE outbox_id = 'outbox_authentic_v5_progress'
+  `).run(deliveredMessageId, options.now);
+  database.exec(`
+    ALTER TABLE continuation_jobs ADD COLUMN retain INTEGER NOT NULL DEFAULT 0
+      CHECK(retain IN (0, 1));
+    UPDATE continuation_jobs SET retain = 1;
+    PRAGMA user_version = 6;
+  `);
+  if (options.version === 6) {
+    return { ...fixture, deliveredMessageId };
+  }
+
+  const route = JSON.parse(ROUTE('om_legacy_v5')) as Record<string, unknown>;
+  const permissions = {
+    profile: 'bounded',
+    filesystem: {
+      root: options.workingDirectory,
+      mode: 'workspace-write',
+      requestedPaths: [],
+    },
+    hostTools: ['lark_cli'],
+    network: 'none',
+    externalSideEffects: 'denied',
+    approval: { mode: 'never' },
+  };
+  database.exec(`
+    ALTER TABLE continuation_jobs ADD COLUMN source_facts_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE continuation_jobs ADD COLUMN task_contract_json TEXT NOT NULL DEFAULT '{}';
+  `);
+  database.prepare(`
+    UPDATE continuation_jobs SET source_facts_json = ?, task_contract_json = ?
+  `).run(
+    JSON.stringify({
+      schemaVersion: 1,
+      provenance: 'legacy_unavailable',
+      originalUserText: null,
+      sourceContextText: null,
+      quotedMessageText: null,
+      creatorOpenId: 'ou_creator',
+      chatId: 'oc_legacy',
+      chatType: '',
+      route,
+      sourceMessageId: 'om_legacy_v5',
+      sourceThreadId: 'omt_legacy',
+      sourceMessageType: null,
+      sourceTimestamp: null,
+      inputs: [],
+      workingDirectory: options.workingDirectory,
+      model: null,
+      permissions,
+    }),
+    JSON.stringify({
+      schemaVersion: 1,
+      title: 'Legacy v5',
+      objective: 'Migrate v5',
+      deliverables: [],
+      acceptanceCriteria: [],
+      verificationRequirements: [],
+      initialContext: JSON.parse(CHECKPOINT),
+    }),
+  );
+  database.exec('PRAGMA user_version = 7;');
+  if (options.version === 7) {
+    return { ...fixture, deliveredMessageId };
+  }
+
+  database.exec(`
+    ALTER TABLE continuation_jobs ADD COLUMN no_progress_count INTEGER NOT NULL DEFAULT 0
+      CHECK(no_progress_count >= 0);
+    ALTER TABLE continuation_attempts ADD COLUMN step_id TEXT;
+    ALTER TABLE continuation_attempts ADD COLUMN delta_json TEXT;
+    ALTER TABLE continuation_attempts ADD COLUMN verification_json TEXT;
+    PRAGMA user_version = 8;
+  `);
+  if (options.version === 8) {
+    return { ...fixture, deliveredMessageId };
+  }
+
+  const interruptId = 'interrupt_authentic_v9';
+  database.exec(`
+    ALTER TABLE continuation_jobs ADD COLUMN recovery_json TEXT;
+    ALTER TABLE continuation_jobs ADD COLUMN recovery_total_count INTEGER NOT NULL DEFAULT 0
+      CHECK(recovery_total_count >= 0);
+    ALTER TABLE continuation_jobs ADD COLUMN recovery_fingerprint_counts_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE continuation_attempts ADD COLUMN execution_phase TEXT NOT NULL DEFAULT 'claimed'
+      CHECK(execution_phase IN ('claimed', 'execution_started'));
+    ALTER TABLE continuation_attempts ADD COLUMN recovery_json TEXT;
+    UPDATE continuation_attempts SET execution_phase = 'execution_started';
+    CREATE TABLE continuation_interrupts (
+      interrupt_id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
+      attempt_id TEXT NOT NULL REFERENCES continuation_attempts(attempt_id),
+      status TEXT NOT NULL CHECK(status IN ('pending', 'resolved')),
+      prompt TEXT NOT NULL,
+      response_text TEXT,
+      created_at TEXT NOT NULL,
+      resolved_at TEXT,
+      UNIQUE(job_id, attempt_id)
+    ) STRICT;
+    CREATE UNIQUE INDEX continuation_interrupts_active_job_idx
+      ON continuation_interrupts(job_id) WHERE status = 'pending';
+    CREATE UNIQUE INDEX continuation_outbox_message_id_idx
+      ON continuation_outbox(message_id) WHERE message_id IS NOT NULL;
+    PRAGMA user_version = 9;
+  `);
+  database.prepare(`
+    INSERT INTO continuation_interrupts (
+      interrupt_id, job_id, attempt_id, status, prompt, response_text, created_at, resolved_at
+    ) VALUES (?, ?, ?, 'resolved', 'Confirm the historical result.', 'confirmed', ?, ?)
+  `).run(
+    interruptId,
+    fixture.terminalJobId,
+    fixture.terminalAttemptId,
+    options.now,
+    '2026-07-17T00:00:04.000Z',
+  );
+  return { ...fixture, interruptId, deliveredMessageId };
 }
 
 function versionFourJobAndAttemptSchema(): string {
