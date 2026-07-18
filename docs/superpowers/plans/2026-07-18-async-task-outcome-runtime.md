@@ -24,22 +24,28 @@
 **Files:**
 - Modify: `src/domain/continuation.ts`
 - Modify: `src/continuation/artifact-store.ts`
+- Modify: `src/continuation/runtime.ts`
 - Modify: `src/continuation/service.ts`
 - Modify: `src/continuation/sqlite-repository.ts`
 - Modify: `src/codex-exec-action-schemas.ts`
 - Modify: `src/codex-exec-action-channel.ts`
+- Modify: `src/codex-exec-actions.ts`
 - Test: `scripts/continuation-action-smoke.ts`
+- Test: `scripts/codex-exec-actions-smoke.ts`
 - Test: `scripts/continuation-repository-smoke.ts`
 - Test: `scripts/continuation-restart-process-smoke.ts`
 
 **Interfaces:**
-- Produces: `AsyncTaskFactSnapshot`, `AsyncTaskContract`, `AsyncTaskInputArtifact`, and `ContinuationArtifactStore.ingestInputs(jobId, paths)`.
+- Produces: `AsyncTaskFactSnapshot`, `AsyncTaskContract`, `AsyncTaskInputArtifact`, deterministic `continuationJobId(idempotencyKey)`, and staged input installation under a read-only input store.
 - Consumes: authenticated `LarkMessage`, canonical working-directory resolution, existing repository creation transaction.
 
 - [ ] **Step 1: Add failing action tests for explicit deliverables and verification requirements**
 
-Add a valid `create_continuation_job` action with `deliverables` and
-`verification_requirements`, then assert empty IDs, duplicate IDs, and oversized
+Add a valid `create_continuation_job` action whose wire fields are
+`deliverables: [{id, description, required}]`,
+`acceptance_criteria: [{id, description, deliverable_ids}]`, and
+`verification_requirements: [{id, description, kind: "artifact_exists" | "artifact_sha256" | "evidence_reference"}]`.
+Assert empty IDs, duplicate IDs, unknown deliverable references, and oversized
 entries are rejected by `CreateContinuationActionSchema`.
 
 - [ ] **Step 2: Run the action smoke test and verify the new action fails validation**
@@ -55,9 +61,12 @@ Keep paths out of model-provided source facts.
 
 - [ ] **Step 4: Add failing managed-input tests**
 
-Create image/file fixtures, call creation from a message containing `imagePaths`
-and attachments, and assert managed references survive source deletion, have a
-SHA-256 checksum, and reject paths outside the admitted local input set.
+Create image/file fixtures. Existing downloaded images are admitted directly;
+`executeCreateContinuation` downloads message attachment descriptors through the
+current Lark transport only after the continuation action is accepted. Assert
+managed references survive source deletion, have a SHA-256 checksum, and reject
+paths outside the admitted set. Add failures for unreadable input and download
+failure.
 
 - [ ] **Step 5: Run repository and restart smoke tests and verify failure**
 
@@ -69,11 +78,15 @@ Expected: FAIL because source facts are not restored after reopening SQLite.
 
 - [ ] **Step 6: Implement managed input ingestion and schema v7 migration**
 
-Copy admitted local files into `artifacts/<job-id>/inputs/`, compute SHA-256 while
-copying, store relative references, and persist `source_facts_json` plus
-`task_contract_json`. Rebuild SQLite CHECK-constrained tables in one transaction
-and migrate legacy jobs to bounded synthetic facts/contracts derived from existing
-trusted columns.
+Derive a deterministic Job ID, serialize same-ID creation, copy files into a
+staging directory, compute SHA-256, chmod the completed tree read-only, atomically
+rename it to `inputs/<job-id>`, and then persist `source_facts_json` plus
+`task_contract_json`. On persistence failure remove a newly installed tree when no
+matching row exists; clean aged orphan staging/final trees at startup. Preserve the
+v1-v6 migration chain. Legacy rows use `provenance: legacy_unavailable`, null/empty
+unrecoverable facts, and deterministic criterion IDs instead of fabricated source
+text. Add duplicate/concurrent create, staging failure, DB failure, and cleanup
+tests.
 
 - [ ] **Step 7: Verify issue #303 targeted tests**
 
@@ -100,6 +113,7 @@ PR with `Closes #303`, inspect checks/comments, fix findings, and squash merge.
 
 **Files:**
 - Create: `src/continuation/progress-policy.ts`
+- Create: `src/continuation/verifier.ts`
 - Modify: `src/domain/continuation.ts`
 - Modify: `src/ports/continuation.ts`
 - Modify: `src/continuation/codex-runner.ts`
@@ -108,9 +122,11 @@ PR with `Closes #303`, inspect checks/comments, fix findings, and squash merge.
 - Test: `scripts/continuation-domain-smoke.ts`
 - Test: `scripts/continuation-codex-runner-smoke.ts`
 - Test: `scripts/continuation-repository-smoke.ts`
+- Test: `scripts/continuation-restart-process-smoke.ts`
+- Test: `scripts/continuation-worker-smoke.ts`
 
 **Interfaces:**
-- Produces: `ContinuationCheckpointV2`, `ContinuationAttemptDelta`, and pure `evaluateContinuationProgress(previous, next, budget)`.
+- Produces: `ContinuationCheckpointV2`, stable `currentStepId`, `ContinuationAttemptDelta`, pure `evaluateContinuationProgress(previous, next, budget)`, and `ContinuationVerifier.verify(claim, candidate)`.
 - Consumes: #303 task-contract criterion/deliverable IDs and managed artifact references.
 
 - [ ] **Step 1: Add failing pure policy tests**
@@ -133,8 +149,12 @@ next action for continuation, and return `continue`, `complete`, or
 - [ ] **Step 4: Add failing runner/repository delta tests**
 
 Assert the runner receives immutable facts plus contract, emits a structured
-delta, the repository stores it on the immutable attempt, and restart preserves
-the latest valid checkpoint and no-progress count.
+delta, and the repository stores it on the immutable attempt with its stable step
+ID. Add completion candidates with criterion evidence. Assert structural verifier
+acceptance commits completion, verifier rejection moves to `recovering` with
+bounded findings, output checksum mismatch is rejected, and `delivery_unknown`
+remains distinct from execution/verification state. Restart must preserve the
+latest valid checkpoint, verdict, and no-progress count.
 
 - [ ] **Step 5: Run runner/repository smoke and verify failure**
 
@@ -146,8 +166,11 @@ Expected: FAIL because attempts do not persist deltas.
 
 - [ ] **Step 6: Implement runner, repository, and event integration**
 
-Persist bounded attempt deltas and append parent-owned state-transition events.
-Convert legacy checkpoints once during migration/read normalization. Terminate
+Migrate v7 to v8, including `recovering` as a schedulable status with the same
+lease/cancellation/expiry guarantees as other due states. Persist bounded attempt
+deltas, stable step IDs, verification verdicts, and parent-owned state-transition
+events. Convert legacy checkpoints once without inventing facts. Invoke the
+verifier before terminal completion; revision returns to `recovering`. Terminate
 with `continuation_stalled` after the configured consecutive no-progress limit.
 
 - [ ] **Step 7: Verify, review, PR, and merge #300**
@@ -170,11 +193,19 @@ resolve review findings, and squash merge.
 - Modify: `src/continuation/service.ts`
 - Modify: `src/continuation/command-handler.ts`
 - Modify: `src/continuation/lark-delivery.ts`
+- Modify: `src/continuation/runtime.ts`
+- Modify: `src/channel-services.ts`
+- Modify: `src/channel.ts`
+- Modify: `src/index.ts`
+- Modify: `src/lark-message.ts`
+- Modify: `src/message-trackers.ts`
 - Modify: `src/inbound-turn-pipeline.ts`
 - Test: `scripts/continuation-local-cli-invoker-smoke.ts`
 - Test: `scripts/continuation-worker-smoke.ts`
 - Test: `scripts/continuation-command-smoke.ts`
 - Test: `scripts/inbound-turn-pipeline-smoke.ts`
+- Test: `scripts/continuation-repository-smoke.ts`
+- Test: `scripts/continuation-restart-process-smoke.ts`
 
 **Interfaces:**
 - Produces: `DurableRunFailure`, `DurableRunRecoveryDecision`, pure `decideRecovery`, persisted interrupts, and `ContinuationTaskService.resumeForActor`.
@@ -184,7 +215,9 @@ resolve review findings, and squash merge.
 
 Cover invalid invocation with hints, safe transient retry, ambiguous side effect,
 authentication/permission wait, unavailable capability block, terminal failure,
-unknown error, fingerprint budget, and total recovery budget.
+unknown error, fingerprint budget, total recovery budget, and interrupted opaque
+Codex execution. Assert opaque workspace/network/external effects never receive an
+automatic lease-expiry replay unless the failure is proven pre-execution.
 
 - [ ] **Step 2: Run invoker/worker smoke and verify failure**
 
@@ -199,12 +232,19 @@ Expected: FAIL because `recovering` and `waiting_user` are unsupported.
 Parse structured adapter output without matching tool names. The adapter reports
 category, retry safety, capability availability, operation risk, hints, failed
 step, and a bounded redacted diagnostic. The policy alone chooses task state.
+Migrate the tool-call key to `(job_id, step_id, request_hash)`: completed validation
+failures allow corrected hashes, while any unknown running call prevents a
+replacement.
 
 - [ ] **Step 4: Add failing interrupt/resume tests**
 
-Assert a permission failure creates one interrupt outbox row, stores its delivered
-message ID, authorizes creator/owner only, resumes the same Job from a quoted reply
-or `/task resume`, and rejects duplicate/stale resume input.
+Assert a permission failure creates one interrupt outbox row, stores its unique
+interrupt ID and delivered message ID, authorizes creator/owner plus route, and
+resumes the same Job. The exact command grammar is
+`/task resume <job-id> <non-empty input up to 4096 characters>`. IM supports a
+same-conversation quoted reply admitted by normal mention policy; document comments
+require the command. Atomic first-input-wins rejects duplicate/stale input and
+restart preserves correlation.
 
 - [ ] **Step 5: Run command/inbound tests and verify failure**
 
@@ -216,9 +256,12 @@ Expected: FAIL because quoted interrupt routing is not resolved.
 
 - [ ] **Step 6: Implement persisted recovery, interrupt delivery, and same-Job resume**
 
-Add `recovering` and `waiting_user` transitions, bounded counters, interrupt rows,
-interrupt outbox markers, delivery-message lookup, authenticated input events, and
-atomic resume to `recovering`. Preserve unknown external outcomes without replay.
+Migrate v8 to v9. Preserve `waiting_retry`, `recovering`, and `cancel_requested`;
+add non-runnable `waiting_user` with cancellation/expiry/list semantics.
+Add bounded counters, interrupt rows, interrupt outbox markers, persistent
+delivery-message lookup, authenticated first-input events, and atomic resume to
+`recovering`. Existing `/task retry` continues to clone terminal jobs. Preserve
+unknown external outcomes without replay.
 
 - [ ] **Step 7: Verify, review, PR, and merge #299**
 

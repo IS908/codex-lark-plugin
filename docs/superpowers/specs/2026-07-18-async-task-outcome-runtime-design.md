@@ -21,14 +21,16 @@ adding a DAG, or adopting an external workflow engine.
   both products to use the same execution strategy or model protocol.
 - The current `ContinuationJob` is one workflow run. A committed checkpoint
   transition is one business step, and an attempt is one disposable worker/model
-  execution. Separate Run and Step tables are deferred until branching or multiple
-  attempts per business step become real requirements.
+  execution. Multiple attempts already may execute one business step, so each Job
+  and Attempt gains a stable parent-assigned `currentStepId`. A separate Step table
+  remains deferred until branching or step dependencies become real requirements.
 
 ## Trusted Facts And Model Interpretation
 
 Creation persists two independent records.
 
-`AsyncTaskFactSnapshot` is server-derived and immutable:
+`AsyncTaskFactSnapshot` is server-derived, redacted before persistence, and
+immutable after creation:
 
 - schema version;
 - original unenriched user text;
@@ -38,10 +40,25 @@ Creation persists two independent records.
 - managed input artifact references for downloaded images and attachments;
 - canonical working directory, selected model, and permission envelope.
 
-It never contains the memory-enriched prompt. Source paths are copied into the
-job's managed artifact area, hashed, and represented by stable relative references.
-Missing or unreadable inputs fail creation instead of creating a task that cannot
-survive restart.
+It never contains the memory-enriched prompt or a raw credential-bearing message.
+Downloaded source paths are staged, hashed, and atomically renamed into a separate
+read-only `inputs/<job-id>/` tree; they are never placed in the writable artifact
+tree. The Codex sandbox receives the input paths as readable references but only
+the sibling artifact tree as an additional writable directory. Checksums are
+revalidated before each attempt. Missing or unreadable inputs fail creation.
+
+Creation derives a deterministic Job ID from the source-message idempotency key,
+serializes same-ID creation in-process, stages input files, atomically renames the
+complete manifest, and then commits the SQLite row. A database failure removes the
+newly installed input tree when no matching row exists. Startup cleanup removes
+aged orphan staging/final trees that have no Job row. This is compensating
+recovery, not a false cross-filesystem transaction.
+
+Legacy rows cannot reconstruct facts that v6 never stored. Migration marks their
+fact snapshot `provenance: legacy_unavailable`, keeps unavailable text and input
+fields null/empty, and derives stable criterion IDs from the stored criterion
+ordinal plus hash. It never fabricates original user text or quoted context. The
+existing v1-v6 migration chain remains supported.
 
 `AsyncTaskContract` is a validated model interpretation:
 
@@ -68,9 +85,15 @@ CheckpointV2 contains only agent workflow progress:
 - a bounded stop reason.
 
 Tool calls, normalized failures, recovery budgets, side effects, interrupt inputs,
-and delivery receipts are parent-owned facts. They are stored in repository rows
-or append-only events and are composed into the next execution snapshot. Model
-output cannot reset counters, claim an external effect, or overwrite source facts.
+verification verdicts, and delivery receipts are parent-owned facts. They are
+stored in repository rows or append-only events and are composed into the next
+execution snapshot. Model output cannot reset counters, claim an external effect,
+or overwrite source facts.
+
+The host-tool receipt key becomes `(job_id, step_id, request_hash)`. A completed
+failed validation call permits a corrected request hash in the same business step;
+an unknown in-flight call blocks all replacement requests until reconciled. This
+preserves no-blind-replay while allowing bounded invocation repair.
 
 ## Outcome-Driven Scheduling
 
@@ -103,40 +126,66 @@ evidence that invocation validation rejected the operation. Transient operations
 are retried only when the adapter establishes retry safety. Unknown external
 outcomes remain preserved and are never blindly replayed.
 
+Trusted Codex execution can perform opaque filesystem, network, or external
+effects that do not pass through the host-tool receipt ledger. A timeout, process
+crash, or expired lease after such execution begins is therefore classified as an
+unknown external outcome and moves to `waiting_user`; it is never automatically
+rerun. Only failures proven to occur before execution, or execution constrained to
+read-only/receipt-bearing operations, may use infrastructure retry.
+
 The durable states become:
 
 ```text
-queued -> running -> recovering -> running
-                  -> waiting_user -> recovering
-                  -> completed | partial | blocked | failed | cancelled
+queued ----------------------> running
+waiting_retry ---------------> running
+recovering ------------------> running
+running -> waiting_retry | recovering | waiting_user
+running -> completed | partial | blocked | failed
+queued | waiting_retry | recovering | waiting_user -> cancelled
+running -> cancel_requested -> cancelled
 ```
 
-Per-error and total recovery budgets are parent-owned. Exhaustion produces a
-terminal failure with the completed work and recovery history.
+`waiting_retry` is infrastructure retry of the same request. `recovering` is a due
+task-level repair with a new validated request/evidence path. `waiting_user` is a
+non-runnable interrupt. Per-error and total recovery budgets are parent-owned.
+Exhaustion produces a terminal failure with completed work and recovery history.
+Existing `/task retry` remains a terminal-job clone; only automatic recovery and
+`/task resume` continue the same Job.
 
 ## Human Resume
 
 `waiting_user` persists an interrupt with a bounded question, required action,
-resume schema, and expiry. Its outbox event records the delivered Lark message ID.
-The creator or owner may resume the same Job by replying to that message or by
-using `/task resume <job-id> <input>`. The input becomes a parent-owned event and
-the Job moves to `recovering`; retry does not clone the task or discard progress.
+resume schema, and expiry. Its outbox event records the delivered Lark message ID
+under a unique indexed interrupt ID. The creator or owner may resume the same Job
+by using `/task resume <job-id> <input>`. IM routes also accept a same-conversation
+reply to the delivered interrupt message when normal group mention policy admits
+the turn. Document comments require the explicit command because reply-to-reply
+correlation is not reliable. Resume is atomic first-input-wins; stale or duplicate
+inputs are rejected. The input becomes a parent-owned event and the Job moves to
+`recovering` without cloning or discarding progress.
 
 ## Verification
 
-The first release performs deterministic verification of managed artifact
-existence, checksums, criterion evidence references, and delivery constraints. A
-`ContinuationVerifier` port separates verification from execution so an
-independent Codex review session and bounded revision loop can be added later
-without changing checkpoint or repository contracts.
+The first release performs deterministic verification of managed input and output
+artifact existence/checksums plus criterion evidence-reference integrity. This is
+reported as structural verification and never represented as independent semantic
+acceptance. A `ContinuationVerifier` port runs after an executor proposes
+completion and before terminal execution commit. Its accepted/revision verdict is
+persisted; revision returns the Job to `recovering` with bounded findings. An
+independent Codex semantic reviewer can replace or compose with this verifier in a
+later release without changing checkpoint or repository contracts.
 
 Executor completion, verification acceptance, and delivery remain separate facts.
-No task is presented as completed when verification fails or delivery is unknown.
+Execution may be `completed` while delivery is `delivery_unknown`; user-facing
+status must say both facts rather than relabel execution or imply receipt. A
+verification rejection cannot commit terminal completion.
 
 ## Persistence And Migration
 
-Async Task storage migrates directly from schema v6 to v7. Existing checkpoints
-are normalized once into the new representation; there is no dual state machine or
+Each independently mergeable PR owns one direct schema migration: #303 v6 to v7,
+#300 v7 to v8, and #299 v8 to v9. Every initializer continues to support upgrades
+from older supported versions through the existing chain. Existing checkpoints
+are normalized once when v8 is installed; there is no dual state machine or
 runtime compatibility branch. Existing identifiers and `/task` commands remain
 readable.
 
