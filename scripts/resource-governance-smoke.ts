@@ -23,6 +23,7 @@ import {
   acquireSingleInstanceLock,
   appendRotatingLine,
   BoundedCache,
+  isCodexLarkProcessCommand,
   stopSingleInstanceLock,
   sweepInbox,
 } from '../src/resource-governance.js';
@@ -526,7 +527,30 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-// 7a. Safe stop sends SIGTERM only to a matching live lark plugin process and removes its lock after exit.
+// 7a. Process matching recognizes the packaged Node entrypoint without accepting lookalikes.
+{
+  for (const command of [
+    'node runtime/index.js',
+    '/opt/homebrew/bin/node runtime/index.js',
+    '"C:\\Program Files\\nodejs\\node.exe" runtime\\index.js',
+  ]) {
+    assert.equal(isCodexLarkProcessCommand(command), true, command);
+  }
+
+  for (const command of [
+    'python runtime/index.js',
+    'node ./runtime/index.js',
+    'node other/runtime/index.js',
+    'node runtime/index.js.backup',
+    'node -e "runtime/index.js"',
+    'node helper.js runtime/index.js',
+  ]) {
+    assert.equal(isCodexLarkProcessCommand(command), false, command);
+  }
+  passed++;
+}
+
+// 7b. Safe stop sends SIGTERM only to a matching live packaged process and removes its lock after exit.
 {
   const dir = tmpRoot('resource-stop-live-');
   const lockPath = join(dir, 'bridge.lock');
@@ -539,7 +563,7 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
     sleepMs: 0,
     processExists: () => alive,
     getProcessStartedAt: async () => 1111,
-    getProcessCommand: async () => 'node --import tsx src/index.ts',
+    getProcessCommand: async () => 'node runtime/index.js',
     killProcess: async (pid, signal) => {
       signals.push({ pid, signal });
       alive = false;
@@ -553,7 +577,7 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-// 7b. Safe stop refuses a live unrelated process and leaves the lock intact.
+// 7c. Safe stop refuses a live unrelated process and leaves the lock intact.
 {
   const dir = tmpRoot('resource-stop-unrelated-');
   const lockPath = join(dir, 'bridge.lock');
@@ -578,7 +602,7 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-// 7c. Safe stop removes stale locks only after proving the PID is gone or reused.
+// 7d. Safe stop removes stale locks only after proving the PID is gone or reused.
 {
   const goneDir = tmpRoot('resource-stop-stale-gone-');
   const goneLock = join(goneDir, 'bridge.lock');
@@ -606,7 +630,7 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-// 7d. Safe stop keeps the lock when a matching process ignores SIGTERM.
+// 7e. Safe stop keeps the lock when a matching process ignores SIGTERM.
 {
   const dir = tmpRoot('resource-stop-stubborn-');
   const lockPath = join(dir, 'bridge.lock');
@@ -627,7 +651,7 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-// 7e. Safe stop refuses unparsable locks because it cannot prove ownership.
+// 7f. Safe stop refuses unparsable locks because it cannot prove ownership.
 {
   const dir = tmpRoot('resource-stop-invalid-');
   const lockPath = join(dir, 'bridge.lock');
@@ -961,4 +985,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/40 PASS`);
+console.log(`resource-governance smoke: ${passed}/41 PASS`);
