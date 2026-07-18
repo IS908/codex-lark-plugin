@@ -4118,9 +4118,12 @@ const retryRoot = await mkdtemp(join(tmpdir(), 'continuation-retry-inputs-'));
 const retrySourcePath = join(retryRoot, 'retry-source.txt');
 await writeFile(retrySourcePath, 'retry input', 'utf8');
 const retryInputsDir = join(retryRoot, 'inputs');
+const retryArtifactsDir = join(retryRoot, 'artifacts');
+const retryArtifactStore = new ContinuationArtifactStore(retryArtifactsDir);
 const retryRepository = await SqliteContinuationRepository.open({
   databasePath: join(retryRoot, 'jobs.sqlite'),
-  artifactsDir: join(retryRoot, 'artifacts'),
+  artifactsDir: retryArtifactsDir,
+  artifactStore: retryArtifactStore,
   inputsDir: retryInputsDir,
   jitter: () => 0,
 });
@@ -4152,6 +4155,48 @@ assert.equal((await retryRepository.cloneForRetry(
   'copy-request',
   '2026-07-17T00:00:03.000Z',
 )).jobId, retryClone.jobId);
+
+const resumableSource = await retryRepository.create(createRequest('retry-checkpoint-artifact'));
+const resumableClaim = await retryRepository.claimDue(
+  'worker-retry-checkpoint-artifact',
+  '2026-07-17T00:00:04.000Z',
+  '2026-07-17T00:01:04.000Z',
+);
+assert.equal(resumableClaim?.job.jobId, resumableSource.job.jobId);
+const resumableCheckpoint = {
+  ...await completedCheckpoint(
+    resumableSource.job.jobId,
+    'produce-result',
+    'resume.json',
+    retryArtifactStore,
+  ),
+  completedCriterionIds: [],
+  remainingSteps: [{ id: 'deliver-result', description: 'Deliver the verified result.' }],
+  nextAction: { id: 'deliver-result', description: 'Deliver the verified result.' },
+  stopReason: 'Artifact is ready; delivery remains.',
+};
+await retryRepository.completeStep(resumableClaim!, {
+  outcome: {
+    outcome: 'partial',
+    checkpoint: resumableCheckpoint,
+    completedWork: ['Created and verified the result artifact.'],
+    keyFindings: ['The artifact is ready for delivery.'],
+    unperformedWork: ['Deliver the verified result.'],
+    risks: [],
+    nextSteps: ['Deliver the verified result.'],
+    artifacts: ['resume.json'],
+  },
+}, '2026-07-17T00:00:05.000Z');
+const resumableClone = await retryRepository.cloneForRetry(
+  resumableSource.job.jobId,
+  'checkpoint-artifact-copy',
+  '2026-07-17T00:00:06.000Z',
+);
+assert.deepEqual(resumableClone.checkpoint, resumableCheckpoint);
+const originalArtifact = retryArtifactStore.resolve(resumableSource.job.jobId, 'resume.json');
+const clonedArtifact = retryArtifactStore.resolve(resumableClone.jobId, 'resume.json');
+assert.notEqual((await stat(originalArtifact)).ino, (await stat(clonedArtifact)).ino);
+assert.equal(await readFile(clonedArtifact, 'utf8'), await readFile(originalArtifact, 'utf8'));
 
 const corruptRetrySourcePath = join(retryRoot, 'corrupt-retry-source.txt');
 await writeFile(corruptRetrySourcePath, 'corrupt retry input', 'utf8');

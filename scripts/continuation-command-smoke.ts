@@ -320,6 +320,10 @@ assert.equal(await run(message({
 })), true);
 assert.match(replies.at(-1)?.text ?? '', new RegExp(ownedQueued.jobId));
 assert.match(replies.at(-1)?.text ?? '', /State: completed/);
+assert.match(replies.at(-1)?.text ?? '', /Execution: completed/);
+assert.match(replies.at(-1)?.text ?? '', /Artifact: verified/);
+assert.match(replies.at(-1)?.text ?? '', /Delivery: delivered/);
+assert.match(replies.at(-1)?.text ?? '', /Resume available: no/);
 assert.match(replies.at(-1)?.text ?? '', /Attempts: 1 \/ 5/);
 assert.match(replies.at(-1)?.text ?? '', /Completed:/);
 assert.match(replies.at(-1)?.text ?? '', /Delivery events:/);

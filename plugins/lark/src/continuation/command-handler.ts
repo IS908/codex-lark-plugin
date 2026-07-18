@@ -1,7 +1,13 @@
 import { audit } from '../audit-log.js';
 import { isFeishuOpenMessageId } from '../codex-exec-error.js';
 import { splitDocCommentText } from '../doc-comment-api.js';
-import type { ContinuationJob } from '../domain/continuation.js';
+import {
+  continuationArtifactStatus,
+  continuationResumeAvailable,
+  continuationUnmetAcceptanceCriteria,
+  isContinuationTerminal,
+  type ContinuationJob,
+} from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
 import { extractMessageText } from '../message-content.js';
 import type { ReplyRequest, ReplySendResult } from '../reply-sender.js';
@@ -266,8 +272,11 @@ function formatTaskList(jobs: ContinuationJob[]): string {
 }
 
 function formatTaskStatus(job: ContinuationJob): string {
+  const unmetCriteria = continuationUnmetAcceptanceCriteria(job);
   return [
     `State: ${job.status}`,
+    `Execution: ${job.status}`,
+    `Artifact: ${continuationArtifactStatus(job)}`,
     `Job ID: ${job.jobId}`,
     `Title: ${job.title}`,
     `Attempts: ${attemptCount(job)} / ${job.maxAttempts}`,
@@ -293,6 +302,16 @@ function formatTaskStatus(job: ContinuationJob): string {
     `Next run: ${formatOptionalTime(job.nextRunAt)}`,
     `Completed: ${formatOptionalTime(job.completedAt)}`,
     `Delivery: ${job.deliveryStatus ?? 'not_started'}`,
+    `Resume available: ${continuationResumeAvailable(job) ? 'yes' : 'no'}`,
+    ...(job.errorCode && isContinuationTerminal(job.status)
+      ? [`Terminal reason: ${job.errorCode}`]
+      : []),
+    ...(unmetCriteria.length > 0
+      ? [`Unmet acceptance criteria: ${unmetCriteria.join(', ')}`]
+      : []),
+    ...(job.checkpoint?.nextAction
+      ? [`Next best action: ${truncateDiagnostic(job.checkpoint.nextAction.description, 500)}`]
+      : []),
     `Retain: ${job.retained ? 'on' : 'off'}`,
     formatDeliveryEvents(job),
     ...(job.errorCode ? [`Error code: ${job.errorCode}`] : []),

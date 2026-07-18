@@ -1,7 +1,11 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { CONTINUATION_LIMITS } from '../domain/continuation.js';
+import {
+  CONTINUATION_LIMITS,
+  type ContinuationCheckpointArtifact,
+} from '../domain/continuation.js';
 import {
   currentProcessStartedAt,
   isProcessAlive,
@@ -131,6 +135,44 @@ export class ContinuationArtifactStore {
     }
     await this.assertWithinLimit(jobId);
     return canonical;
+  }
+
+  async copyVerified(
+    sourceJobId: string,
+    targetJobId: string,
+    artifacts: readonly ContinuationCheckpointArtifact[],
+  ): Promise<boolean> {
+    if (artifacts.length === 0) return false;
+    const canonical = await this.canonicalizeReferences(
+      sourceJobId,
+      artifacts.map((artifact) => artifact.path),
+    );
+    if (canonical.length !== artifacts.length) {
+      throw new Error('Continuation retry artifact references must be unique.');
+    }
+    await this.ensure(targetJobId);
+    try {
+      for (let index = 0; index < canonical.length; index += 1) {
+        const reference = canonical[index];
+        const target = this.resolve(targetJobId, reference);
+        await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+        await fs.copyFile(
+          this.resolve(sourceJobId, reference),
+          target,
+          constants.COPYFILE_EXCL,
+        );
+        await fs.chmod(target, 0o600);
+        const sha256 = createHash('sha256').update(await fs.readFile(target)).digest('hex');
+        if (sha256 !== artifacts[index].sha256.toLowerCase()) {
+          throw new Error(`Continuation retry artifact checksum mismatch: ${reference}`);
+        }
+      }
+      await this.assertWithinLimit(targetJobId);
+      return true;
+    } catch (error) {
+      await this.remove(targetJobId).catch(() => {});
+      throw error;
+    }
   }
 
   async remove(jobId: string): Promise<void> {
