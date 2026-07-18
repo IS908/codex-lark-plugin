@@ -2,12 +2,14 @@ import type {
   DurableRunClaim,
   DurableRunDeliveryClaim,
   DurableRunFailure,
+  DurableRunPreflight,
   DurableRunTransition,
   DurableRunWorkloadClaim,
 } from '../domain/durable-run.js';
 import {
   materializeDurableRunWorkloadClaim,
   materializeDurableRunWorkloadContext,
+  type DurableRunClaimMutationResult,
   type DurableRunClock,
   type DurableRunDelivery,
   type DurableRunRepository,
@@ -255,23 +257,43 @@ export class DurableRunWorker {
 
   private async runExecution(execution: ActiveExecution): Promise<void> {
     let workloadClaim: DurableRunWorkloadClaim<unknown, unknown>;
-    let result: unknown;
+    let preflight: DurableRunPreflight;
     try {
       const context = materializeDurableRunWorkloadContext(
         execution.workload,
         execution.claim.run,
       );
       workloadClaim = materializeDurableRunWorkloadClaim(execution.claim, context);
-      const preflight = await execution.workload.preflight(context);
-      if (preflight.action === 'transition') {
-        await this.commitExecutionTransition(execution, preflight.transition);
-        return;
-      }
-      if (await this.executionCannotCommit(execution)) {
-        await this.finishAbortedExecution(execution);
-        return;
-      }
-      await this.options.repository.markExecutionStarted(execution.claim, this.nowIso());
+      preflight = await execution.workload.preflight(context);
+    } catch (error) {
+      await this.handleExecutionError(execution, error);
+      return;
+    }
+
+    if (preflight.action === 'transition') {
+      await this.commitExecutionTransition(execution, preflight.transition);
+      return;
+    }
+    if (await this.executionCannotCommit(execution)) {
+      await this.finishAbortedExecution(execution);
+      return;
+    }
+    if (!this.executionCanMutate(execution)) {
+      await this.finishAbortedExecution(execution);
+      return;
+    }
+    const started = await this.options.repository.markExecutionStarted(
+      execution.claim,
+      this.nowIso(),
+    );
+    if (!this.acceptClaimMutation(execution, started)) return;
+    if (!this.executionCanMutate(execution)) {
+      await this.finishAbortedExecution(execution);
+      return;
+    }
+
+    let result: unknown;
+    try {
       result = await execution.workload.execute(workloadClaim, execution.controller.signal);
     } catch (error) {
       await this.handleExecutionError(execution, error);
@@ -290,7 +312,16 @@ export class DurableRunWorker {
       await this.finishAbortedExecution(execution);
       return;
     }
-    await this.options.repository.commitTransition(execution.claim, transition, this.nowIso());
+    if (!this.executionCanMutate(execution)) {
+      await this.finishAbortedExecution(execution);
+      return;
+    }
+    const committed = await this.options.repository.commitTransition(
+      execution.claim,
+      transition,
+      this.nowIso(),
+    );
+    this.acceptClaimMutation(execution, committed);
   }
 
   private async executionCannotCommit(execution: ActiveExecution): Promise<boolean> {
@@ -306,7 +337,6 @@ export class DurableRunWorker {
   }
 
   private abortIfWorkerCannotOwnClaim(execution: ActiveExecution): void {
-    if (execution.abortReason || execution.controller.signal.aborted) return;
     if (this.stopping) {
       this.abortExecution(execution, 'shutdown');
     } else if (execution.confirmedLeaseExpiresAt <= this.nowIso()) {
@@ -314,44 +344,64 @@ export class DurableRunWorker {
     }
   }
 
+  private executionCanMutate(execution: ActiveExecution): boolean {
+    this.abortIfWorkerCannotOwnClaim(execution);
+    return !execution.abortReason && !execution.controller.signal.aborted;
+  }
+
+  private acceptClaimMutation(
+    execution: ActiveExecution,
+    result: DurableRunClaimMutationResult,
+  ): boolean {
+    if (result === 'committed') return true;
+    this.abortExecution(execution, 'lease_lost');
+    return false;
+  }
+
   private async handleExecutionError(
     execution: ActiveExecution,
     error: unknown,
   ): Promise<void> {
+    this.abortIfWorkerCannotOwnClaim(execution);
     if (execution.abortReason || execution.controller.signal.aborted) {
       await this.finishAbortedExecution(execution);
       return;
     }
-    let latest;
-    try {
-      latest = await this.options.repository.get(execution.claim.run.runId);
-    } catch {
-      return;
-    }
+    const latest = await this.options.repository.get(execution.claim.run.runId);
     if (latest?.status === 'cancel_requested') {
-      execution.abortReason = 'cancel';
+      this.abortExecution(execution, 'cancel');
       await this.finishAbortedExecution(execution);
       return;
     }
-    if (!latest || latest.status !== 'running') return;
-    await this.options.repository.failAttempt(
+    if (!latest || latest.status !== 'running') {
+      this.abortExecution(execution, 'lease_lost');
+      return;
+    }
+    if (!this.executionCanMutate(execution)) {
+      await this.finishAbortedExecution(execution);
+      return;
+    }
+    const failed = await this.options.repository.failAttempt(
       execution.claim,
       classifyExecutionFailure(execution.claim, error),
       this.nowIso(),
     );
+    this.acceptClaimMutation(execution, failed);
   }
 
   private async finishAbortedExecution(execution: ActiveExecution): Promise<void> {
+    this.abortIfWorkerCannotOwnClaim(execution);
     if (execution.abortReason === 'cancel') {
-      await this.options.repository.commitTransition(
+      const committed = await this.options.repository.commitTransition(
         execution.claim,
         unchangedTransition(execution.claim, 'cancelled'),
         this.nowIso(),
       );
+      this.acceptClaimMutation(execution, committed);
       return;
     }
     if (execution.abortReason === 'expired') {
-      await this.options.repository.commitTransition(
+      const committed = await this.options.repository.commitTransition(
         execution.claim,
         {
           ...unchangedTransition(execution.claim, 'failed'),
@@ -370,6 +420,7 @@ export class DurableRunWorker {
         },
         this.nowIso(),
       );
+      this.acceptClaimMutation(execution, committed);
     }
     // Shutdown and lost leases intentionally leave their attempts for lease recovery.
   }
@@ -443,7 +494,10 @@ export class DurableRunWorker {
   }
 
   private abortExecution(execution: ActiveExecution, reason: AbortReason): void {
-    if (execution.controller.signal.aborted) return;
+    if (execution.controller.signal.aborted) {
+      if (reason === 'lease_lost' || reason === 'shutdown') execution.abortReason = reason;
+      return;
+    }
     execution.abortReason = reason;
     execution.controller.abort();
   }

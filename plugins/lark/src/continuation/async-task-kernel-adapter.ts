@@ -23,12 +23,14 @@ import type {
 } from '../domain/durable-run.js';
 import { formatContinuationDiagnosticMessage } from '../diagnostic-log-format.js';
 import type {
+  ContinuationClaimMutationResult,
   ContinuationAudit,
   ContinuationDelivery,
   ContinuationExecutor,
   ContinuationRepository,
 } from '../ports/continuation.js';
 import type {
+  DurableRunClaimMutationResult,
   DurableRunDelivery,
   DurableRunRepository,
   DurableRunWorkload,
@@ -105,15 +107,20 @@ export class AsyncTaskKernelAdapter implements
     return durableClaimFromContinuation(claim);
   }
 
-  async markExecutionStarted(claim: DurableRunClaim, now: string): Promise<void> {
+  async markExecutionStarted(
+    claim: DurableRunClaim,
+    now: string,
+  ): Promise<DurableRunClaimMutationResult> {
     const continuationClaim = continuationClaimFromDurable(claim);
+    const result = await this.options.repository.markExecutionStarted(continuationClaim, now);
+    if (result === 'stale') return result;
     await this.audit(
       'continuation.execute.start',
       continuationClaim,
       'ok',
       permissionAuditDetail(continuationClaim),
     );
-    await this.options.repository.markExecutionStarted(continuationClaim, now);
+    return 'committed';
   }
 
   heartbeat(
@@ -134,25 +141,24 @@ export class AsyncTaskKernelAdapter implements
     claim: DurableRunClaim,
     transition: DurableRunTransition,
     now: string,
-  ): Promise<void> {
+  ): Promise<DurableRunClaimMutationResult> {
     const continuationClaim = continuationClaimFromDurable(claim);
     const state = parseAsyncTaskState(transition.state, transition.stateVersion);
     if (state.commit?.kind === 'step') {
-      await this.commitStep(continuationClaim, state.commit.result, now);
-      return;
+      return this.commitStep(continuationClaim, state.commit.result, now);
     }
     if (state.commit?.kind === 'failure') {
-      await this.commitFailure(continuationClaim, state.commit.failure, now);
-      return;
+      return this.commitFailure(continuationClaim, state.commit.failure, now);
     }
     if (transition.status === 'cancelled') {
-      await this.options.repository.completeCancellation(continuationClaim, now);
+      const result = await this.options.repository.completeCancellation(continuationClaim, now);
+      if (result === 'stale') return result;
       await this.audit('continuation.cancel', continuationClaim, 'ok');
       this.debug('cancelled', continuationClaim, 'cancelled');
-      return;
+      return 'committed';
     }
     if (transition.status === 'failed' && transition.errorCode === 'durable_run_expired') {
-      await this.options.repository.failAttempt(
+      const result = await this.options.repository.failAttempt(
         continuationClaim,
         {
           errorCode: 'continuation_expired',
@@ -161,9 +167,10 @@ export class AsyncTaskKernelAdapter implements
         },
         now,
       );
+      if (result === 'stale') return result;
       await this.audit('continuation.execute', continuationClaim, 'error', 'continuation_expired');
       this.debug('expired', continuationClaim, 'failed');
-      return;
+      return 'committed';
     }
     throw new Error(`Unsupported Async Task kernel transition: ${transition.status}`);
   }
@@ -172,9 +179,9 @@ export class AsyncTaskKernelAdapter implements
     claim: DurableRunClaim,
     failure: DurableRunFailure,
     now: string,
-  ): Promise<void> {
+  ): Promise<DurableRunClaimMutationResult> {
     const continuationClaim = continuationClaimFromDurable(claim);
-    await this.commitFailure(continuationClaim, {
+    return this.commitFailure(continuationClaim, {
       errorCode: 'continuation_execution_failed',
       errorSummary: failure.diagnostic,
       retryable: failure.retrySafety !== 'unsafe',
@@ -320,51 +327,37 @@ export class AsyncTaskKernelAdapter implements
     claim: ContinuationClaim,
     result: ContinuationExecutionResult,
     now: string,
-  ): Promise<void> {
-    try {
-      await this.options.repository.completeStep(claim, result, now);
-      const committed = await this.options.repository.get(claim.job.jobId);
-      const committedState = committed?.status ?? result.outcome.outcome;
-      const detail = committed
-        ? `state=${committed.status};verification=${committed.lastVerification?.status ?? 'none'};material_change=${committed.lastAttemptDelta?.stateChanged ?? false};no_progress=${committed.noProgressCount}`
-        : `state=${committedState}`;
-      await this.audit('continuation.execute', claim, 'ok', detail);
-      this.debug('step_committed', claim, committedState);
-    } catch {
-      const afterFailure = await this.options.repository.get(claim.job.jobId).catch(() => null);
-      if (afterFailure?.status === 'cancel_requested') {
-        await this.options.repository.completeCancellation(claim, now);
-        await this.audit('continuation.cancel', claim, 'ok');
-        this.debug('cancelled', claim, 'cancelled');
-        return;
-      }
-      await this.audit('continuation.execute', claim, 'error', 'state_commit_failed');
-      this.debug('state_commit_failed', claim, 'running');
-    }
+  ): Promise<ContinuationClaimMutationResult> {
+    const resultStatus = await this.options.repository.completeStep(claim, result, now);
+    if (resultStatus === 'stale') return resultStatus;
+    const committed = await this.options.repository.get(claim.job.jobId);
+    const committedState = committed?.status ?? result.outcome.outcome;
+    const detail = committed
+      ? `state=${committed.status};verification=${committed.lastVerification?.status ?? 'none'};material_change=${committed.lastAttemptDelta?.stateChanged ?? false};no_progress=${committed.noProgressCount}`
+      : `state=${committedState}`;
+    await this.audit('continuation.execute', claim, 'ok', detail);
+    this.debug('step_committed', claim, committedState);
+    return 'committed';
   }
 
   private async commitFailure(
     claim: ContinuationClaim,
     failure: ContinuationFailure,
     now: string,
-  ): Promise<void> {
+  ): Promise<ContinuationClaimMutationResult> {
     let committedState: ContinuationJob['status'] = 'failed';
-    try {
-      await this.options.repository.failAttempt(claim, failure, now);
-      committedState = (await this.options.repository.get(claim.job.jobId))?.status
-        ?? committedState;
-    } catch {
-      await this.audit('continuation.execute', claim, 'error', 'worker_state_error');
-      this.debug('worker_state_error', claim, 'running');
-    } finally {
-      await this.audit(
-        'continuation.execute',
-        claim,
-        'error',
-        `attempt_failed;state=${committedState}`,
-      );
-      this.debug('attempt_failed', claim, committedState);
-    }
+    const result = await this.options.repository.failAttempt(claim, failure, now);
+    if (result === 'stale') return result;
+    committedState = (await this.options.repository.get(claim.job.jobId))?.status
+      ?? committedState;
+    await this.audit(
+      'continuation.execute',
+      claim,
+      'error',
+      `attempt_failed;state=${committedState}`,
+    );
+    this.debug('attempt_failed', claim, committedState);
+    return 'committed';
   }
 
   private async audit(

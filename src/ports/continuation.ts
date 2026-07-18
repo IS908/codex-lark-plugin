@@ -22,6 +22,8 @@ export interface ContinuationInputInstallResult {
   installed: boolean;
 }
 
+export type ContinuationClaimMutationResult = 'committed' | 'stale';
+
 export type ContinuationInputVerification =
   | { ok: true }
   | { ok: false; reason: 'missing' | 'modified' | 'invalid' };
@@ -65,7 +67,10 @@ export interface ContinuationRepository {
   ): Promise<ContinuationJob[]>;
   listAll(limit: number, statuses?: ContinuationStatus[]): Promise<ContinuationJob[]>;
   claimDue(workerId: string, now: string, leaseExpiresAt: string): Promise<ContinuationClaim | null>;
-  markExecutionStarted(claim: ContinuationClaim, now: string): Promise<void>;
+  markExecutionStarted(
+    claim: ContinuationClaim,
+    now: string,
+  ): Promise<ContinuationClaimMutationResult>;
   heartbeat(jobId: string, workerId: string, now: string, leaseExpiresAt: string): Promise<boolean>;
   inspectToolCall(claim: ContinuationClaim): Promise<ContinuationToolCallRecovery | null>;
   beginToolCall(
@@ -79,10 +84,21 @@ export interface ContinuationRepository {
     result: ContinuationToolResult,
     now: string,
   ): Promise<void>;
-  completeStep(claim: ContinuationClaim, result: ContinuationExecutionResult, now: string): Promise<void>;
-  failAttempt(claim: ContinuationClaim, failure: ContinuationFailure, now: string): Promise<void>;
+  completeStep(
+    claim: ContinuationClaim,
+    result: ContinuationExecutionResult,
+    now: string,
+  ): Promise<ContinuationClaimMutationResult>;
+  failAttempt(
+    claim: ContinuationClaim,
+    failure: ContinuationFailure,
+    now: string,
+  ): Promise<ContinuationClaimMutationResult>;
   requestCancel(jobId: string, now: string): Promise<'cancelled' | 'cancel_requested' | 'terminal' | 'missing'>;
-  completeCancellation(claim: ContinuationClaim, now: string): Promise<void>;
+  completeCancellation(
+    claim: ContinuationClaim,
+    now: string,
+  ): Promise<ContinuationClaimMutationResult>;
   recoverExpiredLeases(now: string): Promise<number>;
   expireOverdue(now: string): Promise<number>;
   cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob>;

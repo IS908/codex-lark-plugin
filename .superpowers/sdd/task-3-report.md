@@ -367,3 +367,100 @@ All tests passed.
 
 - The Task 4 structured-recovery and persisted Async Task envelope-validation
   cautions remain unchanged; they are outside this Task 3 worker fix.
+
+---
+
+## Issue #315 Task 3 Repository Ownership Fence Remediation
+
+### Status
+
+PASS. The final worker check-then-act TOCTOU is closed by making the repository
+the authoritative claim ownership fence. No persistence schema changed and no
+GitHub operation was performed.
+
+### Fix
+
+- Generic `markExecutionStarted`, `commitTransition`, and `failAttempt` now
+  return `committed | stale`. `DurableRunWorker` treats every `stale` result as
+  immediate `lease_lost`, returns without execution or further mutation, and
+  never reclassifies stale as an execution failure.
+- Final shutdown/deadline checks and mutation invocation now occur in the same
+  synchronous continuation. Mutation calls are outside the execution-error
+  catch, so unknown storage outcomes are left to recovery rather than being
+  converted into `failAttempt`.
+- `ContinuationRepository` claim-bound mutations return the same explicit
+  result. Their `BEGIN IMMEDIATE` transactions verify the claim projection,
+  Job/Attempt identity, worker, row version, active attempt, and a live lease.
+  Cancellation accepts only the expected `cancel_requested` row-version bump.
+- `completeStep` rechecks the lease after asynchronous artifact verification
+  using elapsed monotonic time, so a deadline crossed inside repository work
+  cannot commit state or terminal outbox.
+- `AsyncTaskKernelAdapter` maps continuation mutation results without loss and
+  no longer swallows genuine mark/step/failure storage exceptions.
+
+### RED Evidence
+
+```text
+node --import tsx scripts/durable-run-worker-smoke.ts
+AssertionError: stale markExecutionStarted still executed run_stale-mark
+
+node --import tsx scripts/continuation-repository-smoke.ts
+AssertionError: forged claim projection returned undefined instead of stale
+
+node --import tsx scripts/continuation-repository-smoke.ts
+AssertionError: delayed completeStep returned committed after its lease deadline
+```
+
+The worker regressions also place `stop()` and a confirmed lease deadline in
+the microtask gap between status-read settlement and mutation, and cover a
+deadline crossed before error-to-`failAttempt` persistence.
+
+### GREEN Evidence
+
+```text
+node --import tsx scripts/durable-run-domain-smoke.ts
+durable run domain smoke: PASS
+
+node --import tsx scripts/durable-run-worker-smoke.ts
+durable run worker smoke: PASS
+
+node --import tsx scripts/continuation-domain-smoke.ts
+continuation domain smoke: PASS
+
+node --import tsx scripts/continuation-worker-smoke.ts
+continuation worker smoke: PASS
+
+node --import tsx scripts/continuation-repository-smoke.ts
+continuation repository smoke: PASS
+
+node --import tsx scripts/continuation-runtime-smoke.ts
+continuation runtime smoke: PASS
+
+npm run --silent typecheck
+exit 0
+
+npm run --silent check:architecture
+architecture check ok: 0 baseline cycle component(s), 0 baseline restricted import(s)
+
+npm run --silent check:plugin-src-sync
+plugin source sync check ok
+
+npm run --silent build
+[build-runtime] bundled ./dist
+[build-runtime] bundled plugins/lark/runtime
+
+npm test
+All tests passed.
+```
+
+### Commit
+
+- Baseline: `0bc715a2590c4762c7fda0daa7f0696216627256`.
+- Fix commit subject: `fix: fence durable run mutations by claim ownership`.
+- The final commit SHA is reported in the task result because a commit cannot
+  contain its own object ID.
+
+### Concerns
+
+- The Task 4 structured-recovery bridge and full persisted Async Task envelope
+  validation cautions remain unchanged and are outside this Task 3 fix.

@@ -202,6 +202,30 @@ async function completedCheckpoint(
   });
 }
 
+class DelayedArtifactStore extends ContinuationArtifactStore {
+  private markVerificationStarted!: () => void;
+  private releaseVerification!: () => void;
+  readonly verificationStarted = new Promise<void>((resolve) => {
+    this.markVerificationStarted = resolve;
+  });
+  private readonly verificationReleased = new Promise<void>((resolve) => {
+    this.releaseVerification = resolve;
+  });
+
+  release(): void {
+    this.releaseVerification();
+  }
+
+  override async canonicalizeReferences(
+    jobId: string,
+    references: readonly string[],
+  ): Promise<string[]> {
+    this.markVerificationStarted();
+    await this.verificationReleased;
+    return super.canonicalizeReferences(jobId, references);
+  }
+}
+
 function createRequest(
   suffix: string,
   overrides: Partial<ContinuationCreateRequest> = {},
@@ -727,17 +751,20 @@ try {
     await repository.requestCancel(runningCancel.job.jobId, '2026-07-17T00:00:21.000Z'),
     'cancel_requested',
   );
-  await assert.rejects(
-    repository.completeStep(runningCancelClaim, {
+  assert.equal(
+    await repository.completeStep(runningCancelClaim, {
       outcome: {
         outcome: 'completed',
         finalMessage: 'must not win cancellation',
         artifacts: [],
       },
     }, '2026-07-17T00:00:22.000Z'),
-    /stale continuation claim/i,
+    'stale',
   );
-  await repository.completeCancellation(runningCancelClaim, '2026-07-17T00:00:23.000Z');
+  assert.equal(
+    await repository.completeCancellation(runningCancelClaim, '2026-07-17T00:00:23.000Z'),
+    'committed',
+  );
   assert.equal((await repository.get(runningCancel.job.jobId))?.status, 'cancelled');
 
   const expiredQueued = await repository.create(createRequest('expired-queued', {
@@ -4068,6 +4095,199 @@ assert.equal(competingClaims.filter(Boolean).length, 1);
 assert.equal((await claimRaceA.get(claimRaceJob.job.jobId))?.attemptCount, 1);
 claimRaceA.close();
 claimRaceB.close();
+
+// Claim-bound mutations fence identity, row version, owner, and lease in the repository.
+const ownershipFenceRoot = await mkdtemp(join(tmpdir(), 'continuation-ownership-fence-'));
+const ownershipFenceRepository = await SqliteContinuationRepository.open({
+  databasePath: join(ownershipFenceRoot, 'jobs.sqlite'),
+  artifactsDir: join(ownershipFenceRoot, 'artifacts'),
+  jitter: () => 0,
+});
+
+const identityFenceJob = await ownershipFenceRepository.create(createRequest('identity-fence'));
+const identityFenceClaim = await ownershipFenceRepository.claimDue(
+  'worker-identity-fence',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+assert.equal(identityFenceClaim?.job.jobId, identityFenceJob.job.jobId);
+assert.ok(identityFenceClaim);
+assert.equal(await ownershipFenceRepository.markExecutionStarted({
+  ...identityFenceClaim,
+  job: { ...identityFenceClaim.job, rowVersion: identityFenceClaim.job.rowVersion + 1 },
+}, '2026-07-17T00:00:01.000Z'), 'stale');
+assert.equal((await ownershipFenceRepository.get(identityFenceJob.job.jobId))?.status, 'running');
+assert.equal(
+  await ownershipFenceRepository.claimPendingDelivery(
+    'delivery-identity-fence',
+    '2026-07-17T00:00:01.000Z',
+  ),
+  null,
+);
+assert.equal(
+  await ownershipFenceRepository.markExecutionStarted(
+    identityFenceClaim,
+    '2026-07-17T00:00:01.100Z',
+  ),
+  'committed',
+);
+assert.equal(await ownershipFenceRepository.failAttempt(identityFenceClaim, {
+  errorCode: 'identity_fence_cleanup',
+  errorSummary: 'Release the identity-fence claim.',
+  retryable: true,
+}, '2026-07-17T00:00:01.200Z'), 'committed');
+const identityFenceCleanupDelivery = await ownershipFenceRepository.claimPendingDelivery(
+  'delivery-identity-fence-cleanup',
+  '2026-07-17T00:00:01.300Z',
+);
+assert.equal(identityFenceCleanupDelivery?.jobId, identityFenceJob.job.jobId);
+assert.ok(identityFenceCleanupDelivery);
+await ownershipFenceRepository.markDeliveryResult(
+  identityFenceCleanupDelivery,
+  { status: 'delivered', messageId: 'om_identity_fence_cleanup' },
+  '2026-07-17T00:00:01.400Z',
+);
+
+const expiredMarkJob = await ownershipFenceRepository.create(createRequest('expired-mark-fence'));
+const expiredMarkClaim = await ownershipFenceRepository.claimDue(
+  'worker-expired-mark',
+  '2026-07-17T00:00:02.000Z',
+  '2026-07-17T00:00:03.000Z',
+);
+assert.equal(expiredMarkClaim?.job.jobId, expiredMarkJob.job.jobId);
+assert.ok(expiredMarkClaim);
+assert.equal(
+  await ownershipFenceRepository.markExecutionStarted(
+    expiredMarkClaim,
+    '2026-07-17T00:00:04.000Z',
+  ),
+  'stale',
+);
+assert.equal((await ownershipFenceRepository.get(expiredMarkJob.job.jobId))?.status, 'running');
+assert.equal(
+  await ownershipFenceRepository.claimPendingDelivery(
+    'delivery-expired-mark',
+    '2026-07-17T00:00:04.000Z',
+  ),
+  null,
+);
+assert.equal(await ownershipFenceRepository.recoverExpiredLeases(
+  '2026-07-17T00:00:04.000Z',
+), 1);
+
+const expiredFailureJob = await ownershipFenceRepository.create(createRequest('expired-fail-fence'));
+const expiredFailureClaim = await ownershipFenceRepository.claimDue(
+  'worker-expired-fail',
+  '2026-07-17T00:00:05.000Z',
+  '2026-07-17T00:00:06.000Z',
+);
+assert.equal(expiredFailureClaim?.job.jobId, expiredFailureJob.job.jobId);
+assert.ok(expiredFailureClaim);
+assert.equal(await ownershipFenceRepository.failAttempt(expiredFailureClaim, {
+  errorCode: 'must_not_commit',
+  errorSummary: 'The expired owner must not persist this failure.',
+  retryable: false,
+}, '2026-07-17T00:00:07.000Z'), 'stale');
+assert.equal((await ownershipFenceRepository.get(expiredFailureJob.job.jobId))?.status, 'running');
+assert.equal(
+  await ownershipFenceRepository.claimPendingDelivery(
+    'delivery-expired-fail',
+    '2026-07-17T00:00:07.000Z',
+  ),
+  null,
+);
+assert.equal(await ownershipFenceRepository.recoverExpiredLeases(
+  '2026-07-17T00:00:07.000Z',
+), 1);
+
+const staleCommitJob = await ownershipFenceRepository.create(createRequest('stale-commit-fence'));
+const staleCommitClaim = await ownershipFenceRepository.claimDue(
+  'worker-stale-commit',
+  '2026-07-17T00:00:08.000Z',
+  '2026-07-17T00:00:38.000Z',
+);
+assert.equal(staleCommitClaim?.job.jobId, staleCommitJob.job.jobId);
+assert.ok(staleCommitClaim);
+assert.equal(
+  await ownershipFenceRepository.requestCancel(
+    staleCommitJob.job.jobId,
+    '2026-07-17T00:00:09.000Z',
+  ),
+  'cancel_requested',
+);
+assert.equal(await ownershipFenceRepository.completeStep(staleCommitClaim, {
+  outcome: {
+    outcome: 'completed',
+    finalMessage: 'The stale completion must not win.',
+    artifacts: [],
+  },
+}, '2026-07-17T00:00:10.000Z'), 'stale');
+assert.equal(
+  (await ownershipFenceRepository.get(staleCommitJob.job.jobId))?.status,
+  'cancel_requested',
+);
+assert.equal(
+  await ownershipFenceRepository.claimPendingDelivery(
+    'delivery-stale-commit',
+    '2026-07-17T00:00:10.000Z',
+  ),
+  null,
+);
+assert.equal(
+  await ownershipFenceRepository.completeCancellation(
+    staleCommitClaim,
+    '2026-07-17T00:00:10.100Z',
+  ),
+  'committed',
+);
+assert.equal((await ownershipFenceRepository.get(staleCommitJob.job.jobId))?.status, 'cancelled');
+ownershipFenceRepository.close();
+
+// The final completeStep transaction rechecks the lease after asynchronous verification.
+const delayedCommitRoot = await mkdtemp(join(tmpdir(), 'continuation-delayed-commit-fence-'));
+const delayedCommitStore = new DelayedArtifactStore(join(delayedCommitRoot, 'artifacts'));
+const delayedCommitRepository = await SqliteContinuationRepository.open({
+  databasePath: join(delayedCommitRoot, 'jobs.sqlite'),
+  artifactsDir: join(delayedCommitRoot, 'artifacts'),
+  artifactStore: delayedCommitStore,
+  jitter: () => 0,
+});
+const delayedCommitJob = await delayedCommitRepository.create(createRequest('delayed-commit'));
+const delayedCommitClaim = await delayedCommitRepository.claimDue(
+  'worker-delayed-commit',
+  baseNow,
+  '2026-07-17T00:00:00.020Z',
+);
+assert.equal(delayedCommitClaim?.job.jobId, delayedCommitJob.job.jobId);
+assert.ok(delayedCommitClaim);
+const delayedCommitCheckpoint = await completedCheckpoint(
+  delayedCommitJob.job.jobId,
+  'produce-result',
+  'artifact.json',
+  delayedCommitStore,
+);
+const delayedCommit = delayedCommitRepository.completeStep(delayedCommitClaim, {
+  outcome: {
+    outcome: 'completed',
+    checkpoint: delayedCommitCheckpoint,
+    finalMessage: 'This completion crossed the lease deadline.',
+    resultSummary: 'stale',
+    artifacts: ['artifact.json'],
+  },
+}, baseNow);
+await delayedCommitStore.verificationStarted;
+await new Promise((resolve) => setTimeout(resolve, 35));
+delayedCommitStore.release();
+assert.equal(await delayedCommit, 'stale');
+assert.equal((await delayedCommitRepository.get(delayedCommitJob.job.jobId))?.status, 'running');
+assert.equal(
+  await delayedCommitRepository.claimPendingDelivery(
+    'delivery-delayed-commit',
+    '2026-07-17T00:00:00.035Z',
+  ),
+  null,
+);
+delayedCommitRepository.close();
 
 // A later integrity failure preserves prior attempts and adds no failed-gate attempt.
 const priorAttemptRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-prior-attempt-'));

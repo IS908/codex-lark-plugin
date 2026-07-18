@@ -43,6 +43,7 @@ import {
 } from './progress-policy.js';
 import { ContinuationVerifier } from './verifier.js';
 import type {
+  ContinuationClaimMutationResult,
   ContinuationInputStorePort,
   ContinuationInputVerification,
   ContinuationRepository,
@@ -1351,9 +1352,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     });
   }
 
-  async markExecutionStarted(claim: ContinuationClaim, now: string): Promise<void> {
-    this.transaction(() => {
-      this.assertActiveClaim(claim);
+  async markExecutionStarted(
+    claim: ContinuationClaim,
+    now: string,
+  ): Promise<ContinuationClaimMutationResult> {
+    return this.transaction(() => {
+      if (!this.activeClaimForMutation(claim, now)) return 'stale';
       const update = this.database.prepare(`
         UPDATE continuation_attempts
         SET execution_phase = 'execution_started', heartbeat_at = ?
@@ -1365,7 +1369,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         claim.job.jobId,
         claim.workerId,
       );
-      assertOneChange(update.changes, claim.job.jobId);
+      return Number(update.changes) === 1 ? 'committed' : 'stale';
     });
   }
 
@@ -1502,8 +1506,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     claim: ContinuationClaim,
     result: ContinuationExecutionResult,
     now: string,
-  ): Promise<void> {
-    const claimed = this.transaction(() => this.assertActiveClaim(claim));
+  ): Promise<ContinuationClaimMutationResult> {
+    const leaseCheckStartedAt = process.hrtime.bigint();
+    const claimed = this.transaction(() => this.activeClaimForMutation(claim, now));
+    if (!claimed) return 'stale';
     const candidate = result.outcome.checkpoint;
     assertJsonBytes('checkpoint', candidate, CONTINUATION_LIMITS.checkpointBytes);
     const previous = claimed.checkpoint ?? null;
@@ -1540,8 +1546,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           findings: ['A continue outcome requires one concrete next action.'],
         }
       : verification;
-    this.transaction(() => {
-      const current = this.assertActiveClaim(claim);
+    const stale = this.transaction(() => {
+      const current = this.activeClaimForMutation(
+        claim,
+        timestampAfterElapsed(now, leaseCheckStartedAt),
+      );
+      if (!current) return true;
       this.recordAttemptEvaluation(claim, delta, committedVerification);
       const executionSessionId = result.executionSessionId === undefined
         ? current.executionSessionId
@@ -1740,15 +1750,17 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         outcome.recoveryFailure,
       );
     });
+    return stale === true ? 'stale' : 'committed';
   }
 
   async failAttempt(
     claim: ContinuationClaim,
     failure: ContinuationFailure,
     now: string,
-  ): Promise<void> {
-    this.transaction(() => {
-      const current = this.assertActiveClaim(claim);
+  ): Promise<ContinuationClaimMutationResult> {
+    return this.transaction(() => {
+      const current = this.activeClaimForMutation(claim, now);
+      if (!current) return 'stale';
       const attempt = this.database.prepare(`
         SELECT execution_phase FROM continuation_attempts
         WHERE attempt_id = ? AND job_id = ? AND worker_id = ? AND finished_at IS NULL
@@ -1786,9 +1798,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           now,
           current.executionSessionId,
         );
-        return;
+        return 'committed';
       }
       this.finishFailure(claim, current, failure, now, current.executionSessionId);
+      return 'committed';
     });
   }
 
@@ -1827,26 +1840,29 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     });
   }
 
-  async completeCancellation(claim: ContinuationClaim, now: string): Promise<void> {
-    this.transaction(() => {
-      const current = this.readJobBy('j.job_id = ?', claim.job.jobId);
-      if (!current || current.status !== 'cancel_requested' || current.leaseOwner !== claim.workerId) {
-        throw staleClaimError(claim.job.jobId);
-      }
+  async completeCancellation(
+    claim: ContinuationClaim,
+    now: string,
+  ): Promise<ContinuationClaimMutationResult> {
+    return this.transaction(() => {
+      const current = this.cancellationClaimForMutation(claim, now);
+      if (!current) return 'stale';
       const update = this.database.prepare(`
         UPDATE continuation_jobs
         SET status = 'cancelled', completed_at = ?, updated_at = ?,
             lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
             row_version = row_version + 1
         WHERE job_id = ? AND status = 'cancel_requested' AND lease_owner = ?
-      `).run(now, now, claim.job.jobId, claim.workerId);
-      assertOneChange(update.changes, claim.job.jobId);
+          AND row_version = ? AND lease_expires_at > ?
+      `).run(now, now, claim.job.jobId, claim.workerId, current.rowVersion, now);
+      if (Number(update.changes) !== 1) return 'stale';
       this.finishAttempt(claim, now, 'cancelled', current.executionSessionId);
       this.insertTerminalOutbox(
         current,
         `Task cancelled: ${current.jobId}\nThe background task was cancelled.`,
         now,
       );
+      return 'committed';
     });
   }
 
@@ -2666,6 +2682,46 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       // On an uncertain database outcome, preserve the installed tree for startup reconciliation.
       return false;
     }
+  }
+
+  private activeClaimForMutation(
+    claim: ContinuationClaim,
+    now: string,
+  ): ContinuationJob | null {
+    if (!claimProjectionMatches(claim)) return null;
+    const current = this.readJobBy('j.job_id = ?', claim.job.jobId);
+    if (
+      !current
+      || current.status !== 'running'
+      || current.leaseOwner !== claim.workerId
+      || current.rowVersion !== claim.claimedRowVersion
+      || !current.leaseExpiresAt
+      || current.leaseExpiresAt <= now
+      || this.activeAttemptId(current.jobId, claim.workerId) !== claim.attempt.attemptId
+    ) {
+      return null;
+    }
+    return current;
+  }
+
+  private cancellationClaimForMutation(
+    claim: ContinuationClaim,
+    now: string,
+  ): ContinuationJob | null {
+    if (!claimProjectionMatches(claim)) return null;
+    const current = this.readJobBy('j.job_id = ?', claim.job.jobId);
+    if (
+      !current
+      || current.status !== 'cancel_requested'
+      || current.leaseOwner !== claim.workerId
+      || current.rowVersion !== claim.claimedRowVersion + 1
+      || !current.leaseExpiresAt
+      || current.leaseExpiresAt <= now
+      || this.activeAttemptId(current.jobId, claim.workerId) !== claim.attempt.attemptId
+    ) {
+      return null;
+    }
+    return current;
   }
 
   private assertActiveClaim(claim: ContinuationClaim): ContinuationJob {
@@ -5265,6 +5321,20 @@ function numberField(row: SqlRow, field: string): number {
     throw new Error(`Invalid continuation database number field: ${field}.`);
   }
   return Number(value);
+}
+
+function claimProjectionMatches(claim: ContinuationClaim): boolean {
+  return claim.job.jobId === claim.attempt.jobId
+    && claim.workerId === claim.attempt.workerId
+    && claim.job.leaseOwner === claim.workerId
+    && claim.job.rowVersion === claim.claimedRowVersion;
+}
+
+function timestampAfterElapsed(timestamp: string, startedAt: bigint): string {
+  const elapsedMilliseconds = Number((process.hrtime.bigint() - startedAt) / 1_000_000n);
+  return elapsedMilliseconds > 0
+    ? addMilliseconds(timestamp, elapsedMilliseconds)
+    : timestamp;
 }
 
 function assertOneChange(changes: number | bigint, jobId: string): void {

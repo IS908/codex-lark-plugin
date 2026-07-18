@@ -23,6 +23,8 @@ export interface DurableRunWorkload<Input = unknown, State = unknown, Result = u
   recoverInterruptedAttempt(context: DurableRunInterruptedAttempt): DurableRunTransition;
 }
 
+export type DurableRunClaimMutationResult = 'committed' | 'stale';
+
 export function materializeDurableRunWorkloadContext<Input, State>(
   workload: Pick<
     DurableRunWorkload<Input, State, unknown>,
@@ -60,14 +62,21 @@ export interface DurableRunRepository {
     now: string,
     leaseExpiresAt: string,
   ): Promise<DurableRunClaim | null>;
-  markExecutionStarted(claim: DurableRunClaim, now: string): Promise<void>;
+  markExecutionStarted(
+    claim: DurableRunClaim,
+    now: string,
+  ): Promise<DurableRunClaimMutationResult>;
   heartbeat(claim: DurableRunClaim, now: string, leaseExpiresAt: string): Promise<boolean>;
   commitTransition(
     claim: DurableRunClaim,
     transition: DurableRunTransition,
     now: string,
-  ): Promise<void>;
-  failAttempt(claim: DurableRunClaim, failure: DurableRunFailure, now: string): Promise<void>;
+  ): Promise<DurableRunClaimMutationResult>;
+  failAttempt(
+    claim: DurableRunClaim,
+    failure: DurableRunFailure,
+    now: string,
+  ): Promise<DurableRunClaimMutationResult>;
   recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]>;
   claimDelivery(
     workloadKinds: readonly string[],

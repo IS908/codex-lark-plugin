@@ -35,6 +35,10 @@ class FakeClock implements DurableRunClock {
   now(): Date {
     return new Date(this.value);
   }
+
+  advance(ms: number): void {
+    this.value = new Date(this.value.getTime() + ms);
+  }
 }
 
 class SystemClock implements DurableRunClock {
@@ -153,6 +157,7 @@ function createRepositoryHarness(initialClaims: DurableRunClaim[] = []): Reposit
     },
     async markExecutionStarted(claim) {
       harness.executionStarts.push(claim.run.runId);
+      return 'committed';
     },
     async heartbeat(claim) {
       harness.heartbeats.push(claim.run.runId);
@@ -168,10 +173,12 @@ function createRepositoryHarness(initialClaims: DurableRunClaim[] = []): Reposit
         state: transition.state,
         rowVersion: claim.run.rowVersion + 1,
       });
+      return 'committed';
     },
     async failAttempt(claim, failure) {
       harness.failedAttempts.push(claim.run.runId);
       harness.failures.push(failure);
+      return 'committed';
     },
     async recoverExpiredLeases() {
       const interrupted = harness.interrupted;
@@ -200,6 +207,7 @@ interface WorkloadHarness {
   preflightCalls: string[];
   executeCalls: string[];
   recoverCalls: string[];
+  signals: AbortSignal[];
   releases: Array<() => void>;
 }
 
@@ -217,6 +225,7 @@ function createWorkloadHarness(
     preflightCalls: [],
     executeCalls: [],
     recoverCalls: [],
+    signals: [],
     releases: [],
   } as WorkloadHarness;
   harness.workload = {
@@ -246,6 +255,7 @@ function createWorkloadHarness(
     },
     async execute(claim, signal) {
       harness.executeCalls.push(claim.run.runId);
+      harness.signals.push(signal);
       if (options.hold) {
         await new Promise<void>((resolve, reject) => {
           harness.releases.push(resolve);
@@ -423,6 +433,227 @@ await stoppingPreflight;
 assert.deepEqual(stoppedPreflightRepository.transitions, []);
 assert.deepEqual(stoppedPreflightRepository.failedAttempts, []);
 assert.deepEqual(stoppedPreflightRepository.deliveryResults, []);
+
+// A stale execution-start CAS is lease loss: execution and every later mutation stay untouched.
+const staleMarkClaim = createClaim('async_task', 'stale-mark');
+const staleMarkRepository = createRepositoryHarness([staleMarkClaim]);
+const staleMarkWorkload = createWorkloadHarness('async_task');
+let staleMarkEntered = false;
+let releaseStaleMark!: () => void;
+const staleMarkReleased = new Promise<void>((resolve) => { releaseStaleMark = resolve; });
+staleMarkRepository.repository.markExecutionStarted = async () => {
+  staleMarkEntered = true;
+  await staleMarkReleased;
+  return 'stale' as never;
+};
+const staleMarkWorker = new DurableRunWorker({
+  repository: staleMarkRepository.repository,
+  workloads: [staleMarkWorkload.workload],
+  delivery,
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await staleMarkWorker.tick();
+await waitFor(() => staleMarkEntered, 'stale execution-start CAS');
+releaseStaleMark();
+await waitFor(() => staleMarkWorker.activeCount === 0, 'stale execution-start completion');
+assert.deepEqual(staleMarkWorkload.executeCalls, []);
+assert.deepEqual(staleMarkRepository.transitions, []);
+assert.deepEqual(staleMarkRepository.failedAttempts, []);
+assert.deepEqual(staleMarkRepository.deliveryResults, []);
+await staleMarkWorker.stop();
+
+// A stale transition CAS never creates state or outbox, and is observed as lease loss.
+const staleCommitClaim = createClaim('async_task', 'stale-commit');
+const staleCommitRepository = createRepositoryHarness([staleCommitClaim]);
+const staleCommitWorkload = createWorkloadHarness('async_task');
+let staleCommitEntered = false;
+let releaseStaleCommit!: () => void;
+const staleCommitReleased = new Promise<void>((resolve) => { releaseStaleCommit = resolve; });
+staleCommitRepository.repository.commitTransition = async () => {
+  staleCommitEntered = true;
+  await staleCommitReleased;
+  return 'stale' as never;
+};
+const staleCommitWorker = new DurableRunWorker({
+  repository: staleCommitRepository.repository,
+  workloads: [staleCommitWorkload.workload],
+  delivery,
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await staleCommitWorker.tick();
+await waitFor(() => staleCommitEntered, 'stale transition CAS');
+releaseStaleCommit();
+await waitFor(() => staleCommitWorker.activeCount === 0, 'stale transition completion');
+assert.equal(staleCommitWorkload.signals[0]?.aborted, true);
+assert.deepEqual(staleCommitRepository.transitions, []);
+assert.deepEqual(staleCommitRepository.failedAttempts, []);
+assert.deepEqual(staleCommitRepository.deliveryResults, []);
+await staleCommitWorker.stop();
+
+// A stale failure CAS is not itself an execution failure and cannot create state or outbox.
+const staleFailureClaim = createClaim('async_task', 'stale-failure');
+const staleFailureRepository = createRepositoryHarness([staleFailureClaim]);
+const staleFailureWorkload = createWorkloadHarness('async_task');
+staleFailureWorkload.workload.execute = async (_claim, signal) => {
+  staleFailureWorkload.signals.push(signal);
+  throw new Error('execution failed after ownership moved');
+};
+let staleFailureEntered = false;
+let releaseStaleFailure!: () => void;
+const staleFailureReleased = new Promise<void>((resolve) => { releaseStaleFailure = resolve; });
+staleFailureRepository.repository.failAttempt = async () => {
+  staleFailureEntered = true;
+  await staleFailureReleased;
+  return 'stale' as never;
+};
+const staleFailureWorker = new DurableRunWorker({
+  repository: staleFailureRepository.repository,
+  workloads: [staleFailureWorkload.workload],
+  delivery,
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await staleFailureWorker.tick();
+await waitFor(() => staleFailureEntered, 'stale failure CAS');
+releaseStaleFailure();
+await waitFor(() => staleFailureWorker.activeCount === 0, 'stale failure completion');
+assert.equal(staleFailureWorkload.signals[0]?.aborted, true);
+assert.deepEqual(staleFailureRepository.transitions, []);
+assert.deepEqual(staleFailureRepository.failedAttempts, []);
+assert.deepEqual(staleFailureRepository.deliveryResults, []);
+await staleFailureWorker.stop();
+
+// stop() can interleave after the status read settles but before execution-start mutation.
+const stopInterleaveClaim = createClaim('async_task', 'stop-interleave');
+const stopInterleaveRepository = createRepositoryHarness([stopInterleaveClaim]);
+const stopInterleaveWorkload = createWorkloadHarness('async_task');
+const stopInterleaveGet = stopInterleaveRepository.repository.get.bind(
+  stopInterleaveRepository.repository,
+);
+let stopInterleaveGetEntered = false;
+let releaseStopInterleaveGet!: () => void;
+const stopInterleaveGetReleased = new Promise<void>((resolve) => {
+  releaseStopInterleaveGet = resolve;
+});
+stopInterleaveRepository.repository.get = async (runId) => {
+  if (!stopInterleaveGetEntered) {
+    stopInterleaveGetEntered = true;
+    await stopInterleaveGetReleased;
+  }
+  return stopInterleaveGet(runId);
+};
+const stopInterleaveWorker = new DurableRunWorker({
+  repository: stopInterleaveRepository.repository,
+  workloads: [stopInterleaveWorkload.workload],
+  delivery,
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await stopInterleaveWorker.tick();
+await waitFor(() => stopInterleaveGetEntered, 'stop interleave status read');
+let stopInterleavePromise: Promise<void> | undefined;
+releaseStopInterleaveGet();
+queueMicrotask(() => { stopInterleavePromise = stopInterleaveWorker.stop(); });
+await waitFor(() => stopInterleavePromise !== undefined, 'interleaved stop');
+await stopInterleavePromise;
+assert.deepEqual(stopInterleaveRepository.executionStarts, []);
+assert.deepEqual(stopInterleaveWorkload.executeCalls, []);
+assert.deepEqual(stopInterleaveRepository.transitions, []);
+
+// The confirmed lease can expire in the same status-read/mutation microtask gap.
+const deadlineInterleaveClock = new FakeClock();
+const deadlineInterleaveClaim = createClaim('async_task', 'deadline-interleave');
+const deadlineInterleaveRepository = createRepositoryHarness([deadlineInterleaveClaim]);
+const deadlineInterleaveWorkload = createWorkloadHarness('async_task', {
+  preflightTransition: {
+    status: 'completed',
+    stateVersion: 1,
+    state: { steps: 1 },
+    deliveries: [{
+      kind: 'terminal',
+      idempotencyKey: `terminal:${deadlineInterleaveClaim.run.runId}`,
+      route: deadlineInterleaveClaim.run.route,
+      payload: { message: 'must not commit across the deadline gap' },
+    }],
+  },
+});
+const deadlineInterleaveGet = deadlineInterleaveRepository.repository.get.bind(
+  deadlineInterleaveRepository.repository,
+);
+let deadlineInterleaveGetEntered = false;
+let releaseDeadlineInterleaveGet!: () => void;
+const deadlineInterleaveGetReleased = new Promise<void>((resolve) => {
+  releaseDeadlineInterleaveGet = resolve;
+});
+deadlineInterleaveRepository.repository.get = async (runId) => {
+  if (!deadlineInterleaveGetEntered) {
+    deadlineInterleaveGetEntered = true;
+    await deadlineInterleaveGetReleased;
+  }
+  return deadlineInterleaveGet(runId);
+};
+const deadlineInterleaveWorker = new DurableRunWorker({
+  repository: deadlineInterleaveRepository.repository,
+  workloads: [deadlineInterleaveWorkload.workload],
+  delivery,
+  clock: deadlineInterleaveClock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await deadlineInterleaveWorker.tick();
+await waitFor(() => deadlineInterleaveGetEntered, 'deadline interleave status read');
+releaseDeadlineInterleaveGet();
+queueMicrotask(() => { deadlineInterleaveClock.advance(30_001); });
+await waitFor(() => deadlineInterleaveWorker.activeCount === 0, 'deadline interleave completion');
+assert.deepEqual(deadlineInterleaveRepository.transitions, []);
+assert.deepEqual(deadlineInterleaveRepository.failedAttempts, []);
+assert.deepEqual(deadlineInterleaveRepository.deliveryResults, []);
+await deadlineInterleaveWorker.stop();
+
+// A rejection observed after the confirmed deadline cannot be persisted as an attempt failure.
+const deadlineFailureClock = new FakeClock();
+const deadlineFailureClaim = createClaim('async_task', 'deadline-failure');
+const deadlineFailureRepository = createRepositoryHarness([deadlineFailureClaim]);
+const deadlineFailureWorkload = createWorkloadHarness('async_task');
+deadlineFailureWorkload.workload.execute = async (_claim, signal) => {
+  deadlineFailureWorkload.signals.push(signal);
+  throw new Error('execution failed at the lease boundary');
+};
+const deadlineFailureGet = deadlineFailureRepository.repository.get.bind(
+  deadlineFailureRepository.repository,
+);
+let deadlineFailureGetEntered = false;
+let deadlineFailureGetCalls = 0;
+let releaseDeadlineFailureGet!: () => void;
+const deadlineFailureGetReleased = new Promise<void>((resolve) => {
+  releaseDeadlineFailureGet = resolve;
+});
+deadlineFailureRepository.repository.get = async (runId) => {
+  deadlineFailureGetCalls += 1;
+  if (deadlineFailureGetCalls === 2) {
+    deadlineFailureGetEntered = true;
+    await deadlineFailureGetReleased;
+  }
+  return deadlineFailureGet(runId);
+};
+const deadlineFailureWorker = new DurableRunWorker({
+  repository: deadlineFailureRepository.repository,
+  workloads: [deadlineFailureWorkload.workload],
+  delivery,
+  clock: deadlineFailureClock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await deadlineFailureWorker.tick();
+await waitFor(() => deadlineFailureGetEntered, 'deadline failure status read');
+deadlineFailureClock.advance(30_001);
+releaseDeadlineFailureGet();
+await waitFor(() => deadlineFailureWorker.activeCount === 0, 'deadline failure completion');
+assert.equal(deadlineFailureWorkload.signals[0]?.aborted, true);
+assert.deepEqual(deadlineFailureRepository.failedAttempts, []);
+assert.deepEqual(deadlineFailureRepository.transitions, []);
+assert.deepEqual(deadlineFailureRepository.deliveryResults, []);
+await deadlineFailureWorker.stop();
 
 // Structured interrupted attempts are reduced by their workload and never blindly replayed.
 const recoveredClaim = createClaim('async_task', 'recovered');

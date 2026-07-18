@@ -143,9 +143,10 @@ function createRepositoryHarness(initialClaims: ContinuationClaim[] = []): Repos
       harness.heartbeats.push(jobId);
       return harness.getStatus === 'running';
     },
-    async markExecutionStarted() {},
+    async markExecutionStarted() { return 'committed'; },
     async completeStep(claim, result) {
       harness.completed.push({ claim, result });
+      return 'committed';
     },
     async failAttempt(claim, failure) {
       harness.failures.push({
@@ -153,9 +154,13 @@ function createRepositoryHarness(initialClaims: ContinuationClaim[] = []): Repos
         errorCode: failure.errorCode,
         retryable: failure.retryable,
       });
+      return 'committed';
     },
     async requestCancel() { return 'missing'; },
-    async completeCancellation(claim) { harness.cancellations.push(claim); },
+    async completeCancellation(claim) {
+      harness.cancellations.push(claim);
+      return 'committed';
+    },
     async recoverExpiredLeases() { harness.recoverCalls += 1; return 0; },
     async expireOverdue() { harness.expireCalls += 1; return 0; },
     async cloneForRetry() { throw new Error('not used'); },
@@ -379,6 +384,139 @@ await waitFor(() => nonRetryableHarness.failures.length === 1, 'non-retryable fa
 assert.equal(nonRetryableHarness.failures[0].errorCode, 'invalid_continuation_output');
 assert.equal(nonRetryableHarness.failures[0].retryable, false);
 await nonRetryableWorker.stop();
+
+// A stale continuation execution-start result is mapped to lease loss before Codex executes.
+const staleStartHarness = createRepositoryHarness([createClaim('stale-start')]);
+staleStartHarness.repository.markExecutionStarted = async () => 'stale';
+let staleStartExecutionCalls = 0;
+const staleStartWorker = new ContinuationWorker({
+  repository: staleStartHarness.repository,
+  executor: {
+    async execute() {
+      staleStartExecutionCalls += 1;
+      return completedResult('must not execute');
+    },
+  },
+  delivery: noDelivery,
+  clock: new FakeClock(),
+  maxConcurrency: 1,
+});
+await staleStartWorker.tick();
+await waitFor(() => staleStartWorker.activeCount === 0, 'stale continuation execution start');
+assert.equal(staleStartExecutionCalls, 0);
+assert.deepEqual(staleStartHarness.completed, []);
+assert.deepEqual(staleStartHarness.failures, []);
+await staleStartWorker.stop();
+
+// Stale step and failure commits stay stale instead of emitting committed diagnostics.
+const staleStepHarness = createRepositoryHarness([createClaim('stale-step')]);
+staleStepHarness.repository.completeStep = async () => 'stale';
+const staleStepDebug: string[] = [];
+const staleStepWorker = new ContinuationWorker({
+  repository: staleStepHarness.repository,
+  executor: { async execute() { return completedResult('stale result'); } },
+  delivery: noDelivery,
+  clock: new FakeClock(),
+  debug(message) { staleStepDebug.push(message); },
+  maxConcurrency: 1,
+});
+await staleStepWorker.tick();
+await waitFor(() => staleStepWorker.activeCount === 0, 'stale continuation step');
+assert.equal(staleStepDebug.some((message) => message.includes('event=step_committed')), false);
+assert.deepEqual(staleStepHarness.failures, []);
+await staleStepWorker.stop();
+
+const staleFailureHarness = createRepositoryHarness([createClaim('stale-failure')]);
+staleFailureHarness.repository.failAttempt = async () => 'stale';
+const staleFailureDebug: string[] = [];
+const staleFailureWorker = new ContinuationWorker({
+  repository: staleFailureHarness.repository,
+  executor: { async execute() { throw new Error('executor failed'); } },
+  delivery: noDelivery,
+  clock: new FakeClock(),
+  debug(message) { staleFailureDebug.push(message); },
+  maxConcurrency: 1,
+});
+await staleFailureWorker.tick();
+await waitFor(() => staleFailureWorker.activeCount === 0, 'stale continuation failure');
+assert.equal(staleFailureDebug.some((message) => message.includes('event=attempt_failed')), false);
+assert.deepEqual(staleFailureHarness.failures, []);
+await staleFailureWorker.stop();
+
+// Real mutation storage errors propagate to the worker-state boundary and are never reclassified.
+const markStorageErrorHarness = createRepositoryHarness([createClaim('mark-storage-error')]);
+markStorageErrorHarness.repository.markExecutionStarted = async () => {
+  throw new Error('execution-start storage unavailable');
+};
+const markStorageErrorAudit: string[] = [];
+const markStorageErrorWorker = new ContinuationWorker({
+  repository: markStorageErrorHarness.repository,
+  executor: { async execute() { return completedResult('unreachable'); } },
+  delivery: noDelivery,
+  clock: new FakeClock(),
+  audit: {
+    async record(event) {
+      if (event.detail) markStorageErrorAudit.push(`${event.action}:${event.detail}`);
+    },
+  },
+  maxConcurrency: 1,
+});
+await markStorageErrorWorker.tick();
+await waitFor(() => markStorageErrorWorker.activeCount === 0, 'execution-start storage error');
+assert.ok(markStorageErrorAudit.includes('continuation.execute:worker_state_error'));
+assert.deepEqual(markStorageErrorHarness.failures, []);
+await markStorageErrorWorker.stop();
+
+const stepStorageErrorHarness = createRepositoryHarness([createClaim('step-storage-error')]);
+stepStorageErrorHarness.repository.completeStep = async () => {
+  throw new Error('step storage unavailable');
+};
+const stepStorageErrorAudit: string[] = [];
+const stepStorageErrorWorker = new ContinuationWorker({
+  repository: stepStorageErrorHarness.repository,
+  executor: { async execute() { return completedResult('cannot commit'); } },
+  delivery: noDelivery,
+  clock: new FakeClock(),
+  audit: {
+    async record(event) {
+      if (event.detail) stepStorageErrorAudit.push(`${event.action}:${event.detail}`);
+    },
+  },
+  maxConcurrency: 1,
+});
+await stepStorageErrorWorker.tick();
+await waitFor(() => stepStorageErrorWorker.activeCount === 0, 'step storage error');
+assert.ok(stepStorageErrorAudit.includes('continuation.execute:worker_state_error'));
+assert.deepEqual(stepStorageErrorHarness.failures, []);
+await stepStorageErrorWorker.stop();
+
+const failureStorageErrorHarness = createRepositoryHarness([createClaim('failure-storage-error')]);
+failureStorageErrorHarness.repository.failAttempt = async () => {
+  throw new Error('failure storage unavailable');
+};
+const failureStorageErrorAudit: string[] = [];
+const failureStorageErrorDebug: string[] = [];
+const failureStorageErrorWorker = new ContinuationWorker({
+  repository: failureStorageErrorHarness.repository,
+  executor: { async execute() { throw new Error('provider unavailable'); } },
+  delivery: noDelivery,
+  clock: new FakeClock(),
+  audit: {
+    async record(event) {
+      if (event.detail) failureStorageErrorAudit.push(`${event.action}:${event.detail}`);
+    },
+  },
+  debug(message) { failureStorageErrorDebug.push(message); },
+  maxConcurrency: 1,
+});
+await failureStorageErrorWorker.tick();
+await waitFor(() => failureStorageErrorWorker.activeCount === 0, 'failure storage error');
+assert.ok(failureStorageErrorAudit.includes('continuation.execute:worker_state_error'));
+assert.equal(
+  failureStorageErrorDebug.some((message) => message.includes('event=attempt_failed')),
+  false,
+);
+await failureStorageErrorWorker.stop();
 
 // Top-level worker state errors retain the legacy continuation audit and debug boundary.
 const workerStateHarness = createRepositoryHarness([createClaim('worker-state-error')]);
