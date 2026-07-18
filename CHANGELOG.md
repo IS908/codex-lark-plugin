@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-07-19
+
+### Added
+- Persist immutable authenticated source facts and evidence-based task contracts separately from model-authored continuation state.
+- Add outcome-driven checkpoint verification, attempt deltas, bounded convergence, and factual progress reporting for collaborative background execution.
+- Add tool-agnostic durable failure categories, bounded automatic recovery, and creator/owner-authorized `waiting_user` resume through `/task resume` or an interrupt-message reply.
+
+### Changed
+- Migrate continuation storage directly to schema v9 with execution phases, recovery diagnostics, durable interrupts, and tool-call identity keyed by Job, logical step, and request hash.
+- Require an explicit per-tool `retrySafeStructuredValidation` contract before an executed validation envelope may authorize automatic retry.
+
+### Fixed
+- Prevent blind replay after ambiguous execution, process restart, legacy schema migration, repeated invalid invocations, or model-declared retries on opaque side-effecting steps.
+- Preserve normalized failure diagnostics and recovery decisions in task status and terminal delivery while keeping sensitive output redacted.
+
 ## [2.7.0] - 2026-07-17
 
 ### Added
@@ -896,7 +911,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.4.0...v2.5.0
