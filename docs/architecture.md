@@ -82,7 +82,8 @@ The current baseline is empty:
 - Persistent continuation is an independent bounded context. Pure state and
   closed outcomes live in `src/domain/continuation.ts`; repository, executor,
   delivery, clock, and audit contracts live in `src/ports/continuation.ts`.
-  Server-derived source facts and task contracts are persisted independently;
+  Server-derived source facts (including bounded document-comment selected and
+  parent context) and task contracts are persisted independently;
   admitted source files live in logically immutable, checksum-verified input
   trees that are read-only to Codex and the sandbox, never in the writable
   output artifact tree. Processes running under the same OS uid remain inside

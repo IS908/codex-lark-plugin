@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
 import type { LarkMessage } from './lark-message.js';
@@ -476,7 +477,10 @@ async function resolveContinuationSourceInputs(
         messageId: message.messageId,
         fileKey: attachment.fileKey,
         resourceType,
-        fileName: `${Date.now()}-${index}-${fileName}`,
+        fileName: `continuation-input-${createHash('sha256')
+          .update(`${message.messageId}\0${index}`)
+          .digest('hex')
+          .slice(0, 16)}.bin`,
         logPrefix: '[continuation-input]',
       });
       if (!downloaded) {

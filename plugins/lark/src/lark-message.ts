@@ -17,6 +17,8 @@ export interface LarkMessage {
   text: string;
   /** Unenriched current-turn user text. Routing classifiers must not inspect stored memory or quoted content. */
   currentUserText?: string;
+  /** Unenriched source envelope that may include selected document or parent-comment context. */
+  sourceContextText?: string;
   messageType: string;
   parentId?: string;
   parentContent?: string;

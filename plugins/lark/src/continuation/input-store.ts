@@ -41,10 +41,6 @@ const CREATION_LOCK_PREFIX = '.creating-';
 const CREATION_RECLAIM_PREFIX = '.reclaim-';
 const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
-const OWNERLESS_LOCK_GRACE_MS = 1_000;
-const CREATION_LOCK_HEARTBEAT_MS = 5_000;
-const CREATION_LOCK_LEASE_MS = 30_000;
-const REDACTION_QUARANTINE_LEASE_MS = 30_000;
 
 interface CreationLockOwner {
   pid: number;
@@ -95,7 +91,6 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
             `${JSON.stringify(owner)}\n`,
             { mode: 0o600, flag: 'wx' },
           );
-          await refreshCreationLockHeartbeat(lockDirectory, ownerNonce);
           if (await hasCompetingCreationReclaim(this.rootDir, lockDirectory)) {
             await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce);
             ownerNonce = undefined;
@@ -116,19 +111,9 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
-    let heartbeatInFlight = false;
-    const heartbeatTimer = setInterval(() => {
-      if (!ownerNonce || heartbeatInFlight) return;
-      heartbeatInFlight = true;
-      void refreshCreationLockHeartbeat(lockDirectory, ownerNonce)
-        .catch(() => {})
-        .finally(() => { heartbeatInFlight = false; });
-    }, CREATION_LOCK_HEARTBEAT_MS);
-    heartbeatTimer.unref();
     try {
       return await operation();
     } finally {
-      clearInterval(heartbeatTimer);
       if (ownerNonce) await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce).catch(() => {});
     }
   }
@@ -318,8 +303,6 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       await fs.rename(destination, source).catch(() => {});
       throw new Error('Continuation input quarantine identity changed during rename.');
     }
-    const now = new Date();
-    await fs.utimes(destination, now, now);
     return token;
   }
 
@@ -349,11 +332,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       if (redactionQuarantine) {
         const candidate = path.join(this.rootDir, entry.name);
         if (jobIds.has(redactionQuarantine.jobId)) {
-          const metadata = await fs.stat(candidate);
-          if (
-            isProcessAlive(redactionQuarantine.ownerPid)
-            && nowMs - metadata.mtimeMs < REDACTION_QUARANTINE_LEASE_MS
-          ) continue;
+          if (isProcessAlive(redactionQuarantine.ownerPid)) continue;
           try {
             await fs.rename(candidate, this.jobDirectory(redactionQuarantine.jobId));
           } catch (error) {
@@ -632,14 +611,7 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
     throw new Error('Continuation creation lock state is invalid.');
   }
   const owner = await readCreationOwner(lockDirectory);
-  if (owner === null) {
-    if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
-  } else {
-    const heartbeatAge = owner.nonce
-      ? await creationLockHeartbeatAge(lockDirectory, owner.nonce)
-      : Math.max(0, Date.now() - metadata.mtimeMs);
-    if (isProcessAlive(owner.pid) && heartbeatAge < CREATION_LOCK_LEASE_MS) return false;
-  }
+  if (owner === null || isProcessAlive(owner.pid)) return false;
 
   const quarantine = path.join(
     rootDir,
@@ -669,24 +641,6 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
 async function hasCompetingCreationReclaim(rootDir: string, lockDirectory: string): Promise<boolean> {
   const prefix = `${CREATION_RECLAIM_PREFIX}${path.basename(lockDirectory)}-`;
   return (await fs.readdir(rootDir)).some((entry) => entry.startsWith(prefix));
-}
-
-async function refreshCreationLockHeartbeat(lockDirectory: string, nonce: string): Promise<void> {
-  await fs.writeFile(
-    path.join(lockDirectory, `.heartbeat-${nonce}`),
-    `${Date.now()}\n`,
-    { mode: 0o600 },
-  );
-}
-
-async function creationLockHeartbeatAge(lockDirectory: string, nonce: string): Promise<number> {
-  try {
-    const metadata = await fs.stat(path.join(lockDirectory, `.heartbeat-${nonce}`));
-    return Math.max(0, Date.now() - metadata.mtimeMs);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return Number.POSITIVE_INFINITY;
-    throw error;
-  }
 }
 
 async function releaseCreationLock(

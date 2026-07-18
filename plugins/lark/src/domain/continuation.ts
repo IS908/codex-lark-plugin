@@ -150,6 +150,7 @@ export interface AsyncTaskFactSnapshot {
   schemaVersion: 1;
   provenance: 'captured' | 'legacy_unavailable';
   originalUserText: string | null;
+  sourceContextText: string | null;
   quotedMessageText: string | null;
   creatorOpenId: string;
   chatId: string;

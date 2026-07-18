@@ -283,6 +283,7 @@ export async function handleCommentEvent(data: any, deps: CommentEventDeps): Pro
     senderName,
     text: envelope,
     currentUserText: body ?? '',
+    sourceContextText: envelope,
     messageType: 'doc_comment',
     threadId: commentId,
     rawContent: JSON.stringify(data),

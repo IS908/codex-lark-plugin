@@ -127,12 +127,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       );
     }
     this.database.exec(`
+      PRAGMA busy_timeout = 5000;
       PRAGMA foreign_keys = ON;
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
-      PRAGMA busy_timeout = 5000;
     `);
     if (existingVersion === 0) this.transaction(() => {
+      if (Number(this.scalar('PRAGMA user_version')) !== 0) return;
       this.database.exec(`
       CREATE TABLE IF NOT EXISTS continuation_jobs (
         job_id TEXT PRIMARY KEY,
@@ -245,17 +246,48 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     });
-    if (existingVersion === 1) this.transaction(() => {
+    while (true) {
+      const version = Number(this.scalar('PRAGMA user_version'));
+      if (version === SCHEMA_VERSION) break;
+      if (version > SCHEMA_VERSION || version < 1) {
+        throw new Error(
+          `Unsupported continuation database schema version ${version}; expected 1-${SCHEMA_VERSION}.`,
+        );
+      }
+      if (version === 1) this.migrateToolCallSchema();
+      else if (version === 2) this.migratePermissionSchema();
+      else if (version === 3) this.migrateAttemptBudgetSchema();
+      else if (version === ATTEMPT_BUDGET_SCHEMA_VERSION) this.migrateDeliveryOutboxSchema();
+      else if (version === DELIVERY_OUTBOX_SCHEMA_VERSION) this.migrateRetentionSchema();
+      else if (version === RETENTION_SCHEMA_VERSION) this.migrateAsyncTaskFactsSchema();
+    }
+    await this.healthCheck();
+  }
+
+  private migrateToolCallSchema(): void {
+    this.transaction(() => {
+      const version = Number(this.scalar('PRAGMA user_version'));
+      if (version >= 2) return;
+      if (version !== 1) throw new Error(`Unexpected continuation schema version ${version}.`);
       this.database.exec(`
         ${toolCallSchemaSql()}
         PRAGMA user_version = 2;
       `);
     });
-    if (existingVersion === 1 || existingVersion === 2) this.transaction(() => {
-      this.database.exec(`
-        ALTER TABLE continuation_jobs
-        ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '{}';
-      `);
+  }
+
+  private migratePermissionSchema(): void {
+    this.transaction(() => {
+      const version = Number(this.scalar('PRAGMA user_version'));
+      if (version >= 3) return;
+      if (version !== 2) throw new Error(`Unexpected continuation schema version ${version}.`);
+      const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
+      if (!columns.some((column) => stringField(column, 'name') === 'permissions_json')) {
+        this.database.exec(`
+          ALTER TABLE continuation_jobs
+          ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '{}';
+        `);
+      }
       const rows = this.database.prepare(`
         SELECT job_id, working_directory, required_tools_json
         FROM continuation_jobs
@@ -281,33 +313,21 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       }
       this.database.exec('PRAGMA user_version = 3;');
     });
-    if (existingVersion >= 1 && existingVersion <= 3) {
-      this.migrateAttemptBudgetSchema();
-    }
-    if (Number(this.scalar('PRAGMA user_version')) === ATTEMPT_BUDGET_SCHEMA_VERSION) {
-      this.migrateDeliveryOutboxSchema();
-    }
-    if (Number(this.scalar('PRAGMA user_version')) === DELIVERY_OUTBOX_SCHEMA_VERSION) {
-      this.migrateRetentionSchema();
-    }
-    if (Number(this.scalar('PRAGMA user_version')) === RETENTION_SCHEMA_VERSION) {
-      this.migrateAsyncTaskFactsSchema();
-    }
-    await this.healthCheck();
   }
 
   private migrateAttemptBudgetSchema(): void {
-    const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
-    if (columns.some((column) => stringField(column, 'name') === 'max_attempts')) {
-      this.transaction(() => this.database.exec(
-        `PRAGMA user_version = ${ATTEMPT_BUDGET_SCHEMA_VERSION};`,
-      ));
-      return;
-    }
-
     this.database.exec('PRAGMA foreign_keys = OFF;');
     try {
-      this.transaction(() => this.database.exec(`
+      this.transaction(() => {
+        const version = Number(this.scalar('PRAGMA user_version'));
+        if (version >= ATTEMPT_BUDGET_SCHEMA_VERSION) return;
+        if (version !== 3) throw new Error(`Unexpected continuation schema version ${version}.`);
+        const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
+        if (columns.some((column) => stringField(column, 'name') === 'max_attempts')) {
+          this.database.exec(`PRAGMA user_version = ${ATTEMPT_BUDGET_SCHEMA_VERSION};`);
+          return;
+        }
+        this.database.exec(`
         CREATE TABLE continuation_jobs_v4 (
           job_id TEXT PRIMARY KEY,
           idempotency_key TEXT NOT NULL UNIQUE,
@@ -415,7 +435,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           ON continuation_jobs(creator_open_id, created_at DESC)
           WHERE deleted_at IS NULL;
         PRAGMA user_version = ${ATTEMPT_BUDGET_SCHEMA_VERSION};
-      `));
+        `);
+      });
     } finally {
       this.database.exec('PRAGMA foreign_keys = ON;');
     }
@@ -426,17 +447,20 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   private migrateDeliveryOutboxSchema(): void {
-    const columns = this.database.prepare('PRAGMA table_info(continuation_outbox)').all();
-    if (columns.some((column) => stringField(column, 'name') === 'event_key')) {
-      this.transaction(() => this.database.exec(
-        `PRAGMA user_version = ${DELIVERY_OUTBOX_SCHEMA_VERSION};`,
-      ));
-      return;
-    }
-
     this.database.exec('PRAGMA foreign_keys = OFF;');
     try {
-      this.transaction(() => this.database.exec(`
+      this.transaction(() => {
+        const version = Number(this.scalar('PRAGMA user_version'));
+        if (version >= DELIVERY_OUTBOX_SCHEMA_VERSION) return;
+        if (version !== ATTEMPT_BUDGET_SCHEMA_VERSION) {
+          throw new Error(`Unexpected continuation schema version ${version}.`);
+        }
+        const columns = this.database.prepare('PRAGMA table_info(continuation_outbox)').all();
+        if (columns.some((column) => stringField(column, 'name') === 'event_key')) {
+          this.database.exec(`PRAGMA user_version = ${DELIVERY_OUTBOX_SCHEMA_VERSION};`);
+          return;
+        }
+        this.database.exec(`
         CREATE TABLE continuation_outbox_v5 (
           outbox_id TEXT PRIMARY KEY,
           job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
@@ -486,7 +510,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         CREATE INDEX continuation_outbox_due_idx
           ON continuation_outbox(status, kind, next_attempt_at, created_at);
         PRAGMA user_version = ${DELIVERY_OUTBOX_SCHEMA_VERSION};
-      `));
+        `);
+      });
     } finally {
       this.database.exec('PRAGMA foreign_keys = ON;');
     }
@@ -497,16 +522,21 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   private migrateRetentionSchema(): void {
-    const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
-    if (columns.some((column) => stringField(column, 'name') === 'retain')) {
-      this.transaction(() => this.database.exec(`PRAGMA user_version = ${RETENTION_SCHEMA_VERSION};`));
-      return;
-    }
-    this.transaction(() => this.database.exec(`
-      ALTER TABLE continuation_jobs
-      ADD COLUMN retain INTEGER NOT NULL DEFAULT 0 CHECK(retain IN (0, 1));
-      PRAGMA user_version = ${RETENTION_SCHEMA_VERSION};
-    `));
+    this.transaction(() => {
+      const version = Number(this.scalar('PRAGMA user_version'));
+      if (version >= RETENTION_SCHEMA_VERSION) return;
+      if (version !== DELIVERY_OUTBOX_SCHEMA_VERSION) {
+        throw new Error(`Unexpected continuation schema version ${version}.`);
+      }
+      const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
+      if (!columns.some((column) => stringField(column, 'name') === 'retain')) {
+        this.database.exec(`
+          ALTER TABLE continuation_jobs
+          ADD COLUMN retain INTEGER NOT NULL DEFAULT 0 CHECK(retain IN (0, 1));
+        `);
+      }
+      this.database.exec(`PRAGMA user_version = ${RETENTION_SCHEMA_VERSION};`);
+    });
   }
 
   private migrateAsyncTaskFactsSchema(): void {
@@ -2073,6 +2103,10 @@ function toolCallSchemaSql(): string {
 }
 
 function mapJob(row: SqlRow): ContinuationJob {
+  const sourceFactsValue = parseTrustedJson(row.source_facts_json, 'source_facts_json');
+  validateSourceFacts(sourceFactsValue);
+  const taskContractValue = parseTrustedJson(row.task_contract_json, 'task_contract_json');
+  validateTaskContract(taskContractValue);
   return {
     jobId: stringField(row, 'job_id'),
     idempotencyKey: stringField(row, 'idempotency_key'),
@@ -2085,8 +2119,8 @@ function mapJob(row: SqlRow): ContinuationJob {
     objective: stringField(row, 'objective'),
     acceptanceCriteria: parseJson<string[]>(row.acceptance_criteria_json, []),
     contextSnapshot: parseJson(row.context_snapshot_json, EMPTY_CHECKPOINT),
-    sourceFacts: parseJson<AsyncTaskFactSnapshot>(row.source_facts_json, redactedLegacyFacts()),
-    taskContract: parseJson<AsyncTaskContract>(row.task_contract_json, redactedLegacyContract()),
+    sourceFacts: sourceFactsValue,
+    taskContract: taskContractValue,
     requiredTools: parseJson<string[]>(row.required_tools_json, []),
     workingDirectory: stringField(row, 'working_directory'),
     permissions: parsePermissionEnvelope(row.permissions_json),
@@ -2151,6 +2185,9 @@ function projectCreateRequest(
     originalUserText: request.sourceFacts.originalUserText === null
       ? null
       : redactContinuationText(request.sourceFacts.originalUserText),
+    sourceContextText: request.sourceFacts.sourceContextText === null
+      ? null
+      : redactContinuationText(request.sourceFacts.sourceContextText),
     quotedMessageText: request.sourceFacts.quotedMessageText === null
       ? null
       : redactContinuationText(request.sourceFacts.quotedMessageText),
@@ -2215,6 +2252,7 @@ function legacyFactsAndContract(row: SqlRow): {
       schemaVersion: 1,
       provenance: 'legacy_unavailable',
       originalUserText: null,
+      sourceContextText: null,
       quotedMessageText: null,
       creatorOpenId: stringField(row, 'creator_open_id'),
       chatId: route.kind === 'message_thread'
@@ -2256,6 +2294,7 @@ function redactedLegacyFacts(): AsyncTaskFactSnapshot {
     schemaVersion: 1,
     provenance: 'legacy_unavailable',
     originalUserText: null,
+    sourceContextText: null,
     quotedMessageText: null,
     creatorOpenId: '',
     chatId: '',
@@ -2310,13 +2349,7 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
   assertJsonBytes('permission envelope', request.permissions, CONTINUATION_LIMITS.contextSnapshotBytes);
   assertJsonBytes('delivery route', request.route, CONTINUATION_LIMITS.contextSnapshotBytes);
   validateTaskContract(request.taskContract);
-  if (request.sourceFacts.schemaVersion !== 1) {
-    throw new Error('Continuation source facts schema version is invalid.');
-  }
-  if (request.sourceFacts.provenance !== 'captured' && request.sourceFacts.provenance !== 'legacy_unavailable') {
-    throw new Error('Continuation source facts provenance is invalid.');
-  }
-  assertJsonBytes('source facts', request.sourceFacts, CONTINUATION_LIMITS.contextSnapshotBytes);
+  validateSourceFacts(request.sourceFacts);
   assertJsonBytes('source inputs', request.sourceInputs.map((input) => ({
     kind: input.kind,
     fileName: input.fileName,
@@ -2335,7 +2368,37 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
   }
 }
 
-function validateTaskContract(contract: AsyncTaskContract): void {
+function validateTaskContract(value: unknown): asserts value is AsyncTaskContract {
+  if (!isRecord(value)) throw new Error('Continuation task contract is invalid.');
+  const contract = value as Partial<AsyncTaskContract>;
+  if (
+    typeof contract.title !== 'string'
+    || typeof contract.objective !== 'string'
+    || !Array.isArray(contract.deliverables)
+    || !Array.isArray(contract.acceptanceCriteria)
+    || !Array.isArray(contract.verificationRequirements)
+    || !isCheckpoint(contract.initialContext)
+    || !contract.deliverables.every((entry) =>
+      isRecord(entry)
+      && typeof entry.id === 'string'
+      && typeof entry.description === 'string'
+      && typeof entry.required === 'boolean')
+    || !contract.acceptanceCriteria.every((entry) =>
+      isRecord(entry)
+      && typeof entry.id === 'string'
+      && typeof entry.description === 'string'
+      && Array.isArray(entry.deliverableIds)
+      && entry.deliverableIds.every((id) => typeof id === 'string'))
+    || !contract.verificationRequirements.every((entry) =>
+      isRecord(entry)
+      && typeof entry.id === 'string'
+      && typeof entry.description === 'string'
+      && (entry.kind === 'artifact_exists'
+        || entry.kind === 'artifact_sha256'
+        || entry.kind === 'evidence_reference'))
+  ) {
+    throw new Error('Continuation task contract is invalid.');
+  }
   if (contract.schemaVersion !== 1) throw new Error('Continuation task contract schema version is invalid.');
   if (contract.deliverables.length > CONTINUATION_LIMITS.deliverableCount) {
     throw new Error('Continuation deliverable count exceeds the configured limit.');
@@ -2371,6 +2434,34 @@ function validateTaskContract(contract: AsyncTaskContract): void {
     }
   }
   assertJsonBytes('task contract', contract, CONTINUATION_LIMITS.contextSnapshotBytes);
+}
+
+function validateSourceFacts(value: unknown): asserts value is AsyncTaskFactSnapshot {
+  if (!isRecord(value)) throw new Error('Continuation source facts are invalid.');
+  const facts = value as Partial<AsyncTaskFactSnapshot>;
+  if (
+    facts.schemaVersion !== 1
+    || (facts.provenance !== 'captured' && facts.provenance !== 'legacy_unavailable')
+    || !isNullableString(facts.originalUserText)
+    || !isNullableString(facts.sourceContextText)
+    || !isNullableString(facts.quotedMessageText)
+    || typeof facts.creatorOpenId !== 'string'
+    || typeof facts.chatId !== 'string'
+    || typeof facts.chatType !== 'string'
+    || !isDeliveryRoute(facts.route)
+    || typeof facts.sourceMessageId !== 'string'
+    || (facts.sourceThreadId !== undefined && typeof facts.sourceThreadId !== 'string')
+    || !isNullableString(facts.sourceMessageType)
+    || !isNullableString(facts.sourceTimestamp)
+    || !Array.isArray(facts.inputs)
+    || !facts.inputs.every(isManagedInputArtifact)
+    || typeof facts.workingDirectory !== 'string'
+    || !isNullableString(facts.model)
+  ) {
+    throw new Error('Continuation source facts are invalid.');
+  }
+  validatePermissionEnvelope(facts.permissions, false);
+  assertJsonBytes('source facts', facts, CONTINUATION_LIMITS.contextSnapshotBytes);
 }
 
 function validateFinalResult(
@@ -2684,6 +2775,60 @@ function parseJson<T>(value: SqlRow[string] | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function parseTrustedJson(value: SqlRow[string] | undefined, field: string): unknown {
+  if (typeof value !== 'string') {
+    throw new Error(`Invalid continuation database field: ${field}.`);
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch (error) {
+    throw new Error(`Invalid trusted continuation JSON field: ${field}.`, { cause: error });
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === 'string';
+}
+
+function isCheckpoint(value: unknown): value is ContinuationCheckpoint {
+  if (!isRecord(value) || typeof value.summary !== 'string') return false;
+  return ['completedSteps', 'remainingSteps', 'constraints', 'decisions', 'references']
+    .every((field) => Array.isArray(value[field])
+      && (value[field] as unknown[]).every((entry) => typeof entry === 'string'));
+}
+
+function isDeliveryRoute(value: unknown): value is ContinuationDeliveryRoute {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'message_thread') {
+    return typeof value.conversationId === 'string'
+      && typeof value.sourceMessageId === 'string'
+      && (value.threadId === undefined || typeof value.threadId === 'string');
+  }
+  return value.kind === 'comment_thread'
+    && typeof value.documentToken === 'string'
+    && typeof value.commentId === 'string'
+    && typeof value.fileType === 'string';
+}
+
+function isManagedInputArtifact(value: unknown): value is AsyncTaskFactSnapshot['inputs'][number] {
+  if (!isRecord(value)) return false;
+  return /^input_\d{3}$/.test(String(value.id ?? ''))
+    && (value.kind === 'message_image' || value.kind === 'message_attachment')
+    && typeof value.fileName === 'string'
+    && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.fileName)
+    && typeof value.relativePath === 'string'
+    && value.relativePath === value.fileName
+    && typeof value.sha256 === 'string'
+    && /^[a-f0-9]{64}$/.test(value.sha256)
+    && typeof value.sizeBytes === 'number'
+    && Number.isSafeInteger(value.sizeBytes)
+    && value.sizeBytes >= 0;
 }
 
 function stringField(row: SqlRow, field: string): string {

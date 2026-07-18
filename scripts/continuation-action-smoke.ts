@@ -344,6 +344,14 @@ const comment = message('comment', {
   chatId: 'doc:dox_report',
   senderId: 'ou_comment_creator',
   threadId: 'cmt_report',
+  currentUserText: 'Please update this section.',
+  sourceContextText: [
+    'Document comment: Please update this section.',
+    '[Selected Text]',
+    'Quarterly revenue was $42.',
+    '[Parent Comment]',
+    'Please verify the source.',
+  ].join('\n'),
   docComment: {
     fileToken: 'dox_report',
     commentId: 'cmt_report',
@@ -357,6 +365,9 @@ assert.deepEqual(commentCreated.job.route, {
   commentId: 'cmt_report',
   fileType: 'docx',
 });
+assert.equal(commentCreated.job.sourceFacts.originalUserText, 'Please update this section.');
+assert.match(commentCreated.job.sourceFacts.sourceContextText ?? '', /Quarterly revenue was \$42/);
+assert.match(commentCreated.job.sourceFacts.sourceContextText ?? '', /Please verify the source/);
 
 await assert.rejects(
   service.createFromMessage(action() as any, message('reaction', {

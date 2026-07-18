@@ -1,7 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import path from 'node:path';
-import os from 'node:os';
 import { appConfig } from './config.js';
 import { validateFeishuChatAccess } from './access-control-validation.js';
 import { LarkChannel } from './channel.js';
@@ -45,14 +43,14 @@ import { createContinuationRuntime } from './continuation/runtime.js';
 import { debugLog } from './debug-log.js';
 import type { JobFile } from './job-store.js';
 import type { RunJobNowResult } from './scheduler.js';
+import { LARK_INSTANCE_LOCK_PATH } from './instance-lock.js';
 
-const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 let closeContinuationRuntime: (() => Promise<void>) | null = null;
 
 async function main() {
   assertSupportedNodeVersion();
   const isDryRun = process.argv.includes('--dry-run');
-  const lock = isDryRun ? null : await acquireSingleInstanceLock(LOCK_FILE);
+  const lock = isDryRun ? null : await acquireSingleInstanceLock(LARK_INSTANCE_LOCK_PATH);
   if (lock) {
     registerLockCleanup(lock, undefined, async () => {
       await closeContinuationRuntime?.();

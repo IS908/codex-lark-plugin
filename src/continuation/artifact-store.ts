@@ -4,7 +4,6 @@ import path from 'node:path';
 import { CONTINUATION_LIMITS } from '../domain/continuation.js';
 
 const REDACTION_QUARANTINE_PREFIX = '.redacting-';
-const REDACTION_QUARANTINE_LEASE_MS = 30_000;
 
 export class ContinuationArtifactStore {
   readonly rootDir: string;
@@ -132,8 +131,6 @@ export class ContinuationArtifactStore {
       await fs.rename(destination, source).catch(() => {});
       throw new Error('Continuation artifact quarantine identity changed during rename.');
     }
-    const now = new Date();
-    await fs.utimes(destination, now, now);
     return token;
   }
 
@@ -145,7 +142,7 @@ export class ContinuationArtifactStore {
     await removeArtifactTree(this.quarantineDirectory(jobId, token));
   }
 
-  async cleanupOrphans(jobIds: ReadonlySet<string>, nowMs = Date.now()): Promise<void> {
+  async cleanupOrphans(jobIds: ReadonlySet<string>): Promise<void> {
     await this.ensureRoot();
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -154,11 +151,7 @@ export class ContinuationArtifactStore {
       if (!quarantine) continue;
       const candidate = path.join(this.rootDir, entry.name);
       if (jobIds.has(quarantine.jobId)) {
-        const metadata = await fs.stat(candidate);
-        if (
-          isProcessAlive(quarantine.ownerPid)
-          && nowMs - metadata.mtimeMs < REDACTION_QUARANTINE_LEASE_MS
-        ) continue;
+        if (isProcessAlive(quarantine.ownerPid)) continue;
         try {
           await fs.rename(candidate, this.jobDirectory(quarantine.jobId));
         } catch (error) {

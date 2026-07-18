@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
 process.env.LARK_APP_SECRET ||= 'test_app_secret';
@@ -469,6 +469,7 @@ try {
   );
   assert.equal(existsSync(continuationInputBatches[1][0].sourcePath), true);
   assert.equal(existsSync(continuationInputBatches[1][1].sourcePath), false);
+  assert.doesNotMatch(basename(continuationInputBatches[1][1].sourcePath), /report\.pdf/i);
 
   const createsBeforeAttachmentReplay = continuationCreates.length;
   const attachmentReplay = await dispatcher.execute({

@@ -77,6 +77,7 @@ function request(suffix: string, requiredTools: string[]): ContinuationCreateReq
       schemaVersion: 1,
       provenance: 'captured',
       originalUserText: 'Use one configured local CLI tool.',
+      sourceContextText: null,
       quotedMessageText: null,
       creatorOpenId: 'ou_creator',
       chatId: 'oc_tool',

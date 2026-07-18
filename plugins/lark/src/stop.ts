@@ -1,14 +1,10 @@
-import os from 'node:os';
-import path from 'node:path';
-import { appConfig } from './config.js';
 import { stopSingleInstanceLock } from './resource-governance.js';
-
-const lockPath = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
+import { LARK_INSTANCE_LOCK_PATH } from './instance-lock.js';
 
 const okStatuses = new Set(['no_lock', 'stale_lock_removed', 'process_terminated']);
 
 try {
-  const result = await stopSingleInstanceLock(lockPath);
+  const result = await stopSingleInstanceLock(LARK_INSTANCE_LOCK_PATH);
   console.error(result.message);
   process.exit(okStatuses.has(result.status) ? 0 : 1);
 } catch (err) {

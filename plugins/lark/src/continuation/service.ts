@@ -181,6 +181,9 @@ export class ContinuationService implements ContinuationTaskService {
         schemaVersion: 1,
         provenance: 'captured',
         originalUserText: boundedFactText(message.currentUserText ?? message.text),
+        sourceContextText: message.sourceContextText
+          ? boundedFactText(message.sourceContextText)
+          : null,
         quotedMessageText: message.parentContent
           ? boundedFactText(message.parentContent)
           : null,

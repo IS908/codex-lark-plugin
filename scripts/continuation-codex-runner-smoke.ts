@@ -64,6 +64,7 @@ function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
       schemaVersion: 1,
       provenance: 'captured',
       originalUserText: 'Produce a verified result.',
+      sourceContextText: null,
       quotedMessageText: null,
       creatorOpenId: 'ou_creator',
       chatId: 'oc_runner',
@@ -889,6 +890,9 @@ assert.equal(toolInputVerifications, 3);
 assert.equal(toolRequests[1].resumeSessionId, 'session-tool');
 assert.match(toolRequests[1].prompt, /Continuation Tool Result/);
 assert.match(toolRequests[1].prompt, /Release plan/);
+assert.match(toolRequests[1].prompt, /Durable Continuation Step/);
+assert.match(toolRequests[1].prompt, /sourceFacts/);
+assert.match(toolRequests[1].prompt, /taskContract/);
 assert.equal(toolRequests[1].sandbox, 'workspace-write');
 assert.deepEqual(toolRequests[1].configOverrides, [
   'approval_policy="never"',

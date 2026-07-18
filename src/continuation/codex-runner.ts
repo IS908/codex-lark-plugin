@@ -354,7 +354,6 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           recovery.result.message,
           claim.job.executionSessionId,
           false,
-          true,
           signal,
         );
       }
@@ -450,7 +449,6 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       invocation.result.message,
       firstSessionId,
       firstReplacedSession,
-      false,
       signal,
     );
   }
@@ -462,15 +460,12 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     resultMessage: string,
     previousSessionId: string | null | undefined,
     previousReplacedSession: boolean,
-    includeJobContext: boolean,
     signal: AbortSignal,
   ): Promise<ContinuationExecutionResult> {
     const toolResultPrompt = buildContinuationToolResultPrompt(claim, toolRequest, resultMessage);
     const followupRequest: CodexExecRequest = {
       ...baseRequest,
-      prompt: includeJobContext
-        ? `${baseRequest.prompt}\n\n${toolResultPrompt}`
-        : toolResultPrompt,
+      prompt: `${baseRequest.prompt}\n\n${toolResultPrompt}`,
       resumeSessionId: previousSessionId ?? baseRequest.resumeSessionId ?? null,
       abortSignal: signal,
     };

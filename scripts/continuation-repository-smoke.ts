@@ -193,6 +193,7 @@ function createRequest(
     schemaVersion: 1,
     provenance: 'captured',
     originalUserText: `Complete ${suffix}`,
+    sourceContextText: null,
     quotedMessageText: null,
     creatorOpenId: 'ou_creator',
     chatId: 'oc_continuation',
@@ -1319,6 +1320,49 @@ async function verifyIntermediateMigration(version: 4 | 5): Promise<void> {
 await verifyIntermediateMigration(4);
 await verifyIntermediateMigration(5);
 
+async function verifyConcurrentHistoricalMigration(version: 1 | 4 | 5): Promise<void> {
+  const migrationRoot = join(root, `migration-concurrent-v${version}`);
+  const databasePath = join(migrationRoot, 'jobs.sqlite');
+  const artifactsDir = join(migrationRoot, 'artifacts');
+  const inputsDir = join(migrationRoot, 'inputs');
+  const fixture = await seedHistoricalContinuationDatabase({
+    databasePath,
+    now: baseNow,
+    version,
+    workingDirectory: root,
+  });
+  const openChild = () => spawn(process.execPath, [
+    '--import',
+    'tsx',
+    new URL(import.meta.url).pathname,
+    '--open-continuation-repository',
+    databasePath,
+    artifactsDir,
+    inputsDir,
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const first = openChild();
+  const second = openChild();
+  await Promise.all([
+    waitForChildMarker(first, 'REPOSITORY_OPENED', 5_000),
+    waitForChildMarker(second, 'REPOSITORY_OPENED', 5_000),
+  ]);
+  const repository = await SqliteContinuationRepository.open({ databasePath, artifactsDir, inputsDir });
+  try {
+    await repository.healthCheck();
+    assert.equal((await repository.get(fixture.terminalJobId))?.jobId, fixture.terminalJobId);
+  } finally {
+    repository.close();
+  }
+  const database = new DatabaseSync(databasePath);
+  assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 7);
+  assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+  database.close();
+}
+
+await verifyConcurrentHistoricalMigration(1);
+await verifyConcurrentHistoricalMigration(4);
+await verifyConcurrentHistoricalMigration(5);
+
 const versionTwoDatabase = new DatabaseSync(migrationDatabasePath);
 const v2Columns = versionTwoDatabase.prepare('PRAGMA table_info(continuation_jobs)').all() as Array<{ name: string }>;
 if (v2Columns.some((column) => column.name === 'permissions_json')) {
@@ -1624,6 +1668,24 @@ assert.doesNotMatch(
   managedRaw.task_contract_json,
   /github_pat_|xapp-|sk-proj-|managed-db-secret|quarterly-|super-secret|source-report/,
 );
+managedDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run('{not-json', expectedManagedJobId);
+await assert.rejects(
+  reopenedManagedRepository.get(expectedManagedJobId),
+  /trusted continuation JSON field: source_facts_json/i,
+);
+managedDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ?, task_contract_json = ? WHERE job_id = ?
+`).run(managedRaw.source_facts_json, '{}', expectedManagedJobId);
+await assert.rejects(
+  reopenedManagedRepository.get(expectedManagedJobId),
+  /task contract is invalid/i,
+);
+managedDatabase.prepare(`
+  UPDATE continuation_jobs SET task_contract_json = ? WHERE job_id = ?
+`).run(managedRaw.task_contract_json, expectedManagedJobId);
+assert.equal((await reopenedManagedRepository.get(expectedManagedJobId))?.jobId, expectedManagedJobId);
 const managedManifest = await readFile(join(
   managedInputsDir,
   expectedManagedJobId,
@@ -1743,26 +1805,16 @@ await assert.rejects(lstat(join(
   redactionRollbackCreated.job.jobId,
 )));
 await assert.rejects(lstat(redactionRollbackArtifactRoot));
-const staleRedactionLease = new Date(Date.now() - 60_000);
-await utimes(liveInputQuarantine, staleRedactionLease, staleRedactionLease);
-await utimes(liveArtifactQuarantine, staleRedactionLease, staleRedactionLease);
-await redactionRollbackDelegate.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
-await redactionRollbackArtifacts.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
-assert.equal((await stat(redactionRollbackDelegate.resolve(
-  redactionRollbackCreated.job.jobId,
-  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
-))).isFile(), true);
-assert.equal((await stat(redactionRollbackArtifactRoot)).isDirectory(), true);
 const deadRedactionToken = `2147483647-${'f'.repeat(16)}`;
 await rename(
-  join(redactionRollbackOptions.inputsDir, redactionRollbackCreated.job.jobId),
+  liveInputQuarantine,
   join(
     redactionRollbackOptions.inputsDir,
     `.redacting-${redactionRollbackCreated.job.jobId}-${deadRedactionToken}`,
   ),
 );
 await rename(
-  redactionRollbackArtifactRoot,
+  liveArtifactQuarantine,
   join(
     redactionRollbackOptions.artifactsDir,
     `.redacting-${redactionRollbackCreated.job.jobId}-${deadRedactionToken}`,
@@ -2019,14 +2071,19 @@ const deadLockStore = new ContinuationInputStore(deadLockInputsRoot);
 await deadLockStore.ensureRoot();
 const ownerlessLockJobId = continuationJobId('ownerless-lock-grace');
 await mkdir(join(deadLockInputsRoot, `.creating-${ownerlessLockJobId}`));
-let ownerlessLockEntered = false;
-const ownerlessLockAcquisition = deadLockStore.withCreationLock(ownerlessLockJobId, async () => {
-  ownerlessLockEntered = true;
-});
-await new Promise((resolve) => setTimeout(resolve, 50));
-assert.equal(ownerlessLockEntered, false, 'a newly ownerless creation lock receives a grace period');
-await ownerlessLockAcquisition;
-assert.equal(ownerlessLockEntered, true);
+const ownerlessReclaimer = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  ownerlessLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await assert.rejects(
+  waitForChildMarker(ownerlessReclaimer, 'DEAD_LOCK_RECLAIMED', 500),
+  /timed out/i,
+);
+await rm(join(deadLockInputsRoot, `.creating-${ownerlessLockJobId}`), { recursive: true, force: true });
 const deadLockJobId = continuationJobId('dead-lock-immediate-recovery');
 const deadLockDirectory = join(deadLockInputsRoot, `.creating-${deadLockJobId}`);
 await mkdir(deadLockDirectory);
@@ -2053,10 +2110,6 @@ await writeFile(join(reusedPidLockDirectory, 'owner.json'), JSON.stringify({
   nonce: reusedPidNonce,
   createdAt: new Date().toISOString(),
 }), 'utf8');
-const reusedPidHeartbeat = join(reusedPidLockDirectory, `.heartbeat-${reusedPidNonce}`);
-await writeFile(reusedPidHeartbeat, 'stale\n', 'utf8');
-const staleHeartbeatTime = new Date(Date.now() - 60_000);
-await utimes(reusedPidHeartbeat, staleHeartbeatTime, staleHeartbeatTime);
 const reusedPidReclaimer = spawn(process.execPath, [
   '--import',
   'tsx',
@@ -2065,7 +2118,12 @@ const reusedPidReclaimer = spawn(process.execPath, [
   deadLockInputsRoot,
   reusedPidLockJobId,
 ], { stdio: ['ignore', 'pipe', 'pipe'] });
-await waitForChildMarker(reusedPidReclaimer, 'DEAD_LOCK_RECLAIMED', 1_000);
+await assert.rejects(
+  waitForChildMarker(reusedPidReclaimer, 'DEAD_LOCK_RECLAIMED', 500),
+  /timed out/i,
+);
+assert.equal((await lstat(reusedPidLockDirectory)).isDirectory(), true);
+await rm(reusedPidLockDirectory, { recursive: true, force: true });
 
 // Exercise the actual crash path: the first process owns the lock directory and
 // owner.json, then dies without cleanup. A fresh process must reclaim it without

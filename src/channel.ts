@@ -276,6 +276,7 @@ export class LarkChannel {
       const message = bindSdkCommentIdentity(comment, this.identitySession!);
       message.currentUserText = message.text;
       await this.addSdkCommentContext(message, comment, sdkChannel);
+      message.sourceContextText = message.text;
       this.enqueueMessage(message);
     } catch (err) {
       logSafeError('[sdk-channel] Error handling SDK comment event:', err);
@@ -335,9 +336,20 @@ export class LarkChannel {
       const target = await sdkChannel.comments.resolveTarget(comment.fileToken, comment.fileType);
       if (!target) return;
       const fetched = await sdkChannel.comments.fetch(target, comment.commentId);
-      if (fetched?.quote) {
-        message.text = `${message.text}\n\n[Selected Text]\n${capUtf8Text(fetched.quote, SDK_COMMENT_CONTEXT_CAP_BYTES)}`;
-      }
+      if (!fetched) return;
+      const currentReply = comment.replyId
+        ? fetched.replies.find((reply) => reply.reply_id === comment.replyId)
+        : fetched.replies[0];
+      const currentBody = sdkCommentReplyText(currentReply);
+      const parentBody = comment.replyId && fetched.replies[0]?.reply_id !== comment.replyId
+        ? sdkCommentReplyText(fetched.replies[0])
+        : '';
+      if (currentBody) message.currentUserText = currentBody;
+      message.text = capUtf8Text([
+        currentBody ? `[Comment]\n${currentBody}` : message.text,
+        fetched.quote ? `[Selected Text]\n${fetched.quote}` : '',
+        parentBody ? `[Parent Comment]\n${parentBody}` : '',
+      ].filter(Boolean).join('\n\n'), SDK_COMMENT_CONTEXT_CAP_BYTES) ?? message.text;
     } catch {
       // Comment context is best-effort; keep the turn deliverable without it.
     }
@@ -503,4 +515,22 @@ export class LarkChannel {
       logSafeError('[channel] Warning: failed to fetch bot info:', err);
     }
   }
+}
+
+function sdkCommentReplyText(reply: {
+  content?: {
+    elements?: Array<{
+      type: string;
+      text_run?: { text?: string };
+      docs_link?: { url?: string };
+      person?: { user_id?: string };
+    }>;
+  };
+} | undefined): string {
+  return (reply?.content?.elements ?? []).map((element) => {
+    if (element.type === 'text_run') return element.text_run?.text ?? '';
+    if (element.type === 'docs_link') return element.docs_link?.url ?? '';
+    if (element.type === 'person') return element.person?.user_id ?? '';
+    return '';
+  }).join('').trim();
 }

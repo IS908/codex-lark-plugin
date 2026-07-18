@@ -406,4 +406,48 @@ function makeDeps(overrides: any = {}) {
   assert.match(handled[0].text, /prior doc context/);
 }
 
+// 9. SDK comments retain the actual reply, selected text, and parent reply as
+// unenriched source context instead of persisting only the SDK placeholder.
+{
+  const channel = new LarkChannel();
+  const session = new IdentitySession(() => null);
+  const handled: any[] = [];
+  channel.setIdentitySession(session);
+  channel.setMessageHandler(async (message: any) => { handled.push(message); });
+  await channel.handleSdkCommentEvent({
+    fileToken: 'dox_sdk_context',
+    fileType: 'docx',
+    commentId: 'cmt_sdk_context',
+    replyId: 'rpl_child',
+    operator: { openId: 'ou_sdk_commenter' },
+    mentionedBot: true,
+    timestamp: Date.now(),
+  } as any, {
+    comments: {
+      resolveTarget: async () => ({ fileToken: 'dox_sdk_context', fileType: 'docx' }),
+      fetch: async () => ({
+        commentId: 'cmt_sdk_context',
+        quote: 'Selected quarterly revenue.',
+        isWhole: false,
+        replies: [
+          {
+            reply_id: 'rpl_parent',
+            content: { elements: [{ type: 'text_run', text_run: { text: 'Verify the source.' } }] },
+          },
+          {
+            reply_id: 'rpl_child',
+            content: { elements: [{ type: 'text_run', text_run: { text: 'Please update this section.' } }] },
+          },
+        ],
+      }),
+    },
+  } as any);
+  await flush();
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].currentUserText, 'Please update this section.');
+  assert.match(handled[0].sourceContextText, /Selected quarterly revenue/);
+  assert.match(handled[0].sourceContextText, /Verify the source/);
+  assert.doesNotMatch(handled[0].sourceContextText, /SDK comment mention/);
+}
+
 console.log('PASS');
