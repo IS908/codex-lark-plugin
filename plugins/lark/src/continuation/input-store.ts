@@ -314,7 +314,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
 
   async quarantine(jobId: string): Promise<string | null> {
     const source = this.jobDirectory(jobId);
-    const token = `${process.pid}.${currentProcessStartedAt()}-${randomBytes(8).toString('hex')}`;
+    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes(8).toString('hex')}`;
     const destination = this.quarantineDirectory(jobId, token);
     let metadata;
     try {
@@ -387,13 +387,20 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       const redactionQuarantine = parseRedactionQuarantine(entry.name);
       if (redactionQuarantine) {
         const candidate = path.join(this.rootDir, entry.name);
-        if (jobIds.has(redactionQuarantine.jobId)) {
+        await this.withCreationLock(redactionQuarantine.jobId, async () => {
+          const shouldRestore = isJobKnown
+            ? await isJobKnown(redactionQuarantine.jobId)
+            : jobIds.has(redactionQuarantine.jobId);
+          if (!shouldRestore) {
+            await removeManagedTree(candidate);
+            return;
+          }
           const candidateMetadata = await fs.lstat(candidate).catch((error) => {
             if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
             throw error;
           });
-          if (!candidateMetadata) continue;
-          const stateAgeMs = Date.now() - candidateMetadata.mtimeMs;
+          if (!candidateMetadata) return;
+          const stateAgeMs = nowMs - (redactionQuarantine.createdAt ?? candidateMetadata.mtimeMs);
           const ownerIsActive = redactionQuarantine.ownerStartedAt === null
             ? isProcessAlive(redactionQuarantine.ownerPid)
               && stateAgeMs < OWNERLESS_LOCK_GRACE_MS
@@ -407,7 +414,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
             ownerIsActive
             && (redactionQuarantine.ownerPid !== process.pid
               || ACTIVE_REDACTION_QUARANTINES.has(entry.name))
-          ) continue;
+          ) return;
           try {
             await fs.rename(candidate, this.jobDirectory(redactionQuarantine.jobId));
           } catch (error) {
@@ -418,9 +425,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
               || !(await isRestoredDirectory(this.jobDirectory(redactionQuarantine.jobId)))
             ) throw error;
           }
-        } else {
-          await removeManagedTree(candidate);
-        }
+        });
         continue;
       }
       const isStaging = entry.name.startsWith('.staging-');
@@ -479,7 +484,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
 
   private quarantineDirectory(jobId: string, token: string): string {
     assertJobId(jobId);
-    if (!/^[1-9]\d*\.[1-9]\d*-[a-f0-9]{16}$/.test(token)) {
+    if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error('Continuation input quarantine token is invalid.');
     }
     return path.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
@@ -805,10 +810,9 @@ function assertEquivalentManifest(existing: InputManifest, candidate: InputManif
 
 function parseRedactionQuarantine(
   name: string,
-): { jobId: string; ownerPid: number; ownerStartedAt: number | null } | null {
+): { jobId: string; ownerPid: number; ownerStartedAt: number | null; createdAt: number | null } | null {
   if (!name.startsWith(REDACTION_QUARANTINE_PREFIX)) return null;
-  const match = /^\.redacting-(.+)-([1-9]\d*)\.([1-9]\d*)-([a-f0-9]{16})$/.exec(name)
-    ?? /^\.redacting-(.+)-([1-9]\d*)-([a-f0-9]{16})$/.exec(name);
+  const match = /^\.redacting-(.+)-([1-9]\d*)(?:\.([1-9]\d*))?(?:\.([1-9]\d*))?-[a-f0-9]{16}$/.exec(name);
   if (!match) return null;
   try {
     assertJobId(match[1]);
@@ -817,9 +821,11 @@ function parseRedactionQuarantine(
   }
   const ownerPid = Number(match[2]);
   if (!Number.isSafeInteger(ownerPid)) return null;
-  const ownerStartedAt = match.length === 5 ? Number(match[3]) : null;
+  const ownerStartedAt = match[3] === undefined ? null : Number(match[3]);
   if (ownerStartedAt !== null && !Number.isSafeInteger(ownerStartedAt)) return null;
-  return { jobId: match[1], ownerPid, ownerStartedAt };
+  const createdAt = match[4] === undefined ? null : Number(match[4]);
+  if (createdAt !== null && !Number.isSafeInteger(createdAt)) return null;
+  return { jobId: match[1], ownerPid, ownerStartedAt, createdAt };
 }
 
 async function removeManagedTree(target: string): Promise<void> {

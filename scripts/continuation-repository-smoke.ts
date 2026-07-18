@@ -2156,6 +2156,75 @@ assert.equal(
   'restore artifact after rollback',
 );
 
+// A stale reconciliation snapshot must not restore quarantines after the current
+// database state says the Job was deleted or sanitized as corrupt. New tokens
+// also carry quarantine creation time instead of inheriting an old tree mtime.
+const oldQuarantineTime = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+await utimes(
+  join(redactionRollbackOptions.inputsDir, redactionRollbackCreated.job.jobId),
+  oldQuarantineTime,
+  oldQuarantineTime,
+);
+await utimes(redactionRollbackArtifactRoot, oldQuarantineTime, oldQuarantineTime);
+const quarantineStartedAt = Date.now();
+const staleSnapshotInputToken = await redactionRollbackDelegate.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+const staleSnapshotArtifactToken = await redactionRollbackArtifacts.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+assert.ok(staleSnapshotInputToken);
+assert.ok(staleSnapshotArtifactToken);
+const inputQuarantineCreatedAt = /^(?:\d+)\.(?:\d+)\.(\d+)-/.exec(staleSnapshotInputToken)?.[1];
+const artifactQuarantineCreatedAt = /^(?:\d+)\.(?:\d+)\.(\d+)-/.exec(staleSnapshotArtifactToken)?.[1];
+assert.ok(inputQuarantineCreatedAt);
+assert.ok(artifactQuarantineCreatedAt);
+assert.ok(Number(inputQuarantineCreatedAt) >= quarantineStartedAt);
+assert.ok(Number(artifactQuarantineCreatedAt) >= quarantineStartedAt);
+const staleSnapshotDeadToken = `2147483646.1.${Date.now()}-${'d'.repeat(16)}`;
+await rename(
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${staleSnapshotInputToken}`,
+  ),
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${staleSnapshotDeadToken}`,
+  ),
+);
+await rename(
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${staleSnapshotArtifactToken}`,
+  ),
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${staleSnapshotDeadToken}`,
+  ),
+);
+await redactionRollbackDelegate.cleanupOrphans(
+  liveRedactionJobs,
+  Date.now(),
+  async () => false,
+);
+await redactionRollbackArtifacts.cleanupOrphans(
+  liveRedactionJobs,
+  Date.now(),
+  async () => false,
+  (jobId, operation) => redactionRollbackDelegate.withCreationLock(jobId, operation),
+);
+await assert.rejects(lstat(join(
+  redactionRollbackOptions.inputsDir,
+  redactionRollbackCreated.job.jobId,
+)), /ENOENT/);
+await assert.rejects(lstat(redactionRollbackArtifactRoot), /ENOENT/);
+assert.equal((await readdir(redactionRollbackOptions.inputsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${redactionRollbackCreated.job.jobId}-`),
+), false);
+assert.equal((await readdir(redactionRollbackOptions.artifactsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${redactionRollbackCreated.job.jobId}-`),
+), false);
+
 // Separate repository instances serialize redaction through the cross-process Job lock.
 // The loser must observe the committed DB state and must never restore the winner's quarantines.
 const concurrentRedactionRoot = await mkdtemp(join(tmpdir(), 'continuation-redaction-concurrent-'));

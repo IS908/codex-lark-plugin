@@ -142,6 +142,12 @@ export class ContinuationService implements ContinuationTaskService {
     ) {
       throw new Error('Continuation deterministic Job identity conflicts with the authenticated source message.');
     }
+    if (existing.errorCode === 'continuation_persisted_state_invalid') {
+      throw new ContinuationServiceError(
+        'invalid_state',
+        'This background task cannot be reused because its stored state failed integrity validation.',
+      );
+    }
     return existing;
   }
 

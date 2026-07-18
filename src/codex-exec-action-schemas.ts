@@ -206,6 +206,7 @@ const ContinuationAcceptanceCriterionActionSchema = z.object({
   id: ContinuationContractIdSchema,
   description: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
   deliverable_ids: z.array(ContinuationContractIdSchema)
+    .min(1)
     .max(CONTINUATION_LIMITS.deliverableCount),
 }).strict();
 
@@ -244,6 +245,13 @@ function validateContinuationActionContract(
   action: z.infer<typeof CreateContinuationActionBaseSchema>,
   ctx: z.RefinementCtx,
 ): void {
+  if (!action.deliverables.some((deliverable) => deliverable.required)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['deliverables'],
+      message: 'at least one deliverable must be required',
+    });
+  }
   for (const [field, entries] of [
     ['deliverables', action.deliverables],
     ['acceptance_criteria', action.acceptance_criteria],

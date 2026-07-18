@@ -120,7 +120,7 @@ export class ContinuationArtifactStore {
   async quarantine(jobId: string): Promise<string | null> {
     await this.ensureRoot();
     const source = this.jobDirectory(jobId);
-    const token = `${process.pid}.${currentProcessStartedAt()}-${randomBytes(8).toString('hex')}`;
+    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes(8).toString('hex')}`;
     const destination = this.quarantineDirectory(jobId, token);
     let sourceMetadata;
     try {
@@ -166,7 +166,12 @@ export class ContinuationArtifactStore {
     }
   }
 
-  async cleanupOrphans(jobIds: ReadonlySet<string>): Promise<void> {
+  async cleanupOrphans(
+    jobIds: ReadonlySet<string>,
+    nowMs = Date.now(),
+    isJobKnown?: (jobId: string) => boolean | Promise<boolean>,
+    withJobLock?: <T>(jobId: string, operation: () => Promise<T>) => Promise<T>,
+  ): Promise<void> {
     await this.ensureRoot();
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -174,13 +179,20 @@ export class ContinuationArtifactStore {
       const quarantine = parseRedactionQuarantine(entry.name);
       if (!quarantine) continue;
       const candidate = path.join(this.rootDir, entry.name);
-      if (jobIds.has(quarantine.jobId)) {
+      const reconcile = async (): Promise<void> => {
+        const shouldRestore = isJobKnown
+          ? await isJobKnown(quarantine.jobId)
+          : jobIds.has(quarantine.jobId);
+        if (!shouldRestore) {
+          await removeArtifactTree(candidate);
+          return;
+        }
         const candidateMetadata = await fs.lstat(candidate).catch((error) => {
           if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
           throw error;
         });
-        if (!candidateMetadata) continue;
-        const stateAgeMs = Date.now() - candidateMetadata.mtimeMs;
+        if (!candidateMetadata) return;
+        const stateAgeMs = nowMs - (quarantine.createdAt ?? candidateMetadata.mtimeMs);
         const ownerIsActive = quarantine.ownerStartedAt === null
           ? isProcessAlive(quarantine.ownerPid)
             && stateAgeMs < LEGACY_QUARANTINE_GRACE_MS
@@ -194,7 +206,7 @@ export class ContinuationArtifactStore {
           ownerIsActive
           && (quarantine.ownerPid !== process.pid
             || ACTIVE_REDACTION_QUARANTINES.has(entry.name))
-        ) continue;
+        ) return;
         try {
           await fs.rename(candidate, this.jobDirectory(quarantine.jobId));
         } catch (error) {
@@ -205,9 +217,9 @@ export class ContinuationArtifactStore {
             || !(await isRestoredDirectory(this.jobDirectory(quarantine.jobId)))
           ) throw error;
         }
-      } else {
-        await removeArtifactTree(candidate);
-      }
+      };
+      if (withJobLock) await withJobLock(quarantine.jobId, reconcile);
+      else await reconcile();
     }
   }
 
@@ -228,7 +240,7 @@ export class ContinuationArtifactStore {
 
   private quarantineDirectory(jobId: string, token: string): string {
     this.jobDirectory(jobId);
-    if (!/^[1-9]\d*\.[1-9]\d*-[a-f0-9]{16}$/.test(token)) {
+    if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error('Continuation artifact quarantine token is invalid.');
     }
     return path.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
@@ -237,16 +249,17 @@ export class ContinuationArtifactStore {
 
 function parseRedactionQuarantine(
   name: string,
-): { jobId: string; ownerPid: number; ownerStartedAt: number | null } | null {
+): { jobId: string; ownerPid: number; ownerStartedAt: number | null; createdAt: number | null } | null {
   if (!name.startsWith(REDACTION_QUARANTINE_PREFIX)) return null;
-  const match = /^\.redacting-(.+)-([1-9]\d*)\.([1-9]\d*)-[a-f0-9]{16}$/.exec(name)
-    ?? /^\.redacting-(.+)-([1-9]\d*)-[a-f0-9]{16}$/.exec(name);
+  const match = /^\.redacting-(.+)-([1-9]\d*)(?:\.([1-9]\d*))?(?:\.([1-9]\d*))?-[a-f0-9]{16}$/.exec(name);
   if (!match || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(match[1])) return null;
   const ownerPid = Number(match[2]);
   if (!Number.isSafeInteger(ownerPid)) return null;
-  const ownerStartedAt = match.length === 4 ? Number(match[3]) : null;
+  const ownerStartedAt = match[3] === undefined ? null : Number(match[3]);
   if (ownerStartedAt !== null && !Number.isSafeInteger(ownerStartedAt)) return null;
-  return { jobId: match[1], ownerPid, ownerStartedAt };
+  const createdAt = match[4] === undefined ? null : Number(match[4]);
+  if (createdAt !== null && !Number.isSafeInteger(createdAt)) return null;
+  return { jobId: match[1], ownerPid, ownerStartedAt, createdAt };
 }
 
 async function removeArtifactTree(directory: string): Promise<void> {

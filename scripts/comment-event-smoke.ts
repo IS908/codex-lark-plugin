@@ -452,4 +452,29 @@ function makeDeps(overrides: any = {}) {
   assert.doesNotMatch(handled[0].sourceContextText, /SDK comment mention/);
 }
 
+// 10. Production raw SDK comments retain the normalized SDK timestamp.
+{
+  const channel = new LarkChannel();
+  const session = new IdentitySession(() => null);
+  const handled: any[] = [];
+  const deps = makeDeps();
+  const sdkCommentTimestamp = Date.parse('2026-07-18T09:45:00.000Z');
+  channel.setIdentitySession(session);
+  channel.setMessageHandler(async (message: any) => { handled.push(message); });
+  (channel as any).botOpenId = 'ou_bot';
+  (channel as any).client = deps.client;
+  await channel.handleSdkCommentEvent({
+    fileToken: 'dox_doc_1',
+    fileType: 'docx',
+    commentId: 'cmt_doc_1',
+    operator: { openId: 'ou_owner' },
+    mentionedBot: true,
+    timestamp: sdkCommentTimestamp,
+    raw: makeEvent({ event_id: 'evt_sdk_raw_timestamp' }),
+  } as any);
+  await flush();
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].timestampMs, sdkCommentTimestamp);
+}
+
 console.log('PASS');

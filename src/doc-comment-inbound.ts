@@ -17,6 +17,7 @@ export interface CommentEventDeps {
   messageHandler: MessageHandler | null;
   processMessage?: (message: LarkMessage) => Promise<void>;
   resolveUserName: (openId: string) => Promise<string>;
+  sourceTimestampMs?: number;
   client: {
     request?: (req: {
       method: 'POST';
@@ -285,6 +286,7 @@ export async function handleCommentEvent(data: any, deps: CommentEventDeps): Pro
     currentUserText: body ?? '',
     sourceContextText: envelope,
     messageType: 'doc_comment',
+    ...(deps.sourceTimestampMs !== undefined ? { timestampMs: deps.sourceTimestampMs } : {}),
     threadId: commentId,
     rawContent: JSON.stringify(data),
     docComment: {

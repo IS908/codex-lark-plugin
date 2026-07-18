@@ -267,6 +267,7 @@ export class LarkChannel {
         messageHandler: this.messageHandler,
         processMessage: this.processEnqueuedMessage.bind(this),
         resolveUserName: this.displayNameResolver.resolveUserName.bind(this.displayNameResolver),
+        sourceTimestampMs: comment.timestamp,
         client: this.client as any,
       });
       return;

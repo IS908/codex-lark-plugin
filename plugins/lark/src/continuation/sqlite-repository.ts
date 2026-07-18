@@ -1737,11 +1737,19 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       .filter((row) => optionalStringField(row, 'error_code') !== 'continuation_persisted_state_invalid')
       .map((row) => stringField(row, 'job_id')));
     const isJobKnown = (jobId: string): boolean => Boolean(this.database.prepare(`
-      SELECT 1 FROM continuation_jobs WHERE job_id = ? AND deleted_at IS NULL
+      SELECT 1 FROM continuation_jobs
+      WHERE job_id = ? AND deleted_at IS NULL
+        AND (error_code IS NULL OR error_code <> 'continuation_persisted_state_invalid')
     `).get(jobId));
+    const nowMs = Date.now();
     const results = await Promise.allSettled([
-      this.artifacts.cleanupOrphans(knownJobs),
-      this.inputs.cleanupOrphans(knownJobs, Date.now(), isJobKnown),
+      this.artifacts.cleanupOrphans(
+        knownJobs,
+        nowMs,
+        isJobKnown,
+        (jobId, operation) => this.inputs.withCreationLock(jobId, operation),
+      ),
+      this.inputs.cleanupOrphans(knownJobs, nowMs, isJobKnown),
     ]);
     const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
     if (errors.length > 0) {

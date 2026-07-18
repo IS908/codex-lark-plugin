@@ -71,6 +71,14 @@ for (const invalidContract of [
     ],
   },
   {
+    deliverables: [{ id: 'report', description: 'Optional report.', required: false }],
+  },
+  {
+    acceptance_criteria: [
+      { id: 'unbound', description: 'Criterion without a deliverable.', deliverable_ids: [] },
+    ],
+  },
+  {
     deliverables: Array.from({ length: 33 }, (_, index) => ({
       id: `deliverable_${index}`,
       description: 'Bounded deliverable.',
@@ -444,6 +452,13 @@ corruptRetryDatabase.prepare(`
   unexpected: 'invalid persisted state',
 }), corruptRetrySource.job.jobId);
 corruptRetryDatabase.close();
+const corruptCreateReplay = await dispatcher.execute({
+  message: corruptRetryMessage,
+  actions: [action()] as any,
+  continuationPermitted: false,
+});
+assert.equal(corruptCreateReplay[0].ok, false);
+assert.match(corruptCreateReplay[0].message, /stored state failed integrity validation/i);
 await assert.rejects(
   service.retryForActor(
     corruptRetrySource.job.jobId,
