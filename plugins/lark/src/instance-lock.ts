@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { readdir, stat } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import {
   acquireSingleInstanceLock,
   stopSingleInstanceLock,
@@ -31,8 +31,11 @@ export async function acquireLarkInstanceLock(
     globalPath,
   ];
   const acquired: SingleInstanceLockHandle[] = [];
+  const expectedUid = process.getuid?.();
   try {
-    for (const lockPath of paths) acquired.push(await acquireSingleInstanceLock(lockPath));
+    for (const lockPath of paths) {
+      acquired.push(await acquireSingleInstanceLock(lockPath, { expectedUid }));
+    }
   } catch (error) {
     const releaseErrors = releaseLocks(acquired);
     if (releaseErrors.length > 0) {
@@ -64,7 +67,10 @@ export async function stopLarkInstances(
     path.join(stateRoot, path.basename(LARK_INSTANCE_LOCK_PATH)),
     ...await compatibleLegacyLockPaths(appId, legacyLockRoot, false),
   ];
-  for (const lockPath of paths) results.push(await stopSingleInstanceLock(lockPath));
+  const expectedUid = process.getuid?.();
+  for (const lockPath of paths) {
+    results.push(await stopSingleInstanceLock(lockPath, { expectedUid }));
+  }
   return results;
 }
 
@@ -85,8 +91,12 @@ async function compatibleLegacyLockPaths(
   const ownedPaths: string[] = [];
   for (const name of candidates) {
     const candidate = path.join(lockRoot, name);
-    const metadata = await stat(candidate).catch(() => null);
-    if (metadata && (currentUid === undefined || metadata.uid === currentUid)) {
+    const metadata = await lstat(candidate).catch(() => null);
+    if (
+      metadata?.isFile()
+      && !metadata.isSymbolicLink()
+      && (currentUid === undefined || metadata.uid === currentUid)
+    ) {
       ownedPaths.push(candidate);
     }
   }

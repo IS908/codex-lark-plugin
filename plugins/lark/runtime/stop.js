@@ -664,7 +664,7 @@ var appConfig = {
 // src/instance-lock.ts
 import os2 from "node:os";
 import path2 from "node:path";
-import { readdir as readdir2, stat as stat2 } from "node:fs/promises";
+import { lstat, readdir as readdir2 } from "node:fs/promises";
 
 // src/resource-governance.ts
 import { execFile } from "node:child_process";
@@ -672,6 +672,7 @@ import {
   appendFile,
   link,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -680,6 +681,7 @@ import {
   unlink,
   writeFile
 } from "node:fs/promises";
+import { constants, existsSync, readFileSync, unlinkSync } from "node:fs";
 import { gzip } from "node:zlib";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
@@ -749,8 +751,8 @@ function sameLockOwner(a, b) {
   if (b.startedAt !== void 0) return a.startedAt === b.startedAt;
   return true;
 }
-async function removeLockIfStillOwned(lockPath, record) {
-  const current = await readLockState(lockPath);
+async function removeLockIfStillOwned(lockPath, record, expectedUid) {
+  const current = await readLockState(lockPath, expectedUid);
   if (!current || !sameLockOwner(current.record, record)) return false;
   await removePathIfExists(lockPath);
   return true;
@@ -759,18 +761,24 @@ function isCodexLarkProcessCommand(command) {
   const normalized = command.toLowerCase();
   return normalized.includes("codex-lark-plugin") || normalized.includes("scripts/start.sh") || normalized.includes("src/index.ts") && normalized.includes("tsx");
 }
-async function readLockState(lockPath) {
-  let s;
+async function readLockState(lockPath, expectedUid) {
+  let handle;
   try {
-    s = await stat(lockPath);
-  } catch {
-    return null;
+    handle = await open(lockPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw new Error(`Refusing unsafe lock path ${lockPath}.`, { cause: error });
   }
-  const raw = await readFile(lockPath, "utf-8").catch((err) => {
-    console.error(`[resource-governance] Failed to read lock ${lockPath}:`, err?.message ?? String(err));
-    return "";
-  });
-  return { record: parseLock(raw), ageMs: Date.now() - s.mtimeMs };
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || expectedUid !== void 0 && metadata.uid !== expectedUid) {
+      throw new Error(`Refusing lock path with unexpected type or owner: ${lockPath}.`);
+    }
+    const raw = await handle.readFile({ encoding: "utf8" });
+    return { record: parseLock(raw), ageMs: Date.now() - metadata.mtimeMs };
+  } finally {
+    await handle.close();
+  }
 }
 async function removePathIfExists(filePath) {
   await rm(filePath, { recursive: true, force: true }).catch(() => void 0);
@@ -781,9 +789,10 @@ async function stopSingleInstanceLock(lockPath, options = {}) {
   const getProcessCommand = options.getProcessCommand ?? defaultProcessCommand;
   const killProcess = options.killProcess ?? defaultKillProcess;
   const isExpectedProcess = options.isExpectedProcess ?? isCodexLarkProcessCommand;
+  const expectedUid = options.expectedUid;
   const waitMs = Math.max(0, Math.floor(options.waitMs ?? 5e3));
   const sleepMs = Math.max(0, Math.floor(options.sleepMs ?? 100));
-  const state = await readLockState(lockPath);
+  const state = await readLockState(lockPath, expectedUid);
   if (!state) {
     return {
       status: "no_lock",
@@ -806,7 +815,7 @@ async function stopSingleInstanceLock(lockPath, options = {}) {
   };
   const alive = await processExists(record.pid);
   if (!alive) {
-    const removed = await removeLockIfStillOwned(lockPath, record);
+    const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
     return {
       ...base,
       status: "stale_lock_removed",
@@ -816,7 +825,7 @@ async function stopSingleInstanceLock(lockPath, options = {}) {
   if (record.startedAt) {
     const actualStartedAt = await getProcessStartedAt(record.pid);
     if (actualStartedAt !== null && !sameStartTime(actualStartedAt, record.startedAt)) {
-      const removed = await removeLockIfStillOwned(lockPath, record);
+      const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
       return {
         ...base,
         status: "stale_lock_removed",
@@ -837,7 +846,7 @@ async function stopSingleInstanceLock(lockPath, options = {}) {
     await killProcess(record.pid, "SIGTERM");
   } catch (err) {
     if (err?.code === "ESRCH") {
-      const removed = await removeLockIfStillOwned(lockPath, record);
+      const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
       return {
         ...base,
         command,
@@ -858,7 +867,7 @@ async function stopSingleInstanceLock(lockPath, options = {}) {
   const deadline = Date.now() + waitMs;
   do {
     if (!await processExists(record.pid)) {
-      const removed = await removeLockIfStillOwned(lockPath, record);
+      const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
       return {
         ...base,
         command,
@@ -869,7 +878,7 @@ async function stopSingleInstanceLock(lockPath, options = {}) {
     if (record.startedAt) {
       const actualStartedAt = await getProcessStartedAt(record.pid);
       if (actualStartedAt !== null && !sameStartTime(actualStartedAt, record.startedAt)) {
-        const removed = await removeLockIfStillOwned(lockPath, record);
+        const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
         return {
           ...base,
           command,
@@ -905,7 +914,10 @@ async function stopLarkInstances(appId, stateRoot = path2.dirname(LARK_INSTANCE_
     path2.join(stateRoot, path2.basename(LARK_INSTANCE_LOCK_PATH)),
     ...await compatibleLegacyLockPaths(appId, legacyLockRoot, false)
   ];
-  for (const lockPath of paths) results.push(await stopSingleInstanceLock(lockPath));
+  const expectedUid = process.getuid?.();
+  for (const lockPath of paths) {
+    results.push(await stopSingleInstanceLock(lockPath, { expectedUid }));
+  }
   return results;
 }
 function legacyLarkInstanceLockPath(appId, lockRoot = os2.tmpdir()) {
@@ -918,8 +930,8 @@ async function compatibleLegacyLockPaths(appId, lockRoot, scanAll) {
   const ownedPaths = [];
   for (const name of candidates) {
     const candidate = path2.join(lockRoot, name);
-    const metadata = await stat2(candidate).catch(() => null);
-    if (metadata && (currentUid === void 0 || metadata.uid === currentUid)) {
+    const metadata = await lstat(candidate).catch(() => null);
+    if (metadata?.isFile() && !metadata.isSymbolicLink() && (currentUid === void 0 || metadata.uid === currentUid)) {
       ownedPaths.push(candidate);
     }
   }

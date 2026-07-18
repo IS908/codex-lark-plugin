@@ -12,6 +12,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { chmod, readdir, utimes, writeFile } from 'node:fs/promises';
@@ -253,6 +254,26 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   scopedLock.release();
   assert.equal(existsSync(join(stateDir, '.instance.lock')), false);
   assert.equal(existsSync(legacyPath), false);
+  cleanup(stateDir);
+  cleanup(sharedLegacyDir);
+  passed++;
+}
+
+// 6c. Shared legacy roots never follow attacker-controlled lock symlinks.
+{
+  const stateDir = tmpRoot('resource-lark-symlink-state-');
+  const sharedLegacyDir = tmpRoot('resource-lark-symlink-legacy-');
+  await chmod(sharedLegacyDir, 0o777);
+  const target = join(sharedLegacyDir, 'foreign-target');
+  writeFileSync(target, JSON.stringify({ pid: process.pid }), 'utf8');
+  const unsafePath = legacyLarkInstanceLockPath('cli_symlink_current', sharedLegacyDir);
+  symlinkSync(target, unsafePath);
+  await assert.rejects(
+    acquireLarkInstanceLock('cli_symlink_current', stateDir, sharedLegacyDir),
+    /unsafe lock path|unexpected type or owner/i,
+  );
+  assert.equal(readFileSync(target, 'utf8'), JSON.stringify({ pid: process.pid }));
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), false);
   cleanup(stateDir);
   cleanup(sharedLegacyDir);
   passed++;
@@ -708,4 +729,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/30 PASS`);
+console.log(`resource-governance smoke: ${passed}/31 PASS`);
