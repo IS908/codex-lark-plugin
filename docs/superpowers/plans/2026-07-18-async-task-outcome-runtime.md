@@ -99,6 +99,9 @@ Expected: FAIL because the v7 fact/contract compatibility projection is absent.
 Run: `npx tsx scripts/continuation-command-smoke.ts`
 Expected: FAIL because retry does not clone managed inputs into an independent tree.
 
+Run: `npx tsx scripts/codex-exec-actions-smoke.ts`
+Expected: FAIL because accepted continuation attachments are not downloaded and ingested.
+
 - [ ] **Step 6: Implement managed input ingestion and schema v7 migration**
 
 Derive a deterministic Job ID, serialize same-ID creation, copy files into a
@@ -126,6 +129,9 @@ Expected: PASS.
 
 Run: `npx tsx scripts/continuation-action-smoke.ts`
 Expected: PASS.
+
+Run: `npx tsx scripts/codex-exec-actions-smoke.ts`
+Expected: PASS with attachment download and managed-input ingestion.
 
 Run: `npx tsx scripts/continuation-repository-smoke.ts`
 Expected: PASS.
