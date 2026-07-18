@@ -41,7 +41,12 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
   private constructor(
     private readonly database: DatabaseSync,
     private readonly deliveryLeaseMs: number,
+    private readonly ownsDatabase: boolean,
   ) {}
+
+  static attach(database: DatabaseSync): SqliteDurableRunRepository {
+    return new SqliteDurableRunRepository(database, DEFAULT_DELIVERY_LEASE_MS, false);
+  }
 
   static async open(
     options: SqliteDurableRunRepositoryOptions,
@@ -65,6 +70,7 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
       const repository = new SqliteDurableRunRepository(
         database,
         positiveInteger(options.deliveryLeaseMs, DEFAULT_DELIVERY_LEASE_MS),
+        true,
       );
       await repository.initialize();
       return repository;
@@ -252,7 +258,11 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
     }));
     return this.transaction(() => {
       const current = this.readClaimFence(claim);
-      if (!current || !claimCanCommit(current, now)) return 'stale';
+      if (
+        !current
+        || requiredString(current, 'lease_owner') !== claim.workerId
+        || !claimCanCommit(current, now)
+      ) return 'stale';
       const currentStatus = requiredString(current, 'status') as DurableRunStatus;
       assertDurableRunTransition(currentStatus, transition);
       const completedAt = isDurableRunTerminal(transition.status) ? now : null;
@@ -341,13 +351,12 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
     return this.transaction(() => {
       const rows = this.database.prepare(`
         SELECT r.run_id, r.row_version, a.attempt_id, a.worker_id,
-               a.execution_phase, a.operation_risk
+               a.execution_phase, a.operation_risk, a.recovery_pending
         FROM durable_runs r
         JOIN durable_attempts a ON a.run_id = r.run_id
         WHERE r.status IN ('running', 'cancel_requested')
           AND r.lease_expires_at IS NOT NULL AND r.lease_expires_at <= ?
           AND r.deleted_at IS NULL AND a.finished_at IS NULL
-          AND a.recovery_pending = 0
           AND a.ordinal = r.attempt_count
         ORDER BY r.lease_expires_at, r.run_id
       `).all(now) as SqlRow[];
@@ -355,22 +364,31 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
       for (const row of rows) {
         const runId = requiredString(row, 'run_id');
         const oldVersion = requiredNumber(row, 'row_version');
+        const recoveryLeaseExpiresAt = addMilliseconds(now, DEFAULT_DELIVERY_LEASE_MS);
         const runUpdate = this.database.prepare(`
           UPDATE durable_runs
-          SET lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+          SET lease_expires_at = ?, heartbeat_at = ?,
               row_version = row_version + 1, updated_at = ?
           WHERE run_id = ? AND row_version = ?
             AND status IN ('running', 'cancel_requested')
             AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
-        `).run(now, runId, oldVersion, now);
+        `).run(recoveryLeaseExpiresAt, now, now, runId, oldVersion, now);
         if (Number(runUpdate.changes) !== 1) continue;
         const attemptId = requiredString(row, 'attempt_id');
         const attemptUpdate = this.database.prepare(`
           UPDATE durable_attempts
-          SET recovery_pending = 1, recovered_at = ?
+          SET recovery_pending = 1, recovered_at = ?, heartbeat_at = ?, lease_expires_at = ?
           WHERE attempt_id = ? AND run_id = ? AND finished_at IS NULL
-            AND recovery_pending = 0
-        `).run(now, attemptId, runId);
+            AND recovery_pending = ? AND lease_expires_at <= ?
+        `).run(
+          now,
+          now,
+          recoveryLeaseExpiresAt,
+          attemptId,
+          runId,
+          requiredNumber(row, 'recovery_pending'),
+          now,
+        );
         if (Number(attemptUpdate.changes) !== 1) {
           throw new Error(`Durable Run recovery lost Attempt ${attemptId}.`);
         }
@@ -485,7 +503,7 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
   }
 
   close(): void {
-    this.database.close();
+    if (this.ownsDatabase) this.database.close();
   }
 
   private readRunBy(where: string, value: string): DurableRunRecord | null {

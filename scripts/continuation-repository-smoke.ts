@@ -18,6 +18,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { DatabaseSync as SqliteDatabaseSync } from 'node:sqlite';
 import { Worker } from 'node:worker_threads';
 import { seedHistoricalContinuationDatabase } from './fixtures/continuation-historical-schema.js';
 import {
@@ -27,12 +28,18 @@ import {
   type ContinuationCreateRequest,
   type ContinuationCheckpointV2,
 } from '../src/domain/continuation.js';
+import type { DurableRunInterruptedAttempt } from '../src/domain/durable-run.js';
+import { AsyncTaskKernelAdapter } from '../src/continuation/async-task-kernel-adapter.js';
 import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js';
 import {
   ContinuationInputStore,
   continuationJobId,
 } from '../src/continuation/input-store.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
+import {
+  installContinuationCompatibilitySchema,
+  registerContinuationCompatibilityFunctions,
+} from '../src/durable-run/sqlite-migrations.js';
 import { currentProcessStartedAt } from '../src/process-identity.js';
 
 if (process.argv[2] === '--hold-managed-input-create') {
@@ -144,6 +151,112 @@ async function waitForChildMarker(
     });
   });
 }
+
+function enableCompatibilityWrites(database: SqliteDatabaseSync): void {
+  registerContinuationCompatibilityFunctions(database, () => 1);
+}
+
+function cloneHistoricalContinuationJob(
+  database: SqliteDatabaseSync,
+  sourceJobId: string,
+  overrides: Readonly<Record<string, string | number | null>>,
+): void {
+  const columns = database.prepare('PRAGMA table_info(continuation_jobs)').all() as Array<{
+    name: string;
+  }>;
+  const values: Array<string | number | null> = [];
+  const projection = columns.map(({ name }) => {
+    if (!Object.hasOwn(overrides, name)) return `"${name}"`;
+    values.push(overrides[name] ?? null);
+    return '?';
+  });
+  database.prepare(`
+    INSERT INTO continuation_jobs (${columns.map(({ name }) => `"${name}"`).join(', ')})
+    SELECT ${projection.join(', ')} FROM continuation_jobs WHERE job_id = ?
+  `).run(...values, sourceJobId);
+}
+
+async function verifyConcurrentFreshInitialization(): Promise<void> {
+  const initializationRoot = await mkdtemp(join(tmpdir(), 'continuation-init-concurrent-'));
+  const initializationDatabasePath = join(initializationRoot, 'jobs.sqlite');
+  const initializationArtifactsDir = join(initializationRoot, 'artifacts');
+  const initializationInputsDir = join(initializationRoot, 'inputs');
+  const children = Array.from({ length: 6 }, () => spawn(process.execPath, [
+    '--import',
+    'tsx',
+    new URL(import.meta.url).pathname,
+    '--open-continuation-repository',
+    initializationDatabasePath,
+    initializationArtifactsDir,
+    initializationInputsDir,
+  ], { stdio: ['ignore', 'pipe', 'pipe'] }));
+
+  await Promise.all(children.map((child) => (
+    waitForChildMarker(child, 'REPOSITORY_OPENED', 10_000)
+  )));
+
+  const { DatabaseSync: InitializationDatabaseSync } = await import('node:sqlite');
+  const database = new InitializationDatabaseSync(initializationDatabasePath);
+  try {
+    enableCompatibilityWrites(database);
+    assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 10);
+    const schema = database.prepare(`
+      SELECT type, name
+      FROM sqlite_master
+      WHERE name LIKE 'continuation_%'
+        AND type IN ('view', 'trigger')
+      ORDER BY type, name
+    `).all() as Array<{ type: string; name: string }>;
+    assert.deepEqual(
+      schema.filter((entry) => entry.type === 'view').map((entry) => entry.name),
+      [
+        'continuation_attempts',
+        'continuation_interrupts',
+        'continuation_jobs',
+        'continuation_outbox',
+        'continuation_tool_calls',
+      ],
+    );
+    assert.equal(schema.filter((entry) => entry.type === 'trigger').length, 15);
+    assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+
+    const definitionsBeforeFailure = database.prepare(`
+      SELECT type, name, sql
+      FROM sqlite_master
+      WHERE name LIKE 'continuation_%' AND type IN ('view', 'trigger')
+      ORDER BY type, name
+    `).all();
+    const failingDatabase = new Proxy(database, {
+      get(target, property) {
+        if (property === 'exec') {
+          return (sql: string) => {
+            if (sql.includes('CREATE VIEW continuation_outbox AS')) {
+              throw new Error('injected compatibility install failure');
+            }
+            return target.exec(sql);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    assert.throws(
+      () => installContinuationCompatibilitySchema(failingDatabase),
+      /injected compatibility install failure/u,
+    );
+    assert.deepEqual(database.prepare(`
+      SELECT type, name, sql
+      FROM sqlite_master
+      WHERE name LIKE 'continuation_%' AND type IN ('view', 'trigger')
+      ORDER BY type, name
+    `).all(), definitionsBeforeFailure);
+  } finally {
+    database.close();
+    await rm(initializationRoot, { force: true, recursive: true });
+  }
+}
+
+await verifyConcurrentFreshInitialization();
 
 const root = await mkdtemp(join(tmpdir(), 'continuation-repository-'));
 const databasePath = join(root, 'runtime', 'jobs.sqlite');
@@ -317,6 +430,33 @@ function modeBits(mode: number): number {
   return mode & 0o777;
 }
 
+function kernelAdapter(repository: SqliteContinuationRepository): AsyncTaskKernelAdapter {
+  return new AsyncTaskKernelAdapter({
+    repository,
+    executor: { async execute() { throw new Error('unexpected recovery execution'); } },
+    delivery: { async deliver() { throw new Error('unexpected recovery delivery'); } },
+  });
+}
+
+async function recoverAndCommit(
+  repository: SqliteContinuationRepository,
+  now: string,
+): Promise<DurableRunInterruptedAttempt[]> {
+  const adapter = kernelAdapter(repository);
+  const interrupted = await adapter.recoverExpiredLeases(now);
+  for (const attempt of interrupted) {
+    assert.equal(
+      await adapter.commitTransition(
+        attempt.claim,
+        adapter.recoverInterruptedAttempt(attempt),
+        now,
+      ),
+      'committed',
+    );
+  }
+  return interrupted;
+}
+
 async function claimInWorker(
   workerId: string,
   barrier: SharedArrayBuffer,
@@ -404,6 +544,32 @@ try {
   assert.equal(first.job.status, 'queued');
   assert.equal(first.job.rowVersion, 1);
   assert.deepEqual(first.job.permissions, createRequest('first').permissions);
+  const persistedFirstJob = JSON.parse(JSON.stringify(first.job)) as unknown;
+  assert.throws(() => kernelAdapter(repository).parseState({
+    schemaVersion: 1,
+    job: persistedFirstJob,
+    commit: { kind: 'step', result: { unexpected: true } },
+  }, 1), /Invalid Async Task kernel commit/u);
+  const { DatabaseSync: EnvelopeDatabaseSync } = await import('node:sqlite');
+  const envelopeDatabase = new EnvelopeDatabaseSync(databasePath);
+  const persistedEnvelope = envelopeDatabase.prepare(`
+    SELECT input_version, input_json, state_version, state_json
+    FROM durable_runs WHERE run_id = ?
+  `).get(first.job.jobId) as {
+    input_version: number;
+    input_json: string;
+    state_version: number;
+    state_json: string;
+  };
+  envelopeDatabase.close();
+  kernelAdapter(repository).parseInput(
+    JSON.parse(persistedEnvelope.input_json),
+    persistedEnvelope.input_version,
+  );
+  kernelAdapter(repository).parseState(
+    JSON.parse(persistedEnvelope.state_json),
+    persistedEnvelope.state_version,
+  );
 
   const duplicate = await secondRepository.create(createRequest('first'));
   assert.equal(duplicate.created, false);
@@ -604,8 +770,12 @@ try {
   assert.equal(runningConcurrent?.status, 'running');
   const raceWinner = raceClaims.find(Boolean);
   assert.ok(raceWinner);
-  const recovered = await repository.recoverExpiredLeases('2026-07-17T00:00:31.000Z');
-  assert.equal(recovered, 1);
+  const recovered = await recoverAndCommit(repository, '2026-07-17T00:00:31.000Z');
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0]?.claim.run.runId, concurrent.job.jobId);
+  assert.equal(recovered[0]?.claim.workerId, raceWinner.workerId);
+  assert.equal(recovered[0]?.executionPhase, 'claimed');
+  assert.equal(recovered[0]?.operationRisk, 'unknown');
   assert.equal((await repository.get(concurrent.job.jobId))?.status, 'waiting_retry');
 
   const opaqueExecution = await repository.create(createRequest('opaque-execution-lease'));
@@ -616,7 +786,11 @@ try {
   );
   assert.equal(opaqueClaim?.job.jobId, opaqueExecution.job.jobId);
   await repository.markExecutionStarted(opaqueClaim!, '2026-07-17T00:00:31.100Z');
-  assert.equal(await repository.recoverExpiredLeases('2026-07-17T00:00:41.000Z'), 1);
+  const recoveredOpaque = await recoverAndCommit(repository, '2026-07-17T00:00:41.000Z');
+  assert.equal(recoveredOpaque.length, 1);
+  assert.equal(recoveredOpaque[0]?.claim.attempt.attemptId, opaqueClaim?.attempt.attemptId);
+  assert.equal(recoveredOpaque[0]?.executionPhase, 'execution_started');
+  assert.equal(recoveredOpaque[0]?.operationRisk, 'unknown');
   const interruptedOpaqueExecution = await repository.get(opaqueExecution.job.jobId);
   assert.equal(interruptedOpaqueExecution?.status, 'waiting_user');
   assert.equal(interruptedOpaqueExecution?.recovery?.failure.category, 'unknown');
@@ -858,6 +1032,7 @@ try {
   const legacyEnvelope = await repository.create(createRequest('legacy-envelope'));
   const { DatabaseSync } = await import('node:sqlite');
   const rawDatabase = new DatabaseSync(databasePath);
+  enableCompatibilityWrites(rawDatabase);
   rawDatabase.prepare('UPDATE continuation_jobs SET permissions_json = ? WHERE job_id = ?').run(
     JSON.stringify({
       filesystem: { root, mode: 'workspace-write' },
@@ -892,6 +1067,7 @@ const maintenanceRepository = await SqliteContinuationRepository.open({
 });
 const { DatabaseSync: MaintenanceDatabaseSync } = await import('node:sqlite');
 const maintenanceDatabase = new MaintenanceDatabaseSync(maintenanceDatabasePath);
+enableCompatibilityWrites(maintenanceDatabase);
 const corruptMaintenanceFacts = (jobId: string) => {
   const row = maintenanceDatabase.prepare(`
     SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
@@ -923,9 +1099,12 @@ assert.equal((await maintenanceRepository.claimDue(
   '2026-07-17T00:00:05.000Z',
 ))?.job.jobId, healthyLeaseJob.job.jobId);
 corruptMaintenanceFacts(corruptLeaseJob.job.jobId);
-assert.equal(await maintenanceRepository.recoverExpiredLeases(
+const maintenanceRecovered = await recoverAndCommit(
+  maintenanceRepository,
   '2026-07-17T00:00:06.000Z',
-), 2);
+);
+assert.equal(maintenanceRecovered.length, 1);
+assert.equal(maintenanceRecovered[0]?.claim.run.runId, healthyLeaseJob.job.jobId);
 assert.equal(
   (await maintenanceRepository.get(corruptLeaseJob.job.jobId))?.errorCode,
   'continuation_persisted_state_invalid',
@@ -995,25 +1174,14 @@ maintenanceRepository.close();
 
 const migrationDatabasePath = join(root, 'migration', 'jobs.sqlite');
 const migrationArtifactsDir = join(root, 'migration', 'artifacts');
-const migrationSeed = await SqliteContinuationRepository.open({
-  databasePath: migrationDatabasePath,
-  artifactsDir: migrationArtifactsDir,
-});
 const legacyWorkingDirectory = join(root, 'legacy-working-directory');
 await import('node:fs/promises').then(({ mkdir }) => mkdir(legacyWorkingDirectory));
-const legacyV2Job = await migrationSeed.create(createRequest('legacy-v2', {
+const legacyV2Fixture = await seedHistoricalContinuationDatabase({
+  databasePath: migrationDatabasePath,
+  now: baseNow,
+  version: 2,
   workingDirectory: legacyWorkingDirectory,
-  requiredTools: ['lark_cli'],
-  permissions: {
-    profile: 'bounded',
-    filesystem: { root: root, mode: 'read-only', requestedPaths: [] },
-    hostTools: ['lark_cli'],
-    network: 'none',
-    externalSideEffects: 'denied',
-    approval: { mode: 'never' },
-  },
-}));
-migrationSeed.close();
+});
 const { DatabaseSync } = await import('node:sqlite');
 
 const convergenceDatabasePath = join(root, 'convergence', 'jobs.sqlite');
@@ -1823,7 +1991,7 @@ const migratedVersionThreeColumns = migratedVersionThreeDatabase
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'max_attempts'));
 assert.equal(migratedVersionThreeColumns.some((column) => column.name === 'max_steps'), false);
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'retain'));
-assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 9);
+assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 10);
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'no_progress_count'));
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'source_facts_json'));
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'task_contract_json'));
@@ -1875,7 +2043,7 @@ async function verifyIntermediateMigration(version: 4 | 5): Promise<void> {
     migrated.close();
   }
   const migratedDatabase = new DatabaseSync(migrationOptions.databasePath);
-  assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 9);
+  assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 10);
   assert.equal(Number(migratedDatabase.prepare(
     'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
   ).get(fixture.terminalJobId)?.count), fixture.expectedAttemptCount);
@@ -1926,7 +2094,7 @@ async function verifyConcurrentHistoricalMigration(version: 1 | 4 | 5): Promise<
     repository.close();
   }
   const database = new DatabaseSync(databasePath);
-  assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 9);
+  assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 10);
   assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
   database.close();
 }
@@ -1935,20 +2103,13 @@ await verifyConcurrentHistoricalMigration(1);
 await verifyConcurrentHistoricalMigration(4);
 await verifyConcurrentHistoricalMigration(5);
 
-const versionTwoDatabase = new DatabaseSync(migrationDatabasePath);
-const v2Columns = versionTwoDatabase.prepare('PRAGMA table_info(continuation_jobs)').all() as Array<{ name: string }>;
-if (v2Columns.some((column) => column.name === 'permissions_json')) {
-  versionTwoDatabase.exec('ALTER TABLE continuation_jobs DROP COLUMN permissions_json;');
-}
-versionTwoDatabase.exec('PRAGMA user_version = 2;');
-versionTwoDatabase.close();
 const migratedRepository = await SqliteContinuationRepository.open({
   databasePath: migrationDatabasePath,
   artifactsDir: migrationArtifactsDir,
 });
 try {
   await migratedRepository.healthCheck();
-  assert.deepEqual((await migratedRepository.get(legacyV2Job.job.jobId))?.permissions, {
+  assert.deepEqual((await migratedRepository.get(legacyV2Fixture.terminalJobId))?.permissions, {
     profile: 'bounded',
     filesystem: { root: legacyWorkingDirectory, mode: 'workspace-write', requestedPaths: [] },
     hostTools: ['lark_cli'],
@@ -2036,7 +2197,7 @@ try {
   migratedVersionOneRepository.close();
 }
 const migratedVersionOneDatabase = new DatabaseSync(versionOneDatabasePath);
-assert.equal(Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version), 9);
+assert.equal(Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version), 10);
 assert.equal(Number(migratedVersionOneDatabase.prepare(
   'SELECT COUNT(*) AS count FROM continuation_attempts',
 ).get()?.count), 3);
@@ -2052,66 +2213,75 @@ migratedVersionOneDatabase.close();
 const versionSixRoot = join(root, 'migration-v6');
 const versionSixDatabasePath = join(versionSixRoot, 'jobs.sqlite');
 const versionSixArtifactsDir = join(versionSixRoot, 'artifacts');
-const versionSixSeed = await SqliteContinuationRepository.open({
+const versionSixFixture = await seedHistoricalContinuationDatabase({
   databasePath: versionSixDatabasePath,
-  artifactsDir: versionSixArtifactsDir,
+  now: baseNow,
+  version: 6,
+  workingDirectory: versionSixRoot,
 });
-const legacyV6Job = await versionSixSeed.create(createRequest('legacy-v6', {
-  taskContract: {
-    ...createRequest('legacy-v6').taskContract,
-    acceptanceCriteria: [{
-      id: 'old_id_not_available_to_v6',
-      description: 'Legacy criterion text.',
-      deliverableIds: ['result'],
-    }],
-  },
-}));
-const legacyV6MessageMismatch = await versionSixSeed.create(createRequest(
-  'legacy-v6-message-route-mismatch',
-));
-const legacyV6Malformed = await versionSixSeed.create(createRequest(
-  'legacy-v6-malformed-row',
-));
-const legacyV6CommentBase = createRequest('legacy-v6-comment-route-mismatch');
+const legacyV6JobId = 'job_legacy_v6_due';
+const legacyV6MessageMismatchId = 'job_legacy_v6_message_route_mismatch';
+const legacyV6MalformedId = 'job_legacy_v6_malformed';
+const legacyV6CommentMismatchId = 'job_legacy_v6_comment_route_mismatch';
 const legacyV6CommentRoute = {
-  kind: 'comment_thread' as const,
+  kind: 'comment_thread',
   documentToken: 'doc_legacy_v6_mismatch',
   commentId: 'comment_legacy_v6_expected',
   fileType: 'docx',
 };
-const legacyV6CommentMismatch = await versionSixSeed.create({
-  ...legacyV6CommentBase,
-  route: legacyV6CommentRoute,
-  sourceMessageId: 'comment_legacy_v6_source',
-  sourceThreadId: legacyV6CommentRoute.commentId,
-  sourceFacts: {
-    ...legacyV6CommentBase.sourceFacts,
-    chatId: 'doc:doc_legacy_v6_mismatch',
-    chatType: 'doc_comment',
-    route: legacyV6CommentRoute,
-    sourceMessageId: 'comment_legacy_v6_source',
-    sourceThreadId: legacyV6CommentRoute.commentId,
-  },
-});
-versionSixSeed.close();
 const versionSixDatabase = new DatabaseSync(versionSixDatabasePath);
+cloneHistoricalContinuationJob(versionSixDatabase, versionSixFixture.terminalJobId, {
+  job_id: legacyV6JobId,
+  idempotency_key: 'idem-legacy-v6-due',
+  acceptance_criteria_json: JSON.stringify(['Legacy criterion text.']),
+  status: 'queued',
+  execution_session_id: null,
+  checkpoint_json: null,
+  step_count: 0,
+  failure_count: 0,
+  next_run_at: baseNow,
+  lease_owner: null,
+  lease_expires_at: null,
+  heartbeat_at: null,
+  result_summary: null,
+  result_artifacts_json: '[]',
+  error_code: null,
+  error_summary: null,
+  started_at: null,
+  completed_at: null,
+  deleted_at: null,
+});
+cloneHistoricalContinuationJob(versionSixDatabase, legacyV6JobId, {
+  job_id: legacyV6MessageMismatchId,
+  idempotency_key: 'idem-legacy-v6-message-route-mismatch',
+  route_json: JSON.stringify({
+    kind: 'message_thread',
+    conversationId: 'oc_legacy',
+    sourceMessageId: 'om_legacy_v5',
+    threadId: 'omt_legacy_v6_conflicting_route',
+  }),
+});
+cloneHistoricalContinuationJob(versionSixDatabase, legacyV6JobId, {
+  job_id: legacyV6MalformedId,
+  idempotency_key: 'idem-legacy-v6-malformed',
+  permissions_json: '{malformed-json',
+});
+cloneHistoricalContinuationJob(versionSixDatabase, legacyV6JobId, {
+  job_id: legacyV6CommentMismatchId,
+  idempotency_key: 'idem-legacy-v6-comment-route-mismatch',
+  origin_kind: 'comment_thread',
+  route_json: JSON.stringify(legacyV6CommentRoute),
+  source_message_id: 'comment_legacy_v6_source',
+  source_thread_id: 'comment_legacy_v6_conflicting_source',
+});
 versionSixDatabase.prepare(`
   UPDATE continuation_jobs SET route_json = ? WHERE job_id = ?
 `).run(JSON.stringify({
-  ...legacyV6MessageMismatch.job.route,
+  kind: 'message_thread',
+  conversationId: 'oc_legacy',
+  sourceMessageId: 'om_legacy_v5',
   threadId: 'omt_legacy_v6_conflicting_route',
-}), legacyV6MessageMismatch.job.jobId);
-versionSixDatabase.prepare(`
-  UPDATE continuation_jobs SET source_thread_id = ? WHERE job_id = ?
-`).run('comment_legacy_v6_conflicting_source', legacyV6CommentMismatch.job.jobId);
-versionSixDatabase.prepare(`
-  UPDATE continuation_jobs SET permissions_json = ? WHERE job_id = ?
-`).run('{malformed-json', legacyV6Malformed.job.jobId);
-versionSixDatabase.exec(`
-  ALTER TABLE continuation_jobs DROP COLUMN source_facts_json;
-  ALTER TABLE continuation_jobs DROP COLUMN task_contract_json;
-  PRAGMA user_version = 6;
-`);
+}), legacyV6MessageMismatchId);
 versionSixDatabase.close();
 const versionSixInputsDir = join(versionSixRoot, 'inputs');
 const concurrentVersionSixOpen = () => spawn(process.execPath, [
@@ -2135,7 +2305,7 @@ const migratedVersionSixRepository = await SqliteContinuationRepository.open({
   inputsDir: versionSixInputsDir,
 });
 try {
-  const migratedV6 = await migratedVersionSixRepository.get(legacyV6Job.job.jobId);
+  const migratedV6 = await migratedVersionSixRepository.get(legacyV6JobId);
   assert.equal(migratedV6?.sourceFacts.provenance, 'legacy_unavailable');
   assert.equal(migratedV6?.sourceFacts.originalUserText, null);
   assert.deepEqual(migratedV6?.sourceFacts.inputs, []);
@@ -2143,9 +2313,9 @@ try {
   assert.equal(migratedV6?.taskContract.acceptanceCriteria[0].description, 'Legacy criterion text.');
   assert.deepEqual(migratedV6?.acceptanceCriteria, ['Legacy criterion text.']);
   for (const corruptLegacyId of [
-    legacyV6MessageMismatch.job.jobId,
-    legacyV6CommentMismatch.job.jobId,
-    legacyV6Malformed.job.jobId,
+    legacyV6MessageMismatchId,
+    legacyV6CommentMismatchId,
+    legacyV6MalformedId,
   ]) {
     const tombstone = await migratedVersionSixRepository.get(corruptLegacyId);
     assert.equal(tombstone?.status, 'failed');
@@ -2165,24 +2335,36 @@ try {
   migratedVersionSixRepository.close();
 }
 
-const interruptedFactsMigrationDatabase = new DatabaseSync(versionSixDatabasePath);
+const interruptedFactsMigrationRoot = join(root, 'migration-v70');
+const interruptedFactsMigrationDatabasePath = join(interruptedFactsMigrationRoot, 'jobs.sqlite');
+const interruptedFactsMigrationArtifactsDir = join(interruptedFactsMigrationRoot, 'artifacts');
+const interruptedFactsMigrationInputsDir = join(interruptedFactsMigrationRoot, 'inputs');
+const interruptedFactsFixture = await seedHistoricalContinuationDatabase({
+  databasePath: interruptedFactsMigrationDatabasePath,
+  now: baseNow,
+  version: 7,
+  workingDirectory: interruptedFactsMigrationRoot,
+});
+const interruptedFactsMigrationDatabase = new DatabaseSync(interruptedFactsMigrationDatabasePath);
 interruptedFactsMigrationDatabase.prepare(`
   UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
-`).run('{', legacyV6Job.job.jobId);
+`).run('{', interruptedFactsFixture.terminalJobId);
 interruptedFactsMigrationDatabase.exec('PRAGMA user_version = 70;');
 interruptedFactsMigrationDatabase.close();
 const resumedFactsMigrationRepository = await SqliteContinuationRepository.open({
-  databasePath: versionSixDatabasePath,
-  artifactsDir: versionSixArtifactsDir,
-  inputsDir: versionSixInputsDir,
+  databasePath: interruptedFactsMigrationDatabasePath,
+  artifactsDir: interruptedFactsMigrationArtifactsDir,
+  inputsDir: interruptedFactsMigrationInputsDir,
 });
 try {
-  const resumedTombstone = await resumedFactsMigrationRepository.get(legacyV6Job.job.jobId);
+  const resumedTombstone = await resumedFactsMigrationRepository.get(
+    interruptedFactsFixture.terminalJobId,
+  );
   assert.equal(resumedTombstone?.errorCode, 'continuation_persisted_state_invalid');
-  const resumedFactsMigrationDatabase = new DatabaseSync(versionSixDatabasePath);
+  const resumedFactsMigrationDatabase = new DatabaseSync(interruptedFactsMigrationDatabasePath);
   assert.equal(
     Number(resumedFactsMigrationDatabase.prepare('PRAGMA user_version').get()?.user_version),
-    9,
+    10,
   );
   resumedFactsMigrationDatabase.close();
 } finally {
@@ -2311,6 +2493,7 @@ const reopenedManagedJob = await reopenedManagedRepository.get(expectedManagedJo
 assert.equal(reopenedManagedJob?.jobId, expectedManagedJobId);
 assert.equal(reopenedManagedJob?.sourceFacts.sourceTimestamp, '2026-07-18T08:30:00.000Z');
 const managedDatabase = new DatabaseSync(managedDatabasePath);
+enableCompatibilityWrites(managedDatabase);
 const managedRaw = managedDatabase.prepare(`
   SELECT source_facts_json, task_contract_json FROM continuation_jobs WHERE job_id = ?
 `).get(expectedManagedJobId) as { source_facts_json: string; task_contract_json: string };
@@ -2328,7 +2511,9 @@ const managedManifest = await readFile(join(
 assert.doesNotMatch(managedManifest, /github_pat_|quarterly-|source-report/);
 assert.match(managedManifest, /input_001\.pdf/);
 managedDatabase.prepare(`
-  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+  UPDATE durable_runs
+  SET state_json = json_set(state_json, '$.job.sourceFacts', ?)
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).run('{not-json', expectedManagedJobId);
 const invalidJsonTombstone = await reopenedManagedRepository.get(expectedManagedJobId);
 assert.equal(invalidJsonTombstone?.status, 'failed');
@@ -2416,6 +2601,7 @@ const injectRedactionRace = (): void => {
   if (redactionRaceInjected) return;
   redactionRaceInjected = true;
   const concurrent = new DatabaseSync(redactionRollbackOptions.databasePath);
+  enableCompatibilityWrites(concurrent);
   concurrent.prepare(`
     UPDATE continuation_jobs SET status = 'queued' WHERE job_id = ?
   `).run(redactionRollbackCreated.job.jobId);
@@ -2803,6 +2989,7 @@ const crashAdoptionSeed = await SqliteContinuationRepository.open(crashAdoptionO
 const crashAdoptionCreated = await crashAdoptionSeed.create(crashAdoptionRequest);
 crashAdoptionSeed.close();
 const crashAdoptionDatabase = new DatabaseSync(crashAdoptionOptions.databasePath);
+enableCompatibilityWrites(crashAdoptionDatabase);
 crashAdoptionDatabase.prepare('DELETE FROM continuation_jobs WHERE job_id = ?').run(
   crashAdoptionCreated.job.jobId,
 );
@@ -3268,6 +3455,7 @@ const healthyStateJob = await corruptStateRepository.create(createRequest('healt
   createdAt: '2026-07-16T23:59:59.000Z',
 }));
 const corruptStateDatabase = new DatabaseSync(corruptStateDatabasePath);
+enableCompatibilityWrites(corruptStateDatabase);
 const persistedInput = (index: number, sizeBytes = 1) => ({
   id: `input_${String(index).padStart(3, '0')}`,
   kind: 'message_attachment',
@@ -3432,6 +3620,7 @@ const routeMismatchHealthy = await routeMismatchRepository.create(createRequest(
   { createdAt: '2026-07-16T23:59:59.000Z' },
 ));
 const routeMismatchDatabase = new DatabaseSync(routeMismatchDatabasePath);
+enableCompatibilityWrites(routeMismatchDatabase);
 const routeMismatchFacts = routeMismatchDatabase.prepare(`
   SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
 `).get(routeMismatchJob.job.jobId) as { source_facts_json: string };
@@ -3600,6 +3789,7 @@ assert.equal(await terminalCorruptRepository.requestCancel(
   baseNow,
 ), 'cancelled');
 const terminalCorruptDatabase = new DatabaseSync(terminalCorruptDatabasePath);
+enableCompatibilityWrites(terminalCorruptDatabase);
 const terminalCorruptFacts = terminalCorruptDatabase.prepare(`
   SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
 `).get(terminalCorruptCreated.job.jobId) as { source_facts_json: string };
@@ -3705,12 +3895,15 @@ const recoveryRaceCreated = await recoveryRaceRepository.create(createRequest(
 ));
 recoveryRaceJobId = recoveryRaceCreated.job.jobId;
 recoveryRaceDatabase = new DatabaseSync(recoveryRaceDatabasePath);
+enableCompatibilityWrites(recoveryRaceDatabase);
 recoveryRaceHealthyFacts = String(recoveryRaceDatabase.prepare(`
   SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
 `).get(recoveryRaceJobId)?.source_facts_json ?? '');
 const corruptRecoveryRaceRow = (): void => {
   recoveryRaceDatabase?.prepare(`
-    UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+    UPDATE durable_runs
+    SET state_json = json_set(state_json, '$.job.sourceFacts', ?)
+    WHERE run_id = ? AND workload_kind = 'async_task'
   `).run('{', recoveryRaceJobId);
   restoreHealthyRowOnLock = true;
 };
@@ -3812,6 +4005,7 @@ await reopenedIntegrityRepository.markDeliveryResult(
   baseNow,
 );
 const integrityOutboxDatabase = new DatabaseSync(integrityDatabasePath);
+enableCompatibilityWrites(integrityOutboxDatabase);
 integrityOutboxDatabase.prepare(`
   UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
 `).run(JSON.stringify({
@@ -3877,6 +4071,7 @@ assert.equal(await reopenedIntegrityRepository.requestCancel(
   '2026-07-17T00:00:01.000Z',
 ), 'cancelled');
 const routeInvalidCleanupDatabase = new DatabaseSync(integrityDatabasePath);
+enableCompatibilityWrites(routeInvalidCleanupDatabase);
 routeInvalidCleanupDatabase.prepare(`
   UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
 `).run(JSON.stringify({
@@ -4171,9 +4366,12 @@ assert.equal(
   ),
   null,
 );
-assert.equal(await ownershipFenceRepository.recoverExpiredLeases(
+const expiredMarkRecovery = await recoverAndCommit(
+  ownershipFenceRepository,
   '2026-07-17T00:00:04.000Z',
-), 1);
+);
+assert.equal(expiredMarkRecovery.length, 1);
+assert.equal(expiredMarkRecovery[0]?.claim.run.runId, expiredMarkJob.job.jobId);
 
 const expiredFailureJob = await ownershipFenceRepository.create(createRequest('expired-fail-fence'));
 const expiredFailureClaim = await ownershipFenceRepository.claimDue(
@@ -4196,9 +4394,12 @@ assert.equal(
   ),
   null,
 );
-assert.equal(await ownershipFenceRepository.recoverExpiredLeases(
+const expiredFailureRecovery = await recoverAndCommit(
+  ownershipFenceRepository,
   '2026-07-17T00:00:07.000Z',
-), 1);
+);
+assert.equal(expiredFailureRecovery.length, 1);
+assert.equal(expiredFailureRecovery[0]?.claim.run.runId, expiredFailureJob.job.jobId);
 
 const staleCommitJob = await ownershipFenceRepository.create(createRequest('stale-commit-fence'));
 const staleCommitClaim = await ownershipFenceRepository.claimDue(
@@ -4628,28 +4829,45 @@ const activeMigrationOptions = {
   artifactsDir: join(activeMigrationRoot, 'artifacts'),
   jitter: () => 0,
 };
-let activeMigrationRepository = await SqliteContinuationRepository.open(activeMigrationOptions);
-const activeMigrationJob = await activeMigrationRepository.create(createRequest('v8-active-migration'));
-const activeMigrationClaim = await activeMigrationRepository.claimDue(
-  'worker-v8-active',
-  baseNow,
-  '2026-07-17T00:00:05.000Z',
-);
-assert.equal(activeMigrationClaim?.job.jobId, activeMigrationJob.job.jobId);
-await activeMigrationRepository.markExecutionStarted(
-  activeMigrationClaim!,
-  '2026-07-17T00:00:01.000Z',
-);
-activeMigrationRepository.close();
+const activeMigrationFixture = await seedHistoricalContinuationDatabase({
+  databasePath: activeMigrationOptions.databasePath,
+  now: baseNow,
+  version: 8,
+  workingDirectory: activeMigrationRoot,
+});
 const activeMigrationDatabase = new DatabaseSync(activeMigrationOptions.databasePath);
-activeMigrationDatabase.exec('PRAGMA user_version = 8;');
-activeMigrationDatabase.close();
-activeMigrationRepository = await SqliteContinuationRepository.open(activeMigrationOptions);
-assert.equal(
-  await activeMigrationRepository.recoverExpiredLeases('2026-07-17T00:00:06.000Z'),
-  1,
+activeMigrationDatabase.prepare(`
+  UPDATE continuation_jobs
+  SET status = 'running', execution_session_id = 'session-v8-active',
+      lease_owner = 'worker-v8-active', lease_expires_at = ?, heartbeat_at = ?,
+      result_summary = NULL, result_artifacts_json = '[]', error_code = NULL,
+      error_summary = NULL, completed_at = NULL, deleted_at = NULL
+  WHERE job_id = ?
+`).run(
+  '2026-07-17T00:00:05.000Z',
+  baseNow,
+  activeMigrationFixture.terminalJobId,
 );
-assert.equal((await activeMigrationRepository.get(activeMigrationJob.job.jobId))?.status, 'waiting_user');
+activeMigrationDatabase.prepare(`
+  UPDATE continuation_attempts
+  SET worker_id = 'worker-v8-active', execution_session_id = 'session-v8-active',
+      heartbeat_at = ?, finished_at = NULL, outcome = NULL,
+      error_code = NULL, error_summary = NULL
+  WHERE attempt_id = ?
+`).run(baseNow, activeMigrationFixture.terminalAttemptId);
+activeMigrationDatabase.close();
+const activeMigrationRepository = await SqliteContinuationRepository.open(activeMigrationOptions);
+const activeMigrationRecovery = await recoverAndCommit(
+  activeMigrationRepository,
+  '2026-07-17T00:00:06.000Z',
+);
+assert.equal(activeMigrationRecovery.length, 1);
+assert.equal(activeMigrationRecovery[0]?.claim.run.runId, activeMigrationFixture.terminalJobId);
+assert.equal(activeMigrationRecovery[0]?.executionPhase, 'execution_started');
+assert.equal(
+  (await activeMigrationRepository.get(activeMigrationFixture.terminalJobId))?.status,
+  'waiting_user',
+);
 activeMigrationRepository.close();
 
 const failedToolRoot = await mkdtemp(join(tmpdir(), 'continuation-failed-tool-replay-'));

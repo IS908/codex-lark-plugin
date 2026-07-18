@@ -21,6 +21,7 @@ import type {
   DurableRunWorkloadClaim,
   DurableRunWorkloadContext,
 } from '../domain/durable-run.js';
+import { serializeDurableRunJson } from '../domain/durable-run.js';
 import { formatContinuationDiagnosticMessage } from '../diagnostic-log-format.js';
 import type {
   ContinuationClaimMutationResult,
@@ -189,11 +190,9 @@ export class AsyncTaskKernelAdapter implements
   }
 
   async recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]> {
-    // The pre-migration repository applies its recovery policy transactionally and returns only a
-    // count. Returning no synthetic claims is deliberate: fabricating them would enable blind replay.
-    await this.options.repository.recoverExpiredLeases(now);
+    const interrupted = await this.options.repository.recoverExpiredLeases(now);
     await this.options.repository.expireOverdue(now);
-    return [];
+    return interrupted;
   }
 
   async claimDelivery(
@@ -296,8 +295,70 @@ export class AsyncTaskKernelAdapter implements
     };
   }
 
-  recoverInterruptedAttempt(_context: DurableRunInterruptedAttempt): DurableRunTransition {
-    throw new Error('Legacy Async Task lease recovery is committed inside ContinuationRepository.');
+  recoverInterruptedAttempt(context: DurableRunInterruptedAttempt): DurableRunTransition {
+    const state = parseAsyncTaskState(context.claim.run.state, context.claim.run.stateVersion);
+    const job = continuationJobFromDurable(state.job, context.claim);
+    if (job.status === 'cancel_requested') {
+      return {
+        status: 'cancelled',
+        stateVersion: ASYNC_TASK_STATE_VERSION,
+        state: { schemaVersion: 1, job } satisfies AsyncTaskKernelState,
+      };
+    }
+    if (
+      context.executionPhase === 'execution_started'
+      && (context.operationRisk === 'external_side_effect' || context.operationRisk === 'unknown')
+    ) {
+      const failedStep = currentContinuationStepId(job);
+      const failure: DurableRunFailure = {
+        category: 'unknown',
+        retrySafety: 'unknown',
+        capabilityAvailable: true,
+        operationRisk: context.operationRisk,
+        hints: ['Confirm whether the interrupted operation completed before resuming.'],
+        failedStep,
+        diagnostic: 'The worker lease expired after opaque execution started, so the external outcome is unknown.',
+        fingerprint: `lease-expired:${failedStep}`,
+      };
+      const result: ContinuationExecutionResult = {
+        outcome: {
+          outcome: 'waiting_user',
+          checkpoint: job.checkpoint ?? checkpointFromInitialContext(job),
+          failure,
+          prompt: 'Confirm whether the interrupted operation completed, then resume with the observed result.',
+          reason: failure.diagnostic,
+        },
+      };
+      return {
+        status: 'waiting_user',
+        stateVersion: ASYNC_TASK_STATE_VERSION,
+        state: {
+          schemaVersion: 1,
+          job,
+          commit: { kind: 'step', result },
+        } satisfies AsyncTaskKernelState,
+        errorCode: 'lease_expired_unknown_outcome',
+        errorSummary: failure.diagnostic,
+        failure,
+      };
+    }
+    const failure: ContinuationFailure = {
+      errorCode: 'lease_expired',
+      errorSummary: 'Worker lease expired.',
+      retryable: true,
+    };
+    return {
+      status: 'waiting_retry',
+      stateVersion: ASYNC_TASK_STATE_VERSION,
+      state: {
+        schemaVersion: 1,
+        job,
+        commit: { kind: 'failure', failure },
+      } satisfies AsyncTaskKernelState,
+      nextRunAt: context.recoveredAt,
+      errorCode: failure.errorCode,
+      errorSummary: failure.errorSummary,
+    };
   }
 
   async deliver(claim: DurableRunDeliveryClaim): Promise<DurableRunDeliveryResult> {
@@ -413,15 +474,23 @@ export class AsyncTaskKernelAdapter implements
 }
 
 function durableRunFromJob(job: ContinuationJob): DurableRunRecord {
+  const input = parseAsyncTaskInput({
+    schemaVersion: 1,
+    job: omitUndefinedProperties(job),
+  }, ASYNC_TASK_INPUT_VERSION);
+  const state: AsyncTaskKernelState = {
+    schemaVersion: 1,
+    job: input.job,
+  };
   return {
     runId: job.jobId,
     workloadKind: 'async_task',
     idempotencyKey: job.idempotencyKey,
     status: job.status,
     inputVersion: ASYNC_TASK_INPUT_VERSION,
-    input: { schemaVersion: 1, job } satisfies AsyncTaskKernelInput,
+    input,
     stateVersion: ASYNC_TASK_STATE_VERSION,
-    state: { schemaVersion: 1, job } satisfies AsyncTaskKernelState,
+    state,
     route: job.route,
     actorOpenId: job.creatorOpenId,
     nextRunAt: job.nextRunAt,
@@ -430,6 +499,21 @@ function durableRunFromJob(job: ContinuationJob): DurableRunRecord {
     attemptCount: job.attemptCount ?? 0,
     rowVersion: job.rowVersion,
   };
+}
+
+function omitUndefinedProperties(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => {
+      if (entry === undefined) throw new Error('Async Task arrays must not contain undefined values.');
+      return omitUndefinedProperties(entry);
+    });
+  }
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, omitUndefinedProperties(entry)]),
+  );
 }
 
 function durableClaimFromContinuation(claim: ContinuationClaim): DurableRunClaim {
@@ -452,8 +536,9 @@ function durableClaimFromContinuation(claim: ContinuationClaim): DurableRunClaim
 
 function continuationClaimFromDurable(claim: DurableRunClaim): ContinuationClaim {
   const state = parseAsyncTaskState(claim.run.state, claim.run.stateVersion);
+  const job = continuationJobFromDurable(state.job, claim);
   return {
-    job: state.job,
+    job,
     workerId: claim.workerId,
     claimedRowVersion: claim.claimedRowVersion,
     attempt: {
@@ -461,8 +546,8 @@ function continuationClaimFromDurable(claim: DurableRunClaim): ContinuationClaim
       jobId: claim.run.runId,
       ordinal: claim.attempt.ordinal,
       workerId: claim.attempt.workerId,
-      ...(state.job.executionSessionId
-        ? { executionSessionId: state.job.executionSessionId }
+      ...(job.executionSessionId
+        ? { executionSessionId: job.executionSessionId }
         : {}),
       startedAt: claim.attempt.claimedAt,
       heartbeatAt: claim.attempt.heartbeatAt,
@@ -470,43 +555,175 @@ function continuationClaimFromDurable(claim: DurableRunClaim): ContinuationClaim
   };
 }
 
+function continuationJobFromDurable(
+  persisted: ContinuationJob,
+  claim: DurableRunClaim,
+): ContinuationJob {
+  return {
+    ...persisted,
+    jobId: claim.run.runId,
+    idempotencyKey: claim.run.idempotencyKey,
+    creatorOpenId: claim.run.actorOpenId,
+    route: claim.run.route as ContinuationJob['route'],
+    status: claim.run.status,
+    rowVersion: claim.run.rowVersion,
+    nextRunAt: claim.run.nextRunAt,
+    expiresAt: claim.run.expiresAt,
+    maxAttempts: claim.run.maxAttempts,
+    attemptCount: claim.run.attemptCount,
+    leaseOwner: claim.workerId,
+    leaseExpiresAt: claim.attempt.leaseExpiresAt,
+    heartbeatAt: claim.attempt.heartbeatAt,
+  };
+}
+
+function currentContinuationStepId(job: ContinuationJob): string {
+  return job.checkpoint?.nextAction?.id
+    ?? job.checkpoint?.currentStepId
+    ?? 'initial-step';
+}
+
+function checkpointFromInitialContext(job: ContinuationJob): NonNullable<ContinuationJob['checkpoint']> {
+  const completedStepIds = job.contextSnapshot.completedSteps.map((description, index) => (
+    `legacy-completed-${index + 1}-${stableStepSuffix(description)}`
+  ));
+  const remainingSteps = job.contextSnapshot.remainingSteps.map((description, index) => ({
+    id: `legacy-remaining-${index + 1}-${stableStepSuffix(description)}`,
+    description,
+  }));
+  const currentStepId = remainingSteps[0]?.id ?? completedStepIds.at(-1) ?? 'initial-step';
+  return {
+    schemaVersion: 2,
+    summary: job.contextSnapshot.summary,
+    currentStepId,
+    completedStepIds,
+    completedCriterionIds: [],
+    completedDeliverableIds: [],
+    remainingSteps,
+    artifacts: [],
+    evidence: [],
+    sideEffects: [],
+    constraints: [...job.contextSnapshot.constraints],
+    decisions: [...job.contextSnapshot.decisions],
+    nextAction: remainingSteps[0] ?? null,
+    stopReason: 'Recovered after an interrupted Attempt.',
+  };
+}
+
+function stableStepSuffix(value: string): string {
+  let hash = 2166136261;
+  for (const character of value) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
 function parseAsyncTaskInput(value: unknown, version: number): AsyncTaskKernelInput {
-  if (version !== ASYNC_TASK_INPUT_VERSION || !isRecord(value) || value.schemaVersion !== 1) {
+  const snapshot = snapshotAsyncTaskEnvelope(value, 'input');
+  if (version !== ASYNC_TASK_INPUT_VERSION || !isRecord(snapshot) || snapshot.schemaVersion !== 1) {
     throw new Error(`Unsupported Async Task kernel input version: ${version}`);
   }
-  return { schemaVersion: 1, job: parseContinuationJob(value.job) };
+  return { schemaVersion: 1, job: parseContinuationJob(snapshot.job) };
 }
 
 function parseAsyncTaskState(value: unknown, version: number): AsyncTaskKernelState {
-  if (version !== ASYNC_TASK_STATE_VERSION || !isRecord(value) || value.schemaVersion !== 1) {
+  const snapshot = snapshotAsyncTaskEnvelope(value, 'state');
+  if (version !== ASYNC_TASK_STATE_VERSION || !isRecord(snapshot) || snapshot.schemaVersion !== 1) {
     throw new Error(`Unsupported Async Task kernel state version: ${version}`);
   }
   const state: AsyncTaskKernelState = {
     schemaVersion: 1,
-    job: parseContinuationJob(value.job),
+    job: parseContinuationJob(snapshot.job),
   };
-  if (value.commit !== undefined) state.commit = parseAsyncTaskCommit(value.commit);
+  if (snapshot.commit !== undefined) state.commit = parseAsyncTaskCommit(snapshot.commit);
   return state;
 }
 
 function parseContinuationJob(value: unknown): ContinuationJob {
-  if (
-    !isRecord(value)
-    || typeof value.jobId !== 'string'
-    || typeof value.idempotencyKey !== 'string'
-    || typeof value.creatorOpenId !== 'string'
-    || typeof value.status !== 'string'
-    || typeof value.rowVersion !== 'number'
-  ) {
+  if (!isValidContinuationJob(value)) {
     throw new Error('Invalid Continuation Job in Async Task kernel envelope.');
   }
-  return value as unknown as ContinuationJob;
+  return value;
+}
+
+function snapshotAsyncTaskEnvelope(value: unknown, kind: 'input' | 'state'): unknown {
+  const serialized = serializeDurableRunJson(value, `Async Task ${kind} envelope`);
+  return JSON.parse(serialized) as unknown;
+}
+
+const CONTINUATION_STATUSES = new Set([
+  'queued', 'running', 'waiting_retry', 'recovering', 'waiting_user',
+  'cancel_requested', 'completed', 'partial', 'blocked', 'failed', 'cancelled',
+]);
+
+function isValidContinuationJob(value: unknown): value is ContinuationJob {
+  if (!isRecord(value)) return false;
+  if (
+    !requiredString(value.jobId)
+    || !requiredString(value.idempotencyKey)
+    || !requiredString(value.creatorOpenId)
+    || !isDeliveryRoute(value.route)
+    || !requiredString(value.sourceMessageId)
+    || !isOptionalString(value.sourceThreadId)
+    || typeof value.title !== 'string'
+    || typeof value.objective !== 'string'
+    || !isStringArray(value.acceptanceCriteria)
+    || !isCheckpoint(value.contextSnapshot)
+    || !isSourceFacts(value.sourceFacts)
+    || !isTaskContract(value.taskContract)
+    || !isStringArray(value.requiredTools)
+    || typeof value.workingDirectory !== 'string'
+    || !isPermissionEnvelope(value.permissions)
+    || !isOptionalString(value.model)
+    || !isOptionalString(value.parentSessionId)
+    || !positiveInteger(value.maxAttempts)
+    || !nonNegativeInteger(value.maxRetries)
+    || !positiveInteger(value.timeoutSeconds)
+    || !validTimestamp(value.createdAt)
+    || !validTimestamp(value.expiresAt)
+    || !positiveInteger(value.rowVersion)
+    || typeof value.status !== 'string'
+    || !CONTINUATION_STATUSES.has(value.status)
+    || !isOptionalString(value.executionSessionId)
+    || !isOptionalCheckpointV2(value.checkpoint)
+    || !isOptionalAttemptDelta(value.lastAttemptDelta)
+    || !isOptionalVerification(value.lastVerification)
+    || !isOptionalRecoveryState(value.recovery)
+    || !nonNegativeInteger(value.recoveryTotalCount)
+    || !isCountRecord(value.recoveryFingerprintCounts)
+    || !isOptionalInterrupt(value.currentInterrupt)
+    || !nonNegativeInteger(value.noProgressCount)
+    || (value.attemptCount !== undefined && !nonNegativeInteger(value.attemptCount))
+    || !nonNegativeInteger(value.stepCount)
+    || !nonNegativeInteger(value.failureCount)
+    || !validTimestamp(value.nextRunAt)
+    || !isOptionalString(value.leaseOwner)
+    || !isOptionalTimestamp(value.leaseExpiresAt)
+    || !isOptionalTimestamp(value.heartbeatAt)
+    || !isOptionalString(value.resultSummary)
+    || !isStringArray(value.resultArtifacts)
+    || !isOptionalString(value.errorCode)
+    || !isOptionalString(value.errorSummary)
+    || !isOptionalTimestamp(value.startedAt)
+    || !validTimestamp(value.updatedAt)
+    || !isOptionalTimestamp(value.completedAt)
+    || !isOptionalTimestamp(value.deletedAt)
+    || typeof value.retained !== 'boolean'
+    || !isOptionalDeliveryStatus(value.deliveryStatus)
+    || !isOptionalDeliveryEvents(value.deliveryEvents)
+  ) return false;
+  const sourceFacts = value.sourceFacts as Record<string, unknown>;
+  const taskContract = value.taskContract as Record<string, unknown>;
+  return sourceFacts.sourceMessageId === value.sourceMessageId
+    && taskContract.title === value.title
+    && taskContract.objective === value.objective;
 }
 
 function parseAsyncTaskCommit(value: unknown): AsyncTaskCommit {
   if (!isRecord(value)) throw new Error('Invalid Async Task kernel commit.');
-  if (value.kind === 'step' && isRecord(value.result)) {
-    return { kind: 'step', result: value.result as unknown as ContinuationExecutionResult };
+  if (value.kind === 'step' && isContinuationExecutionResult(value.result)) {
+    return { kind: 'step', result: value.result };
   }
   if (value.kind === 'failure' && isContinuationFailure(value.failure)) {
     return { kind: 'failure', failure: value.failure };
@@ -514,11 +731,339 @@ function parseAsyncTaskCommit(value: unknown): AsyncTaskCommit {
   throw new Error('Invalid Async Task kernel commit.');
 }
 
+function isContinuationExecutionResult(value: unknown): value is ContinuationExecutionResult {
+  return isRecord(value)
+    && (value.executionSessionId === undefined
+      || value.executionSessionId === null
+      || typeof value.executionSessionId === 'string')
+    && isContinuationStepOutcome(value.outcome);
+}
+
+function isContinuationStepOutcome(value: unknown): boolean {
+  if (!isRecord(value) || !isCheckpointV2(value.checkpoint)) return false;
+  switch (value.outcome) {
+    case 'continue':
+      return value.resumeAfterSeconds === undefined || nonNegativeInteger(value.resumeAfterSeconds);
+    case 'completed':
+      return typeof value.finalMessage === 'string'
+        && isOptionalString(value.resultSummary)
+        && isStringArray(value.artifacts);
+    case 'partial':
+      return isStringArray(value.completedWork)
+        && isStringArray(value.keyFindings)
+        && isStringArray(value.unperformedWork)
+        && isStringArray(value.risks)
+        && isStringArray(value.nextSteps)
+        && isStringArray(value.artifacts);
+    case 'recovering':
+      return isDurableFailure(value.failure)
+        && nonNegativeInteger(value.delaySeconds)
+        && typeof value.reason === 'string';
+    case 'waiting_user':
+      return isDurableFailure(value.failure)
+        && typeof value.prompt === 'string'
+        && typeof value.reason === 'string';
+    case 'failed':
+      return typeof value.errorCode === 'string'
+        && typeof value.errorSummary === 'string'
+        && typeof value.retryable === 'boolean'
+        && isStringArray(value.completedWork)
+        && isStringArray(value.unperformedWork)
+        && isOptionalDurableFailure(value.recoveryFailure);
+    case 'blocked':
+      return typeof value.errorCode === 'string'
+        && typeof value.errorSummary === 'string'
+        && typeof value.requiredCapability === 'string'
+        && isStringArray(value.completedWork)
+        && isStringArray(value.unperformedWork)
+        && isOptionalDurableFailure(value.recoveryFailure);
+    default:
+      return false;
+  }
+}
+
 function isContinuationFailure(value: unknown): value is ContinuationFailure {
   return isRecord(value)
     && typeof value.errorCode === 'string'
     && typeof value.errorSummary === 'string'
     && typeof value.retryable === 'boolean';
+}
+
+function isDeliveryRoute(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'message_thread') {
+    return requiredString(value.conversationId)
+      && requiredString(value.sourceMessageId)
+      && isOptionalString(value.threadId);
+  }
+  return value.kind === 'comment_thread'
+    && requiredString(value.documentToken)
+    && requiredString(value.commentId)
+    && requiredString(value.fileType);
+}
+
+function isPermissionEnvelope(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.filesystem) || !isRecord(value.approval)) return false;
+  return ['bounded', 'trusted_personal_workspace'].includes(String(value.profile))
+    && typeof value.filesystem.root === 'string'
+    && ['read-only', 'workspace-write'].includes(String(value.filesystem.mode))
+    && isStringArray(value.filesystem.requestedPaths)
+    && isStringArray(value.hostTools)
+    && ['none', 'enabled'].includes(String(value.network))
+    && ['denied', 'allowed'].includes(String(value.externalSideEffects))
+    && ['never', 'interactive'].includes(String(value.approval.mode));
+}
+
+function isCheckpoint(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.summary === 'string'
+    && isStringArray(value.completedSteps)
+    && isStringArray(value.remainingSteps)
+    && isStringArray(value.constraints)
+    && isStringArray(value.decisions)
+    && isStringArray(value.references);
+}
+
+function isSourceFacts(value: unknown): boolean {
+  if (!isRecord(value) || value.schemaVersion !== 1) return false;
+  if (!Array.isArray(value.inputs) || !value.inputs.every((input) => (
+    isRecord(input)
+    && requiredString(input.id)
+    && ['message_image', 'message_attachment'].includes(String(input.kind))
+    && requiredString(input.fileName)
+    && requiredString(input.relativePath)
+    && requiredString(input.sha256)
+    && nonNegativeInteger(input.sizeBytes)
+  ))) return false;
+  return ['captured', 'legacy_unavailable'].includes(String(value.provenance))
+    && isNullableString(value.originalUserText)
+    && isNullableString(value.sourceContextText)
+    && isNullableString(value.quotedMessageText)
+    && typeof value.creatorOpenId === 'string'
+    && typeof value.chatId === 'string'
+    && typeof value.chatType === 'string'
+    && isDeliveryRoute(value.route)
+    && typeof value.sourceMessageId === 'string'
+    && isOptionalString(value.sourceThreadId)
+    && isNullableString(value.sourceMessageType)
+    && isNullableString(value.sourceTimestamp)
+    && typeof value.workingDirectory === 'string'
+    && isNullableString(value.model)
+    && isPermissionEnvelope(value.permissions);
+}
+
+function isTaskContract(value: unknown): boolean {
+  if (!isRecord(value) || value.schemaVersion !== 1 || !isCheckpoint(value.initialContext)) return false;
+  const deliverables = Array.isArray(value.deliverables) && value.deliverables.every((entry) => (
+    isRecord(entry)
+    && requiredString(entry.id)
+    && typeof entry.description === 'string'
+    && typeof entry.required === 'boolean'
+  ));
+  const criteria = Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.every((entry) => (
+    isRecord(entry)
+    && requiredString(entry.id)
+    && typeof entry.description === 'string'
+    && isStringArray(entry.deliverableIds)
+  ));
+  const requirements = Array.isArray(value.verificationRequirements)
+    && value.verificationRequirements.every((entry) => (
+      isRecord(entry)
+      && requiredString(entry.id)
+      && typeof entry.description === 'string'
+      && ['artifact_exists', 'artifact_sha256', 'evidence_reference'].includes(String(entry.kind))
+    ));
+  return typeof value.title === 'string'
+    && typeof value.objective === 'string'
+    && deliverables
+    && criteria
+    && requirements;
+}
+
+function isOptionalCheckpointV2(value: unknown): boolean {
+  if (value === undefined) return true;
+  return isCheckpointV2(value);
+}
+
+function isCheckpointV2(value: unknown): boolean {
+  if (!isRecord(value) || value.schemaVersion !== 2) return false;
+  return typeof value.summary === 'string'
+    && requiredString(value.currentStepId)
+    && isStringArray(value.completedStepIds)
+    && isStringArray(value.completedCriterionIds)
+    && isStringArray(value.completedDeliverableIds)
+    && isStepArray(value.remainingSteps)
+    && isArtifactArray(value.artifacts)
+    && isEvidenceArray(value.evidence)
+    && isSideEffectArray(value.sideEffects)
+    && isStringArray(value.constraints)
+    && isStringArray(value.decisions)
+    && (value.nextAction === null || isStep(value.nextAction))
+    && typeof value.stopReason === 'string';
+}
+
+function isStepArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every(isStep);
+}
+
+function isStep(value: unknown): boolean {
+  return isRecord(value) && requiredString(value.id) && typeof value.description === 'string';
+}
+
+function isArtifactArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((entry) => (
+    isRecord(entry)
+    && requiredString(entry.id)
+    && requiredString(entry.deliverableId)
+    && requiredString(entry.path)
+    && requiredString(entry.sha256)
+  ));
+}
+
+function isEvidenceArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((entry) => (
+    isRecord(entry)
+    && requiredString(entry.id)
+    && requiredString(entry.requirementId)
+    && isStringArray(entry.criterionIds)
+    && isOptionalString(entry.artifactId)
+    && isOptionalString(entry.reference)
+  ));
+}
+
+function isSideEffectArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((entry) => (
+    isRecord(entry)
+    && requiredString(entry.id)
+    && typeof entry.description === 'string'
+    && requiredString(entry.idempotencyKey)
+  ));
+}
+
+function isOptionalAttemptDelta(value: unknown): boolean {
+  if (value === undefined) return true;
+  return isRecord(value)
+    && value.schemaVersion === 1
+    && requiredString(value.stepId)
+    && requiredString(value.checkpointHash)
+    && requiredString(value.materialHash)
+    && typeof value.stateChanged === 'boolean'
+    && isStringArray(value.newCompletedStepIds)
+    && isStringArray(value.newCompletedCriterionIds)
+    && isStringArray(value.newCompletedDeliverableIds)
+    && isStringArray(value.newArtifactIds)
+    && isStringArray(value.newEvidenceIds)
+    && isStringArray(value.newSideEffectIds)
+    && isOptionalString(value.nextActionStepId);
+}
+
+function isOptionalVerification(value: unknown): boolean {
+  return value === undefined || (
+    isRecord(value)
+    && ['accepted', 'revision_required'].includes(String(value.status))
+    && isStringArray(value.findings)
+  );
+}
+
+function isOptionalRecoveryState(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value) || !isDurableFailure(value.failure)) return false;
+  return nonNegativeInteger(value.fingerprintAttempts)
+    && nonNegativeInteger(value.totalAttempts)
+    && ['retry', 'wait_user', 'block', 'fail'].includes(String(value.lastDecision))
+    && isOptionalString(value.userInput);
+}
+
+function isDurableFailure(value: unknown): boolean {
+  return isRecord(value)
+    && ['invalid_invocation', 'transient', 'authentication_required', 'permission_required',
+      'capability_unavailable', 'terminal', 'unknown'].includes(String(value.category))
+    && ['safe', 'unsafe', 'unknown'].includes(String(value.retrySafety))
+    && typeof value.capabilityAvailable === 'boolean'
+    && ['pure', 'read_only', 'idempotent_write', 'external_side_effect', 'unknown']
+      .includes(String(value.operationRisk))
+    && isStringArray(value.hints)
+    && requiredString(value.failedStep)
+    && typeof value.diagnostic === 'string'
+    && requiredString(value.fingerprint);
+}
+
+function isOptionalDurableFailure(value: unknown): boolean {
+  return value === undefined || isDurableFailure(value);
+}
+
+function isOptionalInterrupt(value: unknown): boolean {
+  if (value === undefined) return true;
+  return isRecord(value)
+    && requiredString(value.interruptId)
+    && requiredString(value.jobId)
+    && requiredString(value.attemptId)
+    && ['pending', 'delivered', 'resolved'].includes(String(value.status))
+    && typeof value.prompt === 'string'
+    && isOptionalString(value.deliveredMessageId)
+    && isOptionalString(value.responseText)
+    && validTimestamp(value.createdAt)
+    && isOptionalTimestamp(value.deliveredAt)
+    && isOptionalTimestamp(value.resolvedAt);
+}
+
+function isOptionalDeliveryStatus(value: unknown): boolean {
+  return value === undefined || [
+    'pending', 'sending', 'delivered', 'delivery_unknown', 'failed', 'superseded',
+  ].includes(String(value));
+}
+
+function isOptionalDeliveryEvents(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.every((entry) => (
+    isRecord(entry)
+    && requiredString(entry.eventKey)
+    && ['progress', 'interrupt', 'terminal'].includes(String(entry.kind))
+    && isOptionalString(entry.attemptId)
+    && isOptionalDeliveryStatus(entry.status)
+    && nonNegativeInteger(entry.attemptCount)
+    && isOptionalTimestamp(entry.firstAttemptAt)
+    && isOptionalTimestamp(entry.lastAttemptAt)
+    && isOptionalString(entry.lastErrorCode)
+    && isOptionalString(entry.lastErrorSummary)
+    && validTimestamp(entry.createdAt)
+    && validTimestamp(entry.updatedAt)
+  )));
+}
+
+function isCountRecord(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).every(nonNegativeInteger);
+}
+
+function requiredString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === 'string';
+}
+
+function isNullableString(value: unknown): boolean {
+  return value === null || typeof value === 'string';
+}
+
+function nonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function positiveInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 1;
+}
+
+function validTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function isOptionalTimestamp(value: unknown): boolean {
+  return value === undefined || validTimestamp(value);
 }
 
 function durableStatusForExecution(result: ContinuationExecutionResult): DurableRunTransition['status'] {

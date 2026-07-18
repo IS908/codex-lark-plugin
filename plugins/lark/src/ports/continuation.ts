@@ -16,6 +16,7 @@ import type {
   ContinuationToolRequest,
   ContinuationToolResult,
 } from '../domain/continuation.js';
+import type { DurableRunInterruptedAttempt } from '../domain/durable-run.js';
 
 export interface ContinuationInputInstallResult {
   artifacts: AsyncTaskInputArtifact[];
@@ -99,7 +100,7 @@ export interface ContinuationRepository {
     claim: ContinuationClaim,
     now: string,
   ): Promise<ContinuationClaimMutationResult>;
-  recoverExpiredLeases(now: string): Promise<number>;
+  recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]>;
   expireOverdue(now: string): Promise<number>;
   cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob>;
   redactTerminal(jobId: string, now: string): Promise<boolean>;

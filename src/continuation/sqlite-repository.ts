@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
 import {
   CONTINUATION_CONTRACT_ID_PATTERN,
@@ -56,7 +56,14 @@ import {
 } from './idempotency.js';
 import { ContinuationInputStore } from './input-store.js';
 import { redactContinuationText } from './redaction.js';
-import type { DurableRunFailure } from '../domain/durable-run.js';
+import type { DurableRunFailure, DurableRunInterruptedAttempt } from '../domain/durable-run.js';
+import { SqliteDurableRunRepository } from '../durable-run/sqlite-repository.js';
+import {
+  DURABLE_RUN_SCHEMA_VERSION,
+  installContinuationCompatibilitySchema,
+  migrateSqliteToDurableV10,
+  registerContinuationCompatibilityFunctions,
+} from '../durable-run/sqlite-migrations.js';
 
 type SqlRow = Record<string, null | number | bigint | string | Uint8Array>;
 
@@ -69,6 +76,10 @@ interface SqliteContinuationRepositoryOptions {
   jitter?: () => number;
 }
 
+interface ViewMutationCounter {
+  value: number;
+}
+
 type DueCandidateSelection =
   | { kind: 'job'; job: ContinuationJob }
   | null;
@@ -78,7 +89,7 @@ const DELIVERY_OUTBOX_SCHEMA_VERSION = 5;
 const RETENTION_SCHEMA_VERSION = 6;
 const ASYNC_TASK_FACTS_SCHEMA_VERSION = 7;
 const OUTCOME_DRIVEN_SCHEMA_VERSION = 8;
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = DURABLE_RUN_SCHEMA_VERSION;
 const ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
 const DELIVERY_LEASE_MS = 30_000;
 const PROGRESS_PAYLOAD_MAX_CHARS = 4_000;
@@ -107,14 +118,17 @@ class LegacyRouteProjectionError extends LegacyPersistedRowError {}
 export class SqliteContinuationRepository implements ContinuationRepository {
   private readonly jobMutationTails = new Map<string, Promise<void>>();
   private readonly verifier: ContinuationVerifier;
+  private readonly durableRuns: SqliteDurableRunRepository;
 
   private constructor(
     private readonly database: DatabaseSync,
+    nativeDatabase: DatabaseSync,
     private readonly artifacts: ContinuationArtifactStore,
     private readonly inputs: ContinuationInputStorePort,
     private readonly jitter: () => number,
   ) {
     this.verifier = new ContinuationVerifier(artifacts);
+    this.durableRuns = SqliteDurableRunRepository.attach(nativeDatabase);
   }
 
   static async open(
@@ -138,7 +152,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         options.inputsDir ?? path.join(path.dirname(path.resolve(options.artifactsDir)), 'inputs'),
       );
       await inputs.ensureRoot();
+      const viewMutationCounter: ViewMutationCounter = { value: 0 };
+      registerContinuationCompatibilityFunctions(database, () => {
+        viewMutationCounter.value += 1;
+        return viewMutationCounter.value;
+      });
       const repository = new SqliteContinuationRepository(
+        wrapViewMutationChanges(database, viewMutationCounter),
         database,
         artifacts,
         inputs,
@@ -169,155 +189,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     `);
     await retrySqliteBusy(() => this.database.exec('PRAGMA journal_mode = WAL;'), 5_000);
     this.database.exec('PRAGMA synchronous = NORMAL;');
-    if (existingVersion === 0) this.transaction(() => {
-      if (Number(this.scalar('PRAGMA user_version')) !== 0) return;
-      this.database.exec(`
-      CREATE TABLE IF NOT EXISTS continuation_jobs (
-        job_id TEXT PRIMARY KEY,
-        idempotency_key TEXT NOT NULL UNIQUE,
-        retry_of_job_id TEXT REFERENCES continuation_jobs(job_id),
-        creator_open_id TEXT NOT NULL,
-        origin_kind TEXT NOT NULL CHECK(origin_kind IN ('message_thread', 'comment_thread')),
-        route_json TEXT NOT NULL,
-        source_message_id TEXT NOT NULL,
-        source_thread_id TEXT,
-        title TEXT NOT NULL,
-        objective TEXT NOT NULL,
-        acceptance_criteria_json TEXT NOT NULL,
-        context_snapshot_json TEXT NOT NULL,
-        source_facts_json TEXT NOT NULL,
-        task_contract_json TEXT NOT NULL,
-        required_tools_json TEXT NOT NULL,
-        working_directory TEXT NOT NULL,
-        permissions_json TEXT NOT NULL,
-        model TEXT,
-        parent_session_id TEXT,
-        max_attempts INTEGER NOT NULL CHECK(max_attempts BETWEEN 1 AND 20),
-        max_retries INTEGER NOT NULL,
-        timeout_seconds INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        row_version INTEGER NOT NULL CHECK(row_version >= 1),
-        status TEXT NOT NULL CHECK(status IN (
-          'queued', 'running', 'waiting_retry', 'cancel_requested',
-          'recovering', 'waiting_user',
-          'completed', 'partial', 'blocked', 'failed', 'cancelled'
-        )),
-        execution_session_id TEXT,
-        checkpoint_json TEXT,
-        no_progress_count INTEGER NOT NULL DEFAULT 0 CHECK(no_progress_count >= 0),
-        recovery_json TEXT,
-        recovery_total_count INTEGER NOT NULL DEFAULT 0 CHECK(recovery_total_count >= 0),
-        recovery_fingerprint_counts_json TEXT NOT NULL DEFAULT '{}',
-        step_count INTEGER NOT NULL CHECK(step_count >= 0),
-        failure_count INTEGER NOT NULL CHECK(failure_count >= 0),
-        next_run_at TEXT NOT NULL,
-        lease_owner TEXT,
-        lease_expires_at TEXT,
-        heartbeat_at TEXT,
-        result_summary TEXT,
-        result_artifacts_json TEXT NOT NULL,
-        error_code TEXT,
-        error_summary TEXT,
-        started_at TEXT,
-        updated_at TEXT NOT NULL,
-        completed_at TEXT,
-        deleted_at TEXT,
-        retain INTEGER NOT NULL DEFAULT 0 CHECK(retain IN (0, 1))
-      ) STRICT;
-
-      CREATE INDEX IF NOT EXISTS continuation_jobs_due_idx
-        ON continuation_jobs(status, next_run_at, created_at)
-        WHERE deleted_at IS NULL;
-      CREATE INDEX IF NOT EXISTS continuation_jobs_creator_idx
-        ON continuation_jobs(creator_open_id, created_at DESC)
-        WHERE deleted_at IS NULL;
-
-      CREATE TABLE IF NOT EXISTS continuation_attempts (
-        attempt_id TEXT PRIMARY KEY,
-        job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
-        ordinal INTEGER NOT NULL,
-        worker_id TEXT NOT NULL,
-        execution_session_id TEXT,
-        started_at TEXT NOT NULL,
-        heartbeat_at TEXT NOT NULL,
-        finished_at TEXT,
-        outcome TEXT CHECK(outcome IS NULL OR outcome IN (
-          'continue', 'recovering', 'waiting_user', 'completed', 'partial',
-          'failed', 'blocked', 'error', 'cancelled'
-        )),
-        error_code TEXT,
-        error_summary TEXT,
-        execution_phase TEXT NOT NULL DEFAULT 'claimed' CHECK(execution_phase IN ('claimed', 'execution_started')),
-        recovery_json TEXT,
-        step_id TEXT,
-        delta_json TEXT,
-        verification_json TEXT,
-        UNIQUE(job_id, ordinal)
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS continuation_outbox (
-        outbox_id TEXT PRIMARY KEY,
-        job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
-        event_key TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK(kind IN ('progress', 'interrupt', 'terminal')),
-        attempt_id TEXT REFERENCES continuation_attempts(attempt_id),
-        route_json TEXT NOT NULL,
-        idempotency_key TEXT NOT NULL UNIQUE,
-        payload TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN (
-          'pending', 'sending', 'delivered', 'delivery_unknown', 'failed', 'superseded'
-        )),
-        attempt_count INTEGER NOT NULL CHECK(attempt_count >= 0),
-        next_attempt_at TEXT NOT NULL,
-        worker_id TEXT,
-        lease_expires_at TEXT,
-        first_attempt_at TEXT,
-        last_attempt_at TEXT,
-        message_id TEXT,
-        error_code TEXT,
-        error_summary TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        UNIQUE(job_id, event_key),
-        CHECK(
-          (kind = 'terminal' AND event_key = 'terminal' AND attempt_id IS NULL)
-          OR
-          (kind = 'progress' AND event_key = 'progress:' || attempt_id AND attempt_id IS NOT NULL)
-          OR
-          (kind = 'interrupt' AND event_key LIKE 'interrupt:%' AND attempt_id IS NOT NULL)
-        )
-      ) STRICT;
-
-      CREATE INDEX IF NOT EXISTS continuation_outbox_due_idx
-        ON continuation_outbox(status, kind, next_attempt_at, created_at);
-
-      ${toolCallSchemaSql()}
-      ${interruptSchemaSql()}
-      PRAGMA user_version = ${SCHEMA_VERSION};
-      `);
-    });
-    while (true) {
-      const version = Number(this.scalar('PRAGMA user_version'));
-      if (version === SCHEMA_VERSION) break;
-      if (version === ASYNC_TASK_FACTS_MIGRATION_VERSION) {
-        await this.resumeAsyncTaskFactsMigration();
-        continue;
-      }
-      if (version > SCHEMA_VERSION || version < 1) {
-        throw new Error(
-          `Unsupported continuation database schema version ${version}; expected 1-${SCHEMA_VERSION}.`,
-        );
-      }
-      if (version === 1) this.migrateToolCallSchema();
-      else if (version === 2) this.migratePermissionSchema();
-      else if (version === 3) this.migrateAttemptBudgetSchema();
-      else if (version === ATTEMPT_BUDGET_SCHEMA_VERSION) this.migrateDeliveryOutboxSchema();
-      else if (version === DELIVERY_OUTBOX_SCHEMA_VERSION) this.migrateRetentionSchema();
-      else if (version === RETENTION_SCHEMA_VERSION) await this.migrateAsyncTaskFactsSchema();
-      else if (version === ASYNC_TASK_FACTS_SCHEMA_VERSION) this.migrateOutcomeDrivenSchema();
-      else if (version === OUTCOME_DRIVEN_SCHEMA_VERSION) this.migrateRecoverySchema();
-    }
+    await retrySqliteBusy(() => {
+      migrateSqliteToDurableV10(this.database);
+      installContinuationCompatibilitySchema(this.database);
+    }, 5_000);
     await this.healthCheck();
   }
 
@@ -1866,7 +1741,22 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     });
   }
 
-  async recoverExpiredLeases(now: string): Promise<number> {
+  async recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]> {
+    const interrupted = await this.durableRuns.recoverExpiredLeases(now);
+    const valid: DurableRunInterruptedAttempt[] = [];
+    for (const attempt of interrupted) {
+      const jobId = attempt.claim.run.runId;
+      try {
+        if (!this.readJobBy('j.job_id = ?', jobId)) continue;
+        valid.push(attempt);
+      } catch {
+        await this.recoverCorruptJobStorage(jobId, now, false);
+      }
+    }
+    return valid;
+  }
+
+  private async recoverExpiredLeasesLegacy(now: string): Promise<number> {
     const corruptJobIds: string[] = [];
     const recovered = this.transaction(() => {
       const rows = this.database.prepare(`
@@ -3265,12 +3155,11 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         )
     `).run(now, jobId, now);
     this.database.prepare(`
-      INSERT INTO continuation_outbox (
+      INSERT OR IGNORE INTO continuation_outbox (
         outbox_id, job_id, event_key, kind, attempt_id,
         route_json, idempotency_key, payload, status,
         attempt_count, next_attempt_at, created_at, updated_at
       ) VALUES (?, ?, 'terminal', 'terminal', NULL, ?, ?, ?, 'pending', 0, ?, ?, ?)
-      ON CONFLICT(job_id, event_key) DO NOTHING
     `).run(
       makeId('out'),
       jobId,
@@ -3291,12 +3180,11 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ): void {
     const eventKey = `progress:${claim.attempt.attemptId}`;
     this.database.prepare(`
-      INSERT INTO continuation_outbox (
+      INSERT OR IGNORE INTO continuation_outbox (
         outbox_id, job_id, event_key, kind, attempt_id,
         route_json, idempotency_key, payload, status,
         attempt_count, next_attempt_at, created_at, updated_at
       ) VALUES (?, ?, ?, 'progress', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
-      ON CONFLICT(job_id, event_key) DO NOTHING
     `).run(
       makeId('out'),
       job.jobId,
@@ -3326,19 +3214,17 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       .slice(0, 24)}`;
     const boundedPrompt = truncateCharacters(redactContinuationText(prompt), 2_000);
     this.database.prepare(`
-      INSERT INTO continuation_interrupts (
+      INSERT OR IGNORE INTO continuation_interrupts (
         interrupt_id, job_id, attempt_id, status, prompt, created_at
       ) VALUES (?, ?, ?, 'pending', ?, ?)
-      ON CONFLICT(job_id, attempt_id) DO NOTHING
     `).run(interruptId, job.jobId, claim.attempt.attemptId, boundedPrompt, now);
     const eventKey = `interrupt:${interruptId}`;
     this.database.prepare(`
-      INSERT INTO continuation_outbox (
+      INSERT OR IGNORE INTO continuation_outbox (
         outbox_id, job_id, event_key, kind, attempt_id,
         route_json, idempotency_key, payload, status,
         attempt_count, next_attempt_at, created_at, updated_at
       ) VALUES (?, ?, ?, 'interrupt', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
-      ON CONFLICT(job_id, event_key) DO NOTHING
     `).run(
       makeId('out'),
       job.jobId,
@@ -5302,6 +5188,38 @@ function isManagedInputArtifact(value: unknown): value is AsyncTaskFactSnapshot[
     && typeof value.sizeBytes === 'number'
     && Number.isSafeInteger(value.sizeBytes)
     && value.sizeBytes >= 0;
+}
+
+function wrapViewMutationChanges(
+  database: DatabaseSync,
+  counter: ViewMutationCounter,
+): DatabaseSync {
+  return new Proxy(database, {
+    get(target, property) {
+      if (property === 'prepare') {
+        return (sql: string) => {
+          const statement = target.prepare(sql);
+          return new Proxy(statement, {
+            get(statementTarget, statementProperty) {
+              if (statementProperty === 'run') {
+                return (...parameters: SQLInputValue[]) => {
+                  counter.value = 0;
+                  const result = statementTarget.run(...parameters);
+                  return counter.value > Number(result.changes)
+                    ? { ...result, changes: counter.value }
+                    : result;
+                };
+              }
+              const value = Reflect.get(statementTarget, statementProperty, statementTarget);
+              return typeof value === 'function' ? value.bind(statementTarget) : value;
+            },
+          });
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
 
 function stringField(row: SqlRow, field: string): string {

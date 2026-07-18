@@ -165,6 +165,51 @@ try {
     [],
   );
 
+  const recoveryRestartDatabasePath = join(root, 'recovery-restart.sqlite');
+  const recoveryBeforeRestart = await SqliteDurableRunRepository.open({
+    databasePath: recoveryRestartDatabasePath,
+  });
+  await recoveryBeforeRestart.create(request('run-recovery-restart', 'async_task'));
+  const recoveryRestartClaim = await recoveryBeforeRestart.claimDue(
+    ['async_task'],
+    'worker-recovery-restart',
+    now,
+    '2026-07-19T00:00:05.000Z',
+  );
+  assert.equal(await recoveryBeforeRestart.markExecutionStarted(recoveryRestartClaim!, now), 'committed');
+  const recoveryBeforeCrash = await recoveryBeforeRestart.recoverExpiredLeases(
+    '2026-07-19T00:00:06.000Z',
+  );
+  assert.equal(recoveryBeforeCrash.length, 1);
+  recoveryBeforeRestart.close();
+
+  const recoveryAfterRestart = await SqliteDurableRunRepository.open({
+    databasePath: recoveryRestartDatabasePath,
+  });
+  assert.deepEqual(
+    await recoveryAfterRestart.recoverExpiredLeases('2026-07-19T00:00:35.000Z'),
+    [],
+  );
+  const reclaimedRecovery = await recoveryAfterRestart.recoverExpiredLeases(
+    '2026-07-19T00:00:37.000Z',
+  );
+  assert.equal(reclaimedRecovery.length, 1);
+  assert.equal(reclaimedRecovery[0]?.claim.attempt.attemptId, recoveryBeforeCrash[0]?.claim.attempt.attemptId);
+  assert.ok(
+    (reclaimedRecovery[0]?.claim.claimedRowVersion ?? 0)
+      > (recoveryBeforeCrash[0]?.claim.claimedRowVersion ?? 0),
+  );
+  assert.equal(
+    await recoveryAfterRestart.commitTransition(reclaimedRecovery[0]!.claim, {
+      status: 'waiting_retry',
+      stateVersion: 1,
+      state: { schemaVersion: 1, step: 0, recovery: 'restart_reclaimed' },
+      nextRunAt: '2026-07-19T00:00:37.000Z',
+    }, '2026-07-19T00:00:37.000Z'),
+    'committed',
+  );
+  recoveryAfterRestart.close();
+
   repository.close();
 
   const database = new DatabaseSync(databasePath, { enableForeignKeyConstraints: true });

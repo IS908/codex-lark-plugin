@@ -8,6 +8,7 @@ import type {
   ContinuationExecutionResult,
   ContinuationJob,
 } from '../src/domain/continuation.js';
+import type { DurableRunInterruptedAttempt } from '../src/domain/durable-run.js';
 import { ContinuationExecutionError } from '../src/domain/continuation.js';
 import type {
   ContinuationAudit,
@@ -22,37 +23,67 @@ import { ContinuationService } from '../src/continuation/service.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
 
 function createJob(suffix: string): ContinuationJob {
+  const route = {
+    kind: 'message_thread' as const,
+    conversationId: 'oc_worker',
+    sourceMessageId: `om_${suffix}`,
+  };
+  const permissions = {
+    profile: 'bounded' as const,
+    filesystem: { root: '/tmp', mode: 'workspace-write' as const, requestedPaths: [] },
+    hostTools: [],
+    network: 'none' as const,
+    externalSideEffects: 'denied' as const,
+    approval: { mode: 'never' as const },
+  };
+  const contextSnapshot = {
+    summary: 'Ready',
+    completedSteps: [],
+    remainingSteps: ['finish'],
+    constraints: [],
+    decisions: [],
+    references: [],
+  };
   return {
     jobId: `job_${suffix.padEnd(24, '0').slice(0, 24)}`,
     idempotencyKey: `idem-${suffix}`,
     creatorOpenId: 'ou_creator',
-    route: {
-      kind: 'message_thread',
-      conversationId: 'oc_worker',
-      sourceMessageId: `om_${suffix}`,
-    },
+    route,
     sourceMessageId: `om_${suffix}`,
     title: `Worker ${suffix}`,
     objective: 'Complete the background task',
     acceptanceCriteria: ['finish'],
-    contextSnapshot: {
-      summary: 'Ready',
-      completedSteps: [],
-      remainingSteps: ['finish'],
-      constraints: [],
-      decisions: [],
-      references: [],
+    contextSnapshot,
+    sourceFacts: {
+      schemaVersion: 1,
+      provenance: 'legacy_unavailable',
+      originalUserText: null,
+      sourceContextText: null,
+      quotedMessageText: null,
+      creatorOpenId: 'ou_creator',
+      chatId: 'oc_worker',
+      chatType: 'p2p',
+      route,
+      sourceMessageId: `om_${suffix}`,
+      sourceMessageType: 'text',
+      sourceTimestamp: '2026-07-17T00:00:00.000Z',
+      inputs: [],
+      workingDirectory: '/tmp',
+      model: null,
+      permissions,
+    },
+    taskContract: {
+      schemaVersion: 1,
+      title: `Worker ${suffix}`,
+      objective: 'Complete the background task',
+      deliverables: [],
+      acceptanceCriteria: [{ id: 'finish', description: 'finish', deliverableIds: [] }],
+      verificationRequirements: [],
+      initialContext: contextSnapshot,
     },
     requiredTools: [],
     workingDirectory: '/tmp',
-    permissions: {
-      profile: 'bounded',
-      filesystem: { root: '/tmp', mode: 'workspace-write', requestedPaths: [] },
-      hostTools: [],
-      network: 'none',
-      externalSideEffects: 'denied',
-      approval: { mode: 'never' },
-    },
+    permissions,
     maxAttempts: 5,
     maxRetries: 3,
     timeoutSeconds: 60,
@@ -60,6 +91,9 @@ function createJob(suffix: string): ContinuationJob {
     expiresAt: '2026-07-18T00:00:00.000Z',
     rowVersion: 2,
     status: 'running',
+    recoveryTotalCount: 0,
+    recoveryFingerprintCounts: {},
+    noProgressCount: 0,
     stepCount: 0,
     failureCount: 0,
     nextRunAt: '2026-07-17T00:00:00.000Z',
@@ -89,6 +123,46 @@ function createClaim(suffix: string): ContinuationClaim {
   };
 }
 
+function interruptedAttempt(suffix: string): DurableRunInterruptedAttempt {
+  const claim = createClaim(suffix);
+  return {
+    claim: {
+      run: {
+        runId: claim.job.jobId,
+        workloadKind: 'async_task',
+        idempotencyKey: claim.job.idempotencyKey,
+        status: claim.job.status,
+        inputVersion: 1,
+        input: { schemaVersion: 1, job: claim.job },
+        stateVersion: 1,
+        state: { schemaVersion: 1, job: claim.job },
+        route: claim.job.route,
+        actorOpenId: claim.job.creatorOpenId,
+        nextRunAt: claim.job.nextRunAt,
+        expiresAt: claim.job.expiresAt,
+        maxAttempts: claim.job.maxAttempts,
+        attemptCount: 1,
+        rowVersion: claim.claimedRowVersion + 1,
+      },
+      attempt: {
+        attemptId: claim.attempt.attemptId,
+        runId: claim.job.jobId,
+        ordinal: claim.attempt.ordinal,
+        workerId: claim.workerId,
+        claimedAt: claim.attempt.startedAt,
+        heartbeatAt: claim.attempt.heartbeatAt,
+        leaseExpiresAt: '2026-07-17T00:00:00.000Z',
+        executionStartedAt: claim.attempt.startedAt,
+      },
+      workerId: claim.workerId,
+      claimedRowVersion: claim.claimedRowVersion + 1,
+    },
+    recoveredAt: '2026-07-17T00:00:01.000Z',
+    executionPhase: 'execution_started',
+    operationRisk: 'unknown',
+  };
+}
+
 class FakeClock implements ContinuationClock {
   constructor(private value = new Date('2026-07-17T00:00:00.000Z')) {}
   now(): Date { return new Date(this.value); }
@@ -103,6 +177,7 @@ interface RepositoryHarness {
   cancellations: ContinuationClaim[];
   heartbeats: string[];
   deliveryResults: unknown[];
+  recoveries: DurableRunInterruptedAttempt[];
   recoverCalls: number;
   expireCalls: number;
   claimCalls: number;
@@ -118,6 +193,7 @@ function createRepositoryHarness(initialClaims: ContinuationClaim[] = []): Repos
     cancellations: [],
     heartbeats: [],
     deliveryResults: [],
+    recoveries: [],
     recoverCalls: 0,
     expireCalls: 0,
     claimCalls: 0,
@@ -161,7 +237,10 @@ function createRepositoryHarness(initialClaims: ContinuationClaim[] = []): Repos
       harness.cancellations.push(claim);
       return 'committed';
     },
-    async recoverExpiredLeases() { harness.recoverCalls += 1; return 0; },
+    async recoverExpiredLeases() {
+      harness.recoverCalls += 1;
+      return harness.recoveries.splice(0);
+    },
     async expireOverdue() { harness.expireCalls += 1; return 0; },
     async cloneForRetry() { throw new Error('not used'); },
     async redactTerminal() { return false; },
@@ -179,7 +258,31 @@ function createRepositoryHarness(initialClaims: ContinuationClaim[] = []): Repos
 
 function completedResult(message: string): ContinuationExecutionResult {
   return {
-    outcome: { outcome: 'completed', finalMessage: message, artifacts: [] },
+    outcome: {
+      outcome: 'completed',
+      checkpoint: workerCheckpoint(),
+      finalMessage: message,
+      artifacts: [],
+    },
+  };
+}
+
+function workerCheckpoint() {
+  return {
+    schemaVersion: 2 as const,
+    summary: 'Worker step completed.',
+    currentStepId: 'finish',
+    completedStepIds: ['finish'],
+    completedCriterionIds: [],
+    completedDeliverableIds: [],
+    remainingSteps: [],
+    artifacts: [],
+    evidence: [],
+    sideEffects: [],
+    constraints: [],
+    decisions: [],
+    nextAction: null,
+    stopReason: 'Worker smoke outcome.',
   };
 }
 
@@ -259,6 +362,34 @@ assert.ok(debugMessages.some((message) => message.includes('event=step_committed
 assert.ok(debugMessages.some((message) => message.includes('event=delivery_committed')));
 await normalWorker.stop();
 
+// Expired opaque execution is reduced by the Async Task workload and never blindly re-executed.
+const recoveryHarness = createRepositoryHarness();
+recoveryHarness.recoveries.push(interruptedAttempt('structured-recovery'));
+let recoveryExecutionCalls = 0;
+const recoveryWorker = new ContinuationWorker({
+  repository: recoveryHarness.repository,
+  executor: {
+    async execute() {
+      recoveryExecutionCalls += 1;
+      return completedResult('must not execute');
+    },
+  },
+  delivery: normalDelivery,
+  clock: new FakeClock(new Date('2026-07-17T00:00:01.000Z')),
+  maxConcurrency: 1,
+});
+await recoveryWorker.tick();
+await waitFor(() => recoveryHarness.completed.length === 1, 'structured recovery commit');
+assert.equal(recoveryExecutionCalls, 0);
+assert.equal(recoveryHarness.completed[0]?.result.outcome.outcome, 'waiting_user');
+if (recoveryHarness.completed[0]?.result.outcome.outcome === 'waiting_user') {
+  assert.equal(
+    recoveryHarness.completed[0].result.outcome.failure.operationRisk,
+    'unknown',
+  );
+}
+await recoveryWorker.stop();
+
 // Max concurrency is enforced, and completion refills the available slot.
 const concurrentHarness = createRepositoryHarness([
   createClaim('concurrent-a'),
@@ -331,6 +462,7 @@ const blockedWorker = new ContinuationWorker({
       return {
         outcome: {
           outcome: 'blocked',
+          checkpoint: workerCheckpoint(),
           errorCode: 'capability_unavailable',
           errorSummary: 'Unavailable',
           requiredCapability: 'network',

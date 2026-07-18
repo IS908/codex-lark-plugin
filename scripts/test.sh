@@ -45,6 +45,10 @@ echo "=== Continuation repository checks ==="
 node --import tsx scripts/continuation-repository-smoke.ts
 
 echo ""
+echo "=== Continuation durable storage cutover checks ==="
+node --import tsx scripts/continuation-durable-cutover-smoke.ts
+
+echo ""
 echo "=== Continuation local CLI invoker checks ==="
 node --import tsx scripts/continuation-local-cli-invoker-smoke.ts
 

@@ -506,8 +506,10 @@ const corruptRetryFacts = corruptRetryDatabase.prepare(`
 `).get(corruptRetrySource.job.jobId) as { source_facts_json: string };
 assert.ok(corruptRetryFacts.source_facts_json.length > 0);
 corruptRetryDatabase.prepare(`
-  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
-`).run('{', corruptRetrySource.job.jobId);
+  UPDATE durable_runs
+  SET state_json = json_set(state_json, '$.job.sourceFacts', json(?))
+  WHERE run_id = ? AND workload_kind = 'async_task'
+`).run('{}', corruptRetrySource.job.jobId);
 corruptRetryDatabase.close();
 const corruptCreateReplay = await dispatcher.execute({
   message: corruptRetryMessage,
