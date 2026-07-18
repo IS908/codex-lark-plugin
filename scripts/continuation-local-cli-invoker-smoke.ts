@@ -163,14 +163,25 @@ try {
     outcome: {
       outcome: 'continue',
       checkpoint: {
+        schemaVersion: 2,
         summary: 'first tool complete',
-        completedSteps: [],
-        remainingSteps: [],
+        currentStepId: 'invoke-local-tool',
+        completedStepIds: ['invoke-local-tool'],
+        completedCriterionIds: [],
+        completedDeliverableIds: [],
+        remainingSteps: [{ id: 'finish', description: 'finish' }],
+        artifacts: [],
+        evidence: [],
+        sideEffects: [{
+          id: 'local-tool-call',
+          description: 'Fetched the document through the configured host tool.',
+          idempotencyKey: `${declaredJob.job.jobId}:0`,
+        }],
         constraints: [],
         decisions: [],
-        references: [],
+        nextAction: { id: 'finish', description: 'finish' },
+        stopReason: 'The bounded host-tool step completed.',
       },
-      nextStep: 'finish',
     },
   }, now);
 

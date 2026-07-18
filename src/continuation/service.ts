@@ -483,7 +483,7 @@ export class UnavailableContinuationService implements ContinuationTaskService {
 
 function expandListStatuses(statuses: ContinuationListStatus[]): ContinuationStatus[] {
   return [...new Set(statuses.flatMap((status): ContinuationStatus[] => {
-    if (status === 'pending') return ['queued', 'waiting_retry'];
+    if (status === 'pending') return ['queued', 'waiting_retry', 'recovering'];
     if (status === 'running') return ['running', 'cancel_requested'];
     return [status];
   }))];

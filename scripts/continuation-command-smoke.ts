@@ -8,6 +8,7 @@ import { SqliteContinuationRepository } from '../src/continuation/sqlite-reposit
 import { ContinuationService } from '../src/continuation/service.js';
 import { ContinuationInputStore } from '../src/continuation/input-store.js';
 import { handleContinuationCommand } from '../src/continuation/command-handler.js';
+import type { ContinuationCheckpointV2 } from '../src/domain/continuation.js';
 
 const root = await mkdtemp(path.join(tmpdir(), 'continuation-command-'));
 const now = new Date('2026-07-17T08:00:00.000Z');
@@ -34,6 +35,30 @@ const commentReplies: Array<{
   file_type: string;
   content: string;
 }> = [];
+
+function taskCheckpoint(completed = true): ContinuationCheckpointV2 {
+  return {
+    schemaVersion: 2,
+    summary: completed ? 'Task completed with evidence.' : 'Task could not be completed.',
+    currentStepId: 'complete-task',
+    completedStepIds: completed ? ['complete-task'] : [],
+    completedCriterionIds: completed ? ['task_complete'] : [],
+    completedDeliverableIds: completed ? ['result'] : [],
+    remainingSteps: completed ? [] : [{ id: 'complete-task', description: 'Complete the task.' }],
+    artifacts: [],
+    evidence: completed ? [{
+      id: 'result-evidence-entry',
+      requirementId: 'result_evidence',
+      criterionIds: ['task_complete'],
+      reference: 'terminal-result',
+    }] : [],
+    sideEffects: [],
+    constraints: [],
+    decisions: [],
+    nextAction: completed ? null : { id: 'complete-task', description: 'Complete the task.' },
+    stopReason: completed ? 'Acceptance criteria verified.' : 'Smoke-test failure.',
+  };
+}
 
 function message(overrides: Partial<LarkMessage> = {}): LarkMessage {
   return {
@@ -128,6 +153,7 @@ assert.equal(completedClaim?.job.jobId, ownedQueued.jobId);
 await repository.completeStep(completedClaim!, {
   outcome: {
     outcome: 'completed',
+    checkpoint: taskCheckpoint(),
     finalMessage: 'Owned queued task is complete.',
     artifacts: [],
   },
@@ -143,6 +169,7 @@ assert.equal(otherClaim?.job.jobId, otherQueued.jobId);
 await repository.completeStep(otherClaim!, {
   outcome: {
     outcome: 'completed',
+    checkpoint: taskCheckpoint(),
     finalMessage: 'Other task is complete.',
     artifacts: [],
   },
@@ -156,6 +183,7 @@ assert.equal(completedSourceClaim?.job.jobId, completed.jobId);
 await repository.completeStep(completedSourceClaim!, {
   outcome: {
     outcome: 'failed',
+    checkpoint: taskCheckpoint(false),
     errorCode: 'test_failure',
     errorSummary: 'The task failed in the smoke test.',
     retryable: false,
@@ -193,6 +221,7 @@ assert.equal(ambiguousClaim?.job.jobId, ambiguous.jobId);
 await repository.completeStep(ambiguousClaim!, {
   outcome: {
     outcome: 'completed',
+    checkpoint: taskCheckpoint(),
     finalMessage: 'Ambiguous delivery task is complete.',
     artifacts: [],
   },
@@ -209,6 +238,21 @@ const pendingFilter = await createJob(
   'ou_creator',
   'Pending filter task',
 );
+const recoveringClaim = await repository.claimDue(
+  'worker-recovering-filter',
+  now.toISOString(),
+  new Date(now.getTime() + 60_000).toISOString(),
+);
+assert.equal(recoveringClaim?.job.jobId, pendingFilter.jobId);
+await repository.completeStep(recoveringClaim!, {
+  outcome: {
+    outcome: 'completed',
+    checkpoint: taskCheckpoint(false),
+    finalMessage: 'This unverified completion must be revised.',
+    artifacts: [],
+  },
+}, now.toISOString());
+assert.equal((await repository.get(pendingFilter.jobId))?.status, 'recovering');
 
 assert.equal(await run(message({
   messageId: 'om_list_creator',
@@ -228,6 +272,7 @@ assert.equal(await run(message({
   rawContent: '{"text":"/task list --status pending, failed"}',
 })), true);
 assert.match(replies.at(-1)?.text ?? '', /Pending filter task/);
+assert.match(replies.at(-1)?.text ?? '', /recovering/);
 assert.match(replies.at(-1)?.text ?? '', /Completed task/);
 assert.doesNotMatch(replies.at(-1)?.text ?? '', /Owned queued task/);
 assert.doesNotMatch(replies.at(-1)?.text ?? '', /Ambiguous delivery task/);

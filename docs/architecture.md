@@ -91,6 +91,16 @@ The current baseline is empty:
   detects mutation but is not an OS-adversary-proof isolation boundary.
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
   Lark progress/terminal delivery, and composition live under `src/continuation/`.
+  Attempt handoff uses a schema-versioned checkpoint with stable step,
+  deliverable, criterion, artifact, evidence, and side-effect IDs. The parent
+  verifies monotonic continuity and artifact checksums, derives a material-only
+  attempt delta, and persists both the delta and verification verdict. Free-form
+  summaries, decisions, stop reasons, and confidence do not count as progress.
+  A verified completion may terminate below the configured attempt ceiling;
+  rejected candidates enter the schedulable `recovering` state, and two
+  consecutive attempts without verified material change terminate early as
+  `continuation_stalled`. Checkpoints, deltas, verdicts, and no-progress counts
+  are restored from SQLite after restart and are exposed through `/task status`.
   Retention consumes the persisted terminal delivery result, serializes cleanup
   against retain mutations, and preserves only a compact audited tombstone.
   The local CLI continuation adapter is parent-owned. Standard Codex tools stay

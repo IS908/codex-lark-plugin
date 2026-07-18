@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import {
   chmod,
@@ -24,6 +25,7 @@ import {
   type AsyncTaskFactSnapshot,
   type AsyncTaskContract,
   type ContinuationCreateRequest,
+  type ContinuationCheckpointV2,
 } from '../src/domain/continuation.js';
 import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js';
 import {
@@ -147,6 +149,58 @@ const root = await mkdtemp(join(tmpdir(), 'continuation-repository-'));
 const databasePath = join(root, 'runtime', 'jobs.sqlite');
 const artifactsDir = join(root, 'runtime', 'artifacts');
 const baseNow = '2026-07-17T00:00:00.000Z';
+const artifactStore = new ContinuationArtifactStore(artifactsDir);
+
+function progressCheckpoint(
+  overrides: Partial<ContinuationCheckpointV2> = {},
+): ContinuationCheckpointV2 {
+  return {
+    schemaVersion: 2,
+    summary: 'Bounded step complete.',
+    currentStepId: 'inspect-inputs',
+    completedStepIds: ['inspect-inputs'],
+    completedCriterionIds: [],
+    completedDeliverableIds: [],
+    remainingSteps: [{ id: 'produce-result', description: 'Produce the result.' }],
+    artifacts: [],
+    evidence: [],
+    sideEffects: [],
+    constraints: ['do not publish'],
+    decisions: [],
+    nextAction: { id: 'produce-result', description: 'Produce the result.' },
+    stopReason: 'One bounded step completed.',
+    ...overrides,
+  };
+}
+
+async function completedCheckpoint(
+  jobId: string,
+  currentStepId = 'produce-result',
+  fileName = 'artifact.json',
+  store: ContinuationArtifactStore = artifactStore,
+): Promise<ContinuationCheckpointV2> {
+  const content = '{"result":"ok"}\n';
+  const directory = await store.ensure(jobId);
+  await writeFile(join(directory, fileName), content, 'utf8');
+  const sha256 = createHash('sha256').update(content).digest('hex');
+  return progressCheckpoint({
+    summary: 'Task contract verified.',
+    currentStepId,
+    completedStepIds: ['inspect-inputs', currentStepId],
+    completedCriterionIds: ['result_persisted'],
+    completedDeliverableIds: ['result'],
+    remainingSteps: [],
+    artifacts: [{ id: 'result-artifact', deliverableId: 'result', path: fileName, sha256 }],
+    evidence: [{
+      id: 'result-evidence',
+      requirementId: 'result_exists',
+      criterionIds: ['result_persisted'],
+      artifactId: 'result-artifact',
+    }],
+    nextAction: null,
+    stopReason: 'All acceptance criteria are verified.',
+  });
+}
 
 function createRequest(
   suffix: string,
@@ -393,15 +447,10 @@ try {
     executionSessionId: 'session-continuation-1',
     outcome: {
       outcome: 'continue',
-      checkpoint: {
+      checkpoint: progressCheckpoint({
         summary: 'First slice complete',
-        completedSteps: ['inspect inputs'],
-        remainingSteps: ['produce result'],
-        constraints: ['do not publish'],
         decisions: ['use local data'],
-        references: ['artifact.json'],
-      },
-      nextStep: 'produce result',
+      }),
       resumeAfterSeconds: 0,
     },
   }, '2026-07-17T00:00:11.000Z');
@@ -475,6 +524,7 @@ try {
     executionSessionId: 'session-continuation-1',
     outcome: {
       outcome: 'completed',
+      checkpoint: await completedCheckpoint(first.job.jobId),
       finalMessage: 'Complete result',
       resultSummary: 'Complete',
       artifacts: ['artifact.json'],
@@ -869,15 +919,19 @@ try {
       executionSessionId: 'session-convergence',
       outcome: {
         outcome: 'continue',
-        checkpoint: {
+        checkpoint: progressCheckpoint({
           summary: `Attempt ${ordinal} checkpoint`,
-          completedSteps: [`completed ${ordinal}`],
-          remainingSteps: ['finish the remaining work'],
+          currentStepId: `step-${ordinal}`,
+          completedStepIds: Array.from({ length: ordinal }, (_, index) => `step-${index + 1}`),
+          remainingSteps: ordinal < 5
+            ? [{ id: `step-${ordinal + 1}`, description: 'finish the remaining work' }]
+            : [{ id: 'post-budget', description: 'finish the remaining work' }],
           constraints: ['stay within the attempt budget'],
           decisions: ['preserve the checkpoint'],
-          references: ['result.md'],
-        },
-        nextStep: 'finish the remaining work',
+          nextAction: ordinal < 5
+            ? { id: `step-${ordinal + 1}`, description: 'finish the remaining work' }
+            : { id: 'post-budget', description: 'finish the remaining work' },
+        }),
       },
     }, now);
     assert.equal(
@@ -923,6 +977,13 @@ try {
   await convergenceRepository.completeStep(blockedClaim, {
     outcome: {
       outcome: 'blocked',
+      checkpoint: progressCheckpoint({
+        summary: 'Local validation completed before the blocker.',
+        currentStepId: 'production-validation',
+        completedStepIds: ['local-validation'],
+        remainingSteps: [{ id: 'production-validation', description: 'run production validation' }],
+        nextAction: { id: 'production-validation', description: 'run production validation' },
+      }),
       errorCode: 'missing_capability',
       errorSummary: 'A required capability is unavailable.',
       requiredCapability: 'production credentials',
@@ -936,6 +997,168 @@ try {
   assert.equal(blockedResult?.deliveryStatus, 'pending');
 } finally {
   convergenceRepository.close();
+}
+
+const outcomePolicyArtifacts = new ContinuationArtifactStore(
+  join(root, 'outcome-policy', 'artifacts'),
+);
+const outcomePolicyRepository = await SqliteContinuationRepository.open({
+  databasePath: join(root, 'outcome-policy', 'jobs.sqlite'),
+  artifactsDir: join(root, 'outcome-policy', 'artifacts'),
+  artifactStore: outcomePolicyArtifacts,
+  jitter: () => 0,
+});
+try {
+  const revisionJob = await outcomePolicyRepository.create(createRequest('verification-revision'));
+  const rejectedClaim = await outcomePolicyRepository.claimDue(
+    'worker-verification-revision',
+    baseNow,
+    '2026-07-17T00:01:00.000Z',
+  );
+  assert.ok(rejectedClaim);
+  await outcomePolicyRepository.completeStep(rejectedClaim, {
+    outcome: {
+      outcome: 'completed',
+      checkpoint: progressCheckpoint({ nextAction: null }),
+      finalMessage: 'Unverified completion must not be accepted.',
+      artifacts: [],
+    },
+  }, '2026-07-17T00:00:01.000Z');
+  const recovering = await outcomePolicyRepository.get(revisionJob.job.jobId);
+  assert.equal(recovering?.status, 'recovering');
+  assert.equal(recovering?.lastVerification?.status, 'revision_required');
+  assert.equal(recovering?.lastAttemptDelta?.stepId, 'inspect-inputs');
+  assert.equal(recovering?.lastAttemptDelta?.stateChanged, false);
+  assert.equal(recovering?.noProgressCount, 1);
+  assert.ok(recovering?.lastVerification?.findings.some((finding) =>
+    finding.includes('Required deliverable result')));
+
+  const revisionClaim = await outcomePolicyRepository.claimDue(
+    'worker-verification-revision',
+    '2026-07-17T00:00:02.000Z',
+    '2026-07-17T00:01:02.000Z',
+  );
+  assert.ok(revisionClaim);
+  assert.equal(revisionClaim.job.status, 'running');
+  await outcomePolicyRepository.completeStep(revisionClaim, {
+    outcome: {
+      outcome: 'completed',
+      checkpoint: await completedCheckpoint(
+        revisionJob.job.jobId,
+        'legacy-step-1',
+        'verified.json',
+        outcomePolicyArtifacts,
+      ),
+      finalMessage: 'Verified completion.',
+      artifacts: ['verified.json'],
+    },
+  }, '2026-07-17T00:00:03.000Z');
+  const revised = await outcomePolicyRepository.get(revisionJob.job.jobId);
+  assert.equal(revised?.status, 'completed');
+  assert.equal(revised?.attemptCount, 2);
+  assert.equal(revised?.lastVerification?.status, 'accepted');
+  const revisionDelivery = await outcomePolicyRepository.claimPendingDelivery(
+    'delivery-verification-revision',
+    '2026-07-17T00:00:03.500Z',
+  );
+  assert.equal(revisionDelivery?.kind, 'terminal');
+  await outcomePolicyRepository.markDeliveryResult(
+    revisionDelivery!,
+    { status: 'delivered', messageId: 'om_verification_revision' },
+    '2026-07-17T00:00:03.600Z',
+  );
+
+  const checksumJob = await outcomePolicyRepository.create(createRequest('checksum-revision'));
+  const checksumClaim = await outcomePolicyRepository.claimDue(
+    'worker-checksum-revision',
+    '2026-07-17T00:00:03.700Z',
+    '2026-07-17T00:01:03.700Z',
+  );
+  assert.equal(checksumClaim?.job.jobId, checksumJob.job.jobId);
+  const checksumCheckpoint = await completedCheckpoint(
+    checksumJob.job.jobId,
+    'produce-result',
+    'checksum.json',
+    outcomePolicyArtifacts,
+  );
+  checksumCheckpoint.artifacts[0].sha256 = '0'.repeat(64);
+  await outcomePolicyRepository.completeStep(checksumClaim!, {
+    outcome: {
+      outcome: 'completed',
+      checkpoint: checksumCheckpoint,
+      finalMessage: 'A mismatched checksum must not complete.',
+      artifacts: ['checksum.json'],
+    },
+  }, '2026-07-17T00:00:03.800Z');
+  const checksumRevision = await outcomePolicyRepository.get(checksumJob.job.jobId);
+  assert.equal(checksumRevision?.status, 'recovering');
+  assert.ok(checksumRevision?.lastVerification?.findings.some((finding) =>
+    finding.includes('checksum does not match')));
+  assert.equal(await outcomePolicyRepository.requestCancel(
+    checksumJob.job.jobId,
+    '2026-07-17T00:00:03.900Z',
+  ), 'cancelled');
+  const checksumTerminal = await outcomePolicyRepository.claimPendingDelivery(
+    'delivery-checksum-revision',
+    '2026-07-17T00:00:03.950Z',
+  );
+  assert.equal(checksumTerminal?.kind, 'terminal');
+  await outcomePolicyRepository.markDeliveryResult(
+    checksumTerminal!,
+    { status: 'delivered', messageId: 'om_checksum_revision' },
+    '2026-07-17T00:00:03.960Z',
+  );
+
+  const stalledJob = await outcomePolicyRepository.create(createRequest('no-progress-stall'));
+  const firstStallClaim = await outcomePolicyRepository.claimDue(
+    'worker-no-progress',
+    '2026-07-17T00:00:04.000Z',
+    '2026-07-17T00:01:04.000Z',
+  );
+  assert.ok(firstStallClaim);
+  const stableCheckpoint = progressCheckpoint();
+  await outcomePolicyRepository.completeStep(firstStallClaim, {
+    outcome: { outcome: 'continue', checkpoint: stableCheckpoint },
+  }, '2026-07-17T00:00:05.000Z');
+  for (let ordinal = 2; ordinal <= 3; ordinal += 1) {
+    const deliverySecond = String(6 + (ordinal - 2) * 3).padStart(2, '0');
+    const claimSecond = String(7 + (ordinal - 2) * 3).padStart(2, '0');
+    const completeSecond = String(8 + (ordinal - 2) * 3).padStart(2, '0');
+    if (ordinal === 2) {
+      const delivery = await outcomePolicyRepository.claimPendingDelivery(
+        `delivery-no-progress-${ordinal}`,
+        `2026-07-17T00:00:${deliverySecond}.000Z`,
+      );
+      assert.equal(delivery?.kind, 'progress');
+      await outcomePolicyRepository.markDeliveryResult(
+        delivery!,
+        { status: 'delivered', messageId: `om_no_progress_${ordinal}` },
+        `2026-07-17T00:00:${deliverySecond}.100Z`,
+      );
+    }
+    const claim = await outcomePolicyRepository.claimDue(
+      'worker-no-progress',
+      `2026-07-17T00:00:${claimSecond}.000Z`,
+      `2026-07-17T00:01:${claimSecond}.000Z`,
+    );
+    assert.ok(claim);
+    await outcomePolicyRepository.completeStep(claim, {
+      outcome: {
+        outcome: 'continue',
+        checkpoint: progressCheckpoint({
+          currentStepId: 'produce-result',
+          completedStepIds: stableCheckpoint.completedStepIds,
+        }),
+      },
+    }, `2026-07-17T00:00:${completeSecond}.000Z`);
+  }
+  const stalledResult = await outcomePolicyRepository.get(stalledJob.job.jobId);
+  assert.equal(stalledResult?.status, 'failed');
+  assert.equal(stalledResult?.errorCode, 'continuation_stalled');
+  assert.equal(stalledResult?.attemptCount, 3);
+  assert.equal(stalledResult?.noProgressCount, 2);
+} finally {
+  outcomePolicyRepository.close();
 }
 
 const deliveryRaceRepository = await SqliteContinuationRepository.open({
@@ -954,15 +1177,11 @@ try {
   await deliveryRaceRepository.completeStep(raceClaim, {
     outcome: {
       outcome: 'continue',
-      checkpoint: {
+      checkpoint: progressCheckpoint({
         summary: 'A progress delivery is in flight.',
-        completedSteps: ['completed one bounded step'],
-        remainingSteps: ['finish the task'],
         constraints: [],
         decisions: [],
-        references: [],
-      },
-      nextStep: 'finish the task',
+      }),
     },
   }, '2026-07-17T00:00:01.000Z');
   const inFlightProgress = await deliveryRaceRepository.claimPendingDelivery(
@@ -1045,7 +1264,17 @@ try {
     '2026-07-17T00:00:02.000Z',
   );
   await retentionRepository.completeStep(cleanupClaim, {
-    outcome: { outcome: 'completed', finalMessage: 'Done.', artifacts: ['report.txt'] },
+    outcome: {
+      outcome: 'completed',
+      checkpoint: await completedCheckpoint(
+        cleanupJob.job.jobId,
+        'produce-result',
+        'report.txt',
+        retentionArtifacts,
+      ),
+      finalMessage: 'Done.',
+      artifacts: ['report.txt'],
+    },
   }, '2026-07-17T00:00:03.000Z');
   const cleanupDelivery = await retentionRepository.claimPendingDelivery(
     'delivery-retention-cleanup',
@@ -1058,7 +1287,6 @@ try {
     '2026-07-17T00:00:05.000Z',
   );
   const cleanupArtifactRoot = await retentionArtifacts.ensure(cleanupJob.job.jobId);
-  await writeFile(join(cleanupArtifactRoot, 'report.txt'), 'result', 'utf-8');
 
   const retainedJob = await retentionRepository.create(createRequest('retention-retained'));
   const retainedClaim = await retentionRepository.claimDue(
@@ -1068,7 +1296,17 @@ try {
   );
   assert.ok(retainedClaim);
   await retentionRepository.completeStep(retainedClaim, {
-    outcome: { outcome: 'completed', finalMessage: 'Retained.', artifacts: [] },
+    outcome: {
+      outcome: 'completed',
+      checkpoint: await completedCheckpoint(
+        retainedJob.job.jobId,
+        'produce-result',
+        'retained.txt',
+        retentionArtifacts,
+      ),
+      finalMessage: 'Retained.',
+      artifacts: ['retained.txt'],
+    },
   }, '2026-07-17T00:00:06.000Z');
   const retainedDelivery = await retentionRepository.claimPendingDelivery(
     'delivery-retention-retained',
@@ -1094,7 +1332,17 @@ try {
   );
   assert.ok(undeliveredClaim);
   await retentionRepository.completeStep(undeliveredClaim, {
-    outcome: { outcome: 'completed', finalMessage: 'Not delivered.', artifacts: [] },
+    outcome: {
+      outcome: 'completed',
+      checkpoint: await completedCheckpoint(
+        undeliveredJob.job.jobId,
+        'produce-result',
+        'undelivered.txt',
+        retentionArtifacts,
+      ),
+      finalMessage: 'Not delivered.',
+      artifacts: ['undelivered.txt'],
+    },
   }, '2026-07-17T00:00:10.000Z');
   const nonterminalJob = await retentionRepository.create(createRequest('retention-nonterminal'));
 
@@ -1151,7 +1399,17 @@ try {
   );
   assert.equal(failedCleanupClaim?.job.jobId, failedCleanupJob.job.jobId);
   await retentionRepository.completeStep(failedCleanupClaim!, {
-    outcome: { outcome: 'completed', finalMessage: 'Retry cleanup.', artifacts: ['retry.txt'] },
+    outcome: {
+      outcome: 'completed',
+      checkpoint: await completedCheckpoint(
+        failedCleanupJob.job.jobId,
+        'produce-result',
+        'retry.txt',
+        retentionArtifacts,
+      ),
+      finalMessage: 'Retry cleanup.',
+      artifacts: ['retry.txt'],
+    },
   }, '2026-07-17T00:00:11.000Z');
   const failedCleanupDelivery = await retentionRepository.claimPendingDelivery(
     'delivery-retention-cleanup-retry',
@@ -1164,7 +1422,6 @@ try {
     '2026-07-17T00:00:13.000Z',
   );
   const failedCleanupArtifactRoot = await retentionArtifacts.ensure(failedCleanupJob.job.jobId);
-  await writeFile(join(failedCleanupArtifactRoot, 'retry.txt'), 'retry', 'utf-8');
   retentionArtifacts.failDiscard = true;
   retentionInputs.failDiscard = true;
   const failedCleanupResults = await retentionRepository.purgeExpired(
@@ -1423,7 +1680,8 @@ const migratedVersionThreeColumns = migratedVersionThreeDatabase
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'max_attempts'));
 assert.equal(migratedVersionThreeColumns.some((column) => column.name === 'max_steps'), false);
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'retain'));
-assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 7);
+assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 8);
+assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'no_progress_count'));
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'source_facts_json'));
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'task_contract_json'));
 const migratedOutboxColumns = migratedVersionThreeDatabase
@@ -1474,7 +1732,7 @@ async function verifyIntermediateMigration(version: 4 | 5): Promise<void> {
     migrated.close();
   }
   const migratedDatabase = new DatabaseSync(migrationOptions.databasePath);
-  assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 7);
+  assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 8);
   assert.equal(Number(migratedDatabase.prepare(
     'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
   ).get(fixture.terminalJobId)?.count), fixture.expectedAttemptCount);
@@ -1525,7 +1783,7 @@ async function verifyConcurrentHistoricalMigration(version: 1 | 4 | 5): Promise<
     repository.close();
   }
   const database = new DatabaseSync(databasePath);
-  assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 7);
+  assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 8);
   assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
   database.close();
 }
@@ -1635,7 +1893,7 @@ try {
   migratedVersionOneRepository.close();
 }
 const migratedVersionOneDatabase = new DatabaseSync(versionOneDatabasePath);
-assert.equal(Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version), 7);
+assert.equal(Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version), 8);
 assert.equal(Number(migratedVersionOneDatabase.prepare(
   'SELECT COUNT(*) AS count FROM continuation_attempts',
 ).get()?.count), 3);
@@ -1781,7 +2039,7 @@ try {
   const resumedFactsMigrationDatabase = new DatabaseSync(versionSixDatabasePath);
   assert.equal(
     Number(resumedFactsMigrationDatabase.prepare('PRAGMA user_version').get()?.user_version),
-    7,
+    8,
   );
   resumedFactsMigrationDatabase.close();
 } finally {

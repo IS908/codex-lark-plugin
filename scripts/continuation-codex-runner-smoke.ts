@@ -109,6 +109,7 @@ function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
     status: 'running',
     executionSessionId: 'session-background',
     checkpoint: undefined,
+    noProgressCount: 0,
     stepCount: 0,
     failureCount: 0,
     nextRunAt: '2026-07-17T00:00:00.000Z',
@@ -190,8 +191,7 @@ for (const key of [
 function wireOutcome(fields: Record<string, unknown>): Record<string, unknown> {
   return {
     outcome: 'completed',
-    checkpoint: null,
-    next_step: null,
+    checkpoint: wireCheckpoint(),
     resume_after_seconds: null,
     final_message: null,
     result_summary: null,
@@ -207,6 +207,26 @@ function wireOutcome(fields: Record<string, unknown>): Record<string, unknown> {
     next_steps: [],
     tool: null,
     args: [],
+    ...fields,
+  };
+}
+
+function wireCheckpoint(fields: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schema_version: 2,
+    summary: 'Current task state.',
+    current_step_id: 'finish',
+    completed_step_ids: ['finish'],
+    completed_criterion_ids: [],
+    completed_deliverable_ids: [],
+    remaining_steps: [],
+    artifacts: [],
+    evidence: [],
+    side_effects: [],
+    constraints: [],
+    decisions: [],
+    next_action: null,
+    stop_reason: 'bounded step complete',
     ...fields,
   };
 }
@@ -363,15 +383,15 @@ const responses = [
   {
     text: JSON.stringify(wireOutcome({
       outcome: 'continue',
-      checkpoint: {
+      checkpoint: wireCheckpoint({
         summary: 'Inspected token=super-secret-value',
-        completed_steps: ['inspect'],
-        remaining_steps: ['finish'],
+        current_step_id: 'inspect',
+        completed_step_ids: ['inspect'],
+        remaining_steps: [{ id: 'finish', description: 'finish' }],
         constraints: ['do not publish'],
         decisions: ['use local inputs'],
-        references: ['summary.md'],
-      },
-      next_step: 'finish',
+        next_action: { id: 'finish', description: 'finish' },
+      }),
       resume_after_seconds: 3,
     })),
     sessionId: 'session-next',
@@ -424,20 +444,43 @@ assert.deepEqual(continuation, {
   outcome: {
     outcome: 'continue',
     checkpoint: {
+      schemaVersion: 2,
       summary: 'Inspected token=[redacted]',
-      completedSteps: ['inspect'],
-      remainingSteps: ['finish'],
+      currentStepId: 'inspect',
+      completedStepIds: ['inspect'],
+      completedCriterionIds: [],
+      completedDeliverableIds: [],
+      remainingSteps: [{ id: 'finish', description: 'finish' }],
+      artifacts: [],
+      evidence: [],
+      sideEffects: [],
       constraints: ['do not publish'],
       decisions: ['use local inputs'],
-      references: ['summary.md'],
+      nextAction: { id: 'finish', description: 'finish' },
+      stopReason: 'bounded step complete',
     },
-    nextStep: 'finish',
     resumeAfterSeconds: 3,
   },
 });
 const completed = await executor.execute(createClaim(), signal);
 assert.deepEqual(completed.outcome, {
   outcome: 'completed',
+  checkpoint: {
+    schemaVersion: 2,
+    summary: 'Current task state.',
+    currentStepId: 'finish',
+    completedStepIds: ['finish'],
+    completedCriterionIds: [],
+    completedDeliverableIds: [],
+    remainingSteps: [],
+    artifacts: [],
+    evidence: [],
+    sideEffects: [],
+    constraints: [],
+    decisions: [],
+    nextAction: null,
+    stopReason: 'bounded step complete',
+  },
   finalMessage: 'Finished with Bearer [redacted]',
   resultSummary: 'Done password=[redacted]',
   artifacts: ['summary.md'],
@@ -501,15 +544,15 @@ const convergenceExecutor = createContinuationCodexExecutor({
     return {
       text: JSON.stringify(wireOutcome({
         outcome: 'continue',
-        checkpoint: {
+        checkpoint: wireCheckpoint({
           summary: 'Validated the current implementation.',
-          completed_steps: ['reviewed persistence'],
-          remaining_steps: ['run production validation'],
+          current_step_id: 'review-persistence',
+          completed_step_ids: ['review-persistence'],
+          remaining_steps: [{ id: 'production-validation', description: 'run production validation' }],
           constraints: ['production credentials are unavailable'],
           decisions: ['preserve the current migration'],
-          references: ['summary.md'],
-        },
-        next_step: 'run production validation',
+          next_action: { id: 'production-validation', description: 'run production validation' },
+        }),
       })),
       sessionId: 'session-convergence',
     };
@@ -526,7 +569,23 @@ assert.deepEqual(forced, {
   executionSessionId: 'session-convergence',
   outcome: {
     outcome: 'partial',
-    completedWork: ['reviewed persistence'],
+    checkpoint: {
+      schemaVersion: 2,
+      summary: 'Validated the current implementation.',
+      currentStepId: 'review-persistence',
+      completedStepIds: ['review-persistence'],
+      completedCriterionIds: [],
+      completedDeliverableIds: [],
+      remainingSteps: [{ id: 'production-validation', description: 'run production validation' }],
+      artifacts: [],
+      evidence: [],
+      sideEffects: [],
+      constraints: ['production credentials are unavailable'],
+      decisions: ['preserve the current migration'],
+      nextAction: { id: 'production-validation', description: 'run production validation' },
+      stopReason: 'bounded step complete',
+    },
+    completedWork: ['review-persistence'],
     keyFindings: ['Validated the current implementation.'],
     unperformedWork: ['run production validation'],
     risks: ['production credentials are unavailable'],
@@ -552,9 +611,12 @@ assert.equal(firstRequest.forceToolTrace, undefined);
 assert.match(firstRequest.prompt, /one bounded, highest-priority step/i);
 assert.match(firstRequest.prompt, /continue only if measurable progress was made/i);
 assert.match(firstRequest.prompt, /another attempt is available/i);
-assert.match(firstRequest.prompt, /return completed when the acceptance criteria/i);
+assert.match(firstRequest.prompt, /return completed only when every required deliverable/i);
 assert.match(firstRequest.prompt, /do not repeat completed work/i);
 assert.match(firstRequest.prompt, /do not expand scope/i);
+assert.match(firstRequest.prompt, /previousAttemptDelta/);
+assert.match(firstRequest.prompt, /previousVerification/);
+assert.match(firstRequest.prompt, /schema_version=2 checkpoint/i);
 
 const managedInputSource = join(root, 'managed-input-source.txt');
 await writeFile(managedInputSource, 'runner input', 'utf8');
@@ -650,14 +712,14 @@ const lateIntegrityExecutor = createContinuationCodexExecutor({
 });
 const lateIntegrityResult = await lateIntegrityExecutor.execute(createClaim(managedInputJob), signal);
 assert.equal(lateIntegrityCodexCalls, 0);
-assert.deepEqual(lateIntegrityResult.outcome, {
-  outcome: 'failed',
-  errorCode: 'continuation_input_integrity_failed',
-  errorSummary: 'A managed continuation input failed integrity verification.',
-  retryable: false,
-  completedWork: [],
-  unperformedWork: ['Recreate the task from trusted source inputs.'],
-});
+assert.equal(lateIntegrityResult.outcome.outcome, 'failed');
+if (lateIntegrityResult.outcome.outcome !== 'failed') throw new Error('expected failed outcome');
+assert.equal(lateIntegrityResult.outcome.checkpoint.schemaVersion, 2);
+assert.equal(lateIntegrityResult.outcome.errorCode, 'continuation_input_integrity_failed');
+assert.equal(lateIntegrityResult.outcome.retryable, false);
+assert.deepEqual(lateIntegrityResult.outcome.unperformedWork, [
+  'Recreate the task from trusted source inputs.',
+]);
 
 await chmod(managedInputPath, 0o600);
 await writeFile(managedInputPath, 'runner input', 'utf8');
@@ -767,7 +829,9 @@ const revokedTrusted = await revokedTrustedExecutor.execute(createClaim({
   },
 }), signal);
 assert.equal(revokedTrustedCodexCalls, 0);
-assert.deepEqual(revokedTrusted.outcome, {
+const { checkpoint: revokedCheckpoint, ...revokedOutcome } = revokedTrusted.outcome;
+assert.equal(revokedCheckpoint.schemaVersion, 2);
+assert.deepEqual(revokedOutcome, {
   outcome: 'blocked',
   errorCode: 'continuation_trusted_profile_revoked',
   errorSummary: 'The creator is no longer eligible for trusted_personal_workspace.',
@@ -784,7 +848,7 @@ const readOnlyExecutor = createContinuationCodexExecutor({
   runCodexExec: async (request) => {
     readOnlyRequests.push(request);
     return {
-      text: JSON.stringify({ outcome: 'completed', final_message: 'read only', artifacts: [] }),
+      text: JSON.stringify(wireOutcome({ outcome: 'completed', final_message: 'read only' })),
     };
   },
 });
@@ -809,12 +873,14 @@ const policyDeniedExecutor = createContinuationCodexExecutor({
   currentWorkingRoot: await realpath(narrowedRoot),
   runCodexExec: async () => {
     policyDeniedCodexCalls += 1;
-    return { text: JSON.stringify({ outcome: 'completed', final_message: 'unsafe', artifacts: [] }) };
+    return { text: JSON.stringify(wireOutcome({ outcome: 'completed', final_message: 'unsafe' })) };
   },
 });
 const policyDenied = await policyDeniedExecutor.execute(createClaim(), signal);
 assert.equal(policyDeniedCodexCalls, 0);
-assert.deepEqual(policyDenied.outcome, {
+const { checkpoint: deniedCheckpoint, ...deniedOutcome } = policyDenied.outcome;
+assert.equal(deniedCheckpoint.schemaVersion, 2);
+assert.deepEqual(deniedOutcome, {
   outcome: 'blocked',
   errorCode: 'continuation_working_directory_denied',
   errorSummary: 'The continuation working directory is no longer authorized by its snapshot and current operator policy.',
@@ -830,7 +896,7 @@ const interactiveApprovalExecutor = createContinuationCodexExecutor({
   currentWorkingRoot: canonicalRoot,
   runCodexExec: async () => {
     interactiveApprovalCodexCalls += 1;
-    return { text: JSON.stringify({ outcome: 'completed', final_message: 'unsafe', artifacts: [] }) };
+    return { text: JSON.stringify(wireOutcome({ outcome: 'completed', final_message: 'unsafe' })) };
   },
 });
 const interactiveApproval = await interactiveApprovalExecutor.execute(createClaim({
@@ -844,7 +910,9 @@ const interactiveApproval = await interactiveApprovalExecutor.execute(createClai
   },
 }), signal);
 assert.equal(interactiveApprovalCodexCalls, 0);
-assert.deepEqual(interactiveApproval.outcome, {
+const { checkpoint: approvalCheckpoint, ...approvalOutcome } = interactiveApproval.outcome;
+assert.equal(approvalCheckpoint.schemaVersion, 2);
+assert.deepEqual(approvalOutcome, {
   outcome: 'blocked',
   errorCode: 'continuation_approval_unavailable',
   errorSummary: 'Interactive approval is reserved but is not enabled for continuation tasks.',
@@ -922,11 +990,10 @@ const toolResponses = [
     sessionId: 'session-tool',
   },
   {
-    text: JSON.stringify({
+    text: JSON.stringify(wireOutcome({
       outcome: 'completed',
       final_message: 'Fetched the document.',
-      artifacts: [],
-    }),
+    })),
     sessionId: 'session-tool',
   },
 ];
@@ -1001,7 +1068,7 @@ const toolFallbackExecutor = createContinuationCodexExecutor({
     }
     if (request.resumeSessionId) throw new Error('session not found');
     return {
-      text: JSON.stringify({ outcome: 'completed', final_message: 'Recovered context.', artifacts: [] }),
+      text: JSON.stringify(wireOutcome({ outcome: 'completed', final_message: 'Recovered context.' })),
       sessionId: 'session-tool-fresh',
     };
   },
@@ -1039,7 +1106,9 @@ const undeclaredExecutor = createContinuationCodexExecutor({
   }),
 });
 const undeclared = await undeclaredExecutor.execute(createClaim(), signal);
-assert.deepEqual(undeclared.outcome, {
+const { checkpoint: undeclaredCheckpoint, ...undeclaredOutcome } = undeclared.outcome;
+assert.equal(undeclaredCheckpoint.schemaVersion, 2);
+assert.deepEqual(undeclaredOutcome, {
   outcome: 'blocked',
   errorCode: 'continuation_tool_not_declared',
   errorSummary: 'Local CLI tool "lark_cli" was not declared in required_tools.',
@@ -1122,11 +1191,10 @@ const recoveryExecutor = createContinuationCodexExecutor({
   runCodexExec: async (request) => {
     recoveryRequests.push(request);
     return {
-      text: JSON.stringify({
+      text: JSON.stringify(wireOutcome({
         outcome: 'completed',
         final_message: 'Recovered without replay.',
-        artifacts: [],
-      }),
+      })),
       sessionId: 'session-recovery',
     };
   },
@@ -1185,7 +1253,7 @@ const fallbackExecutor = createContinuationCodexExecutor({
     fallbackRequests.push(request);
     if (request.resumeSessionId) throw new Error('session not found');
     return {
-      text: JSON.stringify({ outcome: 'completed', final_message: 'fresh', artifacts: [] }),
+      text: JSON.stringify(wireOutcome({ outcome: 'completed', final_message: 'fresh' })),
       sessionId: 'session-fresh',
     };
   },
@@ -1204,7 +1272,7 @@ const clearedSessionExecutor = createContinuationCodexExecutor({
   currentWorkingRoot: canonicalRoot,
   runCodexExec: async (request) => {
     if (request.resumeSessionId) throw new Error('thread does not exist');
-    return JSON.stringify({ outcome: 'completed', final_message: 'fresh', artifacts: [] });
+    return JSON.stringify(wireOutcome({ outcome: 'completed', final_message: 'fresh' }));
   },
 });
 assert.equal(
