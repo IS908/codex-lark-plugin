@@ -219,8 +219,13 @@ export class ContinuationWorker {
 
     try {
       await this.options.repository.completeStep(execution.claim, result, this.nowIso());
-      await this.audit('continuation.execute', execution.claim, 'ok');
-      this.debug('step_committed', execution.claim, result.outcome.outcome);
+      const committed = await this.options.repository.get(execution.claim.job.jobId);
+      const committedState = committed?.status ?? result.outcome.outcome;
+      const detail = committed
+        ? `state=${committed.status};verification=${committed.lastVerification?.status ?? 'none'};material_change=${committed.lastAttemptDelta?.stateChanged ?? false};no_progress=${committed.noProgressCount}`
+        : `state=${committedState}`;
+      await this.audit('continuation.execute', execution.claim, 'ok', detail);
+      this.debug('step_committed', execution.claim, committedState);
     } catch {
       const afterFailure = await this.options.repository.get(execution.claim.job.jobId).catch(() => null);
       if (afterFailure?.status === 'cancel_requested') {

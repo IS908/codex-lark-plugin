@@ -229,6 +229,17 @@ function formatTaskStatus(job: ContinuationJob): string {
     `Job ID: ${job.jobId}`,
     `Title: ${job.title}`,
     `Attempts: ${attemptCount(job)} / ${job.maxAttempts}`,
+    `Consecutive no-progress attempts: ${job.noProgressCount}`,
+    ...(job.lastAttemptDelta ? [
+      `Last step: ${job.lastAttemptDelta.stepId} | Material change: ${job.lastAttemptDelta.stateChanged ? 'yes' : 'no'}`,
+    ] : []),
+    ...(job.lastVerification ? [
+      `Last verification: ${job.lastVerification.status}`,
+      ...job.lastVerification.findings.slice(0, 5).map((finding) => `- ${finding}`),
+      ...(job.lastVerification.findings.length > 5
+        ? [`- ${job.lastVerification.findings.length - 5} more finding(s)`]
+        : []),
+    ] : []),
     `Next run: ${formatOptionalTime(job.nextRunAt)}`,
     `Completed: ${formatOptionalTime(job.completedAt)}`,
     `Delivery: ${job.deliveryStatus ?? 'not_started'}`,

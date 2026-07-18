@@ -57,14 +57,21 @@ async function runCheckpointChild(root: string): Promise<void> {
         outcome: {
           outcome: 'continue',
           checkpoint: {
+            schemaVersion: 2,
             summary: 'Checkpoint committed.',
-            completedSteps: ['first step'],
-            remainingSteps: ['final step'],
+            currentStepId: 'first-step',
+            completedStepIds: ['first-step'],
+            completedCriterionIds: [],
+            completedDeliverableIds: [],
+            remainingSteps: [{ id: 'final-step', description: 'final step' }],
+            artifacts: [],
+            evidence: [],
+            sideEffects: [],
             constraints: [],
             decisions: [],
-            references: [],
+            nextAction: { id: 'final-step', description: 'final step' },
+            stopReason: 'First bounded step completed.',
           },
-          nextStep: 'final step',
           resumeAfterSeconds: 60,
         },
       };
@@ -117,6 +124,10 @@ async function runResumeChild(root: string): Promise<void> {
   const runtime = await makeRuntime(root, fixedClock('2026-07-17T10:02:00.000Z'), {
     async execute(claim) {
       assert.equal(claim.job.checkpoint?.summary, 'Checkpoint committed.');
+      assert.equal(claim.job.lastAttemptDelta?.stepId, 'first-step');
+      assert.equal(claim.job.lastAttemptDelta?.stateChanged, true);
+      assert.equal(claim.job.lastVerification?.status, 'accepted');
+      assert.equal(claim.job.noProgressCount, 0);
       assert.equal(claim.job.executionSessionId, 'session_checkpoint');
       assert.equal(claim.job.sourceFacts.provenance, 'captured');
       assert.equal(claim.job.sourceFacts.originalUserText, 'Start restart task.');
@@ -128,6 +139,27 @@ async function runResumeChild(root: string): Promise<void> {
         executionSessionId: 'session_checkpoint',
         outcome: {
           outcome: 'completed',
+          checkpoint: {
+            schemaVersion: 2,
+            summary: 'Restart task completed with evidence.',
+            currentStepId: 'final-step',
+            completedStepIds: ['first-step', 'final-step'],
+            completedCriterionIds: ['terminal_delivery'],
+            completedDeliverableIds: ['result'],
+            remainingSteps: [],
+            artifacts: [],
+            evidence: [{
+              id: 'terminal-result-evidence',
+              requirementId: 'result_evidence',
+              criterionIds: ['terminal_delivery'],
+              reference: 'terminal-delivery',
+            }],
+            sideEffects: [],
+            constraints: [],
+            decisions: [],
+            nextAction: null,
+            stopReason: 'Acceptance criteria verified after restart.',
+          },
           finalMessage: 'Restart task completed.',
           resultSummary: 'Completed after restart.',
           artifacts: [],

@@ -178,7 +178,7 @@ PR with `Closes #303`, inspect checks/comments, fix findings, and squash merge.
 - Produces: `ContinuationCheckpointV2`, stable `currentStepId`, `ContinuationAttemptDelta`, pure `evaluateContinuationProgress(previous, next, budget)`, and `ContinuationVerifier.verify(claim, candidate)`.
 - Consumes: #303 task-contract criterion/deliverable IDs and managed artifact references.
 
-- [ ] **Step 1: Add failing pure policy tests**
+- [x] **Step 1: Add failing pure policy tests**
 
 Cover parent-verifiable evidence content/checksums, output artifact checksum,
 completed stable criterion/deliverable/step IDs, and repository-authorized
@@ -187,18 +187,18 @@ stop reasons, confidence, or next-action prose alone are not material. Also cove
 missing next action, duplicate deltas, acceptance completion below max attempts,
 and two consecutive no-progress attempts.
 
-- [ ] **Step 2: Run domain smoke and verify policy tests fail**
+- [x] **Step 2: Run domain smoke and verify policy tests fail**
 
 Run: `npx tsx scripts/continuation-domain-smoke.ts`
 Expected: FAIL because the progress policy and V2 types are absent.
 
-- [ ] **Step 3: Implement CheckpointV2 and deterministic progress policy**
+- [x] **Step 3: Implement CheckpointV2 and deterministic progress policy**
 
 Canonicalize bounded progress fields, compare trusted material hashes, require one
 next action for continuation, and return `continue`, `complete`, or
 `fail_stalled` without trusting model confidence alone.
 
-- [ ] **Step 4: Add failing runner/repository delta tests**
+- [x] **Step 4: Add failing runner/repository delta tests**
 
 Assert the runner receives immutable facts plus contract, emits a structured
 delta, and the repository stores it on the immutable attempt with its stable step
@@ -212,7 +212,7 @@ revocation and sandbox/root narrowing cannot retain prior authority and block
 before execution. `/task list` and `/task status` must classify `recovering` as
 pending/runnable rather than terminal.
 
-- [ ] **Step 5: Run all new behavior smoke tests and verify failure**
+- [x] **Step 5: Run all new behavior smoke tests and verify failure**
 
 Run: `npx tsx scripts/continuation-codex-runner-smoke.ts`
 Expected: FAIL because the output schema lacks V2 checkpoint/delta fields.
@@ -229,7 +229,7 @@ Expected: FAIL because `recovering` is not classified as pending/runnable.
 Run: `npx tsx scripts/continuation-restart-process-smoke.ts`
 Expected: FAIL because V2 checkpoint, verdict, and no-progress state are not restored.
 
-- [ ] **Step 6: Implement runner, repository, and event integration**
+- [x] **Step 6: Implement runner, repository, and event integration**
 
 Migrate v7 to v8, including `recovering` as a schedulable status with the same
 lease/cancellation/expiry guarantees as other due states. Persist bounded attempt

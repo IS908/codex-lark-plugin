@@ -16,6 +16,74 @@ const auditEvents: ContinuationAuditEvent[] = [];
 const delivered: string[] = [];
 const invokedTools: string[] = [];
 
+function checkpoint(criterionId: string) {
+  return {
+    schemaVersion: 2 as const,
+    summary: 'Task completed with durable evidence.',
+    currentStepId: 'finish',
+    completedStepIds: ['finish'],
+    completedCriterionIds: [criterionId],
+    completedDeliverableIds: ['result'],
+    remainingSteps: [],
+    artifacts: [],
+    evidence: [{
+      id: 'result-evidence-entry',
+      requirementId: 'result_evidence',
+      criterionIds: [criterionId],
+      reference: 'terminal-result',
+    }],
+    sideEffects: [],
+    constraints: [],
+    decisions: [],
+    nextAction: null,
+    stopReason: 'Acceptance criteria verified.',
+  };
+}
+
+function wireCompletedOutcome(finalMessage: string) {
+  const state = checkpoint('complete_once');
+  return {
+    outcome: 'completed',
+    checkpoint: {
+      schema_version: 2,
+      summary: state.summary,
+      current_step_id: state.currentStepId,
+      completed_step_ids: state.completedStepIds,
+      completed_criterion_ids: state.completedCriterionIds,
+      completed_deliverable_ids: state.completedDeliverableIds,
+      remaining_steps: [],
+      artifacts: [],
+      evidence: [{
+        id: 'result-evidence-entry',
+        requirement_id: 'result_evidence',
+        criterion_ids: ['complete_once'],
+        artifact_id: null,
+        reference: 'terminal-result',
+      }],
+      side_effects: [],
+      constraints: [],
+      decisions: [],
+      next_action: null,
+      stop_reason: state.stopReason,
+    },
+    resume_after_seconds: null,
+    final_message: finalMessage,
+    result_summary: 'Done.',
+    artifacts: [],
+    error_code: null,
+    error_summary: null,
+    retryable: null,
+    required_capability: null,
+    completed_work: [],
+    key_findings: [],
+    unperformed_work: [],
+    risks: [],
+    next_steps: [],
+    tool: null,
+    args: [],
+  };
+}
+
 const runtime = await createContinuationRuntime({
   enabled: true,
   databasePath: path.join(root, 'jobs.sqlite'),
@@ -54,12 +122,7 @@ const runtime = await createContinuationRuntime({
       }),
       sessionId: 'session_runtime',
     } : {
-      text: JSON.stringify({
-        outcome: 'completed',
-        final_message: 'Sensitive result body delivered to the user.',
-        result_summary: 'Done.',
-        artifacts: [],
-      }),
+      text: JSON.stringify(wireCompletedOutcome('Sensitive result body delivered to the user.')),
       sessionId: 'session_runtime',
     };
   },
@@ -161,7 +224,14 @@ const seedRetentionRuntime = await createContinuationRuntime({
   getTransport: () => ({} as never),
   executor: {
     async execute() {
-      return { outcome: { outcome: 'completed', finalMessage: 'Archived.', artifacts: [] } };
+      return {
+        outcome: {
+          outcome: 'completed',
+          checkpoint: checkpoint('complete'),
+          finalMessage: 'Archived.',
+          artifacts: [],
+        },
+      };
     },
   },
   delivery: {
@@ -213,7 +283,14 @@ const cleanupRuntime = await createContinuationRuntime({
   getTransport: () => ({} as never),
   executor: {
     async execute() {
-      return { outcome: { outcome: 'completed', finalMessage: 'unused', artifacts: [] } };
+      return {
+        outcome: {
+          outcome: 'completed',
+          checkpoint: checkpoint('complete'),
+          finalMessage: 'unused',
+          artifacts: [],
+        },
+      };
     },
   },
   delivery: {

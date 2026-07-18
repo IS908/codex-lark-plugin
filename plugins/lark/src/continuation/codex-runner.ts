@@ -14,7 +14,7 @@ import {
   CONTINUATION_LIMITS,
   ContinuationExecutionError,
   partialOutcomeFromCheckpoint,
-  type ContinuationCheckpoint,
+  type ContinuationCheckpointV2,
   type ContinuationClaim,
   type ContinuationExecutionResult,
   type ContinuationFilesystemMode,
@@ -49,24 +49,52 @@ export interface ContinuationCodexExecutorOptions {
 
 const compactString = z.string().max(CONTINUATION_LIMITS.objectiveBytes);
 const compactStringList = z.array(compactString).max(CONTINUATION_LIMITS.acceptanceCriteriaCount);
+const contractId = z.string().regex(/^[A-Za-z0-9_.-]{1,80}$/);
+const checkpointStepSchema = z.object({
+  id: contractId,
+  description: compactString.min(1),
+}).strict();
 const checkpointSchema = z.object({
+  schema_version: z.literal(2),
   summary: compactString,
-  completed_steps: compactStringList,
-  remaining_steps: compactStringList,
+  current_step_id: contractId,
+  completed_step_ids: z.array(contractId).max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  completed_criterion_ids: z.array(contractId).max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  completed_deliverable_ids: z.array(contractId).max(CONTINUATION_LIMITS.deliverableCount),
+  remaining_steps: z.array(checkpointStepSchema).max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  artifacts: z.array(z.object({
+    id: contractId,
+    deliverable_id: contractId,
+    path: compactString.min(1),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+  }).strict()).max(CONTINUATION_LIMITS.artifactCount),
+  evidence: z.array(z.object({
+    id: contractId,
+    requirement_id: contractId,
+    criterion_ids: z.array(contractId).max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+    artifact_id: contractId.nullable(),
+    reference: compactString.nullable(),
+  }).strict()).max(CONTINUATION_LIMITS.verificationRequirementCount),
+  side_effects: z.array(z.object({
+    id: contractId,
+    description: compactString.min(1),
+    idempotency_key: compactString.min(1),
+  }).strict()).max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
   constraints: compactStringList,
   decisions: compactStringList,
-  references: compactStringList,
+  next_action: checkpointStepSchema.nullable(),
+  stop_reason: compactString,
 }).strict();
 
 const continueSchema = z.object({
   outcome: z.literal('continue'),
   checkpoint: checkpointSchema,
-  next_step: compactString.min(1),
   resume_after_seconds: z.number().int().min(0).max(24 * 60 * 60).optional(),
 }).strict();
 
 const completedSchema = z.object({
   outcome: z.literal('completed'),
+  checkpoint: checkpointSchema,
   final_message: z.string().max(CONTINUATION_LIMITS.finalMessageBytes),
   result_summary: compactString.optional(),
   artifacts: z.array(compactString).max(CONTINUATION_LIMITS.artifactCount),
@@ -74,6 +102,7 @@ const completedSchema = z.object({
 
 const partialSchema = z.object({
   outcome: z.literal('partial'),
+  checkpoint: checkpointSchema,
   completed_work: compactStringList,
   key_findings: compactStringList,
   unperformed_work: compactStringList,
@@ -84,6 +113,7 @@ const partialSchema = z.object({
 
 const failedSchema = z.object({
   outcome: z.literal('failed'),
+  checkpoint: checkpointSchema,
   error_code: z.string().min(1).max(128),
   error_summary: compactString,
   retryable: z.boolean(),
@@ -93,6 +123,7 @@ const failedSchema = z.object({
 
 const blockedSchema = z.object({
   outcome: z.literal('blocked'),
+  checkpoint: checkpointSchema,
   error_code: z.string().min(1).max(128),
   error_summary: compactString,
   required_capability: compactString.min(1),
@@ -118,7 +149,6 @@ const outcomeSchema = z.discriminatedUnion('outcome', [
 const wireOutcomeSchema = z.object({
   outcome: z.enum(['continue', 'completed', 'partial', 'failed', 'blocked', 'tool_request']),
   checkpoint: checkpointSchema.nullable(),
-  next_step: compactString.nullable(),
   resume_after_seconds: z.number().int().min(0).max(24 * 60 * 60).nullable(),
   final_message: z.string().max(CONTINUATION_LIMITS.finalMessageBytes).nullable(),
   result_summary: compactString.nullable(),
@@ -140,20 +170,88 @@ const checkpointJsonSchema = {
   type: ['object', 'null'],
   additionalProperties: false,
   required: [
+    'schema_version',
     'summary',
-    'completed_steps',
+    'current_step_id',
+    'completed_step_ids',
+    'completed_criterion_ids',
+    'completed_deliverable_ids',
     'remaining_steps',
+    'artifacts',
+    'evidence',
+    'side_effects',
     'constraints',
     'decisions',
-    'references',
+    'next_action',
+    'stop_reason',
   ],
   properties: {
+    schema_version: { type: 'integer', enum: [2] },
     summary: { type: 'string' },
-    completed_steps: { type: 'array', items: { type: 'string' } },
-    remaining_steps: { type: 'array', items: { type: 'string' } },
+    current_step_id: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,80}$' },
+    completed_step_ids: { type: 'array', items: { type: 'string' } },
+    completed_criterion_ids: { type: 'array', items: { type: 'string' } },
+    completed_deliverable_ids: { type: 'array', items: { type: 'string' } },
+    remaining_steps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'description'],
+        properties: { id: { type: 'string' }, description: { type: 'string' } },
+      },
+    },
+    artifacts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'deliverable_id', 'path', 'sha256'],
+        properties: {
+          id: { type: 'string' },
+          deliverable_id: { type: 'string' },
+          path: { type: 'string' },
+          sha256: { type: 'string' },
+        },
+      },
+    },
+    evidence: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'requirement_id', 'criterion_ids', 'artifact_id', 'reference'],
+        properties: {
+          id: { type: 'string' },
+          requirement_id: { type: 'string' },
+          criterion_ids: { type: 'array', items: { type: 'string' } },
+          artifact_id: { type: ['string', 'null'] },
+          reference: { type: ['string', 'null'] },
+        },
+      },
+    },
+    side_effects: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'description', 'idempotency_key'],
+        properties: {
+          id: { type: 'string' },
+          description: { type: 'string' },
+          idempotency_key: { type: 'string' },
+        },
+      },
+    },
     constraints: { type: 'array', items: { type: 'string' } },
     decisions: { type: 'array', items: { type: 'string' } },
-    references: { type: 'array', items: { type: 'string' } },
+    next_action: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['id', 'description'],
+      properties: { id: { type: 'string' }, description: { type: 'string' } },
+    },
+    stop_reason: { type: 'string' },
   },
 } as const;
 
@@ -164,7 +262,6 @@ export const CONTINUATION_OUTPUT_SCHEMA: Record<string, unknown> = {
   required: [
     'outcome',
     'checkpoint',
-    'next_step',
     'resume_after_seconds',
     'final_message',
     'result_summary',
@@ -187,7 +284,6 @@ export const CONTINUATION_OUTPUT_SCHEMA: Record<string, unknown> = {
       enum: ['continue', 'completed', 'partial', 'failed', 'blocked', 'tool_request'],
     },
     checkpoint: checkpointJsonSchema,
-    next_step: { type: ['string', 'null'] },
     resume_after_seconds: { type: ['integer', 'null'], minimum: 0, maximum: 86_400 },
     final_message: { type: ['string', 'null'] },
     result_summary: { type: ['string', 'null'] },
@@ -228,6 +324,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       ) {
         return {
           outcome: blockedCapabilityOutcome({
+            checkpoint: checkpointForClaim(claim),
             errorCode: 'continuation_trusted_profile_revoked',
             errorSummary: 'The creator is no longer eligible for trusted_personal_workspace.',
             requiredCapability: 'trusted_personal_workspace',
@@ -240,6 +337,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       if (claim.job.permissions.approval.mode !== 'never') {
         return {
           outcome: blockedCapabilityOutcome({
+            checkpoint: checkpointForClaim(claim),
             errorCode: 'continuation_approval_unavailable',
             errorSummary: 'Interactive approval is reserved but is not enabled for continuation tasks.',
             requiredCapability: 'approval.interactive',
@@ -257,6 +355,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         if (!(error instanceof ContinuationWorkingDirectoryError)) throw error;
         return {
           outcome: blockedCapabilityOutcome({
+            checkpoint: checkpointForClaim(claim),
             errorCode: 'continuation_working_directory_denied',
             errorSummary: 'The continuation working directory is no longer authorized by its snapshot and current operator policy.',
             requiredCapability: 'filesystem.workspace',
@@ -276,6 +375,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           return {
             outcome: {
               outcome: 'failed',
+              checkpoint: checkpointForClaim(claim),
               errorCode: 'continuation_input_integrity_failed',
               errorSummary: 'A managed continuation input failed integrity verification.',
               retryable: false,
@@ -346,7 +446,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       const recovery = await this.options.toolInvoker?.recover(claim);
       if (recovery?.status === 'blocked') {
         return {
-          outcome: blockedToolOutcome(
+          outcome: blockedToolOutcome(claim,
             recovery.errorCode,
             recovery.errorSummary,
             recovery.tool,
@@ -356,7 +456,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       if (recovery?.status === 'completed') {
         if (!recovery.result.ok) {
           return {
-            outcome: blockedToolOutcome(
+            outcome: blockedToolOutcome(claim,
               'continuation_tool_denied',
               redactContinuationText(recovery.result.message),
               recovery.tool,
@@ -462,7 +562,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     ) {
       return {
         ...firstSessionPatch,
-        outcome: blockedToolOutcome(
+        outcome: blockedToolOutcome(claim,
           'continuation_tool_not_declared',
           `Local CLI tool "${toolRequest.tool}" was not declared in required_tools.`,
           toolRequest.tool,
@@ -472,7 +572,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     if (!this.options.toolInvoker) {
       return {
         ...firstSessionPatch,
-        outcome: blockedToolOutcome(
+        outcome: blockedToolOutcome(claim,
           'continuation_tool_unavailable',
           `Local CLI tool "${toolRequest.tool}" is unavailable to continuation tasks.`,
           toolRequest.tool,
@@ -488,7 +588,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     if (invocation.status === 'blocked') {
       return {
         ...firstSessionPatch,
-        outcome: blockedToolOutcome(
+        outcome: blockedToolOutcome(claim,
           invocation.errorCode,
           invocation.errorSummary,
           toolRequest.tool,
@@ -498,7 +598,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     if (!invocation.result.ok) {
       return {
         ...firstSessionPatch,
-        outcome: blockedToolOutcome(
+        outcome: blockedToolOutcome(claim,
           'continuation_tool_denied',
           redactContinuationText(invocation.result.message),
           toolRequest.tool,
@@ -553,7 +653,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           previousSessionId,
           previousReplacedSession,
         ),
-        outcome: blockedToolOutcome(
+        outcome: blockedToolOutcome(claim,
           'continuation_tool_call_limit',
           'Only one local CLI tool request is allowed per continuation step.',
           followupOutcome.tool,
@@ -674,7 +774,6 @@ async function parseOutcome(
     return {
       outcome: 'continue',
       checkpoint: mapCheckpoint(value.checkpoint),
-      nextStep: value.next_step,
       ...(value.resume_after_seconds === undefined
         ? {}
         : { resumeAfterSeconds: value.resume_after_seconds }),
@@ -688,6 +787,7 @@ async function parseOutcome(
     const artifacts = await artifactStore.canonicalizeReferences(jobId, value.artifacts);
     return {
       outcome: 'completed',
+      checkpoint: mapCheckpoint(value.checkpoint),
       finalMessage: redactContinuationText(value.final_message),
       ...(value.result_summary === undefined
         ? {}
@@ -699,6 +799,7 @@ async function parseOutcome(
     const artifacts = await artifactStore.canonicalizeReferences(jobId, value.artifacts);
     return {
       outcome: 'partial',
+      checkpoint: mapCheckpoint(value.checkpoint),
       completedWork: value.completed_work.map(redactContinuationText),
       keyFindings: value.key_findings.map(redactContinuationText),
       unperformedWork: value.unperformed_work.map(redactContinuationText),
@@ -710,6 +811,7 @@ async function parseOutcome(
   if (value.outcome === 'failed') {
     return {
       outcome: 'failed',
+      checkpoint: mapCheckpoint(value.checkpoint),
       errorCode: redactContinuationText(value.error_code),
       errorSummary: redactContinuationText(value.error_summary),
       retryable: value.retryable,
@@ -719,6 +821,7 @@ async function parseOutcome(
   }
   return {
     outcome: 'blocked',
+    checkpoint: mapCheckpoint(value.checkpoint),
     errorCode: redactContinuationText(value.error_code),
     errorSummary: redactContinuationText(value.error_summary),
     requiredCapability: redactContinuationText(value.required_capability),
@@ -733,7 +836,6 @@ function compactWireOutcome(input: z.infer<typeof wireOutcomeSchema>): unknown {
       return {
         outcome: input.outcome,
         checkpoint: input.checkpoint,
-        next_step: input.next_step,
         ...(input.resume_after_seconds === null
           ? {}
           : { resume_after_seconds: input.resume_after_seconds }),
@@ -741,6 +843,7 @@ function compactWireOutcome(input: z.infer<typeof wireOutcomeSchema>): unknown {
     case 'completed':
       return {
         outcome: input.outcome,
+        checkpoint: input.checkpoint,
         final_message: input.final_message,
         ...(input.result_summary === null ? {} : { result_summary: input.result_summary }),
         artifacts: input.artifacts,
@@ -748,6 +851,7 @@ function compactWireOutcome(input: z.infer<typeof wireOutcomeSchema>): unknown {
     case 'partial':
       return {
         outcome: input.outcome,
+        checkpoint: input.checkpoint,
         completed_work: input.completed_work,
         key_findings: input.key_findings,
         unperformed_work: input.unperformed_work,
@@ -758,6 +862,7 @@ function compactWireOutcome(input: z.infer<typeof wireOutcomeSchema>): unknown {
     case 'failed':
       return {
         outcome: input.outcome,
+        checkpoint: input.checkpoint,
         error_code: input.error_code,
         error_summary: input.error_summary,
         retryable: input.retryable,
@@ -767,6 +872,7 @@ function compactWireOutcome(input: z.infer<typeof wireOutcomeSchema>): unknown {
     case 'blocked':
       return {
         outcome: input.outcome,
+        checkpoint: input.checkpoint,
         error_code: input.error_code,
         error_summary: input.error_summary,
         required_capability: input.required_capability,
@@ -778,14 +884,43 @@ function compactWireOutcome(input: z.infer<typeof wireOutcomeSchema>): unknown {
   }
 }
 
-function mapCheckpoint(input: z.infer<typeof checkpointSchema>): ContinuationCheckpoint {
+function mapCheckpoint(input: z.infer<typeof checkpointSchema>): ContinuationCheckpointV2 {
   return {
+    schemaVersion: 2,
     summary: redactContinuationText(input.summary),
-    completedSteps: input.completed_steps.map(redactContinuationText),
-    remainingSteps: input.remaining_steps.map(redactContinuationText),
+    currentStepId: input.current_step_id,
+    completedStepIds: input.completed_step_ids,
+    completedCriterionIds: input.completed_criterion_ids,
+    completedDeliverableIds: input.completed_deliverable_ids,
+    remainingSteps: input.remaining_steps.map((step) => ({
+      id: step.id,
+      description: redactContinuationText(step.description),
+    })),
+    artifacts: input.artifacts.map((artifact) => ({
+      id: artifact.id,
+      deliverableId: artifact.deliverable_id,
+      path: artifact.path,
+      sha256: artifact.sha256.toLowerCase(),
+    })),
+    evidence: input.evidence.map((evidence) => ({
+      id: evidence.id,
+      requirementId: evidence.requirement_id,
+      criterionIds: evidence.criterion_ids,
+      ...(evidence.artifact_id ? { artifactId: evidence.artifact_id } : {}),
+      ...(evidence.reference ? { reference: redactContinuationText(evidence.reference) } : {}),
+    })),
+    sideEffects: input.side_effects.map((effect) => ({
+      id: effect.id,
+      description: redactContinuationText(effect.description),
+      idempotencyKey: redactContinuationText(effect.idempotency_key),
+    })),
     constraints: input.constraints.map(redactContinuationText),
     decisions: input.decisions.map(redactContinuationText),
-    references: input.references.map(redactContinuationText),
+    nextAction: input.next_action ? {
+      id: input.next_action.id,
+      description: redactContinuationText(input.next_action.description),
+    } : null,
+    stopReason: redactContinuationText(input.stop_reason),
   };
 }
 
@@ -796,7 +931,7 @@ export function enforceAttemptConvergence(
   if (outcome.outcome !== 'continue' || claim.attempt.ordinal < claim.job.maxAttempts) {
     return outcome;
   }
-  return partialOutcomeFromCheckpoint(outcome.checkpoint, outcome.nextStep);
+  return partialOutcomeFromCheckpoint(outcome.checkpoint);
 }
 
 function convergenceInstruction(claim: ContinuationClaim): string {
@@ -827,6 +962,8 @@ function buildContinuationPrompt(
     acceptanceCriteria: job.acceptanceCriteria,
     contextSnapshot: job.contextSnapshot,
     checkpoint: job.checkpoint ?? null,
+    previousAttemptDelta: job.lastAttemptDelta ?? null,
+    previousVerification: job.lastVerification ?? null,
     requiredTools: job.requiredTools,
     attempt: claim.attempt.ordinal,
     maxAttempts: job.maxAttempts,
@@ -848,8 +985,10 @@ function buildContinuationPrompt(
     'Execute one bounded, highest-priority step of the task using the latest checkpoint.',
     'Return only one JSON object matching the supplied output schema.',
     'Every schema field must be present. Set unused array fields to [] and other unused fields to null.',
-    'Return continue only if measurable progress was made, useful work remains, and another attempt is available. Include an accurate checkpoint and one explicit next step.',
-    'Return completed when the acceptance criteria are sufficiently satisfied and include a user-facing final summary.',
+    'Every non-tool outcome must include a complete schema_version=2 checkpoint. Preserve prior completed IDs, evidence, artifacts, and side effects exactly.',
+    'The current_step_id must continue the prior next_action id. Use stable IDs; never rename completed work between attempts.',
+    'Return continue only if measurable progress was made, useful work remains, and another attempt is available. Set exactly one concrete next_action.',
+    'Return completed only when every required deliverable, acceptance criterion, and verification requirement has parent-verifiable evidence. Set next_action to null and include a user-facing final summary.',
     'Return partial when useful results exist but the objective cannot be fully completed within the remaining budget.',
     'Return blocked when an external dependency, permission, input, or capability prevents progress; include the blocker and recovery steps.',
     'Return failed only for a non-recoverable execution error; include completed and remaining work.',
@@ -865,7 +1004,7 @@ function buildContinuationPrompt(
     `Network access: ${job.permissions.network}`,
     `External side effects: ${job.permissions.externalSideEffects}`,
     `Managed artifact directory: ${artifactDir}`,
-    'Artifact references in a completed outcome must be relative files inside the managed artifact directory.',
+    'Checkpoint artifact paths and completed outcome artifact references must be relative files inside the managed artifact directory. Record the exact SHA-256 of each checkpoint artifact.',
     managedInputs.length > 0
       ? 'Managed input files are immutable read-only evidence. Read them from the exact paths in managedInputs; never write to or replace them.'
       : 'Managed input files: (none)',
@@ -894,12 +1033,14 @@ function buildContinuationToolResultPrompt(
 }
 
 function blockedToolOutcome(
+  claim: ContinuationClaim,
   errorCode: string,
   errorSummary: string,
   requiredCapability: string,
 ): ContinuationStepOutcome {
   return {
     outcome: 'blocked',
+    checkpoint: checkpointForClaim(claim),
     errorCode: redactContinuationText(errorCode),
     errorSummary: redactContinuationText(errorSummary),
     requiredCapability: redactContinuationText(requiredCapability),
@@ -909,6 +1050,7 @@ function blockedToolOutcome(
 }
 
 function blockedCapabilityOutcome(input: {
+  checkpoint: ContinuationCheckpointV2;
   errorCode: string;
   errorSummary: string;
   requiredCapability: string;
@@ -916,11 +1058,39 @@ function blockedCapabilityOutcome(input: {
 }): ContinuationStepOutcome {
   return {
     outcome: 'blocked',
+    checkpoint: input.checkpoint,
     errorCode: redactContinuationText(input.errorCode),
     errorSummary: redactContinuationText(input.errorSummary),
     requiredCapability: redactContinuationText(input.requiredCapability),
     completedWork: [],
     unperformedWork: input.unperformedWork.map(redactContinuationText),
+  };
+}
+
+function checkpointForClaim(claim: ContinuationClaim): ContinuationCheckpointV2 {
+  if (claim.job.checkpoint) return claim.job.checkpoint;
+  const initial = claim.job.taskContract.initialContext;
+  const firstRemaining = initial.remainingSteps[0]?.trim();
+  return {
+    schemaVersion: 2,
+    summary: redactContinuationText(initial.summary),
+    currentStepId: 'initial',
+    completedStepIds: [],
+    completedCriterionIds: [],
+    completedDeliverableIds: [],
+    remainingSteps: initial.remainingSteps.map((description, index) => ({
+      id: `legacy-step-${index + 1}`,
+      description: redactContinuationText(description),
+    })),
+    artifacts: [],
+    evidence: [],
+    sideEffects: [],
+    constraints: initial.constraints.map(redactContinuationText),
+    decisions: initial.decisions.map(redactContinuationText),
+    nextAction: firstRemaining
+      ? { id: 'legacy-step-1', description: redactContinuationText(firstRemaining) }
+      : null,
+    stopReason: 'No prior structured checkpoint was available.',
   };
 }
 

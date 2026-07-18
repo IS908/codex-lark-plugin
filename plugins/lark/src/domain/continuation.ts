@@ -47,6 +47,7 @@ export type ContinuationStatus =
   | 'queued'
   | 'running'
   | 'waiting_retry'
+  | 'recovering'
   | 'cancel_requested'
   | 'completed'
   | 'partial'
@@ -94,6 +95,69 @@ export interface ContinuationCheckpoint {
   constraints: string[];
   decisions: string[];
   references: string[];
+}
+
+export interface ContinuationCheckpointStep {
+  id: string;
+  description: string;
+}
+
+export interface ContinuationCheckpointArtifact {
+  id: string;
+  deliverableId: string;
+  path: string;
+  sha256: string;
+}
+
+export interface ContinuationCheckpointEvidence {
+  id: string;
+  requirementId: string;
+  criterionIds: string[];
+  artifactId?: string;
+  reference?: string;
+}
+
+export interface ContinuationCheckpointSideEffect {
+  id: string;
+  description: string;
+  idempotencyKey: string;
+}
+
+export interface ContinuationCheckpointV2 {
+  schemaVersion: 2;
+  summary: string;
+  currentStepId: string;
+  completedStepIds: string[];
+  completedCriterionIds: string[];
+  completedDeliverableIds: string[];
+  remainingSteps: ContinuationCheckpointStep[];
+  artifacts: ContinuationCheckpointArtifact[];
+  evidence: ContinuationCheckpointEvidence[];
+  sideEffects: ContinuationCheckpointSideEffect[];
+  constraints: string[];
+  decisions: string[];
+  nextAction: ContinuationCheckpointStep | null;
+  stopReason: string;
+}
+
+export interface ContinuationAttemptDelta {
+  schemaVersion: 1;
+  stepId: string;
+  checkpointHash: string;
+  materialHash: string;
+  stateChanged: boolean;
+  newCompletedStepIds: string[];
+  newCompletedCriterionIds: string[];
+  newCompletedDeliverableIds: string[];
+  newArtifactIds: string[];
+  newEvidenceIds: string[];
+  newSideEffectIds: string[];
+  nextActionStepId?: string;
+}
+
+export interface ContinuationVerificationVerdict {
+  status: 'accepted' | 'revision_required';
+  findings: string[];
 }
 
 export type AsyncTaskInputKind = 'message_image' | 'message_attachment';
@@ -209,7 +273,10 @@ export interface ContinuationJob extends Omit<ContinuationCreateRequest, 'source
   rowVersion: number;
   status: ContinuationStatus;
   executionSessionId?: string;
-  checkpoint?: ContinuationCheckpoint;
+  checkpoint?: ContinuationCheckpointV2;
+  lastAttemptDelta?: ContinuationAttemptDelta;
+  lastVerification?: ContinuationVerificationVerdict;
+  noProgressCount: number;
   attemptCount?: number;
   stepCount: number;
   failureCount: number;
@@ -242,6 +309,9 @@ export interface ContinuationAttempt {
   outcome?: ContinuationStepOutcome['outcome'] | 'error' | 'cancelled';
   errorCode?: string;
   errorSummary?: string;
+  stepId?: string;
+  delta?: ContinuationAttemptDelta;
+  verification?: ContinuationVerificationVerdict;
 }
 
 export interface ContinuationClaim {
@@ -274,18 +344,19 @@ export type ContinuationToolCallRecovery =
 export type ContinuationStepOutcome =
   | {
       outcome: 'continue';
-      checkpoint: ContinuationCheckpoint;
-      nextStep: string;
+      checkpoint: ContinuationCheckpointV2;
       resumeAfterSeconds?: number;
     }
   | {
       outcome: 'completed';
+      checkpoint: ContinuationCheckpointV2;
       finalMessage: string;
       resultSummary?: string;
       artifacts: string[];
     }
   | {
       outcome: 'partial';
+      checkpoint: ContinuationCheckpointV2;
       completedWork: string[];
       keyFindings: string[];
       unperformedWork: string[];
@@ -295,6 +366,7 @@ export type ContinuationStepOutcome =
     }
   | {
       outcome: 'failed';
+      checkpoint: ContinuationCheckpointV2;
       errorCode: string;
       errorSummary: string;
       retryable: boolean;
@@ -303,6 +375,7 @@ export type ContinuationStepOutcome =
     }
   | {
       outcome: 'blocked';
+      checkpoint: ContinuationCheckpointV2;
       errorCode: string;
       errorSummary: string;
       requiredCapability: string;
@@ -311,21 +384,21 @@ export type ContinuationStepOutcome =
     };
 
 export function partialOutcomeFromCheckpoint(
-  checkpoint: ContinuationCheckpoint,
-  nextStep: string,
+  checkpoint: ContinuationCheckpointV2,
 ): Extract<ContinuationStepOutcome, { outcome: 'partial' }> {
   return {
     outcome: 'partial',
-    completedWork: checkpoint.completedSteps,
+    checkpoint,
+    completedWork: checkpoint.completedStepIds,
     keyFindings: checkpoint.summary ? [checkpoint.summary] : [],
-    unperformedWork: checkpoint.remainingSteps,
+    unperformedWork: checkpoint.remainingSteps.map((step) => step.description),
     risks: checkpoint.constraints,
     nextSteps: [...new Set(
-      [nextStep, ...checkpoint.remainingSteps]
+      [checkpoint.nextAction?.description ?? '', ...checkpoint.remainingSteps.map((step) => step.description)]
         .map((value) => value.trim())
         .filter(Boolean),
     )],
-    artifacts: [],
+    artifacts: checkpoint.artifacts.map((artifact) => artifact.path),
   };
 }
 
