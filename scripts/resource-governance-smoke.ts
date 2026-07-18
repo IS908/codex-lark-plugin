@@ -229,7 +229,7 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-// 6b. Shared legacy roots detect owned old locks but never publish new unscoped locks.
+// 6b. Shared legacy roots reserve the current app's old filename in both start orders.
 {
   const stateDir = tmpRoot('resource-lark-private-state-');
   const sharedLegacyDir = tmpRoot('resource-lark-shared-legacy-');
@@ -245,8 +245,14 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
 
   const scopedLock = await acquireLarkInstanceLock(appId, stateDir, sharedLegacyDir);
   assert.equal(existsSync(join(stateDir, '.instance.lock')), true);
-  assert.equal(existsSync(legacyPath), false);
+  assert.equal(existsSync(legacyPath), true);
+  await assert.rejects(
+    acquireSingleInstanceLock(legacyPath),
+    /Another instance is running/i,
+  );
   scopedLock.release();
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), false);
+  assert.equal(existsSync(legacyPath), false);
   cleanup(stateDir);
   cleanup(sharedLegacyDir);
   passed++;

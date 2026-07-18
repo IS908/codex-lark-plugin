@@ -91,16 +91,10 @@ async function compatibleLegacyLockPaths(
     }
   }
   const currentPath = legacyLarkInstanceLockPath(appId, lockRoot);
-  const rootMetadata = await stat(lockRoot).catch(() => null);
-  // Old releases used an unscoped filename. Publish it only inside a private
-  // temp root; on shared /tmp we can safely detect owned old locks but must not
-  // create a cross-user compatibility lock.
-  const privateLegacyRoot = Boolean(
-    rootMetadata
-    && (currentUid === undefined || rootMetadata.uid === currentUid)
-    && (rootMetadata.mode & 0o022) === 0,
-  );
-  if (privateLegacyRoot) ownedPaths.push(currentPath);
+  // Always reserve this app's legacy filename so an old same-app runtime
+  // started after us cannot bypass the private global lock. Unrelated legacy
+  // locks discovered in a shared root remain restricted to the current UID.
+  ownedPaths.push(currentPath);
   return [...new Set(ownedPaths.sort())];
 }
 
