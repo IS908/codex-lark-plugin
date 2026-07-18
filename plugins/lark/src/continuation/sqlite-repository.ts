@@ -31,7 +31,12 @@ import {
 } from '../domain/continuation.js';
 import type { ContinuationInputStorePort, ContinuationRepository } from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
-import { ContinuationInputStore, continuationJobId } from './input-store.js';
+import {
+  continuationJobId,
+  continuationRetryIdempotencyKey,
+  continuationRetryJobId,
+} from './idempotency.js';
+import { ContinuationInputStore } from './input-store.js';
 import { redactContinuationText } from './redaction.js';
 
 type SqlRow = Record<string, null | number | bigint | string | Uint8Array>;
@@ -108,6 +113,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       const knownJobs = new Set(repository.database.prepare(
         'SELECT job_id FROM continuation_jobs WHERE deleted_at IS NULL',
       ).all().map((row) => stringField(row, 'job_id')));
+      await artifacts.cleanupOrphans(knownJobs);
       await inputs.cleanupOrphans(knownJobs);
       return repository;
     } catch (error) {
@@ -1157,12 +1163,19 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   async cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob> {
+    const idempotencyKey = continuationRetryIdempotencyKey(jobId, requestId);
+    const existing = await this.get(continuationRetryJobId(jobId, requestId));
+    if (existing && !existing.deletedAt) {
+      if (existing.idempotencyKey !== idempotencyKey || existing.retryOfJobId !== jobId) {
+        throw new Error('Continuation retry idempotency conflicts with an unrelated Job.');
+      }
+      return existing;
+    }
     const source = await this.get(jobId);
     if (!source || !isContinuationTerminal(source.status) || source.deletedAt) {
       throw new Error(`Continuation ${jobId} is not an available terminal job.`);
     }
     const lifetimeMs = Math.max(1, Date.parse(source.expiresAt) - Date.parse(source.createdAt));
-    const idempotencyKey = `manual-retry:${jobId}:${requestId}`;
     const verification = await this.inputs.verify(source.jobId, source.sourceFacts.inputs);
     if (!verification.ok) {
       throw new Error('Continuation input integrity check failed; retry input copy was not created.');
@@ -1239,10 +1252,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     ) {
       return false;
     }
-    await this.artifacts.remove(jobId);
-    const inputQuarantine = await this.inputs.quarantine(jobId);
+    const quarantines: RedactionQuarantines = { artifact: null, input: null };
     let committed = false;
+    let restoreAttempted = false;
     try {
+      quarantines.artifact = await this.artifacts.quarantine(jobId);
+      quarantines.input = await this.inputs.quarantine(jobId);
       const redacted = this.transaction(() => {
         const automaticGate = automaticRetentionCutoff
           ? `AND retain = 0 AND completed_at < ? AND EXISTS (
@@ -1301,22 +1316,47 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         return true;
       });
       if (!redacted) {
-        if (inputQuarantine) await this.inputs.restoreQuarantine(jobId, inputQuarantine);
+        restoreAttempted = true;
+        const restoreErrors = await restoreRedactionQuarantines(
+          jobId,
+          quarantines,
+          this.artifacts,
+          this.inputs,
+        );
+        if (restoreErrors.length > 0) {
+          throw new AggregateError(
+            restoreErrors,
+            'Continuation redaction was not committed and quarantined data could not be restored.',
+          );
+        }
         return false;
       }
       committed = true;
-      if (inputQuarantine) {
-        await this.inputs.discardQuarantine(jobId, inputQuarantine).catch(() => {});
+      const discardErrors = await discardRedactionQuarantines(
+        jobId,
+        quarantines,
+        this.artifacts,
+        this.inputs,
+      );
+      if (discardErrors.length > 0) {
+        throw new AggregateError(
+          discardErrors,
+          'Continuation redaction committed, but quarantined data cleanup is incomplete.',
+        );
       }
       return true;
     } catch (error) {
-      if (!committed && inputQuarantine) {
-        try {
-          await this.inputs.restoreQuarantine(jobId, inputQuarantine);
-        } catch (restoreError) {
+      if (!committed && !restoreAttempted) {
+        const restoreErrors = await restoreRedactionQuarantines(
+          jobId,
+          quarantines,
+          this.artifacts,
+          this.inputs,
+        );
+        if (restoreErrors.length > 0) {
           throw new AggregateError(
-            [error, restoreError],
-            'Continuation redaction failed and managed inputs could not be restored.',
+            [error, ...restoreErrors],
+            'Continuation redaction failed and quarantined data could not be restored.',
           );
         }
       }
@@ -2514,6 +2554,45 @@ function sameStringSet(left: string[], right: string[]): boolean {
   if (left.length !== right.length) return false;
   const values = new Set(left);
   return values.size === left.length && right.every((value) => values.has(value));
+}
+
+interface RedactionQuarantines {
+  artifact: string | null;
+  input: string | null;
+}
+
+async function restoreRedactionQuarantines(
+  jobId: string,
+  quarantines: RedactionQuarantines,
+  artifacts: ContinuationArtifactStore,
+  inputs: ContinuationInputStorePort,
+): Promise<unknown[]> {
+  const operations: Promise<void>[] = [];
+  if (quarantines.artifact) {
+    operations.push(artifacts.restoreQuarantine(jobId, quarantines.artifact));
+  }
+  if (quarantines.input) {
+    operations.push(inputs.restoreQuarantine(jobId, quarantines.input));
+  }
+  const results = await Promise.allSettled(operations);
+  return results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+}
+
+async function discardRedactionQuarantines(
+  jobId: string,
+  quarantines: RedactionQuarantines,
+  artifacts: ContinuationArtifactStore,
+  inputs: ContinuationInputStorePort,
+): Promise<unknown[]> {
+  const operations: Promise<void>[] = [];
+  if (quarantines.artifact) {
+    operations.push(artifacts.discardQuarantine(jobId, quarantines.artifact));
+  }
+  if (quarantines.input) {
+    operations.push(inputs.discardQuarantine(jobId, quarantines.input));
+  }
+  const results = await Promise.allSettled(operations);
+  return results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
 }
 
 function boundedFailure(failure: ContinuationFailure): ContinuationFailure {

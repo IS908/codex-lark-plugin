@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type {
   AsyncTaskSourceInput,
   ContinuationCreateRequest,
@@ -10,6 +9,11 @@ import type {
 import { CONTINUATION_LIMITS, isContinuationTerminal } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
+import {
+  continuationCreateIdempotencyKey,
+  continuationJobId,
+  continuationRetryJobId,
+} from './idempotency.js';
 import { redactContinuationText } from './redaction.js';
 import {
   resolveContinuationRequestedPaths,
@@ -53,6 +57,7 @@ export interface ContinuationActionInput {
 }
 
 export interface ContinuationTaskService {
+  findExistingFromMessage(message: LarkMessage): Promise<ContinuationJob | null>;
   createFromMessage(
     action: ContinuationActionInput,
     message: LarkMessage,
@@ -116,6 +121,21 @@ export class ContinuationServiceError extends Error {
 export class ContinuationService implements ContinuationTaskService {
   constructor(private readonly options: ContinuationServiceOptions) {}
 
+  async findExistingFromMessage(message: LarkMessage): Promise<ContinuationJob | null> {
+    assertEligibleSource(message);
+    const jobId = continuationJobId(continuationCreateIdempotencyKey(message.messageId));
+    const existing = await this.options.repository.get(jobId);
+    if (!existing || existing.deletedAt) return null;
+    if (
+      existing.sourceMessageId !== message.messageId
+      || existing.creatorOpenId !== message.senderId
+      || existing.retryOfJobId
+    ) {
+      throw new Error('Continuation deterministic Job identity conflicts with the authenticated source message.');
+    }
+    return existing;
+  }
+
   async createFromMessage(
     action: ContinuationActionInput,
     message: LarkMessage,
@@ -139,7 +159,7 @@ export class ContinuationService implements ContinuationTaskService {
       resolvedWorkingDirectory.workingDirectory,
     );
     const request: ContinuationCreateRequest = {
-      idempotencyKey: continuationIdempotencyKey(message.messageId),
+      idempotencyKey: continuationCreateIdempotencyKey(message.messageId),
       creatorOpenId: message.senderId,
       route,
       sourceMessageId: message.messageId,
@@ -278,6 +298,17 @@ export class ContinuationService implements ContinuationTaskService {
     ownerOpenId: string | null | undefined,
     requestId: string,
   ): Promise<ContinuationJob> {
+    const existingRetry = await this.options.repository.get(
+      continuationRetryJobId(jobId, requestId),
+    );
+    if (existingRetry && !existingRetry.deletedAt) {
+      if (existingRetry.retryOfJobId !== jobId) throw notAccessibleError();
+      if (
+        existingRetry.creatorOpenId !== actorOpenId
+        && !isOwner(actorOpenId, ownerOpenId)
+      ) throw notAccessibleError();
+      return existingRetry;
+    }
     const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
     if (job.deliveryStatus === 'delivery_unknown') {
       throw new ContinuationServiceError(
@@ -354,6 +385,7 @@ export class ContinuationService implements ContinuationTaskService {
 }
 
 export class UnavailableContinuationService implements ContinuationTaskService {
+  async findExistingFromMessage(): Promise<never> { throw unavailableError(); }
   async createFromMessage(): Promise<never> { throw unavailableError(); }
   async listForActor(): Promise<never> { throw unavailableError(); }
   async getForActor(): Promise<never> { throw unavailableError(); }
@@ -416,12 +448,6 @@ function deriveRoute(message: LarkMessage): ContinuationDeliveryRoute {
     sourceMessageId: message.messageId,
     ...(message.threadId ? { threadId: message.threadId } : {}),
   };
-}
-
-function continuationIdempotencyKey(sourceMessageId: string): string {
-  return `create-continuation:${createHash('sha256')
-    .update(`${sourceMessageId}\0create_continuation_job`)
-    .digest('hex')}`;
 }
 
 function sanitizeBrief(action: ContinuationActionInput) {

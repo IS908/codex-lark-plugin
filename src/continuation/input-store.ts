@@ -15,6 +15,9 @@ import type {
   ContinuationInputStorePort,
   ContinuationInputVerification,
 } from '../ports/continuation.js';
+import { continuationJobId } from './idempotency.js';
+
+export { continuationJobId } from './idempotency.js';
 
 interface ContinuationInputStoreOptions {
   maxFiles?: number;
@@ -39,10 +42,13 @@ const CREATION_RECLAIM_PREFIX = '.reclaim-';
 const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
 const OWNERLESS_LOCK_GRACE_MS = 1_000;
+const CREATION_LOCK_HEARTBEAT_MS = 5_000;
+const CREATION_LOCK_LEASE_MS = 30_000;
 
-export function continuationJobId(idempotencyKey: string): string {
-  if (!idempotencyKey) throw new Error('Continuation idempotency key is required.');
-  return `job_${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 24)}`;
+interface CreationLockOwner {
+  pid: number;
+  nonce: string | null;
+  createdAt: string;
 }
 
 export class ContinuationInputStore implements ContinuationInputStorePort {
@@ -71,15 +77,24 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     await this.ensureRoot();
     const lockDirectory = path.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
+    let ownerNonce: string | undefined;
     while (true) {
       try {
         await fs.mkdir(lockDirectory, { mode: 0o700 });
+        const nonce = randomBytes(16).toString('hex');
+        const owner: CreationLockOwner = {
+          pid: process.pid,
+          nonce,
+          createdAt: new Date().toISOString(),
+        };
+        ownerNonce = nonce;
         try {
           await fs.writeFile(
             path.join(lockDirectory, 'owner.json'),
-            `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`,
+            `${JSON.stringify(owner)}\n`,
             { mode: 0o600, flag: 'wx' },
           );
+          await refreshCreationLockHeartbeat(lockDirectory, ownerNonce);
         } catch (error) {
           await removeManagedTree(lockDirectory).catch(() => {});
           throw error;
@@ -94,10 +109,20 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
+    let heartbeatInFlight = false;
+    const heartbeatTimer = setInterval(() => {
+      if (!ownerNonce || heartbeatInFlight) return;
+      heartbeatInFlight = true;
+      void refreshCreationLockHeartbeat(lockDirectory, ownerNonce)
+        .catch(() => {})
+        .finally(() => { heartbeatInFlight = false; });
+    }, CREATION_LOCK_HEARTBEAT_MS);
+    heartbeatTimer.unref();
     try {
       return await operation();
     } finally {
-      await removeManagedTree(lockDirectory).catch(() => {});
+      clearInterval(heartbeatTimer);
+      if (ownerNonce) await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce).catch(() => {});
     }
   }
 
@@ -305,14 +330,8 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       if (!entry.isDirectory() || !entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
       const lockDirectory = path.join(this.rootDir, entry.name);
       const jobId = entry.name.slice(CREATION_LOCK_PREFIX.length);
-      const owner = await readCreationOwner(lockDirectory);
-      if (owner !== null && isProcessAlive(owner)) {
+      if (!(await tryReclaimCreationLock(lockDirectory, this.rootDir))) {
         liveCreationJobs.add(jobId);
-        continue;
-      }
-      const metadata = await fs.stat(lockDirectory);
-      if (nowMs - metadata.mtimeMs >= this.orphanAgeMs) {
-        await removeManagedTree(lockDirectory);
       }
     }
     for (const entry of entries) {
@@ -320,7 +339,6 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       const redactionQuarantine = parseRedactionQuarantine(entry.name);
       if (redactionQuarantine) {
         const candidate = path.join(this.rootDir, entry.name);
-        if (isProcessAlive(redactionQuarantine.ownerPid)) continue;
         if (jobIds.has(redactionQuarantine.jobId)) {
           try {
             await fs.rename(candidate, this.jobDirectory(redactionQuarantine.jobId));
@@ -558,12 +576,22 @@ function safeAdmissionError(error: unknown): Error {
   return error instanceof Error ? error : new Error('Continuation input admission failed.');
 }
 
-async function readCreationOwner(lockDirectory: string): Promise<number | null> {
+async function readCreationOwner(lockDirectory: string): Promise<CreationLockOwner | null> {
   try {
     const parsed = JSON.parse(await fs.readFile(path.join(lockDirectory, 'owner.json'), 'utf8')) as {
       pid?: unknown;
+      nonce?: unknown;
+      createdAt?: unknown;
     };
-    return Number.isInteger(parsed.pid) && Number(parsed.pid) > 0 ? Number(parsed.pid) : null;
+    if (
+      !Number.isInteger(parsed.pid)
+      || Number(parsed.pid) <= 0
+      || typeof parsed.createdAt !== 'string'
+    ) return null;
+    const nonce = typeof parsed.nonce === 'string' && /^[a-f0-9]{32}$/.test(parsed.nonce)
+      ? parsed.nonce
+      : null;
+    return { pid: Number(parsed.pid), nonce, createdAt: parsed.createdAt };
   } catch {
     return null;
   }
@@ -590,8 +618,14 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
     throw new Error('Continuation creation lock state is invalid.');
   }
   const owner = await readCreationOwner(lockDirectory);
-  if (owner !== null && isProcessAlive(owner)) return false;
-  if (owner === null && Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
+  if (owner === null) {
+    if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
+  } else {
+    const heartbeatAge = owner.nonce
+      ? await creationLockHeartbeatAge(lockDirectory, owner.nonce)
+      : Math.max(0, Date.now() - metadata.mtimeMs);
+    if (isProcessAlive(owner.pid) && heartbeatAge < CREATION_LOCK_LEASE_MS) return false;
+  }
 
   const quarantine = path.join(
     rootDir,
@@ -610,6 +644,49 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
   }
   await removeManagedTree(quarantine);
   return true;
+}
+
+async function refreshCreationLockHeartbeat(lockDirectory: string, nonce: string): Promise<void> {
+  await fs.writeFile(
+    path.join(lockDirectory, `.heartbeat-${nonce}`),
+    `${Date.now()}\n`,
+    { mode: 0o600 },
+  );
+}
+
+async function creationLockHeartbeatAge(lockDirectory: string, nonce: string): Promise<number> {
+  try {
+    const metadata = await fs.stat(path.join(lockDirectory, `.heartbeat-${nonce}`));
+    return Math.max(0, Date.now() - metadata.mtimeMs);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return Number.POSITIVE_INFINITY;
+    throw error;
+  }
+}
+
+async function releaseCreationLock(
+  lockDirectory: string,
+  rootDir: string,
+  nonce: string,
+): Promise<void> {
+  const owner = await readCreationOwner(lockDirectory);
+  if (owner?.nonce !== nonce) return;
+  const releaseDirectory = path.join(
+    rootDir,
+    `${CREATION_RECLAIM_PREFIX}release-${path.basename(lockDirectory)}-${process.pid}-${nonce}`,
+  );
+  try {
+    await fs.rename(lockDirectory, releaseDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  const movedOwner = await readCreationOwner(releaseDirectory);
+  if (movedOwner?.nonce !== nonce) {
+    await fs.rename(releaseDirectory, lockDirectory).catch(() => {});
+    return;
+  }
+  await removeManagedTree(releaseDirectory);
 }
 
 function assertEquivalentManifest(existing: InputManifest, candidate: InputManifest): void {

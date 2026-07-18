@@ -1,6 +1,9 @@
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CONTINUATION_LIMITS } from '../domain/continuation.js';
+
+const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 
 export class ContinuationArtifactStore {
   readonly rootDir: string;
@@ -107,6 +110,58 @@ export class ContinuationArtifactStore {
     await fs.rm(this.jobDirectory(jobId), { recursive: true, force: true });
   }
 
+  async quarantine(jobId: string): Promise<string | null> {
+    await this.ensureRoot();
+    const source = this.jobDirectory(jobId);
+    const token = `${process.pid}-${randomBytes(8).toString('hex')}`;
+    const destination = this.quarantineDirectory(jobId, token);
+    let sourceMetadata;
+    try {
+      sourceMetadata = await fs.lstat(source);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      throw error;
+    }
+    if (sourceMetadata.isSymbolicLink() || !sourceMetadata.isDirectory()) {
+      throw new Error('Continuation artifact quarantine source is not a real directory.');
+    }
+    await fs.rename(source, destination);
+    const moved = await fs.lstat(destination);
+    if (moved.dev !== sourceMetadata.dev || moved.ino !== sourceMetadata.ino) {
+      await fs.rename(destination, source).catch(() => {});
+      throw new Error('Continuation artifact quarantine identity changed during rename.');
+    }
+    return token;
+  }
+
+  async restoreQuarantine(jobId: string, token: string): Promise<void> {
+    await fs.rename(this.quarantineDirectory(jobId, token), this.jobDirectory(jobId));
+  }
+
+  async discardQuarantine(jobId: string, token: string): Promise<void> {
+    await removeArtifactTree(this.quarantineDirectory(jobId, token));
+  }
+
+  async cleanupOrphans(jobIds: ReadonlySet<string>): Promise<void> {
+    await this.ensureRoot();
+    const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      const quarantine = parseRedactionQuarantine(entry.name);
+      if (!quarantine) continue;
+      const candidate = path.join(this.rootDir, entry.name);
+      if (jobIds.has(quarantine.jobId)) {
+        try {
+          await fs.rename(candidate, this.jobDirectory(quarantine.jobId));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+        }
+      } else {
+        await removeArtifactTree(candidate);
+      }
+    }
+  }
+
   async purge(jobIds: readonly string[]): Promise<void> {
     for (const jobId of jobIds) await this.remove(jobId);
   }
@@ -121,6 +176,33 @@ export class ContinuationArtifactStore {
     }
     return resolved;
   }
+
+  private quarantineDirectory(jobId: string, token: string): string {
+    this.jobDirectory(jobId);
+    if (!/^[1-9]\d*-[a-f0-9]{16}$/.test(token)) {
+      throw new Error('Continuation artifact quarantine token is invalid.');
+    }
+    return path.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
+  }
+}
+
+function parseRedactionQuarantine(name: string): { jobId: string } | null {
+  if (!name.startsWith(REDACTION_QUARANTINE_PREFIX)) return null;
+  const match = /^\.redacting-(.+)-[1-9]\d*-[a-f0-9]{16}$/.exec(name);
+  if (!match || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(match[1])) return null;
+  return { jobId: match[1] };
+}
+
+async function removeArtifactTree(directory: string): Promise<void> {
+  const metadata = await fs.lstat(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!metadata) return;
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error(`Refusing to remove non-directory continuation artifact tree: ${directory}`);
+  }
+  await fs.rm(directory, { recursive: true });
 }
 
 async function assertRealDirectory(directory: string): Promise<void> {

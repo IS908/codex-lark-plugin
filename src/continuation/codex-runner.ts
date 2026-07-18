@@ -359,7 +359,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         );
       }
 
-      const { result, replacedSession } = await this.executeWithResumeFallback(request);
+      const { result, replacedSession } = await this.executeWithResumeFallback(claim, request);
       const outcome = await parseOutcome(
         result.text,
         claim.job.jobId,
@@ -474,7 +474,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       resumeSessionId: previousSessionId ?? baseRequest.resumeSessionId ?? null,
       abortSignal: signal,
     };
-    const followup = await this.executeWithResumeFallback(followupRequest);
+    const followup = await this.executeWithResumeFallback(claim, followupRequest);
     const followupOutcome = await parseOutcome(
       followup.result.text,
       claim.job.jobId,
@@ -506,8 +506,12 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     };
   }
 
-  private async executeWithResumeFallback(request: CodexExecRequest) {
+  private async executeWithResumeFallback(
+    claim: ContinuationClaim,
+    request: CodexExecRequest,
+  ) {
     try {
+      await this.verifyManagedInputsBeforeLaunch(claim);
       return {
         result: normalizeCodexExecResult(await this.runCodexExec(request)),
         replacedSession: false,
@@ -521,12 +525,35 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       ) {
         throw error;
       }
+      await this.verifyManagedInputsBeforeLaunch(claim);
       return {
         result: normalizeCodexExecResult(
           await this.runCodexExec({ ...request, resumeSessionId: null }),
         ),
         replacedSession: true,
       };
+    }
+  }
+
+  private async verifyManagedInputsBeforeLaunch(claim: ContinuationClaim): Promise<void> {
+    if (claim.job.sourceFacts.inputs.length === 0) return;
+    if (!this.options.inputStore) {
+      throw new ContinuationExecutionError(
+        'continuation_input_integrity_failed',
+        'Managed continuation input storage is unavailable.',
+        false,
+      );
+    }
+    const verification = await this.options.inputStore.verify(
+      claim.job.jobId,
+      claim.job.sourceFacts.inputs,
+    );
+    if (!verification.ok) {
+      throw new ContinuationExecutionError(
+        'continuation_input_integrity_failed',
+        'A managed continuation input failed integrity verification immediately before execution.',
+        false,
+      );
     }
   }
 }

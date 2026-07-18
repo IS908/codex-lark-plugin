@@ -307,19 +307,6 @@ async function executeCreateContinuation(
   context: CodexExecActionContext,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
-  if (context.continuationPermitted === false) {
-    await audit(
-      'create_continuation_job',
-      context.message.senderId,
-      { source_message_id: context.message.messageId, reason: 'not_permitted_for_turn' },
-      'denied',
-    );
-    return {
-      ok: false,
-      action: 'create_continuation_job',
-      message: 'Continuation was not permitted for this foreground turn. Complete the task now or ask the user for missing input.',
-    };
-  }
   if (!deps.continuationService) {
     await audit(
       'create_continuation_job',
@@ -334,6 +321,38 @@ async function executeCreateContinuation(
     };
   }
   try {
+    const existing = await deps.continuationService.findExistingFromMessage(context.message);
+    if (existing) {
+      await audit(
+        'create_continuation_job',
+        context.message.senderId,
+        {
+          job_id: existing.jobId,
+          source_message_id: context.message.messageId,
+          replay: true,
+        },
+        'ok',
+      );
+      return {
+        ok: true,
+        action: 'create_continuation_job',
+        message: `Background task created: ${existing.title}\nJob ID: ${existing.jobId}`,
+        continuation: { jobId: existing.jobId, title: existing.title },
+      };
+    }
+    if (context.continuationPermitted === false) {
+      await audit(
+        'create_continuation_job',
+        context.message.senderId,
+        { source_message_id: context.message.messageId, reason: 'not_permitted_for_turn' },
+        'denied',
+      );
+      return {
+        ok: false,
+        action: 'create_continuation_job',
+        message: 'Continuation was not permitted for this foreground turn. Complete the task now or ask the user for missing input.',
+      };
+    }
     const configuredHostTools = new Set(
       await listConfiguredLocalCliToolNames(deps.localCliToolsConfigPath),
     );
