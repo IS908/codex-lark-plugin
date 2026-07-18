@@ -245,6 +245,45 @@ function validateContinuationActionContract(
   action: z.infer<typeof CreateContinuationActionBaseSchema>,
   ctx: z.RefinementCtx,
 ): void {
+  const requiredTexts: Array<{ path: Array<string | number>; value: string }> = [
+    { path: ['title'], value: action.title },
+    { path: ['objective'], value: action.objective },
+    ...action.deliverables.map((entry, index) => ({
+      path: ['deliverables', index, 'description'],
+      value: entry.description,
+    })),
+    ...action.acceptance_criteria.map((entry, index) => ({
+      path: ['acceptance_criteria', index, 'description'],
+      value: entry.description,
+    })),
+    ...action.verification_requirements.map((entry, index) => ({
+      path: ['verification_requirements', index, 'description'],
+      value: entry.description,
+    })),
+  ];
+  for (const entry of requiredTexts) {
+    if (entry.value.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: entry.path,
+        message: 'required text must not be blank',
+      });
+    }
+  }
+  if (jsonBytes(action.objective) > CONTINUATION_LIMITS.objectiveBytes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['objective'],
+      message: `objective exceeds ${CONTINUATION_LIMITS.objectiveBytes} UTF-8 JSON bytes`,
+    });
+  }
+  if (jsonBytes(actionTaskContract(action)) > CONTINUATION_LIMITS.contextSnapshotBytes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [],
+      message: `task contract exceeds ${CONTINUATION_LIMITS.contextSnapshotBytes} UTF-8 JSON bytes`,
+    });
+  }
   if (!action.deliverables.some((deliverable) => deliverable.required)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -281,6 +320,33 @@ function validateContinuationActionContract(
       }
     });
   });
+}
+
+function actionTaskContract(action: z.infer<typeof CreateContinuationActionBaseSchema>): unknown {
+  return {
+    schemaVersion: 1,
+    title: action.title,
+    objective: action.objective,
+    deliverables: action.deliverables,
+    acceptanceCriteria: action.acceptance_criteria.map((criterion) => ({
+      id: criterion.id,
+      description: criterion.description,
+      deliverableIds: criterion.deliverable_ids,
+    })),
+    verificationRequirements: action.verification_requirements,
+    initialContext: {
+      summary: action.context_snapshot.summary,
+      completedSteps: action.context_snapshot.completed_steps,
+      remainingSteps: action.context_snapshot.remaining_steps,
+      constraints: action.context_snapshot.constraints,
+      decisions: action.context_snapshot.decisions,
+      references: action.context_snapshot.references,
+    },
+  };
+}
+
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
 }
 
 export const CreateContinuationActionSchema = CreateContinuationActionBaseSchema

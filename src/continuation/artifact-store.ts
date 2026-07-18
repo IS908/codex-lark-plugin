@@ -18,6 +18,8 @@ export class ContinuationArtifactStore {
   constructor(
     rootDir: string,
     private readonly maxBytes = CONTINUATION_LIMITS.managedArtifactBytesPerJob,
+    private readonly maxEntries = CONTINUATION_LIMITS.managedArtifactEntriesPerJob,
+    private readonly maxDepth = CONTINUATION_LIMITS.managedArtifactDirectoryDepth,
   ) {
     this.rootDir = path.resolve(rootDir);
   }
@@ -53,35 +55,53 @@ export class ContinuationArtifactStore {
     const directory = this.jobDirectory(jobId);
     await assertRealDirectory(directory);
     let totalBytes = 0;
+    let totalEntries = 0;
 
-    const visit = async (current: string): Promise<void> => {
-      let entries;
+    const visit = async (current: string, depth: number): Promise<void> => {
+      if (depth > this.maxDepth) {
+        throw new Error(
+          `Continuation artifact directory depth limit exceeded for ${jobId}: ${depth} > ${this.maxDepth}.`,
+        );
+      }
+      let handle;
       try {
-        entries = await fs.readdir(current, { withFileTypes: true });
+        handle = await fs.opendir(current);
       } catch (err: any) {
         if (err?.code === 'ENOENT') return;
         throw err;
       }
-      for (const entry of entries) {
+      for await (const entry of handle) {
+        totalEntries += 1;
+        if (totalEntries > this.maxEntries) {
+          throw new Error(
+            `Continuation artifact entry limit exceeded for ${jobId}: ${totalEntries} > ${this.maxEntries}.`,
+          );
+        }
         const entryPath = path.join(current, entry.name);
-        if (entry.isSymbolicLink()) {
+        const metadata = await fs.lstat(entryPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return null;
+          throw error;
+        });
+        if (!metadata) continue;
+        if (metadata.isSymbolicLink()) {
           throw new Error(`Continuation artifacts cannot contain symbolic links: ${entry.name}`);
         }
-        if (entry.isDirectory()) {
-          await visit(entryPath);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        totalBytes += (await fs.stat(entryPath)).size;
-        if (totalBytes > this.maxBytes) {
-          throw new Error(
-            `Continuation artifact byte limit exceeded for ${jobId}: ${totalBytes} > ${this.maxBytes}.`,
-          );
+        if (metadata.isDirectory()) {
+          await visit(entryPath, depth + 1);
+        } else if (metadata.isFile()) {
+          totalBytes += metadata.size;
+          if (totalBytes > this.maxBytes) {
+            throw new Error(
+              `Continuation artifact byte limit exceeded for ${jobId}: ${totalBytes} > ${this.maxBytes}.`,
+            );
+          }
+        } else {
+          throw new Error(`Continuation artifacts must be regular files or directories: ${entry.name}`);
         }
       }
     };
 
-    await visit(directory);
+    await visit(directory, 0);
   }
 
   async canonicalizeReferences(

@@ -640,6 +640,22 @@ try {
     artifactStore.assertWithinLimit('job_artifact_test'),
     /artifact byte limit/i,
   );
+  const entryLimitedStore = new ContinuationArtifactStore(artifactsDir, 1_024, 2, 4);
+  const entryLimitedRoot = await entryLimitedStore.ensure('job_artifact_entries');
+  await writeFile(join(entryLimitedRoot, 'one.txt'), '', 'utf8');
+  await writeFile(join(entryLimitedRoot, 'two.txt'), '', 'utf8');
+  await writeFile(join(entryLimitedRoot, 'three.txt'), '', 'utf8');
+  await assert.rejects(
+    entryLimitedStore.assertWithinLimit('job_artifact_entries'),
+    /artifact entry limit/i,
+  );
+  const depthLimitedStore = new ContinuationArtifactStore(artifactsDir, 1_024, 10, 1);
+  const depthLimitedRoot = await depthLimitedStore.ensure('job_artifact_depth');
+  await mkdir(join(depthLimitedRoot, 'level-one', 'level-two'), { recursive: true });
+  await assert.rejects(
+    depthLimitedStore.assertWithinLimit('job_artifact_depth'),
+    /artifact directory depth/i,
+  );
   assert.throws(() => artifactStore.resolve('job_artifact_test', '../escape.txt'), /outside job directory/i);
   assert.throws(() => artifactStore.resolve('job_artifact_test', '/tmp/escape.txt'), /relative/i);
   await chmod(artifactRoot, 0o700);
@@ -2516,6 +2532,24 @@ const staleOwnerlessReclaimer = spawn(process.execPath, [
   ownerlessLockJobId,
 ], { stdio: ['ignore', 'pipe', 'pipe'] });
 await waitForChildMarker(staleOwnerlessReclaimer, 'DEAD_LOCK_RECLAIMED', 1_000);
+
+const staleReclaimJobId = continuationJobId('stale-reclaim-recovery');
+const staleReclaimPath = join(
+  deadLockInputsRoot,
+  `.reclaim-.creating-${staleReclaimJobId}-2147483647-${'f'.repeat(16)}`,
+);
+await writeFile(staleReclaimPath, 'stale reclaimed lock', 'utf8');
+await utimes(staleReclaimPath, staleOwnerlessTime, staleOwnerlessTime);
+const staleReclaimChild = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  staleReclaimJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(staleReclaimChild, 'DEAD_LOCK_RECLAIMED', 1_000);
+await assert.rejects(lstat(staleReclaimPath), /ENOENT/);
 
 const atomicLockJobId = continuationJobId('atomic-lock-owner');
 await deadLockStore.withCreationLock(atomicLockJobId, async () => {

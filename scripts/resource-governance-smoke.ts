@@ -123,6 +123,50 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
+// 3a. Unknown process-start identity is bounded by lock age instead of blocking forever.
+{
+  const dir = tmpRoot('resource-lock-unknown-start-');
+  const lockPath = join(dir, 'bridge.lock');
+  writeFileSync(lockPath, JSON.stringify({ pid: 12345, startedAt: 1111 }), 'utf-8');
+  await touchAge(lockPath, 60_000);
+
+  const lock = await acquireSingleInstanceLock(lockPath, {
+    pid: 99999,
+    startedAt: 3333,
+    processExists: () => true,
+    getProcessStartedAt: async () => null,
+  });
+  lock.release();
+  cleanup(dir);
+  passed++;
+}
+
+// 3b. Unknown takeover-owner identity is likewise bounded by takeover age.
+{
+  const dir = tmpRoot('resource-lock-unknown-takeover-start-');
+  const lockPath = join(dir, 'bridge.lock');
+  writeFileSync(lockPath, JSON.stringify({ pid: 12345, startedAt: 1111 }), 'utf-8');
+  await touchAge(lockPath, 60_000);
+  mkdirSync(`${lockPath}.takeover`, { recursive: true });
+  writeFileSync(
+    `${lockPath}.takeover/owner.json`,
+    JSON.stringify({ pid: 23456, startedAt: 2222 }),
+    'utf-8',
+  );
+  await touchAge(`${lockPath}.takeover`, 60_000);
+  await touchAge(`${lockPath}.takeover/owner.json`, 60_000);
+
+  const lock = await acquireSingleInstanceLock(lockPath, {
+    pid: 99999,
+    startedAt: 3333,
+    processExists: () => true,
+    getProcessStartedAt: async () => null,
+  });
+  lock.release();
+  cleanup(dir);
+  passed++;
+}
+
 // 4. Stale takeover markers are recoverable after a crashed takeover owner.
 {
   const dir = tmpRoot('resource-lock-stale-takeover-');
@@ -866,4 +910,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/36 PASS`);
+console.log(`resource-governance smoke: ${passed}/38 PASS`);

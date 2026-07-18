@@ -411,6 +411,52 @@ assert.deepEqual(completed.outcome, {
 assert.equal((await executor.execute(createClaim(), signal)).outcome.outcome, 'failed');
 assert.equal((await executor.execute(createClaim(), signal)).outcome.outcome, 'blocked');
 
+const guardedArtifactStore = new ContinuationArtifactStore(
+  join(root, 'guarded-artifacts'),
+  4,
+  10,
+  2,
+);
+const guardedExecutor = createContinuationCodexExecutor({
+  artifactStore: guardedArtifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async (request) => {
+    const guardedRoot = request.additionalWritableDirs?.[0];
+    assert.ok(guardedRoot);
+    await writeFile(join(guardedRoot, 'oversized.bin'), '12345', 'utf8');
+    await new Promise<void>((_resolve, reject) => {
+      if (request.abortSignal?.aborted) {
+        reject(new CodexExecAbortedError('', ''));
+        return;
+      }
+      request.abortSignal?.addEventListener(
+        'abort',
+        () => reject(new CodexExecAbortedError('', '')),
+        { once: true },
+      );
+    });
+    return { text: '' };
+  },
+});
+let guardTimeout: NodeJS.Timeout | undefined;
+try {
+  await assert.rejects(
+    Promise.race([
+      guardedExecutor.execute(createClaim(), signal),
+      new Promise((_, reject) => {
+        guardTimeout = setTimeout(() => reject(new Error('artifact guard timed out')), 1_000);
+      }),
+    ]),
+    (error: unknown) => (
+      error instanceof Error
+      && (error as Error & { errorCode?: string }).errorCode === 'continuation_artifact_limit_exceeded'
+    ),
+  );
+} finally {
+  clearTimeout(guardTimeout);
+}
+
 const convergenceRequests: CodexExecRequest[] = [];
 const convergenceExecutor = createContinuationCodexExecutor({
   artifactStore,

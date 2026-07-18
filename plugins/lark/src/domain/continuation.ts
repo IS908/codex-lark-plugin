@@ -14,6 +14,8 @@ export const CONTINUATION_LIMITS = {
   artifactCount: 20,
   requestedPathCount: 32,
   managedArtifactBytesPerJob: 100 * 1024 * 1024,
+  managedArtifactEntriesPerJob: 256,
+  managedArtifactDirectoryDepth: 8,
 } as const;
 
 export const CONTINUATION_CONTRACT_ID_PATTERN = /^[A-Za-z0-9_.-]{1,80}$/;

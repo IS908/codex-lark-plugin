@@ -101,6 +101,9 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         if (await hasCompetingCreationReclaim(this.rootDir, lockDirectory)) {
           await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce);
           ownerNonce = undefined;
+          if (Date.now() >= deadline) {
+            throw new Error('Continuation creation-lock reclaim did not finish before the wait deadline.');
+          }
           await new Promise((resolve) => setTimeout(resolve, 20));
           continue;
         }
@@ -736,7 +739,7 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
 
   const quarantine = path.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}${path.basename(lockDirectory)}-${process.pid}-${randomBytes(8).toString('hex')}`,
+    `${CREATION_RECLAIM_PREFIX}${path.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes(8).toString('hex')}`,
   );
   try {
     await fs.rename(lockDirectory, quarantine);
@@ -761,7 +764,46 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
 
 async function hasCompetingCreationReclaim(rootDir: string, lockDirectory: string): Promise<boolean> {
   const prefix = `${CREATION_RECLAIM_PREFIX}${path.basename(lockDirectory)}-`;
-  return (await fs.readdir(rootDir)).some((entry) => entry.startsWith(prefix));
+  for (const entry of await fs.readdir(rootDir)) {
+    if (!entry.startsWith(prefix)) continue;
+    const candidate = path.join(rootDir, entry);
+    const metadata = await fs.lstat(candidate).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (!metadata) continue;
+    const owner = parseCreationReclaimOwner(entry.slice(prefix.length));
+    const stateAgeMs = Date.now() - (owner?.createdAt ?? metadata.mtimeMs);
+    const ownerIsActive = owner?.startedAt
+      ? stateAgeMs < OWNERLESS_LOCK_GRACE_MS && await isProcessInstanceAlive(
+        owner.pid,
+        owner.startedAt,
+        stateAgeMs,
+        OWNERLESS_LOCK_GRACE_MS,
+      )
+      : owner
+        ? isProcessAlive(owner.pid) && stateAgeMs < OWNERLESS_LOCK_GRACE_MS
+        : stateAgeMs < OWNERLESS_LOCK_GRACE_MS;
+    if (ownerIsActive) return true;
+    await removeManagedTree(candidate);
+  }
+  return false;
+}
+
+function parseCreationReclaimOwner(
+  token: string,
+): { pid: number; startedAt: number | null; createdAt: number | null } | null {
+  const match = /^([1-9]\d*)(?:\.([1-9]\d*)\.([1-9]\d*))?-[a-f0-9]{16}$/.exec(token);
+  if (!match) return null;
+  const pid = Number(match[1]);
+  const startedAt = match[2] === undefined ? null : Number(match[2]);
+  const createdAt = match[3] === undefined ? null : Number(match[3]);
+  if (
+    !Number.isSafeInteger(pid)
+    || (startedAt !== null && !Number.isSafeInteger(startedAt))
+    || (createdAt !== null && !Number.isSafeInteger(createdAt))
+  ) return null;
+  return { pid, startedAt, createdAt };
 }
 
 async function releaseCreationLock(

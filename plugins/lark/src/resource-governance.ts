@@ -21,6 +21,7 @@ import {
   currentProcessStartedAt,
   getProcessStartedAt,
   isProcessAlive,
+  isRecordedProcessInstanceActive,
   isSameProcessStart,
 } from './process-identity.js';
 
@@ -228,7 +229,13 @@ async function isLockStateStale(
   if (!alive) return true;
   if (existing.startedAt) {
     const actualStartedAt = await getProcessStartedAt(existing.pid);
-    return actualStartedAt !== null && !isSameProcessStart(actualStartedAt, existing.startedAt);
+    return !isRecordedProcessInstanceActive(
+      alive,
+      existing.startedAt,
+      actualStartedAt,
+      state.ageMs,
+      INVALID_LOCK_STALE_MS,
+    );
   }
   return false;
 }
@@ -299,7 +306,13 @@ async function readTakeoverSnapshot(
     return {
       identity,
       owner,
-      stale: actualStartedAt !== null && !isSameProcessStart(actualStartedAt, owner.startedAt),
+      stale: !isRecordedProcessInstanceActive(
+        alive,
+        owner.startedAt,
+        actualStartedAt,
+        Date.now() - (ownerSnapshot?.mtimeMs ?? metadata.mtimeMs),
+        TAKEOVER_STALE_MS,
+      ),
     };
   }
   return { identity, owner, stale: false };

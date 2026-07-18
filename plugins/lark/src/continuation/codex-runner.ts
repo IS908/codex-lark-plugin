@@ -34,6 +34,8 @@ import {
   validateContinuationWorkingDirectory,
 } from './working-directory.js';
 
+const ARTIFACT_MONITOR_INTERVAL_MS = 100;
+
 export interface ContinuationCodexExecutorOptions {
   artifactStore: ContinuationArtifactStore;
   inputStore?: ContinuationInputStorePort;
@@ -284,6 +286,20 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         }
       }
       const artifactDir = await this.options.artifactStore.ensure(claim.job.jobId);
+      return await this.executeGuardedStep(claim, workingDirectory, artifactDir, signal);
+    } catch (error) {
+      throw mapExecutorError(error);
+    }
+  }
+
+  private async executeGuardedStep(
+    claim: ContinuationClaim,
+    workingDirectory: string,
+    artifactDir: string,
+    parentSignal: AbortSignal,
+  ): Promise<ContinuationExecutionResult> {
+    const artifactGuard = await this.startArtifactGuard(claim.job.jobId, parentSignal);
+    try {
       const managedInputs = claim.job.sourceFacts.inputs.map((input) => {
         if (!this.options.inputStore) {
           throw new Error('Continuation input storage is unavailable for a Job with managed inputs.');
@@ -311,7 +327,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         skipGitRepoCheck: true,
         resumeSessionId: claim.job.executionSessionId ?? null,
         outputSchema: CONTINUATION_OUTPUT_SCHEMA,
-        abortSignal: signal,
+        abortSignal: artifactGuard.signal,
         configOverrides: [
           'approval_policy="never"',
           ...(claim.job.permissions.profile === 'trusted_personal_workspace'
@@ -354,7 +370,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           recovery.result.message,
           claim.job.executionSessionId,
           false,
-          signal,
+          artifactGuard.signal,
         );
       }
 
@@ -371,16 +387,64 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           outcome,
           result.sessionId,
           replacedSession,
-          signal,
+          artifactGuard.signal,
         );
       }
       return {
         ...executionSessionPatch(result.sessionId, replacedSession),
         outcome: enforceAttemptConvergence(claim, outcome),
       };
-    } catch (error) {
-      throw mapExecutorError(error);
+    } finally {
+      await artifactGuard.stop();
     }
+  }
+
+  private async startArtifactGuard(
+    jobId: string,
+    parentSignal: AbortSignal,
+  ): Promise<{ signal: AbortSignal; stop: () => Promise<void> }> {
+    const controller = new AbortController();
+    const relayAbort = (): void => controller.abort(parentSignal.reason);
+    if (parentSignal.aborted) relayAbort();
+    else parentSignal.addEventListener('abort', relayAbort, { once: true });
+
+    let violation: ContinuationExecutionError | null = null;
+    let pendingCheck: Promise<void> | null = null;
+    const check = async (): Promise<void> => {
+      if (violation) return;
+      try {
+        await this.options.artifactStore.assertWithinLimit(jobId);
+      } catch (error) {
+        violation = new ContinuationExecutionError(
+          'continuation_artifact_limit_exceeded',
+          'Managed continuation artifacts exceeded their byte, entry, or directory-depth limit.',
+          false,
+          { cause: error },
+        );
+        controller.abort(violation);
+      }
+    };
+    await check();
+    if (violation) {
+      parentSignal.removeEventListener('abort', relayAbort);
+      throw violation;
+    }
+    const timer = setInterval(() => {
+      if (pendingCheck) return;
+      pendingCheck = check().finally(() => { pendingCheck = null; });
+    }, ARTIFACT_MONITOR_INTERVAL_MS);
+    timer.unref();
+
+    return {
+      signal: controller.signal,
+      stop: async () => {
+        clearInterval(timer);
+        parentSignal.removeEventListener('abort', relayAbort);
+        await pendingCheck;
+        await check();
+        if (violation) throw violation;
+      },
+    };
   }
 
   private async executeToolRequest(

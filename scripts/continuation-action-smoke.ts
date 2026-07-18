@@ -78,6 +78,18 @@ for (const invalidContract of [
       { id: 'unbound', description: 'Criterion without a deliverable.', deliverable_ids: [] },
     ],
   },
+  { objective: '   ' },
+  {
+    deliverables: [{ id: 'report', description: '\t\n', required: true }],
+  },
+  { objective: '界'.repeat(6_000) },
+  {
+    deliverables: Array.from({ length: 5 }, (_, index) => ({
+      id: `large_${index}`,
+      description: 'x'.repeat(15_000),
+      required: true,
+    })),
+  },
   {
     deliverables: Array.from({ length: 33 }, (_, index) => ({
       id: `deliverable_${index}`,
