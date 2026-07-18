@@ -273,18 +273,13 @@ function readJobFixture(id: string): JobFile {
   const scheduler = new JobScheduler({
     client: { im: { v1: { message: { create: async () => ({ data: { message_id: 'om_ok' } }) } } } } as any,
     identitySession: new IdentitySession(() => null),
+    clock: () => new Date(fixedNow),
   });
-  const originalNow = Date.now;
-  Date.now = () => fixedNow;
   let runKey = '';
   (scheduler as any).executeMessageJob = async (_job: JobFile, capturedRunKey: string) => {
     runKey = capturedRunKey;
   };
-  try {
-    await (scheduler as any).executeJob(job);
-  } finally {
-    Date.now = originalNow;
-  }
+  await (scheduler as any).executeJob(job);
   if (runKey !== '2026-06-07T01:15:00.000Z') {
     fail(`6: expected latest missed run key 01:15, got ${runKey}`);
   }
@@ -391,14 +386,9 @@ function readJobFixture(id: string): JobFile {
   const scheduler = new JobScheduler({
     client: client as any,
     identitySession: new IdentitySession(() => null),
+    clock: () => new Date(fixedNow),
   });
-  const originalNow = Date.now;
-  Date.now = () => fixedNow;
-  try {
-    await (scheduler as any).executeJob(job);
-  } finally {
-    Date.now = originalNow;
-  }
+  await (scheduler as any).executeJob(job);
   const expectedUuid = createHash('sha256')
     .update(`scheduler:${id}:2026-06-07T01:15:00.000Z`)
     .digest('hex')

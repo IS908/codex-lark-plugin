@@ -345,6 +345,10 @@ echo "=== Scheduler unit checks ==="
 node --import tsx scripts/scheduler-smoke.ts
 
 echo ""
+echo "=== Cron compatibility checks ==="
+node --import tsx scripts/cron-compatibility-smoke.ts
+
+echo ""
 echo "=== Privacy rules unit checks ==="
 node --import tsx scripts/privacy-rules-smoke.ts
 

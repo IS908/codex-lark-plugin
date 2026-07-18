@@ -198,6 +198,24 @@ if (latestDue !== '2026-06-07T01:15:00.000Z') {
   fail(`24d: expected exact-boundary latest due run, got ${latestDue}`);
 }
 
+// 24e. DST boundaries preserve cron-parser's current New York semantics.
+const springForwardDue = computeLatestDueRun(
+  '0 2 * * *',
+  new Date('2026-03-08T07:00:00.000Z'),
+  'America/New_York',
+);
+if (springForwardDue !== '2026-03-07T07:00:00.000Z') {
+  fail(`24e: spring-forward latest due run changed: ${springForwardDue}`);
+}
+const fallBackDue = computeLatestDueRun(
+  '0 1 * * *',
+  new Date('2026-11-01T06:00:00.000Z'),
+  'America/New_York',
+);
+if (fallBackDue !== '2026-11-01T06:00:00.000Z') {
+  fail(`24e: fall-back latest due run changed: ${fallBackDue}`);
+}
+
 // ── Backfill tests (v0.9.0) ─────────────────────────────────
 
 function makeLegacyJob(overrides: Partial<JobFile['meta']> = {}): JobFile {
