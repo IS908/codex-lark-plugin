@@ -1,9 +1,12 @@
 import type {
+  AsyncTaskContract,
+  AsyncTaskFactSnapshot,
   AsyncTaskSourceInput,
   ContinuationCreateRequest,
   ContinuationDeliveryRoute,
   ContinuationFilesystemMode,
   ContinuationJob,
+  ContinuationPermissionEnvelope,
   ContinuationStatus,
 } from '../domain/continuation.js';
 import { CONTINUATION_LIMITS, isContinuationTerminal } from '../domain/continuation.js';
@@ -58,6 +61,13 @@ export interface ContinuationActionInput {
 
 export interface ContinuationTaskService {
   findExistingFromMessage(message: LarkMessage): Promise<ContinuationJob | null>;
+  preflightFromMessage(
+    action: ContinuationActionInput,
+    message: LarkMessage,
+    parentSessionId?: string | null,
+    selectedModel?: string | null,
+    sourceInputCount?: number,
+  ): Promise<void>;
   createFromMessage(
     action: ContinuationActionInput,
     message: LarkMessage,
@@ -135,11 +145,7 @@ export class ContinuationService implements ContinuationTaskService {
         'This background task was already created, but its retained data has been deleted.',
       );
     }
-    if (
-      existing.sourceMessageId !== message.messageId
-      || existing.creatorOpenId !== message.senderId
-      || existing.retryOfJobId
-    ) {
+    if (existing.creatorOpenId !== message.senderId) {
       throw new Error('Continuation deterministic Job identity conflicts with the authenticated source message.');
     }
     if (existing.errorCode === 'continuation_persisted_state_invalid') {
@@ -148,7 +154,21 @@ export class ContinuationService implements ContinuationTaskService {
         'This background task cannot be reused because its stored state failed integrity validation.',
       );
     }
+    if (existing.sourceMessageId !== message.messageId || existing.retryOfJobId) {
+      throw new Error('Continuation deterministic Job identity conflicts with the authenticated source message.');
+    }
     return existing;
+  }
+
+  async preflightFromMessage(
+    action: ContinuationActionInput,
+    message: LarkMessage,
+    _parentSessionId?: string | null,
+    selectedModel?: string | null,
+    sourceInputCount = 0,
+  ): Promise<void> {
+    assertEligibleSource(message);
+    await this.prepareCreation(action, message, selectedModel, sourceInputCount);
   }
 
   async createFromMessage(
@@ -160,18 +180,18 @@ export class ContinuationService implements ContinuationTaskService {
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     assertEligibleSource(message);
     const now = this.options.clock.now();
-    const resolvedWorkingDirectory = await resolveContinuationWorkingDirectory(
-      this.options.allowedWorkingRoot,
-      action.working_directory ?? '.',
-    );
-    const route = deriveRoute(message);
-    const brief = sanitizeBrief(action);
-    const profile = this.options.canUseTrustedPersonalWorkspace?.(message.senderId)
-      ? 'trusted_personal_workspace'
-      : 'bounded';
-    const requestedPaths = await this.resolveRequestedPaths(
+    const {
+      resolvedWorkingDirectory,
+      route,
+      brief,
+      permissions,
+      sourceFacts,
+      taskContract,
+    } = await this.prepareCreation(
       action,
-      resolvedWorkingDirectory.workingDirectory,
+      message,
+      selectedModel,
+      sourceInputs.length,
     );
     const request: ContinuationCreateRequest = {
       idempotencyKey: continuationCreateIdempotencyKey(message.messageId),
@@ -183,66 +203,12 @@ export class ContinuationService implements ContinuationTaskService {
       objective: brief.objective,
       acceptanceCriteria: brief.acceptanceCriteria,
       contextSnapshot: brief.contextSnapshot,
-      sourceFacts: {
-        schemaVersion: 1,
-        provenance: 'captured',
-        originalUserText: boundedFactText(message.currentUserText ?? message.text),
-        sourceContextText: message.sourceContextText
-          ? boundedFactText(message.sourceContextText)
-          : null,
-        quotedMessageText: message.parentContent
-          ? boundedFactText(message.parentContent)
-          : null,
-        creatorOpenId: message.senderId,
-        chatId: message.chatId,
-        chatType: message.chatType,
-        route,
-        sourceMessageId: message.messageId,
-        ...(message.threadId ? { sourceThreadId: message.threadId } : {}),
-        sourceMessageType: message.messageType || null,
-        sourceTimestamp: message.timestampMs === undefined
-          ? null
-          : new Date(message.timestampMs).toISOString(),
-        inputs: [],
-        workingDirectory: resolvedWorkingDirectory.workingDirectory,
-        model: selectedModel ?? this.options.defaultModel ?? null,
-        permissions: {
-          profile,
-          filesystem: {
-            root: resolvedWorkingDirectory.root,
-            mode: this.options.filesystemMode,
-            requestedPaths,
-          },
-          hostTools: brief.requiredTools,
-          network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',
-          externalSideEffects: profile === 'trusted_personal_workspace' ? 'allowed' : 'denied',
-          approval: { mode: 'never' },
-        },
-      },
-      taskContract: {
-        schemaVersion: 1,
-        title: brief.title,
-        objective: brief.objective,
-        deliverables: brief.deliverables,
-        acceptanceCriteria: brief.structuredAcceptanceCriteria,
-        verificationRequirements: brief.verificationRequirements,
-        initialContext: brief.contextSnapshot,
-      },
+      sourceFacts,
+      taskContract,
       sourceInputs,
       requiredTools: brief.requiredTools,
       workingDirectory: resolvedWorkingDirectory.workingDirectory,
-      permissions: {
-        profile,
-        filesystem: {
-          root: resolvedWorkingDirectory.root,
-          mode: this.options.filesystemMode,
-          requestedPaths,
-        },
-        hostTools: brief.requiredTools,
-        network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',
-        externalSideEffects: profile === 'trusted_personal_workspace' ? 'allowed' : 'denied',
-        approval: { mode: 'never' },
-      },
+      permissions,
       ...((selectedModel ?? this.options.defaultModel)
         ? { model: (selectedModel ?? this.options.defaultModel)! }
         : {}),
@@ -256,6 +222,101 @@ export class ContinuationService implements ContinuationTaskService {
       ).toISOString(),
     };
     return this.options.repository.create(request);
+  }
+
+  private async prepareCreation(
+    action: ContinuationActionInput,
+    message: LarkMessage,
+    selectedModel: string | null | undefined,
+    sourceInputCount: number,
+  ) {
+    if (
+      !Number.isInteger(sourceInputCount)
+      || sourceInputCount < 0
+      || sourceInputCount > CONTINUATION_LIMITS.inputFileCount
+    ) {
+      throw new Error('Continuation input file count exceeds the configured limit.');
+    }
+    const resolvedWorkingDirectory = await resolveContinuationWorkingDirectory(
+      this.options.allowedWorkingRoot,
+      action.working_directory ?? '.',
+    );
+    const route = deriveRoute(message);
+    const brief = sanitizeBrief(action);
+    if (brief.title.length > CONTINUATION_LIMITS.titleChars) {
+      throw new Error(`Continuation title exceeds ${CONTINUATION_LIMITS.titleChars} characters.`);
+    }
+    assertUtf8ByteLimit(
+      'Continuation objective',
+      brief.objective,
+      CONTINUATION_LIMITS.objectiveBytes,
+    );
+    assertJsonByteLimit(
+      'Continuation acceptance criteria',
+      brief.acceptanceCriteria,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    assertJsonByteLimit(
+      'Continuation context snapshot',
+      brief.contextSnapshot,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    assertJsonByteLimit(
+      'Continuation required tools',
+      brief.requiredTools,
+      CONTINUATION_LIMITS.objectiveBytes,
+    );
+    const taskContract = taskContractFromBrief(brief);
+    assertJsonByteLimit(
+      'Continuation task contract',
+      taskContract,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    const profile = this.options.canUseTrustedPersonalWorkspace?.(message.senderId)
+      ? 'trusted_personal_workspace'
+      : 'bounded';
+    const requestedPaths = await this.resolveRequestedPaths(
+      action,
+      resolvedWorkingDirectory.workingDirectory,
+    );
+    const permissions: ContinuationPermissionEnvelope = {
+      profile,
+      filesystem: {
+        root: resolvedWorkingDirectory.root,
+        mode: this.options.filesystemMode,
+        requestedPaths,
+      },
+      hostTools: brief.requiredTools,
+      network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',
+      externalSideEffects: profile === 'trusted_personal_workspace' ? 'allowed' : 'denied',
+      approval: { mode: 'never' },
+    };
+    assertJsonByteLimit(
+      'Continuation permission envelope',
+      permissions,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    assertJsonByteLimit(
+      'Continuation delivery route',
+      route,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    const sourceFacts = buildBoundedSourceFacts({
+      message,
+      route,
+      workingDirectory: resolvedWorkingDirectory.workingDirectory,
+      model: selectedModel ?? this.options.defaultModel ?? null,
+      permissions,
+      sourceInputCount,
+    });
+    return {
+      resolvedWorkingDirectory,
+      route,
+      brief,
+      permissions,
+      sourceFacts,
+      taskContract,
+    };
   }
 
   private async resolveRequestedPaths(
@@ -410,6 +471,7 @@ export class ContinuationService implements ContinuationTaskService {
 
 export class UnavailableContinuationService implements ContinuationTaskService {
   async findExistingFromMessage(): Promise<never> { throw unavailableError(); }
+  async preflightFromMessage(): Promise<never> { throw unavailableError(); }
   async createFromMessage(): Promise<never> { throw unavailableError(); }
   async listForActor(): Promise<never> { throw unavailableError(); }
   async getForActor(): Promise<never> { throw unavailableError(); }
@@ -509,6 +571,147 @@ function sanitizeBrief(action: ContinuationActionInput) {
     },
     requiredTools: [...new Set(action.required_tools.map(redactContinuationText))],
   };
+}
+
+function taskContractFromBrief(brief: ReturnType<typeof sanitizeBrief>): AsyncTaskContract {
+  return {
+    schemaVersion: 1,
+    title: brief.title,
+    objective: brief.objective,
+    deliverables: brief.deliverables,
+    acceptanceCriteria: brief.structuredAcceptanceCriteria,
+    verificationRequirements: brief.verificationRequirements,
+    initialContext: brief.contextSnapshot,
+  };
+}
+
+type SourceFactTextField = 'quotedMessageText' | 'sourceContextText' | 'originalUserText';
+
+function buildBoundedSourceFacts(options: {
+  message: LarkMessage;
+  route: ContinuationDeliveryRoute;
+  workingDirectory: string;
+  model: string | null;
+  permissions: ContinuationPermissionEnvelope;
+  sourceInputCount: number;
+}): AsyncTaskFactSnapshot {
+  const { message } = options;
+  const facts: AsyncTaskFactSnapshot = {
+    schemaVersion: 1,
+    provenance: 'captured',
+    originalUserText: boundedFactText(message.currentUserText ?? message.text),
+    sourceContextText: message.sourceContextText
+      ? boundedFactText(message.sourceContextText)
+      : null,
+    quotedMessageText: message.parentContent
+      ? boundedFactText(message.parentContent)
+      : null,
+    creatorOpenId: message.senderId,
+    chatId: message.chatId,
+    chatType: message.chatType,
+    route: options.route,
+    sourceMessageId: message.messageId,
+    ...(message.threadId ? { sourceThreadId: message.threadId } : {}),
+    sourceMessageType: message.messageType || null,
+    sourceTimestamp: message.timestampMs === undefined
+      ? null
+      : new Date(message.timestampMs).toISOString(),
+    inputs: [],
+    workingDirectory: options.workingDirectory,
+    model: options.model,
+    permissions: options.permissions,
+  };
+  const projectedInputs = projectedManagedInputs(options.sourceInputCount);
+  const projectedBytes = () => jsonByteLength({ ...facts, inputs: projectedInputs });
+  for (const field of [
+    'quotedMessageText',
+    'sourceContextText',
+    'originalUserText',
+  ] as const) {
+    if (projectedBytes() <= CONTINUATION_LIMITS.contextSnapshotBytes) break;
+    const value = facts[field];
+    if (!value) continue;
+    const minimumCharacters = field === 'originalUserText' ? 1 : 0;
+    const fitted = fitSourceFactText(facts, projectedInputs, field, value, minimumCharacters);
+    if (fitted === undefined) {
+      if (field !== 'originalUserText') {
+        facts[field] = null;
+        continue;
+      }
+      throw new Error('Continuation source facts cannot fit within the persisted byte limit.');
+    }
+    facts[field] = fitted;
+  }
+  assertJsonByteLimit(
+    'Continuation source facts',
+    { ...facts, inputs: projectedInputs },
+    CONTINUATION_LIMITS.contextSnapshotBytes,
+  );
+  return facts;
+}
+
+function fitSourceFactText(
+  facts: AsyncTaskFactSnapshot,
+  projectedInputs: AsyncTaskFactSnapshot['inputs'],
+  field: SourceFactTextField,
+  value: string,
+  minimumCharacters: number,
+): string | null | undefined {
+  let lower = minimumCharacters;
+  let upper = Math.max(minimumCharacters - 1, value.length - 1);
+  let best: string | null | undefined;
+  while (lower <= upper) {
+    const length = Math.floor((lower + upper) / 2);
+    const candidate = length === 0
+      ? null
+      : `${value.slice(0, length)}\n[truncated]`;
+    const projected = {
+      ...facts,
+      [field]: candidate,
+      inputs: projectedInputs,
+    };
+    if (
+      (candidate === null
+        || Buffer.byteLength(candidate, 'utf8') <= CONTINUATION_LIMITS.objectiveBytes)
+      && jsonByteLength(projected) <= CONTINUATION_LIMITS.contextSnapshotBytes
+    ) {
+      best = candidate;
+      lower = length + 1;
+    } else {
+      upper = length - 1;
+    }
+  }
+  return best;
+}
+
+function projectedManagedInputs(count: number): AsyncTaskFactSnapshot['inputs'] {
+  return Array.from({ length: count }, (_, index) => {
+    const id = `input_${String(index + 1).padStart(3, '0')}`;
+    const fileName = `${id}.abcdefgh`;
+    return {
+      id,
+      kind: 'message_attachment',
+      fileName,
+      relativePath: fileName,
+      sha256: 'f'.repeat(64),
+      sizeBytes: CONTINUATION_LIMITS.inputBytesPerFile,
+    };
+  });
+}
+
+function assertJsonByteLimit(field: string, value: unknown, limit: number): void {
+  const bytes = jsonByteLength(value);
+  if (bytes > limit) throw new Error(`${field} exceeds ${limit} UTF-8 JSON bytes.`);
+}
+
+function assertUtf8ByteLimit(field: string, value: string, limit: number): void {
+  if (Buffer.byteLength(value, 'utf8') > limit) {
+    throw new Error(`${field} exceeds ${limit} UTF-8 bytes.`);
+  }
+}
+
+function jsonByteLength(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
 }
 
 function boundedFactText(value: string): string {

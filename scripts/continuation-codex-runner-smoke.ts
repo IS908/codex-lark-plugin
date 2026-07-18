@@ -289,13 +289,30 @@ assert.match(forcedTrace, /git status --short/);
 const abortCodex = join(root, 'abort-codex.js');
 const abortReadyPath = join(root, 'abort-ready');
 const abortSignalPath = join(root, 'abort-signal');
+const abortDescendantReadyPath = join(root, 'abort-descendant-ready');
+const abortDescendantSignalPath = join(root, 'abort-descendant-signal');
 await writeFile(abortCodex, [
   '#!/usr/bin/env node',
   'const fs = require("node:fs");',
-  'fs.writeFileSync(process.env.READY_PATH, "ready");',
+  'const { spawn } = require("node:child_process");',
+  'const descendant = spawn(process.execPath, ["-e", [',
+  '  "const fs = require(\\\"node:fs\\\");",',
+  '  "fs.writeFileSync(process.env.DESCENDANT_READY_PATH, \\\"ready\\\");",',
+  '  "process.on(\\\"SIGTERM\\\", () => {",',
+  '  "  fs.writeFileSync(process.env.DESCENDANT_SIGNAL_PATH, \\\"SIGTERM\\\");",',
+  '  "  process.exit(0);",',
+  '  "});",',
+  '  "setTimeout(() => process.exit(0), 10000);",',
+  '].join("\\n")], { stdio: "ignore", env: process.env });',
+  'fs.writeFileSync(process.env.DESCENDANT_PID_PATH, String(descendant.pid));',
+  'const readyTimer = setInterval(() => {',
+  '  if (!fs.existsSync(process.env.DESCENDANT_READY_PATH)) return;',
+  '  clearInterval(readyTimer);',
+  '  fs.writeFileSync(process.env.READY_PATH, "ready");',
+  '}, 5);',
   'process.on("SIGTERM", () => {',
   '  fs.writeFileSync(process.env.SIGNAL_PATH, "SIGTERM");',
-  '  process.exit(0);',
+  '  setTimeout(() => process.exit(0), 50);',
   '});',
   'setInterval(() => {}, 1000);',
 ].join('\n'), 'utf-8');
@@ -307,7 +324,13 @@ const abortRun = runCodexExecCommand({
   cwd: root,
   timeoutMs: 5_000,
   abortSignal: abortController.signal,
-  extraEnv: { READY_PATH: abortReadyPath, SIGNAL_PATH: abortSignalPath },
+  extraEnv: {
+    READY_PATH: abortReadyPath,
+    SIGNAL_PATH: abortSignalPath,
+    DESCENDANT_READY_PATH: abortDescendantReadyPath,
+    DESCENDANT_SIGNAL_PATH: abortDescendantSignalPath,
+    DESCENDANT_PID_PATH: join(root, 'abort-descendant-pid'),
+  },
 });
 for (let attempt = 0; attempt < 100; attempt += 1) {
   try {
@@ -320,6 +343,17 @@ for (let attempt = 0; attempt < 100; attempt += 1) {
 abortController.abort();
 await assert.rejects(abortRun, (error: unknown) => error instanceof CodexExecAbortedError);
 assert.equal(await readFile(abortSignalPath, 'utf-8'), 'SIGTERM');
+if (process.platform !== 'win32') {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      await stat(abortDescendantSignalPath);
+      break;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  assert.equal(await readFile(abortDescendantSignalPath, 'utf-8'), 'SIGTERM');
+}
 
 const artifactRoot = await artifactStore.ensure(createJob().jobId);
 await writeFile(join(artifactRoot, 'summary.md'), '# Result\n', 'utf-8');

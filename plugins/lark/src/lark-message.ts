@@ -37,6 +37,8 @@ export interface LarkMessage {
   rawContent: string;
   imagePath?: string;
   imagePaths?: string[];
+  /** File keys aligned with imagePath/imagePaths for server-downloaded inbound images. */
+  downloadedImageFileKeys?: string[];
   docComment?: {
     fileToken: string;
     commentId: string;

@@ -13,7 +13,16 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { constants, existsSync, readFileSync, unlinkSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  futimesSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+} from 'node:fs';
 import { gzip } from 'node:zlib';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -30,6 +39,7 @@ const gzipAsync = promisify(gzip);
 const INVALID_LOCK_STALE_MS = 30_000;
 const TAKEOVER_STALE_MS = 30_000;
 const LOCK_ACQUIRE_ATTEMPTS = 10;
+const LOCK_HEARTBEAT_INTERVAL_MS = 10_000;
 
 export interface SingleInstanceLockOptions {
   pid?: number;
@@ -37,6 +47,7 @@ export interface SingleInstanceLockOptions {
   expectedUid?: number;
   processExists?: (pid: number) => boolean | Promise<boolean>;
   getProcessStartedAt?: (pid: number) => number | null | Promise<number | null>;
+  heartbeatIntervalMs?: number;
 }
 
 export interface SingleInstanceLockHandle {
@@ -167,12 +178,52 @@ export function isCodexLarkProcessCommand(command: string): boolean {
   );
 }
 
-function makeHandle(lockPath: string, pid: number, startedAt: number): SingleInstanceLockHandle {
+function refreshLockHeartbeat(
+  lockPath: string,
+  record: LockRecord,
+  expectedUid?: number,
+): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(lockPath, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    const metadata = fstatSync(fd);
+    if (!metadata.isFile() || (expectedUid !== undefined && metadata.uid !== expectedUid)) return;
+    if (!sameLockOwner(parseLock(readFileSync(fd, 'utf8')), record)) return;
+    const now = new Date();
+    futimesSync(fd, now, now);
+  } catch {
+    // A heartbeat is advisory. Acquisition still validates age and process identity.
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  }
+}
+
+function makeHandle(
+  lockPath: string,
+  pid: number,
+  startedAt: number,
+  heartbeatIntervalMs: number,
+  expectedUid?: number,
+): SingleInstanceLockHandle {
+  const record: LockRecord = { pid, startedAt };
+  const heartbeat = setInterval(
+    () => refreshLockHeartbeat(lockPath, record, expectedUid),
+    heartbeatIntervalMs,
+  );
+  heartbeat.unref();
+  let released = false;
   return {
     path: lockPath,
     pid,
     startedAt,
     release: () => {
+      if (released) return;
+      released = true;
+      clearInterval(heartbeat);
       try {
         const existing = parseLock(readFileSync(lockPath, 'utf-8'));
         if (existing?.pid === pid && existing.startedAt === startedAt) unlinkSync(lockPath);
@@ -448,6 +499,10 @@ export async function acquireSingleInstanceLock(
   const processExists = options.processExists ?? isProcessAlive;
   const resolveProcessStartedAt = options.getProcessStartedAt ?? getProcessStartedAt;
   const expectedUid = options.expectedUid;
+  const heartbeatIntervalMs = Math.min(
+    LOCK_HEARTBEAT_INTERVAL_MS,
+    Math.max(1, Math.floor(options.heartbeatIntervalMs ?? LOCK_HEARTBEAT_INTERVAL_MS)),
+  );
   const takeoverPath = `${lockPath}.takeover`;
 
   await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
@@ -455,7 +510,7 @@ export async function acquireSingleInstanceLock(
   for (let attempt = 0; attempt < LOCK_ACQUIRE_ATTEMPTS; attempt++) {
     await waitForTakeoverToClear(takeoverPath, processExists, resolveProcessStartedAt, expectedUid);
     if (await writeLockFileAtomically(lockPath, serializeLock(record))) {
-      return makeHandle(lockPath, pid, startedAt);
+      return makeHandle(lockPath, pid, startedAt, heartbeatIntervalMs, expectedUid);
     }
 
     const existing = await readLockState(lockPath, expectedUid);
@@ -478,7 +533,7 @@ export async function acquireSingleInstanceLock(
       if (!(await isLockStateStale(current, processExists, resolveProcessStartedAt))) throw activeLockError(current);
       await removePathIfExists(lockPath);
       if (await writeLockFileAtomically(lockPath, serializeLock(record))) {
-        return makeHandle(lockPath, pid, startedAt);
+        return makeHandle(lockPath, pid, startedAt, heartbeatIntervalMs, expectedUid);
       }
     } finally {
       await removePathIfExists(takeoverPath);

@@ -270,11 +270,21 @@ function validateContinuationActionContract(
       });
     }
   }
-  if (jsonBytes(action.objective) > CONTINUATION_LIMITS.objectiveBytes) {
+  if (Buffer.byteLength(action.objective, 'utf8') > CONTINUATION_LIMITS.objectiveBytes) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['objective'],
-      message: `objective exceeds ${CONTINUATION_LIMITS.objectiveBytes} UTF-8 JSON bytes`,
+      message: `objective exceeds ${CONTINUATION_LIMITS.objectiveBytes} UTF-8 bytes`,
+    });
+  }
+  if (
+    action.requested_paths
+    && jsonBytes(action.requested_paths) > CONTINUATION_LIMITS.contextSnapshotBytes
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['requested_paths'],
+      message: `requested_paths exceeds ${CONTINUATION_LIMITS.contextSnapshotBytes} UTF-8 JSON bytes`,
     });
   }
   if (jsonBytes(actionTaskContract(action)) > CONTINUATION_LIMITS.contextSnapshotBytes) {

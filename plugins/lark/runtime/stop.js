@@ -682,7 +682,16 @@ import {
   unlink,
   writeFile
 } from "node:fs/promises";
-import { constants, existsSync, readFileSync, unlinkSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  futimesSync,
+  openSync,
+  readFileSync,
+  unlinkSync
+} from "node:fs";
 import { gzip } from "node:zlib";
 import { promisify as promisify2 } from "node:util";
 

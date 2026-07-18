@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -55,6 +55,7 @@ function parse(actions: unknown[]) {
 
 assert.equal(parse([action()]).ok, true);
 assert.equal(parse([action({ requested_paths: ['/tmp'] })]).ok, true);
+assert.equal(parse([action({ objective: 'x'.repeat(16 * 1024 - 1) })]).ok, true);
 assert.equal(parse([action({ capability_profile: 'trusted_personal_workspace' })]).ok, false);
 assert.equal(parse([action({ required_tools: ['local filesystem'] })]).ok, false);
 for (const invalidContract of [
@@ -83,6 +84,12 @@ for (const invalidContract of [
     deliverables: [{ id: 'report', description: '\t\n', required: true }],
   },
   { objective: '界'.repeat(6_000) },
+  {
+    requested_paths: Array.from(
+      { length: 32 },
+      (_, index) => `${String(index).padStart(2, '0')}-${'x'.repeat(3_000)}`,
+    ),
+  },
   {
     deliverables: Array.from({ length: 5 }, (_, index) => ({
       id: `large_${index}`,
@@ -264,6 +271,45 @@ assert.deepEqual(
 );
 assert.equal(boundedChatOnlyUser.job.permissions.network, 'none');
 assert.equal(boundedChatOnlyUser.job.permissions.externalSideEffects, 'denied');
+
+const escapeHeavyText = '"\\\n'.repeat(5_400);
+const escapeHeavyMessage = message('escape-heavy-facts', {
+  text: escapeHeavyText,
+  currentUserText: escapeHeavyText,
+  sourceContextText: escapeHeavyText,
+  parentContent: escapeHeavyText,
+});
+const escapeHeavyInputsDirectory = join(root, 'escape-heavy-inputs');
+await mkdir(escapeHeavyInputsDirectory);
+const escapeHeavyInputs = await Promise.all(Array.from({ length: 32 }, async (_, index) => {
+  const sourcePath = join(escapeHeavyInputsDirectory, `input-${index + 1}.txt`);
+  await writeFile(sourcePath, `input ${index + 1}`, 'utf8');
+  return { sourcePath, fileName: `input-${index + 1}.txt`, kind: 'message_attachment' as const };
+}));
+await service.preflightFromMessage(
+  action() as any,
+  escapeHeavyMessage,
+  null,
+  null,
+  32,
+);
+const escapeHeavyCreated = await service.createFromMessage(
+  action() as any,
+  escapeHeavyMessage,
+  null,
+  null,
+  escapeHeavyInputs,
+);
+assert.ok(Buffer.byteLength(JSON.stringify(escapeHeavyCreated.job.sourceFacts), 'utf8') <= 64 * 1024);
+assert.ok((escapeHeavyCreated.job.sourceFacts.originalUserText?.length ?? 0) > 0);
+assert.equal(escapeHeavyCreated.job.sourceFacts.inputs.length, 32);
+await assert.rejects(
+  service.preflightFromMessage(
+    action({ objective: 'token=a '.repeat(2_000) }) as any,
+    message('redaction-expansion'),
+  ),
+  /objective.*exceeds/i,
+);
 await assert.rejects(
   service.createFromMessage(action({
     requested_paths: [join(externalRequestedPath, 'missing')],
@@ -314,6 +360,7 @@ const deduplicatedTools = await service.createFromMessage(
 assert.deepEqual(deduplicatedTools.job.requiredTools, ['lark_cli']);
 assert.deepEqual(deduplicatedTools.job.permissions.hostTools, ['lark_cli']);
 
+const jobCountBeforeDuplicate = (await repository.listAll(100)).length;
 const duplicate = await dispatcher.execute({
   message: p2p,
   actions: [action()] as any,
@@ -321,7 +368,7 @@ const duplicate = await dispatcher.execute({
   model: 'gpt-5.3-codex',
 });
 assert.equal(duplicate[0].continuation?.jobId, first[0].continuation?.jobId);
-assert.equal((await repository.listAll(100)).length, 7);
+assert.equal((await repository.listAll(100)).length, jobCountBeforeDuplicate);
 
 const group = message('group', {
   chatType: 'group',
@@ -457,12 +504,10 @@ const corruptRetryDatabase = new DatabaseSync(join(root, 'runtime', 'jobs.sqlite
 const corruptRetryFacts = corruptRetryDatabase.prepare(`
   SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
 `).get(corruptRetrySource.job.jobId) as { source_facts_json: string };
+assert.ok(corruptRetryFacts.source_facts_json.length > 0);
 corruptRetryDatabase.prepare(`
   UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
-`).run(JSON.stringify({
-  ...JSON.parse(corruptRetryFacts.source_facts_json) as Record<string, unknown>,
-  unexpected: 'invalid persisted state',
-}), corruptRetrySource.job.jobId);
+`).run('{', corruptRetrySource.job.jobId);
 corruptRetryDatabase.close();
 const corruptCreateReplay = await dispatcher.execute({
   message: corruptRetryMessage,

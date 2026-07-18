@@ -376,6 +376,18 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
   ): Promise<void> {
     await this.ensureRoot();
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if ((!entry.isFile() && !entry.isDirectory()) || entry.isSymbolicLink()) continue;
+      const reclaim = parseCreationReclaim(entry.name);
+      if (!reclaim) continue;
+      const candidate = path.join(this.rootDir, entry.name);
+      const metadata = await fs.lstat(candidate).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!metadata || await isCreationReclaimActive(reclaim, metadata.mtimeMs, nowMs)) continue;
+      await removeManagedTree(candidate);
+    }
     const liveCreationJobs = new Set<string>();
     for (const entry of entries) {
       if (!entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
@@ -772,38 +784,50 @@ async function hasCompetingCreationReclaim(rootDir: string, lockDirectory: strin
       throw error;
     });
     if (!metadata) continue;
-    const owner = parseCreationReclaimOwner(entry.slice(prefix.length));
-    const stateAgeMs = Date.now() - (owner?.createdAt ?? metadata.mtimeMs);
-    const ownerIsActive = owner?.startedAt
-      ? stateAgeMs < OWNERLESS_LOCK_GRACE_MS && await isProcessInstanceAlive(
-        owner.pid,
-        owner.startedAt,
-        stateAgeMs,
-        OWNERLESS_LOCK_GRACE_MS,
-      )
-      : owner
-        ? isProcessAlive(owner.pid) && stateAgeMs < OWNERLESS_LOCK_GRACE_MS
-        : stateAgeMs < OWNERLESS_LOCK_GRACE_MS;
-    if (ownerIsActive) return true;
+    const reclaim = parseCreationReclaim(entry);
+    if (reclaim && await isCreationReclaimActive(reclaim, metadata.mtimeMs, Date.now())) return true;
+    if (!reclaim && Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return true;
     await removeManagedTree(candidate);
   }
   return false;
 }
 
-function parseCreationReclaimOwner(
-  token: string,
-): { pid: number; startedAt: number | null; createdAt: number | null } | null {
-  const match = /^([1-9]\d*)(?:\.([1-9]\d*)\.([1-9]\d*))?-[a-f0-9]{16}$/.exec(token);
+function parseCreationReclaim(name: string): {
+  jobId: string;
+  pid: number;
+  startedAt: number | null;
+  createdAt: number | null;
+} | null {
+  const match = /^\.reclaim-(?:release-)?\.creating-(.+)-([1-9]\d*)(?:\.([1-9]\d*)\.([1-9]\d*))?-(?:[a-f0-9]{16}|[a-f0-9]{32})$/.exec(name);
   if (!match) return null;
-  const pid = Number(match[1]);
-  const startedAt = match[2] === undefined ? null : Number(match[2]);
-  const createdAt = match[3] === undefined ? null : Number(match[3]);
+  const jobId = match[1];
+  if (!isValidJobId(jobId)) return null;
+  const pid = Number(match[2]);
+  const startedAt = match[3] === undefined ? null : Number(match[3]);
+  const createdAt = match[4] === undefined ? null : Number(match[4]);
   if (
     !Number.isSafeInteger(pid)
     || (startedAt !== null && !Number.isSafeInteger(startedAt))
     || (createdAt !== null && !Number.isSafeInteger(createdAt))
   ) return null;
-  return { pid, startedAt, createdAt };
+  return { jobId, pid, startedAt, createdAt };
+}
+
+async function isCreationReclaimActive(
+  reclaim: NonNullable<ReturnType<typeof parseCreationReclaim>>,
+  mtimeMs: number,
+  nowMs: number,
+): Promise<boolean> {
+  const stateAgeMs = nowMs - (reclaim.createdAt ?? mtimeMs);
+  if (stateAgeMs >= OWNERLESS_LOCK_GRACE_MS) return false;
+  return reclaim.startedAt === null
+    ? isProcessAlive(reclaim.pid)
+    : isProcessInstanceAlive(
+      reclaim.pid,
+      reclaim.startedAt,
+      stateAgeMs,
+      OWNERLESS_LOCK_GRACE_MS,
+    );
 }
 
 async function releaseCreationLock(
@@ -817,7 +841,7 @@ async function releaseCreationLock(
   }
   const releaseDirectory = path.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}release-${path.basename(lockDirectory)}-${process.pid}-${nonce}`,
+    `${CREATION_RECLAIM_PREFIX}release-${path.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`,
   );
   try {
     await fs.rename(lockDirectory, releaseDirectory);

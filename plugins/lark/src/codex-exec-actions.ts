@@ -380,7 +380,19 @@ async function executeCreateContinuation(
         ].join(' '),
       };
     }
-    const resolvedInputs = await resolveContinuationSourceInputs(context.message, deps);
+    const sourceInputPlan = planContinuationSourceInputs(context.message);
+    await deps.continuationService.preflightFromMessage(
+      action,
+      context.message,
+      context.parentSessionId,
+      context.model,
+      sourceInputPlan.inputCount,
+    );
+    const resolvedInputs = await resolveContinuationSourceInputs(
+      context.message,
+      deps,
+      sourceInputPlan,
+    );
     let job;
     try {
       ({ job } = await deps.continuationService.createFromMessage(
@@ -432,16 +444,17 @@ async function executeCreateContinuation(
 async function resolveContinuationSourceInputs(
   message: LarkMessage,
   deps: CreateCodexExecActionDispatcherOptions,
+  plan = planContinuationSourceInputs(message),
 ): Promise<{ inputs: AsyncTaskSourceInput[]; cleanup(): Promise<void> }> {
   const inputs: AsyncTaskSourceInput[] = [];
   const temporaryPaths: string[] = [];
-  const imagePaths = [...new Set(
-    [message.imagePath, ...(message.imagePaths ?? [])].filter((value): value is string => Boolean(value)),
-  )];
-  const descriptors = (message.attachments ?? []).filter((attachment) => attachment.fileKey);
-  if (imagePaths.length > CONTINUATION_LIMITS.inputFileCount) {
-    throw new Error(`Continuation input file count exceeds ${CONTINUATION_LIMITS.inputFileCount}.`);
-  }
+  const {
+    imagePaths,
+    descriptors,
+    matchedImageDescriptors,
+    plannedImageFileNames,
+    descriptorFileNames,
+  } = plan;
   let totalBytes = 0;
   for (const imagePath of imagePaths) {
     const sizeBytes = (await fs.stat(imagePath)).size;
@@ -455,32 +468,20 @@ async function resolveContinuationSourceInputs(
   }
   if (descriptors.length === 0) {
     return {
-      inputs: imagePaths.map((imagePath) => ({
+      inputs: imagePaths.map((imagePath, imageIndex) => ({
         sourcePath: path.resolve(imagePath),
-        fileName: path.basename(imagePath),
+        fileName: plannedImageFileNames[imageIndex],
         kind: 'message_image',
       })),
       async cleanup() {},
     };
   }
-  const matchedImageDescriptors = new Set<number>();
-  for (const imagePath of imagePaths) {
-    const descriptorIndex = descriptors.findIndex((attachment, index) =>
-      !matchedImageDescriptors.has(index)
-      && attachment.fileType === 'image'
-      && path.basename(imagePath).includes(`-${attachment.fileKey}-`));
-    if (descriptorIndex >= 0) matchedImageDescriptors.add(descriptorIndex);
+  for (const [imageIndex, imagePath] of imagePaths.entries()) {
     inputs.push({
       sourcePath: path.resolve(imagePath),
-      fileName: descriptorIndex >= 0
-        ? safeContinuationInputName(descriptors[descriptorIndex].fileName || `image-${descriptorIndex + 1}`)
-        : path.basename(imagePath),
+      fileName: plannedImageFileNames[imageIndex],
       kind: 'message_image',
     });
-  }
-  const unresolvedDescriptorCount = descriptors.length - matchedImageDescriptors.size;
-  if (inputs.length + unresolvedDescriptorCount > CONTINUATION_LIMITS.inputFileCount) {
-    throw new Error(`Continuation input file count exceeds ${CONTINUATION_LIMITS.inputFileCount}.`);
   }
   const transport = resolveActionTransport(deps.larkTransport);
   if (!transport?.downloadResource) {
@@ -491,9 +492,7 @@ async function resolveContinuationSourceInputs(
     for (const [index, attachment] of descriptors.entries()) {
       if (matchedImageDescriptors.has(index)) continue;
       const resourceType = attachment.fileType === 'image' ? 'image' : 'file';
-      const fileName = safeContinuationInputName(
-        attachment.fileName || `${resourceType}-${index + 1}`,
-      );
+      const fileName = descriptorFileNames[index];
       const downloaded = await downloadInboundResource({ downloadResource }, {
         messageId: message.messageId,
         fileKey: attachment.fileKey,
@@ -529,6 +528,67 @@ async function resolveContinuationSourceInputs(
     async cleanup() {
       await cleanupContinuationTemporaryInputs(temporaryPaths);
     },
+  };
+}
+
+function planContinuationSourceInputs(message: LarkMessage) {
+  const imagePaths = [...new Set(
+    [message.imagePath, ...(message.imagePaths ?? [])]
+      .filter((value): value is string => Boolean(value)),
+  )];
+  const descriptors = (message.attachments ?? []).filter((attachment) => attachment.fileKey);
+  if (imagePaths.length > CONTINUATION_LIMITS.inputFileCount) {
+    throw new Error(`Continuation input file count exceeds ${CONTINUATION_LIMITS.inputFileCount}.`);
+  }
+  const downloadedImageFileKeys = message.downloadedImageFileKeys;
+  if (downloadedImageFileKeys && downloadedImageFileKeys.length !== imagePaths.length) {
+    throw new Error('Continuation downloaded image mapping is inconsistent.');
+  }
+  const matchedImageDescriptors = new Set<number>();
+  const matchedDescriptorByImageIndex = imagePaths.map((imagePath, imageIndex) => {
+    const explicitFileKey = downloadedImageFileKeys?.[imageIndex];
+    const candidateIndexes = descriptors.flatMap((attachment, index) => (
+      !matchedImageDescriptors.has(index)
+      && attachment.fileType === 'image'
+      && path.basename(imagePath).includes(`-${attachment.fileKey}-`)
+        ? [index]
+        : []
+    ));
+    const descriptorIndex = explicitFileKey === undefined
+      ? (candidateIndexes.length === 1 ? candidateIndexes[0] : -1)
+      : descriptors.findIndex((attachment, index) =>
+        !matchedImageDescriptors.has(index)
+        && attachment.fileType === 'image'
+        && attachment.fileKey === explicitFileKey);
+    if (explicitFileKey !== undefined && descriptorIndex < 0) {
+      throw new Error('Continuation downloaded image mapping is invalid.');
+    }
+    if (descriptorIndex >= 0) matchedImageDescriptors.add(descriptorIndex);
+    return descriptorIndex >= 0 ? descriptorIndex : null;
+  });
+  const descriptorFileNames = descriptors.map((attachment, index) => {
+    const resourceType = attachment.fileType === 'image' ? 'image' : 'file';
+    return safeContinuationInputName(
+      attachment.fileName || `${resourceType}-${index + 1}`,
+    );
+  });
+  const plannedImageFileNames = imagePaths.map((imagePath, imageIndex) => {
+    const descriptorIndex = matchedDescriptorByImageIndex[imageIndex];
+    return descriptorIndex === null
+      ? safeContinuationInputName(path.basename(imagePath))
+      : descriptorFileNames[descriptorIndex];
+  });
+  const inputCount = imagePaths.length + descriptors.length - matchedImageDescriptors.size;
+  if (inputCount > CONTINUATION_LIMITS.inputFileCount) {
+    throw new Error(`Continuation input file count exceeds ${CONTINUATION_LIMITS.inputFileCount}.`);
+  }
+  return {
+    imagePaths,
+    descriptors,
+    matchedImageDescriptors,
+    plannedImageFileNames,
+    descriptorFileNames,
+    inputCount,
   };
 }
 

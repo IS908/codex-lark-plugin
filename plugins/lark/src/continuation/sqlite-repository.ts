@@ -57,13 +57,13 @@ interface SqliteContinuationRepositoryOptions {
 
 type DueCandidateSelection =
   | { kind: 'job'; job: ContinuationJob }
-  | { kind: 'corrupt'; jobId: string }
   | null;
 
 const ATTEMPT_BUDGET_SCHEMA_VERSION = 4;
 const DELIVERY_OUTBOX_SCHEMA_VERSION = 5;
 const RETENTION_SCHEMA_VERSION = 6;
 const SCHEMA_VERSION = 7;
+const ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
 const DELIVERY_LEASE_MS = 30_000;
 const PROGRESS_PAYLOAD_MAX_CHARS = 4_000;
 const EMPTY_CHECKPOINT = {
@@ -134,7 +134,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
   async initialize(): Promise<void> {
     const existingVersion = Number(this.scalar('PRAGMA user_version'));
-    if (existingVersion > SCHEMA_VERSION) {
+    if (
+      existingVersion > SCHEMA_VERSION
+      && existingVersion !== ASYNC_TASK_FACTS_MIGRATION_VERSION
+    ) {
       throw new Error(
         `Unsupported continuation database schema version ${existingVersion}; expected at most ${SCHEMA_VERSION}.`,
       );
@@ -262,6 +265,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     while (true) {
       const version = Number(this.scalar('PRAGMA user_version'));
       if (version === SCHEMA_VERSION) break;
+      if (version === ASYNC_TASK_FACTS_MIGRATION_VERSION) {
+        await this.resumeAsyncTaskFactsMigration();
+        continue;
+      }
       if (version > SCHEMA_VERSION || version < 1) {
         throw new Error(
           `Unsupported continuation database schema version ${version}; expected 1-${SCHEMA_VERSION}.`,
@@ -272,7 +279,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       else if (version === 3) this.migrateAttemptBudgetSchema();
       else if (version === ATTEMPT_BUDGET_SCHEMA_VERSION) this.migrateDeliveryOutboxSchema();
       else if (version === DELIVERY_OUTBOX_SCHEMA_VERSION) this.migrateRetentionSchema();
-      else if (version === RETENTION_SCHEMA_VERSION) this.migrateAsyncTaskFactsSchema();
+      else if (version === RETENTION_SCHEMA_VERSION) await this.migrateAsyncTaskFactsSchema();
     }
     await this.healthCheck();
   }
@@ -552,10 +559,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     });
   }
 
-  private migrateAsyncTaskFactsSchema(): void {
+  private async migrateAsyncTaskFactsSchema(): Promise<void> {
     this.transaction(() => {
       const currentVersion = Number(this.scalar('PRAGMA user_version'));
-      if (currentVersion >= SCHEMA_VERSION) return;
+      if (
+        currentVersion === SCHEMA_VERSION
+        || currentVersion === ASYNC_TASK_FACTS_MIGRATION_VERSION
+      ) return;
       if (currentVersion !== RETENTION_SCHEMA_VERSION) {
         throw new Error(
           `Unsupported continuation database schema version ${currentVersion} during facts migration.`,
@@ -578,16 +588,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       const updateOutboxRoute = this.database.prepare(`
         UPDATE continuation_outbox SET route_json = ? WHERE job_id = ?
       `);
-      const migrationNow = new Date().toISOString();
       for (const row of rows) {
         let legacy: ReturnType<typeof legacyFactsAndContract>;
         try {
           legacy = legacyFactsAndContract(row);
         } catch (error) {
           if (!(error instanceof LegacyPersistedRowError)) throw error;
-          if (!this.sanitizeCorruptJob(row, migrationNow, false)) {
-            throw new Error(`Failed to isolate corrupt legacy continuation ${stringField(row, 'job_id')}.`);
-          }
           continue;
         }
         update.run(
@@ -602,6 +608,39 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           stringField(row, 'job_id'),
         );
         updateOutboxRoute.run(JSON.stringify(legacy.route), stringField(row, 'job_id'));
+      }
+      this.database.exec(`PRAGMA user_version = ${ASYNC_TASK_FACTS_MIGRATION_VERSION};`);
+    });
+    await this.resumeAsyncTaskFactsMigration();
+  }
+
+  private async resumeAsyncTaskFactsMigration(): Promise<void> {
+    const version = Number(this.scalar('PRAGMA user_version'));
+    if (version === SCHEMA_VERSION) return;
+    if (version !== ASYNC_TASK_FACTS_MIGRATION_VERSION) {
+      throw new Error(`Unexpected continuation facts migration version ${version}.`);
+    }
+    const rows = this.database.prepare(`${jobSelectSql()} ORDER BY j.created_at ASC`).all();
+    const recoveryJobIds: string[] = [];
+    for (const row of rows) {
+      try {
+        const job = mapJob(row);
+        if (job.errorCode === 'continuation_persisted_state_invalid') {
+          recoveryJobIds.push(job.jobId);
+        }
+      } catch {
+        recoveryJobIds.push(stringField(row, 'job_id'));
+      }
+    }
+    const migrationNow = new Date().toISOString();
+    for (const jobId of recoveryJobIds) {
+      await this.recoverCorruptJobStorage(jobId, migrationNow, false);
+    }
+    this.transaction(() => {
+      const currentVersion = Number(this.scalar('PRAGMA user_version'));
+      if (currentVersion === SCHEMA_VERSION) return;
+      if (currentVersion !== ASYNC_TASK_FACTS_MIGRATION_VERSION) {
+        throw new Error(`Unexpected continuation facts migration version ${currentVersion}.`);
       }
       this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     });
@@ -630,9 +669,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       const existing = await this.readRecoveringJobBy(
         'j.idempotency_key = ?',
         request.idempotencyKey,
+        true,
       );
       if (existing) return { job: existing, created: false };
-      const occupiedJobId = await this.get(jobId);
+      const occupiedJobId = await this.readRecoveringJobBy('j.job_id = ?', jobId, true);
       if (occupiedJobId) {
         throw new Error('Continuation idempotency conflict: the deterministic Job ID is already retired or owned by another request.');
       }
@@ -687,8 +727,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         );
         const created = Number(inserted.changes) === 1;
         const job = created
-          ? await this.get(jobId)
-          : await this.readRecoveringJobBy('j.idempotency_key = ?', request.idempotencyKey);
+          ? await this.readRecoveringJobBy('j.job_id = ?', jobId, true)
+          : await this.readRecoveringJobBy(
+            'j.idempotency_key = ?',
+            request.idempotencyKey,
+            true,
+          );
         if (!job) {
           throw new Error('Continuation create conflicted with an unrelated deterministic Job ID.');
         }
@@ -727,14 +771,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ): Promise<ContinuationClaim | null> {
     const corruptBudgetJobIds = this.transaction(() =>
       this.finishUnclaimedAttemptBudgetExhausted(now));
-    for (const jobId of corruptBudgetJobIds) await this.cleanupCorruptStorage(jobId);
+    for (const jobId of corruptBudgetJobIds) {
+      await this.recoverCorruptJobStorage(jobId, now, false);
+    }
     while (true) {
-      const selection = this.selectDueCandidate(now);
+      const selection = await this.selectDueCandidate(now);
       if (!selection) return null;
-      if (selection.kind === 'corrupt') {
-        await this.cleanupCorruptStorage(selection.jobId);
-        continue;
-      }
       const selected = selection.job;
       let verification: ContinuationInputVerification;
       try {
@@ -1148,7 +1190,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         try {
           current = mapJob(row);
         } catch {
-          if (this.sanitizeCorruptJob(row, now, false)) corruptJobIds.push(jobId);
+          corruptJobIds.push(jobId);
           continue;
         }
         const attemptId = this.activeAttemptId(jobId, current.leaseOwner);
@@ -1210,13 +1252,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       }
       return rows.length;
     });
-    for (const jobId of corruptJobIds) await this.cleanupCorruptStorage(jobId);
+    for (const jobId of corruptJobIds) {
+      await this.recoverCorruptJobStorage(jobId, now, false);
+    }
     return recovered;
   }
 
   async expireOverdue(now: string): Promise<number> {
     const corruptJobIds: string[] = [];
-    const expiredCount = this.transaction(() => {
+    let expiredCount = this.transaction(() => {
       const rows = this.database.prepare(`
         ${jobSelectSql()}
         WHERE j.status IN ('queued', 'waiting_retry')
@@ -1230,10 +1274,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         try {
           current = mapJob(row);
         } catch {
-          if (this.sanitizeCorruptJob(row, now, false)) {
-            corruptJobIds.push(jobId);
-            expired += 1;
-          }
+          corruptJobIds.push(jobId);
           continue;
         }
         const update = this.database.prepare(`
@@ -1253,7 +1294,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       }
       return expired;
     });
-    for (const jobId of corruptJobIds) await this.cleanupCorruptStorage(jobId);
+    for (const jobId of corruptJobIds) {
+      if (await this.recoverCorruptJobStorage(jobId, now, false)) expiredCount += 1;
+    }
     return expiredCount;
   }
 
@@ -1340,7 +1383,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     now: string,
     automaticRetentionCutoff?: string,
   ): Promise<boolean> {
-    const current = await this.get(jobId);
+    const recovered = await this.readRecoveringJobBy('j.job_id = ?', jobId, true);
+    const current = recovered
+      ? { ...recovered, deliveryEvents: this.readDeliveryEvents(jobId) }
+      : null;
     if (!current || !isContinuationTerminal(current.status) || current.deletedAt) return false;
     if (
       automaticRetentionCutoff
@@ -1733,15 +1779,16 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     const corruptJobIds = rows
       .filter((row) => optionalStringField(row, 'error_code') === 'continuation_persisted_state_invalid')
       .map((row) => stringField(row, 'job_id'));
-    const knownJobs = new Set(rows
-      .filter((row) => optionalStringField(row, 'error_code') !== 'continuation_persisted_state_invalid')
-      .map((row) => stringField(row, 'job_id')));
+    const knownJobs = new Set(rows.map((row) => stringField(row, 'job_id')));
     const isJobKnown = (jobId: string): boolean => Boolean(this.database.prepare(`
       SELECT 1 FROM continuation_jobs
       WHERE job_id = ? AND deleted_at IS NULL
         AND (error_code IS NULL OR error_code <> 'continuation_persisted_state_invalid')
     `).get(jobId));
     const nowMs = Date.now();
+    for (const jobId of corruptJobIds) {
+      await this.recoverCorruptJobStorage(jobId, new Date(nowMs).toISOString(), false);
+    }
     const results = await Promise.allSettled([
       this.artifacts.cleanupOrphans(
         knownJobs,
@@ -1755,10 +1802,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Continuation storage reconciliation failed.');
     }
-    for (const jobId of corruptJobIds) await this.cleanupCorruptStorage(jobId);
   }
 
-  private async cleanupCorruptStorage(jobId: string): Promise<void> {
+  private async cleanupCorruptStorageLocked(jobId: string): Promise<void> {
     const results = await Promise.allSettled([
       this.inputs.remove(jobId),
       this.artifacts.remove(jobId),
@@ -1813,7 +1859,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       try {
         current = mapJob(row);
       } catch {
-        if (this.sanitizeCorruptJob(row, now, false)) corruptJobIds.push(jobId);
+        corruptJobIds.push(jobId);
         continue;
       }
       const checkpoint = current.checkpoint ?? current.contextSnapshot;
@@ -2113,7 +2159,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     );
   }
 
-  private selectDueCandidate(now: string): DueCandidateSelection {
+  private async selectDueCandidate(now: string): Promise<DueCandidateSelection> {
     while (true) {
       const row = this.database.prepare(`
         ${jobSelectSql()}
@@ -2138,8 +2184,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       try {
         return { kind: 'job', job: mapJob(row) };
       } catch {
-        const failedJobId = this.transaction(() => this.sanitizeCorruptJob(row, now, true));
-        if (failedJobId) return { kind: 'corrupt', jobId: failedJobId };
+        await this.recoverCorruptJobStorage(stringField(row, 'job_id'), now, true);
       }
     }
   }
@@ -2263,6 +2308,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   private async readRecoveringJobBy(
     predicate: string,
     value: string,
+    storageLockHeld = false,
   ): Promise<ContinuationJob | null> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -2271,24 +2317,72 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       try {
         const job = mapJob(row);
         if (job.errorCode === 'continuation_persisted_state_invalid') {
-          await this.cleanupCorruptStorage(job.jobId);
-          const refreshed = this.database.prepare(`${jobSelectSql()} WHERE ${predicate}`).get(value);
-          return refreshed ? mapJob(refreshed) : null;
+          await this.recoverCorruptJobStorage(
+            job.jobId,
+            new Date().toISOString(),
+            false,
+            storageLockHeld,
+          );
+        } else {
+          return job;
         }
-        return job;
       } catch (error) {
         lastError = error;
-        const sanitizedJobId = this.transaction(() => this.sanitizeCorruptJob(
-          row,
+        await this.recoverCorruptJobStorage(
+          stringField(row, 'job_id'),
           new Date().toISOString(),
           false,
-        ));
-        if (sanitizedJobId) await this.cleanupCorruptStorage(sanitizedJobId);
+          storageLockHeld,
+        );
+      }
+      const refreshed = this.database.prepare(`${jobSelectSql()} WHERE ${predicate}`).get(value);
+      if (!refreshed) return null;
+      try {
+        return mapJob(refreshed);
+      } catch (error) {
+        lastError = error;
       }
     }
     throw lastError instanceof Error
       ? lastError
       : new Error('Continuation persisted state could not be recovered.');
+  }
+
+  private async recoverCorruptJobStorage(
+    jobId: string,
+    now: string,
+    dueOnly: boolean,
+    storageLockHeld = false,
+  ): Promise<boolean> {
+    return this.withJobStorageLock(jobId, storageLockHeld, async () => {
+      const row = this.database.prepare(`${jobSelectSql()} WHERE j.job_id = ?`).get(jobId);
+      if (!row) return false;
+      try {
+        const current = mapJob(row);
+        if (current.errorCode !== 'continuation_persisted_state_invalid') return false;
+      } catch {
+        const sanitizedJobId = this.transaction(() => this.sanitizeCorruptJob(
+          row,
+          now,
+          dueOnly,
+        ));
+        if (!sanitizedJobId) return false;
+      }
+      await this.cleanupCorruptStorageLocked(jobId);
+      return true;
+    });
+  }
+
+  private async withJobStorageLock<T>(
+    jobId: string,
+    storageLockHeld: boolean,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    if (storageLockHeld) return operation();
+    return this.serializeJobMutation(
+      jobId,
+      () => this.inputs.withCreationLock(jobId, operation),
+    );
   }
 
   private async listJobs(
@@ -2897,7 +2991,7 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
   if (request.title.length > CONTINUATION_LIMITS.titleChars) {
     throw new Error(`Continuation title exceeds ${CONTINUATION_LIMITS.titleChars} characters.`);
   }
-  assertJsonBytes('objective', request.objective, CONTINUATION_LIMITS.objectiveBytes);
+  assertUtf8Bytes('objective', request.objective, CONTINUATION_LIMITS.objectiveBytes);
   if (request.acceptanceCriteria.length > CONTINUATION_LIMITS.acceptanceCriteriaCount) {
     throw new Error('Continuation acceptance criteria count exceeds the configured limit.');
   }
@@ -3394,6 +3488,12 @@ function assertJsonBytes(name: string, value: unknown, limit: number): void {
     'utf-8',
   );
   if (bytes > limit) throw new Error(`Continuation ${name} exceeds ${limit} bytes.`);
+}
+
+function assertUtf8Bytes(name: string, value: string, limit: number): void {
+  if (Buffer.byteLength(value, 'utf-8') > limit) {
+    throw new Error(`Continuation ${name} exceeds ${limit} bytes.`);
+  }
 }
 
 function makeId(prefix: 'job' | 'att' | 'out'): string {

@@ -31,6 +31,7 @@ import {
   continuationJobId,
 } from '../src/continuation/input-store.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
+import { currentProcessStartedAt } from '../src/process-identity.js';
 
 if (process.argv[2] === '--hold-managed-input-create') {
   const [childRoot, childJobId, childSource] = process.argv.slice(3);
@@ -306,6 +307,19 @@ try {
     },
   }), /does not match the source thread/i);
 
+  const objectiveBoundary = createRequest('objective-byte-boundary');
+  const boundaryObjective = 'x'.repeat(CONTINUATION_LIMITS.objectiveBytes - 1);
+  const objectiveBoundaryCreated = await repository.create({
+    ...objectiveBoundary,
+    objective: boundaryObjective,
+    createdAt: '2026-07-17T01:00:00.000Z',
+    taskContract: {
+      ...objectiveBoundary.taskContract,
+      objective: boundaryObjective,
+    },
+  });
+  assert.equal(objectiveBoundaryCreated.job.objective.length, 16_383);
+
   const first = await repository.create(createRequest('first'));
   assert.equal(first.created, true);
   assert.match(first.job.jobId, /^job_[a-f0-9]{24}$/);
@@ -317,9 +331,9 @@ try {
   assert.equal(duplicate.created, false);
   assert.equal(duplicate.job.jobId, first.job.jobId);
 
-  assert.equal((await repository.listByCreator('ou_creator', 10)).length, 1);
+  assert.equal((await repository.listByCreator('ou_creator', 10)).length, 2);
   assert.equal((await repository.listByCreator('ou_other', 10)).length, 0);
-  assert.equal((await repository.listAll(10)).length, 1);
+  assert.equal((await repository.listAll(10)).length, 2);
 
   const firstClaim = await repository.claimDue(
     'worker-main',
@@ -1750,6 +1764,30 @@ try {
   migratedVersionSixRepository.close();
 }
 
+const interruptedFactsMigrationDatabase = new DatabaseSync(versionSixDatabasePath);
+interruptedFactsMigrationDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run('{', legacyV6Job.job.jobId);
+interruptedFactsMigrationDatabase.exec('PRAGMA user_version = 70;');
+interruptedFactsMigrationDatabase.close();
+const resumedFactsMigrationRepository = await SqliteContinuationRepository.open({
+  databasePath: versionSixDatabasePath,
+  artifactsDir: versionSixArtifactsDir,
+  inputsDir: versionSixInputsDir,
+});
+try {
+  const resumedTombstone = await resumedFactsMigrationRepository.get(legacyV6Job.job.jobId);
+  assert.equal(resumedTombstone?.errorCode, 'continuation_persisted_state_invalid');
+  const resumedFactsMigrationDatabase = new DatabaseSync(versionSixDatabasePath);
+  assert.equal(
+    Number(resumedFactsMigrationDatabase.prepare('PRAGMA user_version').get()?.user_version),
+    7,
+  );
+  resumedFactsMigrationDatabase.close();
+} finally {
+  resumedFactsMigrationRepository.close();
+}
+
 // v7 immutable facts and managed inputs are deterministic and survive source deletion.
 const managedRoot = await mkdtemp(join(tmpdir(), 'continuation-managed-inputs-'));
 const managedDatabasePath = join(managedRoot, 'runtime', 'jobs.sqlite');
@@ -2551,6 +2589,51 @@ const staleReclaimChild = spawn(process.execPath, [
 await waitForChildMarker(staleReclaimChild, 'DEAD_LOCK_RECLAIMED', 1_000);
 await assert.rejects(lstat(staleReclaimPath), /ENOENT/);
 
+const reclaimCleanupNow = Date.now();
+const staleReclaimCreatedAt = reclaimCleanupNow - 60_000;
+const staleIdentityReclaimPath = join(
+  deadLockInputsRoot,
+  `.reclaim-.creating-${continuationJobId('stale-identity-reclaim')}-2147483647.1.${staleReclaimCreatedAt}-${'a'.repeat(16)}`,
+);
+const staleIdentityReleasePath = join(
+  deadLockInputsRoot,
+  `.reclaim-release-.creating-${continuationJobId('stale-identity-release')}-2147483647.1.${staleReclaimCreatedAt}-${'b'.repeat(32)}`,
+);
+const staleLegacyReleasePath = join(
+  deadLockInputsRoot,
+  `.reclaim-release-.creating-${continuationJobId('stale-legacy-release')}-2147483647-${'c'.repeat(32)}`,
+);
+const staleDirectoryReclaimPath = join(
+  deadLockInputsRoot,
+  `.reclaim-.creating-${continuationJobId('stale-directory-reclaim')}-2147483647.1.${staleReclaimCreatedAt}-${'e'.repeat(16)}`,
+);
+const activeReclaimPath = join(
+  deadLockInputsRoot,
+  `.reclaim-.creating-${continuationJobId('active-identity-reclaim')}-${process.pid}.${currentProcessStartedAt()}.${reclaimCleanupNow}-${'d'.repeat(16)}`,
+);
+const malformedReclaimPath = join(deadLockInputsRoot, '.reclaim-unrecognized-state');
+for (const candidate of [
+  staleIdentityReclaimPath,
+  staleIdentityReleasePath,
+  staleLegacyReleasePath,
+  activeReclaimPath,
+  malformedReclaimPath,
+]) {
+  await writeFile(candidate, 'reclaim marker', 'utf8');
+}
+await mkdir(staleDirectoryReclaimPath);
+await utimes(staleIdentityReclaimPath, staleOwnerlessTime, staleOwnerlessTime);
+await utimes(staleIdentityReleasePath, staleOwnerlessTime, staleOwnerlessTime);
+await utimes(staleLegacyReleasePath, staleOwnerlessTime, staleOwnerlessTime);
+await utimes(staleDirectoryReclaimPath, staleOwnerlessTime, staleOwnerlessTime);
+await deadLockStore.cleanupOrphans(new Set(), reclaimCleanupNow);
+await assert.rejects(lstat(staleIdentityReclaimPath), /ENOENT/);
+await assert.rejects(lstat(staleIdentityReleasePath), /ENOENT/);
+await assert.rejects(lstat(staleLegacyReleasePath), /ENOENT/);
+await assert.rejects(lstat(staleDirectoryReclaimPath), /ENOENT/);
+assert.equal((await lstat(activeReclaimPath)).isFile(), true);
+assert.equal((await lstat(malformedReclaimPath)).isFile(), true);
+
 const atomicLockJobId = continuationJobId('atomic-lock-owner');
 await deadLockStore.withCreationLock(atomicLockJobId, async () => {
   const lockMetadata = await lstat(join(deadLockInputsRoot, `.creating-${atomicLockJobId}`));
@@ -3053,14 +3136,23 @@ const terminalCorruptSource = join(terminalCorruptRoot, 'source.txt');
 await writeFile(terminalCorruptSource, 'terminal corrupt input', 'utf8');
 const terminalCorruptDelegate = new ContinuationInputStore(terminalCorruptInputsDir);
 let terminalCorruptRemoveFailures = 2;
+let terminalCorruptLockDepth = 0;
+const terminalCorruptRemoveLockStates: boolean[] = [];
 const terminalCorruptRepository = await SqliteContinuationRepository.open({
   databasePath: terminalCorruptDatabasePath,
   artifactsDir: join(terminalCorruptRoot, 'artifacts'),
   inputsDir: terminalCorruptInputsDir,
   inputStore: {
     ensureRoot: () => terminalCorruptDelegate.ensureRoot(),
-    withCreationLock: (...args: Parameters<ContinuationInputStore['withCreationLock']>) =>
-      terminalCorruptDelegate.withCreationLock(...args),
+    withCreationLock: <T>(jobId: string, operation: () => Promise<T>) =>
+      terminalCorruptDelegate.withCreationLock(jobId, async () => {
+        terminalCorruptLockDepth += 1;
+        try {
+          return await operation();
+        } finally {
+          terminalCorruptLockDepth -= 1;
+        }
+      }),
     install: (...args: Parameters<ContinuationInputStore['install']>) =>
       terminalCorruptDelegate.install(...args),
     clone: (...args: Parameters<ContinuationInputStore['clone']>) =>
@@ -3070,6 +3162,7 @@ const terminalCorruptRepository = await SqliteContinuationRepository.open({
     resolve: (...args: Parameters<ContinuationInputStore['resolve']>) =>
       terminalCorruptDelegate.resolve(...args),
     async remove(...args: Parameters<ContinuationInputStore['remove']>) {
+      terminalCorruptRemoveLockStates.push(terminalCorruptLockDepth > 0);
       if (terminalCorruptRemoveFailures > 0) {
         terminalCorruptRemoveFailures -= 1;
         throw new Error('injected corrupt storage cleanup failure');
@@ -3122,11 +3215,17 @@ const listedTerminalTombstone = terminalCorruptList.find(
 assert.equal(listedTerminalTombstone?.status, 'failed');
 assert.equal(listedTerminalTombstone?.errorCode, 'continuation_persisted_state_invalid');
 assert.match(listedTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i);
+const stillPendingTerminalTombstone = await terminalCorruptRepository.get(
+  terminalCorruptCreated.job.jobId,
+);
+assert.match(stillPendingTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i);
 const cleanedTerminalTombstone = await terminalCorruptRepository.get(
   terminalCorruptCreated.job.jobId,
 );
 assert.equal(cleanedTerminalTombstone?.retained, false);
 assert.doesNotMatch(cleanedTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i);
+assert.ok(terminalCorruptRemoveLockStates.length >= 3);
+assert.ok(terminalCorruptRemoveLockStates.every(Boolean));
 await assert.rejects(
   lstat(join(terminalCorruptInputsDir, terminalCorruptCreated.job.jobId)),
   /ENOENT/,
@@ -3141,6 +3240,95 @@ await assert.rejects(
 );
 terminalCorruptDatabase.close();
 terminalCorruptRepository.close();
+
+// Corrupt-state recovery must re-read after taking the cross-process storage lock. A concurrent
+// repair that wins the lock must not be overwritten by a tombstone or have its storage removed.
+const recoveryRaceRoot = await mkdtemp(join(tmpdir(), 'continuation-corrupt-recovery-race-'));
+const recoveryRaceDatabasePath = join(recoveryRaceRoot, 'jobs.sqlite');
+const recoveryRaceInputsDir = join(recoveryRaceRoot, 'inputs');
+const recoveryRaceSource = join(recoveryRaceRoot, 'source.txt');
+await writeFile(recoveryRaceSource, 'recovery race input', 'utf8');
+const recoveryRaceDelegate = new ContinuationInputStore(recoveryRaceInputsDir);
+let recoveryRaceDatabase: DatabaseSync | undefined;
+let recoveryRaceJobId = '';
+let recoveryRaceHealthyFacts = '';
+let restoreHealthyRowOnLock = false;
+let recoveryRaceRemoveCount = 0;
+const recoveryRaceRepository = await SqliteContinuationRepository.open({
+  databasePath: recoveryRaceDatabasePath,
+  artifactsDir: join(recoveryRaceRoot, 'artifacts'),
+  inputsDir: recoveryRaceInputsDir,
+  inputStore: {
+    ensureRoot: () => recoveryRaceDelegate.ensureRoot(),
+    withCreationLock: <T>(jobId: string, operation: () => Promise<T>) =>
+      recoveryRaceDelegate.withCreationLock(jobId, async () => {
+        if (restoreHealthyRowOnLock && recoveryRaceDatabase && jobId === recoveryRaceJobId) {
+          restoreHealthyRowOnLock = false;
+          recoveryRaceDatabase.prepare(`
+            UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+          `).run(recoveryRaceHealthyFacts, recoveryRaceJobId);
+        }
+        return operation();
+      }),
+    install: (...args: Parameters<ContinuationInputStore['install']>) =>
+      recoveryRaceDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) =>
+      recoveryRaceDelegate.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) =>
+      recoveryRaceDelegate.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) =>
+      recoveryRaceDelegate.resolve(...args),
+    async remove(...args: Parameters<ContinuationInputStore['remove']>) {
+      recoveryRaceRemoveCount += 1;
+      return recoveryRaceDelegate.remove(...args);
+    },
+    quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+      recoveryRaceDelegate.quarantine(...args),
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      recoveryRaceDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      recoveryRaceDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      recoveryRaceDelegate.cleanupOrphans(...args),
+  },
+});
+const recoveryRaceCreated = await recoveryRaceRepository.create(createRequest(
+  'corrupt-recovery-race',
+  {
+    sourceInputs: [{
+      sourcePath: recoveryRaceSource,
+      fileName: 'source.txt',
+      kind: 'message_attachment',
+    }],
+  },
+));
+recoveryRaceJobId = recoveryRaceCreated.job.jobId;
+recoveryRaceDatabase = new DatabaseSync(recoveryRaceDatabasePath);
+recoveryRaceHealthyFacts = String(recoveryRaceDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(recoveryRaceJobId)?.source_facts_json ?? '');
+const corruptRecoveryRaceRow = (): void => {
+  recoveryRaceDatabase?.prepare(`
+    UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+  `).run('{', recoveryRaceJobId);
+  restoreHealthyRowOnLock = true;
+};
+corruptRecoveryRaceRow();
+assert.equal((await recoveryRaceRepository.get(recoveryRaceJobId))?.status, 'queued');
+corruptRecoveryRaceRow();
+assert.ok((await recoveryRaceRepository.listAll(10)).some(
+  (job) => job.jobId === recoveryRaceJobId && job.status === 'queued',
+));
+corruptRecoveryRaceRow();
+assert.equal((await recoveryRaceRepository.claimDue(
+  'worker-corrupt-recovery-race',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+))?.job.jobId, recoveryRaceJobId);
+assert.equal(recoveryRaceRemoveCount, 0);
+assert.equal((await lstat(join(recoveryRaceInputsDir, recoveryRaceJobId))).isDirectory(), true);
+recoveryRaceDatabase.close();
+recoveryRaceRepository.close();
 
 // A corrupt due input terminates before an attempt/lease, emits one logical terminal event,
 // and does not prevent the next healthy due Job from being claimed.

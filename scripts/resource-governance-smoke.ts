@@ -141,6 +141,57 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
+// 3aa. A live owner refreshes its lock so a temporary start-time probe failure cannot steal it.
+{
+  const dir = tmpRoot('resource-lock-heartbeat-');
+  const lockPath = join(dir, 'bridge.lock');
+  const lock = await acquireSingleInstanceLock(lockPath, {
+    pid: 12345,
+    startedAt: 1111,
+    heartbeatIntervalMs: 5,
+  });
+  await touchAge(lockPath, 60_000);
+
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (Date.now() - statSync(lockPath).mtimeMs < 1_000) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(Date.now() - statSync(lockPath).mtimeMs < 1_000, 'lock heartbeat did not refresh mtime');
+  await assert.rejects(
+    acquireSingleInstanceLock(lockPath, {
+      pid: 99999,
+      startedAt: 3333,
+      processExists: () => true,
+      getProcessStartedAt: async () => null,
+    }),
+    /Another instance is running/,
+  );
+
+  lock.release();
+  cleanup(dir);
+  passed++;
+}
+
+// 3ab. Heartbeats stop touching a lock after its recorded owner identity changes.
+{
+  const dir = tmpRoot('resource-lock-heartbeat-identity-');
+  const lockPath = join(dir, 'bridge.lock');
+  const lock = await acquireSingleInstanceLock(lockPath, {
+    pid: 12345,
+    startedAt: 1111,
+    heartbeatIntervalMs: 5,
+  });
+  writeFileSync(lockPath, JSON.stringify({ pid: 54321, startedAt: 2222 }), 'utf-8');
+  await touchAge(lockPath, 60_000);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.ok(Date.now() - statSync(lockPath).mtimeMs > 50_000);
+  lock.release();
+  assert.equal(existsSync(lockPath), true);
+  cleanup(dir);
+  passed++;
+}
+
 // 3b. Unknown takeover-owner identity is likewise bounded by takeover age.
 {
   const dir = tmpRoot('resource-lock-unknown-takeover-start-');
@@ -910,4 +961,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/38 PASS`);
+console.log(`resource-governance smoke: ${passed}/40 PASS`);

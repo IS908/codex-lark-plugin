@@ -358,6 +358,11 @@ try {
       async findExistingFromMessage(message: any) {
         return existingContinuationJobs.get(message.messageId) ?? null;
       },
+      async preflightFromMessage(_action: any, message: any) {
+        if (message.messageId === 'om_continuation_preflight_failure') {
+          throw new Error('continuation preflight rejected');
+        }
+      },
       async createFromMessage(action: any, _message: any, _parent: any, _model: any, sourceInputs: any[] = []) {
         continuationCreates.push(action);
         continuationInputBatches.push(sourceInputs);
@@ -443,6 +448,19 @@ try {
   assert.match(rejectedBuiltinTools[0].message, /standard Codex tools must not be declared/i);
   assert.equal(continuationCreates.length, 0);
 
+  const downloadsBeforePreflightFailure = actionTransport.downloadCalls;
+  const rejectedPreflight = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_preflight_failure',
+      attachments: [{ fileKey: 'file_preflight', fileName: 'preflight.txt', fileType: 'file' }],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(rejectedPreflight[0].ok, false);
+  assert.match(rejectedPreflight[0].message, /preflight rejected/i);
+  assert.equal(actionTransport.downloadCalls, downloadsBeforePreflightFailure);
+
   const emptyHostTools = await dispatcher.execute({
     message: { ...continuationMessage, messageId: 'om_continuation_empty_tools' },
     actions: [continuationAction([])],
@@ -505,17 +523,22 @@ try {
   assert.match(failedAttachmentContinuation[0].message, /attachment.*download/i);
   assert.equal(continuationCreates.length, createsBeforeFailedAttachment);
 
+  const downloadsBeforeUnsafeAttachment = actionTransport.downloadCalls;
   const unsafeAttachmentContinuation = await dispatcher.execute({
     message: {
       ...continuationMessage,
       messageId: 'om_continuation_unsafe_attachment_name',
-      attachments: [{ fileKey: 'file_report', fileName: '../secret.txt', fileType: 'file' }],
+      attachments: [
+        { fileKey: 'file_report', fileName: 'valid-first.txt', fileType: 'file' },
+        { fileKey: 'file_unsafe', fileName: '../secret.txt', fileType: 'file' },
+      ],
     },
     actions: [continuationAction([])],
   });
   assert.equal(unsafeAttachmentContinuation[0].ok, false);
   assert.match(unsafeAttachmentContinuation[0].message, /file name.*invalid/i);
   assert.equal(continuationCreates.length, createsBeforeFailedAttachment);
+  assert.equal(actionTransport.downloadCalls, downloadsBeforeUnsafeAttachment);
 
   const downloadsBeforeExcessiveAttachments = actionTransport.downloadCalls;
   const excessiveAttachmentContinuation = await dispatcher.execute({
@@ -594,6 +617,71 @@ try {
   });
   assert.equal(admissionFailureWithCleanupFailure[0].ok, false);
   assert.match(admissionFailureWithCleanupFailure[0].message, /managed input admission failed/);
+
+  const sharedKeyImageA = join(root, '1700000000000-img_shared-first.png');
+  const sharedKeyImageB = join(root, '1700000000001-img_shared-second.png');
+  writeFileSync(sharedKeyImageA, 'first shared-key image', 'utf8');
+  writeFileSync(sharedKeyImageB, 'second shared-key image', 'utf8');
+  const sharedKeyImages = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_shared_image_key',
+      imagePaths: [sharedKeyImageA, sharedKeyImageB],
+      attachments: [{ fileKey: 'img_shared', fileName: 'named-first.png', fileType: 'image' }],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(sharedKeyImages[0].ok, true);
+  assert.deepEqual(
+    continuationInputBatches.at(-1)?.map((input) => input.fileName),
+    ['named-first.png', '1700000000001-img_shared-second.png'],
+  );
+
+  const prefixImageA = join(root, '1700000000002-img_ab-short.png');
+  const prefixImageB = join(root, '1700000000003-img_ab-long-long.png');
+  writeFileSync(prefixImageA, 'short key image', 'utf8');
+  writeFileSync(prefixImageB, 'long key image', 'utf8');
+  const prefixImages = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_prefix_image_keys',
+      imagePaths: [prefixImageA, prefixImageB],
+      downloadedImageFileKeys: ['img_ab', 'img_ab-long'],
+      attachments: [
+        { fileKey: 'img_ab', fileName: 'short.png', fileType: 'image' },
+        { fileKey: 'img_ab-long', fileName: 'long.png', fileType: 'image' },
+      ],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(prefixImages[0].ok, true);
+  assert.deepEqual(
+    continuationInputBatches.at(-1)?.map((input) => input.fileName),
+    ['short.png', 'long.png'],
+  );
+
+  const duplicateKeyImageA = join(root, '1700000000004-img_duplicate-first.png');
+  const duplicateKeyImageB = join(root, '1700000000005-img_duplicate-second.png');
+  writeFileSync(duplicateKeyImageA, 'first duplicate-key image', 'utf8');
+  writeFileSync(duplicateKeyImageB, 'second duplicate-key image', 'utf8');
+  const duplicateKeyImages = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_duplicate_image_keys',
+      imagePaths: [duplicateKeyImageA, duplicateKeyImageB],
+      downloadedImageFileKeys: ['img_duplicate', 'img_duplicate'],
+      attachments: [
+        { fileKey: 'img_duplicate', fileName: 'duplicate-first.png', fileType: 'image' },
+        { fileKey: 'img_duplicate', fileName: 'duplicate-second.png', fileType: 'image' },
+      ],
+    },
+    actions: [continuationAction([])],
+  });
+  assert.equal(duplicateKeyImages[0].ok, true);
+  assert.deepEqual(
+    continuationInputBatches.at(-1)?.map((input) => input.fileName),
+    ['duplicate-first.png', 'duplicate-second.png'],
+  );
 
   const traceTimestamp = new Date().toISOString();
   writeFileSync(traceLogPath, [

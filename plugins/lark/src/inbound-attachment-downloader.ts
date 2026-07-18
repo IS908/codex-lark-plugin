@@ -7,6 +7,7 @@ export interface InboundAttachmentMessage {
   messageId: string;
   imagePath?: string;
   imagePaths?: string[];
+  downloadedImageFileKeys?: string[];
 }
 
 export interface InboundResourceDescriptor {
@@ -57,7 +58,12 @@ function safeResourceName(fileName: string, fallback: string): string {
   return fileName.replace(/[\\/:\0]/g, '_').slice(0, 120) || fallback;
 }
 
-function setDownloadedImagePaths(message: InboundAttachmentMessage, downloadedPaths: string[]): void {
+function setDownloadedImagePaths(
+  message: InboundAttachmentMessage,
+  downloads: Array<{ path: string; fileKey: string }>,
+): void {
+  const downloadedPaths = downloads.map((download) => download.path);
+  message.downloadedImageFileKeys = downloads.map((download) => download.fileKey);
   if (downloadedPaths.length === 1) {
     message.imagePath = downloadedPaths[0];
     message.imagePaths = undefined;
@@ -104,7 +110,7 @@ export async function addSdkImageDownloads(
   const imageResources = resources.filter((resource) => resource.type === 'image' && resource.fileKey);
   if (imageResources.length === 0) return;
 
-  const downloadedPaths: string[] = [];
+  const downloads: Array<{ path: string; fileKey: string }> = [];
   for (const resource of imageResources) {
     const fileKey = resource.fileKey!;
     const safeName = safeResourceName(resource.fileName ?? 'image.png', fileKey);
@@ -115,8 +121,8 @@ export async function addSdkImageDownloads(
       fileName: `${optionNow(options)}-${fileKey}-${safeName}`,
       logPrefix: '[sdk-channel]',
     }, options);
-    if (downloaded) downloadedPaths.push(downloaded);
+    if (downloaded) downloads.push({ path: downloaded, fileKey });
   }
 
-  setDownloadedImagePaths(message, downloadedPaths);
+  setDownloadedImagePaths(message, downloads);
 }
