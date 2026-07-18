@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { LarkMessage } from '../src/lark-message.js';
 
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
@@ -423,6 +424,33 @@ const replayedRetry = await service.retryForActor(
   'om_retry_request',
 );
 assert.equal(replayedRetry.jobId, retryClone.jobId);
+
+const corruptRetryMessage = message('retry-persisted-state-invalid');
+const corruptRetrySource = await service.createFromMessage(action() as any, corruptRetryMessage);
+assert.equal(await repository.requestCancel(
+  corruptRetrySource.job.jobId,
+  '2026-07-17T00:00:03.000Z',
+), 'cancelled');
+const corruptRetryDatabase = new DatabaseSync(join(root, 'runtime', 'jobs.sqlite'));
+const corruptRetryFacts = corruptRetryDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(corruptRetrySource.job.jobId) as { source_facts_json: string };
+corruptRetryDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run(JSON.stringify({
+  ...JSON.parse(corruptRetryFacts.source_facts_json) as Record<string, unknown>,
+  unexpected: 'invalid persisted state',
+}), corruptRetrySource.job.jobId);
+corruptRetryDatabase.close();
+await assert.rejects(
+  service.retryForActor(
+    corruptRetrySource.job.jobId,
+    corruptRetryMessage.senderId,
+    null,
+    'om_retry_invalid_state',
+  ),
+  /cannot be retried because its stored state failed integrity validation/i,
+);
 
 repository.close();
 console.log('continuation action smoke: PASS');

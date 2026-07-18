@@ -564,13 +564,18 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       const rows = this.database.prepare(`${jobSelectSql()} ORDER BY j.created_at ASC`).all();
       const update = this.database.prepare(`
         UPDATE continuation_jobs
-        SET source_facts_json = ?, task_contract_json = ?,
+        SET route_json = ?, source_thread_id = ?, source_facts_json = ?, task_contract_json = ?,
             title = ?, objective = ?, acceptance_criteria_json = ?, context_snapshot_json = ?
         WHERE job_id = ?
+      `);
+      const updateOutboxRoute = this.database.prepare(`
+        UPDATE continuation_outbox SET route_json = ? WHERE job_id = ?
       `);
       for (const row of rows) {
         const legacy = legacyFactsAndContract(row);
         update.run(
+          JSON.stringify(legacy.route),
+          legacy.sourceFacts.sourceThreadId ?? null,
           JSON.stringify(legacy.sourceFacts),
           JSON.stringify(legacy.taskContract),
           legacy.taskContract.title,
@@ -579,6 +584,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           JSON.stringify(legacy.taskContract.initialContext),
           stringField(row, 'job_id'),
         );
+        updateOutboxRoute.run(JSON.stringify(legacy.route), stringField(row, 'job_id'));
       }
       this.database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     });
@@ -601,12 +607,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     validateCreateRequest(request);
     const jobId = continuationJobId(request.idempotencyKey);
-    const existing = this.readJobByIdempotencyKey(request.idempotencyKey);
+    const existing = await this.readRecoveringJobBy('j.idempotency_key = ?', request.idempotencyKey);
     if (existing) return { job: existing, created: false };
     return this.serializeJobMutation(jobId, () => this.inputs.withCreationLock(jobId, async () => {
-      const existing = this.readJobByIdempotencyKey(request.idempotencyKey);
+      const existing = await this.readRecoveringJobBy(
+        'j.idempotency_key = ?',
+        request.idempotencyKey,
+      );
       if (existing) return { job: existing, created: false };
-      const occupiedJobId = this.readJobBy('j.job_id = ?', jobId);
+      const occupiedJobId = await this.get(jobId);
       if (occupiedJobId) {
         throw new Error('Continuation idempotency conflict: the deterministic Job ID is already retired or owned by another request.');
       }
@@ -662,7 +671,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         const created = Number(inserted.changes) === 1;
         const job = created
           ? await this.get(jobId)
-          : this.readJobByIdempotencyKey(request.idempotencyKey);
+          : await this.readRecoveringJobBy('j.idempotency_key = ?', request.idempotencyKey);
         if (!job) {
           throw new Error('Continuation create conflicted with an unrelated deterministic Job ID.');
         }
@@ -677,7 +686,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   async get(jobId: string): Promise<ContinuationJob | null> {
-    const job = this.readJobBy('j.job_id = ?', jobId);
+    const job = await this.readRecoveringJobBy('j.job_id = ?', jobId);
     if (!job) return null;
     return { ...job, deliveryEvents: this.readDeliveryEvents(jobId) };
   }
@@ -704,10 +713,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       const selection = this.selectDueCandidate(now);
       if (!selection) return null;
       if (selection.kind === 'corrupt') {
-        await Promise.allSettled([
-          this.inputs.remove(selection.jobId),
-          this.artifacts.remove(selection.jobId),
-        ]);
+        await this.cleanupCorruptStorage(selection.jobId);
         continue;
       }
       const selected = selection.job;
@@ -1223,6 +1229,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     if (!source || !isContinuationTerminal(source.status) || source.deletedAt) {
       throw new Error(`Continuation ${jobId} is not an available terminal job.`);
     }
+    if (source.errorCode === 'continuation_persisted_state_invalid') {
+      throw new Error('Continuation retry is unavailable because stored task state failed integrity validation.');
+    }
     const lifetimeMs = Math.max(1, Date.parse(source.expiresAt) - Date.parse(source.createdAt));
     const verification = await this.inputs.verify(source.jobId, source.sourceFacts.inputs);
     if (!verification.ok) {
@@ -1657,9 +1666,17 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   private async reconcileStorageOrphans(): Promise<void> {
-    const knownJobs = new Set(this.database.prepare(
-      'SELECT job_id FROM continuation_jobs WHERE deleted_at IS NULL',
-    ).all().map((row) => stringField(row, 'job_id')));
+    const rows = this.database.prepare(`
+      SELECT job_id, error_code
+      FROM continuation_jobs
+      WHERE deleted_at IS NULL
+    `).all();
+    const corruptJobIds = rows
+      .filter((row) => optionalStringField(row, 'error_code') === 'continuation_persisted_state_invalid')
+      .map((row) => stringField(row, 'job_id'));
+    const knownJobs = new Set(rows
+      .filter((row) => optionalStringField(row, 'error_code') !== 'continuation_persisted_state_invalid')
+      .map((row) => stringField(row, 'job_id')));
     const results = await Promise.allSettled([
       this.artifacts.cleanupOrphans(knownJobs),
       this.inputs.cleanupOrphans(knownJobs),
@@ -1668,6 +1685,24 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Continuation storage reconciliation failed.');
     }
+    for (const jobId of corruptJobIds) await this.cleanupCorruptStorage(jobId);
+  }
+
+  private async cleanupCorruptStorage(jobId: string): Promise<void> {
+    const results = await Promise.allSettled([
+      this.inputs.remove(jobId),
+      this.artifacts.remove(jobId),
+    ]);
+    const cleanupPending = results.some((result) => result.status === 'rejected');
+    const errorSummary = cleanupPending
+      ? 'Stored task state failed integrity validation. Associated storage cleanup is pending.'
+      : 'Stored task state failed integrity validation.';
+    this.database.prepare(`
+      UPDATE continuation_jobs
+      SET error_summary = ?, updated_at = ?, row_version = row_version + 1
+      WHERE job_id = ? AND error_code = 'continuation_persisted_state_invalid'
+        AND error_summary <> ?
+    `).run(errorSummary, new Date().toISOString(), jobId, errorSummary);
   }
 
   private canConfirmJobAbsent(jobId: string, idempotencyKey: string): boolean {
@@ -2002,10 +2037,6 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     );
   }
 
-  private readJobByIdempotencyKey(idempotencyKey: string): ContinuationJob | null {
-    return this.readJobBy('j.idempotency_key = ?', idempotencyKey);
-  }
-
   private selectDueCandidate(now: string): DueCandidateSelection {
     while (true) {
       const row = this.database.prepare(`
@@ -2031,16 +2062,18 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       try {
         return { kind: 'job', job: mapJob(row) };
       } catch {
-        const failedJobId = this.transaction(() => this.failCorruptDueJob(row, now));
+        const failedJobId = this.transaction(() => this.sanitizeCorruptJob(row, now, true));
         if (failedJobId) return { kind: 'corrupt', jobId: failedJobId };
       }
     }
   }
 
-  private failCorruptDueJob(row: SqlRow, now: string): string | null {
+  private sanitizeCorruptJob(row: SqlRow, now: string, dueOnly: boolean): string | null {
     const jobId = stringField(row, 'job_id');
     const rowVersion = numberField(row, 'row_version');
-    const trustedRoute = trustedRouteFromCorruptRow(row);
+    const trustedRoute = optionalStringField(row, 'deleted_at')
+      ? null
+      : trustedRouteFromCorruptRow(row);
     const tombstoneRoute = trustedRoute ?? emptyRoute();
     const tombstoneSourceMessageId = trustedRoute ? stringField(row, 'source_message_id') : '';
     const tombstoneSourceThreadId = trustedRoute
@@ -2053,6 +2086,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       tombstoneSourceThreadId,
     );
     const tombstoneContract = corruptTombstoneContract();
+    const dueClause = dueOnly
+      ? `AND status IN ('queued', 'waiting_retry')
+         AND deleted_at IS NULL AND next_run_at <= ? AND expires_at > ?`
+      : '';
     const update = this.database.prepare(`
       UPDATE continuation_jobs
       SET status = 'failed', error_code = 'continuation_persisted_state_invalid',
@@ -2063,11 +2100,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           required_tools_json = '[]', working_directory = '', permissions_json = ?,
           model = NULL, parent_session_id = NULL, execution_session_id = NULL,
           checkpoint_json = NULL, result_summary = NULL, result_artifacts_json = '[]',
-          completed_at = ?, updated_at = ?, lease_owner = NULL,
+          completed_at = COALESCE(completed_at, ?), updated_at = ?, lease_owner = NULL,
           lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
       WHERE job_id = ? AND row_version = ?
-        AND status IN ('queued', 'waiting_retry')
-        AND deleted_at IS NULL AND next_run_at <= ? AND expires_at > ?
+        ${dueClause}
     `).run(
       tombstoneRoute.kind,
       JSON.stringify(tombstoneRoute),
@@ -2083,15 +2119,59 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       now,
       jobId,
       rowVersion,
-      now,
-      now,
+      ...(dueOnly ? [now, now] : []),
     );
     if (Number(update.changes) !== 1) return null;
+    this.database.prepare(`
+      UPDATE continuation_attempts
+      SET finished_at = ?, heartbeat_at = ?, outcome = 'error',
+          error_code = 'continuation_persisted_state_invalid',
+          error_summary = 'Stored task state failed integrity validation.'
+      WHERE job_id = ? AND finished_at IS NULL
+    `).run(now, now, jobId);
+    const genericPayload = `Task failed: ${jobId}\nStored task state failed integrity validation.`;
+    this.database.prepare(`
+      UPDATE continuation_outbox
+      SET route_json = ?,
+          payload = CASE WHEN kind = 'terminal' AND ? = 1 THEN ? ELSE '' END,
+          worker_id = NULL, lease_expires_at = NULL,
+          status = CASE
+            WHEN status = 'delivered' THEN 'delivered'
+            WHEN status IN ('sending', 'delivery_unknown') THEN 'delivery_unknown'
+            WHEN kind = 'terminal' AND ? = 1 AND status = 'pending' THEN 'pending'
+            WHEN kind = 'terminal' THEN 'failed'
+            ELSE 'superseded'
+          END,
+          error_code = CASE
+            WHEN status IN ('delivered', 'delivery_unknown') THEN error_code
+            WHEN status = 'sending' THEN 'continuation_delivery_outcome_unknown'
+            WHEN kind = 'terminal' AND ? = 1 AND status = 'pending' THEN NULL
+            ELSE 'continuation_persisted_state_invalid'
+          END,
+          error_summary = CASE
+            WHEN status = 'delivered' THEN error_summary
+            WHEN status IN ('sending', 'delivery_unknown')
+              THEN 'The delivery outcome is unknown after stored task state failed validation.'
+            WHEN kind = 'terminal' AND ? = 1 AND status = 'pending' THEN NULL
+            ELSE 'Stored task state failed integrity validation.'
+          END,
+          updated_at = ?
+      WHERE job_id = ?
+    `).run(
+      JSON.stringify(tombstoneRoute),
+      trustedRoute ? 1 : 0,
+      genericPayload,
+      trustedRoute ? 1 : 0,
+      trustedRoute ? 1 : 0,
+      trustedRoute ? 1 : 0,
+      now,
+      jobId,
+    );
     if (trustedRoute) {
       this.insertTerminalOutboxFromRoute(
         jobId,
         JSON.stringify(trustedRoute),
-        `Task failed: ${jobId}\nStored task state failed integrity validation.`,
+        genericPayload,
         now,
       );
     }
@@ -2103,12 +2183,43 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return row ? mapJob(row) : null;
   }
 
-  private listJobs(
+  private async readRecoveringJobBy(
+    predicate: string,
+    value: string,
+  ): Promise<ContinuationJob | null> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const row = this.database.prepare(`${jobSelectSql()} WHERE ${predicate}`).get(value);
+      if (!row) return null;
+      try {
+        const job = mapJob(row);
+        if (job.errorCode === 'continuation_persisted_state_invalid') {
+          await this.cleanupCorruptStorage(job.jobId);
+          const refreshed = this.database.prepare(`${jobSelectSql()} WHERE ${predicate}`).get(value);
+          return refreshed ? mapJob(refreshed) : null;
+        }
+        return job;
+      } catch (error) {
+        lastError = error;
+        const sanitizedJobId = this.transaction(() => this.sanitizeCorruptJob(
+          row,
+          new Date().toISOString(),
+          false,
+        ));
+        if (sanitizedJobId) await this.cleanupCorruptStorage(sanitizedJobId);
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Continuation persisted state could not be recovered.');
+  }
+
+  private async listJobs(
     predicate: string,
     value: string | undefined,
     limit: number,
     statuses: ContinuationStatus[],
-  ): ContinuationJob[] {
+  ): Promise<ContinuationJob[]> {
     const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
     const uniqueStatuses = [...new Set(statuses)];
     const statusClause = uniqueStatuses.length > 0
@@ -2126,7 +2237,16 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       boundedLimit,
     ];
     const rows = statement.all(...bindings);
-    return rows.map(mapJob);
+    const jobs: ContinuationJob[] = [];
+    for (const row of rows) {
+      const job = await this.readRecoveringJobBy('j.job_id = ?', stringField(row, 'job_id'));
+      if (
+        job
+        && !job.deletedAt
+        && (uniqueStatuses.length === 0 || uniqueStatuses.includes(job.status))
+      ) jobs.push(job);
+    }
+    return jobs;
   }
 
   private readDeliveryClaim(outboxId: string, workerId: string): ContinuationDeliveryClaim {
@@ -2376,6 +2496,7 @@ function validatePersistedFactProjection(
     )
     || !isDeepStrictEqual(taskContract.initialContext, contextSnapshot)
     || (route.kind === 'message_thread' && route.sourceMessageId !== sourceMessageId)
+    || !routeMatchesSourceThread(route, sourceThreadId)
     || (sourceFacts.provenance === 'captured' && sourceFacts.creatorOpenId !== creatorOpenId)
   ) {
     throw new Error('Continuation persisted facts and execution projection are inconsistent.');
@@ -2472,15 +2593,26 @@ function redactCheckpoint(checkpoint: ContinuationCheckpoint): ContinuationCheck
 }
 
 function legacyFactsAndContract(row: SqlRow): {
+  route: ContinuationDeliveryRoute;
   sourceFacts: AsyncTaskFactSnapshot;
   taskContract: AsyncTaskContract;
 } {
-  const route = parseTrustedJson(row.route_json, 'route_json');
-  if (!isDeliveryRoute(route)) throw new Error('Continuation delivery route is invalid.');
+  const rawRoute = parseTrustedJson(row.route_json, 'route_json');
+  if (!isDeliveryRoute(rawRoute)) throw new Error('Continuation delivery route is invalid.');
+  const sourceThreadId = rawRoute.kind === 'comment_thread'
+    ? rawRoute.commentId
+    : optionalStringField(row, 'source_thread_id');
+  const route: ContinuationDeliveryRoute = rawRoute.kind === 'message_thread'
+    ? {
+        ...rawRoute,
+        ...(sourceThreadId ? { threadId: sourceThreadId } : {}),
+      }
+    : rawRoute;
   const permissions = parsePermissionEnvelope(row.permissions_json);
   const criteria = parseTrustedStringArray(row.acceptance_criteria_json, 'acceptance_criteria_json');
   const initialContext = parseTrustedCheckpoint(row.context_snapshot_json, 'context_snapshot_json');
   return {
+    route,
     sourceFacts: {
       schemaVersion: 1,
       provenance: 'legacy_unavailable',
@@ -2494,7 +2626,7 @@ function legacyFactsAndContract(row: SqlRow): {
       chatType: route.kind === 'comment_thread' ? 'doc_comment' : '',
       route,
       sourceMessageId: stringField(row, 'source_message_id'),
-      sourceThreadId: optionalStringField(row, 'source_thread_id'),
+      ...(sourceThreadId ? { sourceThreadId } : {}),
       sourceMessageType: null,
       sourceTimestamp: null,
       inputs: [],
@@ -2574,6 +2706,7 @@ function trustedRouteFromCorruptRow(row: SqlRow): ContinuationDeliveryRoute | nu
       || rawFacts.sourceThreadId !== sourceThreadId
       || rawFacts.chatId !== expectedChatId
       || (route.kind === 'message_thread' && route.sourceMessageId !== sourceMessageId)
+      || !routeMatchesSourceThread(route, sourceThreadId)
     ) return null;
     return route;
   } catch {
@@ -2606,7 +2739,8 @@ function trustedOutboxRoute(row: SqlRow): boolean {
       && rawFacts.sourceMessageId === sourceMessageId
       && rawFacts.sourceThreadId === sourceThreadId
       && rawFacts.chatId === expectedChatId
-      && (jobRoute.kind !== 'message_thread' || jobRoute.sourceMessageId === sourceMessageId);
+      && (jobRoute.kind !== 'message_thread' || jobRoute.sourceMessageId === sourceMessageId)
+      && routeMatchesSourceThread(jobRoute, sourceThreadId);
   } catch {
     return false;
   }
@@ -2679,6 +2813,9 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
   }
   assertJsonBytes('permission envelope', request.permissions, CONTINUATION_LIMITS.contextSnapshotBytes);
   if (!isDeliveryRoute(request.route)) throw new Error('Continuation delivery route is invalid.');
+  if (!routeMatchesSourceThread(request.route, request.sourceThreadId)) {
+    throw new Error('Continuation delivery route does not match the source thread.');
+  }
   assertJsonBytes('delivery route', request.route, CONTINUATION_LIMITS.contextSnapshotBytes);
   validateSourceFacts(request.sourceFacts);
   validateTaskContract(request.taskContract, request.sourceFacts.provenance === 'captured');
@@ -3263,6 +3400,15 @@ function isDeliveryRoute(value: unknown): value is ContinuationDeliveryRoute {
     && typeof value.documentToken === 'string'
     && typeof value.commentId === 'string'
     && typeof value.fileType === 'string';
+}
+
+function routeMatchesSourceThread(
+  route: ContinuationDeliveryRoute,
+  sourceThreadId: string | undefined,
+): boolean {
+  return route.kind === 'message_thread'
+    ? route.threadId === sourceThreadId
+    : route.commentId === sourceThreadId;
 }
 
 function isManagedInputArtifact(value: unknown): value is AsyncTaskFactSnapshot['inputs'][number] {

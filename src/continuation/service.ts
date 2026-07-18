@@ -322,6 +322,12 @@ export class ContinuationService implements ContinuationTaskService {
       return existingRetry;
     }
     const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+    if (job.errorCode === 'continuation_persisted_state_invalid') {
+      throw new ContinuationServiceError(
+        'invalid_state',
+        'This task cannot be retried because its stored state failed integrity validation.',
+      );
+    }
     if (job.deliveryStatus === 'delivery_unknown') {
       throw new ContinuationServiceError(
         'delivery_unknown',

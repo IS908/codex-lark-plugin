@@ -924,11 +924,7 @@ async function compatibleLegacyLockPaths(appId, lockRoot, scanAll) {
     }
   }
   const currentPath = legacyLarkInstanceLockPath(appId, lockRoot);
-  const rootMetadata = await stat2(lockRoot).catch(() => null);
-  const privateLegacyRoot = Boolean(
-    rootMetadata && (currentUid === void 0 || rootMetadata.uid === currentUid) && (rootMetadata.mode & 18) === 0
-  );
-  if (privateLegacyRoot) ownedPaths.push(currentPath);
+  ownedPaths.push(currentPath);
   return [...new Set(ownedPaths.sort())];
 }
 

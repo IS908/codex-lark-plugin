@@ -277,6 +277,34 @@ try {
   assert.equal(modeBits((await stat(databasePath)).mode), 0o600);
   assert.equal(modeBits((await stat(artifactsDir)).mode), 0o700);
 
+  await assert.rejects(
+    repository.create(createRequest('message-thread-mismatch', {
+      sourceThreadId: 'omt_other_thread',
+    })),
+    /does not match the source thread/i,
+  );
+  const commentThreadMismatch = createRequest('comment-thread-mismatch');
+  const commentRoute = {
+    kind: 'comment_thread' as const,
+    documentToken: 'doc_thread_binding',
+    commentId: 'comment_expected',
+    fileType: 'docx',
+  };
+  await assert.rejects(repository.create({
+    ...commentThreadMismatch,
+    route: commentRoute,
+    sourceMessageId: 'comment_message',
+    sourceThreadId: 'comment_other',
+    sourceFacts: {
+      ...commentThreadMismatch.sourceFacts,
+      chatId: 'doc:doc_thread_binding',
+      chatType: 'doc_comment',
+      route: commentRoute,
+      sourceMessageId: 'comment_message',
+      sourceThreadId: 'comment_other',
+    },
+  }), /does not match the source thread/i);
+
   const first = await repository.create(createRequest('first'));
   assert.equal(first.created, true);
   assert.match(first.job.jobId, /^job_[a-f0-9]{24}$/);
@@ -1668,38 +1696,48 @@ assert.doesNotMatch(
   managedRaw.task_contract_json,
   /github_pat_|xapp-|sk-proj-|managed-db-secret|quarterly-|super-secret|source-report/,
 );
+const managedManifest = await readFile(join(
+  managedInputsDir,
+  expectedManagedJobId,
+  '.manifest.json',
+), 'utf8');
+assert.doesNotMatch(managedManifest, /github_pat_|quarterly-|source-report/);
+assert.match(managedManifest, /input_001\.pdf/);
 managedDatabase.prepare(`
   UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
 `).run('{not-json', expectedManagedJobId);
-await assert.rejects(
-  reopenedManagedRepository.get(expectedManagedJobId),
-  /trusted continuation JSON field: source_facts_json/i,
-);
+const invalidJsonTombstone = await reopenedManagedRepository.get(expectedManagedJobId);
+assert.equal(invalidJsonTombstone?.status, 'failed');
+assert.equal(invalidJsonTombstone?.errorCode, 'continuation_persisted_state_invalid');
+
+const invalidContractJob = await reopenedManagedRepository.create(createRequest(
+  'invalid-persisted-contract',
+));
 managedDatabase.prepare(`
-  UPDATE continuation_jobs SET source_facts_json = ?, task_contract_json = ? WHERE job_id = ?
-`).run(managedRaw.source_facts_json, '{}', expectedManagedJobId);
-await assert.rejects(
-  reopenedManagedRepository.get(expectedManagedJobId),
-  /task contract is invalid/i,
+  UPDATE continuation_jobs SET task_contract_json = '{}' WHERE job_id = ?
+`).run(invalidContractJob.job.jobId);
+assert.equal(
+  (await reopenedManagedRepository.get(invalidContractJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
 );
-managedDatabase.prepare(`
-  UPDATE continuation_jobs SET task_contract_json = ? WHERE job_id = ?
-`).run(managedRaw.task_contract_json, expectedManagedJobId);
-assert.equal((await reopenedManagedRepository.get(expectedManagedJobId))?.jobId, expectedManagedJobId);
+
+const unknownFactsJob = await reopenedManagedRepository.create(createRequest(
+  'unknown-persisted-facts-field',
+));
+const unknownFactsRaw = managedDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(unknownFactsJob.job.jobId) as { source_facts_json: string };
 const managedFactsWithUnknownField = {
-  ...JSON.parse(managedRaw.source_facts_json) as Record<string, unknown>,
+  ...JSON.parse(unknownFactsRaw.source_facts_json) as Record<string, unknown>,
   unexpected: 'must not reach the runner prompt',
 };
 managedDatabase.prepare(`
   UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
-`).run(JSON.stringify(managedFactsWithUnknownField), expectedManagedJobId);
-await assert.rejects(
-  reopenedManagedRepository.get(expectedManagedJobId),
-  /source facts are invalid/i,
+`).run(JSON.stringify(managedFactsWithUnknownField), unknownFactsJob.job.jobId);
+assert.equal(
+  (await reopenedManagedRepository.get(unknownFactsJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
 );
-managedDatabase.prepare(`
-  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
-`).run(managedRaw.source_facts_json, expectedManagedJobId);
 const requestWithUnknownPermission = createRequest('unknown-permission-field');
 (requestWithUnknownPermission.permissions as unknown as Record<string, unknown>).unexpected = true;
 await assert.rejects(
@@ -1717,13 +1755,6 @@ await assert.rejects(
   reopenedManagedRepository.create(requestWithoutEvidenceContract),
   /contract requirements must not be empty/i,
 );
-const managedManifest = await readFile(join(
-  managedInputsDir,
-  expectedManagedJobId,
-  '.manifest.json',
-), 'utf8');
-assert.doesNotMatch(managedManifest, /github_pat_|quarterly-|source-report/);
-assert.match(managedManifest, /input_001\.pdf/);
 managedDatabase.close();
 reopenedManagedRepository.close();
 
@@ -2466,26 +2497,36 @@ const routeMismatchHealthy = await routeMismatchRepository.create(createRequest(
   { createdAt: '2026-07-16T23:59:59.000Z' },
 ));
 const routeMismatchDatabase = new DatabaseSync(routeMismatchDatabasePath);
-routeMismatchDatabase.prepare(`
-  UPDATE continuation_jobs SET route_json = ? WHERE job_id = ?
-`).run(JSON.stringify({
+const routeMismatchFacts = routeMismatchDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(routeMismatchJob.job.jobId) as { source_facts_json: string };
+const wrongThreadRoute = {
   kind: 'message_thread',
-  conversationId: 'oc_wrong_destination',
+  conversationId: routeMismatchJob.job.route.kind === 'message_thread'
+    ? routeMismatchJob.job.route.conversationId
+    : '',
   sourceMessageId: routeMismatchJob.job.sourceMessageId,
-  threadId: routeMismatchJob.job.sourceThreadId,
-}), routeMismatchJob.job.jobId);
-await assert.rejects(
-  routeMismatchRepository.get(routeMismatchJob.job.jobId),
-  /facts and execution projection are inconsistent/i,
+  threadId: 'omt_wrong_thread',
+};
+routeMismatchDatabase.prepare(`
+  UPDATE continuation_jobs SET route_json = ?, source_facts_json = ? WHERE job_id = ?
+`).run(
+  JSON.stringify(wrongThreadRoute),
+  JSON.stringify({
+    ...JSON.parse(routeMismatchFacts.source_facts_json) as Record<string, unknown>,
+    route: wrongThreadRoute,
+  }),
+  routeMismatchJob.job.jobId,
 );
+const routeMismatchTombstone = await routeMismatchRepository.get(routeMismatchJob.job.jobId);
+assert.equal(routeMismatchTombstone?.status, 'failed');
+assert.equal(routeMismatchTombstone?.errorCode, 'continuation_persisted_state_invalid');
 const routeMismatchHealthyClaim = await routeMismatchRepository.claimDue(
   'worker-after-route-mismatch',
   baseNow,
   '2026-07-17T00:00:30.000Z',
 );
 assert.equal(routeMismatchHealthyClaim?.job.jobId, routeMismatchHealthy.job.jobId);
-const routeMismatchTombstone = await routeMismatchRepository.get(routeMismatchJob.job.jobId);
-assert.equal(routeMismatchTombstone?.status, 'failed');
 assert.deepEqual(routeMismatchTombstone?.route, {
   kind: 'message_thread',
   conversationId: '',
@@ -2499,12 +2540,156 @@ await assert.rejects(lstat(join(routeMismatchInputsDir, routeMismatchJob.job.job
 await assert.rejects(lstat(join(routeMismatchArtifactsDir, routeMismatchJob.job.jobId)), /ENOENT/);
 assert.doesNotMatch(String(routeMismatchDatabase.prepare(`
   SELECT route_json FROM continuation_jobs WHERE job_id = ?
-`).get(routeMismatchJob.job.jobId)?.route_json ?? ''), /oc_wrong_destination/);
+`).get(routeMismatchJob.job.jobId)?.route_json ?? ''), /omt_wrong_thread/);
 assert.ok((await routeMismatchRepository.listAll(10)).some(
   (job) => job.jobId === routeMismatchJob.job.jobId,
 ));
+const commentBindingBase = createRequest('persisted-comment-thread-binding', {
+  createdAt: '2026-07-16T23:59:57.000Z',
+});
+const expectedCommentRoute = {
+  kind: 'comment_thread' as const,
+  documentToken: 'doc_persisted_binding',
+  commentId: 'comment_persisted_expected',
+  fileType: 'docx',
+};
+const commentBindingJob = await routeMismatchRepository.create({
+  ...commentBindingBase,
+  route: expectedCommentRoute,
+  sourceMessageId: 'comment_source_message',
+  sourceThreadId: expectedCommentRoute.commentId,
+  sourceFacts: {
+    ...commentBindingBase.sourceFacts,
+    chatId: 'doc:doc_persisted_binding',
+    chatType: 'doc_comment',
+    route: expectedCommentRoute,
+    sourceMessageId: 'comment_source_message',
+    sourceThreadId: expectedCommentRoute.commentId,
+  },
+});
+const commentBindingFacts = routeMismatchDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(commentBindingJob.job.jobId) as { source_facts_json: string };
+const wrongCommentRoute = {
+  ...expectedCommentRoute,
+  commentId: 'comment_persisted_wrong',
+};
+routeMismatchDatabase.prepare(`
+  UPDATE continuation_jobs SET route_json = ?, source_facts_json = ? WHERE job_id = ?
+`).run(
+  JSON.stringify(wrongCommentRoute),
+  JSON.stringify({
+    ...JSON.parse(commentBindingFacts.source_facts_json) as Record<string, unknown>,
+    route: wrongCommentRoute,
+  }),
+  commentBindingJob.job.jobId,
+);
+const commentBindingTombstone = await routeMismatchRepository.get(commentBindingJob.job.jobId);
+assert.equal(commentBindingTombstone?.status, 'failed');
+assert.equal(commentBindingTombstone?.errorCode, 'continuation_persisted_state_invalid');
+assert.equal(await routeMismatchRepository.claimPendingDelivery(
+  'delivery-comment-thread-mismatch',
+  baseNow,
+), null);
 routeMismatchDatabase.close();
 routeMismatchRepository.close();
+
+// Corrupt terminal rows heal through list/get, cannot be retried, and retry retained storage cleanup.
+const terminalCorruptRoot = await mkdtemp(join(tmpdir(), 'continuation-terminal-corrupt-'));
+const terminalCorruptDatabasePath = join(terminalCorruptRoot, 'jobs.sqlite');
+const terminalCorruptInputsDir = join(terminalCorruptRoot, 'inputs');
+const terminalCorruptSource = join(terminalCorruptRoot, 'source.txt');
+await writeFile(terminalCorruptSource, 'terminal corrupt input', 'utf8');
+const terminalCorruptDelegate = new ContinuationInputStore(terminalCorruptInputsDir);
+let terminalCorruptRemoveFailures = 2;
+const terminalCorruptRepository = await SqliteContinuationRepository.open({
+  databasePath: terminalCorruptDatabasePath,
+  artifactsDir: join(terminalCorruptRoot, 'artifacts'),
+  inputsDir: terminalCorruptInputsDir,
+  inputStore: {
+    ensureRoot: () => terminalCorruptDelegate.ensureRoot(),
+    withCreationLock: (...args: Parameters<ContinuationInputStore['withCreationLock']>) =>
+      terminalCorruptDelegate.withCreationLock(...args),
+    install: (...args: Parameters<ContinuationInputStore['install']>) =>
+      terminalCorruptDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) =>
+      terminalCorruptDelegate.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) =>
+      terminalCorruptDelegate.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) =>
+      terminalCorruptDelegate.resolve(...args),
+    async remove(...args: Parameters<ContinuationInputStore['remove']>) {
+      if (terminalCorruptRemoveFailures > 0) {
+        terminalCorruptRemoveFailures -= 1;
+        throw new Error('injected corrupt storage cleanup failure');
+      }
+      return terminalCorruptDelegate.remove(...args);
+    },
+    quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+      terminalCorruptDelegate.quarantine(...args),
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      terminalCorruptDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      terminalCorruptDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      terminalCorruptDelegate.cleanupOrphans(...args),
+  },
+});
+const terminalCorruptCreated = await terminalCorruptRepository.create(createRequest(
+  'terminal-corrupt-state',
+  {
+    sourceInputs: [{
+      sourcePath: terminalCorruptSource,
+      fileName: 'source.txt',
+      kind: 'message_attachment',
+    }],
+  },
+));
+assert.equal(await terminalCorruptRepository.setRetained(
+  terminalCorruptCreated.job.jobId,
+  true,
+  baseNow,
+), true);
+assert.equal(await terminalCorruptRepository.requestCancel(
+  terminalCorruptCreated.job.jobId,
+  baseNow,
+), 'cancelled');
+const terminalCorruptDatabase = new DatabaseSync(terminalCorruptDatabasePath);
+const terminalCorruptFacts = terminalCorruptDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(terminalCorruptCreated.job.jobId) as { source_facts_json: string };
+terminalCorruptDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run(JSON.stringify({
+  ...JSON.parse(terminalCorruptFacts.source_facts_json) as Record<string, unknown>,
+  unexpected: 'must_be_scrubbed',
+}), terminalCorruptCreated.job.jobId);
+const terminalCorruptList = await terminalCorruptRepository.listAll(10);
+const listedTerminalTombstone = terminalCorruptList.find(
+  (job) => job.jobId === terminalCorruptCreated.job.jobId,
+);
+assert.equal(listedTerminalTombstone?.status, 'failed');
+assert.equal(listedTerminalTombstone?.errorCode, 'continuation_persisted_state_invalid');
+assert.match(listedTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i);
+const cleanedTerminalTombstone = await terminalCorruptRepository.get(
+  terminalCorruptCreated.job.jobId,
+);
+assert.equal(cleanedTerminalTombstone?.retained, true);
+assert.doesNotMatch(cleanedTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i);
+await assert.rejects(
+  lstat(join(terminalCorruptInputsDir, terminalCorruptCreated.job.jobId)),
+  /ENOENT/,
+);
+await assert.rejects(
+  terminalCorruptRepository.cloneForRetry(
+    terminalCorruptCreated.job.jobId,
+    'retry-corrupt-tombstone',
+    baseNow,
+  ),
+  /stored task state failed integrity validation/i,
+);
+terminalCorruptDatabase.close();
+terminalCorruptRepository.close();
 
 // A corrupt due input terminates before an attempt/lease, emits one logical terminal event,
 // and does not prevent the next healthy due Job from being claimed.
@@ -2563,9 +2748,11 @@ integrityOutboxDatabase.prepare(`
   UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
 `).run(JSON.stringify({
   kind: 'message_thread',
-  conversationId: 'oc_wrong_outbox_destination',
+  conversationId: corruptCreated.job.route.kind === 'message_thread'
+    ? corruptCreated.job.route.conversationId
+    : '',
   sourceMessageId: corruptCreated.job.sourceMessageId,
-  threadId: corruptCreated.job.sourceThreadId,
+  threadId: 'omt_wrong_outbox_thread',
 }), corruptCreated.job.jobId);
 assert.equal(await reopenedIntegrityRepository.claimPendingDelivery(
   'delivery-invalid-route',
