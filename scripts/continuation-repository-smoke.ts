@@ -2594,7 +2594,7 @@ assert.equal(await routeMismatchRepository.claimPendingDelivery(
 routeMismatchDatabase.close();
 routeMismatchRepository.close();
 
-// Corrupt terminal rows heal through list/get, cannot be retried, and retry retained storage cleanup.
+// Corrupt terminal rows heal through list/get, cannot retry, and retry originally retained cleanup.
 const terminalCorruptRoot = await mkdtemp(join(tmpdir(), 'continuation-terminal-corrupt-'));
 const terminalCorruptDatabasePath = join(terminalCorruptRoot, 'jobs.sqlite');
 const terminalCorruptInputsDir = join(terminalCorruptRoot, 'inputs');
@@ -2674,7 +2674,7 @@ assert.match(listedTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i)
 const cleanedTerminalTombstone = await terminalCorruptRepository.get(
   terminalCorruptCreated.job.jobId,
 );
-assert.equal(cleanedTerminalTombstone?.retained, true);
+assert.equal(cleanedTerminalTombstone?.retained, false);
 assert.doesNotMatch(cleanedTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i);
 await assert.rejects(
   lstat(join(terminalCorruptInputsDir, terminalCorruptCreated.job.jobId)),

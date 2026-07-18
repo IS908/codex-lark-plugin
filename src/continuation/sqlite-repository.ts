@@ -2100,6 +2100,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           required_tools_json = '[]', working_directory = '', permissions_json = ?,
           model = NULL, parent_session_id = NULL, execution_session_id = NULL,
           checkpoint_json = NULL, result_summary = NULL, result_artifacts_json = '[]',
+          retain = 0,
           completed_at = COALESCE(completed_at, ?), updated_at = ?, lease_owner = NULL,
           lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
       WHERE job_id = ? AND row_version = ?
