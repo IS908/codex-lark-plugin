@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { LarkMessage } from '../src/lark-message.js';
 import type { ReplyRequest } from '../src/reply-sender.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
 import { ContinuationService } from '../src/continuation/service.js';
+import { ContinuationInputStore } from '../src/continuation/input-store.js';
 import { handleContinuationCommand } from '../src/continuation/command-handler.js';
 
 const root = await mkdtemp(path.join(tmpdir(), 'continuation-command-'));
@@ -54,11 +55,26 @@ async function createJob(
   sourceMessageId: string,
   senderId = 'ou_creator',
   title = `Task ${sourceMessageId}`,
+  sourceInputs: Array<{
+    sourcePath: string;
+    fileName: string;
+    kind: 'message_image' | 'message_attachment';
+  }> = [],
 ) {
   return (await service.createFromMessage({
     title,
     objective: `Complete ${title}`,
-    acceptance_criteria: ['The task is complete.'],
+    deliverables: [{ id: 'result', description: 'The completed task result.', required: true }],
+    acceptance_criteria: [{
+      id: 'task_complete',
+      description: 'The task is complete.',
+      deliverable_ids: ['result'],
+    }],
+    verification_requirements: [{
+      id: 'result_evidence',
+      description: 'Reference evidence for the completed result.',
+      kind: 'evidence_reference',
+    }],
     context_snapshot: {
       summary: 'Foreground work stopped at a durable boundary.',
       completed_steps: [],
@@ -73,7 +89,7 @@ async function createJob(
     senderId,
     text: 'Create a background task.',
     rawContent: '{"text":"Create a background task."}',
-  }))).job;
+  }), undefined, undefined, sourceInputs)).job;
 }
 
 async function run(commandMessage: LarkMessage): Promise<boolean> {
@@ -95,7 +111,14 @@ async function run(commandMessage: LarkMessage): Promise<boolean> {
 
 const ownedQueued = await createJob('om_owned_queued', 'ou_creator', 'Owned queued task');
 const otherQueued = await createJob('om_other_queued', 'ou_other', 'Other private task');
-const completed = await createJob('om_completed', 'ou_creator', 'Completed task');
+const completedInputPath = path.join(root, 'completed-input.txt');
+await writeFile(completedInputPath, 'completed task input', 'utf8');
+const completed = await createJob('om_completed', 'ou_creator', 'Completed task', [{
+  sourcePath: completedInputPath,
+  fileName: 'completed-input.txt',
+  kind: 'message_attachment',
+}]);
+await rm(completedInputPath);
 const completedClaim = await repository.claimDue(
   'worker-complete',
   now.toISOString(),
@@ -312,6 +335,16 @@ assert.equal(await run(message({
 const retryText = replies.at(-1)?.text ?? '';
 assert.match(retryText, /Retry task created/);
 assert.doesNotMatch(retryText, new RegExp(`Job ID: ${completed.jobId}$`, 'm'));
+const retriedJob = (await repository.listAll(100)).find((job) => job.retryOfJobId === completed.jobId);
+assert.ok(retriedJob);
+assert.equal(retriedJob.sourceFacts.inputs.length, 1);
+assert.deepEqual(
+  await new ContinuationInputStore(path.join(root, 'inputs')).verify(
+    retriedJob.jobId,
+    retriedJob.sourceFacts.inputs,
+  ),
+  { ok: true },
+);
 
 assert.equal(await run(message({
   messageId: 'om_retry_ambiguous',

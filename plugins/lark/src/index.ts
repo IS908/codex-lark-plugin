@@ -1,7 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import path from 'node:path';
-import os from 'node:os';
 import { appConfig } from './config.js';
 import { validateFeishuChatAccess } from './access-control-validation.js';
 import { LarkChannel } from './channel.js';
@@ -19,7 +17,6 @@ import { TurnObligationTracker } from './turn-obligation.js';
 import { logSafeError } from './safe-log.js';
 import { packageName, packageVersion } from './package-metadata.js';
 import {
-  acquireSingleInstanceLock,
   registerLockCleanup,
 } from './resource-governance.js';
 import { emitCodexExecConfigDiagnostics } from './codex-exec-config.js';
@@ -45,13 +42,19 @@ import { createContinuationRuntime } from './continuation/runtime.js';
 import { debugLog } from './debug-log.js';
 import type { JobFile } from './job-store.js';
 import type { RunJobNowResult } from './scheduler.js';
+import { acquireLarkInstanceLock } from './instance-lock.js';
 
-const LOCK_FILE = path.join(os.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 let closeContinuationRuntime: (() => Promise<void>) | null = null;
 
 async function main() {
   assertSupportedNodeVersion();
   const isDryRun = process.argv.includes('--dry-run');
+  const lock = isDryRun ? null : await acquireLarkInstanceLock(appConfig.appId);
+  if (lock) {
+    registerLockCleanup(lock, undefined, async () => {
+      await closeContinuationRuntime?.();
+    });
+  }
   await emitCodexExecConfigDiagnostics(appConfig);
   await accessControlStore.load();
   console.error(`[access-control] Using ${appConfig.accessControlConfigPath}`);
@@ -217,10 +220,7 @@ async function main() {
   await server.connect(transport);
   console.error('[index] MCP server connected via stdio');
 
-  // 8. Acquire single-instance lock and start Lark WebSocket
-  const lock = await acquireSingleInstanceLock(LOCK_FILE);
-  registerLockCleanup(lock, undefined, () => continuationRuntime.close());
-
+  // 8. Start Lark WebSocket after the process-wide lock acquired at startup.
   runStartupResourceCleanup(memoryStore);
   startCodexSessionRetention();
   startCodexExecProgressRetention(appConfig.codexExecCwd);

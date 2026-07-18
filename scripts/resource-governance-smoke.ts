@@ -12,6 +12,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { chmod, readdir, utimes, writeFile } from 'node:fs/promises';
@@ -31,6 +32,11 @@ import { BotMessageTracker, LatestMessageTracker } from '../src/message-trackers
 import { MemoryStore } from '../src/memory/file.js';
 import { appConfig } from '../src/config.js';
 import { sendFeishuReply } from '../src/reply-sender.js';
+import {
+  acquireLarkInstanceLock,
+  legacyLarkInstanceLockPath,
+} from '../src/instance-lock.js';
+import { isRecordedProcessInstanceActive } from '../src/process-identity.js';
 
 let passed = 0;
 
@@ -41,6 +47,11 @@ function tmpRoot(prefix: string): string {
 function cleanup(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
 }
+
+// An unavailable start-time probe is trusted only during a bounded grace period.
+assert.equal(isRecordedProcessInstanceActive(true, 1, null, 29_999, 30_000), true);
+assert.equal(isRecordedProcessInstanceActive(true, 1, null, 30_001, 30_000), false);
+passed++;
 
 async function names(dir: string): Promise<string[]> {
   return (await readdir(dir)).sort();
@@ -108,6 +119,101 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
     /Another instance is running|Could not acquire|initializing|invalid lock/i,
   );
   assert.equal(existsSync(lockPath), true);
+  cleanup(dir);
+  passed++;
+}
+
+// 3a. Unknown process-start identity is bounded by lock age instead of blocking forever.
+{
+  const dir = tmpRoot('resource-lock-unknown-start-');
+  const lockPath = join(dir, 'bridge.lock');
+  writeFileSync(lockPath, JSON.stringify({ pid: 12345, startedAt: 1111 }), 'utf-8');
+  await touchAge(lockPath, 60_000);
+
+  const lock = await acquireSingleInstanceLock(lockPath, {
+    pid: 99999,
+    startedAt: 3333,
+    processExists: () => true,
+    getProcessStartedAt: async () => null,
+  });
+  lock.release();
+  cleanup(dir);
+  passed++;
+}
+
+// 3aa. A live owner refreshes its lock so a temporary start-time probe failure cannot steal it.
+{
+  const dir = tmpRoot('resource-lock-heartbeat-');
+  const lockPath = join(dir, 'bridge.lock');
+  const lock = await acquireSingleInstanceLock(lockPath, {
+    pid: 12345,
+    startedAt: 1111,
+    heartbeatIntervalMs: 5,
+  });
+  await touchAge(lockPath, 60_000);
+
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (Date.now() - statSync(lockPath).mtimeMs < 1_000) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(Date.now() - statSync(lockPath).mtimeMs < 1_000, 'lock heartbeat did not refresh mtime');
+  await assert.rejects(
+    acquireSingleInstanceLock(lockPath, {
+      pid: 99999,
+      startedAt: 3333,
+      processExists: () => true,
+      getProcessStartedAt: async () => null,
+    }),
+    /Another instance is running/,
+  );
+
+  lock.release();
+  cleanup(dir);
+  passed++;
+}
+
+// 3ab. Heartbeats stop touching a lock after its recorded owner identity changes.
+{
+  const dir = tmpRoot('resource-lock-heartbeat-identity-');
+  const lockPath = join(dir, 'bridge.lock');
+  const lock = await acquireSingleInstanceLock(lockPath, {
+    pid: 12345,
+    startedAt: 1111,
+    heartbeatIntervalMs: 5,
+  });
+  writeFileSync(lockPath, JSON.stringify({ pid: 54321, startedAt: 2222 }), 'utf-8');
+  await touchAge(lockPath, 60_000);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.ok(Date.now() - statSync(lockPath).mtimeMs > 50_000);
+  lock.release();
+  assert.equal(existsSync(lockPath), true);
+  cleanup(dir);
+  passed++;
+}
+
+// 3b. Unknown takeover-owner identity is likewise bounded by takeover age.
+{
+  const dir = tmpRoot('resource-lock-unknown-takeover-start-');
+  const lockPath = join(dir, 'bridge.lock');
+  writeFileSync(lockPath, JSON.stringify({ pid: 12345, startedAt: 1111 }), 'utf-8');
+  await touchAge(lockPath, 60_000);
+  mkdirSync(`${lockPath}.takeover`, { recursive: true });
+  writeFileSync(
+    `${lockPath}.takeover/owner.json`,
+    JSON.stringify({ pid: 23456, startedAt: 2222 }),
+    'utf-8',
+  );
+  await touchAge(`${lockPath}.takeover`, 60_000);
+  await touchAge(`${lockPath}.takeover/owner.json`, 60_000);
+
+  const lock = await acquireSingleInstanceLock(lockPath, {
+    pid: 99999,
+    startedAt: 3333,
+    processExists: () => true,
+    getProcessStartedAt: async () => null,
+  });
+  lock.release();
   cleanup(dir);
   passed++;
 }
@@ -200,6 +306,208 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
     assert.equal(existsSync(`${lockPath}.takeover`), false);
     cleanup(dir);
   }
+  passed++;
+}
+
+// 6a. The global lock rejects a live legacy per-app runtime during an upgrade.
+{
+  const dir = tmpRoot('resource-lark-lock-upgrade-');
+  const appId = 'cli_upgrade_compatibility';
+  const legacyPath = legacyLarkInstanceLockPath(appId, dir);
+  const legacyLock = await acquireSingleInstanceLock(legacyPath);
+  await assert.rejects(
+    acquireLarkInstanceLock('cli_new_runtime', dir, dir),
+    /Another instance is running/i,
+  );
+  legacyLock.release();
+
+  const compatibleLock = await acquireLarkInstanceLock(appId, dir, dir);
+  assert.equal(existsSync(legacyPath), true);
+  assert.equal(existsSync(join(dir, '.instance.lock')), true);
+  compatibleLock.release();
+  assert.equal(existsSync(legacyPath), false);
+  assert.equal(existsSync(join(dir, '.instance.lock')), false);
+  cleanup(dir);
+  passed++;
+}
+
+// 6b. Shared legacy roots reserve the current app's old filename in both start orders.
+{
+  const stateDir = tmpRoot('resource-lark-private-state-');
+  const sharedLegacyDir = tmpRoot('resource-lark-shared-legacy-');
+  await chmod(sharedLegacyDir, 0o777);
+  const appId = 'cli_shared_legacy_root';
+  const legacyPath = legacyLarkInstanceLockPath(appId, sharedLegacyDir);
+  const oldLock = await acquireSingleInstanceLock(legacyPath);
+  await assert.rejects(
+    acquireLarkInstanceLock(appId, stateDir, sharedLegacyDir),
+    /Another instance is running/i,
+  );
+  oldLock.release();
+
+  const scopedLock = await acquireLarkInstanceLock(appId, stateDir, sharedLegacyDir);
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), true);
+  assert.equal(existsSync(legacyPath), true);
+  await assert.rejects(
+    acquireSingleInstanceLock(legacyPath),
+    /Another instance is running/i,
+  );
+  scopedLock.release();
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), false);
+  assert.equal(existsSync(legacyPath), false);
+  cleanup(stateDir);
+  cleanup(sharedLegacyDir);
+  passed++;
+}
+
+// 6c. Shared legacy roots never follow attacker-controlled lock symlinks.
+{
+  const stateDir = tmpRoot('resource-lark-symlink-state-');
+  const sharedLegacyDir = tmpRoot('resource-lark-symlink-legacy-');
+  await chmod(sharedLegacyDir, 0o777);
+  const target = join(sharedLegacyDir, 'foreign-target');
+  writeFileSync(target, JSON.stringify({ pid: process.pid }), 'utf8');
+  const unsafePath = legacyLarkInstanceLockPath('cli_symlink_current', sharedLegacyDir);
+  symlinkSync(target, unsafePath);
+  await assert.rejects(
+    acquireLarkInstanceLock('cli_symlink_current', stateDir, sharedLegacyDir),
+    /unsafe lock path|unexpected type or owner/i,
+  );
+  assert.equal(readFileSync(target, 'utf8'), JSON.stringify({ pid: process.pid }));
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), false);
+  cleanup(stateDir);
+  cleanup(sharedLegacyDir);
+  passed++;
+}
+
+// 6d. Shared lock takeover markers also reject symlinked directories and owners.
+{
+  const dir = tmpRoot('resource-lock-takeover-symlink-');
+  const lockPath = join(dir, 'bridge.lock');
+  const takeoverPath = `${lockPath}.takeover`;
+  const targetDir = join(dir, 'takeover-target');
+  mkdirSync(targetDir);
+  writeFileSync(join(targetDir, 'owner.json'), JSON.stringify({ pid: process.pid }), 'utf8');
+  symlinkSync(targetDir, takeoverPath);
+  await assert.rejects(
+    acquireSingleInstanceLock(lockPath, { expectedUid: process.getuid?.() }),
+    /takeover path with unexpected type or owner/i,
+  );
+  rmSync(takeoverPath);
+  mkdirSync(takeoverPath);
+  const ownerTarget = join(dir, 'owner-target.json');
+  writeFileSync(ownerTarget, JSON.stringify({ pid: process.pid }), 'utf8');
+  symlinkSync(ownerTarget, join(takeoverPath, 'owner.json'));
+  await assert.rejects(
+    acquireSingleInstanceLock(lockPath, { expectedUid: process.getuid?.() }),
+    /unsafe takeover owner path/i,
+  );
+  assert.equal(existsSync(lockPath), false);
+  cleanup(dir);
+  passed++;
+}
+
+// 6e. A foreign-owned regular legacy filename is outside the current UID namespace.
+{
+  const stateDir = tmpRoot('resource-lark-foreign-state-');
+  const sharedLegacyDir = tmpRoot('resource-lark-foreign-legacy-');
+  const appId = 'cli_foreign_legacy_owner';
+  const legacyPath = legacyLarkInstanceLockPath(appId, sharedLegacyDir);
+  const foreignContents = JSON.stringify({ pid: process.pid });
+  writeFileSync(legacyPath, foreignContents, 'utf8');
+  const simulatedCurrentUid = (process.getuid?.() ?? 0) + 1;
+  const scopedLock = await acquireLarkInstanceLock(
+    appId,
+    stateDir,
+    sharedLegacyDir,
+    simulatedCurrentUid,
+  );
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), true);
+  assert.equal(readFileSync(legacyPath, 'utf8'), foreignContents);
+  scopedLock.release();
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), false);
+  assert.equal(readFileSync(legacyPath, 'utf8'), foreignContents);
+  cleanup(stateDir);
+  cleanup(sharedLegacyDir);
+  passed++;
+}
+
+// 6f. Lock and takeover permissions remain private even with a permissive umask.
+{
+  const previousUmask = process.umask(0);
+  const dir = tmpRoot('resource-lock-umask-');
+  try {
+    const freshLockPath = join(dir, 'fresh-parent', 'bridge.lock');
+    const freshLock = await acquireSingleInstanceLock(freshLockPath);
+    assert.equal(statSync(join(dir, 'fresh-parent')).mode & 0o777, 0o700);
+    assert.equal(statSync(freshLockPath).mode & 0o777, 0o600);
+    freshLock.release();
+
+    const staleParent = join(dir, 'stale-parent');
+    mkdirSync(staleParent, { mode: 0o700 });
+    const staleLockPath = join(staleParent, 'bridge.lock');
+    writeFileSync(
+      staleLockPath,
+      JSON.stringify({ pid: 12345, startedAt: 1111 }),
+      { mode: 0o600 },
+    );
+    let takeoverModes: { directory: number; owner: number } | null = null;
+    const takeoverLock = await acquireSingleInstanceLock(staleLockPath, {
+      pid: 54321,
+      startedAt: 2222,
+      processExists: () => {
+        const takeoverPath = `${staleLockPath}.takeover`;
+        if (existsSync(join(takeoverPath, 'owner.json'))) {
+          takeoverModes = {
+            directory: statSync(takeoverPath).mode & 0o777,
+            owner: statSync(join(takeoverPath, 'owner.json')).mode & 0o777,
+          };
+        }
+        return false;
+      },
+      getProcessStartedAt: async () => null,
+    });
+    assert.deepEqual(takeoverModes, { directory: 0o700, owner: 0o600 });
+    assert.equal(statSync(staleLockPath).mode & 0o777, 0o600);
+    takeoverLock.release();
+  } finally {
+    process.umask(previousUmask);
+    cleanup(dir);
+  }
+  passed++;
+}
+
+// Foreign-owned non-regular legacy paths reserve the shared-temp compatibility name.
+{
+  const stateDir = tmpRoot('resource-lark-foreign-nonregular-state-');
+  const sharedLegacyDir = tmpRoot('resource-lark-foreign-nonregular-legacy-');
+  const appId = 'cli_foreign_nonregular_owner';
+  const legacyPath = legacyLarkInstanceLockPath(appId, sharedLegacyDir);
+  const simulatedCurrentUid = (process.getuid?.() ?? 0) + 1;
+  const target = join(sharedLegacyDir, 'foreign-target');
+  writeFileSync(target, 'foreign target', 'utf8');
+  symlinkSync(target, legacyPath);
+  const symlinkScopedLock = await acquireLarkInstanceLock(
+    appId,
+    stateDir,
+    sharedLegacyDir,
+    simulatedCurrentUid,
+  );
+  assert.equal(existsSync(legacyPath), true);
+  symlinkScopedLock.release();
+  rmSync(legacyPath);
+
+  mkdirSync(legacyPath);
+  const directoryScopedLock = await acquireLarkInstanceLock(
+    appId,
+    stateDir,
+    sharedLegacyDir,
+    simulatedCurrentUid,
+  );
+  assert.equal(statSync(legacyPath).isDirectory(), true);
+  directoryScopedLock.release();
+  cleanup(stateDir);
+  cleanup(sharedLegacyDir);
   passed++;
 }
 
@@ -653,4 +961,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/28 PASS`);
+console.log(`resource-governance smoke: ${passed}/40 PASS`);

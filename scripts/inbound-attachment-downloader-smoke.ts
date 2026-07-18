@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { addSdkImageDownloads } from '../src/inbound-attachment-downloader.js';
+import type { InboundAttachmentMessage } from '../src/inbound-attachment-downloader.js';
 
 const writes: Array<{ data: unknown; filePath: string; maxBytes?: number; timeoutMs?: number }> = [];
 const downloads: Array<{ messageId: string; fileKey: string; resourceType: 'image' | 'file' }> = [];
@@ -30,7 +31,7 @@ const makeTransport = (failKey?: string) => ({
 {
   downloads.length = 0;
   writes.length = 0;
-  const message = { messageId: 'om_sdk' };
+  const message: InboundAttachmentMessage = { messageId: 'om_sdk' };
 
   await addSdkImageDownloads(
     message,
@@ -53,12 +54,13 @@ const makeTransport = (failKey?: string) => ({
     '/tmp/codex-lark-inbox-test/123456789-img_one-one.png',
     '/tmp/codex-lark-inbox-test/123456789-img_two-two_name.png',
   ]);
+  assert.deepEqual(message.downloadedImageFileKeys, ['img_one', 'img_two']);
 }
 
 {
   downloads.length = 0;
   writes.length = 0;
-  const message = { messageId: 'om_best_effort' };
+  const message: InboundAttachmentMessage = { messageId: 'om_best_effort' };
 
   await addSdkImageDownloads(
     message,
@@ -72,6 +74,7 @@ const makeTransport = (failKey?: string) => ({
 
   assert.equal(message.imagePath, '/tmp/codex-lark-inbox-test/123456789-img_ok-ok.png');
   assert.equal(message.imagePaths, undefined);
+  assert.deepEqual(message.downloadedImageFileKeys, ['img_ok']);
 }
 
 console.log('inbound-attachment-downloader smoke: PASS');

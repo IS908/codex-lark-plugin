@@ -3,6 +3,7 @@ import path from 'node:path';
 import { CONTINUATION_LIMITS } from './domain/continuation.js';
 import { expandSchedule, normalizeJobTimezone } from './job-store.js';
 import { ACCESS_CONTROL_LISTS } from './runtime-access-control.js';
+import { redactContinuationText } from './continuation/redaction.js';
 
 export const SaveMemoryActionSchema = z.object({
   type: z.literal('save_memory'),
@@ -187,12 +188,47 @@ const RelativeContinuationDirectorySchema = z.string().min(1).refine((value) => 
   return !value.split(/[\\/]+/).includes('..');
 }, 'working_directory must be relative and remain within the configured working root');
 
-export const CreateContinuationActionSchema = z.object({
+const ContinuationContractIdSchema = z.string().regex(
+  /^[A-Za-z0-9_.-]{1,80}$/,
+  'contract IDs must contain 1-80 letters, numbers, dots, underscores, or hyphens',
+).refine(
+  (value) => redactContinuationText(value) === value,
+  'contract IDs must not contain credential-shaped values',
+);
+
+const ContinuationDeliverableActionSchema = z.object({
+  id: ContinuationContractIdSchema,
+  description: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
+  required: z.boolean(),
+}).strict();
+
+const ContinuationAcceptanceCriterionActionSchema = z.object({
+  id: ContinuationContractIdSchema,
+  description: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
+  deliverable_ids: z.array(ContinuationContractIdSchema)
+    .min(1)
+    .max(CONTINUATION_LIMITS.deliverableCount),
+}).strict();
+
+const ContinuationVerificationRequirementActionSchema = z.object({
+  id: ContinuationContractIdSchema,
+  description: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
+  kind: z.enum(['artifact_exists', 'artifact_sha256', 'evidence_reference']),
+}).strict();
+
+const CreateContinuationActionBaseSchema = z.object({
   type: z.literal('create_continuation_job'),
   title: z.string().min(1).max(CONTINUATION_LIMITS.titleChars),
   objective: z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes),
-  acceptance_criteria: z.array(z.string().min(1).max(CONTINUATION_LIMITS.objectiveBytes))
+  deliverables: z.array(ContinuationDeliverableActionSchema)
+    .min(1)
+    .max(CONTINUATION_LIMITS.deliverableCount),
+  acceptance_criteria: z.array(ContinuationAcceptanceCriterionActionSchema)
+    .min(1)
     .max(CONTINUATION_LIMITS.acceptanceCriteriaCount),
+  verification_requirements: z.array(ContinuationVerificationRequirementActionSchema)
+    .min(1)
+    .max(CONTINUATION_LIMITS.verificationRequirementCount),
   context_snapshot: ContinuationCheckpointActionSchema,
   required_tools: z.array(z.string().regex(
     /^[A-Za-z0-9_.-]{1,80}$/,
@@ -204,6 +240,127 @@ export const CreateContinuationActionSchema = z.object({
     .max(CONTINUATION_LIMITS.requestedPathCount)
     .optional(),
 }).strict();
+
+function validateContinuationActionContract(
+  action: z.infer<typeof CreateContinuationActionBaseSchema>,
+  ctx: z.RefinementCtx,
+): void {
+  const requiredTexts: Array<{ path: Array<string | number>; value: string }> = [
+    { path: ['title'], value: action.title },
+    { path: ['objective'], value: action.objective },
+    ...action.deliverables.map((entry, index) => ({
+      path: ['deliverables', index, 'description'],
+      value: entry.description,
+    })),
+    ...action.acceptance_criteria.map((entry, index) => ({
+      path: ['acceptance_criteria', index, 'description'],
+      value: entry.description,
+    })),
+    ...action.verification_requirements.map((entry, index) => ({
+      path: ['verification_requirements', index, 'description'],
+      value: entry.description,
+    })),
+  ];
+  for (const entry of requiredTexts) {
+    if (entry.value.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: entry.path,
+        message: 'required text must not be blank',
+      });
+    }
+  }
+  if (Buffer.byteLength(action.objective, 'utf8') > CONTINUATION_LIMITS.objectiveBytes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['objective'],
+      message: `objective exceeds ${CONTINUATION_LIMITS.objectiveBytes} UTF-8 bytes`,
+    });
+  }
+  if (
+    action.requested_paths
+    && jsonBytes(action.requested_paths) > CONTINUATION_LIMITS.contextSnapshotBytes
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['requested_paths'],
+      message: `requested_paths exceeds ${CONTINUATION_LIMITS.contextSnapshotBytes} UTF-8 JSON bytes`,
+    });
+  }
+  if (jsonBytes(actionTaskContract(action)) > CONTINUATION_LIMITS.contextSnapshotBytes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [],
+      message: `task contract exceeds ${CONTINUATION_LIMITS.contextSnapshotBytes} UTF-8 JSON bytes`,
+    });
+  }
+  if (!action.deliverables.some((deliverable) => deliverable.required)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['deliverables'],
+      message: 'at least one deliverable must be required',
+    });
+  }
+  for (const [field, entries] of [
+    ['deliverables', action.deliverables],
+    ['acceptance_criteria', action.acceptance_criteria],
+    ['verification_requirements', action.verification_requirements],
+  ] as const) {
+    const ids = new Set<string>();
+    entries.forEach((entry, index) => {
+      if (ids.has(entry.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field, index, 'id'],
+          message: `duplicate ${field} id: ${entry.id}`,
+        });
+      }
+      ids.add(entry.id);
+    });
+  }
+  const deliverableIds = new Set(action.deliverables.map((entry) => entry.id));
+  action.acceptance_criteria.forEach((criterion, criterionIndex) => {
+    criterion.deliverable_ids.forEach((deliverableId, referenceIndex) => {
+      if (!deliverableIds.has(deliverableId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['acceptance_criteria', criterionIndex, 'deliverable_ids', referenceIndex],
+          message: `unknown deliverable id: ${deliverableId}`,
+        });
+      }
+    });
+  });
+}
+
+function actionTaskContract(action: z.infer<typeof CreateContinuationActionBaseSchema>): unknown {
+  return {
+    schemaVersion: 1,
+    title: action.title,
+    objective: action.objective,
+    deliverables: action.deliverables,
+    acceptanceCriteria: action.acceptance_criteria.map((criterion) => ({
+      id: criterion.id,
+      description: criterion.description,
+      deliverableIds: criterion.deliverable_ids,
+    })),
+    verificationRequirements: action.verification_requirements,
+    initialContext: {
+      summary: action.context_snapshot.summary,
+      completedSteps: action.context_snapshot.completed_steps,
+      remainingSteps: action.context_snapshot.remaining_steps,
+      constraints: action.context_snapshot.constraints,
+      decisions: action.context_snapshot.decisions,
+      references: action.context_snapshot.references,
+    },
+  };
+}
+
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
+}
+
+export const CreateContinuationActionSchema = CreateContinuationActionBaseSchema
+  .superRefine(validateContinuationActionContract);
 export type CreateContinuationAction = z.infer<typeof CreateContinuationActionSchema>;
 
 export const CodexExecActionSchema = z.discriminatedUnion('type', [
@@ -220,8 +377,11 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
   GetRunTraceActionSchema,
   SendMessageActionSchema,
   RecallMessageActionSchema,
-  CreateContinuationActionSchema,
+  CreateContinuationActionBaseSchema,
 ]).superRefine((action, ctx) => {
+  if (action.type === 'create_continuation_job') {
+    validateContinuationActionContract(action, ctx);
+  }
   if (
     (action.type === 'run_job' || action.type === 'update_job' || action.type === 'disable_job' || action.type === 'delete_job') &&
     !action.job_id &&

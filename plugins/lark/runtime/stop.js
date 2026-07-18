@@ -393,10 +393,6 @@ var require_main = __commonJS({
   }
 });
 
-// src/stop.ts
-import os2 from "node:os";
-import path2 from "node:path";
-
 // src/config.ts
 var import_dotenv = __toESM(require_main(), 1);
 import path from "node:path";
@@ -665,12 +661,19 @@ var appConfig = {
   )
 };
 
+// src/instance-lock.ts
+import os2 from "node:os";
+import path2 from "node:path";
+import { lstat as lstat2, readdir as readdir2 } from "node:fs/promises";
+
 // src/resource-governance.ts
-import { execFile } from "node:child_process";
+import { execFile as execFile2 } from "node:child_process";
 import {
   appendFile,
   link,
+  lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -679,26 +682,35 @@ import {
   unlink,
   writeFile
 } from "node:fs/promises";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  futimesSync,
+  openSync,
+  readFileSync,
+  unlinkSync
+} from "node:fs";
 import { gzip } from "node:zlib";
+import { promisify as promisify2 } from "node:util";
+
+// src/process-identity.ts
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
-var gzipAsync = promisify(gzip);
-function currentProcessStartedAt() {
-  return Math.floor(Date.now() - process.uptime() * 1e3);
-}
-function defaultProcessExists(pid) {
+var PROCESS_START_TOLERANCE_MS = 1e3;
+var CURRENT_PROCESS_STARTED_AT = Math.floor(Date.now() - process.uptime() * 1e3);
+function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (err) {
-    return err?.code === "EPERM";
+  } catch (error) {
+    return error?.code === "EPERM";
   }
 }
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function defaultProcessStartedAt(pid) {
-  if (pid === process.pid) return currentProcessStartedAt();
+async function getProcessStartedAt(pid) {
+  if (pid === process.pid) return CURRENT_PROCESS_STARTED_AT;
   try {
     const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(pid)]);
     const raw = String(stdout).trim();
@@ -709,9 +721,19 @@ async function defaultProcessStartedAt(pid) {
     return null;
   }
 }
+function isSameProcessStart(a, b) {
+  return Math.abs(a - b) <= PROCESS_START_TOLERANCE_MS;
+}
+
+// src/resource-governance.ts
+var execFileAsync2 = promisify2(execFile2);
+var gzipAsync = promisify2(gzip);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 async function defaultProcessCommand(pid) {
   try {
-    const { stdout } = await execFileAsync("ps", ["-o", "command=", "-p", String(pid)]);
+    const { stdout } = await execFileAsync2("ps", ["-o", "command=", "-p", String(pid)]);
     const raw = String(stdout).trim();
     return raw || null;
   } catch {
@@ -739,73 +761,87 @@ function parseLock(raw) {
     return Number.isInteger(pid) && pid > 0 ? { pid } : null;
   }
 }
-function sameStartTime(a, b) {
-  return Math.abs(a - b) <= 1e3;
-}
 function sameLockOwner(a, b) {
   if (!a) return false;
   if (a.pid !== b.pid) return false;
   if (b.startedAt !== void 0) return a.startedAt === b.startedAt;
   return true;
 }
-async function removeLockIfStillOwned(lockPath2, record) {
-  const current = await readLockState(lockPath2);
+async function removeLockIfStillOwned(lockPath, record, expectedUid) {
+  const current = await readLockState(lockPath, expectedUid);
   if (!current || !sameLockOwner(current.record, record)) return false;
-  await removePathIfExists(lockPath2);
+  await removePathIfExists(lockPath);
   return true;
 }
 function isCodexLarkProcessCommand(command) {
   const normalized = command.toLowerCase();
   return normalized.includes("codex-lark-plugin") || normalized.includes("scripts/start.sh") || normalized.includes("src/index.ts") && normalized.includes("tsx");
 }
-async function readLockState(lockPath2) {
-  let s;
+async function readLockState(lockPath, expectedUid) {
+  const snapshot = await readOwnedRegularFile(lockPath, expectedUid, "lock");
+  if (!snapshot) return null;
+  return { record: parseLock(snapshot.raw), ageMs: Date.now() - snapshot.mtimeMs };
+}
+async function readOwnedRegularFile(filePath, expectedUid, label) {
+  let handle;
   try {
-    s = await stat(lockPath2);
-  } catch {
-    return null;
+    handle = await open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw new Error(`Refusing unsafe ${label} path ${filePath}.`, { cause: error });
   }
-  const raw = await readFile(lockPath2, "utf-8").catch((err) => {
-    console.error(`[resource-governance] Failed to read lock ${lockPath2}:`, err?.message ?? String(err));
-    return "";
-  });
-  return { record: parseLock(raw), ageMs: Date.now() - s.mtimeMs };
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || expectedUid !== void 0 && metadata.uid !== expectedUid) {
+      throw new Error(`Refusing ${label} path with unexpected type or owner: ${filePath}.`);
+    }
+    const raw = await handle.readFile({ encoding: "utf8" });
+    return {
+      raw,
+      mtimeMs: metadata.mtimeMs,
+      dev: metadata.dev,
+      ino: metadata.ino
+    };
+  } finally {
+    await handle.close();
+  }
 }
 async function removePathIfExists(filePath) {
   await rm(filePath, { recursive: true, force: true }).catch(() => void 0);
 }
-async function stopSingleInstanceLock(lockPath2, options = {}) {
-  const processExists = options.processExists ?? defaultProcessExists;
-  const getProcessStartedAt = options.getProcessStartedAt ?? defaultProcessStartedAt;
+async function stopSingleInstanceLock(lockPath, options = {}) {
+  const processExists = options.processExists ?? isProcessAlive;
+  const resolveProcessStartedAt = options.getProcessStartedAt ?? getProcessStartedAt;
   const getProcessCommand = options.getProcessCommand ?? defaultProcessCommand;
   const killProcess = options.killProcess ?? defaultKillProcess;
   const isExpectedProcess = options.isExpectedProcess ?? isCodexLarkProcessCommand;
+  const expectedUid = options.expectedUid;
   const waitMs = Math.max(0, Math.floor(options.waitMs ?? 5e3));
   const sleepMs = Math.max(0, Math.floor(options.sleepMs ?? 100));
-  const state = await readLockState(lockPath2);
+  const state = await readLockState(lockPath, expectedUid);
   if (!state) {
     return {
       status: "no_lock",
-      lockPath: lockPath2,
-      message: `No codex-lark-plugin lock found at ${lockPath2}.`
+      lockPath,
+      message: `No codex-lark-plugin lock found at ${lockPath}.`
     };
   }
   const record = state.record;
   if (!record) {
     return {
       status: "invalid_lock",
-      lockPath: lockPath2,
-      message: `Refusing to stop: lock file ${lockPath2} does not contain a valid PID.`
+      lockPath,
+      message: `Refusing to stop: lock file ${lockPath} does not contain a valid PID.`
     };
   }
   const base = {
-    lockPath: lockPath2,
+    lockPath,
     pid: record.pid,
     ...record.startedAt ? { startedAt: record.startedAt } : {}
   };
   const alive = await processExists(record.pid);
   if (!alive) {
-    const removed = await removeLockIfStillOwned(lockPath2, record);
+    const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
     return {
       ...base,
       status: "stale_lock_removed",
@@ -813,9 +849,9 @@ async function stopSingleInstanceLock(lockPath2, options = {}) {
     };
   }
   if (record.startedAt) {
-    const actualStartedAt = await getProcessStartedAt(record.pid);
-    if (actualStartedAt !== null && !sameStartTime(actualStartedAt, record.startedAt)) {
-      const removed = await removeLockIfStillOwned(lockPath2, record);
+    const actualStartedAt = await resolveProcessStartedAt(record.pid);
+    if (actualStartedAt !== null && !isSameProcessStart(actualStartedAt, record.startedAt)) {
+      const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
       return {
         ...base,
         status: "stale_lock_removed",
@@ -836,7 +872,7 @@ async function stopSingleInstanceLock(lockPath2, options = {}) {
     await killProcess(record.pid, "SIGTERM");
   } catch (err) {
     if (err?.code === "ESRCH") {
-      const removed = await removeLockIfStillOwned(lockPath2, record);
+      const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
       return {
         ...base,
         command,
@@ -857,7 +893,7 @@ async function stopSingleInstanceLock(lockPath2, options = {}) {
   const deadline = Date.now() + waitMs;
   do {
     if (!await processExists(record.pid)) {
-      const removed = await removeLockIfStillOwned(lockPath2, record);
+      const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
       return {
         ...base,
         command,
@@ -866,9 +902,9 @@ async function stopSingleInstanceLock(lockPath2, options = {}) {
       };
     }
     if (record.startedAt) {
-      const actualStartedAt = await getProcessStartedAt(record.pid);
-      if (actualStartedAt !== null && !sameStartTime(actualStartedAt, record.startedAt)) {
-        const removed = await removeLockIfStillOwned(lockPath2, record);
+      const actualStartedAt = await resolveProcessStartedAt(record.pid);
+      if (actualStartedAt !== null && !isSameProcessStart(actualStartedAt, record.startedAt)) {
+        const removed = await removeLockIfStillOwned(lockPath, record, expectedUid);
         return {
           ...base,
           command,
@@ -888,13 +924,57 @@ async function stopSingleInstanceLock(lockPath2, options = {}) {
   };
 }
 
+// src/instance-lock.ts
+var LARK_INSTANCE_LOCK_PATH = path2.join(
+  os2.homedir(),
+  ".codex",
+  "channels",
+  "lark",
+  "runtime",
+  "continuations",
+  ".instance.lock"
+);
+async function stopLarkInstances(appId, stateRoot = path2.dirname(LARK_INSTANCE_LOCK_PATH), legacyLockRoot = os2.tmpdir(), legacyOwnerUid = process.getuid?.()) {
+  const results = [];
+  const paths = [
+    path2.join(stateRoot, path2.basename(LARK_INSTANCE_LOCK_PATH)),
+    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, false, legacyOwnerUid)
+  ];
+  const expectedUid = process.getuid?.();
+  for (const lockPath of paths) {
+    results.push(await stopSingleInstanceLock(lockPath, { expectedUid }));
+  }
+  return results;
+}
+function legacyLarkInstanceLockPath(appId, lockRoot = os2.tmpdir()) {
+  return path2.join(lockRoot, `codex-lark-${appId}.lock`);
+}
+async function compatibleLegacyLockPaths(appId, lockRoot, scanAll, currentUid) {
+  const names = await readdir2(lockRoot).catch(() => []);
+  const candidates = names.filter((name) => /^codex-lark-.+\.lock$/.test(name)).filter((name) => scanAll || name === path2.basename(legacyLarkInstanceLockPath(appId, lockRoot)));
+  const ownedPaths = [];
+  for (const name of candidates) {
+    const candidate = path2.join(lockRoot, name);
+    const metadata = await lstat2(candidate).catch(() => null);
+    if (metadata?.isFile() && !metadata.isSymbolicLink() && (currentUid === void 0 || metadata.uid === currentUid)) {
+      ownedPaths.push(candidate);
+    }
+  }
+  const currentPath = legacyLarkInstanceLockPath(appId, lockRoot);
+  const currentMetadata = await lstat2(currentPath).catch(() => null);
+  const foreignOccupiedPath = Boolean(
+    currentMetadata && currentUid !== void 0 && currentMetadata.uid !== currentUid
+  );
+  if (!foreignOccupiedPath) ownedPaths.push(currentPath);
+  return [...new Set(ownedPaths.sort())];
+}
+
 // src/stop.ts
-var lockPath = path2.join(os2.tmpdir(), `codex-lark-${appConfig.appId}.lock`);
 var okStatuses = /* @__PURE__ */ new Set(["no_lock", "stale_lock_removed", "process_terminated"]);
 try {
-  const result = await stopSingleInstanceLock(lockPath);
-  console.error(result.message);
-  process.exit(okStatuses.has(result.status) ? 0 : 1);
+  const results = await stopLarkInstances(appConfig.appId);
+  for (const result of results) console.error(result.message);
+  process.exit(results.every((result) => okStatuses.has(result.status)) ? 0 : 1);
 } catch (err) {
   console.error(`[stop] Failed to stop codex-lark-plugin: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);

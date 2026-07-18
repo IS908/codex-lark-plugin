@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ContinuationClaim, ContinuationJob } from '../src/domain/continuation.js';
 import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js';
+import { ContinuationInputStore } from '../src/continuation/input-store.js';
 import type { CodexExecRequest } from '../src/codex-exec.js';
 
 const root = await mkdtemp(join(tmpdir(), 'continuation-codex-runner-'));
@@ -28,37 +29,75 @@ const artifactStore = new ContinuationArtifactStore(artifactsDir);
 
 function createJob(overrides: Partial<ContinuationJob> = {}): ContinuationJob {
   const requiredTools = overrides.requiredTools ?? [];
+  const route = {
+    kind: 'message_thread' as const,
+    conversationId: 'oc_runner',
+    sourceMessageId: 'om_runner',
+  };
+  const contextSnapshot = {
+    summary: 'Foreground work is incomplete.',
+    completedSteps: [],
+    remainingSteps: ['finish the work'],
+    constraints: ['do not publish'],
+    decisions: [],
+    references: [],
+  };
+  const permissions = {
+    profile: 'bounded' as const,
+    filesystem: { root: canonicalRoot, mode: 'workspace-write' as const, requestedPaths: [] },
+    hostTools: requiredTools,
+    network: 'none' as const,
+    externalSideEffects: 'denied' as const,
+    approval: { mode: 'never' as const },
+  };
   return {
     jobId: 'job_0123456789abcdef01234567',
     idempotencyKey: 'idem-runner',
     creatorOpenId: 'ou_creator',
-    route: {
-      kind: 'message_thread',
-      conversationId: 'oc_runner',
-      sourceMessageId: 'om_runner',
-    },
+    route,
     sourceMessageId: 'om_runner',
     title: 'Runner smoke',
     objective: 'Produce a verified result',
     acceptanceCriteria: ['return a structured outcome'],
-    contextSnapshot: {
-      summary: 'Foreground work is incomplete.',
-      completedSteps: [],
-      remainingSteps: ['finish the work'],
-      constraints: ['do not publish'],
-      decisions: [],
-      references: [],
+    contextSnapshot,
+    sourceFacts: {
+      schemaVersion: 1,
+      provenance: 'captured',
+      originalUserText: 'Produce a verified result.',
+      sourceContextText: null,
+      quotedMessageText: null,
+      creatorOpenId: 'ou_creator',
+      chatId: 'oc_runner',
+      chatType: 'p2p',
+      route,
+      sourceMessageId: 'om_runner',
+      sourceMessageType: 'text',
+      sourceTimestamp: null,
+      inputs: [],
+      workingDirectory: canonicalRoot,
+      model: 'gpt-5.4',
+      permissions,
+    },
+    taskContract: {
+      schemaVersion: 1,
+      title: 'Runner smoke',
+      objective: 'Produce a verified result',
+      deliverables: [{ id: 'result', description: 'A verified result.', required: true }],
+      acceptanceCriteria: [{
+        id: 'structured_outcome',
+        description: 'return a structured outcome',
+        deliverableIds: ['result'],
+      }],
+      verificationRequirements: [{
+        id: 'result_evidence',
+        description: 'Reference result evidence.',
+        kind: 'evidence_reference',
+      }],
+      initialContext: contextSnapshot,
     },
     requiredTools,
     workingDirectory: canonicalRoot,
-    permissions: {
-      profile: 'bounded',
-      filesystem: { root: canonicalRoot, mode: 'workspace-write', requestedPaths: [] },
-      hostTools: requiredTools,
-      network: 'none',
-      externalSideEffects: 'denied',
-      approval: { mode: 'never' },
-    },
+    permissions,
     model: 'gpt-5.4',
     parentSessionId: 'session-parent',
     maxAttempts: 5,
@@ -250,13 +289,30 @@ assert.match(forcedTrace, /git status --short/);
 const abortCodex = join(root, 'abort-codex.js');
 const abortReadyPath = join(root, 'abort-ready');
 const abortSignalPath = join(root, 'abort-signal');
+const abortDescendantReadyPath = join(root, 'abort-descendant-ready');
+const abortDescendantSignalPath = join(root, 'abort-descendant-signal');
 await writeFile(abortCodex, [
   '#!/usr/bin/env node',
   'const fs = require("node:fs");',
-  'fs.writeFileSync(process.env.READY_PATH, "ready");',
+  'const { spawn } = require("node:child_process");',
+  'const descendant = spawn(process.execPath, ["-e", [',
+  '  "const fs = require(\\\"node:fs\\\");",',
+  '  "fs.writeFileSync(process.env.DESCENDANT_READY_PATH, \\\"ready\\\");",',
+  '  "process.on(\\\"SIGTERM\\\", () => {",',
+  '  "  fs.writeFileSync(process.env.DESCENDANT_SIGNAL_PATH, \\\"SIGTERM\\\");",',
+  '  "  process.exit(0);",',
+  '  "});",',
+  '  "setTimeout(() => process.exit(0), 10000);",',
+  '].join("\\n")], { stdio: "ignore", env: process.env });',
+  'fs.writeFileSync(process.env.DESCENDANT_PID_PATH, String(descendant.pid));',
+  'const readyTimer = setInterval(() => {',
+  '  if (!fs.existsSync(process.env.DESCENDANT_READY_PATH)) return;',
+  '  clearInterval(readyTimer);',
+  '  fs.writeFileSync(process.env.READY_PATH, "ready");',
+  '}, 5);',
   'process.on("SIGTERM", () => {',
   '  fs.writeFileSync(process.env.SIGNAL_PATH, "SIGTERM");',
-  '  process.exit(0);',
+  '  setTimeout(() => process.exit(0), 50);',
   '});',
   'setInterval(() => {}, 1000);',
 ].join('\n'), 'utf-8');
@@ -268,7 +324,13 @@ const abortRun = runCodexExecCommand({
   cwd: root,
   timeoutMs: 5_000,
   abortSignal: abortController.signal,
-  extraEnv: { READY_PATH: abortReadyPath, SIGNAL_PATH: abortSignalPath },
+  extraEnv: {
+    READY_PATH: abortReadyPath,
+    SIGNAL_PATH: abortSignalPath,
+    DESCENDANT_READY_PATH: abortDescendantReadyPath,
+    DESCENDANT_SIGNAL_PATH: abortDescendantSignalPath,
+    DESCENDANT_PID_PATH: join(root, 'abort-descendant-pid'),
+  },
 });
 for (let attempt = 0; attempt < 100; attempt += 1) {
   try {
@@ -281,6 +343,17 @@ for (let attempt = 0; attempt < 100; attempt += 1) {
 abortController.abort();
 await assert.rejects(abortRun, (error: unknown) => error instanceof CodexExecAbortedError);
 assert.equal(await readFile(abortSignalPath, 'utf-8'), 'SIGTERM');
+if (process.platform !== 'win32') {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      await stat(abortDescendantSignalPath);
+      break;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  assert.equal(await readFile(abortDescendantSignalPath, 'utf-8'), 'SIGTERM');
+}
 
 const artifactRoot = await artifactStore.ensure(createJob().jobId);
 await writeFile(join(artifactRoot, 'summary.md'), '# Result\n', 'utf-8');
@@ -372,6 +445,52 @@ assert.deepEqual(completed.outcome, {
 assert.equal((await executor.execute(createClaim(), signal)).outcome.outcome, 'failed');
 assert.equal((await executor.execute(createClaim(), signal)).outcome.outcome, 'blocked');
 
+const guardedArtifactStore = new ContinuationArtifactStore(
+  join(root, 'guarded-artifacts'),
+  4,
+  10,
+  2,
+);
+const guardedExecutor = createContinuationCodexExecutor({
+  artifactStore: guardedArtifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async (request) => {
+    const guardedRoot = request.additionalWritableDirs?.[0];
+    assert.ok(guardedRoot);
+    await writeFile(join(guardedRoot, 'oversized.bin'), '12345', 'utf8');
+    await new Promise<void>((_resolve, reject) => {
+      if (request.abortSignal?.aborted) {
+        reject(new CodexExecAbortedError('', ''));
+        return;
+      }
+      request.abortSignal?.addEventListener(
+        'abort',
+        () => reject(new CodexExecAbortedError('', '')),
+        { once: true },
+      );
+    });
+    return { text: '' };
+  },
+});
+let guardTimeout: NodeJS.Timeout | undefined;
+try {
+  await assert.rejects(
+    Promise.race([
+      guardedExecutor.execute(createClaim(), signal),
+      new Promise((_, reject) => {
+        guardTimeout = setTimeout(() => reject(new Error('artifact guard timed out')), 1_000);
+      }),
+    ]),
+    (error: unknown) => (
+      error instanceof Error
+      && (error as Error & { errorCode?: string }).errorCode === 'continuation_artifact_limit_exceeded'
+    ),
+  );
+} finally {
+  clearTimeout(guardTimeout);
+}
+
 const convergenceRequests: CodexExecRequest[] = [];
 const convergenceExecutor = createContinuationCodexExecutor({
   artifactStore,
@@ -436,6 +555,151 @@ assert.match(firstRequest.prompt, /another attempt is available/i);
 assert.match(firstRequest.prompt, /return completed when the acceptance criteria/i);
 assert.match(firstRequest.prompt, /do not repeat completed work/i);
 assert.match(firstRequest.prompt, /do not expand scope/i);
+
+const managedInputSource = join(root, 'managed-input-source.txt');
+await writeFile(managedInputSource, 'runner input', 'utf8');
+const inputStore = new ContinuationInputStore(join(root, 'inputs'));
+const managedInstallation = await inputStore.install(createJob().jobId, [{
+  sourcePath: managedInputSource,
+  fileName: 'runner-github_pat_123456789012345678901234567890.txt',
+  kind: 'message_attachment',
+}]);
+const managedInputRequests: CodexExecRequest[] = [];
+const managedInputExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  inputStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async (request) => {
+    managedInputRequests.push(request);
+    return {
+      text: JSON.stringify(wireOutcome({
+        outcome: 'completed',
+        final_message: 'managed input complete',
+      })),
+    };
+  },
+});
+const managedInputJob = createJob();
+managedInputJob.sourceFacts = {
+  ...managedInputJob.sourceFacts,
+  inputs: managedInstallation.artifacts,
+};
+await managedInputExecutor.execute(createClaim(managedInputJob), signal);
+const managedInputPath = inputStore.resolve(
+  managedInputJob.jobId,
+  managedInstallation.artifacts[0].relativePath,
+);
+assert.match(managedInputRequests[0].prompt, new RegExp(managedInputPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+assert.match(managedInputRequests[0].prompt, /managed input.*read-only/i);
+assert.match(managedInputRequests[0].prompt, /sourceFacts/);
+assert.match(managedInputRequests[0].prompt, /originalUserText.*Produce a verified result\./s);
+assert.match(managedInputRequests[0].prompt, /taskContract/);
+assert.match(managedInputRequests[0].prompt, /deliverables/);
+assert.doesNotMatch(managedInputRequests[0].prompt, /github_pat_|runner-github_pat_/);
+assert.deepEqual(managedInputRequests[0].additionalWritableDirs, [artifactRoot]);
+
+let preLaunchVerifyCalls = 0;
+let preLaunchCodexCalls = 0;
+const preLaunchInputStore = {
+  resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => inputStore.resolve(...args),
+  async verify(...args: Parameters<ContinuationInputStore['verify']>) {
+    preLaunchVerifyCalls += 1;
+    const verification = await inputStore.verify(...args);
+    if (preLaunchVerifyCalls === 1 && verification.ok) {
+      await chmod(managedInputPath, 0o600);
+      await writeFile(managedInputPath, 'tampered after claim verification', 'utf8');
+      await chmod(managedInputPath, 0o400);
+    }
+    return verification;
+  },
+} as any;
+const preLaunchIntegrityExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  inputStore: preLaunchInputStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async () => {
+    preLaunchCodexCalls += 1;
+    return { text: JSON.stringify(wireOutcome({ final_message: 'must not run' })) };
+  },
+});
+await assert.rejects(
+  preLaunchIntegrityExecutor.execute(createClaim(managedInputJob), signal),
+  (error: unknown) => {
+    assert.equal((error as { errorCode?: string }).errorCode, 'continuation_input_integrity_failed');
+    return true;
+  },
+);
+assert.equal(preLaunchVerifyCalls, 2);
+assert.equal(preLaunchCodexCalls, 0);
+
+await chmod(managedInputPath, 0o600);
+await writeFile(managedInputPath, 'tampered before executor spawn', 'utf8');
+await chmod(managedInputPath, 0o400);
+let lateIntegrityCodexCalls = 0;
+const lateIntegrityExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  inputStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async () => {
+    lateIntegrityCodexCalls += 1;
+    return { text: JSON.stringify(wireOutcome({ final_message: 'must not run' })) };
+  },
+});
+const lateIntegrityResult = await lateIntegrityExecutor.execute(createClaim(managedInputJob), signal);
+assert.equal(lateIntegrityCodexCalls, 0);
+assert.deepEqual(lateIntegrityResult.outcome, {
+  outcome: 'failed',
+  errorCode: 'continuation_input_integrity_failed',
+  errorSummary: 'A managed continuation input failed integrity verification.',
+  retryable: false,
+  completedWork: [],
+  unperformedWork: ['Recreate the task from trusted source inputs.'],
+});
+
+await chmod(managedInputPath, 0o600);
+await writeFile(managedInputPath, 'runner input', 'utf8');
+await chmod(managedInputPath, 0o400);
+let fallbackVerifyCalls = 0;
+let fallbackCodexCalls = 0;
+const fallbackInputStore = {
+  resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => inputStore.resolve(...args),
+  async verify(...args: Parameters<ContinuationInputStore['verify']>) {
+    fallbackVerifyCalls += 1;
+    return inputStore.verify(...args);
+  },
+} as any;
+const fallbackIntegrityExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  inputStore: fallbackInputStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async () => {
+    fallbackCodexCalls += 1;
+    await chmod(managedInputPath, 0o600);
+    await writeFile(managedInputPath, 'tampered before resume fallback', 'utf8');
+    await chmod(managedInputPath, 0o400);
+    throw new Error('session not found');
+  },
+});
+const fallbackManagedJob = {
+  ...managedInputJob,
+  executionSessionId: 'stale-session',
+};
+await assert.rejects(
+  fallbackIntegrityExecutor.execute(createClaim(fallbackManagedJob), signal),
+  (error: unknown) => {
+    assert.equal((error as { errorCode?: string }).errorCode, 'continuation_input_integrity_failed');
+    return true;
+  },
+);
+assert.equal(fallbackVerifyCalls, 3);
+assert.equal(fallbackCodexCalls, 1);
+await chmod(managedInputPath, 0o600);
+await writeFile(managedInputPath, 'runner input', 'utf8');
+await chmod(managedInputPath, 0o400);
 
 const trustedRequests: CodexExecRequest[] = [];
 const trustedExecutor = createContinuationCodexExecutor({
@@ -647,6 +911,7 @@ await assert.rejects(
 
 const toolRequests: CodexExecRequest[] = [];
 const toolInvocations: Array<{ tool: string; args: string[] }> = [];
+let toolInputVerifications = 0;
 const toolResponses = [
   {
     text: JSON.stringify(wireOutcome({
@@ -667,6 +932,13 @@ const toolResponses = [
 ];
 const toolExecutor = createContinuationCodexExecutor({
   artifactStore,
+  inputStore: {
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => inputStore.resolve(...args),
+    async verify(...args: Parameters<ContinuationInputStore['verify']>) {
+      toolInputVerifications += 1;
+      return inputStore.verify(...args);
+    },
+  } as any,
   configuredSandbox: 'workspace-write',
   currentWorkingRoot: canonicalRoot,
   toolInvoker: {
@@ -686,23 +958,71 @@ const toolExecutor = createContinuationCodexExecutor({
     return response;
   },
 });
-const toolResult = await toolExecutor.execute(
-  createClaim({ requiredTools: ['lark_cli'] }),
-  signal,
-);
+const toolJob = createJob({ requiredTools: ['lark_cli'] });
+toolJob.sourceFacts = { ...toolJob.sourceFacts, inputs: managedInstallation.artifacts };
+const toolResult = await toolExecutor.execute(createClaim(toolJob), signal);
 assert.equal(toolResult.outcome.outcome, 'completed');
 assert.deepEqual(toolInvocations, [
   { tool: 'lark_cli', args: ['doc', 'get', '--token', 'doc_1'] },
 ]);
 assert.equal(toolRequests.length, 2);
+assert.equal(toolInputVerifications, 3);
 assert.equal(toolRequests[1].resumeSessionId, 'session-tool');
 assert.match(toolRequests[1].prompt, /Continuation Tool Result/);
 assert.match(toolRequests[1].prompt, /Release plan/);
+assert.doesNotMatch(toolRequests[1].prompt, /Durable Continuation Step/);
+assert.doesNotMatch(toolRequests[1].prompt, /sourceFacts|taskContract/);
 assert.equal(toolRequests[1].sandbox, 'workspace-write');
 assert.deepEqual(toolRequests[1].configOverrides, [
   'approval_policy="never"',
   'sandbox_workspace_write.network_access=false',
 ]);
+
+const toolFallbackRequests: CodexExecRequest[] = [];
+let toolFallbackInvocationCount = 0;
+const toolFallbackExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  toolInvoker: {
+    async recover() { return null; },
+    async invoke() {
+      toolFallbackInvocationCount += 1;
+      return { status: 'completed' as const, result: { ok: true, message: '{"fallback":true}' } };
+    },
+  },
+  runCodexExec: async (request) => {
+    toolFallbackRequests.push(request);
+    if (toolFallbackRequests.length === 1) {
+      return {
+        text: JSON.stringify({ outcome: 'tool_request', tool: 'lark_cli', args: [] }),
+        sessionId: 'session-tool-fallback',
+      };
+    }
+    if (request.resumeSessionId) throw new Error('session not found');
+    return {
+      text: JSON.stringify({ outcome: 'completed', final_message: 'Recovered context.', artifacts: [] }),
+      sessionId: 'session-tool-fresh',
+    };
+  },
+});
+const toolFallbackResult = await toolFallbackExecutor.execute(
+  createClaim({ requiredTools: ['lark_cli'] }),
+  signal,
+);
+assert.equal(toolFallbackResult.outcome.outcome, 'completed');
+assert.equal(toolFallbackInvocationCount, 1);
+assert.deepEqual(toolFallbackRequests.map((request) => request.resumeSessionId), [
+  'session-background',
+  'session-tool-fallback',
+  null,
+]);
+assert.match(toolFallbackRequests[1].prompt, /Continuation Tool Result/);
+assert.doesNotMatch(toolFallbackRequests[1].prompt, /Durable Continuation Step/);
+assert.match(toolFallbackRequests[2].prompt, /Durable Continuation Step/);
+assert.match(toolFallbackRequests[2].prompt, /sourceFacts/);
+assert.match(toolFallbackRequests[2].prompt, /taskContract/);
+assert.match(toolFallbackRequests[2].prompt, /Continuation Tool Result/);
 
 const undeclaredExecutor = createContinuationCodexExecutor({
   artifactStore,
@@ -819,8 +1139,8 @@ assert.equal(recoveredResult.outcome.outcome, 'completed');
 assert.equal(recoveryRequests.length, 1);
 assert.match(recoveryRequests[0].prompt, /Continuation Tool Result/);
 assert.match(recoveryRequests[0].prompt, /recovered/);
-assert.match(recoveryRequests[0].prompt, /Durable Continuation Step/);
-assert.match(recoveryRequests[0].prompt, /Produce a verified result/);
+assert.doesNotMatch(recoveryRequests[0].prompt, /Durable Continuation Step/);
+assert.doesNotMatch(recoveryRequests[0].prompt, /Produce a verified result/);
 
 let unknownRecoveryCodexCalls = 0;
 const unknownRecoveryExecutor = createContinuationCodexExecutor({

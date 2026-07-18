@@ -44,7 +44,12 @@ assert.deepEqual(partialOutcomeFromCheckpoint({
 assert.deepEqual(CONTINUATION_LIMITS, {
   titleChars: 200,
   objectiveBytes: 16 * 1024,
+  deliverableCount: 32,
   acceptanceCriteriaCount: 32,
+  verificationRequirementCount: 32,
+  inputFileCount: 32,
+  inputBytesPerFile: 25 * 1024 * 1024,
+  managedInputBytesPerJob: 100 * 1024 * 1024,
   contextSnapshotBytes: 64 * 1024,
   checkpointBytes: 64 * 1024,
   toolResultBytes: 64 * 1024,
@@ -52,6 +57,8 @@ assert.deepEqual(CONTINUATION_LIMITS, {
   artifactCount: 20,
   requestedPathCount: 32,
   managedArtifactBytesPerJob: 100 * 1024 * 1024,
+  managedArtifactEntriesPerJob: 256,
+  managedArtifactDirectoryDepth: 8,
 });
 
 console.log('continuation domain smoke: PASS');

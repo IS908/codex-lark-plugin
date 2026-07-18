@@ -25,7 +25,7 @@ parent-process bridge for actions that must run safely even when the child
 | Add reaction | `react` | not supported | MCP-only |
 | Download attachment | `download_attachment` | not supported | MCP-only |
 | Doc comment reply/create | `reply_doc_comment`, `create_doc_comment` | ordinary exec text for current doc-comment reply only | no; structured doc-comment mutations remain MCP-only |
-| Persistent continuation | not exposed | `create_continuation_job` when the current user text has explicit async intent | parent validates a bounded execution brief, derives identity/route/session from the trusted event, and commits it through `ContinuationService`; ordinary/heavy turns do not see or receive permission for this action; `required_tools` contains only exact configured host CLI names, never standard Codex tools, and a running task may request one such tool per step while current local policy still authorizes it |
+| Persistent continuation | not exposed | `create_continuation_job` when the current user text has explicit async intent | parent derives immutable redacted source facts and managed input copies from the trusted event, validates model-authored deliverable/criterion/verification IDs, and commits both records through `ContinuationService`; ordinary/heavy turns do not see or receive permission for this action; `required_tools` contains only exact configured host CLI names, never standard Codex tools, and a running task may request one such tool per step while current local policy still authorizes it |
 
 ## Boundary Rules
 
@@ -67,6 +67,12 @@ parent-process bridge for actions that must run safely even when the child
   `required_tools`, configured tool policy, persisted creator identity, and the
   durable no-blind-replay ledger must all accept the call. Terminal delivery
   remains parent-owned.
+- Managed source files are logically immutable, read-only sandbox inputs,
+  checksum-validated before every claim; processes running under the same OS uid
+  are trusted and can bypass mode bits, so this is not an OS-adversary-proof
+  guarantee. A failed integrity gate creates no lease or attempt and emits one
+  idempotent terminal outbox event. Retry physically copies those inputs into the
+  new Job rather than sharing paths or hard links.
 - `required_tools` is intentionally host-bridge-only. Standard Codex tools such
   as `exec_command` and `apply_patch` execute inside the continuation sandbox and
   are not declarations. Unknown host-tool names are rejected before Job

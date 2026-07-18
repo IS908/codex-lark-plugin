@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type {
   ContinuationClaim,
   ContinuationDeliveryClaim,
@@ -14,6 +17,9 @@ import type {
   ContinuationDelivery,
 } from '../src/ports/continuation.js';
 import { ContinuationWorker } from '../src/continuation/worker.js';
+import { ContinuationInputStore } from '../src/continuation/input-store.js';
+import { ContinuationService } from '../src/continuation/service.js';
+import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
 
 function createJob(suffix: string): ContinuationJob {
   return {
@@ -431,4 +437,98 @@ assert.ok(auditEvents.includes('continuation.execute.start:ok'));
 assert.ok(auditDetails.some((detail) =>
   /continuation\.execute\.start:profile=bounded network=none external_side_effects=denied/.test(detail)));
 assert.ok(auditEvents.includes('continuation.deliver:ok'));
+
+// The real pre-claim integrity gate creates terminal delivery without invoking Codex.
+const integrityRoot = await mkdtemp(path.join(tmpdir(), 'continuation-worker-integrity-'));
+const integrityInputsDir = path.join(integrityRoot, 'inputs');
+const integrityRepository = await SqliteContinuationRepository.open({
+  databasePath: path.join(integrityRoot, 'jobs.sqlite'),
+  artifactsDir: path.join(integrityRoot, 'artifacts'),
+  inputsDir: integrityInputsDir,
+  jitter: () => 0,
+});
+const integrityClock = new FakeClock();
+const integrityService = new ContinuationService({
+  repository: integrityRepository,
+  allowedWorkingRoot: integrityRoot,
+  filesystemMode: 'workspace-write',
+  maxAttempts: 5,
+  maxRetries: 3,
+  maxTotalMinutes: 30,
+  timeoutMs: 60_000,
+  clock: integrityClock,
+});
+const integritySource = path.join(integrityRoot, 'source.txt');
+await writeFile(integritySource, 'worker integrity input', 'utf8');
+const integrityJob = (await integrityService.createFromMessage({
+  title: 'Integrity worker task',
+  objective: 'Do not execute after input tampering.',
+  deliverables: [{ id: 'result', description: 'A result.', required: true }],
+  acceptance_criteria: [{
+    id: 'complete',
+    description: 'The task completes.',
+    deliverable_ids: ['result'],
+  }],
+  verification_requirements: [{
+    id: 'evidence',
+    description: 'Reference completion evidence.',
+    kind: 'evidence_reference',
+  }],
+  context_snapshot: {
+    summary: '',
+    completed_steps: [],
+    remaining_steps: ['complete'],
+    constraints: [],
+    decisions: [],
+    references: [],
+  },
+  required_tools: [],
+}, {
+  messageId: 'om_worker_integrity',
+  chatId: 'oc_worker_integrity',
+  chatType: 'p2p',
+  senderId: 'ou_creator',
+  text: 'Run in the background.',
+  messageType: 'text',
+  rawContent: '{"text":"Run in the background."}',
+}, undefined, undefined, [{
+  sourcePath: integritySource,
+  fileName: 'source.txt',
+  kind: 'message_attachment',
+}])).job;
+const integrityStore = new ContinuationInputStore(integrityInputsDir);
+const integrityManagedPath = integrityStore.resolve(
+  integrityJob.jobId,
+  integrityJob.sourceFacts.inputs[0].relativePath,
+);
+await chmod(integrityManagedPath, 0o600);
+await writeFile(integrityManagedPath, 'tampered', 'utf8');
+await chmod(integrityManagedPath, 0o400);
+let integrityExecutionCalls = 0;
+let integrityDeliveryCalls = 0;
+const integrityWorker = new ContinuationWorker({
+  repository: integrityRepository,
+  executor: {
+    async execute() {
+      integrityExecutionCalls += 1;
+      return completedResult('must not run');
+    },
+  },
+  delivery: {
+    async deliver(claim) {
+      integrityDeliveryCalls += 1;
+      assert.equal(claim.kind, 'terminal');
+      assert.doesNotMatch(claim.payload, /source\.txt|worker-integrity/i);
+      return { status: 'delivered', messageId: 'om_integrity_terminal' };
+    },
+  },
+  clock: integrityClock,
+  maxConcurrency: 1,
+});
+await integrityWorker.tick();
+await waitFor(() => integrityDeliveryCalls === 1, 'integrity terminal delivery');
+assert.equal(integrityExecutionCalls, 0);
+assert.equal((await integrityRepository.get(integrityJob.jobId))?.attemptCount, 0);
+await integrityWorker.stop();
+integrityRepository.close();
 console.log('continuation worker smoke: PASS');

@@ -1,14 +1,22 @@
-import { createHash } from 'node:crypto';
 import type {
+  AsyncTaskContract,
+  AsyncTaskFactSnapshot,
+  AsyncTaskSourceInput,
   ContinuationCreateRequest,
   ContinuationDeliveryRoute,
   ContinuationFilesystemMode,
   ContinuationJob,
+  ContinuationPermissionEnvelope,
   ContinuationStatus,
 } from '../domain/continuation.js';
 import { CONTINUATION_LIMITS, isContinuationTerminal } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
+import {
+  continuationCreateIdempotencyKey,
+  continuationJobId,
+  continuationRetryJobId,
+} from './idempotency.js';
 import { redactContinuationText } from './redaction.js';
 import {
   resolveContinuationRequestedPaths,
@@ -31,7 +39,13 @@ export interface ContinuationServiceOptions {
 export interface ContinuationActionInput {
   title: string;
   objective: string;
-  acceptance_criteria: string[];
+  deliverables: Array<{ id: string; description: string; required: boolean }>;
+  acceptance_criteria: Array<{ id: string; description: string; deliverable_ids: string[] }>;
+  verification_requirements: Array<{
+    id: string;
+    description: string;
+    kind: 'artifact_exists' | 'artifact_sha256' | 'evidence_reference';
+  }>;
   context_snapshot: {
     summary: string;
     completed_steps: string[];
@@ -46,11 +60,20 @@ export interface ContinuationActionInput {
 }
 
 export interface ContinuationTaskService {
+  findExistingFromMessage(message: LarkMessage): Promise<ContinuationJob | null>;
+  preflightFromMessage(
+    action: ContinuationActionInput,
+    message: LarkMessage,
+    parentSessionId?: string | null,
+    selectedModel?: string | null,
+    sourceInputCount?: number,
+  ): Promise<void>;
   createFromMessage(
     action: ContinuationActionInput,
     message: LarkMessage,
     parentSessionId?: string | null,
     selectedModel?: string | null,
+    sourceInputs?: AsyncTaskSourceInput[],
   ): Promise<{ job: ContinuationJob; created: boolean }>;
   listForActor(
     actorOpenId: string,
@@ -108,29 +131,70 @@ export class ContinuationServiceError extends Error {
 export class ContinuationService implements ContinuationTaskService {
   constructor(private readonly options: ContinuationServiceOptions) {}
 
+  async findExistingFromMessage(message: LarkMessage): Promise<ContinuationJob | null> {
+    assertEligibleSource(message);
+    const jobId = continuationJobId(continuationCreateIdempotencyKey(message.messageId));
+    const existing = await this.options.repository.get(jobId);
+    if (!existing) return null;
+    if (existing.deletedAt) {
+      if (existing.creatorOpenId !== message.senderId) {
+        throw new Error('Continuation deterministic Job identity conflicts with the authenticated source message.');
+      }
+      throw new ContinuationServiceError(
+        'invalid_state',
+        'This background task was already created, but its retained data has been deleted.',
+      );
+    }
+    if (existing.creatorOpenId !== message.senderId) {
+      throw new Error('Continuation deterministic Job identity conflicts with the authenticated source message.');
+    }
+    if (existing.errorCode === 'continuation_persisted_state_invalid') {
+      throw new ContinuationServiceError(
+        'invalid_state',
+        'This background task cannot be reused because its stored state failed integrity validation.',
+      );
+    }
+    if (existing.sourceMessageId !== message.messageId || existing.retryOfJobId) {
+      throw new Error('Continuation deterministic Job identity conflicts with the authenticated source message.');
+    }
+    return existing;
+  }
+
+  async preflightFromMessage(
+    action: ContinuationActionInput,
+    message: LarkMessage,
+    _parentSessionId?: string | null,
+    selectedModel?: string | null,
+    sourceInputCount = 0,
+  ): Promise<void> {
+    assertEligibleSource(message);
+    await this.prepareCreation(action, message, selectedModel, sourceInputCount);
+  }
+
   async createFromMessage(
     action: ContinuationActionInput,
     message: LarkMessage,
     parentSessionId?: string | null,
     selectedModel?: string | null,
+    sourceInputs: AsyncTaskSourceInput[] = [],
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     assertEligibleSource(message);
     const now = this.options.clock.now();
-    const resolvedWorkingDirectory = await resolveContinuationWorkingDirectory(
-      this.options.allowedWorkingRoot,
-      action.working_directory ?? '.',
-    );
-    const route = deriveRoute(message);
-    const brief = sanitizeBrief(action);
-    const profile = this.options.canUseTrustedPersonalWorkspace?.(message.senderId)
-      ? 'trusted_personal_workspace'
-      : 'bounded';
-    const requestedPaths = await this.resolveRequestedPaths(
+    const {
+      resolvedWorkingDirectory,
+      route,
+      brief,
+      permissions,
+      sourceFacts,
+      taskContract,
+    } = await this.prepareCreation(
       action,
-      resolvedWorkingDirectory.workingDirectory,
+      message,
+      selectedModel,
+      sourceInputs.length,
     );
     const request: ContinuationCreateRequest = {
-      idempotencyKey: continuationIdempotencyKey(message.messageId),
+      idempotencyKey: continuationCreateIdempotencyKey(message.messageId),
       creatorOpenId: message.senderId,
       route,
       sourceMessageId: message.messageId,
@@ -139,20 +203,12 @@ export class ContinuationService implements ContinuationTaskService {
       objective: brief.objective,
       acceptanceCriteria: brief.acceptanceCriteria,
       contextSnapshot: brief.contextSnapshot,
+      sourceFacts,
+      taskContract,
+      sourceInputs,
       requiredTools: brief.requiredTools,
       workingDirectory: resolvedWorkingDirectory.workingDirectory,
-      permissions: {
-        profile,
-        filesystem: {
-          root: resolvedWorkingDirectory.root,
-          mode: this.options.filesystemMode,
-          requestedPaths,
-        },
-        hostTools: brief.requiredTools,
-        network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',
-        externalSideEffects: profile === 'trusted_personal_workspace' ? 'allowed' : 'denied',
-        approval: { mode: 'never' },
-      },
+      permissions,
       ...((selectedModel ?? this.options.defaultModel)
         ? { model: (selectedModel ?? this.options.defaultModel)! }
         : {}),
@@ -166,6 +222,101 @@ export class ContinuationService implements ContinuationTaskService {
       ).toISOString(),
     };
     return this.options.repository.create(request);
+  }
+
+  private async prepareCreation(
+    action: ContinuationActionInput,
+    message: LarkMessage,
+    selectedModel: string | null | undefined,
+    sourceInputCount: number,
+  ) {
+    if (
+      !Number.isInteger(sourceInputCount)
+      || sourceInputCount < 0
+      || sourceInputCount > CONTINUATION_LIMITS.inputFileCount
+    ) {
+      throw new Error('Continuation input file count exceeds the configured limit.');
+    }
+    const resolvedWorkingDirectory = await resolveContinuationWorkingDirectory(
+      this.options.allowedWorkingRoot,
+      action.working_directory ?? '.',
+    );
+    const route = deriveRoute(message);
+    const brief = sanitizeBrief(action);
+    if (brief.title.length > CONTINUATION_LIMITS.titleChars) {
+      throw new Error(`Continuation title exceeds ${CONTINUATION_LIMITS.titleChars} characters.`);
+    }
+    assertUtf8ByteLimit(
+      'Continuation objective',
+      brief.objective,
+      CONTINUATION_LIMITS.objectiveBytes,
+    );
+    assertJsonByteLimit(
+      'Continuation acceptance criteria',
+      brief.acceptanceCriteria,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    assertJsonByteLimit(
+      'Continuation context snapshot',
+      brief.contextSnapshot,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    assertJsonByteLimit(
+      'Continuation required tools',
+      brief.requiredTools,
+      CONTINUATION_LIMITS.objectiveBytes,
+    );
+    const taskContract = taskContractFromBrief(brief);
+    assertJsonByteLimit(
+      'Continuation task contract',
+      taskContract,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    const profile = this.options.canUseTrustedPersonalWorkspace?.(message.senderId)
+      ? 'trusted_personal_workspace'
+      : 'bounded';
+    const requestedPaths = await this.resolveRequestedPaths(
+      action,
+      resolvedWorkingDirectory.workingDirectory,
+    );
+    const permissions: ContinuationPermissionEnvelope = {
+      profile,
+      filesystem: {
+        root: resolvedWorkingDirectory.root,
+        mode: this.options.filesystemMode,
+        requestedPaths,
+      },
+      hostTools: brief.requiredTools,
+      network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',
+      externalSideEffects: profile === 'trusted_personal_workspace' ? 'allowed' : 'denied',
+      approval: { mode: 'never' },
+    };
+    assertJsonByteLimit(
+      'Continuation permission envelope',
+      permissions,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    assertJsonByteLimit(
+      'Continuation delivery route',
+      route,
+      CONTINUATION_LIMITS.contextSnapshotBytes,
+    );
+    const sourceFacts = buildBoundedSourceFacts({
+      message,
+      route,
+      workingDirectory: resolvedWorkingDirectory.workingDirectory,
+      model: selectedModel ?? this.options.defaultModel ?? null,
+      permissions,
+      sourceInputCount,
+    });
+    return {
+      resolvedWorkingDirectory,
+      route,
+      brief,
+      permissions,
+      sourceFacts,
+      taskContract,
+    };
   }
 
   private async resolveRequestedPaths(
@@ -226,7 +377,24 @@ export class ContinuationService implements ContinuationTaskService {
     ownerOpenId: string | null | undefined,
     requestId: string,
   ): Promise<ContinuationJob> {
+    const existingRetry = await this.options.repository.get(
+      continuationRetryJobId(jobId, requestId),
+    );
+    if (existingRetry && !existingRetry.deletedAt) {
+      if (existingRetry.retryOfJobId !== jobId) throw notAccessibleError();
+      if (
+        existingRetry.creatorOpenId !== actorOpenId
+        && !isOwner(actorOpenId, ownerOpenId)
+      ) throw notAccessibleError();
+      return existingRetry;
+    }
     const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+    if (job.errorCode === 'continuation_persisted_state_invalid') {
+      throw new ContinuationServiceError(
+        'invalid_state',
+        'This task cannot be retried because its stored state failed integrity validation.',
+      );
+    }
     if (job.deliveryStatus === 'delivery_unknown') {
       throw new ContinuationServiceError(
         'delivery_unknown',
@@ -302,6 +470,8 @@ export class ContinuationService implements ContinuationTaskService {
 }
 
 export class UnavailableContinuationService implements ContinuationTaskService {
+  async findExistingFromMessage(): Promise<never> { throw unavailableError(); }
+  async preflightFromMessage(): Promise<never> { throw unavailableError(); }
   async createFromMessage(): Promise<never> { throw unavailableError(); }
   async listForActor(): Promise<never> { throw unavailableError(); }
   async getForActor(): Promise<never> { throw unavailableError(); }
@@ -366,12 +536,6 @@ function deriveRoute(message: LarkMessage): ContinuationDeliveryRoute {
   };
 }
 
-function continuationIdempotencyKey(sourceMessageId: string): string {
-  return `create-continuation:${createHash('sha256')
-    .update(`${sourceMessageId}\0create_continuation_job`)
-    .digest('hex')}`;
-}
-
 function sanitizeBrief(action: ContinuationActionInput) {
   const title = redactContinuationText(action.title).replace(/\s+/g, ' ').trim();
   const objective = redactContinuationText(action.objective);
@@ -382,7 +546,21 @@ function sanitizeBrief(action: ContinuationActionInput) {
   return {
     title,
     objective,
-    acceptanceCriteria: action.acceptance_criteria.map(redactContinuationText),
+    deliverables: action.deliverables.map((deliverable) => ({
+      ...deliverable,
+      description: redactContinuationText(deliverable.description),
+    })),
+    acceptanceCriteria: action.acceptance_criteria.map((criterion) =>
+      redactContinuationText(criterion.description)),
+    structuredAcceptanceCriteria: action.acceptance_criteria.map((criterion) => ({
+      id: criterion.id,
+      description: redactContinuationText(criterion.description),
+      deliverableIds: [...criterion.deliverable_ids],
+    })),
+    verificationRequirements: action.verification_requirements.map((requirement) => ({
+      ...requirement,
+      description: redactContinuationText(requirement.description),
+    })),
     contextSnapshot: {
       summary: redactContinuationText(action.context_snapshot.summary),
       completedSteps: action.context_snapshot.completed_steps.map(redactContinuationText),
@@ -393,4 +571,159 @@ function sanitizeBrief(action: ContinuationActionInput) {
     },
     requiredTools: [...new Set(action.required_tools.map(redactContinuationText))],
   };
+}
+
+function taskContractFromBrief(brief: ReturnType<typeof sanitizeBrief>): AsyncTaskContract {
+  return {
+    schemaVersion: 1,
+    title: brief.title,
+    objective: brief.objective,
+    deliverables: brief.deliverables,
+    acceptanceCriteria: brief.structuredAcceptanceCriteria,
+    verificationRequirements: brief.verificationRequirements,
+    initialContext: brief.contextSnapshot,
+  };
+}
+
+type SourceFactTextField = 'quotedMessageText' | 'sourceContextText' | 'originalUserText';
+
+function buildBoundedSourceFacts(options: {
+  message: LarkMessage;
+  route: ContinuationDeliveryRoute;
+  workingDirectory: string;
+  model: string | null;
+  permissions: ContinuationPermissionEnvelope;
+  sourceInputCount: number;
+}): AsyncTaskFactSnapshot {
+  const { message } = options;
+  const facts: AsyncTaskFactSnapshot = {
+    schemaVersion: 1,
+    provenance: 'captured',
+    originalUserText: boundedFactText(message.currentUserText ?? message.text),
+    sourceContextText: message.sourceContextText
+      ? boundedFactText(message.sourceContextText)
+      : null,
+    quotedMessageText: message.parentContent
+      ? boundedFactText(message.parentContent)
+      : null,
+    creatorOpenId: message.senderId,
+    chatId: message.chatId,
+    chatType: message.chatType,
+    route: options.route,
+    sourceMessageId: message.messageId,
+    ...(message.threadId ? { sourceThreadId: message.threadId } : {}),
+    sourceMessageType: message.messageType || null,
+    sourceTimestamp: message.timestampMs === undefined
+      ? null
+      : new Date(message.timestampMs).toISOString(),
+    inputs: [],
+    workingDirectory: options.workingDirectory,
+    model: options.model,
+    permissions: options.permissions,
+  };
+  const projectedInputs = projectedManagedInputs(options.sourceInputCount);
+  const projectedBytes = () => jsonByteLength({ ...facts, inputs: projectedInputs });
+  for (const field of [
+    'quotedMessageText',
+    'sourceContextText',
+    'originalUserText',
+  ] as const) {
+    if (projectedBytes() <= CONTINUATION_LIMITS.contextSnapshotBytes) break;
+    const value = facts[field];
+    if (!value) continue;
+    const minimumCharacters = field === 'originalUserText' ? 1 : 0;
+    const fitted = fitSourceFactText(facts, projectedInputs, field, value, minimumCharacters);
+    if (fitted === undefined) {
+      if (field !== 'originalUserText') {
+        facts[field] = null;
+        continue;
+      }
+      throw new Error('Continuation source facts cannot fit within the persisted byte limit.');
+    }
+    facts[field] = fitted;
+  }
+  assertJsonByteLimit(
+    'Continuation source facts',
+    { ...facts, inputs: projectedInputs },
+    CONTINUATION_LIMITS.contextSnapshotBytes,
+  );
+  return facts;
+}
+
+function fitSourceFactText(
+  facts: AsyncTaskFactSnapshot,
+  projectedInputs: AsyncTaskFactSnapshot['inputs'],
+  field: SourceFactTextField,
+  value: string,
+  minimumCharacters: number,
+): string | null | undefined {
+  let lower = minimumCharacters;
+  let upper = Math.max(minimumCharacters - 1, value.length - 1);
+  let best: string | null | undefined;
+  while (lower <= upper) {
+    const length = Math.floor((lower + upper) / 2);
+    const candidate = length === 0
+      ? null
+      : `${value.slice(0, length)}\n[truncated]`;
+    const projected = {
+      ...facts,
+      [field]: candidate,
+      inputs: projectedInputs,
+    };
+    if (
+      (candidate === null
+        || Buffer.byteLength(candidate, 'utf8') <= CONTINUATION_LIMITS.objectiveBytes)
+      && jsonByteLength(projected) <= CONTINUATION_LIMITS.contextSnapshotBytes
+    ) {
+      best = candidate;
+      lower = length + 1;
+    } else {
+      upper = length - 1;
+    }
+  }
+  return best;
+}
+
+function projectedManagedInputs(count: number): AsyncTaskFactSnapshot['inputs'] {
+  return Array.from({ length: count }, (_, index) => {
+    const id = `input_${String(index + 1).padStart(3, '0')}`;
+    const fileName = `${id}.abcdefgh`;
+    return {
+      id,
+      kind: 'message_attachment',
+      fileName,
+      relativePath: fileName,
+      sha256: 'f'.repeat(64),
+      sizeBytes: CONTINUATION_LIMITS.inputBytesPerFile,
+    };
+  });
+}
+
+function assertJsonByteLimit(field: string, value: unknown, limit: number): void {
+  const bytes = jsonByteLength(value);
+  if (bytes > limit) throw new Error(`${field} exceeds ${limit} UTF-8 JSON bytes.`);
+}
+
+function assertUtf8ByteLimit(field: string, value: string, limit: number): void {
+  if (Buffer.byteLength(value, 'utf8') > limit) {
+    throw new Error(`${field} exceeds ${limit} UTF-8 bytes.`);
+  }
+}
+
+function jsonByteLength(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
+}
+
+function boundedFactText(value: string): string {
+  const redacted = redactContinuationText(value);
+  if (Buffer.byteLength(redacted, 'utf8') <= CONTINUATION_LIMITS.objectiveBytes) return redacted;
+  const suffix = '\n[truncated]';
+  let end = Math.min(redacted.length, CONTINUATION_LIMITS.objectiveBytes - suffix.length);
+  while (
+    end > 0
+    && Buffer.byteLength(`${redacted.slice(0, end)}${suffix}`, 'utf8') > CONTINUATION_LIMITS.objectiveBytes
+  ) {
+    end -= 1;
+  }
+  return `${redacted.slice(0, end)}${suffix}`;
 }

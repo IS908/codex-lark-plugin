@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
 import type { LarkMessage } from './lark-message.js';
@@ -74,6 +75,10 @@ import type {
   UpdateJobAction,
   UpsertJobAction,
 } from './codex-exec-action-schemas.js';
+import {
+  CONTINUATION_LIMITS,
+  type AsyncTaskSourceInput,
+} from './domain/continuation.js';
 export { parseCodexExecActionEnvelope } from './codex-exec-action-schemas.js';
 export type {
   CodexExecAction,
@@ -306,19 +311,6 @@ async function executeCreateContinuation(
   context: CodexExecActionContext,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
-  if (context.continuationPermitted === false) {
-    await audit(
-      'create_continuation_job',
-      context.message.senderId,
-      { source_message_id: context.message.messageId, reason: 'not_permitted_for_turn' },
-      'denied',
-    );
-    return {
-      ok: false,
-      action: 'create_continuation_job',
-      message: 'Continuation was not permitted for this foreground turn. Complete the task now or ask the user for missing input.',
-    };
-  }
   if (!deps.continuationService) {
     await audit(
       'create_continuation_job',
@@ -333,6 +325,38 @@ async function executeCreateContinuation(
     };
   }
   try {
+    const existing = await deps.continuationService.findExistingFromMessage(context.message);
+    if (existing) {
+      await audit(
+        'create_continuation_job',
+        context.message.senderId,
+        {
+          job_id: existing.jobId,
+          source_message_id: context.message.messageId,
+          replay: true,
+        },
+        'ok',
+      );
+      return {
+        ok: true,
+        action: 'create_continuation_job',
+        message: `Background task created: ${existing.title}\nJob ID: ${existing.jobId}`,
+        continuation: { jobId: existing.jobId, title: existing.title },
+      };
+    }
+    if (context.continuationPermitted === false) {
+      await audit(
+        'create_continuation_job',
+        context.message.senderId,
+        { source_message_id: context.message.messageId, reason: 'not_permitted_for_turn' },
+        'denied',
+      );
+      return {
+        ok: false,
+        action: 'create_continuation_job',
+        message: 'Continuation was not permitted for this foreground turn. Complete the task now or ask the user for missing input.',
+      };
+    }
     const configuredHostTools = new Set(
       await listConfiguredLocalCliToolNames(deps.localCliToolsConfigPath),
     );
@@ -356,12 +380,31 @@ async function executeCreateContinuation(
         ].join(' '),
       };
     }
-    const { job } = await deps.continuationService.createFromMessage(
+    const sourceInputPlan = planContinuationSourceInputs(context.message);
+    await deps.continuationService.preflightFromMessage(
       action,
       context.message,
       context.parentSessionId,
       context.model,
+      sourceInputPlan.inputCount,
     );
+    const resolvedInputs = await resolveContinuationSourceInputs(
+      context.message,
+      deps,
+      sourceInputPlan,
+    );
+    let job;
+    try {
+      ({ job } = await deps.continuationService.createFromMessage(
+        action,
+        context.message,
+        context.parentSessionId,
+        context.model,
+        resolvedInputs.inputs,
+      ));
+    } finally {
+      await resolvedInputs.cleanup();
+    }
     await audit(
       'create_continuation_job',
       context.message.senderId,
@@ -396,6 +439,178 @@ async function executeCreateContinuation(
         : `Continuation job was not created: ${errorMessage(error)}`,
     };
   }
+}
+
+async function resolveContinuationSourceInputs(
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+  plan = planContinuationSourceInputs(message),
+): Promise<{ inputs: AsyncTaskSourceInput[]; cleanup(): Promise<void> }> {
+  const inputs: AsyncTaskSourceInput[] = [];
+  const temporaryPaths: string[] = [];
+  const {
+    imagePaths,
+    descriptors,
+    matchedImageDescriptors,
+    plannedImageFileNames,
+    descriptorFileNames,
+  } = plan;
+  let totalBytes = 0;
+  for (const imagePath of imagePaths) {
+    const sizeBytes = (await fs.stat(imagePath)).size;
+    if (sizeBytes > CONTINUATION_LIMITS.inputBytesPerFile) {
+      throw new Error('A continuation input exceeds the per-file byte limit.');
+    }
+    totalBytes += sizeBytes;
+    if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
+      throw new Error('Continuation inputs exceed the total byte limit.');
+    }
+  }
+  if (descriptors.length === 0) {
+    return {
+      inputs: imagePaths.map((imagePath, imageIndex) => ({
+        sourcePath: path.resolve(imagePath),
+        fileName: plannedImageFileNames[imageIndex],
+        kind: 'message_image',
+      })),
+      async cleanup() {},
+    };
+  }
+  for (const [imageIndex, imagePath] of imagePaths.entries()) {
+    inputs.push({
+      sourcePath: path.resolve(imagePath),
+      fileName: plannedImageFileNames[imageIndex],
+      kind: 'message_image',
+    });
+  }
+  const transport = resolveActionTransport(deps.larkTransport);
+  if (!transport?.downloadResource) {
+    throw new Error('Continuation attachment download transport is unavailable.');
+  }
+  const downloadResource = transport.downloadResource.bind(transport);
+  try {
+    for (const [index, attachment] of descriptors.entries()) {
+      if (matchedImageDescriptors.has(index)) continue;
+      const resourceType = attachment.fileType === 'image' ? 'image' : 'file';
+      const fileName = descriptorFileNames[index];
+      const downloaded = await downloadInboundResource({ downloadResource }, {
+        messageId: message.messageId,
+        fileKey: attachment.fileKey,
+        resourceType,
+        fileName: `continuation-input-${createHash('sha256')
+          .update(`${message.messageId}\0${index}`)
+          .digest('hex')
+          .slice(0, 16)}.bin`,
+        logPrefix: '[continuation-input]',
+      }, {
+        maxBytes: CONTINUATION_LIMITS.inputBytesPerFile,
+      });
+      if (!downloaded) {
+        throw new Error('One or more continuation attachments could not be downloaded.');
+      }
+      temporaryPaths.push(downloaded);
+      totalBytes += (await fs.stat(downloaded)).size;
+      if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
+        throw new Error('Continuation inputs exceed the total byte limit.');
+      }
+      inputs.push({
+        sourcePath: path.resolve(downloaded),
+        fileName,
+        kind: resourceType === 'image' ? 'message_image' : 'message_attachment',
+      });
+    }
+  } catch (error) {
+    await cleanupContinuationTemporaryInputs(temporaryPaths);
+    throw error;
+  }
+  return {
+    inputs,
+    async cleanup() {
+      await cleanupContinuationTemporaryInputs(temporaryPaths);
+    },
+  };
+}
+
+function planContinuationSourceInputs(message: LarkMessage) {
+  const imagePaths = [...new Set(
+    [message.imagePath, ...(message.imagePaths ?? [])]
+      .filter((value): value is string => Boolean(value)),
+  )];
+  const descriptors = (message.attachments ?? []).filter((attachment) => attachment.fileKey);
+  if (imagePaths.length > CONTINUATION_LIMITS.inputFileCount) {
+    throw new Error(`Continuation input file count exceeds ${CONTINUATION_LIMITS.inputFileCount}.`);
+  }
+  const downloadedImageFileKeys = message.downloadedImageFileKeys;
+  if (downloadedImageFileKeys && downloadedImageFileKeys.length !== imagePaths.length) {
+    throw new Error('Continuation downloaded image mapping is inconsistent.');
+  }
+  const matchedImageDescriptors = new Set<number>();
+  const matchedDescriptorByImageIndex = imagePaths.map((imagePath, imageIndex) => {
+    const explicitFileKey = downloadedImageFileKeys?.[imageIndex];
+    const candidateIndexes = descriptors.flatMap((attachment, index) => (
+      !matchedImageDescriptors.has(index)
+      && attachment.fileType === 'image'
+      && path.basename(imagePath).includes(`-${attachment.fileKey}-`)
+        ? [index]
+        : []
+    ));
+    const descriptorIndex = explicitFileKey === undefined
+      ? (candidateIndexes.length === 1 ? candidateIndexes[0] : -1)
+      : descriptors.findIndex((attachment, index) =>
+        !matchedImageDescriptors.has(index)
+        && attachment.fileType === 'image'
+        && attachment.fileKey === explicitFileKey);
+    if (explicitFileKey !== undefined && descriptorIndex < 0) {
+      throw new Error('Continuation downloaded image mapping is invalid.');
+    }
+    if (descriptorIndex >= 0) matchedImageDescriptors.add(descriptorIndex);
+    return descriptorIndex >= 0 ? descriptorIndex : null;
+  });
+  const descriptorFileNames = descriptors.map((attachment, index) => {
+    const resourceType = attachment.fileType === 'image' ? 'image' : 'file';
+    return safeContinuationInputName(
+      attachment.fileName || `${resourceType}-${index + 1}`,
+    );
+  });
+  const plannedImageFileNames = imagePaths.map((imagePath, imageIndex) => {
+    const descriptorIndex = matchedDescriptorByImageIndex[imageIndex];
+    return descriptorIndex === null
+      ? safeContinuationInputName(path.basename(imagePath))
+      : descriptorFileNames[descriptorIndex];
+  });
+  const inputCount = imagePaths.length + descriptors.length - matchedImageDescriptors.size;
+  if (inputCount > CONTINUATION_LIMITS.inputFileCount) {
+    throw new Error(`Continuation input file count exceeds ${CONTINUATION_LIMITS.inputFileCount}.`);
+  }
+  return {
+    imagePaths,
+    descriptors,
+    matchedImageDescriptors,
+    plannedImageFileNames,
+    descriptorFileNames,
+    inputCount,
+  };
+}
+
+async function cleanupContinuationTemporaryInputs(temporaryPaths: readonly string[]): Promise<void> {
+  await Promise.allSettled(temporaryPaths.map((filePath) => fs.rm(filePath, { force: true })));
+}
+
+function safeContinuationInputName(value: string): string {
+  if (
+    !value
+    || value.length > 120
+    || value === '.'
+    || value === '..'
+    || value === '.manifest.json'
+    || value.includes('/')
+    || value.includes('\\')
+    || value.includes('\0')
+    || path.basename(value) !== value
+  ) {
+    throw new Error('Continuation attachment file name is invalid.');
+  }
+  return value;
 }
 
 async function executeListJobs(

@@ -1,6 +1,16 @@
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CONTINUATION_LIMITS } from '../domain/continuation.js';
+import {
+  currentProcessStartedAt,
+  isProcessAlive,
+  isProcessInstanceAlive,
+} from '../process-identity.js';
+
+const REDACTION_QUARANTINE_PREFIX = '.redacting-';
+const ACTIVE_REDACTION_QUARANTINES = new Set<string>();
+const LEGACY_QUARANTINE_GRACE_MS = 30_000;
 
 export class ContinuationArtifactStore {
   readonly rootDir: string;
@@ -8,6 +18,8 @@ export class ContinuationArtifactStore {
   constructor(
     rootDir: string,
     private readonly maxBytes = CONTINUATION_LIMITS.managedArtifactBytesPerJob,
+    private readonly maxEntries = CONTINUATION_LIMITS.managedArtifactEntriesPerJob,
+    private readonly maxDepth = CONTINUATION_LIMITS.managedArtifactDirectoryDepth,
   ) {
     this.rootDir = path.resolve(rootDir);
   }
@@ -43,35 +55,53 @@ export class ContinuationArtifactStore {
     const directory = this.jobDirectory(jobId);
     await assertRealDirectory(directory);
     let totalBytes = 0;
+    let totalEntries = 0;
 
-    const visit = async (current: string): Promise<void> => {
-      let entries;
+    const visit = async (current: string, depth: number): Promise<void> => {
+      if (depth > this.maxDepth) {
+        throw new Error(
+          `Continuation artifact directory depth limit exceeded for ${jobId}: ${depth} > ${this.maxDepth}.`,
+        );
+      }
+      let handle;
       try {
-        entries = await fs.readdir(current, { withFileTypes: true });
+        handle = await fs.opendir(current);
       } catch (err: any) {
         if (err?.code === 'ENOENT') return;
         throw err;
       }
-      for (const entry of entries) {
+      for await (const entry of handle) {
+        totalEntries += 1;
+        if (totalEntries > this.maxEntries) {
+          throw new Error(
+            `Continuation artifact entry limit exceeded for ${jobId}: ${totalEntries} > ${this.maxEntries}.`,
+          );
+        }
         const entryPath = path.join(current, entry.name);
-        if (entry.isSymbolicLink()) {
+        const metadata = await fs.lstat(entryPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return null;
+          throw error;
+        });
+        if (!metadata) continue;
+        if (metadata.isSymbolicLink()) {
           throw new Error(`Continuation artifacts cannot contain symbolic links: ${entry.name}`);
         }
-        if (entry.isDirectory()) {
-          await visit(entryPath);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        totalBytes += (await fs.stat(entryPath)).size;
-        if (totalBytes > this.maxBytes) {
-          throw new Error(
-            `Continuation artifact byte limit exceeded for ${jobId}: ${totalBytes} > ${this.maxBytes}.`,
-          );
+        if (metadata.isDirectory()) {
+          await visit(entryPath, depth + 1);
+        } else if (metadata.isFile()) {
+          totalBytes += metadata.size;
+          if (totalBytes > this.maxBytes) {
+            throw new Error(
+              `Continuation artifact byte limit exceeded for ${jobId}: ${totalBytes} > ${this.maxBytes}.`,
+            );
+          }
+        } else {
+          throw new Error(`Continuation artifacts must be regular files or directories: ${entry.name}`);
         }
       }
     };
 
-    await visit(directory);
+    await visit(directory, 0);
   }
 
   async canonicalizeReferences(
@@ -107,6 +137,112 @@ export class ContinuationArtifactStore {
     await fs.rm(this.jobDirectory(jobId), { recursive: true, force: true });
   }
 
+  async quarantine(jobId: string): Promise<string | null> {
+    await this.ensureRoot();
+    const source = this.jobDirectory(jobId);
+    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes(8).toString('hex')}`;
+    const destination = this.quarantineDirectory(jobId, token);
+    let sourceMetadata;
+    try {
+      sourceMetadata = await fs.lstat(source);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      throw error;
+    }
+    if (sourceMetadata.isSymbolicLink() || !sourceMetadata.isDirectory()) {
+      throw new Error('Continuation artifact quarantine source is not a real directory.');
+    }
+    const quarantineName = path.basename(destination);
+    ACTIVE_REDACTION_QUARANTINES.add(quarantineName);
+    try {
+      await fs.rename(source, destination);
+      const moved = await fs.lstat(destination);
+      if (moved.dev !== sourceMetadata.dev || moved.ino !== sourceMetadata.ino) {
+        await fs.rename(destination, source).catch(() => {});
+        throw new Error('Continuation artifact quarantine identity changed during rename.');
+      }
+      return token;
+    } catch (error) {
+      ACTIVE_REDACTION_QUARANTINES.delete(quarantineName);
+      throw error;
+    }
+  }
+
+  async restoreQuarantine(jobId: string, token: string): Promise<void> {
+    const source = this.quarantineDirectory(jobId, token);
+    try {
+      await fs.rename(source, this.jobDirectory(jobId));
+    } finally {
+      ACTIVE_REDACTION_QUARANTINES.delete(path.basename(source));
+    }
+  }
+
+  async discardQuarantine(jobId: string, token: string): Promise<void> {
+    const source = this.quarantineDirectory(jobId, token);
+    try {
+      await removeArtifactTree(source);
+    } finally {
+      ACTIVE_REDACTION_QUARANTINES.delete(path.basename(source));
+    }
+  }
+
+  async cleanupOrphans(
+    jobIds: ReadonlySet<string>,
+    nowMs = Date.now(),
+    isJobKnown?: (jobId: string) => boolean | Promise<boolean>,
+    withJobLock?: <T>(jobId: string, operation: () => Promise<T>) => Promise<T>,
+  ): Promise<void> {
+    await this.ensureRoot();
+    const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      const quarantine = parseRedactionQuarantine(entry.name);
+      if (!quarantine) continue;
+      const candidate = path.join(this.rootDir, entry.name);
+      const reconcile = async (): Promise<void> => {
+        const shouldRestore = isJobKnown
+          ? await isJobKnown(quarantine.jobId)
+          : jobIds.has(quarantine.jobId);
+        if (!shouldRestore) {
+          await removeArtifactTree(candidate);
+          return;
+        }
+        const candidateMetadata = await fs.lstat(candidate).catch((error) => {
+          if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+          throw error;
+        });
+        if (!candidateMetadata) return;
+        const stateAgeMs = nowMs - (quarantine.createdAt ?? candidateMetadata.mtimeMs);
+        const ownerIsActive = quarantine.ownerStartedAt === null
+          ? isProcessAlive(quarantine.ownerPid)
+            && stateAgeMs < LEGACY_QUARANTINE_GRACE_MS
+          : await isProcessInstanceAlive(
+            quarantine.ownerPid,
+            quarantine.ownerStartedAt,
+            stateAgeMs,
+            LEGACY_QUARANTINE_GRACE_MS,
+          );
+        if (
+          ownerIsActive
+          && (quarantine.ownerPid !== process.pid
+            || ACTIVE_REDACTION_QUARANTINES.has(entry.name))
+        ) return;
+        try {
+          await fs.rename(candidate, this.jobDirectory(quarantine.jobId));
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException)?.code;
+          if (
+            !['EEXIST', 'ENOENT', 'EACCES'].includes(code ?? '')
+            || await pathExists(candidate)
+            || !(await isRestoredDirectory(this.jobDirectory(quarantine.jobId)))
+          ) throw error;
+        }
+      };
+      if (withJobLock) await withJobLock(quarantine.jobId, reconcile);
+      else await reconcile();
+    }
+  }
+
   async purge(jobIds: readonly string[]): Promise<void> {
     for (const jobId of jobIds) await this.remove(jobId);
   }
@@ -121,11 +257,65 @@ export class ContinuationArtifactStore {
     }
     return resolved;
   }
+
+  private quarantineDirectory(jobId: string, token: string): string {
+    this.jobDirectory(jobId);
+    if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
+      throw new Error('Continuation artifact quarantine token is invalid.');
+    }
+    return path.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
+  }
+}
+
+function parseRedactionQuarantine(
+  name: string,
+): { jobId: string; ownerPid: number; ownerStartedAt: number | null; createdAt: number | null } | null {
+  if (!name.startsWith(REDACTION_QUARANTINE_PREFIX)) return null;
+  const match = /^\.redacting-(.+)-([1-9]\d*)(?:\.([1-9]\d*))?(?:\.([1-9]\d*))?-[a-f0-9]{16}$/.exec(name);
+  if (!match || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(match[1])) return null;
+  const ownerPid = Number(match[2]);
+  if (!Number.isSafeInteger(ownerPid)) return null;
+  const ownerStartedAt = match[3] === undefined ? null : Number(match[3]);
+  if (ownerStartedAt !== null && !Number.isSafeInteger(ownerStartedAt)) return null;
+  const createdAt = match[4] === undefined ? null : Number(match[4]);
+  if (createdAt !== null && !Number.isSafeInteger(createdAt)) return null;
+  return { jobId: match[1], ownerPid, ownerStartedAt, createdAt };
+}
+
+async function removeArtifactTree(directory: string): Promise<void> {
+  const metadata = await fs.lstat(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!metadata) return;
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error(`Refusing to remove non-directory continuation artifact tree: ${directory}`);
+  }
+  await fs.rm(directory, { recursive: true });
 }
 
 async function assertRealDirectory(directory: string): Promise<void> {
   const metadata = await fs.lstat(directory);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Continuation artifact path is not a real directory: ${directory}`);
+  }
+}
+
+async function isRestoredDirectory(directory: string): Promise<boolean> {
+  try {
+    const metadata = await fs.lstat(directory);
+    return metadata.isDirectory() && !metadata.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.lstat(target);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    throw error;
   }
 }

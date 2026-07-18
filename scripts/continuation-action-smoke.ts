@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { LarkMessage } from '../src/lark-message.js';
 
 process.env.LARK_APP_ID ||= 'cli_test_app_id';
@@ -22,7 +23,18 @@ function action(overrides: Record<string, unknown> = {}) {
     type: 'create_continuation_job',
     title: 'Finish report',
     objective: 'Finish the report and verify the result.',
-    acceptance_criteria: ['report exists', 'checks pass'],
+    deliverables: [
+      { id: 'report', description: 'A completed report.', required: true },
+    ],
+    acceptance_criteria: [
+      { id: 'report_exists', description: 'The report exists.', deliverable_ids: ['report'] },
+      { id: 'checks_pass', description: 'All report checks pass.', deliverable_ids: ['report'] },
+    ],
+    verification_requirements: [
+      { id: 'report_file', description: 'Verify that the report file exists.', kind: 'artifact_exists' },
+      { id: 'report_hash', description: 'Record the report checksum.', kind: 'artifact_sha256' },
+      { id: 'report_evidence', description: 'Reference the report validation evidence.', kind: 'evidence_reference' },
+    ],
     context_snapshot: {
       summary: 'Inputs were inspected.',
       completed_steps: ['inspect inputs'],
@@ -43,8 +55,83 @@ function parse(actions: unknown[]) {
 
 assert.equal(parse([action()]).ok, true);
 assert.equal(parse([action({ requested_paths: ['/tmp'] })]).ok, true);
+assert.equal(parse([action({ objective: 'x'.repeat(16 * 1024 - 1) })]).ok, true);
 assert.equal(parse([action({ capability_profile: 'trusted_personal_workspace' })]).ok, false);
 assert.equal(parse([action({ required_tools: ['local filesystem'] })]).ok, false);
+for (const invalidContract of [
+  { deliverables: [{ id: '', description: 'Missing ID.', required: true }] },
+  {
+    deliverables: [
+      { id: 'report', description: 'First.', required: true },
+      { id: 'report', description: 'Duplicate.', required: false },
+    ],
+  },
+  {
+    acceptance_criteria: [
+      { id: 'unknown_ref', description: 'Unknown deliverable.', deliverable_ids: ['missing'] },
+    ],
+  },
+  {
+    deliverables: [{ id: 'report', description: 'Optional report.', required: false }],
+  },
+  {
+    acceptance_criteria: [
+      { id: 'unbound', description: 'Criterion without a deliverable.', deliverable_ids: [] },
+    ],
+  },
+  { objective: '   ' },
+  {
+    deliverables: [{ id: 'report', description: '\t\n', required: true }],
+  },
+  { objective: '界'.repeat(6_000) },
+  {
+    requested_paths: Array.from(
+      { length: 32 },
+      (_, index) => `${String(index).padStart(2, '0')}-${'x'.repeat(3_000)}`,
+    ),
+  },
+  {
+    deliverables: Array.from({ length: 5 }, (_, index) => ({
+      id: `large_${index}`,
+      description: 'x'.repeat(15_000),
+      required: true,
+    })),
+  },
+  {
+    deliverables: Array.from({ length: 33 }, (_, index) => ({
+      id: `deliverable_${index}`,
+      description: 'Bounded deliverable.',
+      required: true,
+    })),
+  },
+  {
+    verification_requirements: [{
+      id: 'oversized',
+      description: 'x'.repeat(16 * 1024 + 1),
+      kind: 'evidence_reference',
+    }],
+  },
+]) {
+  assert.equal(
+    parse([action(invalidContract)]).ok,
+    false,
+    `invalid contract must fail: ${JSON.stringify(invalidContract)}`,
+  );
+}
+for (const credentialShapedId of [
+  'github_pat_123456789012345678901234567890',
+  'xapp-123456789012345678901234567890',
+  'sk-proj-123456789012345678901234567890',
+]) {
+  assert.equal(
+    parse([action({
+      deliverables: [{ id: credentialShapedId, description: 'Credential-shaped ID.', required: true }],
+      acceptance_criteria: [],
+    })]).ok,
+    false,
+    `credential-shaped contract ID must fail: ${credentialShapedId}`,
+  );
+}
 for (const forbidden of [
   { chat_id: 'oc_forged' },
   { open_id: 'ou_forged' },
@@ -117,6 +204,16 @@ assert.equal(first[0].ok, true);
 assert.equal(first[0].action, 'create_continuation_job');
 assert.match(first[0].message, /^Background task created: Finish report\nJob ID: job_/);
 assert.ok(first[0].continuation);
+const replay = await dispatcher.execute({
+  message: {
+    ...p2p,
+    attachments: [{ fileKey: 'expired-file', fileName: 'expired.txt', fileType: 'file' }],
+  },
+  actions: [action()] as any,
+  continuationPermitted: false,
+});
+assert.equal(replay[0].ok, true);
+assert.equal(replay[0].continuation?.jobId, first[0].continuation!.jobId);
 const firstJob = await repository.get(first[0].continuation!.jobId);
 assert.equal(firstJob?.creatorOpenId, p2p.senderId);
 assert.equal(firstJob?.route.kind, 'message_thread');
@@ -174,6 +271,45 @@ assert.deepEqual(
 );
 assert.equal(boundedChatOnlyUser.job.permissions.network, 'none');
 assert.equal(boundedChatOnlyUser.job.permissions.externalSideEffects, 'denied');
+
+const escapeHeavyText = '"\\\n'.repeat(5_400);
+const escapeHeavyMessage = message('escape-heavy-facts', {
+  text: escapeHeavyText,
+  currentUserText: escapeHeavyText,
+  sourceContextText: escapeHeavyText,
+  parentContent: escapeHeavyText,
+});
+const escapeHeavyInputsDirectory = join(root, 'escape-heavy-inputs');
+await mkdir(escapeHeavyInputsDirectory);
+const escapeHeavyInputs = await Promise.all(Array.from({ length: 32 }, async (_, index) => {
+  const sourcePath = join(escapeHeavyInputsDirectory, `input-${index + 1}.txt`);
+  await writeFile(sourcePath, `input ${index + 1}`, 'utf8');
+  return { sourcePath, fileName: `input-${index + 1}.txt`, kind: 'message_attachment' as const };
+}));
+await service.preflightFromMessage(
+  action() as any,
+  escapeHeavyMessage,
+  null,
+  null,
+  32,
+);
+const escapeHeavyCreated = await service.createFromMessage(
+  action() as any,
+  escapeHeavyMessage,
+  null,
+  null,
+  escapeHeavyInputs,
+);
+assert.ok(Buffer.byteLength(JSON.stringify(escapeHeavyCreated.job.sourceFacts), 'utf8') <= 64 * 1024);
+assert.ok((escapeHeavyCreated.job.sourceFacts.originalUserText?.length ?? 0) > 0);
+assert.equal(escapeHeavyCreated.job.sourceFacts.inputs.length, 32);
+await assert.rejects(
+  service.preflightFromMessage(
+    action({ objective: 'token=a '.repeat(2_000) }) as any,
+    message('redaction-expansion'),
+  ),
+  /objective.*exceeds/i,
+);
 await assert.rejects(
   service.createFromMessage(action({
     requested_paths: [join(externalRequestedPath, 'missing')],
@@ -224,6 +360,7 @@ const deduplicatedTools = await service.createFromMessage(
 assert.deepEqual(deduplicatedTools.job.requiredTools, ['lark_cli']);
 assert.deepEqual(deduplicatedTools.job.permissions.hostTools, ['lark_cli']);
 
+const jobCountBeforeDuplicate = (await repository.listAll(100)).length;
 const duplicate = await dispatcher.execute({
   message: p2p,
   actions: [action()] as any,
@@ -231,7 +368,7 @@ const duplicate = await dispatcher.execute({
   model: 'gpt-5.3-codex',
 });
 assert.equal(duplicate[0].continuation?.jobId, first[0].continuation?.jobId);
-assert.equal((await repository.listAll(100)).length, 7);
+assert.equal((await repository.listAll(100)).length, jobCountBeforeDuplicate);
 
 const group = message('group', {
   chatType: 'group',
@@ -249,16 +386,41 @@ assert.deepEqual(groupCreated.job.route, {
 });
 
 const redacted = await service.createFromMessage(action({
-  objective: 'Use token=super-secret-value to finish the local report.',
-}) as any, message('redacted'));
-assert.doesNotMatch(redacted.job.objective, /super-secret-value/);
+  objective: [
+    'Use github_pat_123456789012345678901234567890',
+    'xapp-123456789012345678901234567890',
+    'sk-proj-123456789012345678901234567890',
+    'AWS_SECRET_ACCESS_KEY=aws-secret-access-key-value',
+    'AWS_SESSION_TOKEN=aws-session-token-value',
+    'to finish the local report.',
+  ].join(' '),
+}) as any, message('redacted', {
+  text: 'Use AWS_SESSION_TOKEN=source-session-secret and finish the report.',
+  parentContent: 'Quoted xapp-abcdefghijklmnopqrstuvwxyz1234567890.',
+}));
+assert.doesNotMatch(
+  redacted.job.objective,
+  /github_pat_|xapp-|sk-proj-|aws-secret-access-key-value|aws-session-token-value/i,
+);
 assert.match(redacted.job.objective, /\[redacted\]/);
+assert.doesNotMatch(redacted.job.sourceFacts.originalUserText ?? '', /source-session-secret/);
+assert.doesNotMatch(redacted.job.sourceFacts.quotedMessageText ?? '', /xapp-/);
+assert.match(redacted.job.sourceFacts.originalUserText ?? '', /\[redacted\]/);
 
 const comment = message('comment', {
   chatType: 'doc_comment',
   chatId: 'doc:dox_report',
   senderId: 'ou_comment_creator',
   threadId: 'cmt_report',
+  timestampMs: Date.parse('2026-07-18T08:30:00.000Z'),
+  currentUserText: 'Please update this section.',
+  sourceContextText: [
+    'Document comment: Please update this section.',
+    '[Selected Text]',
+    'Quarterly revenue was $42.',
+    '[Parent Comment]',
+    'Please verify the source.',
+  ].join('\n'),
   docComment: {
     fileToken: 'dox_report',
     commentId: 'cmt_report',
@@ -272,6 +434,10 @@ assert.deepEqual(commentCreated.job.route, {
   commentId: 'cmt_report',
   fileType: 'docx',
 });
+assert.equal(commentCreated.job.sourceFacts.originalUserText, 'Please update this section.');
+assert.equal(commentCreated.job.sourceFacts.sourceTimestamp, '2026-07-18T08:30:00.000Z');
+assert.match(commentCreated.job.sourceFacts.sourceContextText ?? '', /Quarterly revenue was \$42/);
+assert.match(commentCreated.job.sourceFacts.sourceContextText ?? '', /Please verify the source/);
 
 await assert.rejects(
   service.createFromMessage(action() as any, message('reaction', {
@@ -292,6 +458,72 @@ await assert.rejects(
 await assert.rejects(
   service.createFromMessage(action({ working_directory: '../outside' }) as any, message('outside')),
   /working directory/i,
+);
+
+const retrySourceMessage = message('retry-idempotent');
+const retrySource = await service.createFromMessage(action() as any, retrySourceMessage);
+assert.equal(await repository.requestCancel(
+  retrySource.job.jobId,
+  '2026-07-17T00:00:01.000Z',
+), 'cancelled');
+const retryClone = await service.retryForActor(
+  retrySource.job.jobId,
+  retrySourceMessage.senderId,
+  null,
+  'om_retry_request',
+);
+assert.equal(await repository.redactTerminal(
+  retrySource.job.jobId,
+  '2026-07-17T00:00:02.000Z',
+), true);
+const deletedCreateReplay = await dispatcher.execute({
+  message: {
+    ...retrySourceMessage,
+    attachments: [{ fileKey: 'expired-file', fileName: 'expired.txt', fileType: 'file' }],
+  },
+  actions: [action()] as any,
+  continuationPermitted: false,
+});
+assert.equal(deletedCreateReplay[0].ok, false);
+assert.match(deletedCreateReplay[0].message, /retained data has been deleted/i);
+const replayedRetry = await service.retryForActor(
+  retrySource.job.jobId,
+  retrySourceMessage.senderId,
+  null,
+  'om_retry_request',
+);
+assert.equal(replayedRetry.jobId, retryClone.jobId);
+
+const corruptRetryMessage = message('retry-persisted-state-invalid');
+const corruptRetrySource = await service.createFromMessage(action() as any, corruptRetryMessage);
+assert.equal(await repository.requestCancel(
+  corruptRetrySource.job.jobId,
+  '2026-07-17T00:00:03.000Z',
+), 'cancelled');
+const corruptRetryDatabase = new DatabaseSync(join(root, 'runtime', 'jobs.sqlite'));
+const corruptRetryFacts = corruptRetryDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(corruptRetrySource.job.jobId) as { source_facts_json: string };
+assert.ok(corruptRetryFacts.source_facts_json.length > 0);
+corruptRetryDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run('{', corruptRetrySource.job.jobId);
+corruptRetryDatabase.close();
+const corruptCreateReplay = await dispatcher.execute({
+  message: corruptRetryMessage,
+  actions: [action()] as any,
+  continuationPermitted: false,
+});
+assert.equal(corruptCreateReplay[0].ok, false);
+assert.match(corruptCreateReplay[0].message, /stored state failed integrity validation/i);
+await assert.rejects(
+  service.retryForActor(
+    corruptRetrySource.job.jobId,
+    corruptRetryMessage.senderId,
+    null,
+    'om_retry_invalid_state',
+  ),
+  /cannot be retried because its stored state failed integrity validation/i,
 );
 
 repository.close();

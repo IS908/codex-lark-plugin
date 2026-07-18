@@ -13,6 +13,7 @@ import type {
   ContinuationToolInvoker,
 } from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
+import { ContinuationInputStore } from './input-store.js';
 import { createContinuationCodexExecutor } from './codex-runner.js';
 import { createLarkContinuationDelivery } from './lark-delivery.js';
 import { createContinuationLocalCliToolInvoker } from './local-cli-tool-invoker.js';
@@ -56,6 +57,7 @@ export interface ContinuationRuntimeOptions {
   openRepository?: (options: {
     databasePath: string;
     artifactsDir: string;
+    inputsDir: string;
   }) => Promise<ContinuationRepository>;
 }
 
@@ -83,11 +85,16 @@ export async function createContinuationRuntime(
   try {
     const storage = options.dryRun
       ? await createDryRunStorage()
-      : { databasePath: options.databasePath, artifactsDir: options.artifactsDir };
+      : {
+          databasePath: options.databasePath,
+          artifactsDir: options.artifactsDir,
+          inputsDir: path.join(path.dirname(options.artifactsDir), 'inputs'),
+        };
     temporaryRoot = 'root' in storage ? storage.root : undefined;
     repository = await (options.openRepository ?? defaultOpenRepository)({
       databasePath: storage.databasePath,
       artifactsDir: storage.artifactsDir,
+      inputsDir: storage.inputsDir,
     });
     await repository.healthCheck();
     const now = clock.now().toISOString();
@@ -102,6 +109,7 @@ export async function createContinuationRuntime(
     );
 
     const artifactStore = new ContinuationArtifactStore(storage.artifactsDir);
+    const inputStore = new ContinuationInputStore(storage.inputsDir);
     const service = new ContinuationService({
       repository,
       allowedWorkingRoot: options.allowedWorkingRoot,
@@ -122,6 +130,7 @@ export async function createContinuationRuntime(
       : undefined);
     const executor = options.executor ?? createContinuationCodexExecutor({
       artifactStore,
+      inputStore,
       configuredSandbox: options.configuredSandbox,
       currentWorkingRoot: options.allowedWorkingRoot,
       canUseTrustedPersonalWorkspace: options.canUseTrustedPersonalWorkspace,
@@ -204,6 +213,7 @@ function unavailableRuntime(health: ContinuationRuntimeHealth): ContinuationRunt
 async function defaultOpenRepository(options: {
   databasePath: string;
   artifactsDir: string;
+  inputsDir: string;
 }): Promise<ContinuationRepository> {
   return SqliteContinuationRepository.open(options);
 }
@@ -212,12 +222,14 @@ async function createDryRunStorage(): Promise<{
   root: string;
   databasePath: string;
   artifactsDir: string;
+  inputsDir: string;
 }> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-lark-continuation-dry-run-'));
   return {
     root,
     databasePath: path.join(root, 'jobs.sqlite'),
     artifactsDir: path.join(root, 'artifacts'),
+    inputsDir: path.join(root, 'inputs'),
   };
 }
 

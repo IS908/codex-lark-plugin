@@ -286,9 +286,11 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   try {
     await fs.mkdir(cwd, { recursive: true });
     await new Promise<void>((resolve, reject) => {
+      const usePosixProcessGroup = process.platform !== 'win32';
       const child = spawn(command, args, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
+        detached: usePosixProcessGroup,
         env: {
           ...process.env,
           NO_COLOR: '1',
@@ -300,9 +302,62 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
       const removeAbortListener = (): void => {
         request.abortSignal?.removeEventListener('abort', onAbort);
       };
+      const signalDirectChild = (signal: NodeJS.Signals): void => {
+        try {
+          child.kill(signal);
+        } catch {}
+      };
+      const signalProcessTree = async (signal: NodeJS.Signals): Promise<void> => {
+        if (usePosixProcessGroup && child.pid) {
+          try {
+            process.kill(-child.pid, signal);
+            return;
+          } catch {
+            signalDirectChild(signal);
+            return;
+          }
+        }
+        if (process.platform === 'win32' && child.pid) {
+          try {
+            const args = ['/PID', String(child.pid), '/T'];
+            if (signal === 'SIGKILL') args.push('/F');
+            await new Promise<void>((treeKillComplete) => {
+              const killer = spawn('taskkill', args, {
+                stdio: 'ignore',
+                windowsHide: true,
+              });
+              let settled = false;
+              const finish = (fallback: boolean): void => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(taskkillTimeout);
+                if (fallback) signalDirectChild(signal);
+                treeKillComplete();
+              };
+              const taskkillTimeout = setTimeout(() => {
+                try {
+                  killer.kill('SIGKILL');
+                } catch {}
+                finish(true);
+              }, 2_000);
+              taskkillTimeout.unref();
+              killer.once('error', () => finish(true));
+              killer.once('close', (code) => finish(code !== 0));
+            });
+            return;
+          } catch {}
+        }
+        signalDirectChild(signal);
+      };
+      let pendingTreeSignal = Promise.resolve();
+      const queueTreeSignal = (signal: NodeJS.Signals): void => {
+        pendingTreeSignal = pendingTreeSignal
+          .then(() => signalProcessTree(signal))
+          .catch(() => signalDirectChild(signal));
+      };
       const terminate = (killDelayMs: number): void => {
-        child.kill('SIGTERM');
-        forceKillTimer = setTimeout(() => child.kill('SIGKILL'), killDelayMs);
+        queueTreeSignal('SIGTERM');
+        forceKillTimer = setTimeout(() => queueTreeSignal('SIGKILL'), killDelayMs);
         forceKillTimer.unref();
       };
       const onAbort = (): void => {
@@ -335,26 +390,32 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
         clearTimeout(timer);
         if (forceKillTimer) clearTimeout(forceKillTimer);
         removeAbortListener();
-        reject(aborted ? new CodexExecAbortedError(stdout, stderr) : err);
+        void pendingTreeSignal.finally(() => {
+          reject(aborted ? new CodexExecAbortedError(stdout, stderr) : err);
+        });
       });
       child.on('close', (code, signal) => {
         clearTimeout(timer);
         if (forceKillTimer) clearTimeout(forceKillTimer);
         removeAbortListener();
-        if (aborted) {
-          reject(new CodexExecAbortedError(stdout, stderr));
-          return;
-        }
-        if (timedOut) {
-          reject(new CodexExecTimeoutError(timeoutMs, stdout, stderr));
-          return;
-        }
-        if (code !== 0) {
-          const detail = stderr.trim() || stdout.trim() || `signal=${signal ?? 'none'}`;
-          reject(new CodexExecProcessError(code, signal, stdout, stderr, detail));
-          return;
-        }
-        resolve();
+        void (async () => {
+          await pendingTreeSignal;
+          if (aborted || timedOut) await signalProcessTree('SIGKILL');
+          if (aborted) {
+            reject(new CodexExecAbortedError(stdout, stderr));
+            return;
+          }
+          if (timedOut) {
+            reject(new CodexExecTimeoutError(timeoutMs, stdout, stderr));
+            return;
+          }
+          if (code !== 0) {
+            const detail = stderr.trim() || stdout.trim() || `signal=${signal ?? 'none'}`;
+            reject(new CodexExecProcessError(code, signal, stdout, stderr, detail));
+            return;
+          }
+          resolve();
+        })().catch(reject);
       });
 
       child.stdin.end(request.prompt);

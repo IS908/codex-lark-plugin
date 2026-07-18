@@ -406,4 +406,75 @@ function makeDeps(overrides: any = {}) {
   assert.match(handled[0].text, /prior doc context/);
 }
 
+// 9. SDK comments retain the actual reply, selected text, and parent reply as
+// unenriched source context instead of persisting only the SDK placeholder.
+{
+  const channel = new LarkChannel();
+  const session = new IdentitySession(() => null);
+  const handled: any[] = [];
+  const sdkCommentTimestamp = Date.parse('2026-07-18T08:30:00.000Z');
+  channel.setIdentitySession(session);
+  channel.setMessageHandler(async (message: any) => { handled.push(message); });
+  await channel.handleSdkCommentEvent({
+    fileToken: 'dox_sdk_context',
+    fileType: 'docx',
+    commentId: 'cmt_sdk_context',
+    replyId: 'rpl_child',
+    operator: { openId: 'ou_sdk_commenter' },
+    mentionedBot: true,
+    timestamp: sdkCommentTimestamp,
+  } as any, {
+    comments: {
+      resolveTarget: async () => ({ fileToken: 'dox_sdk_context', fileType: 'docx' }),
+      fetch: async () => ({
+        commentId: 'cmt_sdk_context',
+        quote: 'Selected quarterly revenue.',
+        isWhole: false,
+        replies: [
+          {
+            reply_id: 'rpl_parent',
+            content: { elements: [{ type: 'text_run', text_run: { text: 'Verify the source.' } }] },
+          },
+          {
+            reply_id: 'rpl_child',
+            content: { elements: [{ type: 'text_run', text_run: { text: 'Please update this section.' } }] },
+          },
+        ],
+      }),
+    },
+  } as any);
+  await flush();
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].timestampMs, sdkCommentTimestamp);
+  assert.equal(handled[0].currentUserText, 'Please update this section.');
+  assert.match(handled[0].sourceContextText, /Selected quarterly revenue/);
+  assert.match(handled[0].sourceContextText, /Verify the source/);
+  assert.doesNotMatch(handled[0].sourceContextText, /SDK comment mention/);
+}
+
+// 10. Production raw SDK comments retain the normalized SDK timestamp.
+{
+  const channel = new LarkChannel();
+  const session = new IdentitySession(() => null);
+  const handled: any[] = [];
+  const deps = makeDeps();
+  const sdkCommentTimestamp = Date.parse('2026-07-18T09:45:00.000Z');
+  channel.setIdentitySession(session);
+  channel.setMessageHandler(async (message: any) => { handled.push(message); });
+  (channel as any).botOpenId = 'ou_bot';
+  (channel as any).client = deps.client;
+  await channel.handleSdkCommentEvent({
+    fileToken: 'dox_doc_1',
+    fileType: 'docx',
+    commentId: 'cmt_doc_1',
+    operator: { openId: 'ou_owner' },
+    mentionedBot: true,
+    timestamp: sdkCommentTimestamp,
+    raw: makeEvent({ event_id: 'evt_sdk_raw_timestamp' }),
+  } as any);
+  await flush();
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].timestampMs, sdkCommentTimestamp);
+}
+
 console.log('PASS');

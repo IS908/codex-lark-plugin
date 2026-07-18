@@ -193,6 +193,7 @@ export function bindSdkCommentIdentity(
     senderId: comment.operator.openId,
     text,
     messageType: 'doc_comment',
+    timestampMs: comment.timestamp,
     threadId,
     rawContent: text,
     docComment: {

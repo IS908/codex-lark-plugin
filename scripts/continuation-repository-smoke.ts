@@ -1,11 +1,147 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, stat, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
-import type { ContinuationCreateRequest } from '../src/domain/continuation.js';
+import { seedHistoricalContinuationDatabase } from './fixtures/continuation-historical-schema.js';
+import {
+  CONTINUATION_LIMITS,
+  type AsyncTaskFactSnapshot,
+  type AsyncTaskContract,
+  type ContinuationCreateRequest,
+} from '../src/domain/continuation.js';
 import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js';
+import {
+  ContinuationInputStore,
+  continuationJobId,
+} from '../src/continuation/input-store.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
+import { currentProcessStartedAt } from '../src/process-identity.js';
+
+if (process.argv[2] === '--hold-managed-input-create') {
+  const [childRoot, childJobId, childSource] = process.argv.slice(3);
+  if (!childRoot || !childJobId || !childSource) throw new Error('Missing managed-input child arguments.');
+  await holdManagedInputCreate(childRoot, childJobId, childSource);
+  process.exit(0);
+}
+if (process.argv[2] === '--reclaim-dead-creation-lock') {
+  const [childInputsRoot, childJobId] = process.argv.slice(3);
+  if (!childInputsRoot || !childJobId) throw new Error('Missing dead-lock child arguments.');
+  const store = new ContinuationInputStore(childInputsRoot);
+  await store.withCreationLock(childJobId, async () => {});
+  process.stdout.write('DEAD_LOCK_RECLAIMED\n');
+  process.exit(0);
+}
+if (process.argv[2] === '--hold-creation-lock') {
+  const [childInputsRoot, childJobId] = process.argv.slice(3);
+  if (!childInputsRoot || !childJobId) throw new Error('Missing creation-lock child arguments.');
+  const store = new ContinuationInputStore(childInputsRoot);
+  await store.withCreationLock(childJobId, async () => {
+    process.stdout.write('CREATION_LOCK_HELD\n');
+    await new Promise(() => {});
+  });
+  process.exit(0);
+}
+if (process.argv[2] === '--reject-blocking-input') {
+  const [childInputsRoot, childJobId, childSource] = process.argv.slice(3);
+  if (!childInputsRoot || !childJobId || !childSource) throw new Error('Missing FIFO child arguments.');
+  const store = new ContinuationInputStore(childInputsRoot);
+  try {
+    await store.install(childJobId, [{
+      sourcePath: childSource,
+      fileName: 'blocking.pipe',
+      kind: 'message_attachment',
+    }]);
+    throw new Error('FIFO input was unexpectedly admitted.');
+  } catch (error) {
+    if (error instanceof Error && error.message === 'FIFO input was unexpectedly admitted.') throw error;
+    process.stdout.write('BLOCKING_INPUT_REJECTED\n');
+  }
+  process.exit(0);
+}
+if (process.argv[2] === '--open-continuation-repository') {
+  const [databasePath, artifactsDir, inputsDir] = process.argv.slice(3);
+  if (!databasePath || !artifactsDir || !inputsDir) {
+    throw new Error('Missing repository-open child arguments.');
+  }
+  const repository = await SqliteContinuationRepository.open({
+    databasePath,
+    artifactsDir,
+    inputsDir,
+  });
+  await repository.healthCheck();
+  repository.close();
+  process.stdout.write('REPOSITORY_OPENED\n');
+  process.exit(0);
+}
+
+async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath: string): Promise<void> {
+  const store = new ContinuationInputStore(join(rootDir, 'inputs'));
+  await store.withCreationLock(jobId, async () => {
+    await store.install(jobId, [{
+      sourcePath,
+      fileName: 'live.txt',
+      kind: 'message_attachment',
+    }], 'cross-process-live-create');
+    const aged = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+    await utimes(join(rootDir, 'inputs', jobId), aged, aged);
+    process.stdout.write('MANAGED_INPUT_INSTALLED\n');
+    const releasePath = join(rootDir, `.release-${jobId}`);
+    while (true) {
+      try {
+        await lstat(releasePath);
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+  });
+}
+
+async function waitForChildMarker(
+  child: ReturnType<typeof spawn>,
+  marker: string,
+  timeoutMs = 5_000,
+): Promise<string> {
+  let stdout = '';
+  let stderr = '';
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`child timed out before ${marker}: ${stderr}`));
+    }, timeoutMs);
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk);
+      if (stdout.includes(marker)) {
+        clearTimeout(timeout);
+        resolve(stderr);
+      }
+    });
+    child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
+    child.once('exit', (code) => {
+      if (!stdout.includes(marker)) {
+        clearTimeout(timeout);
+        reject(new Error(stderr || `child exited ${code} before ${marker}`));
+      }
+    });
+  });
+}
 
 const root = await mkdtemp(join(tmpdir(), 'continuation-repository-'));
 const databasePath = join(root, 'runtime', 'jobs.sqlite');
@@ -16,38 +152,80 @@ function createRequest(
   suffix: string,
   overrides: Partial<ContinuationCreateRequest> = {},
 ): ContinuationCreateRequest {
+  const route = {
+    kind: 'message_thread' as const,
+    conversationId: 'oc_continuation',
+    sourceMessageId: `om_${suffix}`,
+    threadId: 'omt_continuation',
+  };
+  const contextSnapshot = {
+    summary: `Context ${suffix}`,
+    completedSteps: [],
+    remainingSteps: ['run the task'],
+    constraints: ['do not publish'],
+    decisions: [],
+    references: [],
+  };
+  const permissions = {
+    profile: 'bounded' as const,
+    filesystem: { root, mode: 'workspace-write' as const, requestedPaths: [] },
+    hostTools: [],
+    network: 'none' as const,
+    externalSideEffects: 'denied' as const,
+    approval: { mode: 'never' as const },
+  };
+  const taskContract: AsyncTaskContract = {
+    schemaVersion: 1,
+    title: `Continuation ${suffix}`,
+    objective: `Complete ${suffix}`,
+    deliverables: [{ id: 'result', description: 'A persisted terminal result.', required: true }],
+    acceptanceCriteria: [{
+      id: 'result_persisted',
+      description: 'terminal result is persisted',
+      deliverableIds: ['result'],
+    }],
+    verificationRequirements: [{
+      id: 'result_exists',
+      description: 'The result artifact exists.',
+      kind: 'artifact_exists',
+    }],
+    initialContext: contextSnapshot,
+  };
+  const sourceFacts: AsyncTaskFactSnapshot = {
+    schemaVersion: 1,
+    provenance: 'captured',
+    originalUserText: `Complete ${suffix}`,
+    sourceContextText: null,
+    quotedMessageText: null,
+    creatorOpenId: 'ou_creator',
+    chatId: 'oc_continuation',
+    chatType: 'p2p',
+    route,
+    sourceMessageId: `om_${suffix}`,
+    sourceThreadId: 'omt_continuation',
+    sourceMessageType: 'text',
+    sourceTimestamp: null,
+    inputs: [],
+    workingDirectory: root,
+    model: null,
+    permissions,
+  };
   return {
     idempotencyKey: `idem-${suffix}`,
     creatorOpenId: 'ou_creator',
-    route: {
-      kind: 'message_thread',
-      conversationId: 'oc_continuation',
-      sourceMessageId: `om_${suffix}`,
-      threadId: 'omt_continuation',
-    },
+    route,
     sourceMessageId: `om_${suffix}`,
     sourceThreadId: 'omt_continuation',
     title: `Continuation ${suffix}`,
     objective: `Complete ${suffix}`,
     acceptanceCriteria: ['terminal result is persisted'],
-    contextSnapshot: {
-      summary: `Context ${suffix}`,
-      completedSteps: [],
-      remainingSteps: ['run the task'],
-      constraints: ['do not publish'],
-      decisions: [],
-      references: [],
-    },
+    contextSnapshot,
+    sourceFacts,
+    taskContract,
+    sourceInputs: [],
     requiredTools: [],
     workingDirectory: root,
-    permissions: {
-      profile: 'bounded',
-      filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
-      hostTools: [],
-      network: 'none',
-      externalSideEffects: 'denied',
-      approval: { mode: 'never' },
-    },
+    permissions,
     maxAttempts: 5,
     maxRetries: 3,
     timeoutSeconds: 600,
@@ -101,6 +279,47 @@ try {
   assert.equal(modeBits((await stat(databasePath)).mode), 0o600);
   assert.equal(modeBits((await stat(artifactsDir)).mode), 0o700);
 
+  await assert.rejects(
+    repository.create(createRequest('message-thread-mismatch', {
+      sourceThreadId: 'omt_other_thread',
+    })),
+    /does not match the source thread/i,
+  );
+  const commentThreadMismatch = createRequest('comment-thread-mismatch');
+  const commentRoute = {
+    kind: 'comment_thread' as const,
+    documentToken: 'doc_thread_binding',
+    commentId: 'comment_expected',
+    fileType: 'docx',
+  };
+  await assert.rejects(repository.create({
+    ...commentThreadMismatch,
+    route: commentRoute,
+    sourceMessageId: 'comment_message',
+    sourceThreadId: 'comment_other',
+    sourceFacts: {
+      ...commentThreadMismatch.sourceFacts,
+      chatId: 'doc:doc_thread_binding',
+      chatType: 'doc_comment',
+      route: commentRoute,
+      sourceMessageId: 'comment_message',
+      sourceThreadId: 'comment_other',
+    },
+  }), /does not match the source thread/i);
+
+  const objectiveBoundary = createRequest('objective-byte-boundary');
+  const boundaryObjective = 'x'.repeat(CONTINUATION_LIMITS.objectiveBytes - 1);
+  const objectiveBoundaryCreated = await repository.create({
+    ...objectiveBoundary,
+    objective: boundaryObjective,
+    createdAt: '2026-07-17T01:00:00.000Z',
+    taskContract: {
+      ...objectiveBoundary.taskContract,
+      objective: boundaryObjective,
+    },
+  });
+  assert.equal(objectiveBoundaryCreated.job.objective.length, 16_383);
+
   const first = await repository.create(createRequest('first'));
   assert.equal(first.created, true);
   assert.match(first.job.jobId, /^job_[a-f0-9]{24}$/);
@@ -112,9 +331,9 @@ try {
   assert.equal(duplicate.created, false);
   assert.equal(duplicate.job.jobId, first.job.jobId);
 
-  assert.equal((await repository.listByCreator('ou_creator', 10)).length, 1);
+  assert.equal((await repository.listByCreator('ou_creator', 10)).length, 2);
   assert.equal((await repository.listByCreator('ou_other', 10)).length, 0);
-  assert.equal((await repository.listAll(10)).length, 1);
+  assert.equal((await repository.listAll(10)).length, 2);
 
   const firstClaim = await repository.claimDue(
     'worker-main',
@@ -435,6 +654,22 @@ try {
     artifactStore.assertWithinLimit('job_artifact_test'),
     /artifact byte limit/i,
   );
+  const entryLimitedStore = new ContinuationArtifactStore(artifactsDir, 1_024, 2, 4);
+  const entryLimitedRoot = await entryLimitedStore.ensure('job_artifact_entries');
+  await writeFile(join(entryLimitedRoot, 'one.txt'), '', 'utf8');
+  await writeFile(join(entryLimitedRoot, 'two.txt'), '', 'utf8');
+  await writeFile(join(entryLimitedRoot, 'three.txt'), '', 'utf8');
+  await assert.rejects(
+    entryLimitedStore.assertWithinLimit('job_artifact_entries'),
+    /artifact entry limit/i,
+  );
+  const depthLimitedStore = new ContinuationArtifactStore(artifactsDir, 1_024, 10, 1);
+  const depthLimitedRoot = await depthLimitedStore.ensure('job_artifact_depth');
+  await mkdir(join(depthLimitedRoot, 'level-one', 'level-two'), { recursive: true });
+  await assert.rejects(
+    depthLimitedStore.assertWithinLimit('job_artifact_depth'),
+    /artifact directory depth/i,
+  );
   assert.throws(() => artifactStore.resolve('job_artifact_test', '../escape.txt'), /outside job directory/i);
   assert.throws(() => artifactStore.resolve('job_artifact_test', '/tmp/escape.txt'), /relative/i);
   await chmod(artifactRoot, 0o700);
@@ -475,6 +710,118 @@ try {
   secondRepository.close();
   repository.close();
 }
+
+// Maintenance scans isolate corrupt rows without blocking healthy lease, expiry, or budget work.
+const maintenanceRoot = await mkdtemp(join(tmpdir(), 'continuation-maintenance-corrupt-'));
+const maintenanceDatabasePath = join(maintenanceRoot, 'jobs.sqlite');
+const maintenanceRepository = await SqliteContinuationRepository.open({
+  databasePath: maintenanceDatabasePath,
+  artifactsDir: join(maintenanceRoot, 'artifacts'),
+  inputsDir: join(maintenanceRoot, 'inputs'),
+  jitter: () => 0,
+});
+const { DatabaseSync: MaintenanceDatabaseSync } = await import('node:sqlite');
+const maintenanceDatabase = new MaintenanceDatabaseSync(maintenanceDatabasePath);
+const corruptMaintenanceFacts = (jobId: string) => {
+  const row = maintenanceDatabase.prepare(`
+    SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+  `).get(jobId) as { source_facts_json: string };
+  maintenanceDatabase.prepare(`
+    UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+  `).run(JSON.stringify({
+    ...JSON.parse(row.source_facts_json) as Record<string, unknown>,
+    unexpected: 'maintenance corruption',
+  }), jobId);
+};
+
+const corruptLeaseJob = await maintenanceRepository.create(createRequest(
+  'maintenance-corrupt-lease',
+  { createdAt: '2026-07-16T23:59:57.000Z' },
+));
+const healthyLeaseJob = await maintenanceRepository.create(createRequest(
+  'maintenance-healthy-lease',
+  { createdAt: '2026-07-16T23:59:58.000Z' },
+));
+assert.equal((await maintenanceRepository.claimDue(
+  'maintenance-worker-corrupt',
+  baseNow,
+  '2026-07-17T00:00:05.000Z',
+))?.job.jobId, corruptLeaseJob.job.jobId);
+assert.equal((await maintenanceRepository.claimDue(
+  'maintenance-worker-healthy',
+  baseNow,
+  '2026-07-17T00:00:05.000Z',
+))?.job.jobId, healthyLeaseJob.job.jobId);
+corruptMaintenanceFacts(corruptLeaseJob.job.jobId);
+assert.equal(await maintenanceRepository.recoverExpiredLeases(
+  '2026-07-17T00:00:06.000Z',
+), 2);
+assert.equal(
+  (await maintenanceRepository.get(corruptLeaseJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await maintenanceRepository.get(healthyLeaseJob.job.jobId))?.status,
+  'waiting_retry',
+);
+
+const corruptOverdueJob = await maintenanceRepository.create(createRequest(
+  'maintenance-corrupt-overdue',
+  { expiresAt: '2026-07-17T00:00:07.000Z' },
+));
+const healthyOverdueJob = await maintenanceRepository.create(createRequest(
+  'maintenance-healthy-overdue',
+  { expiresAt: '2026-07-17T00:00:07.000Z' },
+));
+corruptMaintenanceFacts(corruptOverdueJob.job.jobId);
+assert.equal(await maintenanceRepository.expireOverdue(
+  '2026-07-17T00:00:08.000Z',
+), 2);
+assert.equal(
+  (await maintenanceRepository.get(corruptOverdueJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await maintenanceRepository.get(healthyOverdueJob.job.jobId))?.errorCode,
+  'continuation_expired',
+);
+
+const corruptBudgetJob = await maintenanceRepository.create(createRequest(
+  'maintenance-corrupt-budget',
+  { maxAttempts: 1 },
+));
+const healthyBudgetJob = await maintenanceRepository.create(createRequest(
+  'maintenance-healthy-budget',
+  { maxAttempts: 1 },
+));
+const insertBudgetAttempt = maintenanceDatabase.prepare(`
+  INSERT INTO continuation_attempts (
+    attempt_id, job_id, ordinal, worker_id, started_at, heartbeat_at,
+    finished_at, outcome, error_code, error_summary
+  ) VALUES (?, ?, 1, 'maintenance-worker', ?, ?, ?, 'error', 'test', 'test')
+`);
+for (const [attemptId, jobId] of [
+  ['attempt_maintenance_corrupt', corruptBudgetJob.job.jobId],
+  ['attempt_maintenance_healthy', healthyBudgetJob.job.jobId],
+]) {
+  insertBudgetAttempt.run(attemptId, jobId, baseNow, baseNow, baseNow);
+}
+corruptMaintenanceFacts(corruptBudgetJob.job.jobId);
+assert.equal(await maintenanceRepository.claimDue(
+  'maintenance-budget-worker',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+), null);
+assert.equal(
+  (await maintenanceRepository.get(corruptBudgetJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await maintenanceRepository.get(healthyBudgetJob.job.jobId))?.status,
+  'partial',
+);
+maintenanceDatabase.close();
+maintenanceRepository.close();
 
 const migrationDatabasePath = join(root, 'migration', 'jobs.sqlite');
 const migrationArtifactsDir = join(root, 'migration', 'artifacts');
@@ -650,9 +997,31 @@ try {
 
 const retentionDatabasePath = join(root, 'retention', 'jobs.sqlite');
 const retentionArtifactsDir = join(root, 'retention', 'artifacts');
+class FailingDiscardArtifactStore extends ContinuationArtifactStore {
+  failDiscard = false;
+
+  override async discardQuarantine(jobId: string, token: string): Promise<void> {
+    if (this.failDiscard) throw new Error('simulated artifact quarantine cleanup failure');
+    await super.discardQuarantine(jobId, token);
+  }
+}
+class FailingDiscardInputStore extends ContinuationInputStore {
+  failDiscard = false;
+
+  override async discardQuarantine(jobId: string, token: string): Promise<void> {
+    if (this.failDiscard) throw new Error('simulated input quarantine cleanup failure');
+    await super.discardQuarantine(jobId, token);
+  }
+}
+const retentionArtifacts = new FailingDiscardArtifactStore(retentionArtifactsDir);
+const retentionInputsDir = join(root, 'retention', 'inputs');
+const retentionInputs = new FailingDiscardInputStore(retentionInputsDir);
 const retentionRepository = await SqliteContinuationRepository.open({
   databasePath: retentionDatabasePath,
   artifactsDir: retentionArtifactsDir,
+  artifactStore: retentionArtifacts,
+  inputsDir: retentionInputsDir,
+  inputStore: retentionInputs,
   jitter: () => 0,
 });
 try {
@@ -688,7 +1057,6 @@ try {
     { status: 'delivered', messageId: 'om_retention_cleanup' },
     '2026-07-17T00:00:05.000Z',
   );
-  const retentionArtifacts = new ContinuationArtifactStore(retentionArtifactsDir);
   const cleanupArtifactRoot = await retentionArtifacts.ensure(cleanupJob.job.jobId);
   await writeFile(join(cleanupArtifactRoot, 'report.txt'), 'result', 'utf-8');
 
@@ -797,24 +1165,38 @@ try {
   );
   const failedCleanupArtifactRoot = await retentionArtifacts.ensure(failedCleanupJob.job.jobId);
   await writeFile(join(failedCleanupArtifactRoot, 'retry.txt'), 'retry', 'utf-8');
-  await chmod(retentionArtifactsDir, 0o500);
+  retentionArtifacts.failDiscard = true;
+  retentionInputs.failDiscard = true;
   const failedCleanupResults = await retentionRepository.purgeExpired(
     '2026-07-18T00:00:00.000Z',
     '2026-07-20T00:00:00.000Z',
   );
-  await chmod(retentionArtifactsDir, 0o700);
+  retentionArtifacts.failDiscard = false;
+  retentionInputs.failDiscard = false;
   assert.equal(failedCleanupResults.length, 1);
   assert.equal(failedCleanupResults[0]?.jobId, failedCleanupJob.job.jobId);
   assert.equal(failedCleanupResults[0]?.result, 'error');
-  assert.equal((await retentionRepository.get(failedCleanupJob.job.jobId))?.deletedAt, undefined);
-  assert.equal((await stat(failedCleanupArtifactRoot)).isDirectory(), true);
-  assert.deepEqual((await retentionRepository.purgeExpired(
+  assert.equal(
+    (await retentionRepository.get(failedCleanupJob.job.jobId))?.deletedAt,
+    '2026-07-20T00:00:00.000Z',
+  );
+  await assert.rejects(stat(failedCleanupArtifactRoot), /ENOENT/);
+  assert.equal((await readdir(retentionArtifactsDir)).some(
+    (entry) => entry.startsWith(`.redacting-${failedCleanupJob.job.jobId}-`),
+  ), true);
+  assert.equal((await readdir(retentionInputsDir)).some(
+    (entry) => entry.startsWith(`.redacting-${failedCleanupJob.job.jobId}-`),
+  ), true);
+  assert.deepEqual(await retentionRepository.purgeExpired(
     '2026-07-18T00:00:00.000Z',
     '2026-07-20T00:00:01.000Z',
-  )).map((result) => ({ jobId: result.jobId, result: result.result })), [{
-    jobId: failedCleanupJob.job.jobId,
-    result: 'cleaned',
-  }]);
+  ), []);
+  assert.equal((await readdir(retentionArtifactsDir)).some(
+    (entry) => entry.startsWith(`.redacting-${failedCleanupJob.job.jobId}-`),
+  ), false);
+  assert.equal((await readdir(retentionInputsDir)).some(
+    (entry) => entry.startsWith(`.redacting-${failedCleanupJob.job.jobId}-`),
+  ), false);
 
   assert.equal(await retentionRepository.setRetained(
     retainedJob.job.jobId,
@@ -887,7 +1269,7 @@ versionThreeDatabase.exec(`
   ) STRICT;
   CREATE TABLE continuation_attempts (
     attempt_id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL,
+    job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
     ordinal INTEGER NOT NULL,
     worker_id TEXT NOT NULL,
     execution_session_id TEXT,
@@ -901,7 +1283,7 @@ versionThreeDatabase.exec(`
   ) STRICT;
   CREATE TABLE continuation_outbox (
     outbox_id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL UNIQUE,
+    job_id TEXT NOT NULL UNIQUE REFERENCES continuation_jobs(job_id),
     route_json TEXT NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE,
     payload TEXT NOT NULL,
@@ -920,9 +1302,9 @@ versionThreeDatabase.exec(`
   ) STRICT;
   CREATE TABLE continuation_tool_calls (
     call_id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL,
+    job_id TEXT NOT NULL REFERENCES continuation_jobs(job_id),
     step_index INTEGER NOT NULL,
-    attempt_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL REFERENCES continuation_attempts(attempt_id),
     tool_name TEXT NOT NULL,
     request_hash TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -949,9 +1331,77 @@ versionThreeDatabase.exec(`
     24, 3, 600, '${baseNow}', '2026-07-18T00:00:00.000Z', 1, 'queued',
     0, 0, '${baseNow}', '[]', '${baseNow}'
   );
+  INSERT INTO continuation_attempts (
+    attempt_id, job_id, ordinal, worker_id, started_at, heartbeat_at,
+    finished_at, outcome
+  ) VALUES (
+    'attempt_legacy_v3', 'job_legacy_v3', 1, 'worker_legacy', '${baseNow}',
+    '${baseNow}', '${baseNow}', 'continue'
+  );
+  INSERT INTO continuation_tool_calls (
+    call_id, job_id, step_index, attempt_id, tool_name, request_hash,
+    status, result_json, started_at, completed_at, updated_at
+  ) VALUES (
+    'call_legacy_v3', 'job_legacy_v3', 0, 'attempt_legacy_v3', 'lark_cli',
+    'hash_legacy_v3', 'completed', '{"ok":true,"message":"legacy"}',
+    '${baseNow}', '${baseNow}', '${baseNow}'
+  );
+  INSERT INTO continuation_outbox (
+    outbox_id, job_id, route_json, idempotency_key, payload, status,
+    attempt_count, next_attempt_at, created_at, updated_at
+  ) VALUES (
+    'outbox_legacy_v3', 'job_legacy_v3',
+    '{"kind":"message_thread","conversationId":"oc_legacy","sourceMessageId":"om_legacy"}',
+    'continuation:job_legacy_v3:terminal', 'legacy terminal payload', 'pending',
+    0, '${baseNow}', '${baseNow}', '${baseNow}'
+  );
   PRAGMA user_version = 3;
 `);
 versionThreeDatabase.close();
+
+// Preserve a byte-for-byte v3 database before migrating it, then remove the v3-only
+// permissions column to exercise the independently deployable v2 -> v7 chain.
+const authenticVersionTwoRoot = join(root, 'migration-authentic-v2');
+const authenticVersionTwoDatabasePath = join(authenticVersionTwoRoot, 'jobs.sqlite');
+const authenticVersionTwoArtifactsDir = join(authenticVersionTwoRoot, 'artifacts');
+await mkdir(authenticVersionTwoRoot, { recursive: true });
+await copyFile(versionThreeDatabasePath, authenticVersionTwoDatabasePath);
+const authenticVersionTwoDatabase = new DatabaseSync(authenticVersionTwoDatabasePath);
+authenticVersionTwoDatabase.exec(`
+  ALTER TABLE continuation_jobs DROP COLUMN permissions_json;
+  PRAGMA user_version = 2;
+`);
+authenticVersionTwoDatabase.close();
+
+const authenticVersionTwoRepository = await SqliteContinuationRepository.open({
+  databasePath: authenticVersionTwoDatabasePath,
+  artifactsDir: authenticVersionTwoArtifactsDir,
+});
+try {
+  const migrated = await authenticVersionTwoRepository.get('job_legacy_v3');
+  assert.equal(migrated?.maxAttempts, 5);
+  assert.equal(migrated?.attemptCount, 1);
+  assert.equal(migrated?.deliveryEvents?.[0]?.kind, 'terminal');
+  assert.equal(migrated?.permissions.filesystem.root, root);
+} finally {
+  authenticVersionTwoRepository.close();
+}
+const authenticVersionTwoMigratedDatabase = new DatabaseSync(authenticVersionTwoDatabasePath);
+assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.equal(authenticVersionTwoMigratedDatabase.prepare(
+  'SELECT payload FROM continuation_outbox WHERE job_id = ?',
+).get('job_legacy_v3')?.payload, 'legacy terminal payload');
+assert.deepEqual(authenticVersionTwoMigratedDatabase.prepare('PRAGMA foreign_key_check').all(), []);
+authenticVersionTwoMigratedDatabase.close();
+
 const migratedVersionThreeRepository = await SqliteContinuationRepository.open({
   databasePath: versionThreeDatabasePath,
   artifactsDir: versionThreeArtifactsDir,
@@ -961,6 +1411,8 @@ try {
   assert.equal(migrated?.maxAttempts, 5);
   assert.equal(migrated?.status, 'queued');
   assert.equal(migrated?.retained, false);
+  assert.equal(migrated?.attemptCount, 1);
+  assert.equal(migrated?.deliveryEvents?.[0]?.kind, 'terminal');
 } finally {
   migratedVersionThreeRepository.close();
 }
@@ -971,14 +1423,116 @@ const migratedVersionThreeColumns = migratedVersionThreeDatabase
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'max_attempts'));
 assert.equal(migratedVersionThreeColumns.some((column) => column.name === 'max_steps'), false);
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'retain'));
-assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 6);
+assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 7);
+assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'source_facts_json'));
+assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'task_contract_json'));
 const migratedOutboxColumns = migratedVersionThreeDatabase
   .prepare('PRAGMA table_info(continuation_outbox)')
   .all() as Array<{ name: string }>;
 assert.ok(migratedOutboxColumns.some((column) => column.name === 'event_key'));
 assert.ok(migratedOutboxColumns.some((column) => column.name === 'kind'));
 assert.ok(migratedOutboxColumns.some((column) => column.name === 'attempt_id'));
+assert.equal(Number(migratedVersionThreeDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.equal(Number(migratedVersionThreeDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
+).get('job_legacy_v3')?.count), 1);
+assert.deepEqual(migratedVersionThreeDatabase.prepare('PRAGMA foreign_key_check').all(), []);
 migratedVersionThreeDatabase.close();
+
+async function verifyIntermediateMigration(version: 4 | 5): Promise<void> {
+  const migrationRoot = join(root, `migration-v${version}`);
+  const migrationOptions = {
+    databasePath: join(migrationRoot, 'jobs.sqlite'),
+    artifactsDir: join(migrationRoot, 'artifacts'),
+  };
+  // v4/v5 are seeded from the exact historical DDL, not reconstructed by
+  // deleting newer columns from a v7 database.
+  const fixture = await seedHistoricalContinuationDatabase({
+    databasePath: migrationOptions.databasePath,
+    now: baseNow,
+    version,
+    workingDirectory: root,
+  });
+
+  const migrated = await SqliteContinuationRepository.open(migrationOptions);
+  try {
+    const job = await migrated.get(fixture.terminalJobId);
+    assert.equal(job?.maxAttempts, 5);
+    assert.equal(job?.attemptCount, 1);
+    assert.equal(job?.deliveryEvents?.length, fixture.expectedOutboxCount);
+    assert.equal(job?.deliveryEvents?.some((event) => event.kind === 'terminal'), true);
+    assert.equal(job?.sourceFacts.provenance, 'legacy_unavailable');
+    const delivery = await migrated.claimPendingDelivery(
+      `delivery-v${version}`,
+      '2026-07-17T00:00:04.000Z',
+    );
+    assert.equal(delivery?.jobId, fixture.terminalJobId);
+    assert.match(delivery?.payload ?? '', new RegExp(`v${version} terminal payload$`));
+  } finally {
+    migrated.close();
+  }
+  const migratedDatabase = new DatabaseSync(migrationOptions.databasePath);
+  assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 7);
+  assert.equal(Number(migratedDatabase.prepare(
+    'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
+  ).get(fixture.terminalJobId)?.count), fixture.expectedAttemptCount);
+  assert.equal(Number(migratedDatabase.prepare(
+    'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
+  ).get(fixture.terminalJobId)?.count), 1);
+  assert.equal(Number(migratedDatabase.prepare(
+    'SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ?',
+  ).get(fixture.terminalJobId)?.count), fixture.expectedOutboxCount);
+  assert.deepEqual(migratedDatabase.prepare('PRAGMA foreign_key_check').all(), []);
+  migratedDatabase.close();
+}
+
+await verifyIntermediateMigration(4);
+await verifyIntermediateMigration(5);
+
+async function verifyConcurrentHistoricalMigration(version: 1 | 4 | 5): Promise<void> {
+  const migrationRoot = join(root, `migration-concurrent-v${version}`);
+  const databasePath = join(migrationRoot, 'jobs.sqlite');
+  const artifactsDir = join(migrationRoot, 'artifacts');
+  const inputsDir = join(migrationRoot, 'inputs');
+  const fixture = await seedHistoricalContinuationDatabase({
+    databasePath,
+    now: baseNow,
+    version,
+    workingDirectory: root,
+  });
+  const openChild = () => spawn(process.execPath, [
+    '--import',
+    'tsx',
+    new URL(import.meta.url).pathname,
+    '--open-continuation-repository',
+    databasePath,
+    artifactsDir,
+    inputsDir,
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const first = openChild();
+  const second = openChild();
+  await Promise.all([
+    waitForChildMarker(first, 'REPOSITORY_OPENED', 5_000),
+    waitForChildMarker(second, 'REPOSITORY_OPENED', 5_000),
+  ]);
+  const repository = await SqliteContinuationRepository.open({ databasePath, artifactsDir, inputsDir });
+  try {
+    await repository.healthCheck();
+    assert.equal((await repository.get(fixture.terminalJobId))?.jobId, fixture.terminalJobId);
+  } finally {
+    repository.close();
+  }
+  const database = new DatabaseSync(databasePath);
+  assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 7);
+  assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+  database.close();
+}
+
+await verifyConcurrentHistoricalMigration(1);
+await verifyConcurrentHistoricalMigration(4);
+await verifyConcurrentHistoricalMigration(5);
 
 const versionTwoDatabase = new DatabaseSync(migrationDatabasePath);
 const v2Columns = versionTwoDatabase.prepare('PRAGMA table_info(continuation_jobs)').all() as Array<{ name: string }>;
@@ -1032,36 +1586,22 @@ try {
 
 const versionOneDatabasePath = join(root, 'migration-v1', 'jobs.sqlite');
 const versionOneArtifactsDir = join(root, 'migration-v1', 'artifacts');
-const versionOneSeed = await SqliteContinuationRepository.open({
+const versionOneFixture = await seedHistoricalContinuationDatabase({
   databasePath: versionOneDatabasePath,
-  artifactsDir: versionOneArtifactsDir,
+  now: baseNow,
+  version: 1,
+  workingDirectory: root,
 });
-const legacyV1Job = await versionOneSeed.create(createRequest('legacy-v1', {
-  requiredTools: ['lark_cli'],
-  permissions: {
-    profile: 'bounded',
-    filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
-    hostTools: ['lark_cli'],
-    network: 'none',
-    externalSideEffects: 'denied',
-    approval: { mode: 'never' },
-  },
-}));
-versionOneSeed.close();
-const versionOneDatabase = new DatabaseSync(versionOneDatabasePath);
-versionOneDatabase.exec(`
-  ALTER TABLE continuation_jobs DROP COLUMN permissions_json;
-  DROP TABLE continuation_tool_calls;
-  PRAGMA user_version = 1;
-`);
-versionOneDatabase.close();
 const migratedVersionOneRepository = await SqliteContinuationRepository.open({
   databasePath: versionOneDatabasePath,
   artifactsDir: versionOneArtifactsDir,
 });
 try {
   await migratedVersionOneRepository.healthCheck();
-  assert.deepEqual((await migratedVersionOneRepository.get(legacyV1Job.job.jobId))?.permissions, {
+  const migratedV1Due = await migratedVersionOneRepository.get(versionOneFixture.dueJobId!);
+  assert.equal(migratedV1Due?.maxAttempts, 5);
+  assert.equal(migratedV1Due?.attemptCount, 1);
+  assert.deepEqual(migratedV1Due?.permissions, {
     profile: 'bounded',
     filesystem: { root, mode: 'workspace-write', requestedPaths: [] },
     hostTools: ['lark_cli'],
@@ -1075,6 +1615,8 @@ try {
     '2026-07-17T00:00:30.000Z',
   );
   assert.ok(v1Claim);
+  assert.equal(v1Claim.job.jobId, versionOneFixture.dueJobId);
+  assert.equal(v1Claim.attempt.ordinal, 2);
   assert.equal(
     (await migratedVersionOneRepository.beginToolCall(
       v1Claim,
@@ -1083,8 +1625,2246 @@ try {
     )).status,
     'execute',
   );
+  const v1Delivery = await migratedVersionOneRepository.claimPendingDelivery(
+    'delivery-v1-migrated',
+    baseNow,
+  );
+  assert.equal(v1Delivery?.jobId, versionOneFixture.terminalJobId);
+  assert.equal(v1Delivery?.payload, 'legacy v1 terminal payload');
 } finally {
   migratedVersionOneRepository.close();
 }
+const migratedVersionOneDatabase = new DatabaseSync(versionOneDatabasePath);
+assert.equal(Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version), 7);
+assert.equal(Number(migratedVersionOneDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_attempts',
+).get()?.count), 3);
+assert.equal(Number(migratedVersionOneDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
+).get(versionOneFixture.dueJobId)?.count), 1);
+assert.equal(Number(migratedVersionOneDatabase.prepare(
+  'SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ?',
+).get(versionOneFixture.terminalJobId)?.count), versionOneFixture.expectedOutboxCount);
+assert.deepEqual(migratedVersionOneDatabase.prepare('PRAGMA foreign_key_check').all(), []);
+migratedVersionOneDatabase.close();
+
+const versionSixRoot = join(root, 'migration-v6');
+const versionSixDatabasePath = join(versionSixRoot, 'jobs.sqlite');
+const versionSixArtifactsDir = join(versionSixRoot, 'artifacts');
+const versionSixSeed = await SqliteContinuationRepository.open({
+  databasePath: versionSixDatabasePath,
+  artifactsDir: versionSixArtifactsDir,
+});
+const legacyV6Job = await versionSixSeed.create(createRequest('legacy-v6', {
+  taskContract: {
+    ...createRequest('legacy-v6').taskContract,
+    acceptanceCriteria: [{
+      id: 'old_id_not_available_to_v6',
+      description: 'Legacy criterion text.',
+      deliverableIds: ['result'],
+    }],
+  },
+}));
+const legacyV6MessageMismatch = await versionSixSeed.create(createRequest(
+  'legacy-v6-message-route-mismatch',
+));
+const legacyV6Malformed = await versionSixSeed.create(createRequest(
+  'legacy-v6-malformed-row',
+));
+const legacyV6CommentBase = createRequest('legacy-v6-comment-route-mismatch');
+const legacyV6CommentRoute = {
+  kind: 'comment_thread' as const,
+  documentToken: 'doc_legacy_v6_mismatch',
+  commentId: 'comment_legacy_v6_expected',
+  fileType: 'docx',
+};
+const legacyV6CommentMismatch = await versionSixSeed.create({
+  ...legacyV6CommentBase,
+  route: legacyV6CommentRoute,
+  sourceMessageId: 'comment_legacy_v6_source',
+  sourceThreadId: legacyV6CommentRoute.commentId,
+  sourceFacts: {
+    ...legacyV6CommentBase.sourceFacts,
+    chatId: 'doc:doc_legacy_v6_mismatch',
+    chatType: 'doc_comment',
+    route: legacyV6CommentRoute,
+    sourceMessageId: 'comment_legacy_v6_source',
+    sourceThreadId: legacyV6CommentRoute.commentId,
+  },
+});
+versionSixSeed.close();
+const versionSixDatabase = new DatabaseSync(versionSixDatabasePath);
+versionSixDatabase.prepare(`
+  UPDATE continuation_jobs SET route_json = ? WHERE job_id = ?
+`).run(JSON.stringify({
+  ...legacyV6MessageMismatch.job.route,
+  threadId: 'omt_legacy_v6_conflicting_route',
+}), legacyV6MessageMismatch.job.jobId);
+versionSixDatabase.prepare(`
+  UPDATE continuation_jobs SET source_thread_id = ? WHERE job_id = ?
+`).run('comment_legacy_v6_conflicting_source', legacyV6CommentMismatch.job.jobId);
+versionSixDatabase.prepare(`
+  UPDATE continuation_jobs SET permissions_json = ? WHERE job_id = ?
+`).run('{malformed-json', legacyV6Malformed.job.jobId);
+versionSixDatabase.exec(`
+  ALTER TABLE continuation_jobs DROP COLUMN source_facts_json;
+  ALTER TABLE continuation_jobs DROP COLUMN task_contract_json;
+  PRAGMA user_version = 6;
+`);
+versionSixDatabase.close();
+const versionSixInputsDir = join(versionSixRoot, 'inputs');
+const concurrentVersionSixOpen = () => spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--open-continuation-repository',
+  versionSixDatabasePath,
+  versionSixArtifactsDir,
+  versionSixInputsDir,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+const versionSixOpenA = concurrentVersionSixOpen();
+const versionSixOpenB = concurrentVersionSixOpen();
+await Promise.all([
+  waitForChildMarker(versionSixOpenA, 'REPOSITORY_OPENED', 5_000),
+  waitForChildMarker(versionSixOpenB, 'REPOSITORY_OPENED', 5_000),
+]);
+const migratedVersionSixRepository = await SqliteContinuationRepository.open({
+  databasePath: versionSixDatabasePath,
+  artifactsDir: versionSixArtifactsDir,
+  inputsDir: versionSixInputsDir,
+});
+try {
+  const migratedV6 = await migratedVersionSixRepository.get(legacyV6Job.job.jobId);
+  assert.equal(migratedV6?.sourceFacts.provenance, 'legacy_unavailable');
+  assert.equal(migratedV6?.sourceFacts.originalUserText, null);
+  assert.deepEqual(migratedV6?.sourceFacts.inputs, []);
+  assert.match(migratedV6?.taskContract.acceptanceCriteria[0].id ?? '', /^criterion_1_[a-f0-9]{12}$/);
+  assert.equal(migratedV6?.taskContract.acceptanceCriteria[0].description, 'Legacy criterion text.');
+  assert.deepEqual(migratedV6?.acceptanceCriteria, ['Legacy criterion text.']);
+  for (const corruptLegacyId of [
+    legacyV6MessageMismatch.job.jobId,
+    legacyV6CommentMismatch.job.jobId,
+    legacyV6Malformed.job.jobId,
+  ]) {
+    const tombstone = await migratedVersionSixRepository.get(corruptLegacyId);
+    assert.equal(tombstone?.status, 'failed');
+    assert.equal(tombstone?.errorCode, 'continuation_persisted_state_invalid');
+    assert.deepEqual(tombstone?.route, {
+      kind: 'message_thread',
+      conversationId: '',
+      sourceMessageId: '',
+    });
+  }
+  assert.ok(await migratedVersionSixRepository.claimDue(
+    'worker-v6-migrated',
+    baseNow,
+    '2026-07-17T00:00:30.000Z',
+  ));
+} finally {
+  migratedVersionSixRepository.close();
+}
+
+const interruptedFactsMigrationDatabase = new DatabaseSync(versionSixDatabasePath);
+interruptedFactsMigrationDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run('{', legacyV6Job.job.jobId);
+interruptedFactsMigrationDatabase.exec('PRAGMA user_version = 70;');
+interruptedFactsMigrationDatabase.close();
+const resumedFactsMigrationRepository = await SqliteContinuationRepository.open({
+  databasePath: versionSixDatabasePath,
+  artifactsDir: versionSixArtifactsDir,
+  inputsDir: versionSixInputsDir,
+});
+try {
+  const resumedTombstone = await resumedFactsMigrationRepository.get(legacyV6Job.job.jobId);
+  assert.equal(resumedTombstone?.errorCode, 'continuation_persisted_state_invalid');
+  const resumedFactsMigrationDatabase = new DatabaseSync(versionSixDatabasePath);
+  assert.equal(
+    Number(resumedFactsMigrationDatabase.prepare('PRAGMA user_version').get()?.user_version),
+    7,
+  );
+  resumedFactsMigrationDatabase.close();
+} finally {
+  resumedFactsMigrationRepository.close();
+}
+
+// v7 immutable facts and managed inputs are deterministic and survive source deletion.
+const managedRoot = await mkdtemp(join(tmpdir(), 'continuation-managed-inputs-'));
+const managedDatabasePath = join(managedRoot, 'runtime', 'jobs.sqlite');
+const managedArtifactsDir = join(managedRoot, 'runtime', 'artifacts');
+const managedInputsDir = join(managedRoot, 'runtime', 'inputs');
+const admittedSource = join(managedRoot, 'source-report.txt');
+await writeFile(admittedSource, 'managed input contents', 'utf8');
+const managedRepository = await SqliteContinuationRepository.open({
+  databasePath: managedDatabasePath,
+  artifactsDir: managedArtifactsDir,
+  inputsDir: managedInputsDir,
+  jitter: () => 0,
+});
+const managedBaseRequest = createRequest('managed-input');
+const managedRequest = createRequest('managed-input', {
+  idempotencyKey: 'idem-managed-stable',
+  sourceFacts: {
+    ...managedBaseRequest.sourceFacts,
+    sourceTimestamp: '2026-07-18T08:30:00.000Z',
+    originalUserText: 'Use github_pat_123456789012345678901234567890 to process the admitted file.',
+    quotedMessageText: 'Quoted xapp-123456789012345678901234567890.',
+  },
+  taskContract: {
+    ...managedBaseRequest.taskContract,
+    objective: 'Use sk-proj-123456789012345678901234567890 without persisting it.',
+    deliverables: [{
+      ...managedBaseRequest.taskContract.deliverables[0],
+      description: 'Do not expose AWS_SECRET_ACCESS_KEY=managed-db-secret.',
+    }],
+  },
+  sourceInputs: [{
+    sourcePath: admittedSource,
+    fileName: 'quarterly-github_pat_123456789012345678901234567890.pdf',
+    kind: 'message_attachment',
+  }],
+});
+const expectedManagedJobId = continuationJobId(managedRequest.idempotencyKey);
+assert.doesNotMatch(expectedManagedJobId, /managed|message|om_/i);
+const managedCreated = await managedRepository.create(managedRequest);
+assert.equal(managedCreated.job.jobId, expectedManagedJobId);
+assert.equal(managedCreated.job.sourceFacts.provenance, 'captured');
+assert.equal(managedCreated.job.sourceFacts.inputs.length, 1);
+assert.match(managedCreated.job.sourceFacts.inputs[0].sha256, /^[a-f0-9]{64}$/);
+assert.equal(managedCreated.job.sourceFacts.inputs[0].fileName, 'input_001.pdf');
+assert.equal(managedCreated.job.sourceFacts.inputs[0].relativePath, 'input_001.pdf');
+assert.equal('sourcePath' in managedCreated.job.sourceFacts.inputs[0], false);
+assert.equal(managedCreated.job.taskContract.acceptanceCriteria[0].id, 'result_persisted');
+assert.deepEqual(managedCreated.job.acceptanceCriteria, ['terminal result is persisted']);
+assert.doesNotMatch(JSON.stringify(managedCreated.job.sourceFacts), /github_pat_|xapp-/);
+assert.doesNotMatch(JSON.stringify(managedCreated.job.taskContract), /sk-proj-|managed-db-secret/);
+const managedInputStore = new ContinuationInputStore(managedInputsDir);
+const managedPath = managedInputStore.resolve(
+  managedCreated.job.jobId,
+  managedCreated.job.sourceFacts.inputs[0].relativePath,
+);
+assert.equal(await readFile(managedPath, 'utf8'), 'managed input contents');
+assert.equal(modeBits((await stat(managedPath)).mode), 0o400);
+assert.equal(modeBits((await stat(join(managedInputsDir, managedCreated.job.jobId))).mode), 0o500);
+await rm(admittedSource);
+assert.deepEqual(await managedInputStore.verify(
+  managedCreated.job.jobId,
+  managedCreated.job.sourceFacts.inputs,
+), { ok: true });
+
+const sameWrite = await managedRepository.create({
+  ...managedRequest,
+  title: 'Conflicting later title',
+  taskContract: { ...managedRequest.taskContract, title: 'Conflicting later title' },
+  sourceInputs: [{
+    sourcePath: join(managedRoot, 'missing-later-source'),
+    fileName: 'different.txt',
+    kind: 'message_attachment',
+  }],
+});
+assert.equal(sameWrite.created, false);
+assert.equal(sameWrite.job.jobId, managedCreated.job.jobId);
+assert.equal(sameWrite.job.title, managedCreated.job.title, 'same idempotency key is first-write-wins');
+managedRepository.close();
+
+const existingRowDelegate = new ContinuationInputStore(managedInputsDir);
+let existingRowLockCalls = 0;
+const existingRowRepository = await SqliteContinuationRepository.open({
+  databasePath: managedDatabasePath,
+  artifactsDir: managedArtifactsDir,
+  inputsDir: managedInputsDir,
+  inputStore: {
+    ensureRoot: () => existingRowDelegate.ensureRoot(),
+    async withCreationLock() {
+      existingRowLockCalls += 1;
+      throw new Error('existing same-key row must bypass the filesystem lock');
+    },
+    install: (...args: Parameters<ContinuationInputStore['install']>) => existingRowDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) => existingRowDelegate.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) => existingRowDelegate.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => existingRowDelegate.resolve(...args),
+    remove: (...args: Parameters<ContinuationInputStore['remove']>) => existingRowDelegate.remove(...args),
+    quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+      existingRowDelegate.quarantine(...args),
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      existingRowDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      existingRowDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      existingRowDelegate.cleanupOrphans(...args),
+  },
+});
+const existingWithoutLock = await existingRowRepository.create(managedRequest);
+assert.equal(existingWithoutLock.created, false);
+assert.equal(existingWithoutLock.job.jobId, expectedManagedJobId);
+assert.equal(existingRowLockCalls, 0);
+existingRowRepository.close();
+
+const reopenedManagedRepository = await SqliteContinuationRepository.open({
+  databasePath: managedDatabasePath,
+  artifactsDir: managedArtifactsDir,
+  inputsDir: managedInputsDir,
+  jitter: () => 0,
+});
+const reopenedManagedJob = await reopenedManagedRepository.get(expectedManagedJobId);
+assert.equal(reopenedManagedJob?.jobId, expectedManagedJobId);
+assert.equal(reopenedManagedJob?.sourceFacts.sourceTimestamp, '2026-07-18T08:30:00.000Z');
+const managedDatabase = new DatabaseSync(managedDatabasePath);
+const managedRaw = managedDatabase.prepare(`
+  SELECT source_facts_json, task_contract_json FROM continuation_jobs WHERE job_id = ?
+`).get(expectedManagedJobId) as { source_facts_json: string; task_contract_json: string };
+assert.doesNotMatch(managedRaw.source_facts_json, new RegExp(managedRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+assert.doesNotMatch(managedRaw.source_facts_json, /github_pat_|xapp-|quarterly-|super-secret|source-report/);
+assert.doesNotMatch(
+  managedRaw.task_contract_json,
+  /github_pat_|xapp-|sk-proj-|managed-db-secret|quarterly-|super-secret|source-report/,
+);
+const managedManifest = await readFile(join(
+  managedInputsDir,
+  expectedManagedJobId,
+  '.manifest.json',
+), 'utf8');
+assert.doesNotMatch(managedManifest, /github_pat_|quarterly-|source-report/);
+assert.match(managedManifest, /input_001\.pdf/);
+managedDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run('{not-json', expectedManagedJobId);
+const invalidJsonTombstone = await reopenedManagedRepository.get(expectedManagedJobId);
+assert.equal(invalidJsonTombstone?.status, 'failed');
+assert.equal(invalidJsonTombstone?.errorCode, 'continuation_persisted_state_invalid');
+
+const invalidContractJob = await reopenedManagedRepository.create(createRequest(
+  'invalid-persisted-contract',
+));
+managedDatabase.prepare(`
+  UPDATE continuation_jobs SET task_contract_json = '{}' WHERE job_id = ?
+`).run(invalidContractJob.job.jobId);
+assert.equal(
+  (await reopenedManagedRepository.get(invalidContractJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+
+const unknownFactsJob = await reopenedManagedRepository.create(createRequest(
+  'unknown-persisted-facts-field',
+));
+const unknownFactsRaw = managedDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(unknownFactsJob.job.jobId) as { source_facts_json: string };
+const managedFactsWithUnknownField = {
+  ...JSON.parse(unknownFactsRaw.source_facts_json) as Record<string, unknown>,
+  unexpected: 'must not reach the runner prompt',
+};
+managedDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run(JSON.stringify(managedFactsWithUnknownField), unknownFactsJob.job.jobId);
+assert.equal(
+  (await reopenedManagedRepository.get(unknownFactsJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+const requestWithUnknownPermission = createRequest('unknown-permission-field');
+(requestWithUnknownPermission.permissions as unknown as Record<string, unknown>).unexpected = true;
+await assert.rejects(
+  reopenedManagedRepository.create(requestWithUnknownPermission),
+  /permission envelope is invalid/i,
+);
+const requestWithoutEvidenceContract = createRequest('missing-evidence-contract');
+requestWithoutEvidenceContract.taskContract = {
+  ...requestWithoutEvidenceContract.taskContract,
+  deliverables: [],
+  acceptanceCriteria: [],
+  verificationRequirements: [],
+};
+await assert.rejects(
+  reopenedManagedRepository.create(requestWithoutEvidenceContract),
+  /contract requirements must not be empty/i,
+);
+managedDatabase.close();
+reopenedManagedRepository.close();
+
+// A failed redaction CAS must not strand a still-visible Job without its managed inputs.
+const redactionRollbackRoot = await mkdtemp(join(tmpdir(), 'continuation-redaction-rollback-'));
+const redactionRollbackOptions = {
+  databasePath: join(redactionRollbackRoot, 'jobs.sqlite'),
+  artifactsDir: join(redactionRollbackRoot, 'artifacts'),
+  inputsDir: join(redactionRollbackRoot, 'inputs'),
+};
+const redactionRollbackSource = join(redactionRollbackRoot, 'source.txt');
+await writeFile(redactionRollbackSource, 'restore me after failed redaction', 'utf8');
+const redactionRollbackSeed = await SqliteContinuationRepository.open(redactionRollbackOptions);
+const redactionRollbackCreated = await redactionRollbackSeed.create(createRequest('redaction-rollback', {
+  sourceInputs: [{
+    sourcePath: redactionRollbackSource,
+    fileName: 'source.txt',
+    kind: 'message_attachment',
+  }],
+}));
+const redactionRollbackArtifacts = new ContinuationArtifactStore(redactionRollbackOptions.artifactsDir);
+const redactionRollbackArtifactRoot = await redactionRollbackArtifacts.ensure(
+  redactionRollbackCreated.job.jobId,
+);
+await writeFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'restore artifact after rollback', 'utf8');
+assert.equal(await redactionRollbackSeed.requestCancel(
+  redactionRollbackCreated.job.jobId,
+  '2026-07-17T00:00:01.000Z',
+), 'cancelled');
+redactionRollbackSeed.close();
+
+const redactionRollbackDelegate = new ContinuationInputStore(redactionRollbackOptions.inputsDir);
+let redactionRaceInjected = false;
+const injectRedactionRace = (): void => {
+  if (redactionRaceInjected) return;
+  redactionRaceInjected = true;
+  const concurrent = new DatabaseSync(redactionRollbackOptions.databasePath);
+  concurrent.prepare(`
+    UPDATE continuation_jobs SET status = 'queued' WHERE job_id = ?
+  `).run(redactionRollbackCreated.job.jobId);
+  concurrent.close();
+};
+const redactionRollbackRepository = await SqliteContinuationRepository.open({
+  ...redactionRollbackOptions,
+  inputStore: {
+    ensureRoot: () => redactionRollbackDelegate.ensureRoot(),
+    withCreationLock: (...args: Parameters<ContinuationInputStore['withCreationLock']>) =>
+      redactionRollbackDelegate.withCreationLock(...args),
+    install: (...args: Parameters<ContinuationInputStore['install']>) =>
+      redactionRollbackDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) =>
+      redactionRollbackDelegate.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) =>
+      redactionRollbackDelegate.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) =>
+      redactionRollbackDelegate.resolve(...args),
+    remove: (...args: Parameters<ContinuationInputStore['remove']>) =>
+      redactionRollbackDelegate.remove(...args),
+    async quarantine(...args: Parameters<ContinuationInputStore['quarantine']>) {
+      const token = await redactionRollbackDelegate.quarantine(...args);
+      injectRedactionRace();
+      return token;
+    },
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      redactionRollbackDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      redactionRollbackDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      redactionRollbackDelegate.cleanupOrphans(...args),
+  },
+});
+assert.equal(await redactionRollbackRepository.redactTerminal(
+  redactionRollbackCreated.job.jobId,
+  '2026-07-17T00:00:02.000Z',
+), false);
+const redactionRollbackJob = await redactionRollbackRepository.get(redactionRollbackCreated.job.jobId);
+assert.equal(redactionRollbackJob?.deletedAt, undefined);
+assert.equal(redactionRollbackJob?.sourceFacts.inputs.length, 1);
+assert.equal(await readFile(redactionRollbackDelegate.resolve(
+  redactionRollbackCreated.job.jobId,
+  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
+), 'utf8'), 'restore me after failed redaction');
+assert.equal(
+  await readFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'utf8'),
+  'restore artifact after rollback',
+);
+redactionRollbackRepository.close();
+
+// Restart restores a quarantine left by a crash before the database redaction committed.
+const liveRedactionToken = await redactionRollbackDelegate.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+const liveArtifactRedactionToken = await redactionRollbackArtifacts.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+assert.ok(liveRedactionToken);
+assert.ok(liveArtifactRedactionToken);
+await redactionRollbackDelegate.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+await redactionRollbackArtifacts.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+await assert.rejects(lstat(join(
+  redactionRollbackOptions.inputsDir,
+  redactionRollbackCreated.job.jobId,
+)));
+await assert.rejects(lstat(redactionRollbackArtifactRoot));
+await mkdir(join(redactionRollbackOptions.inputsDir, redactionRollbackCreated.job.jobId));
+await mkdir(redactionRollbackArtifactRoot);
+await writeFile(join(
+  redactionRollbackOptions.inputsDir,
+  redactionRollbackCreated.job.jobId,
+  'restore-blocker',
+), 'block replacement', 'utf8');
+await writeFile(join(redactionRollbackArtifactRoot, 'restore-blocker'), 'block replacement', 'utf8');
+await assert.rejects(
+  redactionRollbackDelegate.restoreQuarantine(
+    redactionRollbackCreated.job.jobId,
+    liveRedactionToken,
+  ),
+  /EACCES|EEXIST|exist|not empty|permission denied/i,
+);
+await assert.rejects(
+  redactionRollbackArtifacts.restoreQuarantine(
+    redactionRollbackCreated.job.jobId,
+    liveArtifactRedactionToken,
+  ),
+  /EACCES|EEXIST|exist|not empty|permission denied/i,
+);
+await rm(join(redactionRollbackOptions.inputsDir, redactionRollbackCreated.job.jobId), {
+  recursive: true,
+  force: true,
+});
+await rm(redactionRollbackArtifactRoot, { recursive: true, force: true });
+await redactionRollbackDelegate.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+await redactionRollbackArtifacts.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+assert.equal(await readFile(redactionRollbackDelegate.resolve(
+  redactionRollbackCreated.job.jobId,
+  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
+), 'utf8'), 'restore me after failed redaction');
+assert.equal(
+  await readFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'utf8'),
+  'restore artifact after rollback',
+);
+const crashRedactionToken = await redactionRollbackDelegate.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+const crashArtifactRedactionToken = await redactionRollbackArtifacts.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+assert.ok(crashRedactionToken);
+assert.ok(crashArtifactRedactionToken);
+const deadRedactionToken = `${process.pid}.1-${'f'.repeat(16)}`;
+await rename(
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${crashRedactionToken}`,
+  ),
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${deadRedactionToken}`,
+  ),
+);
+await rename(
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${crashArtifactRedactionToken}`,
+  ),
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${deadRedactionToken}`,
+  ),
+);
+const redactionCrashRecovery = await SqliteContinuationRepository.open(redactionRollbackOptions);
+assert.equal(await readFile(redactionRollbackDelegate.resolve(
+  redactionRollbackCreated.job.jobId,
+  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
+), 'utf8'), 'restore me after failed redaction');
+assert.equal((await readdir(redactionRollbackOptions.inputsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${redactionRollbackCreated.job.jobId}-`),
+), false);
+assert.equal(
+  await readFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'utf8'),
+  'restore artifact after rollback',
+);
+assert.equal((await readdir(redactionRollbackOptions.artifactsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${redactionRollbackCreated.job.jobId}-`),
+), false);
+redactionCrashRecovery.close();
+
+const concurrentRecoveryInputToken = await redactionRollbackDelegate.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+const concurrentRecoveryArtifactToken = await redactionRollbackArtifacts.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+assert.ok(concurrentRecoveryInputToken);
+assert.ok(concurrentRecoveryArtifactToken);
+const concurrentRecoveryDeadToken = `2147483646.1-${'e'.repeat(16)}`;
+await rename(
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${concurrentRecoveryInputToken}`,
+  ),
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${concurrentRecoveryDeadToken}`,
+  ),
+);
+await rename(
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${concurrentRecoveryArtifactToken}`,
+  ),
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${concurrentRecoveryDeadToken}`,
+  ),
+);
+const liveRedactionJobs = new Set([redactionRollbackCreated.job.jobId]);
+await Promise.all([
+  redactionRollbackDelegate.cleanupOrphans(liveRedactionJobs),
+  redactionRollbackDelegate.cleanupOrphans(liveRedactionJobs),
+  redactionRollbackArtifacts.cleanupOrphans(liveRedactionJobs),
+  redactionRollbackArtifacts.cleanupOrphans(liveRedactionJobs),
+]);
+assert.equal(await readFile(redactionRollbackDelegate.resolve(
+  redactionRollbackCreated.job.jobId,
+  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
+), 'utf8'), 'restore me after failed redaction');
+assert.equal(
+  await readFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'utf8'),
+  'restore artifact after rollback',
+);
+
+// A stale reconciliation snapshot must not restore quarantines after the current
+// database state says the Job was deleted or sanitized as corrupt. New tokens
+// also carry quarantine creation time instead of inheriting an old tree mtime.
+const oldQuarantineTime = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+await utimes(
+  join(redactionRollbackOptions.inputsDir, redactionRollbackCreated.job.jobId),
+  oldQuarantineTime,
+  oldQuarantineTime,
+);
+await utimes(redactionRollbackArtifactRoot, oldQuarantineTime, oldQuarantineTime);
+const quarantineStartedAt = Date.now();
+const staleSnapshotInputToken = await redactionRollbackDelegate.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+const staleSnapshotArtifactToken = await redactionRollbackArtifacts.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
+assert.ok(staleSnapshotInputToken);
+assert.ok(staleSnapshotArtifactToken);
+const inputQuarantineCreatedAt = /^(?:\d+)\.(?:\d+)\.(\d+)-/.exec(staleSnapshotInputToken)?.[1];
+const artifactQuarantineCreatedAt = /^(?:\d+)\.(?:\d+)\.(\d+)-/.exec(staleSnapshotArtifactToken)?.[1];
+assert.ok(inputQuarantineCreatedAt);
+assert.ok(artifactQuarantineCreatedAt);
+assert.ok(Number(inputQuarantineCreatedAt) >= quarantineStartedAt);
+assert.ok(Number(artifactQuarantineCreatedAt) >= quarantineStartedAt);
+const staleSnapshotDeadToken = `2147483646.1.${Date.now()}-${'d'.repeat(16)}`;
+await rename(
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${staleSnapshotInputToken}`,
+  ),
+  join(
+    redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${staleSnapshotDeadToken}`,
+  ),
+);
+await rename(
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${staleSnapshotArtifactToken}`,
+  ),
+  join(
+    redactionRollbackOptions.artifactsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${staleSnapshotDeadToken}`,
+  ),
+);
+await redactionRollbackDelegate.cleanupOrphans(
+  liveRedactionJobs,
+  Date.now(),
+  async () => false,
+);
+await redactionRollbackArtifacts.cleanupOrphans(
+  liveRedactionJobs,
+  Date.now(),
+  async () => false,
+  (jobId, operation) => redactionRollbackDelegate.withCreationLock(jobId, operation),
+);
+await assert.rejects(lstat(join(
+  redactionRollbackOptions.inputsDir,
+  redactionRollbackCreated.job.jobId,
+)), /ENOENT/);
+await assert.rejects(lstat(redactionRollbackArtifactRoot), /ENOENT/);
+assert.equal((await readdir(redactionRollbackOptions.inputsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${redactionRollbackCreated.job.jobId}-`),
+), false);
+assert.equal((await readdir(redactionRollbackOptions.artifactsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${redactionRollbackCreated.job.jobId}-`),
+), false);
+
+// Separate repository instances serialize redaction through the cross-process Job lock.
+// The loser must observe the committed DB state and must never restore the winner's quarantines.
+const concurrentRedactionRoot = await mkdtemp(join(tmpdir(), 'continuation-redaction-concurrent-'));
+const concurrentRedactionOptions = {
+  databasePath: join(concurrentRedactionRoot, 'jobs.sqlite'),
+  artifactsDir: join(concurrentRedactionRoot, 'artifacts'),
+  inputsDir: join(concurrentRedactionRoot, 'inputs'),
+};
+const concurrentRedactionSource = join(concurrentRedactionRoot, 'source.txt');
+await writeFile(concurrentRedactionSource, 'concurrent redaction input', 'utf8');
+const concurrentRedactionSeed = await SqliteContinuationRepository.open(concurrentRedactionOptions);
+const concurrentRedactionJob = await concurrentRedactionSeed.create(createRequest(
+  'redaction-concurrent',
+  {
+    sourceInputs: [{
+      sourcePath: concurrentRedactionSource,
+      fileName: 'source.txt',
+      kind: 'message_attachment',
+    }],
+  },
+));
+const concurrentRedactionArtifacts = new ContinuationArtifactStore(
+  concurrentRedactionOptions.artifactsDir,
+);
+const concurrentRedactionArtifactRoot = await concurrentRedactionArtifacts.ensure(
+  concurrentRedactionJob.job.jobId,
+);
+await writeFile(join(concurrentRedactionArtifactRoot, 'result.txt'), 'concurrent result', 'utf8');
+assert.equal(await concurrentRedactionSeed.requestCancel(
+  concurrentRedactionJob.job.jobId,
+  '2026-07-17T00:00:01.000Z',
+), 'cancelled');
+concurrentRedactionSeed.close();
+
+const concurrentRedactionInputs = new ContinuationInputStore(concurrentRedactionOptions.inputsDir);
+let releaseConcurrentRedaction!: () => void;
+let markConcurrentQuarantine!: () => void;
+const concurrentQuarantineStarted = new Promise<void>((resolve) => {
+  markConcurrentQuarantine = resolve;
+});
+const concurrentQuarantineReleased = new Promise<void>((resolve) => {
+  releaseConcurrentRedaction = resolve;
+});
+const concurrentRedactionA = await SqliteContinuationRepository.open({
+  ...concurrentRedactionOptions,
+  inputStore: {
+    ensureRoot: () => concurrentRedactionInputs.ensureRoot(),
+    withCreationLock: <T>(jobId: string, operation: () => Promise<T>) =>
+      concurrentRedactionInputs.withCreationLock(jobId, operation),
+    install: (...args: Parameters<ContinuationInputStore['install']>) =>
+      concurrentRedactionInputs.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) =>
+      concurrentRedactionInputs.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) =>
+      concurrentRedactionInputs.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) =>
+      concurrentRedactionInputs.resolve(...args),
+    remove: (...args: Parameters<ContinuationInputStore['remove']>) =>
+      concurrentRedactionInputs.remove(...args),
+    async quarantine(...args: Parameters<ContinuationInputStore['quarantine']>) {
+      const token = await concurrentRedactionInputs.quarantine(...args);
+      markConcurrentQuarantine();
+      await concurrentQuarantineReleased;
+      return token;
+    },
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      concurrentRedactionInputs.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      concurrentRedactionInputs.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      concurrentRedactionInputs.cleanupOrphans(...args),
+  },
+});
+const concurrentRedactionB = await SqliteContinuationRepository.open(concurrentRedactionOptions);
+const redactionA = concurrentRedactionA.redactTerminal(
+  concurrentRedactionJob.job.jobId,
+  '2026-07-17T00:00:02.000Z',
+);
+await concurrentQuarantineStarted;
+let redactionBSettled = false;
+const redactionB = concurrentRedactionB.redactTerminal(
+  concurrentRedactionJob.job.jobId,
+  '2026-07-17T00:00:03.000Z',
+).finally(() => { redactionBSettled = true; });
+await new Promise((resolve) => setTimeout(resolve, 50));
+assert.equal(redactionBSettled, false);
+releaseConcurrentRedaction();
+assert.equal(await redactionA, true);
+assert.equal(await redactionB, false);
+assert.ok((await concurrentRedactionB.get(concurrentRedactionJob.job.jobId))?.deletedAt);
+await assert.rejects(stat(concurrentRedactionArtifactRoot), /ENOENT/);
+await assert.rejects(stat(join(
+  concurrentRedactionOptions.inputsDir,
+  concurrentRedactionJob.job.jobId,
+)), /ENOENT/);
+assert.equal((await readdir(concurrentRedactionOptions.artifactsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${concurrentRedactionJob.job.jobId}-`),
+), false);
+assert.equal((await readdir(concurrentRedactionOptions.inputsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${concurrentRedactionJob.job.jobId}-`),
+), false);
+concurrentRedactionA.close();
+concurrentRedactionB.close();
+
+// A crash after input rename but before DB commit leaves exactly a committed input tree and no
+// database row. Construct that durable state directly: pausing in the few instructions between
+// rename and INSERT would require a production fault-injection hook, while killing earlier/later
+// would be nondeterministic and would not improve state-transition coverage.
+const crashAdoptionRoot = await mkdtemp(join(tmpdir(), 'continuation-crash-adoption-'));
+const crashAdoptionOptions = {
+  databasePath: join(crashAdoptionRoot, 'jobs.sqlite'),
+  artifactsDir: join(crashAdoptionRoot, 'artifacts'),
+  inputsDir: join(crashAdoptionRoot, 'inputs'),
+};
+const crashAdoptionSource = join(crashAdoptionRoot, 'source.txt');
+await writeFile(crashAdoptionSource, 'crash adoption bytes', 'utf8');
+const crashAdoptionRequest = createRequest('crash-adoption', {
+  sourceInputs: [{ sourcePath: crashAdoptionSource, fileName: 'source.txt', kind: 'message_attachment' }],
+});
+const crashAdoptionSeed = await SqliteContinuationRepository.open(crashAdoptionOptions);
+const crashAdoptionCreated = await crashAdoptionSeed.create(crashAdoptionRequest);
+crashAdoptionSeed.close();
+const crashAdoptionDatabase = new DatabaseSync(crashAdoptionOptions.databasePath);
+crashAdoptionDatabase.prepare('DELETE FROM continuation_jobs WHERE job_id = ?').run(
+  crashAdoptionCreated.job.jobId,
+);
+crashAdoptionDatabase.close();
+const crashAdoptionRepository = await SqliteContinuationRepository.open(crashAdoptionOptions);
+const crashAdopted = await crashAdoptionRepository.create({
+  ...crashAdoptionRequest,
+  sourceInputs: [{
+    ...crashAdoptionRequest.sourceInputs[0],
+    fileName: 'source-downloaded-after-restart.txt',
+  }],
+  parentSessionId: 'session-after-restart',
+  maxAttempts: crashAdoptionRequest.maxAttempts + 1,
+  maxRetries: crashAdoptionRequest.maxRetries + 1,
+  timeoutSeconds: crashAdoptionRequest.timeoutSeconds + 1,
+  createdAt: '2026-07-17T00:01:00.000Z',
+  expiresAt: '2026-07-18T00:01:00.000Z',
+});
+assert.equal(crashAdopted.created, true);
+assert.equal(crashAdopted.job.jobId, crashAdoptionCreated.job.jobId);
+crashAdoptionRepository.close();
+
+// Input admission rejects unsafe files, collisions, and quota overflow without a partial final tree.
+const inputValidationRoot = join(managedRoot, 'input-validation');
+const inputValidationStore = new ContinuationInputStore(inputValidationRoot, {
+  maxFiles: 2,
+  maxFileBytes: 8,
+  maxTotalBytes: 12,
+});
+const shortA = join(managedRoot, 'short-a.txt');
+const shortB = join(managedRoot, 'short-b.txt');
+const large = join(managedRoot, 'large.txt');
+const mediumA = join(managedRoot, 'medium-a.txt');
+const mediumB = join(managedRoot, 'medium-b.txt');
+const directoryInput = join(managedRoot, 'directory-input');
+const symlinkInput = join(managedRoot, 'symlink-input');
+await writeFile(shortA, 'aaaa', 'utf8');
+await writeFile(shortB, 'bbbb', 'utf8');
+await writeFile(large, '123456789', 'utf8');
+await writeFile(mediumA, '1234567', 'utf8');
+await writeFile(mediumB, '7654321', 'utf8');
+await mkdir(directoryInput);
+await symlink(shortA, symlinkInput);
+await assert.rejects(
+  inputValidationStore.install('job_symlink', [{
+    sourcePath: symlinkInput,
+    fileName: 'link.txt',
+    kind: 'message_attachment',
+  }]),
+  /symbolic|regular file/i,
+);
+await assert.rejects(
+  inputValidationStore.install('job_directory', [{
+    sourcePath: directoryInput,
+    fileName: 'directory',
+    kind: 'message_attachment',
+  }]),
+  /regular file/i,
+);
+const duplicateNames = await inputValidationStore.install('job_duplicate_names', [
+  { sourcePath: shortA, fileName: 'same.txt', kind: 'message_attachment' },
+  { sourcePath: shortB, fileName: 'same.txt', kind: 'message_image' },
+]);
+assert.deepEqual(
+  duplicateNames.artifacts.map((artifact) => artifact.relativePath),
+  ['input_001.txt', 'input_002.txt'],
+);
+assert.equal(await readFile(inputValidationStore.resolve(
+  'job_duplicate_names',
+  duplicateNames.artifacts[0].relativePath,
+), 'utf8'), 'aaaa');
+assert.equal(await readFile(inputValidationStore.resolve(
+  'job_duplicate_names',
+  duplicateNames.artifacts[1].relativePath,
+), 'utf8'), 'bbbb');
+
+const corruptAdoption = await inputValidationStore.install('job_corrupt_adoption', [{
+  sourcePath: shortA,
+  fileName: 'source.txt',
+  kind: 'message_attachment',
+}], 'corrupt-adoption-fingerprint');
+const corruptAdoptionPath = inputValidationStore.resolve(
+  'job_corrupt_adoption',
+  corruptAdoption.artifacts[0].relativePath,
+);
+await chmod(corruptAdoptionPath, 0o600);
+await writeFile(corruptAdoptionPath, 'zzzz', 'utf8');
+await chmod(corruptAdoptionPath, 0o400);
+await assert.rejects(
+  inputValidationStore.install('job_corrupt_adoption', [{
+    sourcePath: shortA,
+    fileName: 'source.txt',
+    kind: 'message_attachment',
+  }], 'corrupt-adoption-fingerprint'),
+  /integrity|modified|managed input/i,
+);
+await assert.rejects(
+  inputValidationStore.install('job_bad_name', [{
+    sourcePath: shortA,
+    fileName: '../escape.txt',
+    kind: 'message_attachment',
+  }]),
+  /file name/i,
+);
+await assert.rejects(
+  inputValidationStore.install('job_too_many', [
+    { sourcePath: shortA, fileName: 'a.txt', kind: 'message_attachment' },
+    { sourcePath: shortB, fileName: 'b.txt', kind: 'message_attachment' },
+    { sourcePath: shortA, fileName: 'c.txt', kind: 'message_attachment' },
+  ]),
+  /count|files/i,
+);
+await assert.rejects(
+  inputValidationStore.install('job_file_large', [{
+    sourcePath: large,
+    fileName: 'large.txt',
+    kind: 'message_attachment',
+  }]),
+  /file.*byte|too large/i,
+);
+await assert.rejects(
+  inputValidationStore.install('job_total_large', [
+    { sourcePath: mediumA, fileName: 'medium-a.txt', kind: 'message_attachment' },
+    { sourcePath: mediumB, fileName: 'medium-b.txt', kind: 'message_attachment' },
+  ]),
+  /total byte/i,
+);
+await assert.rejects(
+  inputValidationStore.install('job_all_or_nothing', [
+    { sourcePath: shortA, fileName: 'a.txt', kind: 'message_attachment' },
+    { sourcePath: join(managedRoot, 'missing-input'), fileName: 'missing.txt', kind: 'message_attachment' },
+  ]),
+  /input|ENOENT|read/i,
+);
+await assert.rejects(lstat(join(inputValidationRoot, 'job_all_or_nothing')));
+
+const deadLockInputsRoot = join(managedRoot, 'dead-lock-inputs');
+const deadLockStore = new ContinuationInputStore(deadLockInputsRoot);
+await deadLockStore.ensureRoot();
+const ownerlessLockJobId = continuationJobId('ownerless-lock-grace');
+await mkdir(join(deadLockInputsRoot, `.creating-${ownerlessLockJobId}`));
+const ownerlessReclaimer = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  ownerlessLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await assert.rejects(
+  waitForChildMarker(ownerlessReclaimer, 'DEAD_LOCK_RECLAIMED', 500),
+  /timed out/i,
+);
+const staleOwnerlessTime = new Date(Date.now() - 60_000);
+await utimes(
+  join(deadLockInputsRoot, `.creating-${ownerlessLockJobId}`),
+  staleOwnerlessTime,
+  staleOwnerlessTime,
+);
+const staleOwnerlessReclaimer = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  ownerlessLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(staleOwnerlessReclaimer, 'DEAD_LOCK_RECLAIMED', 1_000);
+
+const staleReclaimJobId = continuationJobId('stale-reclaim-recovery');
+const staleReclaimPath = join(
+  deadLockInputsRoot,
+  `.reclaim-.creating-${staleReclaimJobId}-2147483647-${'f'.repeat(16)}`,
+);
+await writeFile(staleReclaimPath, 'stale reclaimed lock', 'utf8');
+await utimes(staleReclaimPath, staleOwnerlessTime, staleOwnerlessTime);
+const staleReclaimChild = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  staleReclaimJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(staleReclaimChild, 'DEAD_LOCK_RECLAIMED', 1_000);
+await assert.rejects(lstat(staleReclaimPath), /ENOENT/);
+
+const reclaimCleanupNow = Date.now();
+const staleReclaimCreatedAt = reclaimCleanupNow - 60_000;
+const staleIdentityReclaimPath = join(
+  deadLockInputsRoot,
+  `.reclaim-.creating-${continuationJobId('stale-identity-reclaim')}-2147483647.1.${staleReclaimCreatedAt}-${'a'.repeat(16)}`,
+);
+const staleIdentityReleasePath = join(
+  deadLockInputsRoot,
+  `.reclaim-release-.creating-${continuationJobId('stale-identity-release')}-2147483647.1.${staleReclaimCreatedAt}-${'b'.repeat(32)}`,
+);
+const staleLegacyReleasePath = join(
+  deadLockInputsRoot,
+  `.reclaim-release-.creating-${continuationJobId('stale-legacy-release')}-2147483647-${'c'.repeat(32)}`,
+);
+const staleDirectoryReclaimPath = join(
+  deadLockInputsRoot,
+  `.reclaim-.creating-${continuationJobId('stale-directory-reclaim')}-2147483647.1.${staleReclaimCreatedAt}-${'e'.repeat(16)}`,
+);
+const activeReclaimPath = join(
+  deadLockInputsRoot,
+  `.reclaim-.creating-${continuationJobId('active-identity-reclaim')}-${process.pid}.${currentProcessStartedAt()}.${reclaimCleanupNow}-${'d'.repeat(16)}`,
+);
+const malformedReclaimPath = join(deadLockInputsRoot, '.reclaim-unrecognized-state');
+for (const candidate of [
+  staleIdentityReclaimPath,
+  staleIdentityReleasePath,
+  staleLegacyReleasePath,
+  activeReclaimPath,
+  malformedReclaimPath,
+]) {
+  await writeFile(candidate, 'reclaim marker', 'utf8');
+}
+await mkdir(staleDirectoryReclaimPath);
+await utimes(staleIdentityReclaimPath, staleOwnerlessTime, staleOwnerlessTime);
+await utimes(staleIdentityReleasePath, staleOwnerlessTime, staleOwnerlessTime);
+await utimes(staleLegacyReleasePath, staleOwnerlessTime, staleOwnerlessTime);
+await utimes(staleDirectoryReclaimPath, staleOwnerlessTime, staleOwnerlessTime);
+await deadLockStore.cleanupOrphans(new Set(), reclaimCleanupNow);
+await assert.rejects(lstat(staleIdentityReclaimPath), /ENOENT/);
+await assert.rejects(lstat(staleIdentityReleasePath), /ENOENT/);
+await assert.rejects(lstat(staleLegacyReleasePath), /ENOENT/);
+await assert.rejects(lstat(staleDirectoryReclaimPath), /ENOENT/);
+assert.equal((await lstat(activeReclaimPath)).isFile(), true);
+assert.equal((await lstat(malformedReclaimPath)).isFile(), true);
+
+const atomicLockJobId = continuationJobId('atomic-lock-owner');
+await deadLockStore.withCreationLock(atomicLockJobId, async () => {
+  const lockMetadata = await lstat(join(deadLockInputsRoot, `.creating-${atomicLockJobId}`));
+  assert.equal(lockMetadata.isFile(), true);
+});
+await assert.rejects(lstat(join(deadLockInputsRoot, `.creating-${atomicLockJobId}`)), /ENOENT/);
+
+const deadLockJobId = continuationJobId('dead-lock-immediate-recovery');
+const deadLockDirectory = join(deadLockInputsRoot, `.creating-${deadLockJobId}`);
+await mkdir(deadLockDirectory);
+await writeFile(join(deadLockDirectory, 'owner.json'), JSON.stringify({
+  pid: 2_147_483_647,
+  createdAt: new Date().toISOString(),
+}), 'utf8');
+const deadLockChild = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  deadLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(deadLockChild, 'DEAD_LOCK_RECLAIMED', 1_000);
+
+const reusedPidLockJobId = continuationJobId('reused-pid-lock-recovery');
+const reusedPidLockDirectory = join(deadLockInputsRoot, `.creating-${reusedPidLockJobId}`);
+const reusedPidNonce = 'a'.repeat(32);
+await mkdir(reusedPidLockDirectory);
+await writeFile(join(reusedPidLockDirectory, 'owner.json'), JSON.stringify({
+  pid: process.pid,
+  startedAt: 1,
+  nonce: reusedPidNonce,
+  createdAt: new Date().toISOString(),
+}), 'utf8');
+await deadLockStore.withCreationLock(reusedPidLockJobId, async () => {});
+await assert.rejects(lstat(reusedPidLockDirectory), /ENOENT/);
+
+// Exercise the actual crash path: the first process owns the lock directory and
+// owner.json, then dies without cleanup. A fresh process must reclaim it without
+// waiting for the normal lock timeout.
+const killedLockJobId = continuationJobId('killed-creation-lock-recovery');
+const killedLockOwner = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--hold-creation-lock',
+  deadLockInputsRoot,
+  killedLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+const killedLockStderr = await waitForChildMarker(
+  killedLockOwner,
+  'CREATION_LOCK_HELD',
+  1_000,
+);
+const killedLockExit = new Promise<{
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}>((resolve) => killedLockOwner.once('exit', (code, signal) => resolve({ code, signal })));
+assert.equal(killedLockOwner.kill('SIGKILL'), true);
+const killedLockResult = await killedLockExit;
+assert.equal(killedLockResult.signal, 'SIGKILL', killedLockStderr);
+const reclaimStartedAt = Date.now();
+const killedLockReclaimer = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  killedLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(killedLockReclaimer, 'DEAD_LOCK_RECLAIMED', 1_000);
+assert.ok(Date.now() - reclaimStartedAt < 1_000, 'dead process lock is reclaimed promptly');
+
+const fifoPath = join(managedRoot, 'blocking-input.pipe');
+const mkfifo = spawn('mkfifo', [fifoPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+const mkfifoExit = await new Promise<number | null>((resolve) => mkfifo.once('close', resolve));
+assert.equal(mkfifoExit, 0);
+const fifoChild = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reject-blocking-input',
+  join(managedRoot, 'fifo-inputs'),
+  'job_fifo_rejection',
+  fifoPath,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(fifoChild, 'BLOCKING_INPUT_REJECTED', 1_000);
+
+// If managed input admission succeeds but the database insert fails, creation compensates by
+// removing only the tree installed by this request and leaves no partial staging directory.
+const failedCommitRoot = await mkdtemp(join(tmpdir(), 'continuation-failed-commit-'));
+const failedCommitSource = join(failedCommitRoot, 'source.txt');
+await writeFile(failedCommitSource, 'valid admitted bytes', 'utf8');
+const failedCommitOptions = {
+  databasePath: join(failedCommitRoot, 'jobs.sqlite'),
+  artifactsDir: join(failedCommitRoot, 'artifacts'),
+  inputsDir: join(failedCommitRoot, 'inputs'),
+};
+const failedCommitRepository = await SqliteContinuationRepository.open(failedCommitOptions);
+const failedCommitRequest = createRequest('failed-commit', {
+  retryOfJobId: 'job_missing_retry_source',
+  sourceInputs: [{
+    sourcePath: failedCommitSource,
+    fileName: 'source.txt',
+    kind: 'message_attachment',
+  }],
+});
+await assert.rejects(failedCommitRepository.create(failedCommitRequest), /foreign key/i);
+assert.equal(await failedCommitRepository.get(continuationJobId(failedCommitRequest.idempotencyKey)), null);
+const failedCommitEntries = await readdir(failedCommitOptions.inputsDir);
+assert.equal(
+  failedCommitEntries.some((entry) =>
+    entry === continuationJobId(failedCommitRequest.idempotencyKey) || entry.startsWith('.staging-')),
+  false,
+);
+failedCommitRepository.close();
+
+// Separate repository instances converge on one deterministic row/tree. A young final tree is
+// never treated as an orphan while another process may still be committing its database row.
+const concurrentCreateRoot = await mkdtemp(join(tmpdir(), 'continuation-concurrent-create-'));
+const concurrentCreateSource = join(concurrentCreateRoot, 'source.txt');
+await writeFile(concurrentCreateSource, 'same concurrent source', 'utf8');
+const concurrentCreateOptions = {
+  databasePath: join(concurrentCreateRoot, 'jobs.sqlite'),
+  artifactsDir: join(concurrentCreateRoot, 'artifacts'),
+  inputsDir: join(concurrentCreateRoot, 'inputs'),
+  jitter: () => 0,
+};
+const concurrentCreateA = await SqliteContinuationRepository.open(concurrentCreateOptions);
+const concurrentCreateB = await SqliteContinuationRepository.open(concurrentCreateOptions);
+const concurrentRequest = createRequest('concurrent-create', {
+  sourceInputs: [{
+    sourcePath: concurrentCreateSource,
+    fileName: 'source.txt',
+    kind: 'message_attachment',
+  }],
+});
+const [concurrentResultA, concurrentResultB] = await Promise.all([
+  concurrentCreateA.create(concurrentRequest),
+  concurrentCreateB.create(concurrentRequest),
+]);
+assert.equal(concurrentResultA.job.jobId, concurrentResultB.job.jobId);
+assert.equal(Number(concurrentResultA.created) + Number(concurrentResultB.created), 1);
+const concurrentEntries = await readdir(join(concurrentCreateRoot, 'inputs'));
+assert.equal(concurrentEntries.filter((entry) => entry === concurrentResultA.job.jobId).length, 1);
+assert.equal(concurrentEntries.some((entry) => entry.startsWith('.staging-')), false);
+const concurrentStore = new ContinuationInputStore(join(concurrentCreateRoot, 'inputs'));
+await concurrentStore.cleanupOrphans(new Set(), Date.now());
+assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', concurrentResultA.job.jobId))).isDirectory(), true);
+concurrentCreateA.close();
+concurrentCreateB.close();
+
+const liveCleanupJobId = continuationJobId('live-cleanup-create');
+const liveCreateChild = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--hold-managed-input-create',
+  concurrentCreateRoot,
+  liveCleanupJobId,
+  concurrentCreateSource,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+const liveCreateStderr = await waitForChildMarker(liveCreateChild, 'MANAGED_INPUT_INSTALLED');
+await concurrentStore.cleanupOrphans(new Set(), Date.now());
+assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', liveCleanupJobId))).isDirectory(), true);
+const liveCreateExit = new Promise<number | null>((resolve) => liveCreateChild.once('close', resolve));
+await writeFile(join(concurrentCreateRoot, `.release-${liveCleanupJobId}`), 'release', 'utf8');
+assert.equal(await liveCreateExit, 0, liveCreateStderr);
+
+const concurrentOrphan = join(concurrentCreateRoot, 'inputs', 'job_concurrent_orphan');
+await mkdir(join(concurrentOrphan, 'nested'), { recursive: true });
+for (let index = 0; index < 20; index += 1) {
+  await writeFile(join(concurrentOrphan, 'nested', `file-${index}.txt`), 'orphan', 'utf8');
+}
+const agedOrphan = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+await utimes(concurrentOrphan, agedOrphan, agedOrphan);
+await Promise.all([
+  concurrentStore.cleanupOrphans(new Set(), Date.now()),
+  concurrentStore.cleanupOrphans(new Set(), Date.now()),
+]);
+await assert.rejects(lstat(concurrentOrphan), /ENOENT/);
+
+const adoptedOrphanJobId = continuationJobId('adopted-orphan-recheck');
+const adoptedOrphan = await concurrentStore.install(adoptedOrphanJobId, [{
+  sourcePath: concurrentCreateSource,
+  fileName: 'adopted.txt',
+  kind: 'message_attachment',
+}], 'adopted-orphan-fingerprint');
+const adoptedOrphanDirectory = join(concurrentCreateRoot, 'inputs', adoptedOrphanJobId);
+await utimes(adoptedOrphanDirectory, agedOrphan, agedOrphan);
+await concurrentStore.cleanupOrphans(
+  new Set(),
+  Date.now(),
+  async (jobId) => jobId === adoptedOrphanJobId,
+);
+assert.deepEqual(await concurrentStore.verify(adoptedOrphanJobId, adoptedOrphan.artifacts), { ok: true });
+
+// One corrupt trusted snapshot must fail closed without blocking the next due Job.
+const corruptStateRoot = await mkdtemp(join(tmpdir(), 'continuation-corrupt-state-'));
+const corruptStateDatabasePath = join(corruptStateRoot, 'jobs.sqlite');
+const corruptStateRepository = await SqliteContinuationRepository.open({
+  databasePath: corruptStateDatabasePath,
+  artifactsDir: join(corruptStateRoot, 'artifacts'),
+  inputsDir: join(corruptStateRoot, 'inputs'),
+  jitter: () => 0,
+});
+const corruptInputCountJob = await corruptStateRepository.create(createRequest(
+  'corrupt-input-count-state',
+  { createdAt: '2026-07-16T23:59:53.000Z' },
+));
+const corruptInputDuplicateJob = await corruptStateRepository.create(createRequest(
+  'corrupt-input-duplicate-state',
+  { createdAt: '2026-07-16T23:59:54.000Z' },
+));
+const corruptInputSizeJob = await corruptStateRepository.create(createRequest(
+  'corrupt-input-size-state',
+  { createdAt: '2026-07-16T23:59:55.000Z' },
+));
+const corruptCheckpointJob = await corruptStateRepository.create(createRequest(
+  'corrupt-checkpoint-state',
+  { createdAt: '2026-07-16T23:59:56.000Z' },
+));
+const corruptArtifactsJob = await corruptStateRepository.create(createRequest(
+  'corrupt-artifacts-state',
+  { createdAt: '2026-07-16T23:59:57.000Z' },
+));
+const corruptStateJob = await corruptStateRepository.create(createRequest('corrupt-state', {
+  createdAt: '2026-07-16T23:59:58.000Z',
+}));
+const healthyStateJob = await corruptStateRepository.create(createRequest('healthy-after-corrupt-state', {
+  createdAt: '2026-07-16T23:59:59.000Z',
+}));
+const corruptStateDatabase = new DatabaseSync(corruptStateDatabasePath);
+const persistedInput = (index: number, sizeBytes = 1) => ({
+  id: `input_${String(index).padStart(3, '0')}`,
+  kind: 'message_attachment',
+  fileName: `input_${String(index).padStart(3, '0')}.bin`,
+  relativePath: `input_${String(index).padStart(3, '0')}.bin`,
+  sha256: 'a'.repeat(64),
+  sizeBytes,
+});
+const overwritePersistedInputs = (jobId: string, inputs: unknown[]) => {
+  const row = corruptStateDatabase.prepare(`
+    SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+  `).get(jobId) as { source_facts_json: string };
+  corruptStateDatabase.prepare(`
+    UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+  `).run(JSON.stringify({
+    ...JSON.parse(row.source_facts_json) as Record<string, unknown>,
+    inputs,
+  }), jobId);
+};
+overwritePersistedInputs(corruptInputCountJob.job.jobId, Array.from(
+  { length: CONTINUATION_LIMITS.inputFileCount + 1 },
+  (_, index) => persistedInput(index + 1),
+));
+overwritePersistedInputs(corruptInputDuplicateJob.job.jobId, [persistedInput(1), persistedInput(1)]);
+overwritePersistedInputs(corruptInputSizeJob.job.jobId, [
+  persistedInput(1, CONTINUATION_LIMITS.inputBytesPerFile + 1),
+]);
+assert.equal(
+  (await corruptStateRepository.get(corruptInputDuplicateJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await corruptStateRepository.listAll(20)).find(
+    (job) => job.jobId === corruptInputSizeJob.job.jobId,
+  )?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+corruptStateDatabase.prepare(`
+  UPDATE continuation_jobs SET checkpoint_json = ? WHERE job_id = ?
+`).run(JSON.stringify({
+  summary: 'x'.repeat(CONTINUATION_LIMITS.checkpointBytes),
+  completedSteps: [],
+  remainingSteps: [],
+  constraints: [],
+  decisions: [],
+  references: [],
+}), corruptCheckpointJob.job.jobId);
+corruptStateDatabase.prepare(`
+  UPDATE continuation_jobs SET result_artifacts_json = ? WHERE job_id = ?
+`).run(JSON.stringify(Array.from(
+  { length: CONTINUATION_LIMITS.artifactCount + 1 },
+  (_, index) => `artifact-${index}`,
+)), corruptArtifactsJob.job.jobId);
+assert.equal(
+  (await corruptStateRepository.get(corruptCheckpointJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await corruptStateRepository.listAll(10)).find(
+    (job) => job.jobId === corruptArtifactsJob.job.jobId,
+  )?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+const corruptFactsJson = corruptStateDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(corruptStateJob.job.jobId) as { source_facts_json: string };
+corruptStateDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run(JSON.stringify({
+  ...JSON.parse(corruptFactsJson.source_facts_json) as Record<string, unknown>,
+  unexpected: 'github_pat_must_not_leak',
+}), corruptStateJob.job.jobId);
+const healthyStateClaim = await corruptStateRepository.claimDue(
+  'worker-after-corrupt-state',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+assert.equal(healthyStateClaim?.job.jobId, healthyStateJob.job.jobId);
+assert.equal(
+  (await corruptStateRepository.get(corruptInputCountJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+const corruptStateRow = corruptStateDatabase.prepare(`
+  SELECT status, error_code, lease_owner FROM continuation_jobs WHERE job_id = ?
+`).get(corruptStateJob.job.jobId) as {
+  status: string;
+  error_code: string;
+  lease_owner: string | null;
+};
+assert.equal(corruptStateRow.status, 'failed');
+assert.equal(corruptStateRow.error_code, 'continuation_persisted_state_invalid');
+assert.equal(corruptStateRow.lease_owner, null);
+const corruptStateTombstone = await corruptStateRepository.get(corruptStateJob.job.jobId);
+assert.equal(corruptStateTombstone?.status, 'failed');
+assert.equal(corruptStateTombstone?.sourceFacts.provenance, 'legacy_unavailable');
+assert.equal(corruptStateTombstone?.sourceFacts.originalUserText, null);
+assert.deepEqual(corruptStateTombstone?.sourceFacts.inputs, []);
+assert.ok((await corruptStateRepository.listAll(10)).some(
+  (job) => job.jobId === corruptStateJob.job.jobId,
+));
+const tombstoneRaw = corruptStateDatabase.prepare(`
+  SELECT source_facts_json, task_contract_json FROM continuation_jobs WHERE job_id = ?
+`).get(corruptStateJob.job.jobId) as {
+  source_facts_json: string;
+  task_contract_json: string;
+};
+assert.doesNotMatch(
+  `${tombstoneRaw.source_facts_json}\n${tombstoneRaw.task_contract_json}`,
+  /github_pat|unexpected|must_not_leak/i,
+);
+const corruptStateDelivery = await corruptStateRepository.claimPendingDelivery(
+  'delivery-corrupt-state',
+  baseNow,
+);
+assert.equal(corruptStateDelivery?.jobId, corruptStateJob.job.jobId);
+assert.doesNotMatch(corruptStateDelivery?.payload ?? '', /github_pat|unexpected|source_facts/i);
+await corruptStateRepository.markDeliveryResult(
+  corruptStateDelivery!,
+  { status: 'delivered', messageId: 'om_corrupt_state_failure' },
+  baseNow,
+);
+const corruptStateCleanup = await corruptStateRepository.purgeExpired(
+  '2026-07-17T00:00:01.000Z',
+  '2026-07-17T00:02:00.000Z',
+);
+assert.ok(corruptStateCleanup.some((entry) =>
+  entry.jobId === corruptStateJob.job.jobId && entry.result === 'cleaned'));
+assert.equal((await corruptStateRepository.get(corruptStateJob.job.jobId))?.deletedAt,
+  '2026-07-17T00:02:00.000Z');
+corruptStateDatabase.close();
+corruptStateRepository.close();
+
+// Divergent route copies are never used for remote delivery; the Job becomes a local tombstone.
+const routeMismatchRoot = await mkdtemp(join(tmpdir(), 'continuation-route-mismatch-'));
+const routeMismatchDatabasePath = join(routeMismatchRoot, 'jobs.sqlite');
+const routeMismatchInputsDir = join(routeMismatchRoot, 'inputs');
+const routeMismatchArtifactsDir = join(routeMismatchRoot, 'artifacts');
+const routeMismatchSource = join(routeMismatchRoot, 'source.txt');
+await writeFile(routeMismatchSource, 'sensitive managed input', 'utf8');
+const routeMismatchRepository = await SqliteContinuationRepository.open({
+  databasePath: routeMismatchDatabasePath,
+  artifactsDir: routeMismatchArtifactsDir,
+  inputsDir: routeMismatchInputsDir,
+  jitter: () => 0,
+});
+const routeMismatchJob = await routeMismatchRepository.create(createRequest('route-mismatch', {
+  createdAt: '2026-07-16T23:59:58.000Z',
+  sourceInputs: [{
+    sourcePath: routeMismatchSource,
+    fileName: 'source.txt',
+    kind: 'message_attachment',
+  }],
+}));
+const routeMismatchArtifactStore = new ContinuationArtifactStore(routeMismatchArtifactsDir);
+await writeFile(
+  join(await routeMismatchArtifactStore.ensure(routeMismatchJob.job.jobId), 'result.txt'),
+  'sensitive result',
+  'utf8',
+);
+const routeMismatchHealthy = await routeMismatchRepository.create(createRequest(
+  'healthy-after-route-mismatch',
+  { createdAt: '2026-07-16T23:59:59.000Z' },
+));
+const routeMismatchDatabase = new DatabaseSync(routeMismatchDatabasePath);
+const routeMismatchFacts = routeMismatchDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(routeMismatchJob.job.jobId) as { source_facts_json: string };
+const wrongThreadRoute = {
+  kind: 'message_thread',
+  conversationId: routeMismatchJob.job.route.kind === 'message_thread'
+    ? routeMismatchJob.job.route.conversationId
+    : '',
+  sourceMessageId: routeMismatchJob.job.sourceMessageId,
+  threadId: 'omt_wrong_thread',
+};
+routeMismatchDatabase.prepare(`
+  UPDATE continuation_jobs SET route_json = ?, source_facts_json = ? WHERE job_id = ?
+`).run(
+  JSON.stringify(wrongThreadRoute),
+  JSON.stringify({
+    ...JSON.parse(routeMismatchFacts.source_facts_json) as Record<string, unknown>,
+    route: wrongThreadRoute,
+  }),
+  routeMismatchJob.job.jobId,
+);
+const routeMismatchTombstone = await routeMismatchRepository.get(routeMismatchJob.job.jobId);
+assert.equal(routeMismatchTombstone?.status, 'failed');
+assert.equal(routeMismatchTombstone?.errorCode, 'continuation_persisted_state_invalid');
+const routeMismatchHealthyClaim = await routeMismatchRepository.claimDue(
+  'worker-after-route-mismatch',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+assert.equal(routeMismatchHealthyClaim?.job.jobId, routeMismatchHealthy.job.jobId);
+assert.deepEqual(routeMismatchTombstone?.route, {
+  kind: 'message_thread',
+  conversationId: '',
+  sourceMessageId: '',
+});
+assert.equal(await routeMismatchRepository.claimPendingDelivery(
+  'delivery-route-mismatch',
+  baseNow,
+), null);
+await assert.rejects(lstat(join(routeMismatchInputsDir, routeMismatchJob.job.jobId)), /ENOENT/);
+await assert.rejects(lstat(join(routeMismatchArtifactsDir, routeMismatchJob.job.jobId)), /ENOENT/);
+assert.doesNotMatch(String(routeMismatchDatabase.prepare(`
+  SELECT route_json FROM continuation_jobs WHERE job_id = ?
+`).get(routeMismatchJob.job.jobId)?.route_json ?? ''), /omt_wrong_thread/);
+assert.ok((await routeMismatchRepository.listAll(10)).some(
+  (job) => job.jobId === routeMismatchJob.job.jobId,
+));
+const commentBindingBase = createRequest('persisted-comment-thread-binding', {
+  createdAt: '2026-07-16T23:59:57.000Z',
+});
+const expectedCommentRoute = {
+  kind: 'comment_thread' as const,
+  documentToken: 'doc_persisted_binding',
+  commentId: 'comment_persisted_expected',
+  fileType: 'docx',
+};
+const commentBindingJob = await routeMismatchRepository.create({
+  ...commentBindingBase,
+  route: expectedCommentRoute,
+  sourceMessageId: 'comment_source_message',
+  sourceThreadId: expectedCommentRoute.commentId,
+  sourceFacts: {
+    ...commentBindingBase.sourceFacts,
+    chatId: 'doc:doc_persisted_binding',
+    chatType: 'doc_comment',
+    route: expectedCommentRoute,
+    sourceMessageId: 'comment_source_message',
+    sourceThreadId: expectedCommentRoute.commentId,
+  },
+});
+const commentBindingFacts = routeMismatchDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(commentBindingJob.job.jobId) as { source_facts_json: string };
+const wrongCommentRoute = {
+  ...expectedCommentRoute,
+  commentId: 'comment_persisted_wrong',
+};
+routeMismatchDatabase.prepare(`
+  UPDATE continuation_jobs SET route_json = ?, source_facts_json = ? WHERE job_id = ?
+`).run(
+  JSON.stringify(wrongCommentRoute),
+  JSON.stringify({
+    ...JSON.parse(commentBindingFacts.source_facts_json) as Record<string, unknown>,
+    route: wrongCommentRoute,
+  }),
+  commentBindingJob.job.jobId,
+);
+const commentBindingTombstone = await routeMismatchRepository.get(commentBindingJob.job.jobId);
+assert.equal(commentBindingTombstone?.status, 'failed');
+assert.equal(commentBindingTombstone?.errorCode, 'continuation_persisted_state_invalid');
+assert.equal(await routeMismatchRepository.claimPendingDelivery(
+  'delivery-comment-thread-mismatch',
+  baseNow,
+), null);
+routeMismatchDatabase.close();
+routeMismatchRepository.close();
+
+// Corrupt terminal rows heal through list/get, cannot retry, and retry originally retained cleanup.
+const terminalCorruptRoot = await mkdtemp(join(tmpdir(), 'continuation-terminal-corrupt-'));
+const terminalCorruptDatabasePath = join(terminalCorruptRoot, 'jobs.sqlite');
+const terminalCorruptInputsDir = join(terminalCorruptRoot, 'inputs');
+const terminalCorruptSource = join(terminalCorruptRoot, 'source.txt');
+await writeFile(terminalCorruptSource, 'terminal corrupt input', 'utf8');
+const terminalCorruptDelegate = new ContinuationInputStore(terminalCorruptInputsDir);
+let terminalCorruptRemoveFailures = 2;
+let terminalCorruptLockDepth = 0;
+const terminalCorruptRemoveLockStates: boolean[] = [];
+const terminalCorruptRepository = await SqliteContinuationRepository.open({
+  databasePath: terminalCorruptDatabasePath,
+  artifactsDir: join(terminalCorruptRoot, 'artifacts'),
+  inputsDir: terminalCorruptInputsDir,
+  inputStore: {
+    ensureRoot: () => terminalCorruptDelegate.ensureRoot(),
+    withCreationLock: <T>(jobId: string, operation: () => Promise<T>) =>
+      terminalCorruptDelegate.withCreationLock(jobId, async () => {
+        terminalCorruptLockDepth += 1;
+        try {
+          return await operation();
+        } finally {
+          terminalCorruptLockDepth -= 1;
+        }
+      }),
+    install: (...args: Parameters<ContinuationInputStore['install']>) =>
+      terminalCorruptDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) =>
+      terminalCorruptDelegate.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) =>
+      terminalCorruptDelegate.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) =>
+      terminalCorruptDelegate.resolve(...args),
+    async remove(...args: Parameters<ContinuationInputStore['remove']>) {
+      terminalCorruptRemoveLockStates.push(terminalCorruptLockDepth > 0);
+      if (terminalCorruptRemoveFailures > 0) {
+        terminalCorruptRemoveFailures -= 1;
+        throw new Error('injected corrupt storage cleanup failure');
+      }
+      return terminalCorruptDelegate.remove(...args);
+    },
+    quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+      terminalCorruptDelegate.quarantine(...args),
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      terminalCorruptDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      terminalCorruptDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      terminalCorruptDelegate.cleanupOrphans(...args),
+  },
+});
+const terminalCorruptCreated = await terminalCorruptRepository.create(createRequest(
+  'terminal-corrupt-state',
+  {
+    sourceInputs: [{
+      sourcePath: terminalCorruptSource,
+      fileName: 'source.txt',
+      kind: 'message_attachment',
+    }],
+  },
+));
+assert.equal(await terminalCorruptRepository.setRetained(
+  terminalCorruptCreated.job.jobId,
+  true,
+  baseNow,
+), true);
+assert.equal(await terminalCorruptRepository.requestCancel(
+  terminalCorruptCreated.job.jobId,
+  baseNow,
+), 'cancelled');
+const terminalCorruptDatabase = new DatabaseSync(terminalCorruptDatabasePath);
+const terminalCorruptFacts = terminalCorruptDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(terminalCorruptCreated.job.jobId) as { source_facts_json: string };
+terminalCorruptDatabase.prepare(`
+  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+`).run(JSON.stringify({
+  ...JSON.parse(terminalCorruptFacts.source_facts_json) as Record<string, unknown>,
+  unexpected: 'must_be_scrubbed',
+}), terminalCorruptCreated.job.jobId);
+const terminalCorruptList = await terminalCorruptRepository.listAll(10);
+const listedTerminalTombstone = terminalCorruptList.find(
+  (job) => job.jobId === terminalCorruptCreated.job.jobId,
+);
+assert.equal(listedTerminalTombstone?.status, 'failed');
+assert.equal(listedTerminalTombstone?.errorCode, 'continuation_persisted_state_invalid');
+assert.match(listedTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i);
+const stillPendingTerminalTombstone = await terminalCorruptRepository.get(
+  terminalCorruptCreated.job.jobId,
+);
+assert.match(stillPendingTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i);
+const cleanedTerminalTombstone = await terminalCorruptRepository.get(
+  terminalCorruptCreated.job.jobId,
+);
+assert.equal(cleanedTerminalTombstone?.retained, false);
+assert.doesNotMatch(cleanedTerminalTombstone?.errorSummary ?? '', /cleanup is pending/i);
+assert.ok(terminalCorruptRemoveLockStates.length >= 3);
+assert.ok(terminalCorruptRemoveLockStates.every(Boolean));
+await assert.rejects(
+  lstat(join(terminalCorruptInputsDir, terminalCorruptCreated.job.jobId)),
+  /ENOENT/,
+);
+await assert.rejects(
+  terminalCorruptRepository.cloneForRetry(
+    terminalCorruptCreated.job.jobId,
+    'retry-corrupt-tombstone',
+    baseNow,
+  ),
+  /stored task state failed integrity validation/i,
+);
+terminalCorruptDatabase.close();
+terminalCorruptRepository.close();
+
+// Corrupt-state recovery must re-read after taking the cross-process storage lock. A concurrent
+// repair that wins the lock must not be overwritten by a tombstone or have its storage removed.
+const recoveryRaceRoot = await mkdtemp(join(tmpdir(), 'continuation-corrupt-recovery-race-'));
+const recoveryRaceDatabasePath = join(recoveryRaceRoot, 'jobs.sqlite');
+const recoveryRaceInputsDir = join(recoveryRaceRoot, 'inputs');
+const recoveryRaceSource = join(recoveryRaceRoot, 'source.txt');
+await writeFile(recoveryRaceSource, 'recovery race input', 'utf8');
+const recoveryRaceDelegate = new ContinuationInputStore(recoveryRaceInputsDir);
+let recoveryRaceDatabase: DatabaseSync | undefined;
+let recoveryRaceJobId = '';
+let recoveryRaceHealthyFacts = '';
+let restoreHealthyRowOnLock = false;
+let recoveryRaceRemoveCount = 0;
+const recoveryRaceRepository = await SqliteContinuationRepository.open({
+  databasePath: recoveryRaceDatabasePath,
+  artifactsDir: join(recoveryRaceRoot, 'artifacts'),
+  inputsDir: recoveryRaceInputsDir,
+  inputStore: {
+    ensureRoot: () => recoveryRaceDelegate.ensureRoot(),
+    withCreationLock: <T>(jobId: string, operation: () => Promise<T>) =>
+      recoveryRaceDelegate.withCreationLock(jobId, async () => {
+        if (restoreHealthyRowOnLock && recoveryRaceDatabase && jobId === recoveryRaceJobId) {
+          restoreHealthyRowOnLock = false;
+          recoveryRaceDatabase.prepare(`
+            UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+          `).run(recoveryRaceHealthyFacts, recoveryRaceJobId);
+        }
+        return operation();
+      }),
+    install: (...args: Parameters<ContinuationInputStore['install']>) =>
+      recoveryRaceDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) =>
+      recoveryRaceDelegate.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) =>
+      recoveryRaceDelegate.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) =>
+      recoveryRaceDelegate.resolve(...args),
+    async remove(...args: Parameters<ContinuationInputStore['remove']>) {
+      recoveryRaceRemoveCount += 1;
+      return recoveryRaceDelegate.remove(...args);
+    },
+    quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+      recoveryRaceDelegate.quarantine(...args),
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      recoveryRaceDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      recoveryRaceDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      recoveryRaceDelegate.cleanupOrphans(...args),
+  },
+});
+const recoveryRaceCreated = await recoveryRaceRepository.create(createRequest(
+  'corrupt-recovery-race',
+  {
+    sourceInputs: [{
+      sourcePath: recoveryRaceSource,
+      fileName: 'source.txt',
+      kind: 'message_attachment',
+    }],
+  },
+));
+recoveryRaceJobId = recoveryRaceCreated.job.jobId;
+recoveryRaceDatabase = new DatabaseSync(recoveryRaceDatabasePath);
+recoveryRaceHealthyFacts = String(recoveryRaceDatabase.prepare(`
+  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+`).get(recoveryRaceJobId)?.source_facts_json ?? '');
+const corruptRecoveryRaceRow = (): void => {
+  recoveryRaceDatabase?.prepare(`
+    UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+  `).run('{', recoveryRaceJobId);
+  restoreHealthyRowOnLock = true;
+};
+corruptRecoveryRaceRow();
+assert.equal((await recoveryRaceRepository.get(recoveryRaceJobId))?.status, 'queued');
+corruptRecoveryRaceRow();
+assert.ok((await recoveryRaceRepository.listAll(10)).some(
+  (job) => job.jobId === recoveryRaceJobId && job.status === 'queued',
+));
+corruptRecoveryRaceRow();
+assert.equal((await recoveryRaceRepository.claimDue(
+  'worker-corrupt-recovery-race',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+))?.job.jobId, recoveryRaceJobId);
+assert.equal(recoveryRaceRemoveCount, 0);
+assert.equal((await lstat(join(recoveryRaceInputsDir, recoveryRaceJobId))).isDirectory(), true);
+recoveryRaceDatabase.close();
+recoveryRaceRepository.close();
+
+// A corrupt due input terminates before an attempt/lease, emits one logical terminal event,
+// and does not prevent the next healthy due Job from being claimed.
+const integrityRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-'));
+const integrityDatabasePath = join(integrityRoot, 'jobs.sqlite');
+const integrityArtifactsDir = join(integrityRoot, 'artifacts');
+const integrityInputsDir = join(integrityRoot, 'inputs');
+const corruptSource = join(integrityRoot, 'corrupt-source.txt');
+const unreadableSource = join(integrityRoot, 'unreadable-source.txt');
+const healthySource = join(integrityRoot, 'healthy-source.txt');
+await writeFile(corruptSource, 'before tamper', 'utf8');
+await writeFile(unreadableSource, 'unreadable', 'utf8');
+await writeFile(healthySource, 'healthy', 'utf8');
+const integrityRepository = await SqliteContinuationRepository.open({
+  databasePath: integrityDatabasePath,
+  artifactsDir: integrityArtifactsDir,
+  inputsDir: integrityInputsDir,
+  jitter: () => 0,
+});
+const unreadableCreated = await integrityRepository.create(createRequest('integrity-unreadable', {
+  createdAt: '2026-07-16T23:59:57.000Z',
+  sourceInputs: [{
+    sourcePath: unreadableSource,
+    fileName: 'unreadable.txt',
+    kind: 'message_attachment',
+  }],
+}));
+const corruptCreated = await integrityRepository.create(createRequest('integrity-corrupt', {
+  createdAt: '2026-07-16T23:59:58.000Z',
+  sourceInputs: [{ sourcePath: corruptSource, fileName: 'corrupt.txt', kind: 'message_attachment' }],
+}));
+const healthyCreated = await integrityRepository.create(createRequest('integrity-healthy', {
+  createdAt: '2026-07-16T23:59:59.000Z',
+  sourceInputs: [{ sourcePath: healthySource, fileName: 'healthy.txt', kind: 'message_attachment' }],
+}));
+const integrityStore = new ContinuationInputStore(integrityInputsDir);
+const corruptManagedPath = integrityStore.resolve(
+  corruptCreated.job.jobId,
+  corruptCreated.job.sourceFacts.inputs[0].relativePath,
+);
+const unreadableManagedPath = integrityStore.resolve(
+  unreadableCreated.job.jobId,
+  unreadableCreated.job.sourceFacts.inputs[0].relativePath,
+);
+await chmod(unreadableManagedPath, 0o000);
+await chmod(corruptManagedPath, 0o600);
+await writeFile(corruptManagedPath, 'tampered', 'utf8');
+await chmod(corruptManagedPath, 0o400);
+integrityRepository.close();
+const reopenedIntegrityRepository = await SqliteContinuationRepository.open({
+  databasePath: integrityDatabasePath,
+  artifactsDir: integrityArtifactsDir,
+  inputsDir: integrityInputsDir,
+  jitter: () => 0,
+});
+const healthyClaim = await reopenedIntegrityRepository.claimDue(
+  'worker-after-integrity',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+assert.equal(healthyClaim?.job.jobId, healthyCreated.job.jobId);
+const unreadableJob = await reopenedIntegrityRepository.get(unreadableCreated.job.jobId);
+assert.equal(unreadableJob?.status, 'failed');
+assert.equal(unreadableJob?.errorCode, 'continuation_input_integrity_failed');
+const corruptedJob = await reopenedIntegrityRepository.get(corruptCreated.job.jobId);
+assert.equal(corruptedJob?.status, 'failed');
+assert.equal(corruptedJob?.errorCode, 'continuation_input_integrity_failed');
+assert.equal(corruptedJob?.attemptCount, 0);
+assert.equal(corruptedJob?.leaseOwner, undefined);
+assert.equal(corruptedJob?.leaseExpiresAt, undefined);
+assert.equal(corruptedJob?.deliveryEvents?.filter((event) => event.kind === 'terminal').length, 1);
+const unreadableDelivery = await reopenedIntegrityRepository.claimPendingDelivery(
+  'delivery-unreadable-input',
+  baseNow,
+);
+assert.equal(unreadableDelivery?.jobId, unreadableCreated.job.jobId);
+await reopenedIntegrityRepository.markDeliveryResult(
+  unreadableDelivery!,
+  { status: 'delivered', messageId: 'om_unreadable_input_failure' },
+  baseNow,
+);
+const integrityOutboxDatabase = new DatabaseSync(integrityDatabasePath);
+integrityOutboxDatabase.prepare(`
+  UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
+`).run(JSON.stringify({
+  kind: 'message_thread',
+  conversationId: corruptCreated.job.route.kind === 'message_thread'
+    ? corruptCreated.job.route.conversationId
+    : '',
+  sourceMessageId: corruptCreated.job.sourceMessageId,
+  threadId: 'omt_wrong_outbox_thread',
+}), corruptCreated.job.jobId);
+assert.equal(await reopenedIntegrityRepository.claimPendingDelivery(
+  'delivery-invalid-route',
+  baseNow,
+), null);
+const invalidRouteOutbox = integrityOutboxDatabase.prepare(`
+  SELECT status, error_code FROM continuation_outbox WHERE job_id = ? AND kind = 'terminal'
+`).get(corruptCreated.job.jobId) as { status: string; error_code: string };
+assert.equal(invalidRouteOutbox.status, 'failed');
+assert.equal(invalidRouteOutbox.error_code, 'continuation_delivery_route_invalid');
+integrityOutboxDatabase.prepare(`
+  UPDATE continuation_outbox
+  SET route_json = ?, status = 'pending', error_code = NULL, error_summary = NULL
+  WHERE job_id = ? AND kind = 'terminal'
+`).run(JSON.stringify(corruptCreated.job.route), corruptCreated.job.jobId);
+integrityOutboxDatabase.close();
+const integrityDelivery = await reopenedIntegrityRepository.claimPendingDelivery(
+  'delivery-integrity',
+  baseNow,
+);
+assert.equal(integrityDelivery?.jobId, corruptCreated.job.jobId);
+assert.doesNotMatch(integrityDelivery?.payload ?? '', /corrupt\.txt|continuation-integrity|tampered/i);
+await reopenedIntegrityRepository.markDeliveryResult(
+  integrityDelivery!,
+  { status: 'delivered', messageId: 'om_integrity_failure' },
+  baseNow,
+);
+assert.equal(
+  (await reopenedIntegrityRepository.get(corruptCreated.job.jobId))?.deliveryEvents
+    ?.filter((event) => event.kind === 'terminal').length,
+  1,
+);
+
+const routeInvalidCleanupSource = join(integrityRoot, 'route-invalid-cleanup.txt');
+await writeFile(routeInvalidCleanupSource, 'route invalid cleanup input', 'utf8');
+const routeInvalidCleanupJob = await reopenedIntegrityRepository.create(createRequest(
+  'route-invalid-terminal-cleanup',
+  {
+    sourceInputs: [{
+      sourcePath: routeInvalidCleanupSource,
+      fileName: 'cleanup.txt',
+      kind: 'message_attachment',
+    }],
+  },
+));
+const routeInvalidCleanupArtifacts = new ContinuationArtifactStore(integrityArtifactsDir);
+await writeFile(
+  join(await routeInvalidCleanupArtifacts.ensure(routeInvalidCleanupJob.job.jobId), 'result.txt'),
+  'route invalid result',
+  'utf8',
+);
+assert.equal(await reopenedIntegrityRepository.requestCancel(
+  routeInvalidCleanupJob.job.jobId,
+  '2026-07-17T00:00:01.000Z',
+), 'cancelled');
+const routeInvalidCleanupDatabase = new DatabaseSync(integrityDatabasePath);
+routeInvalidCleanupDatabase.prepare(`
+  UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
+`).run(JSON.stringify({
+  ...routeInvalidCleanupJob.job.route,
+  threadId: 'omt_route_invalid_cleanup',
+}), routeInvalidCleanupJob.job.jobId);
+routeInvalidCleanupDatabase.close();
+assert.equal(await reopenedIntegrityRepository.claimPendingDelivery(
+  'delivery-route-invalid-cleanup',
+  '2026-07-17T00:00:01.000Z',
+), null);
+const routeInvalidStateDatabase = new DatabaseSync(integrityDatabasePath);
+const routeInvalidState = routeInvalidStateDatabase.prepare(`
+  SELECT j.status, j.completed_at, j.retain, o.status AS delivery_status,
+         o.error_code AS delivery_error_code
+  FROM continuation_jobs j
+  JOIN continuation_outbox o ON o.job_id = j.job_id AND o.kind = 'terminal'
+  WHERE j.job_id = ?
+`).get(routeInvalidCleanupJob.job.jobId);
+routeInvalidStateDatabase.close();
+assert.deepEqual({ ...routeInvalidState }, {
+  status: 'cancelled',
+  completed_at: '2026-07-17T00:00:01.000Z',
+  retain: 0,
+  delivery_status: 'failed',
+  delivery_error_code: 'continuation_delivery_route_invalid',
+});
+const routeInvalidCleanup = await reopenedIntegrityRepository.purgeExpired(
+  '2026-07-17T00:00:02.000Z',
+  '2026-07-17T00:00:03.000Z',
+);
+assert.ok(routeInvalidCleanup.some((entry) =>
+  entry.jobId === routeInvalidCleanupJob.job.jobId && entry.result === 'cleaned'),
+JSON.stringify(routeInvalidCleanup));
+await assert.rejects(
+  lstat(join(integrityInputsDir, routeInvalidCleanupJob.job.jobId)),
+  /ENOENT/,
+);
+await assert.rejects(
+  lstat(join(integrityArtifactsDir, routeInvalidCleanupJob.job.jobId)),
+  /ENOENT/,
+);
+reopenedIntegrityRepository.close();
+
+// Persistent input I/O failures become terminal integrity failures instead of starving scans.
+const unavailableRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-unavailable-'));
+const unavailableSource = join(unavailableRoot, 'source.txt');
+await writeFile(unavailableSource, 'temporarily unreadable', 'utf8');
+const unavailableInputsDir = join(unavailableRoot, 'inputs');
+const unavailableRepository = await SqliteContinuationRepository.open({
+  databasePath: join(unavailableRoot, 'jobs.sqlite'),
+  artifactsDir: join(unavailableRoot, 'artifacts'),
+  inputsDir: unavailableInputsDir,
+});
+const unavailableJob = await unavailableRepository.create(createRequest('integrity-unavailable', {
+  sourceInputs: [{ sourcePath: unavailableSource, fileName: 'source.txt', kind: 'message_attachment' }],
+}));
+const unavailableStore = new ContinuationInputStore(unavailableInputsDir);
+const unavailableManagedPath = unavailableStore.resolve(
+  unavailableJob.job.jobId,
+  unavailableJob.job.sourceFacts.inputs[0].relativePath,
+);
+await chmod(unavailableManagedPath, 0o000);
+assert.equal(
+  await unavailableRepository.claimDue(
+    'worker-unavailable',
+    baseNow,
+    '2026-07-17T00:00:30.000Z',
+  ),
+  null,
+);
+const failedAfterIoFailure = await unavailableRepository.get(unavailableJob.job.jobId);
+assert.equal(failedAfterIoFailure?.status, 'failed');
+assert.equal(failedAfterIoFailure?.errorCode, 'continuation_input_integrity_failed');
+assert.equal(failedAfterIoFailure?.attemptCount, 0);
+assert.equal(failedAfterIoFailure?.deliveryEvents?.length, 1);
+await chmod(unavailableManagedPath, 0o400);
+unavailableRepository.close();
+
+async function makeDelayedInputStore(rootDir: string) {
+  const delegate = new ContinuationInputStore(rootDir);
+  let releaseVerification!: () => void;
+  let markStarted!: () => void;
+  const verificationStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+  const verificationReleased = new Promise<void>((resolve) => { releaseVerification = resolve; });
+  return {
+    store: {
+      ensureRoot: () => delegate.ensureRoot(),
+      withCreationLock: <T>(jobId: string, operation: () => Promise<T>) =>
+        delegate.withCreationLock(jobId, operation),
+      install: (...args: Parameters<ContinuationInputStore['install']>) => delegate.install(...args),
+      clone: (...args: Parameters<ContinuationInputStore['clone']>) => delegate.clone(...args),
+      async verify(...args: Parameters<ContinuationInputStore['verify']>) {
+        markStarted();
+        await verificationReleased;
+        return delegate.verify(...args);
+      },
+      resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => delegate.resolve(...args),
+      remove: (...args: Parameters<ContinuationInputStore['remove']>) => delegate.remove(...args),
+      quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+        delegate.quarantine(...args),
+      restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+        delegate.restoreQuarantine(...args),
+      discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+        delegate.discardQuarantine(...args),
+      cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+        delegate.cleanupOrphans(...args),
+    },
+    verificationStarted,
+    releaseVerification,
+  };
+}
+
+// Cancellation wins a row-version race while integrity verification is outside the transaction.
+const cancelRaceRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-cancel-race-'));
+const cancelRaceSource = join(cancelRaceRoot, 'source.txt');
+await writeFile(cancelRaceSource, 'cancel race', 'utf8');
+const cancelRaceOptions = {
+  databasePath: join(cancelRaceRoot, 'jobs.sqlite'),
+  artifactsDir: join(cancelRaceRoot, 'artifacts'),
+  inputsDir: join(cancelRaceRoot, 'inputs'),
+  jitter: () => 0,
+};
+const cancelRaceSeed = await SqliteContinuationRepository.open(cancelRaceOptions);
+const cancelRaceJob = await cancelRaceSeed.create(createRequest('cancel-race', {
+  sourceInputs: [{ sourcePath: cancelRaceSource, fileName: 'source.txt', kind: 'message_attachment' }],
+}));
+cancelRaceSeed.close();
+const delayedCancelStore = await makeDelayedInputStore(cancelRaceOptions.inputsDir);
+const cancelRaceClaimRepository = await SqliteContinuationRepository.open({
+  ...cancelRaceOptions,
+  inputStore: delayedCancelStore.store,
+});
+const cancelRaceMutationRepository = await SqliteContinuationRepository.open(cancelRaceOptions);
+const pendingCancelClaim = cancelRaceClaimRepository.claimDue(
+  'worker-cancel-race',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+await delayedCancelStore.verificationStarted;
+assert.equal(
+  await cancelRaceMutationRepository.requestCancel(cancelRaceJob.job.jobId, baseNow),
+  'cancelled',
+);
+delayedCancelStore.releaseVerification();
+assert.equal(await pendingCancelClaim, null);
+const cancelledDuringVerification = await cancelRaceMutationRepository.get(cancelRaceJob.job.jobId);
+assert.equal(cancelledDuringVerification?.status, 'cancelled');
+assert.equal(cancelledDuringVerification?.attemptCount, 0);
+assert.equal(cancelledDuringVerification?.deliveryEvents?.filter((event) => event.kind === 'terminal').length, 1);
+cancelRaceClaimRepository.close();
+cancelRaceMutationRepository.close();
+
+// Expiry likewise wins the CAS and remains the sole terminal transition.
+const expireRaceRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-expire-race-'));
+const expireRaceSource = join(expireRaceRoot, 'source.txt');
+await writeFile(expireRaceSource, 'expire race', 'utf8');
+const expireRaceOptions = {
+  databasePath: join(expireRaceRoot, 'jobs.sqlite'),
+  artifactsDir: join(expireRaceRoot, 'artifacts'),
+  inputsDir: join(expireRaceRoot, 'inputs'),
+  jitter: () => 0,
+};
+const expireRaceSeed = await SqliteContinuationRepository.open(expireRaceOptions);
+const expireRaceJob = await expireRaceSeed.create(createRequest('expire-race', {
+  expiresAt: '2026-07-17T00:00:05.000Z',
+  sourceInputs: [{ sourcePath: expireRaceSource, fileName: 'source.txt', kind: 'message_attachment' }],
+}));
+expireRaceSeed.close();
+const delayedExpireStore = await makeDelayedInputStore(expireRaceOptions.inputsDir);
+const expireRaceClaimRepository = await SqliteContinuationRepository.open({
+  ...expireRaceOptions,
+  inputStore: delayedExpireStore.store,
+});
+const expireRaceMutationRepository = await SqliteContinuationRepository.open(expireRaceOptions);
+const pendingExpireClaim = expireRaceClaimRepository.claimDue(
+  'worker-expire-race',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+await delayedExpireStore.verificationStarted;
+assert.equal(
+  await expireRaceMutationRepository.expireOverdue('2026-07-17T00:00:06.000Z'),
+  1,
+);
+delayedExpireStore.releaseVerification();
+assert.equal(await pendingExpireClaim, null);
+const expiredDuringVerification = await expireRaceMutationRepository.get(expireRaceJob.job.jobId);
+assert.equal(expiredDuringVerification?.status, 'failed');
+assert.equal(expiredDuringVerification?.errorCode, 'continuation_expired');
+assert.equal(expiredDuringVerification?.attemptCount, 0);
+assert.equal(expiredDuringVerification?.deliveryEvents?.filter((event) => event.kind === 'terminal').length, 1);
+expireRaceClaimRepository.close();
+expireRaceMutationRepository.close();
+
+// Two workers can verify the same candidate, but only one CAS creates an attempt and lease.
+const claimRaceRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-claim-race-'));
+const claimRaceSource = join(claimRaceRoot, 'source.txt');
+await writeFile(claimRaceSource, 'claim race', 'utf8');
+const claimRaceOptions = {
+  databasePath: join(claimRaceRoot, 'jobs.sqlite'),
+  artifactsDir: join(claimRaceRoot, 'artifacts'),
+  inputsDir: join(claimRaceRoot, 'inputs'),
+  jitter: () => 0,
+};
+const claimRaceA = await SqliteContinuationRepository.open(claimRaceOptions);
+const claimRaceB = await SqliteContinuationRepository.open(claimRaceOptions);
+const claimRaceJob = await claimRaceA.create(createRequest('claim-race', {
+  sourceInputs: [{ sourcePath: claimRaceSource, fileName: 'source.txt', kind: 'message_attachment' }],
+}));
+const competingClaims = await Promise.all([
+  claimRaceA.claimDue('worker-claim-a', baseNow, '2026-07-17T00:00:30.000Z'),
+  claimRaceB.claimDue('worker-claim-b', baseNow, '2026-07-17T00:00:30.000Z'),
+]);
+assert.equal(competingClaims.filter(Boolean).length, 1);
+assert.equal((await claimRaceA.get(claimRaceJob.job.jobId))?.attemptCount, 1);
+claimRaceA.close();
+claimRaceB.close();
+
+// A later integrity failure preserves prior attempts and adds no failed-gate attempt.
+const priorAttemptRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-prior-attempt-'));
+const priorAttemptSource = join(priorAttemptRoot, 'source.txt');
+await writeFile(priorAttemptSource, 'prior attempt', 'utf8');
+const priorAttemptInputsDir = join(priorAttemptRoot, 'inputs');
+const priorAttemptRepository = await SqliteContinuationRepository.open({
+  databasePath: join(priorAttemptRoot, 'jobs.sqlite'),
+  artifactsDir: join(priorAttemptRoot, 'artifacts'),
+  inputsDir: priorAttemptInputsDir,
+  jitter: () => 0,
+});
+const priorAttemptJob = await priorAttemptRepository.create(createRequest('prior-attempt', {
+  sourceInputs: [{ sourcePath: priorAttemptSource, fileName: 'source.txt', kind: 'message_attachment' }],
+}));
+const priorClaim = await priorAttemptRepository.claimDue(
+  'worker-prior-attempt',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+assert.ok(priorClaim);
+await priorAttemptRepository.failAttempt(priorClaim, {
+  errorCode: 'transient_test',
+  errorSummary: 'Retry later.',
+  retryable: true,
+}, baseNow);
+const priorAttemptStore = new ContinuationInputStore(priorAttemptInputsDir);
+const priorManagedPath = priorAttemptStore.resolve(
+  priorAttemptJob.job.jobId,
+  priorAttemptJob.job.sourceFacts.inputs[0].relativePath,
+);
+await chmod(priorManagedPath, 0o600);
+await writeFile(priorManagedPath, 'tampered after attempt', 'utf8');
+await chmod(priorManagedPath, 0o400);
+assert.equal(await priorAttemptRepository.claimDue(
+  'worker-prior-attempt-2',
+  '2026-07-17T00:01:00.000Z',
+  '2026-07-17T00:01:30.000Z',
+), null);
+const failedAfterPriorAttempt = await priorAttemptRepository.get(priorAttemptJob.job.jobId);
+assert.equal(failedAfterPriorAttempt?.status, 'failed');
+assert.equal(failedAfterPriorAttempt?.attemptCount, 1);
+assert.equal(failedAfterPriorAttempt?.errorCode, 'continuation_input_integrity_failed');
+priorAttemptRepository.close();
+
+// Retry owns an actual copy, remains valid after source cleanup, and rejects a corrupt source tree.
+const retryRoot = await mkdtemp(join(tmpdir(), 'continuation-retry-inputs-'));
+const retrySourcePath = join(retryRoot, 'retry-source.txt');
+await writeFile(retrySourcePath, 'retry input', 'utf8');
+const retryInputsDir = join(retryRoot, 'inputs');
+const retryRepository = await SqliteContinuationRepository.open({
+  databasePath: join(retryRoot, 'jobs.sqlite'),
+  artifactsDir: join(retryRoot, 'artifacts'),
+  inputsDir: retryInputsDir,
+  jitter: () => 0,
+});
+const retrySourceJob = await retryRepository.create(createRequest('retry-copy', {
+  sourceInputs: [{ sourcePath: retrySourcePath, fileName: 'retry.txt', kind: 'message_attachment' }],
+}));
+await rm(retrySourcePath);
+assert.equal(await retryRepository.requestCancel(retrySourceJob.job.jobId, baseNow), 'cancelled');
+const retryClone = await retryRepository.cloneForRetry(
+  retrySourceJob.job.jobId,
+  'copy-request',
+  '2026-07-17T00:00:01.000Z',
+);
+const retryStore = new ContinuationInputStore(retryInputsDir);
+const originalManaged = retryStore.resolve(
+  retrySourceJob.job.jobId,
+  retrySourceJob.job.sourceFacts.inputs[0].relativePath,
+);
+const clonedManaged = retryStore.resolve(
+  retryClone.jobId,
+  retryClone.sourceFacts.inputs[0].relativePath,
+);
+assert.notEqual((await stat(originalManaged)).ino, (await stat(clonedManaged)).ino);
+assert.equal(await readFile(clonedManaged, 'utf8'), 'retry input');
+assert.equal(await retryRepository.redactTerminal(retrySourceJob.job.jobId, '2026-07-17T00:00:02.000Z'), true);
+assert.deepEqual(await retryStore.verify(retryClone.jobId, retryClone.sourceFacts.inputs), { ok: true });
+assert.equal((await retryRepository.cloneForRetry(
+  retrySourceJob.job.jobId,
+  'copy-request',
+  '2026-07-17T00:00:03.000Z',
+)).jobId, retryClone.jobId);
+
+const corruptRetrySourcePath = join(retryRoot, 'corrupt-retry-source.txt');
+await writeFile(corruptRetrySourcePath, 'corrupt retry input', 'utf8');
+const corruptRetrySource = await retryRepository.create(createRequest('retry-corrupt', {
+  sourceInputs: [{
+    sourcePath: corruptRetrySourcePath,
+    fileName: 'corrupt-retry.txt',
+    kind: 'message_attachment',
+  }],
+}));
+assert.equal(await retryRepository.requestCancel(corruptRetrySource.job.jobId, baseNow), 'cancelled');
+const corruptRetryManaged = retryStore.resolve(
+  corruptRetrySource.job.jobId,
+  corruptRetrySource.job.sourceFacts.inputs[0].relativePath,
+);
+await chmod(corruptRetryManaged, 0o600);
+await writeFile(corruptRetryManaged, 'changed', 'utf8');
+await chmod(corruptRetryManaged, 0o400);
+await assert.rejects(
+  retryRepository.cloneForRetry(
+    corruptRetrySource.job.jobId,
+    'corrupt-copy-request',
+    '2026-07-17T00:00:03.000Z',
+  ),
+  /integrity/i,
+);
+retryRepository.close();
+
+// Retry binds the copy to the checksum/size verified before creation, so a verify/copy race fails.
+const toctouRoot = await mkdtemp(join(tmpdir(), 'continuation-retry-toctou-'));
+const toctouSource = join(toctouRoot, 'source.txt');
+await writeFile(toctouSource, 'toctou original', 'utf8');
+const toctouOptions = {
+  databasePath: join(toctouRoot, 'jobs.sqlite'),
+  artifactsDir: join(toctouRoot, 'artifacts'),
+  inputsDir: join(toctouRoot, 'inputs'),
+};
+const toctouSeed = await SqliteContinuationRepository.open(toctouOptions);
+const toctouJob = await toctouSeed.create(createRequest('retry-toctou', {
+  sourceInputs: [{ sourcePath: toctouSource, fileName: 'source.txt', kind: 'message_attachment' }],
+}));
+assert.equal(await toctouSeed.requestCancel(toctouJob.job.jobId, baseNow), 'cancelled');
+toctouSeed.close();
+const toctouDelegate = new ContinuationInputStore(toctouOptions.inputsDir);
+let toctouTampered = false;
+const toctouRepository = await SqliteContinuationRepository.open({
+  ...toctouOptions,
+  inputStore: {
+    ensureRoot: () => toctouDelegate.ensureRoot(),
+    withCreationLock: <T>(jobId: string, operation: () => Promise<T>) =>
+      toctouDelegate.withCreationLock(jobId, operation),
+    install: (...args: Parameters<ContinuationInputStore['install']>) => toctouDelegate.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) => toctouDelegate.clone(...args),
+    async verify(jobId, artifacts) {
+      const result = await toctouDelegate.verify(jobId, artifacts);
+      if (result.ok && !toctouTampered && artifacts[0]) {
+        const managedPath = toctouDelegate.resolve(jobId, artifacts[0].relativePath);
+        await chmod(managedPath, 0o600);
+        await writeFile(managedPath, 'toctou mutated after verify', 'utf8');
+        await chmod(managedPath, 0o400);
+        toctouTampered = true;
+      }
+      return result;
+    },
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => toctouDelegate.resolve(...args),
+    remove: (...args: Parameters<ContinuationInputStore['remove']>) => toctouDelegate.remove(...args),
+    quarantine: (...args: Parameters<ContinuationInputStore['quarantine']>) =>
+      toctouDelegate.quarantine(...args),
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      toctouDelegate.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      toctouDelegate.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      toctouDelegate.cleanupOrphans(...args),
+  },
+});
+await assert.rejects(
+  toctouRepository.cloneForRetry(
+    toctouJob.job.jobId,
+    'toctou-copy-request',
+    '2026-07-17T00:00:05.000Z',
+  ),
+  /integrity|checksum|size/i,
+);
+const toctouTargetJobId = continuationJobId(`manual-retry:${toctouJob.job.jobId}:toctou-copy-request`);
+assert.equal(await toctouRepository.get(toctouTargetJobId), null);
+await assert.rejects(lstat(join(toctouOptions.inputsDir, toctouTargetJobId)));
+toctouRepository.close();
 
 console.log('continuation repository smoke: PASS');

@@ -1,7 +1,12 @@
 export const CONTINUATION_LIMITS = {
   titleChars: 200,
   objectiveBytes: 16 * 1024,
+  deliverableCount: 32,
   acceptanceCriteriaCount: 32,
+  verificationRequirementCount: 32,
+  inputFileCount: 32,
+  inputBytesPerFile: 25 * 1024 * 1024,
+  managedInputBytesPerJob: 100 * 1024 * 1024,
   contextSnapshotBytes: 64 * 1024,
   checkpointBytes: 64 * 1024,
   toolResultBytes: 64 * 1024,
@@ -9,7 +14,34 @@ export const CONTINUATION_LIMITS = {
   artifactCount: 20,
   requestedPathCount: 32,
   managedArtifactBytesPerJob: 100 * 1024 * 1024,
+  managedArtifactEntriesPerJob: 256,
+  managedArtifactDirectoryDepth: 8,
 } as const;
+
+export const CONTINUATION_CONTRACT_ID_PATTERN = /^[A-Za-z0-9_.-]{1,80}$/;
+
+export interface AsyncTaskDeliverable {
+  id: string;
+  description: string;
+  required: boolean;
+}
+
+export interface AsyncTaskAcceptanceCriterion {
+  id: string;
+  description: string;
+  deliverableIds: string[];
+}
+
+export type AsyncTaskVerificationKind =
+  | 'artifact_exists'
+  | 'artifact_sha256'
+  | 'evidence_reference';
+
+export interface AsyncTaskVerificationRequirement {
+  id: string;
+  description: string;
+  kind: AsyncTaskVerificationKind;
+}
 
 export type ContinuationStatus =
   | 'queued'
@@ -64,6 +96,25 @@ export interface ContinuationCheckpoint {
   references: string[];
 }
 
+export type AsyncTaskInputKind = 'message_image' | 'message_attachment';
+
+export interface AsyncTaskInputArtifact {
+  id: string;
+  kind: AsyncTaskInputKind;
+  fileName: string;
+  relativePath: string;
+  sha256: string;
+  sizeBytes: number;
+}
+
+export interface AsyncTaskSourceInput {
+  kind: AsyncTaskInputKind;
+  fileName: string;
+  sourcePath: string;
+  expectedSha256?: string;
+  expectedSizeBytes?: number;
+}
+
 export type ContinuationFilesystemMode = 'read-only' | 'workspace-write';
 export type ContinuationApprovalMode = 'never' | 'interactive';
 export type ContinuationCapabilityProfile = 'bounded' | 'trusted_personal_workspace';
@@ -97,6 +148,36 @@ export type ContinuationDeliveryRoute =
       fileType: string;
     };
 
+export interface AsyncTaskFactSnapshot {
+  schemaVersion: 1;
+  provenance: 'captured' | 'legacy_unavailable';
+  originalUserText: string | null;
+  sourceContextText: string | null;
+  quotedMessageText: string | null;
+  creatorOpenId: string;
+  chatId: string;
+  chatType: string;
+  route: ContinuationDeliveryRoute;
+  sourceMessageId: string;
+  sourceThreadId?: string;
+  sourceMessageType: string | null;
+  sourceTimestamp: string | null;
+  inputs: AsyncTaskInputArtifact[];
+  workingDirectory: string;
+  model: string | null;
+  permissions: ContinuationPermissionEnvelope;
+}
+
+export interface AsyncTaskContract {
+  schemaVersion: 1;
+  title: string;
+  objective: string;
+  deliverables: AsyncTaskDeliverable[];
+  acceptanceCriteria: AsyncTaskAcceptanceCriterion[];
+  verificationRequirements: AsyncTaskVerificationRequirement[];
+  initialContext: ContinuationCheckpoint;
+}
+
 export interface ContinuationCreateRequest {
   idempotencyKey: string;
   retryOfJobId?: string;
@@ -108,6 +189,9 @@ export interface ContinuationCreateRequest {
   objective: string;
   acceptanceCriteria: string[];
   contextSnapshot: ContinuationCheckpoint;
+  sourceFacts: AsyncTaskFactSnapshot;
+  taskContract: AsyncTaskContract;
+  sourceInputs: AsyncTaskSourceInput[];
   requiredTools: string[];
   workingDirectory: string;
   permissions: ContinuationPermissionEnvelope;
@@ -120,7 +204,7 @@ export interface ContinuationCreateRequest {
   expiresAt: string;
 }
 
-export interface ContinuationJob extends ContinuationCreateRequest {
+export interface ContinuationJob extends Omit<ContinuationCreateRequest, 'sourceInputs'> {
   jobId: string;
   rowVersion: number;
   status: ContinuationStatus;
