@@ -79,6 +79,8 @@ const EMPTY_PERMISSION_ENVELOPE: ContinuationPermissionEnvelope = {
   approval: { mode: 'never' },
 };
 
+class LegacyRouteProjectionError extends Error {}
+
 export class SqliteContinuationRepository implements ContinuationRepository {
   private readonly jobMutationTails = new Map<string, Promise<void>>();
 
@@ -571,8 +573,18 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       const updateOutboxRoute = this.database.prepare(`
         UPDATE continuation_outbox SET route_json = ? WHERE job_id = ?
       `);
+      const migrationNow = new Date().toISOString();
       for (const row of rows) {
-        const legacy = legacyFactsAndContract(row);
+        let legacy: ReturnType<typeof legacyFactsAndContract>;
+        try {
+          legacy = legacyFactsAndContract(row);
+        } catch (error) {
+          if (!(error instanceof LegacyRouteProjectionError)) throw error;
+          if (!this.sanitizeCorruptJob(row, migrationNow, false)) {
+            throw new Error(`Failed to isolate corrupt legacy continuation ${stringField(row, 'job_id')}.`);
+          }
+          continue;
+        }
         update.run(
           JSON.stringify(legacy.route),
           legacy.sourceFacts.sourceThreadId ?? null,
@@ -1308,6 +1320,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         || (
           current.errorCode !== 'continuation_persisted_state_invalid'
           && current.deliveryStatus !== 'delivered'
+          && !current.deliveryEvents?.some((event) =>
+            event.kind === 'terminal'
+            && event.status === 'failed'
+            && event.lastErrorCode === 'continuation_delivery_route_invalid')
         )
         || !current.completedAt
         || current.completedAt >= automaticRetentionCutoff
@@ -1328,7 +1344,14 @@ export class SqliteContinuationRepository implements ContinuationRepository {
             OR EXISTS (
               SELECT 1 FROM continuation_outbox terminal
               WHERE terminal.job_id = continuation_jobs.job_id
-                AND terminal.kind = 'terminal' AND terminal.status = 'delivered'
+                AND terminal.kind = 'terminal'
+                AND (
+                  terminal.status = 'delivered'
+                  OR (
+                    terminal.status = 'failed'
+                    AND terminal.error_code = 'continuation_delivery_route_invalid'
+                  )
+                )
             )
           )`
           : '';
@@ -1599,7 +1622,14 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           OR EXISTS (
             SELECT 1 FROM continuation_outbox terminal
             WHERE terminal.job_id = j.job_id
-              AND terminal.kind = 'terminal' AND terminal.status = 'delivered'
+              AND terminal.kind = 'terminal'
+              AND (
+                terminal.status = 'delivered'
+                OR (
+                  terminal.status = 'failed'
+                  AND terminal.error_code = 'continuation_delivery_route_invalid'
+                )
+              )
           )
         )
       ORDER BY j.completed_at ASC
@@ -2600,9 +2630,25 @@ function legacyFactsAndContract(row: SqlRow): {
 } {
   const rawRoute = parseTrustedJson(row.route_json, 'route_json');
   if (!isDeliveryRoute(rawRoute)) throw new Error('Continuation delivery route is invalid.');
+  const persistedSourceThreadId = optionalStringField(row, 'source_thread_id');
+  if (
+    rawRoute.kind === 'message_thread'
+    && rawRoute.threadId !== undefined
+    && persistedSourceThreadId !== undefined
+    && rawRoute.threadId !== persistedSourceThreadId
+  ) {
+    throw new LegacyRouteProjectionError('Legacy message route conflicts with source_thread_id.');
+  }
+  if (
+    rawRoute.kind === 'comment_thread'
+    && persistedSourceThreadId !== undefined
+    && rawRoute.commentId !== persistedSourceThreadId
+  ) {
+    throw new LegacyRouteProjectionError('Legacy comment route conflicts with source_thread_id.');
+  }
   const sourceThreadId = rawRoute.kind === 'comment_thread'
     ? rawRoute.commentId
-    : optionalStringField(row, 'source_thread_id');
+    : persistedSourceThreadId ?? rawRoute.threadId;
   const route: ContinuationDeliveryRoute = rawRoute.kind === 'message_thread'
     ? {
         ...rawRoute,

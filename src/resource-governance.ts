@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import {
   appendFile,
   link,
+  lstat,
   mkdir,
   open,
   readdir,
@@ -82,6 +83,13 @@ interface TakeoverSnapshot {
   identity: string;
   owner: LockRecord | null;
   stale: boolean;
+}
+
+interface OwnedFileSnapshot {
+  raw: string;
+  mtimeMs: number;
+  dev: number | bigint;
+  ino: number | bigint;
 }
 
 function currentProcessStartedAt(): number {
@@ -197,20 +205,35 @@ function makeHandle(lockPath: string, pid: number, startedAt: number): SingleIns
 }
 
 async function readLockState(lockPath: string, expectedUid?: number): Promise<LockState | null> {
+  const snapshot = await readOwnedRegularFile(lockPath, expectedUid, 'lock');
+  if (!snapshot) return null;
+  return { record: parseLock(snapshot.raw), ageMs: Date.now() - snapshot.mtimeMs };
+}
+
+async function readOwnedRegularFile(
+  filePath: string,
+  expectedUid: number | undefined,
+  label: string,
+): Promise<OwnedFileSnapshot | null> {
   let handle: Awaited<ReturnType<typeof open>>;
   try {
-    handle = await open(lockPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    handle = await open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw new Error(`Refusing unsafe lock path ${lockPath}.`, { cause: error });
+    throw new Error(`Refusing unsafe ${label} path ${filePath}.`, { cause: error });
   }
   try {
     const metadata = await handle.stat();
     if (!metadata.isFile() || (expectedUid !== undefined && metadata.uid !== expectedUid)) {
-      throw new Error(`Refusing lock path with unexpected type or owner: ${lockPath}.`);
+      throw new Error(`Refusing ${label} path with unexpected type or owner: ${filePath}.`);
     }
     const raw = await handle.readFile({ encoding: 'utf8' });
-    return { record: parseLock(raw), ageMs: Date.now() - metadata.mtimeMs };
+    return {
+      raw,
+      mtimeMs: metadata.mtimeMs,
+      dev: metadata.dev,
+      ino: metadata.ino,
+    };
   } finally {
     await handle.close();
   }
@@ -265,17 +288,33 @@ async function readTakeoverSnapshot(
   takeoverPath: string,
   processExists: (pid: number) => boolean | Promise<boolean>,
   getProcessStartedAt: (pid: number) => number | null | Promise<number | null>,
+  expectedUid?: number,
 ): Promise<TakeoverSnapshot | null> {
-  let s: Awaited<ReturnType<typeof stat>>;
+  let metadata: Awaited<ReturnType<typeof lstat>>;
   try {
-    s = await stat(takeoverPath);
-  } catch {
-    return null;
+    metadata = await lstat(takeoverPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
-  const ownerRaw = await readFile(join(takeoverPath, 'owner.json'), 'utf-8').catch(() => '');
+  if (
+    !metadata.isDirectory()
+    || metadata.isSymbolicLink()
+    || (expectedUid !== undefined && metadata.uid !== expectedUid)
+  ) {
+    throw new Error(`Refusing takeover path with unexpected type or owner: ${takeoverPath}.`);
+  }
+  const ownerSnapshot = await readOwnedRegularFile(
+    join(takeoverPath, 'owner.json'),
+    expectedUid,
+    'takeover owner',
+  );
+  const ownerRaw = ownerSnapshot?.raw ?? '';
   const owner = parseLock(ownerRaw);
-  const identity = `${s.dev}:${s.ino}:${ownerRaw}`;
-  if (!owner) return { identity, owner, stale: Date.now() - s.mtimeMs > TAKEOVER_STALE_MS };
+  const identity = `${metadata.dev}:${metadata.ino}:${ownerSnapshot?.dev ?? '-'}:${ownerSnapshot?.ino ?? '-'}:${ownerRaw}`;
+  if (!owner) {
+    return { identity, owner, stale: Date.now() - metadata.mtimeMs > TAKEOVER_STALE_MS };
+  }
 
   const alive = await processExists(owner.pid);
   if (!alive) return { identity, owner, stale: true };
@@ -294,8 +333,14 @@ async function isTakeoverStale(
   takeoverPath: string,
   processExists: (pid: number) => boolean | Promise<boolean>,
   getProcessStartedAt: (pid: number) => number | null | Promise<number | null>,
+  expectedUid?: number,
 ): Promise<boolean> {
-  const snapshot = await readTakeoverSnapshot(takeoverPath, processExists, getProcessStartedAt);
+  const snapshot = await readTakeoverSnapshot(
+    takeoverPath,
+    processExists,
+    getProcessStartedAt,
+    expectedUid,
+  );
   return snapshot?.stale ?? true;
 }
 
@@ -303,11 +348,23 @@ async function waitForTakeoverToClear(
   takeoverPath: string,
   processExists: (pid: number) => boolean | Promise<boolean>,
   getProcessStartedAt: (pid: number) => number | null | Promise<number | null>,
+  expectedUid?: number,
 ): Promise<void> {
   for (let attempt = 0; attempt < LOCK_ACQUIRE_ATTEMPTS; attempt++) {
-    if (!existsSync(takeoverPath)) return;
-    if (await isTakeoverStale(takeoverPath, processExists, getProcessStartedAt)) {
-      if (await removeStaleTakeoverIfStillStale(takeoverPath, processExists, getProcessStartedAt)) return;
+    const snapshot = await readTakeoverSnapshot(
+      takeoverPath,
+      processExists,
+      getProcessStartedAt,
+      expectedUid,
+    );
+    if (!snapshot) return;
+    if (snapshot.stale) {
+      if (await removeStaleTakeoverIfStillStale(
+        takeoverPath,
+        processExists,
+        getProcessStartedAt,
+        expectedUid,
+      )) return;
     }
     await sleep(10);
   }
@@ -319,6 +376,7 @@ async function claimTakeover(
   record: LockRecord,
   processExists: (pid: number) => boolean | Promise<boolean>,
   getProcessStartedAt: (pid: number) => number | null | Promise<number | null>,
+  expectedUid?: number,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < LOCK_ACQUIRE_ATTEMPTS; attempt++) {
     try {
@@ -332,8 +390,13 @@ async function claimTakeover(
       return true;
     } catch (err: any) {
       if (err?.code !== 'EEXIST') throw err;
-      if (await isTakeoverStale(takeoverPath, processExists, getProcessStartedAt)) {
-        await removeStaleTakeoverIfStillStale(takeoverPath, processExists, getProcessStartedAt);
+      if (await isTakeoverStale(takeoverPath, processExists, getProcessStartedAt, expectedUid)) {
+        await removeStaleTakeoverIfStillStale(
+          takeoverPath,
+          processExists,
+          getProcessStartedAt,
+          expectedUid,
+        );
       } else {
         await sleep(10);
       }
@@ -346,8 +409,14 @@ async function removeStaleTakeoverIfStillStale(
   takeoverPath: string,
   processExists: (pid: number) => boolean | Promise<boolean>,
   getProcessStartedAt: (pid: number) => number | null | Promise<number | null>,
+  expectedUid?: number,
 ): Promise<boolean> {
-  const before = await readTakeoverSnapshot(takeoverPath, processExists, getProcessStartedAt);
+  const before = await readTakeoverSnapshot(
+    takeoverPath,
+    processExists,
+    getProcessStartedAt,
+    expectedUid,
+  );
   if (!before) return true;
   if (!before.stale) return false;
 
@@ -361,7 +430,12 @@ async function removeStaleTakeoverIfStillStale(
   }
 
   try {
-    const after = await readTakeoverSnapshot(takeoverPath, processExists, getProcessStartedAt);
+    const after = await readTakeoverSnapshot(
+      takeoverPath,
+      processExists,
+      getProcessStartedAt,
+      expectedUid,
+    );
     if (!after) return true;
     if (after.identity !== before.identity) return false;
     if (after.owner && !after.stale) return false;
@@ -387,7 +461,7 @@ export async function acquireSingleInstanceLock(
   await mkdir(dirname(lockPath), { recursive: true });
 
   for (let attempt = 0; attempt < LOCK_ACQUIRE_ATTEMPTS; attempt++) {
-    await waitForTakeoverToClear(takeoverPath, processExists, getProcessStartedAt);
+    await waitForTakeoverToClear(takeoverPath, processExists, getProcessStartedAt, expectedUid);
     if (await writeLockFileAtomically(lockPath, serializeLock(record))) {
       return makeHandle(lockPath, pid, startedAt);
     }
@@ -395,7 +469,13 @@ export async function acquireSingleInstanceLock(
     const existing = await readLockState(lockPath, expectedUid);
     if (!(await isLockStateStale(existing, processExists, getProcessStartedAt))) throw activeLockError(existing);
 
-    const claimed = await claimTakeover(takeoverPath, record, processExists, getProcessStartedAt);
+    const claimed = await claimTakeover(
+      takeoverPath,
+      record,
+      processExists,
+      getProcessStartedAt,
+      expectedUid,
+    );
     if (!claimed) {
       await sleep(10);
       continue;

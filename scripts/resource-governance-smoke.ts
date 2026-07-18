@@ -279,6 +279,33 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
+// 6d. Shared lock takeover markers also reject symlinked directories and owners.
+{
+  const dir = tmpRoot('resource-lock-takeover-symlink-');
+  const lockPath = join(dir, 'bridge.lock');
+  const takeoverPath = `${lockPath}.takeover`;
+  const targetDir = join(dir, 'takeover-target');
+  mkdirSync(targetDir);
+  writeFileSync(join(targetDir, 'owner.json'), JSON.stringify({ pid: process.pid }), 'utf8');
+  symlinkSync(targetDir, takeoverPath);
+  await assert.rejects(
+    acquireSingleInstanceLock(lockPath, { expectedUid: process.getuid?.() }),
+    /takeover path with unexpected type or owner/i,
+  );
+  rmSync(takeoverPath);
+  mkdirSync(takeoverPath);
+  const ownerTarget = join(dir, 'owner-target.json');
+  writeFileSync(ownerTarget, JSON.stringify({ pid: process.pid }), 'utf8');
+  symlinkSync(ownerTarget, join(takeoverPath, 'owner.json'));
+  await assert.rejects(
+    acquireSingleInstanceLock(lockPath, { expectedUid: process.getuid?.() }),
+    /unsafe takeover owner path/i,
+  );
+  assert.equal(existsSync(lockPath), false);
+  cleanup(dir);
+  passed++;
+}
+
 // 7. Rotating logs keep current + configured backups and preserve new writes.
 {
   const dir = tmpRoot('resource-log-');
@@ -729,4 +756,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/31 PASS`);
+console.log(`resource-governance smoke: ${passed}/32 PASS`);

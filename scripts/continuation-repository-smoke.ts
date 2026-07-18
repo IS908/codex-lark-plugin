@@ -1522,8 +1522,41 @@ const legacyV6Job = await versionSixSeed.create(createRequest('legacy-v6', {
     }],
   },
 }));
+const legacyV6MessageMismatch = await versionSixSeed.create(createRequest(
+  'legacy-v6-message-route-mismatch',
+));
+const legacyV6CommentBase = createRequest('legacy-v6-comment-route-mismatch');
+const legacyV6CommentRoute = {
+  kind: 'comment_thread' as const,
+  documentToken: 'doc_legacy_v6_mismatch',
+  commentId: 'comment_legacy_v6_expected',
+  fileType: 'docx',
+};
+const legacyV6CommentMismatch = await versionSixSeed.create({
+  ...legacyV6CommentBase,
+  route: legacyV6CommentRoute,
+  sourceMessageId: 'comment_legacy_v6_source',
+  sourceThreadId: legacyV6CommentRoute.commentId,
+  sourceFacts: {
+    ...legacyV6CommentBase.sourceFacts,
+    chatId: 'doc:doc_legacy_v6_mismatch',
+    chatType: 'doc_comment',
+    route: legacyV6CommentRoute,
+    sourceMessageId: 'comment_legacy_v6_source',
+    sourceThreadId: legacyV6CommentRoute.commentId,
+  },
+});
 versionSixSeed.close();
 const versionSixDatabase = new DatabaseSync(versionSixDatabasePath);
+versionSixDatabase.prepare(`
+  UPDATE continuation_jobs SET route_json = ? WHERE job_id = ?
+`).run(JSON.stringify({
+  ...legacyV6MessageMismatch.job.route,
+  threadId: 'omt_legacy_v6_conflicting_route',
+}), legacyV6MessageMismatch.job.jobId);
+versionSixDatabase.prepare(`
+  UPDATE continuation_jobs SET source_thread_id = ? WHERE job_id = ?
+`).run('comment_legacy_v6_conflicting_source', legacyV6CommentMismatch.job.jobId);
 versionSixDatabase.exec(`
   ALTER TABLE continuation_jobs DROP COLUMN source_facts_json;
   ALTER TABLE continuation_jobs DROP COLUMN task_contract_json;
@@ -1559,6 +1592,19 @@ try {
   assert.match(migratedV6?.taskContract.acceptanceCriteria[0].id ?? '', /^criterion_1_[a-f0-9]{12}$/);
   assert.equal(migratedV6?.taskContract.acceptanceCriteria[0].description, 'Legacy criterion text.');
   assert.deepEqual(migratedV6?.acceptanceCriteria, ['Legacy criterion text.']);
+  for (const corruptLegacyId of [
+    legacyV6MessageMismatch.job.jobId,
+    legacyV6CommentMismatch.job.jobId,
+  ]) {
+    const tombstone = await migratedVersionSixRepository.get(corruptLegacyId);
+    assert.equal(tombstone?.status, 'failed');
+    assert.equal(tombstone?.errorCode, 'continuation_persisted_state_invalid');
+    assert.deepEqual(tombstone?.route, {
+      kind: 'message_thread',
+      conversationId: '',
+      sourceMessageId: '',
+    });
+  }
   assert.ok(await migratedVersionSixRepository.claimDue(
     'worker-v6-migrated',
     baseNow,
@@ -2784,6 +2830,72 @@ assert.equal(
   (await reopenedIntegrityRepository.get(corruptCreated.job.jobId))?.deliveryEvents
     ?.filter((event) => event.kind === 'terminal').length,
   1,
+);
+
+const routeInvalidCleanupSource = join(integrityRoot, 'route-invalid-cleanup.txt');
+await writeFile(routeInvalidCleanupSource, 'route invalid cleanup input', 'utf8');
+const routeInvalidCleanupJob = await reopenedIntegrityRepository.create(createRequest(
+  'route-invalid-terminal-cleanup',
+  {
+    sourceInputs: [{
+      sourcePath: routeInvalidCleanupSource,
+      fileName: 'cleanup.txt',
+      kind: 'message_attachment',
+    }],
+  },
+));
+const routeInvalidCleanupArtifacts = new ContinuationArtifactStore(integrityArtifactsDir);
+await writeFile(
+  join(await routeInvalidCleanupArtifacts.ensure(routeInvalidCleanupJob.job.jobId), 'result.txt'),
+  'route invalid result',
+  'utf8',
+);
+assert.equal(await reopenedIntegrityRepository.requestCancel(
+  routeInvalidCleanupJob.job.jobId,
+  '2026-07-17T00:00:01.000Z',
+), 'cancelled');
+const routeInvalidCleanupDatabase = new DatabaseSync(integrityDatabasePath);
+routeInvalidCleanupDatabase.prepare(`
+  UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
+`).run(JSON.stringify({
+  ...routeInvalidCleanupJob.job.route,
+  threadId: 'omt_route_invalid_cleanup',
+}), routeInvalidCleanupJob.job.jobId);
+routeInvalidCleanupDatabase.close();
+assert.equal(await reopenedIntegrityRepository.claimPendingDelivery(
+  'delivery-route-invalid-cleanup',
+  '2026-07-17T00:00:01.000Z',
+), null);
+const routeInvalidStateDatabase = new DatabaseSync(integrityDatabasePath);
+const routeInvalidState = routeInvalidStateDatabase.prepare(`
+  SELECT j.status, j.completed_at, j.retain, o.status AS delivery_status,
+         o.error_code AS delivery_error_code
+  FROM continuation_jobs j
+  JOIN continuation_outbox o ON o.job_id = j.job_id AND o.kind = 'terminal'
+  WHERE j.job_id = ?
+`).get(routeInvalidCleanupJob.job.jobId);
+routeInvalidStateDatabase.close();
+assert.deepEqual({ ...routeInvalidState }, {
+  status: 'cancelled',
+  completed_at: '2026-07-17T00:00:01.000Z',
+  retain: 0,
+  delivery_status: 'failed',
+  delivery_error_code: 'continuation_delivery_route_invalid',
+});
+const routeInvalidCleanup = await reopenedIntegrityRepository.purgeExpired(
+  '2026-07-17T00:00:02.000Z',
+  '2026-07-17T00:00:03.000Z',
+);
+assert.ok(routeInvalidCleanup.some((entry) =>
+  entry.jobId === routeInvalidCleanupJob.job.jobId && entry.result === 'cleaned'),
+JSON.stringify(routeInvalidCleanup));
+await assert.rejects(
+  lstat(join(integrityInputsDir, routeInvalidCleanupJob.job.jobId)),
+  /ENOENT/,
+);
+await assert.rejects(
+  lstat(join(integrityArtifactsDir, routeInvalidCleanupJob.job.jobId)),
+  /ENOENT/,
 );
 reopenedIntegrityRepository.close();
 

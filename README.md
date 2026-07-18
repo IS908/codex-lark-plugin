@@ -97,7 +97,10 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Shared Feishu API retry/timeout wrapper for hot-path sends, edits, reactions, metadata reads, and downloads
 - Attachment/image downloads stream to disk with configurable byte caps and bounded timeouts
 - Dependency audit gate available via `npm run audit:deps`
-- Single-instance lock to prevent duplicate event handling
+- Single-instance lock to prevent duplicate event handling. During a mixed-version upgrade,
+  stop every old plugin process before changing `LARK_APP_ID`; a new runtime can reserve the
+  current and already-running same-user legacy lock names, but it cannot predict a different
+  app ID that an old binary may start with later.
 - User and chat ID whitelisting for access control (OR semantics when both lists set)
 - Crash recovery for scheduled jobs (missed executions run once on restart)
 

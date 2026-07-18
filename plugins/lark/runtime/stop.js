@@ -664,13 +664,14 @@ var appConfig = {
 // src/instance-lock.ts
 import os2 from "node:os";
 import path2 from "node:path";
-import { lstat, readdir as readdir2 } from "node:fs/promises";
+import { lstat as lstat2, readdir as readdir2 } from "node:fs/promises";
 
 // src/resource-governance.ts
 import { execFile } from "node:child_process";
 import {
   appendFile,
   link,
+  lstat,
   mkdir,
   open,
   readdir,
@@ -762,20 +763,30 @@ function isCodexLarkProcessCommand(command) {
   return normalized.includes("codex-lark-plugin") || normalized.includes("scripts/start.sh") || normalized.includes("src/index.ts") && normalized.includes("tsx");
 }
 async function readLockState(lockPath, expectedUid) {
+  const snapshot = await readOwnedRegularFile(lockPath, expectedUid, "lock");
+  if (!snapshot) return null;
+  return { record: parseLock(snapshot.raw), ageMs: Date.now() - snapshot.mtimeMs };
+}
+async function readOwnedRegularFile(filePath, expectedUid, label) {
   let handle;
   try {
-    handle = await open(lockPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    handle = await open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch (error) {
     if (error.code === "ENOENT") return null;
-    throw new Error(`Refusing unsafe lock path ${lockPath}.`, { cause: error });
+    throw new Error(`Refusing unsafe ${label} path ${filePath}.`, { cause: error });
   }
   try {
     const metadata = await handle.stat();
     if (!metadata.isFile() || expectedUid !== void 0 && metadata.uid !== expectedUid) {
-      throw new Error(`Refusing lock path with unexpected type or owner: ${lockPath}.`);
+      throw new Error(`Refusing ${label} path with unexpected type or owner: ${filePath}.`);
     }
     const raw = await handle.readFile({ encoding: "utf8" });
-    return { record: parseLock(raw), ageMs: Date.now() - metadata.mtimeMs };
+    return {
+      raw,
+      mtimeMs: metadata.mtimeMs,
+      dev: metadata.dev,
+      ino: metadata.ino
+    };
   } finally {
     await handle.close();
   }
@@ -930,7 +941,7 @@ async function compatibleLegacyLockPaths(appId, lockRoot, scanAll) {
   const ownedPaths = [];
   for (const name of candidates) {
     const candidate = path2.join(lockRoot, name);
-    const metadata = await lstat(candidate).catch(() => null);
+    const metadata = await lstat2(candidate).catch(() => null);
     if (metadata?.isFile() && !metadata.isSymbolicLink() && (currentUid === void 0 || metadata.uid === currentUid)) {
       ownedPaths.push(candidate);
     }
