@@ -53,10 +53,14 @@ Downloaded source paths are staged, hashed, and atomically renamed into a separa
 read-only `inputs/<job-id>/` tree; they are never placed in the writable artifact
 tree. The Codex sandbox receives the input paths as readable references but only
 the sibling artifact tree as an additional writable directory. Checksums are
-revalidated before each attempt, after restart and before invoking Codex. A
-missing or modified admitted input records a redacted integrity event and
-terminates as `failed/continuation_input_integrity_failed` without starting the
-attempt. Missing or unreadable inputs fail creation.
+revalidated by a pre-claim gate before each attempt, after restart and before a
+lease or attempt row is created. A missing or modified admitted input records a
+redacted integrity event and atomically terminates the still-due Job as
+`failed/continuation_input_integrity_failed`, with zero new attempts, no lease,
+and no Codex invocation. The gate uses the selected Job's row version when it
+commits either failure or claim, so cancellation and concurrent workers cannot
+race the filesystem result into an invalid transition. Missing or unreadable
+inputs fail creation.
 
 Creation derives a deterministic Job ID from the source-message idempotency key,
 serializes same-ID creation in-process, stages input files, atomically renames the

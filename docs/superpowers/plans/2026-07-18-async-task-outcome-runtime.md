@@ -23,6 +23,7 @@
 
 **Files:**
 - Modify: `src/domain/continuation.ts`
+- Modify: `src/ports/continuation.ts`
 - Modify: `src/continuation/artifact-store.ts`
 - Create: `src/continuation/input-store.ts`
 - Modify: `src/continuation/codex-runner.ts`
@@ -73,17 +74,28 @@ current Lark transport only after the continuation action is accepted. Assert
 managed references survive source deletion, have a SHA-256 checksum, and reject
 paths outside the admitted set. Add failures for unreadable input and download
 failure. After reopening SQLite, tamper with and remove managed inputs; assert the
-worker records `continuation_input_integrity_failed` and never invokes Codex.
+repository pre-claim gate atomically records
+`continuation_input_integrity_failed`, creates zero attempts and no lease, and
+never invokes Codex. Include a cancellation/concurrent-claim row-version race.
 Retry a terminal Job after deleting its original source, then assert the new Job
 owns a staged copy whose validity and cleanup are independent from the old tree.
 
-- [ ] **Step 5: Run repository and restart smoke tests and verify failure**
+- [ ] **Step 5: Run all new behavior smoke tests and verify failure**
 
 Run: `npx tsx scripts/continuation-repository-smoke.ts`
 Expected: FAIL because fact/contract columns and managed input ingestion are absent.
 
 Run: `npx tsx scripts/continuation-restart-process-smoke.ts`
 Expected: FAIL because source facts are not restored after reopening SQLite.
+
+Run: `npx tsx scripts/continuation-worker-smoke.ts`
+Expected: FAIL because integrity is not enforced before claim/execution.
+
+Run: `npx tsx scripts/continuation-codex-runner-smoke.ts`
+Expected: FAIL because the v7 fact/contract compatibility projection is absent.
+
+Run: `npx tsx scripts/continuation-command-smoke.ts`
+Expected: FAIL because retry does not clone managed inputs into an independent tree.
 
 - [ ] **Step 6: Implement managed input ingestion and schema v7 migration**
 
@@ -96,11 +108,13 @@ v1-v6 migration chain. Legacy rows use `provenance: legacy_unavailable`, null/em
 unrecoverable facts, and deterministic criterion IDs instead of fabricated source
 text. Keep the v7 flattened `objective`, `acceptanceCriteria`, and
 `contextSnapshot` projection derived from the contract so the existing runner
-continues to execute after migration and restart. Before every execution, verify
-the immutable manifest and fail closed before invoking Codex on a missing or
-modified input. Clone retry inputs into a separately owned staged tree. Add
-duplicate/concurrent create, staging failure, DB failure, integrity, projection,
-retry-isolation, and cleanup tests.
+continues to execute after migration and restart. Make `claimDue` select a due
+candidate, verify its immutable manifest before the claim transaction, then use
+the selected row version to atomically commit either the failed integrity result
+or the running lease plus attempt. A mismatch must create no attempt or lease;
+the selection loop may continue to another due Job. Clone retry inputs into a
+separately owned staged tree. Add duplicate/concurrent create, staging failure,
+DB failure, integrity, projection, retry-isolation, and cleanup tests.
 
 - [ ] **Step 7: Verify issue #303 targeted tests**
 
@@ -189,13 +203,22 @@ revocation and sandbox/root narrowing cannot retain prior authority and block
 before execution. `/task list` and `/task status` must classify `recovering` as
 pending/runnable rather than terminal.
 
-- [ ] **Step 5: Run runner/repository smoke and verify failure**
+- [ ] **Step 5: Run all new behavior smoke tests and verify failure**
 
 Run: `npx tsx scripts/continuation-codex-runner-smoke.ts`
 Expected: FAIL because the output schema lacks V2 checkpoint/delta fields.
 
 Run: `npx tsx scripts/continuation-repository-smoke.ts`
 Expected: FAIL because attempts do not persist deltas.
+
+Run: `npx tsx scripts/continuation-worker-smoke.ts`
+Expected: FAIL because no-progress and verification outcomes are not scheduled.
+
+Run: `npx tsx scripts/continuation-command-smoke.ts`
+Expected: FAIL because `recovering` is not classified as pending/runnable.
+
+Run: `npx tsx scripts/continuation-restart-process-smoke.ts`
+Expected: FAIL because V2 checkpoint, verdict, and no-progress state are not restored.
 
 - [ ] **Step 6: Implement runner, repository, and event integration**
 
