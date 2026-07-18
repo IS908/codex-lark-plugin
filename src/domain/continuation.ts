@@ -290,6 +290,8 @@ export interface ContinuationCreateRequest {
   sourceFacts: AsyncTaskFactSnapshot;
   taskContract: AsyncTaskContract;
   sourceInputs: AsyncTaskSourceInput[];
+  resumeCheckpoint?: ContinuationCheckpointV2;
+  resumeArtifactSourceJobId?: string;
   requiredTools: string[];
   workingDirectory: string;
   permissions: ContinuationPermissionEnvelope;
@@ -333,6 +335,72 @@ export interface ContinuationJob extends Omit<ContinuationCreateRequest, 'source
   retained: boolean;
   deliveryStatus?: ContinuationDeliveryStatus;
   deliveryEvents?: ContinuationDeliveryRecord[];
+}
+
+export type ContinuationAttemptPhase = 'work' | 'finalize' | 'verify_and_deliver';
+export type ContinuationArtifactStatus = 'not_started' | 'creating' | 'created' | 'verified' | 'failed';
+
+export function continuationAttemptPhase(
+  attemptOrdinal: number,
+  maxAttempts: number,
+): ContinuationAttemptPhase {
+  if (attemptOrdinal >= maxAttempts) return 'verify_and_deliver';
+  if (attemptOrdinal >= Math.max(1, maxAttempts - 1)) return 'finalize';
+  return 'work';
+}
+
+export function continuationArtifactStatus(job: ContinuationJob): ContinuationArtifactStatus {
+  if (job.errorCode?.includes('artifact_creation_failed') || job.errorCode?.includes('artifact_verification_failed')) {
+    return 'failed';
+  }
+  const checkpoint = job.checkpoint;
+  const hasMaterialArtifact = Boolean(
+    checkpoint
+    && (checkpoint.artifacts.length > 0
+      || checkpoint.sideEffects.length > 0
+      || checkpoint.completedDeliverableIds.length > 0),
+  );
+  if (checkpoint && requiredTaskOutputVerified(job.taskContract, checkpoint)) return 'verified';
+  if (hasMaterialArtifact) return 'created';
+  const activeOrdinal = job.status === 'running'
+    ? job.attemptCount ?? 1
+    : (job.attemptCount ?? 0) + 1;
+  return job.status === 'running'
+    && continuationAttemptPhase(activeOrdinal, job.maxAttempts) !== 'work'
+    ? 'creating'
+    : 'not_started';
+}
+
+export function continuationUnmetAcceptanceCriteria(job: ContinuationJob): string[] {
+  const completed = new Set(job.checkpoint?.completedCriterionIds ?? []);
+  return job.taskContract.acceptanceCriteria
+    .filter((criterion) => !completed.has(criterion.id))
+    .map((criterion) => criterion.id);
+}
+
+export function continuationResumeAvailable(job: ContinuationJob): boolean {
+  return ['partial', 'blocked', 'failed'].includes(job.status)
+    && Boolean(job.checkpoint)
+    && !job.deletedAt
+    && job.errorCode !== 'continuation_persisted_state_invalid'
+    && job.deliveryStatus !== 'delivery_unknown';
+}
+
+function requiredTaskOutputVerified(
+  contract: AsyncTaskContract,
+  checkpoint: ContinuationCheckpointV2,
+): boolean {
+  if (
+    contract.deliverables.length === 0
+    && contract.acceptanceCriteria.length === 0
+    && contract.verificationRequirements.length === 0
+  ) return false;
+  const completedDeliverables = new Set(checkpoint.completedDeliverableIds);
+  const completedCriteria = new Set(checkpoint.completedCriterionIds);
+  const evidencedRequirements = new Set(checkpoint.evidence.map((entry) => entry.requirementId));
+  return contract.deliverables.every((item) => !item.required || completedDeliverables.has(item.id))
+    && contract.acceptanceCriteria.every((item) => completedCriteria.has(item.id))
+    && contract.verificationRequirements.every((item) => evidencedRequirements.has(item.id));
 }
 
 export interface ContinuationAttempt {

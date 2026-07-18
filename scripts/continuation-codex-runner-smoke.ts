@@ -563,9 +563,11 @@ const convergenceExecutor = createContinuationCodexExecutor({
 const penultimate = await convergenceExecutor.execute(createClaim({ maxAttempts: 5 }, 4), signal);
 assert.equal(penultimate.outcome.outcome, 'continue');
 assert.match(convergenceRequests[0].prompt, /attempt 4 of 5/i);
-assert.match(convergenceRequests[0].prompt, /penultimate attempt/i);
+assert.match(convergenceRequests[0].prompt, /finalization phase/i);
+assert.match(convergenceRequests[0].prompt, /stop exploratory work/i);
 const forced = await convergenceExecutor.execute(createClaim({ maxAttempts: 5 }, 5), signal);
 assert.match(convergenceRequests[1].prompt, /attempt 5 of 5/i);
+assert.match(convergenceRequests[1].prompt, /verification and delivery phase/i);
 assert.match(convergenceRequests[1].prompt, /continue.*forbidden/i);
 assert.deepEqual(forced, {
   executionSessionId: 'session-convergence',

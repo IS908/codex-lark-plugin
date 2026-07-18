@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   CONTINUATION_CONTRACT_ID_PATTERN,
   CONTINUATION_LIMITS,
+  continuationArtifactStatus,
   isContinuationTerminal,
   partialOutcomeFromCheckpoint,
   retryDelayMs,
@@ -1124,7 +1125,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         requestFingerprint,
       );
       const persisted = projectCreateRequest(request, installation.artifacts);
+      let artifactsInstalled = false;
       try {
+        if (persisted.resumeCheckpoint) {
+          artifactsInstalled = await this.artifacts.copyVerified(
+            persisted.resumeArtifactSourceJobId!,
+            jobId,
+            persisted.resumeCheckpoint.artifacts,
+          );
+        }
         const inserted = this.database.prepare(`
           INSERT OR IGNORE INTO continuation_jobs (
             job_id, idempotency_key, retry_of_job_id, creator_open_id, origin_kind, route_json,
@@ -1132,11 +1141,11 @@ export class SqliteContinuationRepository implements ContinuationRepository {
             acceptance_criteria_json, context_snapshot_json, source_facts_json,
             task_contract_json, required_tools_json, working_directory, permissions_json,
             model, parent_session_id, max_attempts, max_retries, timeout_seconds,
-            created_at, expires_at, row_version, status, step_count, failure_count,
+            created_at, expires_at, row_version, status, checkpoint_json, step_count, failure_count,
             next_run_at, result_artifacts_json, updated_at
           ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-            1, 'queued', 0, 0, ?, '[]', ?
+            1, 'queued', ?, 0, 0, ?, '[]', ?
           )
         `).run(
           jobId,
@@ -1163,6 +1172,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           persisted.timeoutSeconds,
           persisted.createdAt,
           persisted.expiresAt,
+          persisted.resumeCheckpoint ? JSON.stringify(persisted.resumeCheckpoint) : null,
           persisted.createdAt,
           persisted.createdAt,
         );
@@ -1181,6 +1191,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       } catch (error) {
         if (installation.installed && this.canConfirmJobAbsent(jobId, request.idempotencyKey)) {
           await this.inputs.remove(jobId).catch(() => {});
+        }
+        if (artifactsInstalled && this.canConfirmJobAbsent(jobId, request.idempotencyKey)) {
+          await this.artifacts.remove(jobId).catch(() => {});
         }
         throw error;
       }
@@ -1584,14 +1597,16 @@ export class SqliteContinuationRepository implements ContinuationRepository {
           return;
         }
         if (progress.decision === 'finish_partial') {
+          const reason = attemptBudgetTerminalReason(current, outcome.checkpoint);
           this.finishPartial(
             claim,
             current,
             partialOutcomeFromCheckpoint(outcome.checkpoint),
             now,
             executionSessionId,
-            'attempt_budget_exhausted',
+            reason.errorCode,
             outcome.checkpoint,
+            reason.errorSummary,
           );
           return;
         }
@@ -2059,6 +2074,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         expectedSha256: input.sha256,
         expectedSizeBytes: input.sizeBytes,
       })),
+      ...(source.checkpoint ? {
+        resumeCheckpoint: source.checkpoint,
+        ...(source.checkpoint.artifacts.length > 0
+          ? { resumeArtifactSourceJobId: source.jobId }
+          : {}),
+      } : {}),
       requiredTools: source.requiredTools,
       workingDirectory: source.workingDirectory,
       permissions: source.permissions,
@@ -2679,24 +2700,26 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       }
       const checkpoint = current.checkpoint ?? checkpointFromInitialContext(current.contextSnapshot);
       const partial = partialOutcomeFromCheckpoint(checkpoint);
+      const reason = attemptBudgetTerminalReason(current, checkpoint);
       validatePartialResult(partial);
       const update = this.database.prepare(`
         UPDATE continuation_jobs
         SET status = 'partial', result_summary = ?, result_artifacts_json = ?,
-            error_code = 'attempt_budget_exhausted',
-            error_summary = 'The continuation exhausted its attempt budget.',
+            error_code = ?, error_summary = ?,
             completed_at = ?, updated_at = ?, lease_owner = NULL,
             lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
         WHERE job_id = ? AND status IN ('queued', 'waiting_retry', 'recovering')
       `).run(
         partialResultSummary(partial),
         JSON.stringify(partial.artifacts),
+        reason.errorCode,
+        reason.errorSummary,
         now,
         now,
         jobId,
       );
       if (Number(update.changes) !== 1) continue;
-      this.insertTerminalOutbox(current, renderPartialPayload(jobId, partial), now);
+      this.insertTerminalOutbox(current, renderPartialPayload(jobId, partial, reason.errorSummary), now);
     }
     return corruptJobIds;
   }
@@ -2751,14 +2774,16 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       return;
     }
     if (claim.attempt.ordinal >= current.maxAttempts) {
+      const reason = attemptBudgetTerminalReason(current, checkpoint);
       this.finishPartial(
         claim,
         current,
         partialOutcomeFromCheckpoint(checkpoint),
         now,
         executionSessionId,
-        'continuation_verification_failed',
+        reason.errorCode,
         checkpoint,
+        reason.errorSummary,
       );
       return;
     }
@@ -2897,13 +2922,14 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     executionSessionId?: string,
     errorCode = 'partial_completion',
     checkpoint?: ContinuationCheckpointV2,
+    errorSummary = 'The continuation completed with a partial result.',
   ): void {
     validatePartialResult(outcome);
     const update = this.database.prepare(`
       UPDATE continuation_jobs
       SET status = 'partial', execution_session_id = ?, checkpoint_json = ?,
           step_count = step_count + 1, result_summary = ?, result_artifacts_json = ?,
-          error_code = ?, error_summary = 'The continuation completed with a partial result.',
+          error_code = ?, error_summary = ?,
           completed_at = ?, updated_at = ?, lease_owner = NULL,
           lease_expires_at = NULL, heartbeat_at = NULL, row_version = row_version + 1
       WHERE job_id = ? AND status = 'running' AND lease_owner = ? AND row_version = ?
@@ -2913,6 +2939,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       partialResultSummary(outcome),
       JSON.stringify(outcome.artifacts),
       errorCode,
+      errorSummary,
       now,
       now,
       current.jobId,
@@ -2921,7 +2948,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     );
     assertOneChange(update.changes, current.jobId);
     this.finishAttempt(claim, now, 'partial', executionSessionId);
-    this.insertTerminalOutbox(current, renderPartialPayload(current.jobId, outcome), now);
+    this.insertTerminalOutbox(current, renderPartialPayload(current.jobId, outcome, errorSummary), now);
   }
 
   private finishBlocked(
@@ -3980,6 +4007,8 @@ function createRequestFingerprint(request: ContinuationCreateRequest): string {
     sourceFacts: { ...request.sourceFacts, inputs: [] },
     taskContract: request.taskContract,
     sourceInputDescriptors,
+    resumeCheckpoint: request.resumeCheckpoint ?? null,
+    resumeArtifactSourceJobId: request.resumeArtifactSourceJobId ?? null,
   })).digest('hex');
 }
 
@@ -4250,6 +4279,15 @@ function validateCreateRequest(request: ContinuationCreateRequest): void {
     kind: input.kind,
     fileName: input.fileName,
   })), CONTINUATION_LIMITS.contextSnapshotBytes);
+  if (request.resumeCheckpoint && !isCheckpointV2(request.resumeCheckpoint)) {
+    throw new Error('Continuation resume checkpoint is invalid.');
+  }
+  if (request.resumeCheckpoint?.artifacts.length && !request.resumeArtifactSourceJobId) {
+    throw new Error('Continuation resume artifacts require a source Job ID.');
+  }
+  if (request.resumeArtifactSourceJobId && !request.resumeCheckpoint?.artifacts.length) {
+    throw new Error('Continuation resume artifact source is not needed without checkpoint artifacts.');
+  }
   if (!Number.isInteger(request.maxAttempts) || request.maxAttempts < 1 || request.maxAttempts > 20) {
     throw new Error('Continuation maxAttempts must be an integer between 1 and 20.');
   }
@@ -4471,9 +4509,11 @@ function partialResultSummary(
 function renderPartialPayload(
   jobId: string,
   outcome: Extract<ContinuationStepOutcome, { outcome: 'partial' }>,
+  reason = 'The continuation completed with a partial result.',
 ): string {
   return [
     `Task partially completed: ${jobId}`,
+    `Reason: ${reason}`,
     renderResultSection('Completed work', outcome.completedWork),
     renderResultSection('Key findings', outcome.keyFindings),
     renderResultSection('Remaining work', outcome.unperformedWork),
@@ -4540,6 +4580,29 @@ function renderProgressPayload(
       : '',
   ].filter(Boolean).join('\n');
   return truncateCharacters(payload, PROGRESS_PAYLOAD_MAX_CHARS);
+}
+
+function attemptBudgetTerminalReason(
+  job: ContinuationJob,
+  checkpoint: ContinuationCheckpointV2,
+): { errorCode: string; errorSummary: string } {
+  const artifactStatus = continuationArtifactStatus({ ...job, checkpoint });
+  if (artifactStatus === 'not_started' || artifactStatus === 'creating') {
+    return {
+      errorCode: 'attempts_exhausted_artifact_not_started',
+      errorSummary: 'The execution budget was exhausted before a required user-facing artifact was ready.',
+    };
+  }
+  if (artifactStatus === 'created') {
+    return {
+      errorCode: 'attempts_exhausted_artifact_unverified',
+      errorSummary: 'The execution budget was exhausted after artifact creation but before all required verification completed.',
+    };
+  }
+  return {
+    errorCode: 'attempts_exhausted_acceptance_incomplete',
+    errorSummary: 'The execution budget was exhausted with one or more acceptance criteria still incomplete.',
+  };
 }
 
 function renderInterruptPayload(

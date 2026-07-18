@@ -13,6 +13,7 @@ import {
 import {
   CONTINUATION_LIMITS,
   ContinuationExecutionError,
+  continuationAttemptPhase,
   partialOutcomeFromCheckpoint,
   type ContinuationCheckpointV2,
   type ContinuationClaim,
@@ -948,13 +949,14 @@ export function enforceAttemptConvergence(
 }
 
 function convergenceInstruction(claim: ContinuationClaim): string {
-  if (claim.attempt.ordinal >= claim.job.maxAttempts) {
-    return '[Forced convergence] This is the final attempt. A continue outcome is forbidden. Return completed, partial, blocked, or failed with the most useful terminal result available.';
+  const phase = continuationAttemptPhase(claim.attempt.ordinal, claim.job.maxAttempts);
+  if (phase === 'verify_and_deliver') {
+    return '[Verification and delivery phase] This is the protected final attempt. Continue is forbidden. Do not explore or expand analysis. Verify prepared deliverables and evidence, then return completed; otherwise return an honest partial, blocked, or failed result with exact unmet criteria and the next best action.';
   }
-  if (claim.attempt.ordinal === claim.job.maxAttempts - 1) {
-    return '[Convergence warning] This is the penultimate attempt. Prioritize completing the objective or preparing a useful structured partial result for the final attempt.';
+  if (phase === 'finalize') {
+    return '[Finalization phase] Protected delivery capacity has started. Stop exploratory work and scope expansion now. Consolidate verified findings, create the minimum required user-facing artifacts, record evidence and side-effect receipts, and prepare one concrete verification or delivery action for the final attempt. Prefer a trustworthy partial artifact over additional analysis.';
   }
-  return 'Continue only when another bounded attempt is necessary to satisfy the acceptance criteria.';
+  return '[Work phase] Continue only when another bounded attempt is necessary to satisfy the acceptance criteria. Leave the final two attempts for artifact finalization, verification, and delivery.';
 }
 
 function buildContinuationPrompt(
@@ -981,6 +983,7 @@ function buildContinuationPrompt(
     requiredTools: job.requiredTools,
     attempt: claim.attempt.ordinal,
     maxAttempts: job.maxAttempts,
+    executionPhase: continuationAttemptPhase(claim.attempt.ordinal, job.maxAttempts),
     permissions: {
       profile: job.permissions.profile,
       requestedPaths: job.permissions.filesystem.requestedPaths,
