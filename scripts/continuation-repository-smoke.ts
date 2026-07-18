@@ -19,10 +19,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { seedHistoricalContinuationDatabase } from './fixtures/continuation-historical-schema.js';
-import type {
-  AsyncTaskFactSnapshot,
-  AsyncTaskContract,
-  ContinuationCreateRequest,
+import {
+  CONTINUATION_LIMITS,
+  type AsyncTaskFactSnapshot,
+  type AsyncTaskContract,
+  type ContinuationCreateRequest,
 } from '../src/domain/continuation.js';
 import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js';
 import {
@@ -2652,10 +2653,20 @@ const healthyStateJob = await corruptStateRepository.create(createRequest('healt
 const corruptStateDatabase = new DatabaseSync(corruptStateDatabasePath);
 corruptStateDatabase.prepare(`
   UPDATE continuation_jobs SET checkpoint_json = ? WHERE job_id = ?
-`).run('{"summary":', corruptCheckpointJob.job.jobId);
+`).run(JSON.stringify({
+  summary: 'x'.repeat(CONTINUATION_LIMITS.checkpointBytes),
+  completedSteps: [],
+  remainingSteps: [],
+  constraints: [],
+  decisions: [],
+  references: [],
+}), corruptCheckpointJob.job.jobId);
 corruptStateDatabase.prepare(`
   UPDATE continuation_jobs SET result_artifacts_json = ? WHERE job_id = ?
-`).run('{"unexpected":true}', corruptArtifactsJob.job.jobId);
+`).run(JSON.stringify(Array.from(
+  { length: CONTINUATION_LIMITS.artifactCount + 1 },
+  (_, index) => `artifact-${index}`,
+)), corruptArtifactsJob.job.jobId);
 assert.equal(
   (await corruptStateRepository.get(corruptCheckpointJob.job.jobId))?.errorCode,
   'continuation_persisted_state_invalid',

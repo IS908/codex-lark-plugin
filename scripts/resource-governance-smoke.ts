@@ -36,6 +36,7 @@ import {
   acquireLarkInstanceLock,
   legacyLarkInstanceLockPath,
 } from '../src/instance-lock.js';
+import { isRecordedProcessInstanceActive } from '../src/process-identity.js';
 
 let passed = 0;
 
@@ -46,6 +47,11 @@ function tmpRoot(prefix: string): string {
 function cleanup(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
 }
+
+// An unavailable start-time probe is trusted only during a bounded grace period.
+assert.equal(isRecordedProcessInstanceActive(true, 1, null, 29_999, 30_000), true);
+assert.equal(isRecordedProcessInstanceActive(true, 1, null, 30_001, 30_000), false);
+passed++;
 
 async function names(dir: string): Promise<string[]> {
   return (await readdir(dir)).sort();
@@ -826,4 +832,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/34 PASS`);
+console.log(`resource-governance smoke: ${passed}/35 PASS`);

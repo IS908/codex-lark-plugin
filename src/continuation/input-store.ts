@@ -47,6 +47,7 @@ const CREATION_RECLAIM_PREFIX = '.reclaim-';
 const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
 const OWNERLESS_LOCK_GRACE_MS = 30_000;
+const UNKNOWN_CREATION_OWNER_GRACE_MS = CREATION_LOCK_WAIT_MS + OWNERLESS_LOCK_GRACE_MS;
 const ACTIVE_REDACTION_QUARANTINES = new Set<string>();
 
 interface CreationLockOwner {
@@ -382,12 +383,20 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       if (redactionQuarantine) {
         const candidate = path.join(this.rootDir, entry.name);
         if (jobIds.has(redactionQuarantine.jobId)) {
+          const candidateMetadata = await fs.lstat(candidate).catch((error) => {
+            if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+            throw error;
+          });
+          if (!candidateMetadata) continue;
+          const stateAgeMs = Date.now() - candidateMetadata.mtimeMs;
           const ownerIsActive = redactionQuarantine.ownerStartedAt === null
             ? isProcessAlive(redactionQuarantine.ownerPid)
-              && Date.now() - (await fs.lstat(candidate)).mtimeMs < OWNERLESS_LOCK_GRACE_MS
+              && stateAgeMs < OWNERLESS_LOCK_GRACE_MS
             : await isProcessInstanceAlive(
               redactionQuarantine.ownerPid,
               redactionQuarantine.ownerStartedAt,
+              stateAgeMs,
+              OWNERLESS_LOCK_GRACE_MS,
             );
           if (
             ownerIsActive
@@ -698,7 +707,12 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
     if (isProcessAlive(owner.pid) && Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) {
       return false;
     }
-  } else if (await isProcessInstanceAlive(owner.pid, owner.startedAt)) return false;
+  } else if (await isProcessInstanceAlive(
+    owner.pid,
+    owner.startedAt,
+    Date.now() - metadata.mtimeMs,
+    UNKNOWN_CREATION_OWNER_GRACE_MS,
+  )) return false;
 
   const quarantine = path.join(
     rootDir,

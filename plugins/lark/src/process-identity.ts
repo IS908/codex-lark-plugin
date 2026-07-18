@@ -35,8 +35,32 @@ export function isSameProcessStart(a: number, b: number): boolean {
   return Math.abs(a - b) <= PROCESS_START_TOLERANCE_MS;
 }
 
-export async function isProcessInstanceAlive(pid: number, startedAt: number): Promise<boolean> {
-  if (!isProcessAlive(pid)) return false;
+export function isRecordedProcessInstanceActive(
+  processAlive: boolean,
+  recordedStartedAt: number,
+  actualStartedAt: number | null,
+  stateAgeMs: number,
+  unknownIdentityGraceMs: number,
+): boolean {
+  if (!processAlive) return false;
+  if (actualStartedAt === null) return stateAgeMs < unknownIdentityGraceMs;
+  return isSameProcessStart(actualStartedAt, recordedStartedAt);
+}
+
+export async function isProcessInstanceAlive(
+  pid: number,
+  startedAt: number,
+  stateAgeMs: number,
+  unknownIdentityGraceMs: number,
+): Promise<boolean> {
+  const processAlive = isProcessAlive(pid);
+  if (!processAlive) return false;
   const actualStartedAt = await getProcessStartedAt(pid);
-  return actualStartedAt === null || isSameProcessStart(actualStartedAt, startedAt);
+  return isRecordedProcessInstanceActive(
+    processAlive,
+    startedAt,
+    actualStartedAt,
+    stateAgeMs,
+    unknownIdentityGraceMs,
+  );
 }

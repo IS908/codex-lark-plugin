@@ -2488,7 +2488,7 @@ function mapJob(row: SqlRow): ContinuationJob {
     leaseExpiresAt: optionalStringField(row, 'lease_expires_at'),
     heartbeatAt: optionalStringField(row, 'heartbeat_at'),
     resultSummary: optionalStringField(row, 'result_summary'),
-    resultArtifacts: parseTrustedStringArray(
+    resultArtifacts: parseTrustedResultArtifacts(
       row.result_artifacts_json,
       'result_artifacts_json',
     ),
@@ -3438,7 +3438,20 @@ function parseTrustedCheckpoint(
 ): ContinuationCheckpoint {
   const parsed = parseTrustedJson(value, field);
   if (!isCheckpoint(parsed)) throw new Error(`Invalid continuation checkpoint field: ${field}.`);
+  assertJsonBytes(field, parsed, CONTINUATION_LIMITS.checkpointBytes);
   return parsed;
+}
+
+function parseTrustedResultArtifacts(
+  value: SqlRow[string] | undefined,
+  field: string,
+): string[] {
+  const artifacts = parseTrustedStringArray(value, field);
+  if (artifacts.length > CONTINUATION_LIMITS.artifactCount) {
+    throw new Error(`Invalid continuation artifact count in field: ${field}.`);
+  }
+  assertJsonBytes(field, artifacts, CONTINUATION_LIMITS.contextSnapshotBytes);
+  return artifacts;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

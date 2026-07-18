@@ -175,10 +175,21 @@ export class ContinuationArtifactStore {
       if (!quarantine) continue;
       const candidate = path.join(this.rootDir, entry.name);
       if (jobIds.has(quarantine.jobId)) {
+        const candidateMetadata = await fs.lstat(candidate).catch((error) => {
+          if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+          throw error;
+        });
+        if (!candidateMetadata) continue;
+        const stateAgeMs = Date.now() - candidateMetadata.mtimeMs;
         const ownerIsActive = quarantine.ownerStartedAt === null
           ? isProcessAlive(quarantine.ownerPid)
-            && Date.now() - (await fs.lstat(candidate)).mtimeMs < LEGACY_QUARANTINE_GRACE_MS
-          : await isProcessInstanceAlive(quarantine.ownerPid, quarantine.ownerStartedAt);
+            && stateAgeMs < LEGACY_QUARANTINE_GRACE_MS
+          : await isProcessInstanceAlive(
+            quarantine.ownerPid,
+            quarantine.ownerStartedAt,
+            stateAgeMs,
+            LEGACY_QUARANTINE_GRACE_MS,
+          );
         if (
           ownerIsActive
           && (quarantine.ownerPid !== process.pid
