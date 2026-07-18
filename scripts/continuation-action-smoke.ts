@@ -176,6 +176,16 @@ assert.equal(first[0].ok, true);
 assert.equal(first[0].action, 'create_continuation_job');
 assert.match(first[0].message, /^Background task created: Finish report\nJob ID: job_/);
 assert.ok(first[0].continuation);
+const replay = await dispatcher.execute({
+  message: {
+    ...p2p,
+    attachments: [{ fileKey: 'expired-file', fileName: 'expired.txt', fileType: 'file' }],
+  },
+  actions: [action()] as any,
+  continuationPermitted: false,
+});
+assert.equal(replay[0].ok, true);
+assert.equal(replay[0].continuation?.jobId, first[0].continuation!.jobId);
 const firstJob = await repository.get(first[0].continuation!.jobId);
 assert.equal(firstJob?.creatorOpenId, p2p.senderId);
 assert.equal(firstJob?.route.kind, 'message_thread');
@@ -368,6 +378,40 @@ await assert.rejects(
   service.createFromMessage(action({ working_directory: '../outside' }) as any, message('outside')),
   /working directory/i,
 );
+
+const retrySourceMessage = message('retry-idempotent');
+const retrySource = await service.createFromMessage(action() as any, retrySourceMessage);
+assert.equal(await repository.requestCancel(
+  retrySource.job.jobId,
+  '2026-07-17T00:00:01.000Z',
+), 'cancelled');
+const retryClone = await service.retryForActor(
+  retrySource.job.jobId,
+  retrySourceMessage.senderId,
+  null,
+  'om_retry_request',
+);
+assert.equal(await repository.redactTerminal(
+  retrySource.job.jobId,
+  '2026-07-17T00:00:02.000Z',
+), true);
+const deletedCreateReplay = await dispatcher.execute({
+  message: {
+    ...retrySourceMessage,
+    attachments: [{ fileKey: 'expired-file', fileName: 'expired.txt', fileType: 'file' }],
+  },
+  actions: [action()] as any,
+  continuationPermitted: false,
+});
+assert.equal(deletedCreateReplay[0].ok, false);
+assert.match(deletedCreateReplay[0].message, /retained data has been deleted/i);
+const replayedRetry = await service.retryForActor(
+  retrySource.job.jobId,
+  retrySourceMessage.senderId,
+  null,
+  'om_retry_request',
+);
+assert.equal(replayedRetry.jobId, retryClone.jobId);
 
 repository.close();
 console.log('continuation action smoke: PASS');

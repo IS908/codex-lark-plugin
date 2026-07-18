@@ -4,6 +4,7 @@ import path from 'node:path';
 import { CONTINUATION_LIMITS } from '../domain/continuation.js';
 
 const REDACTION_QUARANTINE_PREFIX = '.redacting-';
+const REDACTION_QUARANTINE_LEASE_MS = 30_000;
 
 export class ContinuationArtifactStore {
   readonly rootDir: string;
@@ -131,6 +132,8 @@ export class ContinuationArtifactStore {
       await fs.rename(destination, source).catch(() => {});
       throw new Error('Continuation artifact quarantine identity changed during rename.');
     }
+    const now = new Date();
+    await fs.utimes(destination, now, now);
     return token;
   }
 
@@ -142,7 +145,7 @@ export class ContinuationArtifactStore {
     await removeArtifactTree(this.quarantineDirectory(jobId, token));
   }
 
-  async cleanupOrphans(jobIds: ReadonlySet<string>): Promise<void> {
+  async cleanupOrphans(jobIds: ReadonlySet<string>, nowMs = Date.now()): Promise<void> {
     await this.ensureRoot();
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -151,6 +154,11 @@ export class ContinuationArtifactStore {
       if (!quarantine) continue;
       const candidate = path.join(this.rootDir, entry.name);
       if (jobIds.has(quarantine.jobId)) {
+        const metadata = await fs.stat(candidate);
+        if (
+          isProcessAlive(quarantine.ownerPid)
+          && nowMs - metadata.mtimeMs < REDACTION_QUARANTINE_LEASE_MS
+        ) continue;
         try {
           await fs.rename(candidate, this.jobDirectory(quarantine.jobId));
         } catch (error) {
@@ -186,11 +194,22 @@ export class ContinuationArtifactStore {
   }
 }
 
-function parseRedactionQuarantine(name: string): { jobId: string } | null {
+function parseRedactionQuarantine(name: string): { jobId: string; ownerPid: number } | null {
   if (!name.startsWith(REDACTION_QUARANTINE_PREFIX)) return null;
-  const match = /^\.redacting-(.+)-[1-9]\d*-[a-f0-9]{16}$/.exec(name);
+  const match = /^\.redacting-(.+)-([1-9]\d*)-[a-f0-9]{16}$/.exec(name);
   if (!match || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(match[1])) return null;
-  return { jobId: match[1] };
+  const ownerPid = Number(match[2]);
+  if (!Number.isSafeInteger(ownerPid)) return null;
+  return { jobId: match[1], ownerPid };
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === 'EPERM';
+  }
 }
 
 async function removeArtifactTree(directory: string): Promise<void> {

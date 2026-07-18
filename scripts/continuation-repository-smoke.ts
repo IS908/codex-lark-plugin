@@ -72,6 +72,21 @@ if (process.argv[2] === '--reject-blocking-input') {
   }
   process.exit(0);
 }
+if (process.argv[2] === '--open-continuation-repository') {
+  const [databasePath, artifactsDir, inputsDir] = process.argv.slice(3);
+  if (!databasePath || !artifactsDir || !inputsDir) {
+    throw new Error('Missing repository-open child arguments.');
+  }
+  const repository = await SqliteContinuationRepository.open({
+    databasePath,
+    artifactsDir,
+    inputsDir,
+  });
+  await repository.healthCheck();
+  repository.close();
+  process.stdout.write('REPOSITORY_OPENED\n');
+  process.exit(0);
+}
 
 async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath: string): Promise<void> {
   const store = new ContinuationInputStore(join(rootDir, 'inputs'));
@@ -810,9 +825,31 @@ try {
 
 const retentionDatabasePath = join(root, 'retention', 'jobs.sqlite');
 const retentionArtifactsDir = join(root, 'retention', 'artifacts');
+class FailingDiscardArtifactStore extends ContinuationArtifactStore {
+  failDiscard = false;
+
+  override async discardQuarantine(jobId: string, token: string): Promise<void> {
+    if (this.failDiscard) throw new Error('simulated artifact quarantine cleanup failure');
+    await super.discardQuarantine(jobId, token);
+  }
+}
+class FailingDiscardInputStore extends ContinuationInputStore {
+  failDiscard = false;
+
+  override async discardQuarantine(jobId: string, token: string): Promise<void> {
+    if (this.failDiscard) throw new Error('simulated input quarantine cleanup failure');
+    await super.discardQuarantine(jobId, token);
+  }
+}
+const retentionArtifacts = new FailingDiscardArtifactStore(retentionArtifactsDir);
+const retentionInputsDir = join(root, 'retention', 'inputs');
+const retentionInputs = new FailingDiscardInputStore(retentionInputsDir);
 const retentionRepository = await SqliteContinuationRepository.open({
   databasePath: retentionDatabasePath,
   artifactsDir: retentionArtifactsDir,
+  artifactStore: retentionArtifacts,
+  inputsDir: retentionInputsDir,
+  inputStore: retentionInputs,
   jitter: () => 0,
 });
 try {
@@ -848,7 +885,6 @@ try {
     { status: 'delivered', messageId: 'om_retention_cleanup' },
     '2026-07-17T00:00:05.000Z',
   );
-  const retentionArtifacts = new ContinuationArtifactStore(retentionArtifactsDir);
   const cleanupArtifactRoot = await retentionArtifacts.ensure(cleanupJob.job.jobId);
   await writeFile(join(cleanupArtifactRoot, 'report.txt'), 'result', 'utf-8');
 
@@ -957,24 +993,38 @@ try {
   );
   const failedCleanupArtifactRoot = await retentionArtifacts.ensure(failedCleanupJob.job.jobId);
   await writeFile(join(failedCleanupArtifactRoot, 'retry.txt'), 'retry', 'utf-8');
-  await chmod(retentionArtifactsDir, 0o500);
+  retentionArtifacts.failDiscard = true;
+  retentionInputs.failDiscard = true;
   const failedCleanupResults = await retentionRepository.purgeExpired(
     '2026-07-18T00:00:00.000Z',
     '2026-07-20T00:00:00.000Z',
   );
-  await chmod(retentionArtifactsDir, 0o700);
+  retentionArtifacts.failDiscard = false;
+  retentionInputs.failDiscard = false;
   assert.equal(failedCleanupResults.length, 1);
   assert.equal(failedCleanupResults[0]?.jobId, failedCleanupJob.job.jobId);
   assert.equal(failedCleanupResults[0]?.result, 'error');
-  assert.equal((await retentionRepository.get(failedCleanupJob.job.jobId))?.deletedAt, undefined);
-  assert.equal((await stat(failedCleanupArtifactRoot)).isDirectory(), true);
-  assert.deepEqual((await retentionRepository.purgeExpired(
+  assert.equal(
+    (await retentionRepository.get(failedCleanupJob.job.jobId))?.deletedAt,
+    '2026-07-20T00:00:00.000Z',
+  );
+  await assert.rejects(stat(failedCleanupArtifactRoot), /ENOENT/);
+  assert.equal((await readdir(retentionArtifactsDir)).some(
+    (entry) => entry.startsWith(`.redacting-${failedCleanupJob.job.jobId}-`),
+  ), true);
+  assert.equal((await readdir(retentionInputsDir)).some(
+    (entry) => entry.startsWith(`.redacting-${failedCleanupJob.job.jobId}-`),
+  ), true);
+  assert.deepEqual(await retentionRepository.purgeExpired(
     '2026-07-18T00:00:00.000Z',
     '2026-07-20T00:00:01.000Z',
-  )).map((result) => ({ jobId: result.jobId, result: result.result })), [{
-    jobId: failedCleanupJob.job.jobId,
-    result: 'cleaned',
-  }]);
+  ), []);
+  assert.equal((await readdir(retentionArtifactsDir)).some(
+    (entry) => entry.startsWith(`.redacting-${failedCleanupJob.job.jobId}-`),
+  ), false);
+  assert.equal((await readdir(retentionInputsDir)).some(
+    (entry) => entry.startsWith(`.redacting-${failedCleanupJob.job.jobId}-`),
+  ), false);
 
   assert.equal(await retentionRepository.setRetained(
     retainedJob.job.jobId,
@@ -1408,9 +1458,26 @@ versionSixDatabase.exec(`
   PRAGMA user_version = 6;
 `);
 versionSixDatabase.close();
+const versionSixInputsDir = join(versionSixRoot, 'inputs');
+const concurrentVersionSixOpen = () => spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--open-continuation-repository',
+  versionSixDatabasePath,
+  versionSixArtifactsDir,
+  versionSixInputsDir,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+const versionSixOpenA = concurrentVersionSixOpen();
+const versionSixOpenB = concurrentVersionSixOpen();
+await Promise.all([
+  waitForChildMarker(versionSixOpenA, 'REPOSITORY_OPENED', 5_000),
+  waitForChildMarker(versionSixOpenB, 'REPOSITORY_OPENED', 5_000),
+]);
 const migratedVersionSixRepository = await SqliteContinuationRepository.open({
   databasePath: versionSixDatabasePath,
   artifactsDir: versionSixArtifactsDir,
+  inputsDir: versionSixInputsDir,
 });
 try {
   const migratedV6 = await migratedVersionSixRepository.get(legacyV6Job.job.jobId);
@@ -1584,6 +1651,11 @@ const redactionRollbackCreated = await redactionRollbackSeed.create(createReques
     kind: 'message_attachment',
   }],
 }));
+const redactionRollbackArtifacts = new ContinuationArtifactStore(redactionRollbackOptions.artifactsDir);
+const redactionRollbackArtifactRoot = await redactionRollbackArtifacts.ensure(
+  redactionRollbackCreated.job.jobId,
+);
+await writeFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'restore artifact after rollback', 'utf8');
 assert.equal(await redactionRollbackSeed.requestCancel(
   redactionRollbackCreated.job.jobId,
   '2026-07-17T00:00:01.000Z',
@@ -1641,27 +1713,58 @@ assert.equal(await readFile(redactionRollbackDelegate.resolve(
   redactionRollbackCreated.job.jobId,
   redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
 ), 'utf8'), 'restore me after failed redaction');
+assert.equal(
+  await readFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'utf8'),
+  'restore artifact after rollback',
+);
 redactionRollbackRepository.close();
 
 // Restart restores a quarantine left by a crash before the database redaction committed.
 const liveRedactionToken = await redactionRollbackDelegate.quarantine(
   redactionRollbackCreated.job.jobId,
 );
+const liveArtifactRedactionToken = await redactionRollbackArtifacts.quarantine(
+  redactionRollbackCreated.job.jobId,
+);
 assert.ok(liveRedactionToken);
+assert.ok(liveArtifactRedactionToken);
+const liveInputQuarantine = join(
+  redactionRollbackOptions.inputsDir,
+  `.redacting-${redactionRollbackCreated.job.jobId}-${liveRedactionToken}`,
+);
+const liveArtifactQuarantine = join(
+  redactionRollbackOptions.artifactsDir,
+  `.redacting-${redactionRollbackCreated.job.jobId}-${liveArtifactRedactionToken}`,
+);
 await redactionRollbackDelegate.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+await redactionRollbackArtifacts.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
 await assert.rejects(lstat(join(
   redactionRollbackOptions.inputsDir,
   redactionRollbackCreated.job.jobId,
 )));
-await redactionRollbackDelegate.restoreQuarantine(
+await assert.rejects(lstat(redactionRollbackArtifactRoot));
+const staleRedactionLease = new Date(Date.now() - 60_000);
+await utimes(liveInputQuarantine, staleRedactionLease, staleRedactionLease);
+await utimes(liveArtifactQuarantine, staleRedactionLease, staleRedactionLease);
+await redactionRollbackDelegate.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+await redactionRollbackArtifacts.cleanupOrphans(new Set([redactionRollbackCreated.job.jobId]));
+assert.equal((await stat(redactionRollbackDelegate.resolve(
   redactionRollbackCreated.job.jobId,
-  liveRedactionToken!,
-);
+  redactionRollbackCreated.job.sourceFacts.inputs[0].relativePath,
+))).isFile(), true);
+assert.equal((await stat(redactionRollbackArtifactRoot)).isDirectory(), true);
 const deadRedactionToken = `2147483647-${'f'.repeat(16)}`;
 await rename(
   join(redactionRollbackOptions.inputsDir, redactionRollbackCreated.job.jobId),
   join(
     redactionRollbackOptions.inputsDir,
+    `.redacting-${redactionRollbackCreated.job.jobId}-${deadRedactionToken}`,
+  ),
+);
+await rename(
+  redactionRollbackArtifactRoot,
+  join(
+    redactionRollbackOptions.artifactsDir,
     `.redacting-${redactionRollbackCreated.job.jobId}-${deadRedactionToken}`,
   ),
 );
@@ -1673,7 +1776,118 @@ assert.equal(await readFile(redactionRollbackDelegate.resolve(
 assert.equal((await readdir(redactionRollbackOptions.inputsDir)).some(
   (entry) => entry.startsWith(`.redacting-${redactionRollbackCreated.job.jobId}-`),
 ), false);
+assert.equal(
+  await readFile(join(redactionRollbackArtifactRoot, 'result.txt'), 'utf8'),
+  'restore artifact after rollback',
+);
+assert.equal((await readdir(redactionRollbackOptions.artifactsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${redactionRollbackCreated.job.jobId}-`),
+), false);
 redactionCrashRecovery.close();
+
+// Separate repository instances serialize redaction through the cross-process Job lock.
+// The loser must observe the committed DB state and must never restore the winner's quarantines.
+const concurrentRedactionRoot = await mkdtemp(join(tmpdir(), 'continuation-redaction-concurrent-'));
+const concurrentRedactionOptions = {
+  databasePath: join(concurrentRedactionRoot, 'jobs.sqlite'),
+  artifactsDir: join(concurrentRedactionRoot, 'artifacts'),
+  inputsDir: join(concurrentRedactionRoot, 'inputs'),
+};
+const concurrentRedactionSource = join(concurrentRedactionRoot, 'source.txt');
+await writeFile(concurrentRedactionSource, 'concurrent redaction input', 'utf8');
+const concurrentRedactionSeed = await SqliteContinuationRepository.open(concurrentRedactionOptions);
+const concurrentRedactionJob = await concurrentRedactionSeed.create(createRequest(
+  'redaction-concurrent',
+  {
+    sourceInputs: [{
+      sourcePath: concurrentRedactionSource,
+      fileName: 'source.txt',
+      kind: 'message_attachment',
+    }],
+  },
+));
+const concurrentRedactionArtifacts = new ContinuationArtifactStore(
+  concurrentRedactionOptions.artifactsDir,
+);
+const concurrentRedactionArtifactRoot = await concurrentRedactionArtifacts.ensure(
+  concurrentRedactionJob.job.jobId,
+);
+await writeFile(join(concurrentRedactionArtifactRoot, 'result.txt'), 'concurrent result', 'utf8');
+assert.equal(await concurrentRedactionSeed.requestCancel(
+  concurrentRedactionJob.job.jobId,
+  '2026-07-17T00:00:01.000Z',
+), 'cancelled');
+concurrentRedactionSeed.close();
+
+const concurrentRedactionInputs = new ContinuationInputStore(concurrentRedactionOptions.inputsDir);
+let releaseConcurrentRedaction!: () => void;
+let markConcurrentQuarantine!: () => void;
+const concurrentQuarantineStarted = new Promise<void>((resolve) => {
+  markConcurrentQuarantine = resolve;
+});
+const concurrentQuarantineReleased = new Promise<void>((resolve) => {
+  releaseConcurrentRedaction = resolve;
+});
+const concurrentRedactionA = await SqliteContinuationRepository.open({
+  ...concurrentRedactionOptions,
+  inputStore: {
+    ensureRoot: () => concurrentRedactionInputs.ensureRoot(),
+    withCreationLock: <T>(jobId: string, operation: () => Promise<T>) =>
+      concurrentRedactionInputs.withCreationLock(jobId, operation),
+    install: (...args: Parameters<ContinuationInputStore['install']>) =>
+      concurrentRedactionInputs.install(...args),
+    clone: (...args: Parameters<ContinuationInputStore['clone']>) =>
+      concurrentRedactionInputs.clone(...args),
+    verify: (...args: Parameters<ContinuationInputStore['verify']>) =>
+      concurrentRedactionInputs.verify(...args),
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) =>
+      concurrentRedactionInputs.resolve(...args),
+    remove: (...args: Parameters<ContinuationInputStore['remove']>) =>
+      concurrentRedactionInputs.remove(...args),
+    async quarantine(...args: Parameters<ContinuationInputStore['quarantine']>) {
+      const token = await concurrentRedactionInputs.quarantine(...args);
+      markConcurrentQuarantine();
+      await concurrentQuarantineReleased;
+      return token;
+    },
+    restoreQuarantine: (...args: Parameters<ContinuationInputStore['restoreQuarantine']>) =>
+      concurrentRedactionInputs.restoreQuarantine(...args),
+    discardQuarantine: (...args: Parameters<ContinuationInputStore['discardQuarantine']>) =>
+      concurrentRedactionInputs.discardQuarantine(...args),
+    cleanupOrphans: (...args: Parameters<ContinuationInputStore['cleanupOrphans']>) =>
+      concurrentRedactionInputs.cleanupOrphans(...args),
+  },
+});
+const concurrentRedactionB = await SqliteContinuationRepository.open(concurrentRedactionOptions);
+const redactionA = concurrentRedactionA.redactTerminal(
+  concurrentRedactionJob.job.jobId,
+  '2026-07-17T00:00:02.000Z',
+);
+await concurrentQuarantineStarted;
+let redactionBSettled = false;
+const redactionB = concurrentRedactionB.redactTerminal(
+  concurrentRedactionJob.job.jobId,
+  '2026-07-17T00:00:03.000Z',
+).finally(() => { redactionBSettled = true; });
+await new Promise((resolve) => setTimeout(resolve, 50));
+assert.equal(redactionBSettled, false);
+releaseConcurrentRedaction();
+assert.equal(await redactionA, true);
+assert.equal(await redactionB, false);
+assert.ok((await concurrentRedactionB.get(concurrentRedactionJob.job.jobId))?.deletedAt);
+await assert.rejects(stat(concurrentRedactionArtifactRoot), /ENOENT/);
+await assert.rejects(stat(join(
+  concurrentRedactionOptions.inputsDir,
+  concurrentRedactionJob.job.jobId,
+)), /ENOENT/);
+assert.equal((await readdir(concurrentRedactionOptions.artifactsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${concurrentRedactionJob.job.jobId}-`),
+), false);
+assert.equal((await readdir(concurrentRedactionOptions.inputsDir)).some(
+  (entry) => entry.startsWith(`.redacting-${concurrentRedactionJob.job.jobId}-`),
+), false);
+concurrentRedactionA.close();
+concurrentRedactionB.close();
 
 // A crash after input rename but before DB commit leaves exactly a committed input tree and no
 // database row. Construct that durable state directly: pausing in the few instructions between
@@ -1829,6 +2043,29 @@ const deadLockChild = spawn(process.execPath, [
   deadLockJobId,
 ], { stdio: ['ignore', 'pipe', 'pipe'] });
 await waitForChildMarker(deadLockChild, 'DEAD_LOCK_RECLAIMED', 1_000);
+
+const reusedPidLockJobId = continuationJobId('reused-pid-lock-recovery');
+const reusedPidLockDirectory = join(deadLockInputsRoot, `.creating-${reusedPidLockJobId}`);
+const reusedPidNonce = 'a'.repeat(32);
+await mkdir(reusedPidLockDirectory);
+await writeFile(join(reusedPidLockDirectory, 'owner.json'), JSON.stringify({
+  pid: process.pid,
+  nonce: reusedPidNonce,
+  createdAt: new Date().toISOString(),
+}), 'utf8');
+const reusedPidHeartbeat = join(reusedPidLockDirectory, `.heartbeat-${reusedPidNonce}`);
+await writeFile(reusedPidHeartbeat, 'stale\n', 'utf8');
+const staleHeartbeatTime = new Date(Date.now() - 60_000);
+await utimes(reusedPidHeartbeat, staleHeartbeatTime, staleHeartbeatTime);
+const reusedPidReclaimer = spawn(process.execPath, [
+  '--import',
+  'tsx',
+  new URL(import.meta.url).pathname,
+  '--reclaim-dead-creation-lock',
+  deadLockInputsRoot,
+  reusedPidLockJobId,
+], { stdio: ['ignore', 'pipe', 'pipe'] });
+await waitForChildMarker(reusedPidReclaimer, 'DEAD_LOCK_RECLAIMED', 1_000);
 
 // Exercise the actual crash path: the first process owns the lock directory and
 // owner.json, then dies without cleanup. A fresh process must reclaim it without
@@ -2280,6 +2517,11 @@ assert.notEqual((await stat(originalManaged)).ino, (await stat(clonedManaged)).i
 assert.equal(await readFile(clonedManaged, 'utf8'), 'retry input');
 assert.equal(await retryRepository.redactTerminal(retrySourceJob.job.jobId, '2026-07-17T00:00:02.000Z'), true);
 assert.deepEqual(await retryStore.verify(retryClone.jobId, retryClone.sourceFacts.inputs), { ok: true });
+assert.equal((await retryRepository.cloneForRetry(
+  retrySourceJob.job.jobId,
+  'copy-request',
+  '2026-07-17T00:00:03.000Z',
+)).jobId, retryClone.jobId);
 
 const corruptRetrySourcePath = join(retryRoot, 'corrupt-retry-source.txt');
 await writeFile(corruptRetrySourcePath, 'corrupt retry input', 'utf8');

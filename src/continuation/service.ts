@@ -125,7 +125,16 @@ export class ContinuationService implements ContinuationTaskService {
     assertEligibleSource(message);
     const jobId = continuationJobId(continuationCreateIdempotencyKey(message.messageId));
     const existing = await this.options.repository.get(jobId);
-    if (!existing || existing.deletedAt) return null;
+    if (!existing) return null;
+    if (existing.deletedAt) {
+      if (existing.creatorOpenId !== message.senderId) {
+        throw new Error('Continuation deterministic Job identity conflicts with the authenticated source message.');
+      }
+      throw new ContinuationServiceError(
+        'invalid_state',
+        'This background task was already created, but its retained data has been deleted.',
+      );
+    }
     if (
       existing.sourceMessageId !== message.messageId
       || existing.creatorOpenId !== message.senderId

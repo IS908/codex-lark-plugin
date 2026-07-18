@@ -44,6 +44,7 @@ const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
 const OWNERLESS_LOCK_GRACE_MS = 1_000;
 const CREATION_LOCK_HEARTBEAT_MS = 5_000;
 const CREATION_LOCK_LEASE_MS = 30_000;
+const REDACTION_QUARANTINE_LEASE_MS = 30_000;
 
 interface CreationLockOwner {
   pid: number;
@@ -95,6 +96,12 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
             { mode: 0o600, flag: 'wx' },
           );
           await refreshCreationLockHeartbeat(lockDirectory, ownerNonce);
+          if (await hasCompetingCreationReclaim(this.rootDir, lockDirectory)) {
+            await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce);
+            ownerNonce = undefined;
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            continue;
+          }
         } catch (error) {
           await removeManagedTree(lockDirectory).catch(() => {});
           throw error;
@@ -311,6 +318,8 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       await fs.rename(destination, source).catch(() => {});
       throw new Error('Continuation input quarantine identity changed during rename.');
     }
+    const now = new Date();
+    await fs.utimes(destination, now, now);
     return token;
   }
 
@@ -340,6 +349,11 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       if (redactionQuarantine) {
         const candidate = path.join(this.rootDir, entry.name);
         if (jobIds.has(redactionQuarantine.jobId)) {
+          const metadata = await fs.stat(candidate);
+          if (
+            isProcessAlive(redactionQuarantine.ownerPid)
+            && nowMs - metadata.mtimeMs < REDACTION_QUARANTINE_LEASE_MS
+          ) continue;
           try {
             await fs.rename(candidate, this.jobDirectory(redactionQuarantine.jobId));
           } catch (error) {
@@ -639,11 +653,22 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
   }
   const moved = await fs.lstat(quarantine);
   if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
-    await fs.rename(quarantine, lockDirectory).catch(() => {});
+    try {
+      await fs.rename(quarantine, lockDirectory);
+    } catch (error) {
+      throw new Error('Continuation creation lock changed during reclaim and could not be restored.', {
+        cause: error,
+      });
+    }
     return false;
   }
   await removeManagedTree(quarantine);
   return true;
+}
+
+async function hasCompetingCreationReclaim(rootDir: string, lockDirectory: string): Promise<boolean> {
+  const prefix = `${CREATION_RECLAIM_PREFIX}${path.basename(lockDirectory)}-`;
+  return (await fs.readdir(rootDir)).some((entry) => entry.startsWith(prefix));
 }
 
 async function refreshCreationLockHeartbeat(lockDirectory: string, nonce: string): Promise<void> {

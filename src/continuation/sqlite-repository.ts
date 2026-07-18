@@ -44,6 +44,7 @@ type SqlRow = Record<string, null | number | bigint | string | Uint8Array>;
 interface SqliteContinuationRepositoryOptions {
   databasePath: string;
   artifactsDir: string;
+  artifactStore?: ContinuationArtifactStore;
   inputsDir?: string;
   inputStore?: ContinuationInputStorePort;
   jitter?: () => number;
@@ -97,7 +98,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     });
     try {
       await fs.chmod(databasePath, 0o600);
-      const artifacts = new ContinuationArtifactStore(options.artifactsDir);
+      const artifacts = options.artifactStore ?? new ContinuationArtifactStore(options.artifactsDir);
       await artifacts.ensureRoot();
       const inputs = options.inputStore ?? new ContinuationInputStore(
         options.inputsDir ?? path.join(path.dirname(path.resolve(options.artifactsDir)), 'inputs'),
@@ -110,11 +111,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         options.jitter ?? Math.random,
       );
       await repository.initialize();
-      const knownJobs = new Set(repository.database.prepare(
-        'SELECT job_id FROM continuation_jobs WHERE deleted_at IS NULL',
-      ).all().map((row) => stringField(row, 'job_id')));
-      await artifacts.cleanupOrphans(knownJobs);
-      await inputs.cleanupOrphans(knownJobs);
+      await repository.reconcileStorageOrphans();
       return repository;
     } catch (error) {
       database.close();
@@ -513,21 +510,28 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   private migrateAsyncTaskFactsSchema(): void {
-    const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
-    if (!columns.some((column) => stringField(column, 'name') === 'source_facts_json')) {
-      this.transaction(() => this.database.exec(`
+    this.transaction(() => {
+      const currentVersion = Number(this.scalar('PRAGMA user_version'));
+      if (currentVersion >= SCHEMA_VERSION) return;
+      if (currentVersion !== RETENTION_SCHEMA_VERSION) {
+        throw new Error(
+          `Unsupported continuation database schema version ${currentVersion} during facts migration.`,
+        );
+      }
+      const columns = this.database.prepare('PRAGMA table_info(continuation_jobs)').all();
+      if (!columns.some((column) => stringField(column, 'name') === 'source_facts_json')) {
+        this.database.exec(`
         ALTER TABLE continuation_jobs ADD COLUMN source_facts_json TEXT NOT NULL DEFAULT '{}';
         ALTER TABLE continuation_jobs ADD COLUMN task_contract_json TEXT NOT NULL DEFAULT '{}';
-      `));
-    }
-    const rows = this.database.prepare(`${jobSelectSql()} ORDER BY j.created_at ASC`).all();
-    const update = this.database.prepare(`
-      UPDATE continuation_jobs
-      SET source_facts_json = ?, task_contract_json = ?,
-          title = ?, objective = ?, acceptance_criteria_json = ?, context_snapshot_json = ?
-      WHERE job_id = ?
-    `);
-    this.transaction(() => {
+        `);
+      }
+      const rows = this.database.prepare(`${jobSelectSql()} ORDER BY j.created_at ASC`).all();
+      const update = this.database.prepare(`
+        UPDATE continuation_jobs
+        SET source_facts_json = ?, task_contract_json = ?,
+            title = ?, objective = ?, acceptance_criteria_json = ?, context_snapshot_json = ?
+        WHERE job_id = ?
+      `);
       for (const row of rows) {
         const legacy = legacyFactsAndContract(row);
         update.run(
@@ -1220,7 +1224,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   async redactTerminal(jobId: string, now: string): Promise<boolean> {
-    return this.serializeJobMutation(jobId, () => this.redactTerminalInternal(jobId, now));
+    return this.serializeJobMutation(jobId, () => this.inputs.withCreationLock(
+      jobId,
+      () => this.redactTerminalInternal(jobId, now),
+    ));
   }
 
   async setRetained(jobId: string, retained: boolean, now: string): Promise<boolean> {
@@ -1498,6 +1505,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   async purgeExpired(retainAfter: string, now: string): Promise<ContinuationCleanupResult[]> {
+    await this.reconcileStorageOrphans();
     const rows = this.database.prepare(`
       SELECT j.job_id, j.creator_open_id, j.status, j.completed_at
       FROM continuation_jobs j
@@ -1525,7 +1533,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       try {
         if (await this.serializeJobMutation(
           jobId,
-          () => this.redactTerminalInternal(jobId, now, retainAfter),
+          () => this.inputs.withCreationLock(
+            jobId,
+            () => this.redactTerminalInternal(jobId, now, retainAfter),
+          ),
         )) {
           results.push({ ...base, result: 'cleaned' });
         }
@@ -1568,6 +1579,20 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     } finally {
       release();
       if (this.jobMutationTails.get(jobId) === tail) this.jobMutationTails.delete(jobId);
+    }
+  }
+
+  private async reconcileStorageOrphans(): Promise<void> {
+    const knownJobs = new Set(this.database.prepare(
+      'SELECT job_id FROM continuation_jobs WHERE deleted_at IS NULL',
+    ).all().map((row) => stringField(row, 'job_id')));
+    const results = await Promise.allSettled([
+      this.artifacts.cleanupOrphans(knownJobs),
+      this.inputs.cleanupOrphans(knownJobs),
+    ]);
+    const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'Continuation storage reconciliation failed.');
     }
   }
 

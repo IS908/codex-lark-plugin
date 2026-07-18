@@ -275,6 +275,7 @@ try {
   const continuationLookups: Array<{ jobId: string; actor: string; owner?: string | null }> = [];
   const continuationCreates: any[] = [];
   const continuationInputBatches: any[][] = [];
+  const existingContinuationJobs = new Map<string, any>();
   const currentImagePath = join(root, 'current-image.png');
   const localFilePath = join(root, 'report.txt');
   writeFileSync(currentImagePath, 'fake image bytes', 'utf-8');
@@ -350,6 +351,9 @@ try {
     },
     larkTransport: new ThisBoundQuotedTransport(),
     continuationService: {
+      async findExistingFromMessage(message: any) {
+        return existingContinuationJobs.get(message.messageId) ?? null;
+      },
       async createFromMessage(action: any, _message: any, _parent: any, _model: any, sourceInputs: any[] = []) {
         continuationCreates.push(action);
         continuationInputBatches.push(sourceInputs);
@@ -365,19 +369,18 @@ try {
         if (_message.messageId === 'om_continuation_admission_cleanup_failure') {
           throw new Error('managed input admission failed');
         }
-        return {
-          job: {
-            jobId: `job_created_${continuationCreates.length}`,
-            title: action.title,
-            permissions: {
-              profile: 'bounded',
-              filesystem: { requestedPaths: [] },
-              network: 'none',
-              externalSideEffects: 'denied',
-            },
+        const job = {
+          jobId: `job_created_${continuationCreates.length}`,
+          title: action.title,
+          permissions: {
+            profile: 'bounded',
+            filesystem: { requestedPaths: [] },
+            network: 'none',
+            externalSideEffects: 'denied',
           },
-          created: true,
         };
+        existingContinuationJobs.set(_message.messageId, job);
+        return { job, created: true };
       },
       async getForActor(jobId: string, actor: string, owner?: string | null) {
         continuationLookups.push({ jobId, actor, owner });
@@ -466,6 +469,20 @@ try {
   );
   assert.equal(existsSync(continuationInputBatches[1][0].sourcePath), true);
   assert.equal(existsSync(continuationInputBatches[1][1].sourcePath), false);
+
+  const createsBeforeAttachmentReplay = continuationCreates.length;
+  const attachmentReplay = await dispatcher.execute({
+    message: {
+      ...continuationMessage,
+      messageId: 'om_continuation_attachments',
+      attachments: [{ fileKey: 'file_failure', fileName: 'expired.txt', fileType: 'file' }],
+    },
+    actions: [continuationAction([])],
+    continuationPermitted: false,
+  });
+  assert.equal(attachmentReplay[0].ok, true);
+  assert.equal(attachmentReplay[0].continuation?.jobId, 'job_created_2');
+  assert.equal(continuationCreates.length, createsBeforeAttachmentReplay);
 
   const createsBeforeFailedAttachment = continuationCreates.length;
   const failedAttachmentContinuation = await dispatcher.execute({

@@ -518,6 +518,41 @@ assert.match(managedInputRequests[0].prompt, /deliverables/);
 assert.doesNotMatch(managedInputRequests[0].prompt, /github_pat_|runner-github_pat_/);
 assert.deepEqual(managedInputRequests[0].additionalWritableDirs, [artifactRoot]);
 
+let preLaunchVerifyCalls = 0;
+let preLaunchCodexCalls = 0;
+const preLaunchInputStore = {
+  resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => inputStore.resolve(...args),
+  async verify(...args: Parameters<ContinuationInputStore['verify']>) {
+    preLaunchVerifyCalls += 1;
+    const verification = await inputStore.verify(...args);
+    if (preLaunchVerifyCalls === 1 && verification.ok) {
+      await chmod(managedInputPath, 0o600);
+      await writeFile(managedInputPath, 'tampered after claim verification', 'utf8');
+      await chmod(managedInputPath, 0o400);
+    }
+    return verification;
+  },
+} as any;
+const preLaunchIntegrityExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  inputStore: preLaunchInputStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async () => {
+    preLaunchCodexCalls += 1;
+    return { text: JSON.stringify(wireOutcome({ final_message: 'must not run' })) };
+  },
+});
+await assert.rejects(
+  preLaunchIntegrityExecutor.execute(createClaim(managedInputJob), signal),
+  (error: unknown) => {
+    assert.equal((error as { errorCode?: string }).errorCode, 'continuation_input_integrity_failed');
+    return true;
+  },
+);
+assert.equal(preLaunchVerifyCalls, 2);
+assert.equal(preLaunchCodexCalls, 0);
+
 await chmod(managedInputPath, 0o600);
 await writeFile(managedInputPath, 'tampered before executor spawn', 'utf8');
 await chmod(managedInputPath, 0o400);
@@ -542,6 +577,48 @@ assert.deepEqual(lateIntegrityResult.outcome, {
   completedWork: [],
   unperformedWork: ['Recreate the task from trusted source inputs.'],
 });
+
+await chmod(managedInputPath, 0o600);
+await writeFile(managedInputPath, 'runner input', 'utf8');
+await chmod(managedInputPath, 0o400);
+let fallbackVerifyCalls = 0;
+let fallbackCodexCalls = 0;
+const fallbackInputStore = {
+  resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => inputStore.resolve(...args),
+  async verify(...args: Parameters<ContinuationInputStore['verify']>) {
+    fallbackVerifyCalls += 1;
+    return inputStore.verify(...args);
+  },
+} as any;
+const fallbackIntegrityExecutor = createContinuationCodexExecutor({
+  artifactStore,
+  inputStore: fallbackInputStore,
+  configuredSandbox: 'workspace-write',
+  currentWorkingRoot: canonicalRoot,
+  runCodexExec: async () => {
+    fallbackCodexCalls += 1;
+    await chmod(managedInputPath, 0o600);
+    await writeFile(managedInputPath, 'tampered before resume fallback', 'utf8');
+    await chmod(managedInputPath, 0o400);
+    throw new Error('session not found');
+  },
+});
+const fallbackManagedJob = {
+  ...managedInputJob,
+  executionSessionId: 'stale-session',
+};
+await assert.rejects(
+  fallbackIntegrityExecutor.execute(createClaim(fallbackManagedJob), signal),
+  (error: unknown) => {
+    assert.equal((error as { errorCode?: string }).errorCode, 'continuation_input_integrity_failed');
+    return true;
+  },
+);
+assert.equal(fallbackVerifyCalls, 3);
+assert.equal(fallbackCodexCalls, 1);
+await chmod(managedInputPath, 0o600);
+await writeFile(managedInputPath, 'runner input', 'utf8');
+await chmod(managedInputPath, 0o400);
 
 const trustedRequests: CodexExecRequest[] = [];
 const trustedExecutor = createContinuationCodexExecutor({
@@ -753,6 +830,7 @@ await assert.rejects(
 
 const toolRequests: CodexExecRequest[] = [];
 const toolInvocations: Array<{ tool: string; args: string[] }> = [];
+let toolInputVerifications = 0;
 const toolResponses = [
   {
     text: JSON.stringify(wireOutcome({
@@ -773,6 +851,13 @@ const toolResponses = [
 ];
 const toolExecutor = createContinuationCodexExecutor({
   artifactStore,
+  inputStore: {
+    resolve: (...args: Parameters<ContinuationInputStore['resolve']>) => inputStore.resolve(...args),
+    async verify(...args: Parameters<ContinuationInputStore['verify']>) {
+      toolInputVerifications += 1;
+      return inputStore.verify(...args);
+    },
+  } as any,
   configuredSandbox: 'workspace-write',
   currentWorkingRoot: canonicalRoot,
   toolInvoker: {
@@ -792,15 +877,15 @@ const toolExecutor = createContinuationCodexExecutor({
     return response;
   },
 });
-const toolResult = await toolExecutor.execute(
-  createClaim({ requiredTools: ['lark_cli'] }),
-  signal,
-);
+const toolJob = createJob({ requiredTools: ['lark_cli'] });
+toolJob.sourceFacts = { ...toolJob.sourceFacts, inputs: managedInstallation.artifacts };
+const toolResult = await toolExecutor.execute(createClaim(toolJob), signal);
 assert.equal(toolResult.outcome.outcome, 'completed');
 assert.deepEqual(toolInvocations, [
   { tool: 'lark_cli', args: ['doc', 'get', '--token', 'doc_1'] },
 ]);
 assert.equal(toolRequests.length, 2);
+assert.equal(toolInputVerifications, 3);
 assert.equal(toolRequests[1].resumeSessionId, 'session-tool');
 assert.match(toolRequests[1].prompt, /Continuation Tool Result/);
 assert.match(toolRequests[1].prompt, /Release plan/);

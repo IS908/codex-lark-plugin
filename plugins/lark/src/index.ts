@@ -52,6 +52,12 @@ let closeContinuationRuntime: (() => Promise<void>) | null = null;
 async function main() {
   assertSupportedNodeVersion();
   const isDryRun = process.argv.includes('--dry-run');
+  const lock = isDryRun ? null : await acquireSingleInstanceLock(LOCK_FILE);
+  if (lock) {
+    registerLockCleanup(lock, undefined, async () => {
+      await closeContinuationRuntime?.();
+    });
+  }
   await emitCodexExecConfigDiagnostics(appConfig);
   await accessControlStore.load();
   console.error(`[access-control] Using ${appConfig.accessControlConfigPath}`);
@@ -217,10 +223,7 @@ async function main() {
   await server.connect(transport);
   console.error('[index] MCP server connected via stdio');
 
-  // 8. Acquire single-instance lock and start Lark WebSocket
-  const lock = await acquireSingleInstanceLock(LOCK_FILE);
-  registerLockCleanup(lock, undefined, () => continuationRuntime.close());
-
+  // 8. Start Lark WebSocket after the process-wide lock acquired at startup.
   runStartupResourceCleanup(memoryStore);
   startCodexSessionRetention();
   startCodexExecProgressRetention(appConfig.codexExecCwd);
