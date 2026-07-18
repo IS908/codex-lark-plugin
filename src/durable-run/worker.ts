@@ -23,7 +23,9 @@ interface ActiveExecution {
   controller: AbortController;
   promise: Promise<void>;
   heartbeatTimer?: NodeJS.Timeout;
+  leaseDeadlineTimer?: NodeJS.Timeout;
   expirationTimer?: NodeJS.Timeout;
+  confirmedLeaseExpiresAt: string;
   heartbeatInFlight: boolean;
   abortReason?: AbortReason;
 }
@@ -38,6 +40,7 @@ export interface DurableRunWorkerOptions {
   heartbeatIntervalMs?: number;
   leaseDurationMs?: number;
   workerId?: string;
+  onExecutionStateError?: (claim: DurableRunClaim, error: unknown) => Promise<void> | void;
 }
 
 const DEFAULT_SCAN_INTERVAL_MS = 1_000;
@@ -53,7 +56,8 @@ export class DurableRunWorker {
   private readonly leaseDurationMs: number;
   private scanTimer?: NodeJS.Timeout;
   private scheduledTick?: NodeJS.Timeout;
-  private tickInFlight?: Promise<void>;
+  private executionScanInFlight?: Promise<void>;
+  private deliveryPumpInFlight?: Promise<void>;
   private deliveryInFlight?: Promise<void>;
   private stopping = false;
   private started = false;
@@ -103,13 +107,16 @@ export class DurableRunWorker {
 
   async tick(): Promise<void> {
     if (this.stopping) return;
-    if (this.tickInFlight) return this.tickInFlight;
-    const run = this.scan();
-    this.tickInFlight = run;
-    try {
-      await run;
-    } finally {
-      if (this.tickInFlight === run) this.tickInFlight = undefined;
+    const results: PromiseSettledResult<void>[] = await Promise.allSettled([
+      this.startExecutionScan(),
+      this.startDeliveryPump(),
+    ]);
+    if (!this.stopping) {
+      const followUpDelivery = await Promise.allSettled([this.startDeliveryPump()]);
+      results.push(followUpDelivery[0]);
+    }
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason;
     }
   }
 
@@ -124,12 +131,35 @@ export class DurableRunWorker {
         this.abortExecution(execution, 'shutdown');
       }
     }
-    if (this.tickInFlight) await Promise.allSettled([this.tickInFlight]);
+    if (this.executionScanInFlight) {
+      await Promise.allSettled([this.executionScanInFlight]);
+    }
+    if (this.deliveryPumpInFlight) {
+      await Promise.allSettled([this.deliveryPumpInFlight]);
+    }
     await Promise.allSettled([...this.active.values()].map((entry) => entry.promise));
     if (this.deliveryInFlight) await Promise.allSettled([this.deliveryInFlight]);
   }
 
-  private async scan(): Promise<void> {
+  private startExecutionScan(): Promise<void> {
+    if (this.executionScanInFlight) return this.executionScanInFlight;
+    const run = this.scanExecutions().finally(() => {
+      if (this.executionScanInFlight === run) this.executionScanInFlight = undefined;
+    });
+    this.executionScanInFlight = run;
+    return run;
+  }
+
+  private startDeliveryPump(): Promise<void> {
+    if (this.deliveryPumpInFlight) return this.deliveryPumpInFlight;
+    const run = this.pumpDelivery().finally(() => {
+      if (this.deliveryPumpInFlight === run) this.deliveryPumpInFlight = undefined;
+    });
+    this.deliveryPumpInFlight = run;
+    return run;
+  }
+
+  private async scanExecutions(): Promise<void> {
     const now = this.nowIso();
     const interrupted = await this.options.repository.recoverExpiredLeases(now);
     for (const attempt of interrupted) {
@@ -144,7 +174,8 @@ export class DurableRunWorker {
     }
 
     await this.inspectActiveExecutions();
-    while (!this.stopping) {
+    let remainingClaims = this.availableClaimSlots();
+    while (!this.stopping && remainingClaims > 0) {
       const availableKinds = this.availableWorkloadKinds();
       if (availableKinds.length === 0) break;
       const claimedAt = this.nowIso();
@@ -163,8 +194,11 @@ export class DurableRunWorker {
         throw new Error(`Durable run ${claim.run.runId} is already active.`);
       }
       this.startExecution(claim, this.workloadFor(claim.run.workloadKind));
+      remainingClaims -= 1;
     }
+  }
 
+  private async pumpDelivery(): Promise<void> {
     if (!this.stopping && !this.deliveryInFlight) {
       const claim = await this.options.repository.claimDelivery(
         [...this.workloads.keys()],
@@ -181,6 +215,7 @@ export class DurableRunWorker {
       workload,
       controller: new AbortController(),
       promise: Promise.resolve(),
+      confirmedLeaseExpiresAt: claim.attempt.leaseExpiresAt,
       heartbeatInFlight: false,
     };
     this.active.set(claim.run.runId, execution);
@@ -189,6 +224,7 @@ export class DurableRunWorker {
       void this.maintainExecution(execution);
     }, this.heartbeatIntervalMs);
     execution.heartbeatTimer.unref();
+    this.scheduleLeaseDeadline(execution);
 
     const remainingMs = Date.parse(claim.run.expiresAt) - this.options.clock.now().getTime();
     if (remainingMs <= 0) {
@@ -201,9 +237,16 @@ export class DurableRunWorker {
     }
 
     execution.promise = this.runExecution(execution)
-      .catch(() => {})
+      .catch(async (error) => {
+        try {
+          await this.options.onExecutionStateError?.(execution.claim, error);
+        } catch {
+          // Observability failures never affect durable run state.
+        }
+      })
       .finally(() => {
         if (execution.heartbeatTimer) clearInterval(execution.heartbeatTimer);
+        if (execution.leaseDeadlineTimer) clearTimeout(execution.leaseDeadlineTimer);
         if (execution.expirationTimer) clearTimeout(execution.expirationTimer);
         this.active.delete(claim.run.runId);
         this.scheduleTick();
@@ -321,6 +364,9 @@ export class DurableRunWorker {
       if (run?.status === 'cancel_requested') this.abortExecution(execution, 'cancel');
       else if (!run || run.status !== 'running') this.abortExecution(execution, 'lease_lost');
       else if (run.expiresAt <= this.nowIso()) this.abortExecution(execution, 'expired');
+      else if (execution.confirmedLeaseExpiresAt <= this.nowIso()) {
+        this.abortExecution(execution, 'lease_lost');
+      }
     }));
   }
 
@@ -342,17 +388,42 @@ export class DurableRunWorker {
         this.abortExecution(execution, 'expired');
         return;
       }
+      if (execution.confirmedLeaseExpiresAt <= now) {
+        this.abortExecution(execution, 'lease_lost');
+        return;
+      }
+      const leaseExpiresAt = addMilliseconds(now, this.leaseDurationMs);
       const renewed = await this.options.repository.heartbeat(
         execution.claim,
         now,
-        addMilliseconds(now, this.leaseDurationMs),
+        leaseExpiresAt,
       );
-      if (!renewed) this.abortExecution(execution, 'lease_lost');
+      if (execution.controller.signal.aborted) return;
+      if (!renewed || execution.confirmedLeaseExpiresAt <= this.nowIso()) {
+        this.abortExecution(execution, 'lease_lost');
+        return;
+      }
+      execution.confirmedLeaseExpiresAt = leaseExpiresAt;
+      this.scheduleLeaseDeadline(execution);
     } catch {
-      // A transient repository error is retried on the next heartbeat.
+      // The last confirmed lease deadline remains authoritative.
     } finally {
       execution.heartbeatInFlight = false;
     }
+  }
+
+  private scheduleLeaseDeadline(execution: ActiveExecution): void {
+    if (execution.leaseDeadlineTimer) clearTimeout(execution.leaseDeadlineTimer);
+    const remainingMs = Date.parse(execution.confirmedLeaseExpiresAt)
+      - this.options.clock.now().getTime();
+    if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+      this.abortExecution(execution, 'lease_lost');
+      return;
+    }
+    execution.leaseDeadlineTimer = setTimeout(() => {
+      this.abortExecution(execution, 'lease_lost');
+    }, remainingMs);
+    execution.leaseDeadlineTimer.unref();
   }
 
   private abortExecution(execution: ActiveExecution, reason: AbortReason): void {
@@ -393,6 +464,19 @@ export class DurableRunWorker {
     }
     return [...this.workloads.keys()].filter((kind) =>
       (activeByKind.get(kind) ?? 0) < this.options.maxConcurrencyByWorkload[kind]);
+  }
+
+  private availableClaimSlots(): number {
+    const activeByKind = new Map<string, number>();
+    for (const execution of this.active.values()) {
+      const kind = execution.claim.run.workloadKind;
+      activeByKind.set(kind, (activeByKind.get(kind) ?? 0) + 1);
+    }
+    let available = 0;
+    for (const kind of this.workloads.keys()) {
+      available += this.options.maxConcurrencyByWorkload[kind] - (activeByKind.get(kind) ?? 0);
+    }
+    return available;
   }
 
   private workloadFor(kind: string): RegisteredWorkload {

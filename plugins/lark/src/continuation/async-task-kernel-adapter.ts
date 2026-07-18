@@ -75,6 +75,7 @@ export class AsyncTaskKernelAdapter implements
   DurableRunWorkload<AsyncTaskKernelInput, AsyncTaskKernelState, AsyncTaskExecution>,
   DurableRunDelivery {
   readonly kind = 'async_task';
+  private readonly thrownDeliveryResults = new WeakSet<object>();
 
   constructor(private readonly options: AsyncTaskKernelAdapterOptions) {}
 
@@ -203,6 +204,7 @@ export class AsyncTaskKernelAdapter implements
     result: DurableRunDeliveryResult,
     now: string,
   ): Promise<void> {
+    const deliveryThrew = this.thrownDeliveryResults.delete(result);
     const continuationClaim = continuationDeliveryClaimFromDurable(claim);
     const continuationResult = continuationDeliveryResultFromDurable(result);
     try {
@@ -210,13 +212,15 @@ export class AsyncTaskKernelAdapter implements
       await this.auditDelivery(
         continuationClaim,
         continuationResult.status === 'delivered' ? 'ok' : 'error',
-        continuationResult.status,
+        deliveryThrew ? 'continuation_delivery_failed' : continuationResult.status,
       );
-      this.emitDebug(formatContinuationDiagnosticMessage({
-        event: 'delivery_committed',
-        jobId: continuationClaim.jobId,
-        state: continuationResult.status,
-      }));
+      if (!deliveryThrew) {
+        this.emitDebug(formatContinuationDiagnosticMessage({
+          event: 'delivery_committed',
+          jobId: continuationClaim.jobId,
+          state: continuationResult.status,
+        }));
+      }
     } catch {
       await this.auditDelivery(continuationClaim, 'error', 'delivery_state_persist_failed');
     }
@@ -296,12 +300,20 @@ export class AsyncTaskKernelAdapter implements
         await this.options.delivery.deliver(continuationClaim),
       );
     } catch (error) {
-      return {
+      const result: DurableRunDeliveryResult = {
         status: 'retry',
         errorCode: 'continuation_delivery_failed',
         errorSummary: errorSummary(error),
       };
+      this.thrownDeliveryResults.add(result);
+      return result;
     }
+  }
+
+  async handleWorkerStateError(claim: DurableRunClaim): Promise<void> {
+    const continuationClaim = continuationClaimFromDurable(claim);
+    await this.audit('continuation.execute', continuationClaim, 'error', 'worker_state_error');
+    this.debug('worker_state_error', continuationClaim, 'running');
   }
 
   private async commitStep(

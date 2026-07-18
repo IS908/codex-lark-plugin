@@ -145,3 +145,158 @@ and completed the dry-run checks.
 - Generic `create` through the Async Task adapter is intentionally unsupported;
   Async Task admission remains on `ContinuationService` until the Task 4 schema
   migration. Worker execution does not call this method.
+
+---
+
+## Issue #315 Task 3 Review Remediation
+
+### Status
+
+PASS. All Critical and Important findings in `task-3-review.md` are fixed. The
+fix stays within the Task 3 worker/adapter boundary, changes no persistence
+schema, and performs no GitHub operation.
+
+### Findings Fixed
+
+1. Active executions now retain the last confirmed lease deadline. An
+   independent deadline timer aborts the executor even when heartbeat throws or
+   never settles. Only a heartbeat that returns `true` before the previous
+   confirmed deadline replaces that deadline.
+2. Execution scanning and delivery pumping now have separate in-flight
+   boundaries. Recovery/claim errors and a saturated execution backlog cannot
+   prevent delivery from being claimed. A scan has a fixed claim budget equal
+   to its initial available slots, and a post-scan delivery pass observes
+   outbox rows created during that scan.
+3. The generic execution promise now exposes a top-level state-error observer.
+   The Continuation facade connects it to the adapter, restoring the legacy
+   `continuation.execute:error`, `detail=worker_state_error`, and matching debug
+   event without converting unknown state outcomes into `failAttempt`.
+4. The Async Task adapter preserves whether a delivery retry originated from a
+   thrown delivery call. That path keeps the
+   `continuation_delivery_failed` result and audit detail and emits no
+   `delivery_committed`; an explicit returned retry still audits as `retry` and
+   emits `delivery_committed`.
+
+### RED Evidence
+
+Each finding received an explicit smoke regression before its production fix:
+
+```text
+node --import tsx scripts/durable-run-worker-smoke.ts
+exit 1: Timed out waiting for throwing heartbeat lease deadline.
+
+node --import tsx scripts/durable-run-worker-smoke.ts
+exit 1: Timed out waiting for delivery after recovery error.
+
+node --import tsx scripts/continuation-worker-smoke.ts
+exit 1: workerStateAuditDetails did not include
+continuation.execute:worker_state_error.
+
+node --import tsx scripts/continuation-worker-smoke.ts
+exit 1: deliveryAuditDetails did not include the expected
+continuation_delivery_failed detail.
+```
+
+The completed generic smoke also covers heartbeat throw, one successful
+renewal followed by a permanently pending heartbeat, recovery failure, claim
+failure, and delivery fairness under a short-task backlog. The continuation
+smoke distinguishes thrown delivery from an explicit retry result.
+
+### GREEN Evidence
+
+Fresh targeted verification on the final source and rebuilt mirror/runtime:
+
+```text
+node --import tsx scripts/durable-run-worker-smoke.ts
+durable run worker smoke: PASS
+
+node --import tsx scripts/continuation-worker-smoke.ts
+continuation worker smoke: PASS
+
+node --import tsx scripts/continuation-delivery-smoke.ts
+continuation delivery smoke: PASS
+
+node --import tsx scripts/continuation-runtime-smoke.ts
+continuation runtime smoke: PASS
+
+npm run --silent typecheck
+exit 0
+
+npm run --silent check:architecture
+architecture check ok: 0 baseline cycle component(s), 0 baseline restricted import(s)
+
+npm run --silent check:plugin-src-sync
+plugin source sync check ok
+
+npm run --silent build
+[build-runtime] bundled ./dist
+[build-runtime] bundled plugins/lark/runtime
+```
+
+Fresh full verification after the final runtime rebuild:
+
+```text
+npm test
+All tests passed.
+```
+
+### Files
+
+- `src/durable-run/worker.ts`
+  - Added confirmed lease deadline enforcement, independent execution/delivery
+    pump state, bounded claim refill, post-scan delivery observation, and the
+    top-level execution state-error observer.
+- `src/continuation/async-task-kernel-adapter.ts`
+  - Restored top-level `worker_state_error` observability and preserved delivery
+    throw audit/debug provenance.
+- `src/continuation/worker.ts`
+  - Connected the compatibility facade to the state-error observer.
+- `scripts/durable-run-worker-smoke.ts`
+  - Added lease throw/hang/renewal and delivery isolation/fairness regressions.
+- `scripts/continuation-worker-smoke.ts`
+  - Added `worker_state_error` and thrown-versus-explicit delivery retry
+    regressions, plus deterministic diagnostic waits for concurrent pumping.
+- `plugins/lark/src/durable-run/worker.ts`
+- `plugins/lark/src/continuation/async-task-kernel-adapter.ts`
+- `plugins/lark/src/continuation/worker.ts`
+  - Byte-identical plugin source mirrors.
+- `plugins/lark/runtime/index.js`
+  - Rebuilt runtime bundle with only the expected worker/adapter changes.
+- `.superpowers/sdd/task-3-report.md`
+  - This remediation record.
+
+### Commit
+
+- Baseline: `a46419c81aecc7287bf0f442fa3ecbcaf49b2124`.
+- Fix commit subject: `fix: harden durable run worker orchestration`.
+- The final commit SHA is reported in the task result because a Git commit
+  cannot embed its own object ID in the report it contains.
+
+### Self-review
+
+- Confirmed heartbeat throw and permanently pending promises leave the local
+  deadline timer armed; a successful renewal is rejected if the previously
+  confirmed deadline elapsed before its acknowledgement.
+- Confirmed lease-loss abort does not commit a transition or a replayable
+  failure, preserving lease recovery as the owner of unknown execution outcome.
+- Confirmed delivery starts independently before execution recovery/claim can
+  fail or hang, while the bounded claim budget prevents a fast backlog from
+  monopolizing one scan.
+- Confirmed the post-scan delivery pass preserves the legacy behavior where a
+  pre-claim integrity gate creates a terminal outbox row during the same tick.
+- Confirmed top-level continuation state errors restore audit/debug only; they
+  do not mutate the attempt or mask unknown commit outcomes.
+- Confirmed thrown delivery and returned retry persist their original failure
+  classifications but retain distinct audit/debug semantics.
+- Removed an initially observed bundle-only identifier-renaming side effect;
+  the final runtime diff contains only the intended worker/adapter changes.
+- Confirmed root/plugin source byte identity, clean architecture guardrails,
+  no schema changes, and no GitHub writes.
+
+### Concerns
+
+- No unresolved Critical or Important Task 3 review finding remains.
+- The two Task 4 migration cautions already documented in
+  `task-3-review.md` remain applicable: structured recovery and full persisted
+  Async Task envelope validation must switch atomically with generic
+  persistence.

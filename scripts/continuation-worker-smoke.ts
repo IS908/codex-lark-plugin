@@ -237,6 +237,11 @@ await waitFor(
   () => normalHarness.completed.length === 1 && normalHarness.deliveryResults.length === 1,
   'normal execution and delivery',
 );
+await waitFor(
+  () => debugMessages.some((message) => message.includes('event=step_committed'))
+    && debugMessages.some((message) => message.includes('event=delivery_committed')),
+  'normal execution and delivery diagnostics',
+);
 assert.equal(normalHarness.recoverCalls >= 1, true);
 assert.equal(normalHarness.expireCalls >= 1, true);
 assert.equal(normalHarness.completed[0].result.outcome.outcome, 'completed');
@@ -375,6 +380,41 @@ assert.equal(nonRetryableHarness.failures[0].errorCode, 'invalid_continuation_ou
 assert.equal(nonRetryableHarness.failures[0].retryable, false);
 await nonRetryableWorker.stop();
 
+// Top-level worker state errors retain the legacy continuation audit and debug boundary.
+const workerStateHarness = createRepositoryHarness([createClaim('worker-state-error')]);
+const workerStateGet = workerStateHarness.repository.get.bind(workerStateHarness.repository);
+let workerStateExecutionCompleted = false;
+workerStateHarness.repository.get = async (jobId) => {
+  if (workerStateExecutionCompleted) throw new Error('state read unavailable');
+  return workerStateGet(jobId);
+};
+const workerStateAuditDetails: string[] = [];
+const workerStateDebugMessages: string[] = [];
+const workerStateWorker = new ContinuationWorker({
+  repository: workerStateHarness.repository,
+  executor: {
+    async execute() {
+      workerStateExecutionCompleted = true;
+      return completedResult('state read will fail');
+    },
+  },
+  delivery: noDelivery,
+  clock: new FakeClock(),
+  audit: {
+    async record(event) {
+      if (event.detail) workerStateAuditDetails.push(`${event.action}:${event.detail}`);
+    },
+  },
+  debug(message) { workerStateDebugMessages.push(message); },
+  maxConcurrency: 1,
+});
+await workerStateWorker.tick();
+await waitFor(() => workerStateWorker.activeCount === 0, 'top-level worker state error');
+assert.ok(workerStateAuditDetails.includes('continuation.execute:worker_state_error'));
+assert.ok(workerStateDebugMessages.some((message) => message.includes('event=worker_state_error')));
+assert.deepEqual(workerStateHarness.failures, []);
+await workerStateWorker.stop();
+
 // Delivery errors only reschedule the outbox and never invoke the executor.
 const deliveryHarness = createRepositoryHarness();
 deliveryHarness.deliveryClaim = {
@@ -395,22 +435,93 @@ deliveryHarness.deliveryClaim = {
   attemptCount: 1,
 };
 let deliveryExecutionCalls = 0;
+const deliveryAuditDetails: string[] = [];
+const deliveryDebugMessages: string[] = [];
 const deliveryWorker = new ContinuationWorker({
   repository: deliveryHarness.repository,
   executor: { async execute() { deliveryExecutionCalls += 1; return completedResult('bad'); } },
   delivery: { async deliver() { throw new Error('temporary Lark failure'); } },
   clock: new FakeClock(),
+  audit: {
+    async record(event) {
+      if (event.detail) deliveryAuditDetails.push(`${event.action}:${event.detail}`);
+    },
+  },
+  debug(message) { deliveryDebugMessages.push(message); },
   maxConcurrency: 1,
 });
 await deliveryWorker.tick();
 await waitFor(() => deliveryHarness.deliveryResults.length === 1, 'delivery retry');
+await waitFor(() => deliveryAuditDetails.length >= 1, 'delivery failure audit');
 assert.equal(deliveryExecutionCalls, 0);
 assert.deepEqual(deliveryHarness.deliveryResults[0], {
   status: 'retry',
   errorCode: 'continuation_delivery_failed',
   errorSummary: 'temporary Lark failure',
 });
+assert.ok(deliveryAuditDetails.includes(
+  'continuation.deliver:progress:progress:att_retry0000000000000000000:continuation_delivery_failed',
+));
+assert.equal(deliveryDebugMessages.some((message) => message.includes('event=delivery_committed')), false);
 await deliveryWorker.stop();
+
+// An explicit retry result keeps the ordinary retry audit and committed diagnostic semantics.
+const explicitRetryHarness = createRepositoryHarness();
+explicitRetryHarness.deliveryClaim = {
+  outboxId: 'out_explicit_retry',
+  jobId: 'job_explicit_retry000000000',
+  eventKey: 'progress:att_explicit_retry0000000',
+  kind: 'progress',
+  attemptId: 'att_explicit_retry0000000',
+  workerId: 'continuation-worker-delivery',
+  route: {
+    kind: 'message_thread',
+    conversationId: 'oc_worker',
+    sourceMessageId: 'om_explicit_retry',
+  },
+  idempotencyKey: 'ct_explicit_retry',
+  payload: 'Retry later',
+  status: 'sending',
+  attemptCount: 1,
+};
+const explicitRetryAuditDetails: string[] = [];
+const explicitRetryDebugMessages: string[] = [];
+const explicitRetryWorker = new ContinuationWorker({
+  repository: explicitRetryHarness.repository,
+  executor: { async execute() { return completedResult('unexpected'); } },
+  delivery: {
+    async deliver() {
+      return {
+        status: 'retry',
+        errorCode: 'rate_limited',
+        errorSummary: 'Try later.',
+      };
+    },
+  },
+  clock: new FakeClock(),
+  audit: {
+    async record(event) {
+      if (event.detail) explicitRetryAuditDetails.push(`${event.action}:${event.detail}`);
+    },
+  },
+  debug(message) { explicitRetryDebugMessages.push(message); },
+  maxConcurrency: 1,
+});
+await explicitRetryWorker.tick();
+await waitFor(() => explicitRetryHarness.deliveryResults.length === 1, 'explicit delivery retry');
+await waitFor(
+  () => explicitRetryDebugMessages.some((message) => message.includes('event=delivery_committed')),
+  'explicit delivery retry diagnostic',
+);
+assert.deepEqual(explicitRetryHarness.deliveryResults[0], {
+  status: 'retry',
+  errorCode: 'rate_limited',
+  errorSummary: 'Try later.',
+});
+assert.ok(explicitRetryAuditDetails.includes(
+  'continuation.deliver:progress:progress:att_explicit_retry0000000:retry',
+));
+await explicitRetryWorker.stop();
 
 // Graceful stop aborts active children, leaves their lease for recovery, and blocks new claims.
 const stopHarness = createRepositoryHarness([createClaim('stop'), createClaim('must-not-start')]);

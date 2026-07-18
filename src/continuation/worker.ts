@@ -41,6 +41,7 @@ export class ContinuationWorker {
         ? {}
         : { leaseDurationMs: options.leaseDurationMs }),
       workerId: options.workerId ?? 'continuation-worker',
+      onExecutionStateError: (claim) => adapter.handleWorkerStateError(claim),
     });
   }
 

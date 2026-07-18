@@ -37,6 +37,12 @@ class FakeClock implements DurableRunClock {
   }
 }
 
+class SystemClock implements DurableRunClock {
+  now(): Date {
+    return new Date();
+  }
+}
+
 function createRun(kind: string, suffix: string): DurableRunRecord {
   return {
     runId: `run_${suffix}`,
@@ -73,6 +79,17 @@ function createClaim(kind: string, suffix: string): DurableRunClaim {
       leaseExpiresAt: '2026-07-19T00:00:30.000Z',
     },
   };
+}
+
+function createShortLeaseClaim(kind: string, suffix: string, leaseMs: number): DurableRunClaim {
+  const claim = createClaim(kind, suffix);
+  const now = Date.now();
+  claim.run.nextRunAt = new Date(now).toISOString();
+  claim.run.expiresAt = new Date(now + 5_000).toISOString();
+  claim.attempt.claimedAt = new Date(now).toISOString();
+  claim.attempt.heartbeatAt = new Date(now).toISOString();
+  claim.attempt.leaseExpiresAt = new Date(now + leaseMs).toISOString();
+  return claim;
 }
 
 function createDeliveryClaim(kind: string, suffix: string): DurableRunDeliveryClaim {
@@ -434,6 +451,136 @@ leaseRepository.heartbeatAllowed = false;
 await waitFor(() => leaseWorker.activeCount === 0, 'lease loss abort');
 assert.equal(leaseRepository.transitions.length, 0);
 await leaseWorker.stop();
+
+// A throwing heartbeat cannot let execution outlive the last confirmed lease deadline.
+const throwingLeaseClaim = createShortLeaseClaim('async_task', 'lease-throw', 80);
+const throwingLeaseRepository = createRepositoryHarness([throwingLeaseClaim]);
+throwingLeaseRepository.repository.heartbeat = async (claim) => {
+  throwingLeaseRepository.heartbeats.push(claim.run.runId);
+  throw new Error('heartbeat unavailable');
+};
+const throwingLeaseWorkload = createWorkloadHarness('async_task', { hold: true });
+const throwingLeaseWorker = new DurableRunWorker({
+  repository: throwingLeaseRepository.repository,
+  workloads: [throwingLeaseWorkload.workload],
+  delivery,
+  clock: new SystemClock(),
+  maxConcurrencyByWorkload: { async_task: 1 },
+  heartbeatIntervalMs: 5,
+  leaseDurationMs: 100,
+});
+await throwingLeaseWorker.tick();
+await waitFor(() => throwingLeaseRepository.heartbeats.length >= 1, 'throwing heartbeat');
+await waitFor(() => throwingLeaseWorker.activeCount === 0, 'throwing heartbeat lease deadline');
+assert.deepEqual(throwingLeaseRepository.transitions, []);
+assert.deepEqual(throwingLeaseRepository.failedAttempts, []);
+await throwingLeaseWorker.stop();
+
+// Only a successful heartbeat extends the deadline; a subsequent hung heartbeat remains bounded.
+const hangingLeaseClaim = createShortLeaseClaim('async_task', 'lease-hang', 80);
+const initialHangingDeadline = Date.parse(hangingLeaseClaim.attempt.leaseExpiresAt);
+const hangingLeaseRepository = createRepositoryHarness([hangingLeaseClaim]);
+let hangingHeartbeatCalls = 0;
+hangingLeaseRepository.repository.heartbeat = async (claim) => {
+  hangingLeaseRepository.heartbeats.push(claim.run.runId);
+  hangingHeartbeatCalls += 1;
+  if (hangingHeartbeatCalls === 1) return true;
+  return new Promise<boolean>(() => {});
+};
+const hangingLeaseWorkload = createWorkloadHarness('async_task', { hold: true });
+const hangingLeaseWorker = new DurableRunWorker({
+  repository: hangingLeaseRepository.repository,
+  workloads: [hangingLeaseWorkload.workload],
+  delivery,
+  clock: new SystemClock(),
+  maxConcurrencyByWorkload: { async_task: 1 },
+  heartbeatIntervalMs: 10,
+  leaseDurationMs: 180,
+});
+await hangingLeaseWorker.tick();
+await waitFor(() => hangingHeartbeatCalls >= 2, 'hung heartbeat after successful renewal');
+const waitPastInitialDeadline = Math.max(0, initialHangingDeadline - Date.now() + 25);
+await new Promise((resolve) => setTimeout(resolve, waitPastInitialDeadline));
+assert.equal(hangingLeaseWorker.activeCount, 1);
+await waitFor(() => hangingLeaseWorker.activeCount === 0, 'hung heartbeat renewed lease deadline');
+assert.deepEqual(hangingLeaseRepository.transitions, []);
+assert.deepEqual(hangingLeaseRepository.failedAttempts, []);
+await hangingLeaseWorker.stop();
+
+// Recovery failures are isolated from the delivery pump.
+const recoveryErrorRepository = createRepositoryHarness();
+recoveryErrorRepository.deliveryClaim = createDeliveryClaim('async_task', 'recovery-error');
+recoveryErrorRepository.repository.recoverExpiredLeases = async () => {
+  throw new Error('recovery unavailable');
+};
+const recoveryErrorDeliveries: string[] = [];
+const recoveryErrorWorker = new DurableRunWorker({
+  repository: recoveryErrorRepository.repository,
+  workloads: [createWorkloadHarness('async_task').workload],
+  delivery: {
+    async deliver(claim) {
+      recoveryErrorDeliveries.push(claim.outboxId);
+      return { status: 'sent', messageId: 'om_recovery_error' };
+    },
+  },
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await assert.rejects(recoveryErrorWorker.tick(), /recovery unavailable/);
+await waitFor(() => recoveryErrorRepository.deliveryResults.length === 1, 'delivery after recovery error');
+assert.deepEqual(recoveryErrorDeliveries, ['outbox_recovery-error']);
+await recoveryErrorWorker.stop();
+
+// Claim failures are isolated from the delivery pump.
+const claimErrorRepository = createRepositoryHarness();
+claimErrorRepository.deliveryClaim = createDeliveryClaim('async_task', 'claim-error');
+claimErrorRepository.repository.claimDue = async () => {
+  throw new Error('claim unavailable');
+};
+const claimErrorDeliveries: string[] = [];
+const claimErrorWorker = new DurableRunWorker({
+  repository: claimErrorRepository.repository,
+  workloads: [createWorkloadHarness('async_task').workload],
+  delivery: {
+    async deliver(claim) {
+      claimErrorDeliveries.push(claim.outboxId);
+      return { status: 'sent', messageId: 'om_claim_error' };
+    },
+  },
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await assert.rejects(claimErrorWorker.tick(), /claim unavailable/);
+await waitFor(() => claimErrorRepository.deliveryResults.length === 1, 'delivery after claim error');
+assert.deepEqual(claimErrorDeliveries, ['outbox_claim-error']);
+await claimErrorWorker.stop();
+
+// A continuously refilled short-task quota cannot make delivery wait for the backlog to drain.
+const backlogClaims = Array.from(
+  { length: 25 },
+  (_, index) => createClaim('async_task', `backlog-${index}`),
+);
+const backlogRepository = createRepositoryHarness(backlogClaims);
+backlogRepository.deliveryClaim = createDeliveryClaim('async_task', 'backlog');
+const backlogWorkload = createWorkloadHarness('async_task');
+let executionCountAtDelivery = -1;
+const backlogWorker = new DurableRunWorker({
+  repository: backlogRepository.repository,
+  workloads: [backlogWorkload.workload],
+  delivery: {
+    async deliver() {
+      executionCountAtDelivery = backlogWorkload.executeCalls.length;
+      return { status: 'sent', messageId: 'om_backlog' };
+    },
+  },
+  clock,
+  maxConcurrencyByWorkload: { async_task: 2 },
+});
+await backlogWorker.tick();
+await waitFor(() => backlogRepository.deliveryResults.length === 1, 'delivery during execution backlog');
+assert.equal(executionCountAtDelivery < backlogClaims.length, true);
+await waitFor(() => backlogRepository.transitions.length === backlogClaims.length, 'backlog completion');
+await backlogWorker.stop();
 
 // Stop aborts children, waits for them, and prevents further claims.
 const stopRepository = createRepositoryHarness([
