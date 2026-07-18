@@ -2549,6 +2549,19 @@ const liveCreateExit = new Promise<number | null>((resolve) => liveCreateChild.o
 await writeFile(join(concurrentCreateRoot, `.release-${liveCleanupJobId}`), 'release', 'utf8');
 assert.equal(await liveCreateExit, 0, liveCreateStderr);
 
+const concurrentOrphan = join(concurrentCreateRoot, 'inputs', 'job_concurrent_orphan');
+await mkdir(join(concurrentOrphan, 'nested'), { recursive: true });
+for (let index = 0; index < 20; index += 1) {
+  await writeFile(join(concurrentOrphan, 'nested', `file-${index}.txt`), 'orphan', 'utf8');
+}
+const agedOrphan = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+await utimes(concurrentOrphan, agedOrphan, agedOrphan);
+await Promise.all([
+  concurrentStore.cleanupOrphans(new Set(), Date.now()),
+  concurrentStore.cleanupOrphans(new Set(), Date.now()),
+]);
+await assert.rejects(lstat(concurrentOrphan), /ENOENT/);
+
 // One corrupt trusted snapshot must fail closed without blocking the next due Job.
 const corruptStateRoot = await mkdtemp(join(tmpdir(), 'continuation-corrupt-state-'));
 const corruptStateDatabasePath = join(corruptStateRoot, 'jobs.sqlite');

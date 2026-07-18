@@ -269,7 +269,7 @@ function activeLockError(state: LockState | null): Error {
 async function writeLockFileAtomically(lockPath: string, content: string): Promise<boolean> {
   const tmpPath = `${lockPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
-    await writeFile(tmpPath, content, { flag: 'wx' });
+    await writeFile(tmpPath, content, { flag: 'wx', mode: 0o600 });
     await link(tmpPath, lockPath);
     return true;
   } catch (err: any) {
@@ -380,9 +380,12 @@ async function claimTakeover(
 ): Promise<boolean> {
   for (let attempt = 0; attempt < LOCK_ACQUIRE_ATTEMPTS; attempt++) {
     try {
-      await mkdir(takeoverPath);
+      await mkdir(takeoverPath, { mode: 0o700 });
       try {
-        await writeFile(join(takeoverPath, 'owner.json'), serializeLock(record), { flag: 'wx' });
+        await writeFile(join(takeoverPath, 'owner.json'), serializeLock(record), {
+          flag: 'wx',
+          mode: 0o600,
+        });
       } catch (err) {
         await removePathIfExists(takeoverPath);
         throw err;
@@ -422,7 +425,7 @@ async function removeStaleTakeoverIfStillStale(
 
   const cleanupPath = join(takeoverPath, '.cleanup');
   try {
-    await mkdir(cleanupPath);
+    await mkdir(cleanupPath, { mode: 0o700 });
   } catch (err: any) {
     if (err?.code === 'ENOENT') return true;
     if (err?.code === 'EEXIST') return false;
@@ -458,7 +461,7 @@ export async function acquireSingleInstanceLock(
   const expectedUid = options.expectedUid;
   const takeoverPath = `${lockPath}.takeover`;
 
-  await mkdir(dirname(lockPath), { recursive: true });
+  await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
 
   for (let attempt = 0; attempt < LOCK_ACQUIRE_ATTEMPTS; attempt++) {
     await waitForTakeoverToClear(takeoverPath, processExists, getProcessStartedAt, expectedUid);

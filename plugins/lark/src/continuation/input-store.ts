@@ -395,7 +395,11 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       if (isStaging && [...liveCreationJobs].some((jobId) =>
         entry.name.startsWith(`.staging-${jobId}-`))) continue;
       const candidate = path.join(this.rootDir, entry.name);
-      const metadata = await fs.stat(candidate);
+      const metadata = await fs.stat(candidate).catch((error) => {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!metadata) continue;
       if (nowMs - metadata.mtimeMs < this.orphanAgeMs) continue;
       await removeManagedTree(candidate);
     }
@@ -768,16 +772,45 @@ async function removeManagedTree(target: string): Promise<void> {
     await fs.rm(target, { force: true });
     return;
   }
-  await fs.chmod(target, 0o700);
-  for (const entry of await fs.readdir(target)) {
+  try {
+    await fs.chmod(target, 0o700);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  let entries: string[];
+  try {
+    entries = await fs.readdir(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  for (const entry of entries) {
     const child = path.join(target, entry);
-    const childMetadata = await fs.lstat(child);
+    let childMetadata;
+    try {
+      childMetadata = await fs.lstat(child);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+      throw error;
+    }
     if (childMetadata.isDirectory() && !childMetadata.isSymbolicLink()) {
       await removeManagedTree(child);
     } else {
-      if (!childMetadata.isSymbolicLink()) await fs.chmod(child, 0o600);
+      if (!childMetadata.isSymbolicLink()) {
+        try {
+          await fs.chmod(child, 0o600);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+          throw error;
+        }
+      }
       await fs.rm(child, { force: true });
     }
   }
-  await fs.rmdir(target);
+  try {
+    await fs.rmdir(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+  }
 }

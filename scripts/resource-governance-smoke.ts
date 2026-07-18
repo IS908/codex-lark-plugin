@@ -331,6 +331,51 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
+// 6f. Lock and takeover permissions remain private even with a permissive umask.
+{
+  const previousUmask = process.umask(0);
+  const dir = tmpRoot('resource-lock-umask-');
+  try {
+    const freshLockPath = join(dir, 'fresh-parent', 'bridge.lock');
+    const freshLock = await acquireSingleInstanceLock(freshLockPath);
+    assert.equal(statSync(join(dir, 'fresh-parent')).mode & 0o777, 0o700);
+    assert.equal(statSync(freshLockPath).mode & 0o777, 0o600);
+    freshLock.release();
+
+    const staleParent = join(dir, 'stale-parent');
+    mkdirSync(staleParent, { mode: 0o700 });
+    const staleLockPath = join(staleParent, 'bridge.lock');
+    writeFileSync(
+      staleLockPath,
+      JSON.stringify({ pid: 12345, startedAt: 1111 }),
+      { mode: 0o600 },
+    );
+    let takeoverModes: { directory: number; owner: number } | null = null;
+    const takeoverLock = await acquireSingleInstanceLock(staleLockPath, {
+      pid: 54321,
+      startedAt: 2222,
+      processExists: () => {
+        const takeoverPath = `${staleLockPath}.takeover`;
+        if (existsSync(join(takeoverPath, 'owner.json'))) {
+          takeoverModes = {
+            directory: statSync(takeoverPath).mode & 0o777,
+            owner: statSync(join(takeoverPath, 'owner.json')).mode & 0o777,
+          };
+        }
+        return false;
+      },
+      getProcessStartedAt: async () => null,
+    });
+    assert.deepEqual(takeoverModes, { directory: 0o700, owner: 0o600 });
+    assert.equal(statSync(staleLockPath).mode & 0o777, 0o600);
+    takeoverLock.release();
+  } finally {
+    process.umask(previousUmask);
+    cleanup(dir);
+  }
+  passed++;
+}
+
 // 7. Rotating logs keep current + configured backups and preserve new writes.
 {
   const dir = tmpRoot('resource-log-');
@@ -781,4 +826,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/33 PASS`);
+console.log(`resource-governance smoke: ${passed}/34 PASS`);
