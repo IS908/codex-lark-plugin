@@ -21,6 +21,10 @@ echo "=== Durable run domain checks ==="
 node --import tsx scripts/durable-run-domain-smoke.ts
 
 echo ""
+echo "=== Durable run worker checks ==="
+node --import tsx scripts/durable-run-worker-smoke.ts
+
+echo ""
 echo "=== Continuation recovery policy unit checks ==="
 node --import tsx scripts/continuation-recovery-policy-smoke.ts
 

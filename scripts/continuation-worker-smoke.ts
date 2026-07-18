@@ -188,6 +188,7 @@ async function waitFor(predicate: () => boolean, label: string): Promise<void> {
 
 const auditEvents: string[] = [];
 const auditDetails: string[] = [];
+const debugMessages: string[] = [];
 const audit: ContinuationAudit = {
   async record(event) {
     auditEvents.push(`${event.action}:${event.result}`);
@@ -229,6 +230,7 @@ const normalWorker = new ContinuationWorker({
   scanIntervalMs: 1_000,
   heartbeatIntervalMs: 20,
   leaseDurationMs: 60,
+  debug(message) { debugMessages.push(message); },
 });
 await normalWorker.tick();
 await waitFor(
@@ -242,6 +244,9 @@ assert.deepEqual(normalHarness.deliveryResults[0], {
   status: 'delivered',
   messageId: 'om_terminal',
 });
+assert.ok(debugMessages.some((message) => message.includes('event=claimed')));
+assert.ok(debugMessages.some((message) => message.includes('event=step_committed')));
+assert.ok(debugMessages.some((message) => message.includes('event=delivery_committed')));
 await normalWorker.stop();
 
 // Max concurrency is enforced, and completion refills the available slot.
@@ -271,6 +276,7 @@ const concurrentWorker = new ContinuationWorker({
 });
 await concurrentWorker.tick();
 await waitFor(() => concurrentWorker.activeCount === 2, 'two active claims');
+await waitFor(() => releases.length === 2, 'two executing claims');
 assert.equal(releases.length, 2);
 releases.shift()?.();
 await waitFor(() => releases.length === 2, 'third claim after a slot is released');
