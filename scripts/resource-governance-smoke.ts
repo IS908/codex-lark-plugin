@@ -306,6 +306,31 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
+// 6e. A foreign-owned regular legacy filename is outside the current UID namespace.
+{
+  const stateDir = tmpRoot('resource-lark-foreign-state-');
+  const sharedLegacyDir = tmpRoot('resource-lark-foreign-legacy-');
+  const appId = 'cli_foreign_legacy_owner';
+  const legacyPath = legacyLarkInstanceLockPath(appId, sharedLegacyDir);
+  const foreignContents = JSON.stringify({ pid: process.pid });
+  writeFileSync(legacyPath, foreignContents, 'utf8');
+  const simulatedCurrentUid = (process.getuid?.() ?? 0) + 1;
+  const scopedLock = await acquireLarkInstanceLock(
+    appId,
+    stateDir,
+    sharedLegacyDir,
+    simulatedCurrentUid,
+  );
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), true);
+  assert.equal(readFileSync(legacyPath, 'utf8'), foreignContents);
+  scopedLock.release();
+  assert.equal(existsSync(join(stateDir, '.instance.lock')), false);
+  assert.equal(readFileSync(legacyPath, 'utf8'), foreignContents);
+  cleanup(stateDir);
+  cleanup(sharedLegacyDir);
+  passed++;
+}
+
 // 7. Rotating logs keep current + configured backups and preserve new writes.
 {
   const dir = tmpRoot('resource-log-');
@@ -756,4 +781,4 @@ async function touchAge(filePath: string, ageMs: number): Promise<void> {
   passed++;
 }
 
-console.log(`resource-governance smoke: ${passed}/32 PASS`);
+console.log(`resource-governance smoke: ${passed}/33 PASS`);

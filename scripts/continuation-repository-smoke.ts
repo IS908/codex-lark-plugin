@@ -680,6 +680,118 @@ try {
   repository.close();
 }
 
+// Maintenance scans isolate corrupt rows without blocking healthy lease, expiry, or budget work.
+const maintenanceRoot = await mkdtemp(join(tmpdir(), 'continuation-maintenance-corrupt-'));
+const maintenanceDatabasePath = join(maintenanceRoot, 'jobs.sqlite');
+const maintenanceRepository = await SqliteContinuationRepository.open({
+  databasePath: maintenanceDatabasePath,
+  artifactsDir: join(maintenanceRoot, 'artifacts'),
+  inputsDir: join(maintenanceRoot, 'inputs'),
+  jitter: () => 0,
+});
+const { DatabaseSync: MaintenanceDatabaseSync } = await import('node:sqlite');
+const maintenanceDatabase = new MaintenanceDatabaseSync(maintenanceDatabasePath);
+const corruptMaintenanceFacts = (jobId: string) => {
+  const row = maintenanceDatabase.prepare(`
+    SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+  `).get(jobId) as { source_facts_json: string };
+  maintenanceDatabase.prepare(`
+    UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+  `).run(JSON.stringify({
+    ...JSON.parse(row.source_facts_json) as Record<string, unknown>,
+    unexpected: 'maintenance corruption',
+  }), jobId);
+};
+
+const corruptLeaseJob = await maintenanceRepository.create(createRequest(
+  'maintenance-corrupt-lease',
+  { createdAt: '2026-07-16T23:59:57.000Z' },
+));
+const healthyLeaseJob = await maintenanceRepository.create(createRequest(
+  'maintenance-healthy-lease',
+  { createdAt: '2026-07-16T23:59:58.000Z' },
+));
+assert.equal((await maintenanceRepository.claimDue(
+  'maintenance-worker-corrupt',
+  baseNow,
+  '2026-07-17T00:00:05.000Z',
+))?.job.jobId, corruptLeaseJob.job.jobId);
+assert.equal((await maintenanceRepository.claimDue(
+  'maintenance-worker-healthy',
+  baseNow,
+  '2026-07-17T00:00:05.000Z',
+))?.job.jobId, healthyLeaseJob.job.jobId);
+corruptMaintenanceFacts(corruptLeaseJob.job.jobId);
+assert.equal(await maintenanceRepository.recoverExpiredLeases(
+  '2026-07-17T00:00:06.000Z',
+), 2);
+assert.equal(
+  (await maintenanceRepository.get(corruptLeaseJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await maintenanceRepository.get(healthyLeaseJob.job.jobId))?.status,
+  'waiting_retry',
+);
+
+const corruptOverdueJob = await maintenanceRepository.create(createRequest(
+  'maintenance-corrupt-overdue',
+  { expiresAt: '2026-07-17T00:00:07.000Z' },
+));
+const healthyOverdueJob = await maintenanceRepository.create(createRequest(
+  'maintenance-healthy-overdue',
+  { expiresAt: '2026-07-17T00:00:07.000Z' },
+));
+corruptMaintenanceFacts(corruptOverdueJob.job.jobId);
+assert.equal(await maintenanceRepository.expireOverdue(
+  '2026-07-17T00:00:08.000Z',
+), 2);
+assert.equal(
+  (await maintenanceRepository.get(corruptOverdueJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await maintenanceRepository.get(healthyOverdueJob.job.jobId))?.errorCode,
+  'continuation_expired',
+);
+
+const corruptBudgetJob = await maintenanceRepository.create(createRequest(
+  'maintenance-corrupt-budget',
+  { maxAttempts: 1 },
+));
+const healthyBudgetJob = await maintenanceRepository.create(createRequest(
+  'maintenance-healthy-budget',
+  { maxAttempts: 1 },
+));
+const insertBudgetAttempt = maintenanceDatabase.prepare(`
+  INSERT INTO continuation_attempts (
+    attempt_id, job_id, ordinal, worker_id, started_at, heartbeat_at,
+    finished_at, outcome, error_code, error_summary
+  ) VALUES (?, ?, 1, 'maintenance-worker', ?, ?, ?, 'error', 'test', 'test')
+`);
+for (const [attemptId, jobId] of [
+  ['attempt_maintenance_corrupt', corruptBudgetJob.job.jobId],
+  ['attempt_maintenance_healthy', healthyBudgetJob.job.jobId],
+]) {
+  insertBudgetAttempt.run(attemptId, jobId, baseNow, baseNow, baseNow);
+}
+corruptMaintenanceFacts(corruptBudgetJob.job.jobId);
+assert.equal(await maintenanceRepository.claimDue(
+  'maintenance-budget-worker',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+), null);
+assert.equal(
+  (await maintenanceRepository.get(corruptBudgetJob.job.jobId))?.errorCode,
+  'continuation_persisted_state_invalid',
+);
+assert.equal(
+  (await maintenanceRepository.get(healthyBudgetJob.job.jobId))?.status,
+  'partial',
+);
+maintenanceDatabase.close();
+maintenanceRepository.close();
+
 const migrationDatabasePath = join(root, 'migration', 'jobs.sqlite');
 const migrationArtifactsDir = join(root, 'migration', 'artifacts');
 const migrationSeed = await SqliteContinuationRepository.open({
@@ -1525,6 +1637,9 @@ const legacyV6Job = await versionSixSeed.create(createRequest('legacy-v6', {
 const legacyV6MessageMismatch = await versionSixSeed.create(createRequest(
   'legacy-v6-message-route-mismatch',
 ));
+const legacyV6Malformed = await versionSixSeed.create(createRequest(
+  'legacy-v6-malformed-row',
+));
 const legacyV6CommentBase = createRequest('legacy-v6-comment-route-mismatch');
 const legacyV6CommentRoute = {
   kind: 'comment_thread' as const,
@@ -1557,6 +1672,9 @@ versionSixDatabase.prepare(`
 versionSixDatabase.prepare(`
   UPDATE continuation_jobs SET source_thread_id = ? WHERE job_id = ?
 `).run('comment_legacy_v6_conflicting_source', legacyV6CommentMismatch.job.jobId);
+versionSixDatabase.prepare(`
+  UPDATE continuation_jobs SET permissions_json = ? WHERE job_id = ?
+`).run('{malformed-json', legacyV6Malformed.job.jobId);
 versionSixDatabase.exec(`
   ALTER TABLE continuation_jobs DROP COLUMN source_facts_json;
   ALTER TABLE continuation_jobs DROP COLUMN task_contract_json;
@@ -1595,6 +1713,7 @@ try {
   for (const corruptLegacyId of [
     legacyV6MessageMismatch.job.jobId,
     legacyV6CommentMismatch.job.jobId,
+    legacyV6Malformed.job.jobId,
   ]) {
     const tombstone = await migratedVersionSixRepository.get(corruptLegacyId);
     assert.equal(tombstone?.status, 'failed');

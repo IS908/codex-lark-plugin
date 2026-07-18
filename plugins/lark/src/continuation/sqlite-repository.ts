@@ -79,7 +79,8 @@ const EMPTY_PERMISSION_ENVELOPE: ContinuationPermissionEnvelope = {
   approval: { mode: 'never' },
 };
 
-class LegacyRouteProjectionError extends Error {}
+class LegacyPersistedRowError extends Error {}
+class LegacyRouteProjectionError extends LegacyPersistedRowError {}
 
 export class SqliteContinuationRepository implements ContinuationRepository {
   private readonly jobMutationTails = new Map<string, Promise<void>>();
@@ -579,7 +580,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         try {
           legacy = legacyFactsAndContract(row);
         } catch (error) {
-          if (!(error instanceof LegacyRouteProjectionError)) throw error;
+          if (!(error instanceof LegacyPersistedRowError)) throw error;
           if (!this.sanitizeCorruptJob(row, migrationNow, false)) {
             throw new Error(`Failed to isolate corrupt legacy continuation ${stringField(row, 'job_id')}.`);
           }
@@ -720,7 +721,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     now: string,
     leaseExpiresAt: string,
   ): Promise<ContinuationClaim | null> {
-    this.transaction(() => this.finishUnclaimedAttemptBudgetExhausted(now));
+    const corruptBudgetJobIds = this.transaction(() =>
+      this.finishUnclaimedAttemptBudgetExhausted(now));
+    for (const jobId of corruptBudgetJobIds) await this.cleanupCorruptStorage(jobId);
     while (true) {
       const selection = this.selectDueCandidate(now);
       if (!selection) return null;
@@ -1121,19 +1124,24 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   }
 
   async recoverExpiredLeases(now: string): Promise<number> {
-    return this.transaction(() => {
+    const corruptJobIds: string[] = [];
+    const recovered = this.transaction(() => {
       const rows = this.database.prepare(`
-        SELECT job_id
-        FROM continuation_jobs
-        WHERE status IN ('running', 'cancel_requested')
-          AND lease_expires_at IS NOT NULL
-          AND lease_expires_at <= ?
-          AND deleted_at IS NULL
+        ${jobSelectSql()}
+        WHERE j.status IN ('running', 'cancel_requested')
+          AND j.lease_expires_at IS NOT NULL
+          AND j.lease_expires_at <= ?
+          AND j.deleted_at IS NULL
       `).all(now);
       for (const row of rows) {
         const jobId = stringField(row, 'job_id');
-        const current = this.readJobBy('j.job_id = ?', jobId);
-        if (!current) continue;
+        let current: ContinuationJob;
+        try {
+          current = mapJob(row);
+        } catch {
+          if (this.sanitizeCorruptJob(row, now, false)) corruptJobIds.push(jobId);
+          continue;
+        }
         const attemptId = this.activeAttemptId(jobId, current.leaseOwner);
         if (current.status === 'cancel_requested') {
           this.database.prepare(`
@@ -1193,22 +1201,32 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       }
       return rows.length;
     });
+    for (const jobId of corruptJobIds) await this.cleanupCorruptStorage(jobId);
+    return recovered;
   }
 
   async expireOverdue(now: string): Promise<number> {
-    return this.transaction(() => {
+    const corruptJobIds: string[] = [];
+    const expiredCount = this.transaction(() => {
       const rows = this.database.prepare(`
-        SELECT job_id
-        FROM continuation_jobs
-        WHERE status IN ('queued', 'waiting_retry')
-          AND expires_at <= ?
-          AND deleted_at IS NULL
+        ${jobSelectSql()}
+        WHERE j.status IN ('queued', 'waiting_retry')
+          AND j.expires_at <= ?
+          AND j.deleted_at IS NULL
       `).all(now);
       let expired = 0;
       for (const row of rows) {
         const jobId = stringField(row, 'job_id');
-        const current = this.readJobBy('j.job_id = ?', jobId);
-        if (!current) continue;
+        let current: ContinuationJob;
+        try {
+          current = mapJob(row);
+        } catch {
+          if (this.sanitizeCorruptJob(row, now, false)) {
+            corruptJobIds.push(jobId);
+            expired += 1;
+          }
+          continue;
+        }
         const update = this.database.prepare(`
           UPDATE continuation_jobs
           SET status = 'failed', error_code = 'continuation_expired',
@@ -1226,6 +1244,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       }
       return expired;
     });
+    for (const jobId of corruptJobIds) await this.cleanupCorruptStorage(jobId);
+    return expiredCount;
   }
 
   async cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob> {
@@ -1759,18 +1779,23 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return current;
   }
 
-  private finishUnclaimedAttemptBudgetExhausted(now: string): void {
+  private finishUnclaimedAttemptBudgetExhausted(now: string): string[] {
+    const corruptJobIds: string[] = [];
     const rows = this.database.prepare(`
-      SELECT j.job_id
-      FROM continuation_jobs j
+      ${jobSelectSql()}
       WHERE j.status IN ('queued', 'waiting_retry')
         AND j.deleted_at IS NULL
         AND (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) >= j.max_attempts
     `).all();
     for (const row of rows) {
       const jobId = stringField(row, 'job_id');
-      const current = this.readJobBy('j.job_id = ?', jobId);
-      if (!current) continue;
+      let current: ContinuationJob;
+      try {
+        current = mapJob(row);
+      } catch {
+        if (this.sanitizeCorruptJob(row, now, false)) corruptJobIds.push(jobId);
+        continue;
+      }
       const checkpoint = current.checkpoint ?? current.contextSnapshot;
       const partial = partialOutcomeFromCheckpoint(
         checkpoint,
@@ -1795,6 +1820,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       if (Number(update.changes) !== 1) continue;
       this.insertTerminalOutbox(current, renderPartialPayload(jobId, partial), now);
     }
+    return corruptJobIds;
   }
 
   private finishPartial(
@@ -2623,7 +2649,16 @@ function redactCheckpoint(checkpoint: ContinuationCheckpoint): ContinuationCheck
   };
 }
 
-function legacyFactsAndContract(row: SqlRow): {
+function legacyFactsAndContract(row: SqlRow): ReturnType<typeof parseLegacyFactsAndContract> {
+  try {
+    return parseLegacyFactsAndContract(row);
+  } catch (error) {
+    if (error instanceof LegacyPersistedRowError) throw error;
+    throw new LegacyPersistedRowError('Legacy continuation row is malformed.', { cause: error });
+  }
+}
+
+function parseLegacyFactsAndContract(row: SqlRow): {
   route: ContinuationDeliveryRoute;
   sourceFacts: AsyncTaskFactSnapshot;
   taskContract: AsyncTaskContract;

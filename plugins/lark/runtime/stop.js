@@ -919,11 +919,11 @@ var LARK_INSTANCE_LOCK_PATH = path2.join(
   "continuations",
   ".instance.lock"
 );
-async function stopLarkInstances(appId, stateRoot = path2.dirname(LARK_INSTANCE_LOCK_PATH), legacyLockRoot = os2.tmpdir()) {
+async function stopLarkInstances(appId, stateRoot = path2.dirname(LARK_INSTANCE_LOCK_PATH), legacyLockRoot = os2.tmpdir(), legacyOwnerUid = process.getuid?.()) {
   const results = [];
   const paths = [
     path2.join(stateRoot, path2.basename(LARK_INSTANCE_LOCK_PATH)),
-    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, false)
+    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, false, legacyOwnerUid)
   ];
   const expectedUid = process.getuid?.();
   for (const lockPath of paths) {
@@ -934,8 +934,7 @@ async function stopLarkInstances(appId, stateRoot = path2.dirname(LARK_INSTANCE_
 function legacyLarkInstanceLockPath(appId, lockRoot = os2.tmpdir()) {
   return path2.join(lockRoot, `codex-lark-${appId}.lock`);
 }
-async function compatibleLegacyLockPaths(appId, lockRoot, scanAll) {
-  const currentUid = process.getuid?.();
+async function compatibleLegacyLockPaths(appId, lockRoot, scanAll, currentUid) {
   const names = await readdir2(lockRoot).catch(() => []);
   const candidates = names.filter((name) => /^codex-lark-.+\.lock$/.test(name)).filter((name) => scanAll || name === path2.basename(legacyLarkInstanceLockPath(appId, lockRoot)));
   const ownedPaths = [];
@@ -947,7 +946,11 @@ async function compatibleLegacyLockPaths(appId, lockRoot, scanAll) {
     }
   }
   const currentPath = legacyLarkInstanceLockPath(appId, lockRoot);
-  ownedPaths.push(currentPath);
+  const currentMetadata = await lstat2(currentPath).catch(() => null);
+  const foreignRegularFile = Boolean(
+    currentMetadata?.isFile() && !currentMetadata.isSymbolicLink() && currentUid !== void 0 && currentMetadata.uid !== currentUid
+  );
+  if (!foreignRegularFile) ownedPaths.push(currentPath);
   return [...new Set(ownedPaths.sort())];
 }
 

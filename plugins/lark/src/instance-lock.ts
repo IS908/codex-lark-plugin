@@ -24,10 +24,11 @@ export async function acquireLarkInstanceLock(
   appId: string,
   stateRoot = path.dirname(LARK_INSTANCE_LOCK_PATH),
   legacyLockRoot = os.tmpdir(),
+  legacyOwnerUid = process.getuid?.(),
 ): Promise<SingleInstanceLockHandle> {
   const globalPath = path.join(stateRoot, path.basename(LARK_INSTANCE_LOCK_PATH));
   const paths = [
-    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, true),
+    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, true, legacyOwnerUid),
     globalPath,
   ];
   const acquired: SingleInstanceLockHandle[] = [];
@@ -61,11 +62,12 @@ export async function stopLarkInstances(
   appId: string,
   stateRoot = path.dirname(LARK_INSTANCE_LOCK_PATH),
   legacyLockRoot = os.tmpdir(),
+  legacyOwnerUid = process.getuid?.(),
 ): Promise<StopSingleInstanceLockResult[]> {
   const results: StopSingleInstanceLockResult[] = [];
   const paths = [
     path.join(stateRoot, path.basename(LARK_INSTANCE_LOCK_PATH)),
-    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, false),
+    ...await compatibleLegacyLockPaths(appId, legacyLockRoot, false, legacyOwnerUid),
   ];
   const expectedUid = process.getuid?.();
   for (const lockPath of paths) {
@@ -82,8 +84,8 @@ async function compatibleLegacyLockPaths(
   appId: string,
   lockRoot: string,
   scanAll: boolean,
+  currentUid: number | undefined,
 ): Promise<string[]> {
-  const currentUid = process.getuid?.();
   const names = await readdir(lockRoot).catch(() => []);
   const candidates = names
     .filter((name) => /^codex-lark-.+\.lock$/.test(name))
@@ -101,10 +103,18 @@ async function compatibleLegacyLockPaths(
     }
   }
   const currentPath = legacyLarkInstanceLockPath(appId, lockRoot);
+  const currentMetadata = await lstat(currentPath).catch(() => null);
+  const foreignRegularFile = Boolean(
+    currentMetadata?.isFile()
+    && !currentMetadata.isSymbolicLink()
+    && currentUid !== undefined
+    && currentMetadata.uid !== currentUid,
+  );
   // Always reserve this app's legacy filename so an old same-app runtime
   // started after us cannot bypass the private global lock. Unrelated legacy
-  // locks discovered in a shared root remain restricted to the current UID.
-  ownedPaths.push(currentPath);
+  // locks remain UID-scoped; a foreign regular file already occupies its own
+  // shared-temp namespace and also prevents an old runtime from claiming it.
+  if (!foreignRegularFile) ownedPaths.push(currentPath);
   return [...new Set(ownedPaths.sort())];
 }
 
