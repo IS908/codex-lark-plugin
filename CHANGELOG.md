@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-07-19
+
+### Added
+- Added a generic SQLite Durable Run kernel shared by Async Task, Cron prompt, and Cron message workloads, with workload-specific contracts and independent concurrency quotas.
+- Added process-level crash coverage across admission, execution, Attempt/outbox commit, and Feishu delivery commit boundaries.
+
+### Changed
+- Changed Scheduler to scan JSON definitions and idempotently admit Runs only; durable workers now own execution, lease recovery, retry, and outbox delivery in one direct cutover with no legacy fallback or dual write.
+- Kept Cron definitions and per-Job schedule cursors in JSON while making SQLite Run/Attempt/outbox records authoritative for execution and delivery history.
+- Made `LARK_CONTINUATION_ENABLED` control Async Task only; Cron remains available whenever shared durable persistence initializes successfully.
+
+### Fixed
+- Separated Cron execution retry from Feishu delivery retry so a generated report is never regenerated due to delivery failure, and ambiguous external outcomes are not blindly replayed.
+- Added stable Feishu delivery UUIDs, exact Job revision/Run projection fences, permanent-target auto-pause, and standalone scheduled delivery that cannot attach to or clear state for unrelated chat turns.
+- Preserved completed Cron JSON runtime projections across duplicate schedule scans and hardened the asynchronous audit-log smoke test against timing races.
+
 ## [2.8.2] - 2026-07-19
 
 ### Changed
@@ -925,7 +941,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.2...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.9.0...HEAD
+[2.9.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.2...v2.9.0
 [2.8.2]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.7.0...v2.8.0
