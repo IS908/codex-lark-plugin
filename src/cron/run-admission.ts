@@ -9,6 +9,7 @@ import {
 import { computeLatestDueRun, computeNextRun, jobTimezone, mutateJob, readJob } from '../job-store.js';
 import type { JobFile } from '../job-contracts.js';
 import type { DurableRunRepository } from '../ports/durable-run.js';
+import type { CronRunInput, CronRunState } from './contracts.js';
 
 export type CronAdmissionRejectionReason =
   | 'paused'
@@ -37,33 +38,6 @@ export interface CronRunAdmissionOptions {
   runRepository: DurableRunRepository;
   jobRepository?: CronAdmissionJobRepository;
   waitPollMs?: number;
-}
-
-interface CronRunInput {
-  schemaVersion: 1;
-  job: {
-    id: string;
-    createdAt: string;
-    revision: number;
-    name: string;
-    type: JobFile['meta']['type'];
-    schedule: string;
-    scheduleHuman: string;
-    timezone: string;
-    scheduledOccurrence?: string;
-    prompt?: string;
-    content?: string;
-    messageType?: string;
-    model?: string;
-    targetChatId: string;
-    originChatId: string;
-    createdBy: string;
-  };
-}
-
-interface CronRunState {
-  schemaVersion: 1;
-  phase: 'admitted';
 }
 
 const DEFAULT_WAIT_POLL_MS = 50;

@@ -373,6 +373,11 @@ echo "=== Cron compatibility checks ==="
 node --import tsx scripts/cron-compatibility-smoke.ts
 
 echo ""
+echo "=== Cron durable workload checks ==="
+node --import tsx scripts/cron-workload-smoke.ts
+node --import tsx scripts/cron-prompt-fidelity-smoke.ts
+
+echo ""
 echo "=== Privacy rules unit checks ==="
 node --import tsx scripts/privacy-rules-smoke.ts
 

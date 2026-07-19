@@ -19,6 +19,7 @@ export interface CodexExecActionChannelPromptInfo {
   continuationWorkingRoot?: string;
   continuationHostToolNames?: string[];
   continuationTrustedPersonalWorkspaceEligible?: boolean;
+  blockedActionTypes?: readonly CodexExecAction['type'][];
 }
 
 export interface CodexExecActionChannelOptions {
@@ -345,7 +346,16 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
           ? [`    For local CLI access, required_tools must use exact configured host tool names: ${continuationHostToolNames.join(', ')}. The declaration does not grant access; runtime config and caller policy are checked again.`]
           : ['    No continuation host CLI tools are configured; required_tools must remain empty.']),
       ]
-    : [];
+      : [];
+  const sendMessageLines = info.blockedActionTypes?.includes('send_message')
+    ? []
+    : [
+        '  - {"type":"send_message","message":{"kind":"image|file","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","text":"..."}}',
+        '  - {"type":"send_message","message":{"kind":"rich","parts":[{"type":"text","text":"..."},{"type":"image","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","alt":"..."}]},"reply_in_thread":true}',
+      ];
+  const recallMessageLines = info.blockedActionTypes?.includes('recall_message')
+    ? []
+    : ['  - {"type":"recall_message","message_id":"..."}'];
 
   return [
     'Structured Lark actions (optional):',
@@ -369,8 +379,7 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     '    Use value="current" for the current group chat; never guess chat IDs.',
     ...traceQueryLines,
     ...continuationLines,
-    '  - {"type":"send_message","message":{"kind":"image|file","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","text":"..."}}',
-    '  - {"type":"send_message","message":{"kind":"rich","parts":[{"type":"text","text":"..."},{"type":"image","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","alt":"..."}]},"reply_in_thread":true}',
-    '  - {"type":"recall_message","message_id":"..."}',
+    ...sendMessageLines,
+    ...recallMessageLines,
   ];
 }

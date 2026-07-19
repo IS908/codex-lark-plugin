@@ -36,14 +36,13 @@ import { listConfiguredLocalCliToolNames } from './local-cli-tools.js';
 import { logSafeError } from './safe-log.js';
 import { accessControlStore } from './runtime-access-control.js';
 
-export interface CodexExecDeliveryOptions {
+export interface CodexExecDeliveryBaseOptions {
   message: LarkMessage;
   displayLabel: string;
   runCodexExec?: CodexExecRunner;
   sessionStore?: CodexExecSessionStore;
   useCodexSessions?: boolean;
   sessionHealth?: CodexExecSessionHealthRecorder;
-  sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
   sendDocCommentReply?: (request: DocCommentExecReplyRequest) => Promise<{ replyId?: string }>;
   recordAssistantMessage?: (message: { chatId: string; threadId?: string; text: string }) => void;
   turnObligations?: TurnObligationTracker;
@@ -60,7 +59,33 @@ export interface CodexExecDeliveryOptions {
   actionBaseDir?: string;
   traceLogId?: string;
   traceRunId?: string;
+  abortSignal?: AbortSignal;
+  actionPolicy?: CodexExecActionPolicy;
 }
+
+export interface CodexExecDeliveryOutput {
+  text: string;
+  runtimeFooter?: string;
+}
+
+export type CodexExecDeliverySink = (output: CodexExecDeliveryOutput) => Promise<void>;
+
+export interface CodexExecActionPolicy {
+  blockedActionTypes: readonly CodexExecAction['type'][];
+  reason: string;
+}
+
+export type CodexExecDeliveryOptions = CodexExecDeliveryBaseOptions & (
+  | {
+      /** Final-output sink used by transport-free workloads. */
+      deliverySink: CodexExecDeliverySink;
+      sendReply?: (request: ReplyRequest) => Promise<ReplySendResult>;
+    }
+  | {
+      deliverySink?: undefined;
+      sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
+    }
+);
 
 export interface CodexExecSessionHealthRecorder {
   recordTurn(input: {
@@ -124,6 +149,7 @@ async function enrichCodexExecActionPromptInfo(
   message: LarkMessage,
   continuationAvailable: boolean,
   continuationPermitted: boolean,
+  blockedActionTypes: readonly CodexExecAction['type'][] = [],
 ): Promise<CodexExecActionChannelPromptInfo | null> {
   if (!info?.enabled) return info;
   const baseInfo = {
@@ -139,6 +165,7 @@ async function enrichCodexExecActionPromptInfo(
     continuationTrustedPersonalWorkspaceEligible:
       message.senderId === appConfig.ownerOpenId
       || accessControlStore.isAllowedUserId(message.senderId),
+    ...(blockedActionTypes.length > 0 ? { blockedActionTypes } : {}),
   };
   const exposeForegroundHostTools = appConfig.codexExecSandbox !== 'danger-full-access';
   if (!exposeForegroundHostTools && !baseInfo.continuationEnabled) return baseInfo;
@@ -345,7 +372,9 @@ export function buildCodexExecPrompt(
     ...buildCodexExecActionChannelPrompt(actionInfo),
     'For cronjob schedule fields, use only supported recurring formats: "daily at 09:00", "weekdays at 09:00", "weekly on mon at 09:00", "every 5m", "every 2h", or a 5-field cron expression such as "0 9 * * *". Do not use one-off or natural-language aliases such as "once", "now", "later", "tomorrow at 09:00", or "YYYY-MM-DD HH:mm". Use timezone for an IANA timezone such as "Asia/Shanghai", "Asia/Tokyo", or "UTC"; if omitted, the plugin stores the current LARK_CRON_TIMEZONE default into the job file.',
     'For existing cronjobs, prefer the stable job_id returned by create_job/list_jobs; use name only when it is unique. If create_job reports that a job already exists, use list_jobs plus update_job, disable_job, delete_job, or upsert_job instead of retrying create_job with the same name.',
-    'Use send_message when the user asks Codex to send back an image, file, or ordered text+image rich message through Feishu. For a single image/file, use message.kind=image|file with source=local_path, source=current_message:first_image, or source=quoted_message:first_image. File messages only support local_path. For mixed text and images, use message.kind=rich with ordered parts; the parent bridge prefers one Feishu post and falls back to split messages while preserving order and thread context. Do not use send_message for document comments, audio, video, or interactive cards yet.',
+    ...(actionInfo?.blockedActionTypes?.includes('send_message')
+      ? ['This is a generation-only turn. Return all user-visible content in final stdout; direct send_message delivery is unavailable.']
+      : ['Use send_message when the user asks Codex to send back an image, file, or ordered text+image rich message through Feishu. For a single image/file, use message.kind=image|file with source=local_path, source=current_message:first_image, or source=quoted_message:first_image. File messages only support local_path. For mixed text and images, use message.kind=rich with ordered parts; the parent bridge prefers one Feishu post and falls back to split messages while preserving order and thread context. Do not use send_message for document comments, audio, video, or interactive cards yet.']),
     'Do not put chat_id, thread_id, open_id, created_by, or caller in the action request; the parent Lark bridge derives identity from the current Feishu event.',
     'For ordinary replies, do not write an action request.',
     'If this turn intentionally should not send a Feishu reply, put [LARK_DEFER] or [LARK_NO_REPLY] on its own line outside code fences, optionally followed by a short reason.',
@@ -379,7 +408,10 @@ export function getActiveCodexExecSessionKeys(): ReadonlySet<string> {
 export async function deliverMessageViaCodexExec(
   opts: CodexExecDeliveryOptions,
 ): Promise<void> {
-  const { message, displayLabel, sendReply, turnObligations } = opts;
+  const { message, displayLabel, turnObligations } = opts;
+  if (!opts.deliverySink && !opts.sendReply && message.chatType !== 'doc_comment') {
+    throw new Error('Codex exec delivery requires sendReply or deliverySink.');
+  }
   const runCodexExec = opts.runCodexExec ?? runCodexExecCommand;
   const useCodexSessions = opts.useCodexSessions ?? appConfig.codexExecUseSessions;
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
@@ -406,7 +438,11 @@ export async function deliverMessageViaCodexExec(
       ...progressLimits,
       enabled:
         progressLimits.enabled &&
-        (shouldSendFeishuReplyForMessage(message) || (message.chatType === 'doc_comment' && !!message.docComment)),
+        (
+          !!opts.onProgress
+          || shouldSendFeishuReplyForMessage(message)
+          || (message.chatType === 'doc_comment' && !!message.docComment)
+        ),
     },
     caller: message.senderId,
     messageId: message.messageId,
@@ -427,6 +463,7 @@ export async function deliverMessageViaCodexExec(
         message,
         opts.continuationAvailable ?? true,
         continuationPermitted,
+        opts.actionPolicy?.blockedActionTypes,
       ),
     ),
     imagePaths: collectImagePaths(message),
@@ -441,6 +478,7 @@ export async function deliverMessageViaCodexExec(
     resumeSessionId: existingSession?.sessionId || null,
     traceLogId: resolveTraceLogId(message, opts.traceLogId),
     traceRunId: opts.traceRunId,
+    abortSignal: opts.abortSignal,
     ...(progressSink || actionChannel
       ? {
           extraEnv: {
@@ -525,21 +563,14 @@ export async function deliverMessageViaCodexExec(
   let continuationCreated = false;
   let continuationFailure: CodexExecActionExecutionResult | undefined;
   if (sideChannelActions.length > 0) {
-    const actionResults = opts.actionDispatcher
-      ? await opts.actionDispatcher.execute({
-          message,
-          actions: sideChannelActions,
-          parentSessionId: result.sessionId ?? usedResumeSessionId ?? null,
-          model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
-          continuationPermitted,
-        })
-      : [
-          {
-            ok: false,
-            action: 'action_channel' as const,
-            message: 'Lark exec action dispatcher is not configured.',
-          },
-        ];
+    const actionResults = await dispatchCodexExecActions({
+      opts,
+      message,
+      actions: sideChannelActions,
+      parentSessionId: result.sessionId ?? usedResumeSessionId ?? null,
+      model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
+      continuationPermitted,
+    });
     opts.onActionResults?.(actionResults);
     const continuation = actionResults.find(
       (actionResult) =>
@@ -603,6 +634,17 @@ export async function deliverMessageViaCodexExec(
     return;
   }
 
+  const runtimeFooter = appConfig.cardFooterMetricsEnabled
+    ? formatCodexExecRuntimeMetricsFooter(
+        result.runtimeMetrics ?? null,
+        appConfig.cardFooterMetricsTokenUsageThreshold,
+      )
+    : undefined;
+  if (opts.deliverySink) {
+    await opts.deliverySink({ text, ...(runtimeFooter ? { runtimeFooter } : {}) });
+    return;
+  }
+
   if (message.chatType === 'doc_comment') {
     if (!message.docComment) {
       throw new Error('doc_comment exec delivery requires docComment metadata');
@@ -635,18 +677,56 @@ export async function deliverMessageViaCodexExec(
     return;
   }
 
-  const runtimeFooter = appConfig.cardFooterMetricsEnabled
-    ? formatCodexExecRuntimeMetricsFooter(
-        result.runtimeMetrics ?? null,
-        appConfig.cardFooterMetricsTokenUsageThreshold,
-      )
-    : undefined;
-  await sendReply({
+  await opts.sendReply!({
     chat_id: message.chatId,
     text,
     ...(isFeishuOpenMessageId(message.messageId) ? { reply_to: message.messageId } : {}),
     thread_id: message.threadId,
     ...(runtimeFooter ? { runtimeFooter } : {}),
+  });
+}
+
+async function dispatchCodexExecActions(input: {
+  opts: CodexExecDeliveryOptions;
+  message: LarkMessage;
+  actions: CodexExecAction[];
+  parentSessionId: string | null;
+  model: string | null;
+  continuationPermitted: boolean;
+}): Promise<CodexExecActionExecutionResult[]> {
+  const blocked = new Set(input.opts.actionPolicy?.blockedActionTypes ?? []);
+  const allowedActions = input.actions.filter((action) => !blocked.has(action.type));
+  const allowedResults = input.opts.actionDispatcher && allowedActions.length > 0
+    ? await input.opts.actionDispatcher.execute({
+        message: input.message,
+        actions: allowedActions,
+        parentSessionId: input.parentSessionId,
+        model: input.model,
+        continuationPermitted: input.continuationPermitted,
+      })
+    : [];
+  let allowedIndex = 0;
+  return input.actions.map((action) => {
+    if (blocked.has(action.type)) {
+      return {
+        ok: false,
+        action: action.type,
+        message: input.opts.actionPolicy?.reason ?? `${action.type} is unavailable for this turn.`,
+      };
+    }
+    if (!input.opts.actionDispatcher) {
+      return {
+        ok: false,
+        action: 'action_channel' as const,
+        message: 'Lark exec action dispatcher is not configured.',
+      };
+    }
+    const actionResult = allowedResults[allowedIndex++];
+    return actionResult ?? {
+      ok: false,
+      action: 'action_channel' as const,
+      message: `Lark exec action dispatcher returned no result for ${action.type}.`,
+    };
   });
 }
 
@@ -674,6 +754,7 @@ async function sendCodexExecProgressMessage(
   }
 
   if (!shouldSendFeishuReplyForMessage(message)) return;
+  if (!opts.sendReply) throw new Error('Codex exec progress delivery requires sendReply.');
   await opts.sendReply({
     chat_id: message.chatId,
     text: content,
