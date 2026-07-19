@@ -100,17 +100,22 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
       if (existingById) {
         throw new Error(`Durable Run ID ${request.runId} is owned by another idempotency key.`);
       }
+      if (request.concurrencyKey) {
+        const active = this.readActiveByConcurrencyKey(request.concurrencyKey);
+        if (active) return { run: active, created: false };
+      }
       this.database.prepare(`
         INSERT INTO durable_runs (
-          run_id, workload_kind, idempotency_key, status,
+          run_id, workload_kind, idempotency_key, concurrency_key, status,
           input_version, input_json, state_version, state_json, route_json,
           actor_open_id, created_at, next_run_at, expires_at, max_attempts,
           attempt_count, row_version, retained, updated_at
-        ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 0, ?)
+        ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 0, ?)
       `).run(
         request.runId,
         request.workloadKind,
         request.idempotencyKey,
+        request.concurrencyKey ?? null,
         request.inputVersion,
         inputJson,
         request.stateVersion,
@@ -129,6 +134,11 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
 
   async get(runId: string): Promise<DurableRunRecord | null> {
     return this.readRunBy('run_id = ?', runId);
+  }
+
+  async getActiveByConcurrencyKey(concurrencyKey: string): Promise<DurableRunRecord | null> {
+    if (!concurrencyKey.trim()) throw new Error('Durable Run concurrencyKey is required.');
+    return this.readActiveByConcurrencyKey(concurrencyKey);
   }
 
   async claimDue(
@@ -764,6 +774,15 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
     ) as SqlRow | undefined;
   }
 
+  private readActiveByConcurrencyKey(concurrencyKey: string): DurableRunRecord | null {
+    return this.readRunBy(
+      `concurrency_key = ? AND deleted_at IS NULL AND status IN (
+        'queued', 'running', 'waiting_retry', 'waiting_user', 'recovering', 'cancel_requested'
+      )`,
+      concurrencyKey,
+    );
+  }
+
   private terminalizeInvalidRun(
     runId: string,
     rowVersion: number,
@@ -857,6 +876,11 @@ function validateCreateRequest(request: DurableRunCreateRequest): void {
   if (!Number.isSafeInteger(request.stateVersion) || request.stateVersion < 1) {
     throw new Error('Durable Run stateVersion must be a positive integer.');
   }
+  if (request.concurrencyKey !== undefined) {
+    if (!request.concurrencyKey.trim() || request.concurrencyKey.length > 512) {
+      throw new Error('Durable Run concurrencyKey must be 1-512 characters.');
+    }
+  }
   if (!Number.isSafeInteger(request.maxAttempts) || request.maxAttempts < 1 || request.maxAttempts > 20) {
     throw new Error('Durable Run maxAttempts must be an integer between 1 and 20.');
   }
@@ -870,6 +894,9 @@ function mapRun(row: SqlRow): DurableRunRecord {
     runId: requiredString(row, 'run_id'),
     workloadKind: requiredString(row, 'workload_kind'),
     idempotencyKey: requiredString(row, 'idempotency_key'),
+    ...(optionalString(row, 'concurrency_key')
+      ? { concurrencyKey: optionalString(row, 'concurrency_key') }
+      : {}),
     status: requiredString(row, 'status') as DurableRunStatus,
     inputVersion: requiredNumber(row, 'input_version'),
     input: parseBoundedJson(requiredString(row, 'input_json'), 'Durable Run input'),

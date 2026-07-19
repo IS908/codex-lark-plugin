@@ -233,6 +233,10 @@ echo "=== Job store unit checks ==="
 node --import tsx scripts/job-smoke.ts
 
 echo ""
+echo "=== Cron durable-run admission checks ==="
+node --import tsx scripts/cron-run-admission-smoke.ts
+
+echo ""
 echo "=== Job tool unit checks ==="
 node --import tsx scripts/job-tools-smoke.ts
 

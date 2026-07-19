@@ -38,6 +38,7 @@ import {
   schedulerRetryDelayMs,
 } from './scheduler-policy.js';
 import { JOB_THREAD_PREFIX, jobCreatedAtHash, parseJobThreadId } from './job-thread.js';
+import type { CronRunAdmission } from './cron/run-admission.js';
 export {
   isPermanentTargetError,
   isRetryableError,
@@ -62,6 +63,8 @@ export interface SchedulerOptions {
   scanIntervalMs?: number;
   /** Test seam. Defaults to the JSON Job repository. */
   repository?: Partial<SchedulerRepository>;
+  /** Task 5 dependency seam. Production cutover is intentionally deferred to Task 7. */
+  admission?: CronRunAdmission;
 }
 
 export interface SchedulerRepository {
@@ -258,6 +261,7 @@ export async function recordCronJobReportDelivery(
 export class JobScheduler {
   private timer: NodeJS.Timeout | null = null;
   private client: Lark.Client;
+  private readonly admission?: CronRunAdmission;
   private transport: LarkTransport;
   private identitySession: IdentitySession;
   private botMessageTracker?: BotMessageTracker;
@@ -271,6 +275,7 @@ export class JobScheduler {
 
   constructor(opts: SchedulerOptions) {
     this.client = opts.client;
+    this.admission = opts.admission;
     this.transport = opts.transport ?? createOpenApiLarkTransport(opts.client, {
       outboundMessageContextCache: opts.botMessageTracker,
     });

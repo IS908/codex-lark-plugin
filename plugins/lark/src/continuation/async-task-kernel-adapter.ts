@@ -103,6 +103,10 @@ export class AsyncTaskKernelAdapter implements
     return job ? durableRunFromJob(job) : null;
   }
 
+  getActiveByConcurrencyKey(concurrencyKey: string): Promise<DurableRunRecord | null> {
+    return this.options.repository.durableRuns.getActiveByConcurrencyKey(concurrencyKey);
+  }
+
   async claimDue(
     workloadKinds: readonly string[],
     workerId: string,

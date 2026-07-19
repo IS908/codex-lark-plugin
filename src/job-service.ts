@@ -185,6 +185,7 @@ function buildJobFile(
   return {
     meta: {
       id: normalized.id,
+      revision: 1,
       name: input.name,
       type: input.type,
       schedule: normalized.cron,

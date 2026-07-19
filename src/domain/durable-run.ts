@@ -75,6 +75,7 @@ export interface DurableRunRecord {
   runId: string;
   workloadKind: string;
   idempotencyKey: string;
+  concurrencyKey?: string;
   status: DurableRunStatus;
   inputVersion: number;
   input: unknown;
@@ -176,6 +177,7 @@ export interface DurableRunCreateRequest {
   runId: string;
   workloadKind: string;
   idempotencyKey: string;
+  concurrencyKey?: string;
   inputVersion: number;
   input: unknown;
   stateVersion: number;

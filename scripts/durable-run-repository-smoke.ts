@@ -798,6 +798,51 @@ try {
     }
   });
 
+  await reviewRegression('existing v10 schema gains process-safe active concurrency fencing', async () => {
+    const upgradePath = join(root, 'v10-concurrency-upgrade.sqlite');
+    const seed = await SqliteDurableRunRepository.open({ databasePath: upgradePath });
+    seed.close();
+    const legacyV10 = new DatabaseSync(upgradePath);
+    try {
+      legacyV10.exec(`
+        DROP INDEX durable_runs_active_concurrency_idx;
+        ALTER TABLE durable_runs DROP COLUMN concurrency_key;
+      `);
+    } finally {
+      legacyV10.close();
+    }
+    const [first, second] = await Promise.all([
+      SqliteDurableRunRepository.open({ databasePath: upgradePath }),
+      SqliteDurableRunRepository.open({ databasePath: upgradePath }),
+    ]);
+    try {
+      const firstRequest = request('run-concurrency-upgrade-a', 'cron_prompt');
+      firstRequest.concurrencyKey = 'cron-job:upgrade';
+      const secondRequest = request('run-concurrency-upgrade-b', 'cron_prompt');
+      secondRequest.concurrencyKey = 'cron-job:upgrade';
+      const created = await Promise.all([
+        first.create(firstRequest),
+        second.create(secondRequest),
+      ]);
+      assert.equal(created.filter((result) => result.created).length, 1);
+      assert.equal(created[0]?.run.runId, created[1]?.run.runId);
+      const upgraded = new DatabaseSync(upgradePath, { enableForeignKeyConstraints: true });
+      try {
+        assert.ok(upgraded.prepare('PRAGMA table_info(durable_runs)').all()
+          .some((column) => column.name === 'concurrency_key'));
+        assert.ok(upgraded.prepare(`
+          SELECT name FROM sqlite_master
+          WHERE type = 'index' AND name = 'durable_runs_active_concurrency_idx'
+        `).get());
+      } finally {
+        upgraded.close();
+      }
+    } finally {
+      first.close();
+      second.close();
+    }
+  });
+
   repository.close();
 
   const database = new DatabaseSync(databasePath, { enableForeignKeyConstraints: true });

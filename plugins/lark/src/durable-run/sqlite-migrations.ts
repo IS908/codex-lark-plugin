@@ -27,6 +27,7 @@ export function migrateSqliteToDurableV10(database: DatabaseSync): void {
     );
   }
   if (version === DURABLE_RUN_SCHEMA_VERSION) {
+    hardenDurableRunConcurrency(database);
     hardenDurableAttemptOwnership(database);
     assertDurableSchema(database);
     return;
@@ -222,6 +223,7 @@ export function createDurableSchema(database: DatabaseSync): void {
       run_id TEXT PRIMARY KEY,
       workload_kind TEXT NOT NULL,
       idempotency_key TEXT NOT NULL UNIQUE,
+      concurrency_key TEXT,
       status TEXT NOT NULL CHECK(status IN (
         'queued', 'running', 'waiting_retry', 'waiting_user', 'recovering',
         'completed', 'partial', 'blocked', 'failed', 'cancel_requested', 'cancelled'
@@ -256,6 +258,13 @@ export function createDurableSchema(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS durable_runs_actor_idx
       ON durable_runs(actor_open_id, created_at DESC)
       WHERE deleted_at IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS durable_runs_active_concurrency_idx
+      ON durable_runs(concurrency_key)
+      WHERE concurrency_key IS NOT NULL AND deleted_at IS NULL
+        AND status IN (
+          'queued', 'running', 'waiting_retry', 'waiting_user',
+          'recovering', 'cancel_requested'
+        );
 
     CREATE TABLE IF NOT EXISTS durable_attempts (
       attempt_id TEXT PRIMARY KEY,
@@ -1286,6 +1295,24 @@ function tableExists(database: DatabaseSync, table: string): boolean {
   return row !== undefined;
 }
 
+function hardenDurableRunConcurrency(database: DatabaseSync): void {
+  immediateTransaction(database, () => {
+    const columns = database.prepare('PRAGMA table_info(durable_runs)').all() as SqlRow[];
+    if (!columns.some((column) => requiredString(column, 'name') === 'concurrency_key')) {
+      database.exec('ALTER TABLE durable_runs ADD COLUMN concurrency_key TEXT;');
+    }
+    database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS durable_runs_active_concurrency_idx
+        ON durable_runs(concurrency_key)
+        WHERE concurrency_key IS NOT NULL AND deleted_at IS NULL
+          AND status IN (
+            'queued', 'running', 'waiting_retry', 'waiting_user',
+            'recovering', 'cancel_requested'
+          );
+    `);
+  });
+}
+
 function hardenDurableAttemptOwnership(database: DatabaseSync): void {
   const childTables = [
     {
@@ -1396,6 +1423,15 @@ function assertDurableSchema(database: DatabaseSync): void {
       throw new Error(`Durable Run schema is missing composite Attempt ownership for ${table}.`);
     }
   }
+  const runColumns = database.prepare('PRAGMA table_info(durable_runs)').all() as SqlRow[];
+  if (!runColumns.some((column) => requiredString(column, 'name') === 'concurrency_key')) {
+    throw new Error('Durable Run schema is missing concurrency_key.');
+  }
+  const concurrencyIndex = database.prepare(`
+    SELECT 1 AS present FROM sqlite_master
+    WHERE type = 'index' AND name = 'durable_runs_active_concurrency_idx'
+  `).get();
+  if (!concurrencyIndex) throw new Error('Durable Run schema is missing active concurrency fencing.');
   const violations = database.prepare('PRAGMA foreign_key_check').all();
   if (violations.length > 0) throw new Error('Durable Run schema has foreign-key violations.');
 }

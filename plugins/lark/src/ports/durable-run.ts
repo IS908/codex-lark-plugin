@@ -67,6 +67,7 @@ export interface DurableRunRepository {
   initialize(): Promise<void>;
   create(request: DurableRunCreateRequest): Promise<DurableRunCreateResult>;
   get(runId: string): Promise<DurableRunRecord | null>;
+  getActiveByConcurrencyKey(concurrencyKey: string): Promise<DurableRunRecord | null>;
   claimDue(
     workloadKinds: readonly string[],
     workerId: string,
