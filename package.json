@@ -33,6 +33,7 @@
     "smoke:sdk": "node --import tsx scripts/sdk-channel-scaffold-smoke.ts && node --import tsx scripts/sdk-identity-smoke.ts && node --import tsx scripts/sdk-message-parity-smoke.ts && node --import tsx scripts/sdk-outbound-parity-smoke.ts && node --import tsx scripts/lark-transport-smoke.ts && node --import tsx scripts/sdk-runtime-smoke.ts && node --import tsx scripts/sdk-rollout-doc-smoke.ts",
     "check:release-version": "node scripts/check-release-version.js",
     "check:plugin-src-sync": "node scripts/check-plugin-src-sync.js",
+    "check:runtime-bundle-sync": "node scripts/build-runtime-bundles.js --target plugins/lark --check",
     "check:architecture": "node scripts/architecture-check.js",
     "audit:deps": "npm audit --omit=dev --audit-level=high"
   },

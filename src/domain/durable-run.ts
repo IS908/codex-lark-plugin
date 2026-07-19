@@ -212,6 +212,30 @@ export interface DurableRunDeliveryClaim {
   lastAttemptAt?: string;
   lastErrorCode?: string;
   lastErrorSummary?: string;
+  recoveredFromExpiredLease?: boolean;
+}
+
+export type DurableRunDeliveryStatus =
+  | 'pending'
+  | 'sending'
+  | 'sent'
+  | 'unknown'
+  | 'failed'
+  | 'superseded';
+
+export interface DurableRunDeliverySnapshot {
+  outboxId: string;
+  runId: string;
+  eventKey: string;
+  kind: string;
+  route: unknown;
+  payload: unknown;
+  status: DurableRunDeliveryStatus;
+  attemptCount: number;
+  updatedAt: string;
+  messageId?: string;
+  errorCode?: string;
+  errorSummary?: string;
 }
 
 export type DurableRunDeliveryResult =

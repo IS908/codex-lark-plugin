@@ -125,7 +125,6 @@ export async function createContinuationRuntime(
     }
     const now = clock.now().toISOString();
     const continuationAudit = options.audit ?? defaultContinuationAudit;
-    await repository.recoverExpiredLeases(now);
     await repository.expireOverdue(now);
     await runRetentionCleanup(
       repository,

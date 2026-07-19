@@ -37,8 +37,14 @@ export interface CronPromptExecution {
   runStatus: 'success' | 'failed';
   failureReason: string | null;
   diagnostics: CronJobDiagnosticSnapshot;
+  /** Set only when the executor guarantees that external execution never started. */
+  retrySafe?: boolean;
 }
 
+/**
+ * Implementations must return a failed result once execution may have started.
+ * Throwing is reserved for retry-safe failures known to precede external work.
+ */
 export type CronPromptExecutor = (
   input: CronPromptExecutionInput,
   signal: AbortSignal,
@@ -47,6 +53,8 @@ export type CronPromptExecutor = (
 export interface CronMessageExecution {
   content: string;
   messageType: string;
+  runStatus: 'success' | 'failed';
+  failureReason: string | null;
 }
 
 export type CronRunCommit =
@@ -62,6 +70,8 @@ export type CronRunCommit =
       kind: 'message';
       content: string;
       messageType: string;
+      runStatus: 'success' | 'failed';
+      failureReason: string | null;
     };
 
 export interface CronRunState {
@@ -91,6 +101,8 @@ export type CronTerminalPayload =
       jobRevision: number;
       content: string;
       messageType: string;
+      runStatus: 'success' | 'failed';
+      failureReason: string | null;
     };
 
 export function parseCronRunInput(
@@ -153,6 +165,13 @@ export function parseCronRunState(value: unknown, version: number): CronRunState
   const rawCommit = record(root.commit, 'Cron Run commit');
   const kind = literal(rawCommit.kind, ['prompt', 'message'] as const, 'commit.kind');
   if (kind === 'message') {
+    const runStatus = literal(rawCommit.runStatus, ['success', 'failed'] as const, 'commit.runStatus');
+    const failureReason = rawCommit.failureReason === null
+      ? null
+      : nonEmpty(rawCommit.failureReason, 'commit.failureReason');
+    if ((runStatus === 'failed') !== Boolean(failureReason)) {
+      throw new Error('Cron message commit status and failureReason are inconsistent.');
+    }
     return {
       schemaVersion: 1,
       phase,
@@ -160,6 +179,8 @@ export function parseCronRunState(value: unknown, version: number): CronRunState
         kind,
         content: nonEmpty(rawCommit.content, 'commit.content'),
         messageType: nonEmpty(rawCommit.messageType, 'commit.messageType'),
+        runStatus,
+        failureReason,
       },
     };
   }

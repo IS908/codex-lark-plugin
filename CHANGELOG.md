@@ -21,6 +21,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Separated Cron execution retry from Feishu delivery retry so a generated report is never regenerated due to delivery failure, and ambiguous external outcomes are not blindly replayed.
 - Added stable Feishu delivery UUIDs, exact Job revision/Run projection fences, permanent-target auto-pause, and standalone scheduled delivery that cannot attach to or clear state for unrelated chat turns.
 - Preserved completed Cron JSON runtime projections across duplicate schedule scans and hardened the asynchronous audit-log smoke test against timing races.
+- Renewed execution and delivery leases through the routed production repository, terminalized stale queued and active Runs with workload-owned failure delivery, persisted the external-send boundary so only safe pre-send claims replay, added bounded retry backoff and poison-envelope terminalization, fenced manual versus scheduled projections and max-age commits, blocked nested Cron/background actions, repaired admission state before workers start, and stopped scheduled/manual admission before worker shutdown.
+- Reconciled Cron JSON compatibility state from the latest authoritative SQLite Run/outbox snapshot on every scheduler scan (including paused manual Jobs), classified Feishu 408/5xx responses as unknown instead of replayable, kept expired-attempt recovery exclusively worker-owned, and atomically released shutdown claims when execution had been marked but not invoked.
+- Terminalized expired pre-execution crash recovery without consuming another Attempt or retaining the Job concurrency key, and deferred terminal JSON projection until the pending projection succeeds so reconciliation preserves `run_count`, `last_run_at`, and permanent-target auto-pause ordering.
+- Restored bounded Cron prompt retries for explicitly retry-safe failures before Codex execution starts, while preserving started or unknown execution outcomes as terminal and never replaying them blindly.
+- Added a shared typed pre-start retry classifier, handled child-process stdin failures without terminating the plugin, and added a deterministic check that rejects stale packaged runtime bundles.
 
 ## [2.8.2] - 2026-07-19
 

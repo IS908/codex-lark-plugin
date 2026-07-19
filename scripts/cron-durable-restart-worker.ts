@@ -164,8 +164,8 @@ async function runCronWorker(
     const run = await baseRepository.get(await onlyRunId(baseRepository));
     return Boolean(
       run
-      && (run.status === 'completed' || run.status === 'blocked')
-      && outboxIsSent(sharedRoot),
+      && (run.status === 'completed' || run.status === 'blocked' || run.status === 'failed')
+      && outboxIsTerminal(sharedRoot),
     );
   });
   await worker.stop();
@@ -201,6 +201,7 @@ function interceptRepository(
     failAttempt: (claim, failure, now, transition) => base.failAttempt(claim, failure, now, transition),
     recoverExpiredLeases: (kinds, now) => base.recoverExpiredLeases(kinds, now),
     claimDelivery: (kinds, workerId, now) => base.claimDelivery(kinds, workerId, now),
+    markDeliveryStarted: (claim, now) => base.markDeliveryStarted(claim, now),
     commitDelivery: (claim, result, now) => base.commitDelivery(claim, result, now),
     close: () => {},
   };
@@ -267,12 +268,19 @@ async function recordConfirmedDelivery(sharedRoot: string, idempotencyKey: strin
 }
 
 async function onlyRunId(_repository: DurableRunRepository): Promise<string> {
-  const job = await requiredJob();
-  if (!job.runtime.run_id) throw new Error('Expected Cron admission projection to record run_id.');
-  return job.runtime.run_id;
+  const database = new DatabaseSync(databasePath(root), { readOnly: true });
+  try {
+    const row = database.prepare('SELECT run_id AS runId FROM durable_runs LIMIT 1').get() as
+      | { runId: string }
+      | undefined;
+    if (!row?.runId) throw new Error('Expected one durable Cron Run.');
+    return row.runId;
+  } finally {
+    database.close();
+  }
 }
 
-function outboxIsSent(sharedRoot: string): boolean {
+function outboxIsTerminal(sharedRoot: string): boolean {
   const database = new DatabaseSync(databasePath(sharedRoot), { readOnly: true });
   try {
     const row = database.prepare(`
@@ -281,7 +289,7 @@ function outboxIsSent(sharedRoot: string): boolean {
       ORDER BY created_at
       LIMIT 1
     `).get() as { status: string } | undefined;
-    return row?.status === 'sent';
+    return row?.status === 'sent' || row?.status === 'unknown';
   } finally {
     database.close();
   }

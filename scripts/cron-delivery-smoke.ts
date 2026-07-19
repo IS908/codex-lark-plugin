@@ -20,6 +20,9 @@ function claim(
   payload: Record<string, unknown>,
   overrides: Partial<DurableRunDeliveryClaim> = {},
 ): DurableRunDeliveryClaim {
+  const normalizedPayload = payload.kind === 'message'
+    ? { runStatus: 'success', failureReason: null, ...payload }
+    : payload;
   return {
     outboxId: `outbox_${suffix}`,
     runId: `cron_run_${suffix}`,
@@ -42,7 +45,7 @@ function claim(
       jobId: 'daily-report',
       jobCreatedAt: '2026-07-19T00:00:00.000Z',
       jobRevision: 3,
-      ...payload,
+      ...normalizedPayload,
     },
     attemptCount: 1,
     leaseExpiresAt: '2026-07-19T03:00:30.000Z',
@@ -149,12 +152,43 @@ function transportHarness(options: {
   });
 }
 
+// Workload-generated message failures remain failures in the JSON compatibility
+// projection instead of being rewritten as successful fixed messages.
+{
+  const failedClaim = claim('message-failure', {
+    kind: 'message',
+    content: 'CronJob failed before the message could be committed.',
+    messageType: 'text',
+    runStatus: 'failed',
+    failureReason: 'The CronJob exhausted its execution attempt budget.',
+  });
+  const projected = makeJob({
+    runtime: { run_id: failedClaim.runId, delivery_status: null },
+  });
+  const repository = {
+    async mutateJob(_id: string, mutate: (job: JobFile) => void | false) {
+      return mutate(projected) === false ? null : projected;
+    },
+  };
+  const harness = transportHarness({ projectionRepository: repository });
+  assert.deepEqual(
+    await harness.delivery.deliver(failedClaim),
+    { status: 'sent', messageId: 'om_cron_delivered' },
+  );
+  assert.equal(projected.runtime.run_status, 'failed');
+  assert.equal(
+    projected.runtime.last_error,
+    'The CronJob exhausted its execution attempt budget.',
+  );
+}
+
 function transportError(message: string, fields: Record<string, unknown>): Error {
   return Object.assign(new Error(message), fields);
 }
 
-// A failure known to happen before sending is retryable. An ambiguous timeout
-// is terminal-unknown so the worker never blindly sends a duplicate.
+// A failure known to happen before sending is retryable. Timeouts and socket
+// breakages can happen after Feishu accepts the request, so they are
+// terminal-unknown and the worker never blindly sends a duplicate.
 {
   const retryHarness = transportHarness({
     error: transportError('DNS unavailable', { code: 'ENOTFOUND' }),
@@ -175,6 +209,230 @@ function transportError(message: string, fields: Record<string, unknown>): Error
     kind: 'message', content: 'do not duplicate', messageType: 'text',
   }));
   assert.equal(unknown.status, 'unknown');
+
+  for (const code of ['ECONNRESET', 'ECONNABORTED', 'EPIPE']) {
+    const socketHarness = transportHarness({
+      error: transportError(`socket failed with ${code}`, { code }),
+    });
+    const socketResult = await socketHarness.delivery.deliver(claim(`socket-${code}`, {
+      kind: 'message', content: 'do not duplicate', messageType: 'text',
+    }));
+    assert.equal(socketResult.status, 'unknown', `${code} may occur after Feishu accepts a send`);
+    assert.equal(
+      socketResult.status === 'unknown' ? socketResult.errorCode : undefined,
+      'cron_delivery_outcome_unknown',
+    );
+  }
+
+  for (const status of [408, 500, 502, 503, 504]) {
+    const httpHarness = transportHarness({
+      error: transportError(`Feishu returned ${status} after dispatch`, {
+        response: { status },
+      }),
+    });
+    const httpResult = await httpHarness.delivery.deliver(claim(`http-${status}`, {
+      kind: 'message', content: 'do not duplicate', messageType: 'text',
+    }));
+    assert.equal(httpResult.status, 'unknown', `${status} may follow an accepted send`);
+    assert.equal(
+      httpResult.status === 'unknown' ? httpResult.errorCode : undefined,
+      'cron_delivery_outcome_unknown',
+    );
+  }
+}
+
+// SQLite outbox state is authoritative after Feishu confirms a send. A failed
+// best-effort JSON runtime projection must still return `sent`, so the worker
+// commits the outbox instead of retrying and duplicating the message.
+{
+  let mutationCount = 0;
+  const projected = makeJob({
+    runtime: { run_id: 'cron_run_projection-failure', delivery_status: null },
+  });
+  const repository = {
+    async mutateJob(_id: string, mutate: (job: JobFile) => void | false) {
+      mutationCount += 1;
+      if (mutationCount === 2) throw new Error('disk full while projecting delivery result');
+      return mutate(projected) === false ? null : projected;
+    },
+  };
+  const harness = transportHarness({ projectionRepository: repository });
+  const result = await harness.delivery.deliver(claim('projection-failure', {
+    kind: 'message', content: 'send exactly once', messageType: 'text',
+  }));
+  assert.deepEqual(result, { status: 'sent', messageId: 'om_cron_delivered' });
+  assert.equal(harness.sends.length, 1);
+  assert.ok(harness.sends[0].uuid, 'confirmed delivery must retain its stable UUID');
+}
+
+// A permanent target error cannot auto-pause (and revise) the Job until its
+// terminal delivery result has been projected successfully. Reconciliation
+// will retry both operations in order.
+{
+  let mutations = 0;
+  const projected = makeJob({
+    runtime: { run_id: 'cron_run_projection-before-autopause', delivery_status: null },
+  });
+  const repository = {
+    async mutateJob(_id: string, mutate: (job: JobFile) => void | false) {
+      mutations += 1;
+      if (mutations === 2) throw new Error('terminal projection unavailable');
+      return mutate(projected) === false ? null : projected;
+    },
+  };
+  const harness = transportHarness({
+    error: transportError('chat not found', {
+      status: 400,
+      response: { status: 400, data: { code: 230001, msg: 'chat not found' } },
+    }),
+    projectionRepository: repository,
+  });
+  const result = await harness.delivery.deliver(claim('projection-before-autopause', {
+    kind: 'message', content: 'cannot deliver', messageType: 'text',
+  }));
+  assert.equal(result.status, 'failed');
+  assert.equal(mutations, 2, 'auto-pause must wait for a successful terminal projection');
+}
+
+// Admission repair can race between pending and terminal projection. Even if
+// the terminal mutation then applies, auto-pause must wait until reconciliation
+// has rebuilt the complete pending -> terminal compatibility projection.
+{
+  let mutations = 0;
+  const projected = makeJob({
+    runtime: {
+      run_id: 'older_run',
+      run_count: 0,
+      run_status: null,
+      output_status: null,
+      delivery_status: null,
+      report: null,
+      report_type: null,
+    },
+  });
+  const repository = {
+    async mutateJob(_id: string, mutate: (job: JobFile) => void | false) {
+      mutations += 1;
+      const accepted = mutate(projected);
+      if (mutations === 1) projected.runtime.run_id = 'cron_run_projection-race';
+      if (accepted === false) return null;
+      if (projected.meta.status === 'paused') projected.meta.revision += 1;
+      return projected;
+    },
+  };
+  const harness = transportHarness({
+    error: transportError('chat not found', {
+      status: 400,
+      response: { status: 400, data: { code: 230001, msg: 'chat not found' } },
+    }),
+    projectionRepository: repository,
+  });
+  const result = await harness.delivery.deliver(claim('projection-race', {
+    kind: 'message', content: 'cannot deliver', messageType: 'text',
+  }));
+  assert.equal(result.status, 'failed');
+  assert.equal(mutations, 1, 'delivery must leave terminal projection and auto-pause to reconciliation');
+  assert.equal(projected.meta.status, 'active');
+  assert.equal(projected.runtime.run_count, 0);
+  assert.equal(projected.runtime.delivery_status, null);
+}
+
+// An expired sending lease is an ambiguous external side effect. Recovery must
+// project unknown without invoking Feishu again, even with the same UUID.
+{
+  const projected = makeJob({ runtime: { run_id: 'cron_run_interrupted-send', delivery_status: 'pending' } });
+  const repository = {
+    async mutateJob(_id: string, mutate: (job: JobFile) => void | false) {
+      return mutate(projected) === false ? null : projected;
+    },
+  };
+  const harness = transportHarness({ projectionRepository: repository });
+  const result = await harness.delivery.deliver(claim('interrupted-send', {
+    kind: 'message', content: 'must not replay', messageType: 'text',
+  }, { recoveredFromExpiredLease: true }));
+  assert.equal(result.status, 'unknown');
+  assert.equal(harness.sends.length, 0);
+  assert.equal(projected.runtime.delivery_status, 'failed');
+  assert.match(projected.runtime.delivery_error ?? '', /not replayed/i);
+}
+
+// A compatibility projection failure occurs before any external send and is
+// safe to retry, but must be delayed so one bad Job cannot hot-loop the queue.
+{
+  const harness = transportHarness({
+    projectionRepository: {
+      async mutateJob() { throw new Error('projection storage unavailable'); },
+    },
+  });
+  let sendBoundaryCalls = 0;
+  const result = await harness.delivery.deliver(claim('pending-projection-failure', {
+    kind: 'message', content: 'not sent yet', messageType: 'text',
+  }), {
+    async markExternalSendStarted() {
+      sendBoundaryCalls += 1;
+      return true;
+    },
+  });
+  assert.equal(result.status, 'retry');
+  assert.equal(result.status === 'retry' ? result.retryAt : undefined, '2026-07-19T03:00:30.000Z');
+  assert.equal(harness.sends.length, 0);
+  assert.equal(sendBoundaryCalls, 0);
+}
+
+// The durable external-send marker is written only after compatibility
+// projection succeeds and immediately before transport dispatch.
+{
+  const harness = transportHarness();
+  let sendBoundaryCalls = 0;
+  const result = await harness.delivery.deliver(claim('send-boundary', {
+    kind: 'message', content: 'send after durable boundary', messageType: 'text',
+  }), {
+    async markExternalSendStarted() {
+      sendBoundaryCalls += 1;
+      assert.equal(harness.sends.length, 0);
+      return true;
+    },
+  });
+  assert.equal(result.status, 'sent');
+  assert.equal(sendBoundaryCalls, 1);
+  assert.equal(harness.sends.length, 1);
+
+  const superseded = await harness.delivery.deliver(claim('send-boundary-stale', {
+    kind: 'message', content: 'must not send', messageType: 'text',
+  }), {
+    async markExternalSendStarted() { return false; },
+  });
+  assert.deepEqual(superseded, { status: 'superseded' });
+  assert.equal(harness.sends.length, 1);
+}
+
+// Auto-pause is a JSON compatibility projection. Its failure must not replace
+// the authoritative permanent delivery result with a retry.
+{
+  let mutations = 0;
+  const projected = makeJob({
+    runtime: { run_id: 'cron_run_auto-pause-failure', delivery_status: null },
+  });
+  const repository = {
+    async mutateJob(_id: string, mutate: (job: JobFile) => void | false) {
+      mutations += 1;
+      if (mutations === 3) throw new Error('disk unavailable during auto-pause');
+      return mutate(projected) === false ? null : projected;
+    },
+  };
+  const harness = transportHarness({
+    error: transportError('chat not found', {
+      status: 400,
+      response: { status: 400, data: { code: 230001, msg: 'chat not found' } },
+    }),
+    projectionRepository: repository,
+  });
+  const result = await harness.delivery.deliver(claim('auto-pause-failure', {
+    kind: 'message', content: 'cannot deliver', messageType: 'text',
+  }));
+  assert.equal(result.status, 'failed');
+  assert.equal(result.status === 'failed' ? result.errorCode : undefined, 'cron_delivery_target_permanent');
+  assert.equal(mutations, 3);
 }
 
 // Permanent target failures are failed (not retried) and runtime projection
@@ -232,9 +490,11 @@ function transportError(message: string, fields: Record<string, unknown>): Error
   const mismatched = claim('mismatched-envelope', {
     kind: 'message', content: 'must not send', messageType: 'text', jobRevision: 4,
   });
-  await assert.rejects(
-    harness.delivery.deliver(mismatched),
-    /route and payload identify different CronJob definitions/,
+  const result = await harness.delivery.deliver(mismatched);
+  assert.equal(result.status, 'failed');
+  assert.equal(
+    result.status === 'failed' ? result.errorCode : undefined,
+    'cron_delivery_envelope_invalid',
   );
   assert.equal(harness.sends.length, 0);
 }

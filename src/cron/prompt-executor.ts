@@ -6,6 +6,9 @@ import {
 } from '../codex-exec-delivery.js';
 import type { CodexExecActionDispatcher } from '../codex-exec-actions.js';
 import type { CodexExecRunner } from '../codex-exec.js';
+import {
+  isRetrySafeCodexExecPreStartError,
+} from '../codex-exec.js';
 import type { CodexExecSessionStore } from '../codex-session-store.js';
 import { CronJobRunDiagnostics, formatCronJobDiagnostics, sanitizeDiagnosticText } from '../cronjob-diagnostics.js';
 import type { IdentitySession } from '../identity-session.js';
@@ -18,6 +21,18 @@ import type {
   CronPromptExecutionInput,
   CronPromptExecutor,
 } from './contracts.js';
+
+const CRON_PROMPT_BLOCKED_ACTION_TYPES = [
+  'send_message',
+  'recall_message',
+  'create_job',
+  'run_job',
+  'update_job',
+  'disable_job',
+  'delete_job',
+  'upsert_job',
+  'create_continuation_job',
+] as const;
 
 export interface CronPromptExecutorOptions {
   identitySession: IdentitySession;
@@ -85,8 +100,8 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
         progressVisible: false,
         abortSignal: signal,
         actionPolicy: {
-          blockedActionTypes: ['send_message', 'recall_message'],
-          reason: 'Direct Feishu message mutations are unavailable during durable Cron generation. Return the report in final stdout for durable delivery.',
+          blockedActionTypes: CRON_PROMPT_BLOCKED_ACTION_TYPES,
+          reason: 'Cron generation cannot mutate Feishu messages or create, rerun, update, or schedule background work. Return the report in final stdout for durable delivery.',
         },
         runCodexExec: options.runCodexExec,
         useCodexSessions: options.useCodexSessions,
@@ -128,6 +143,7 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
       };
     } catch (error) {
       if (signal.aborted) throw error;
+      if (isRetrySafeCodexExecPreStartError(error)) throw error;
       diagnostics.failStage(undefined, error);
       const snapshot = diagnostics.finish('failed', error);
       const reason = sanitizeDiagnosticText(error instanceof Error ? error.message : String(error), 1000)
@@ -146,6 +162,7 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
     }
   };
 }
+
 
 function snapshotAsJobFile(input: CronPromptExecutionInput): JobFile {
   const job = input.job;

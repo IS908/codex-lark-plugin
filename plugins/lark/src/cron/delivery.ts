@@ -27,38 +27,101 @@ export interface CronDeliveryOptions {
 }
 
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
+const AMBIGUOUS_SOCKET_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ECONNABORTED',
+  'EPIPE',
+]);
 
 export function createCronDelivery(options: CronDeliveryOptions): DurableRunDelivery {
   return {
-    async deliver(claim): Promise<DurableRunDeliveryResult> {
-      const route = parseCronDeliveryRoute(claim.route);
-      const payload = parseCronTerminalPayload(claim.payload);
-      assertMatchingCronEnvelope(route, payload);
+    managesExternalSendBoundary: true,
+    async recoverInterruptedDelivery(claim): Promise<DurableRunDeliveryResult> {
+      const result: DurableRunDeliveryResult = {
+        status: 'unknown',
+        errorCode: 'cron_delivery_interrupted_unknown',
+        errorSummary: 'Delivery was interrupted after sending may have started; it was not replayed.',
+      };
+      try {
+        const route = parseCronDeliveryRoute(claim.route);
+        const payload = parseCronTerminalPayload(claim.payload);
+        assertMatchingCronEnvelope(route, payload);
+        await projectDeliveryResultSafely(
+          claim,
+          route,
+          payload,
+          result,
+          options.projectionRepository,
+        );
+      } catch {
+        // SQLite outbox state remains authoritative when compatibility data is invalid.
+      }
+      return result;
+    },
+    async deliver(claim, context): Promise<DurableRunDeliveryResult> {
       const now = (options.now ?? (() => new Date()))().toISOString();
-      await projectCronDeliveryPending(
-        claim,
-        route,
-        payload,
-        now,
-        options.projectionRepository,
-      );
+      let route: CronDeliveryRoute;
+      let payload: CronTerminalPayload;
+      try {
+        route = parseCronDeliveryRoute(claim.route);
+        payload = parseCronTerminalPayload(claim.payload);
+        assertMatchingCronEnvelope(route, payload);
+      } catch (error) {
+        return {
+          status: 'failed',
+          errorCode: 'cron_delivery_envelope_invalid',
+          errorSummary: deliveryErrorSummary(error, 'Stored Cron delivery data is invalid.'),
+        };
+      }
+
+      if (claim.recoveredFromExpiredLease) {
+        return this.recoverInterruptedDelivery!(claim);
+      }
+
+      let pendingProjected: boolean;
+      try {
+        pendingProjected = await projectCronDeliveryPending(
+          claim,
+          route,
+          payload,
+          now,
+          options.projectionRepository,
+        );
+      } catch (error) {
+        return {
+          status: 'retry',
+          errorCode: 'cron_delivery_projection_failed',
+          errorSummary: deliveryErrorSummary(error, 'Cron delivery projection failed before send.'),
+          retryAt: new Date(Date.parse(now) + retryDelayMs(claim.attemptCount)).toISOString(),
+        };
+      }
 
       let result: DurableRunDeliveryResult;
       try {
+        if (context && !await context.markExternalSendStarted()) {
+          return { status: 'superseded' };
+        }
         const response = await options.sendReply(replyRequest(claim, route, payload));
         result = classifyReplyResult(response);
       } catch (error) {
         result = classifyDeliveryError(error, claim, now);
       }
-      await projectCronDeliveryResult(
-        claim,
-        route,
-        payload,
-        result,
-        options.projectionRepository,
-      );
-      if (result.status === 'failed' && result.errorCode === 'cron_delivery_target_permanent') {
-        await autoPauseCronJobForDeliveryFailure(
+      const projected = pendingProjected
+        ? await projectDeliveryResultSafely(
+            claim,
+            route,
+            payload,
+            result,
+            options.projectionRepository,
+          )
+        : false;
+      if (
+        pendingProjected
+        && projected
+        && result.status === 'failed'
+        && result.errorCode === 'cron_delivery_target_permanent'
+      ) {
+        await autoPauseSafely(
           route,
           result.errorSummary,
           options.projectionRepository,
@@ -68,6 +131,28 @@ export function createCronDelivery(options: CronDeliveryOptions): DurableRunDeli
       return result;
     },
   };
+}
+
+function deliveryErrorSummary(error: unknown, fallback: string): string {
+  return sanitizeDiagnosticText(error instanceof Error ? error.message : String(error), 1000)
+    || fallback;
+}
+
+async function autoPauseSafely(
+  route: CronDeliveryRoute,
+  reason: string,
+  repository: CronRuntimeProjectionRepository | undefined,
+  runId: string,
+): Promise<void> {
+  try {
+    await autoPauseCronJobForDeliveryFailure(route, reason, repository, runId);
+  } catch (error) {
+    const detail = sanitizeDiagnosticText(
+      error instanceof Error ? error.message : String(error),
+      1000,
+    ) || 'unknown auto-pause error';
+    console.error(`[cron] Auto-pause projection failed for run ${runId}: ${detail}`);
+  }
 }
 
 function replyRequest(
@@ -124,9 +209,22 @@ function classifyDeliveryError(
   claim: DurableRunDeliveryClaim,
   now: string,
 ): DurableRunDeliveryResult {
-  const summary = sanitizeDiagnosticText(error instanceof Error ? error.message : String(error), 1000)
-    || 'Feishu delivery failed.';
+  const summary = deliveryErrorSummary(error, 'Feishu delivery failed.');
   if (isFeishuTimeoutError(error)) {
+    return {
+      status: 'unknown',
+      errorCode: 'cron_delivery_outcome_unknown',
+      errorSummary: summary,
+    };
+  }
+  if (isAmbiguousSocketError(error)) {
+    return {
+      status: 'unknown',
+      errorCode: 'cron_delivery_outcome_unknown',
+      errorSummary: summary,
+    };
+  }
+  if (isAmbiguousHttpResponse(error)) {
     return {
       status: 'unknown',
       errorCode: 'cron_delivery_outcome_unknown',
@@ -150,6 +248,54 @@ function classifyDeliveryError(
       : 'cron_delivery_failed',
     errorSummary: summary,
   };
+}
+
+function isAmbiguousHttpResponse(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: any = error;
+  for (let depth = 0; current && depth < 6; depth++) {
+    if (seen.has(current)) return false;
+    seen.add(current);
+    const status = Number(current.status ?? current.response?.status);
+    if (status === 408 || status >= 500) return true;
+    current = current.cause;
+  }
+  return false;
+}
+
+async function projectDeliveryResultSafely(
+  claim: DurableRunDeliveryClaim,
+  route: CronDeliveryRoute,
+  payload: CronTerminalPayload,
+  result: DurableRunDeliveryResult,
+  repository: CronRuntimeProjectionRepository | undefined,
+): Promise<boolean> {
+  try {
+    return await projectCronDeliveryResult(claim, route, payload, result, repository);
+  } catch (error) {
+    // SQLite outbox state is authoritative. A compatibility projection failure
+    // must not turn a Feishu-confirmed send into a duplicate delivery attempt.
+    const detail = sanitizeDiagnosticText(
+      error instanceof Error ? error.message : String(error),
+      1000,
+    ) || 'unknown projection error';
+    console.error(`[cron] Delivery projection failed for run ${claim.runId}: ${detail}`);
+    return false;
+  }
+}
+
+function isAmbiguousSocketError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: any = error;
+  for (let depth = 0; current && depth < 6; depth++) {
+    if (seen.has(current)) return false;
+    seen.add(current);
+    if (AMBIGUOUS_SOCKET_ERROR_CODES.has(String(current.code ?? '').toUpperCase())) {
+      return true;
+    }
+    current = current.cause;
+  }
+  return false;
 }
 
 function assertMatchingCronEnvelope(
@@ -204,11 +350,22 @@ export function parseCronTerminalPayload(value: unknown): CronTerminalPayload {
     jobRevision: positiveInteger(raw.jobRevision, 'payload.jobRevision'),
   };
   if (kind === 'message') {
+    const runStatus = raw.runStatus === 'success' || raw.runStatus === 'failed'
+      ? raw.runStatus
+      : (() => { throw new Error('payload.runStatus is invalid.'); })();
+    const failureReason = raw.failureReason === null
+      ? null
+      : requiredString(raw.failureReason, 'payload.failureReason');
+    if ((runStatus === 'failed') !== Boolean(failureReason)) {
+      throw new Error('Cron message payload status and failureReason are inconsistent.');
+    }
     return {
       ...base,
       kind,
       content: requiredString(raw.content, 'payload.content'),
       messageType: requiredString(raw.messageType, 'payload.messageType'),
+      runStatus,
+      failureReason,
     };
   }
   if (kind !== 'report') throw new Error('Cron terminal payload kind must be report or message.');

@@ -114,6 +114,31 @@ export class CodexExecProcessError extends Error {
   }
 }
 
+export class CodexExecPreStartError extends Error {
+  readonly code: string | undefined;
+
+  constructor(error: NodeJS.ErrnoException) {
+    super(error.message);
+    this.name = 'CodexExecPreStartError';
+    this.code = error.code;
+  }
+}
+
+const RETRY_SAFE_PRE_START_CODES = new Set([
+  'EAGAIN',
+  'EAI_AGAIN',
+  'EMFILE',
+  'ENFILE',
+]);
+
+export function isRetrySafeCodexExecPreStartError(
+  error: unknown,
+): error is CodexExecPreStartError {
+  return error instanceof CodexExecPreStartError
+    && error.code !== undefined
+    && RETRY_SAFE_PRE_START_CODES.has(error.code);
+}
+
 export interface CodexExecFailureDiagnostic {
   stage: 'output_schema_validation' | 'cli_compatibility' | 'process_spawn' | 'process_execution';
   errorCode: string;
@@ -297,6 +322,8 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
           ...request.extraEnv,
         },
       });
+      let childSpawned = false;
+      child.once('spawn', () => { childSpawned = true; });
 
       let forceKillTimer: NodeJS.Timeout | undefined;
       const removeAbortListener = (): void => {
@@ -391,7 +418,13 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
         if (forceKillTimer) clearTimeout(forceKillTimer);
         removeAbortListener();
         void pendingTreeSignal.finally(() => {
-          reject(aborted ? new CodexExecAbortedError(stdout, stderr) : err);
+          reject(
+            aborted
+              ? new CodexExecAbortedError(stdout, stderr)
+              : childSpawned
+                ? err
+                : new CodexExecPreStartError(err),
+          );
         });
       });
       child.on('close', (code, signal) => {
@@ -416,6 +449,13 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
           }
           resolve();
         })().catch(reject);
+      });
+
+      child.stdin.on('error', (error) => {
+        clearTimeout(timer);
+        removeAbortListener();
+        if (!aborted && !timedOut) terminate(1_000);
+        reject(aborted ? new CodexExecAbortedError(stdout, stderr) : error);
       });
 
       child.stdin.end(request.prompt);

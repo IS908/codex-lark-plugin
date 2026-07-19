@@ -1739,13 +1739,17 @@ try {
     '2026-07-18T00:00:00.000Z',
     '2026-07-20T00:00:00.000Z',
   );
-  assert.deepEqual(cleanupResults, [{
+  assert.equal(cleanupResults.length, 1);
+  assert.deepEqual({ ...cleanupResults[0], completedAt: undefined }, {
     jobId: cleanupJob.job.jobId,
     creatorOpenId: 'ou_creator',
     status: 'completed',
-    completedAt: '2026-07-17T00:00:03.000Z',
+    completedAt: undefined,
     result: 'cleaned',
-  }]);
+  });
+  assert.ok(
+    Date.parse(cleanupResults[0]!.completedAt) >= Date.parse('2026-07-17T00:00:03.000Z'),
+  );
   assert.equal((await retentionRepository.get(cleanupJob.job.jobId))?.deletedAt,
     '2026-07-20T00:00:00.000Z');
   assert.equal((await retentionRepository.get(retainedJob.job.jobId))?.deletedAt, undefined);
@@ -4258,6 +4262,28 @@ integrityOutboxDatabase.prepare(`
   SET route_json = ?, status = 'pending', error_code = NULL, error_summary = NULL
   WHERE run_id = ? AND kind = 'terminal'
 `).run(JSON.stringify(corruptCreated.job.route), corruptCreated.job.jobId);
+const validIntegrityPayload = integrityOutboxDatabase.prepare(`
+  SELECT payload_json FROM durable_outbox
+  WHERE run_id = ? AND kind = 'terminal'
+`).get(corruptCreated.job.jobId)?.payload_json as string;
+integrityOutboxDatabase.prepare(`
+  UPDATE durable_outbox SET payload_json = json('{}')
+  WHERE run_id = ? AND kind = 'terminal'
+`).run(corruptCreated.job.jobId);
+assert.equal(await reopenedIntegrityRepository.claimPendingDelivery(
+  'delivery-invalid-envelope',
+  baseNow,
+), null);
+const invalidEnvelopeOutbox = integrityOutboxDatabase.prepare(`
+  SELECT status, error_code FROM continuation_outbox WHERE job_id = ? AND kind = 'terminal'
+`).get(corruptCreated.job.jobId) as { status: string; error_code: string };
+assert.equal(invalidEnvelopeOutbox.status, 'failed');
+assert.equal(invalidEnvelopeOutbox.error_code, 'continuation_delivery_envelope_invalid');
+integrityOutboxDatabase.prepare(`
+  UPDATE durable_outbox
+  SET payload_json = ?, status = 'pending', error_code = NULL, error_summary = NULL
+  WHERE run_id = ? AND kind = 'terminal'
+`).run(validIntegrityPayload, corruptCreated.job.jobId);
 integrityOutboxDatabase.close();
 const integrityDelivery = await reopenedIntegrityRepository.claimPendingDelivery(
   'delivery-integrity',
@@ -4670,6 +4696,94 @@ assert.equal(
 );
 assert.equal((await ownershipFenceRepository.get(staleCommitJob.job.jobId))?.status, 'cancelled');
 ownershipFenceRepository.close();
+
+// A successful heartbeat renews the persisted lease; completion and failure must not
+// be rejected merely because the immutable claim still carries the original expiry.
+const renewedLeaseRoot = await mkdtemp(join(tmpdir(), 'continuation-renewed-lease-'));
+const renewedLeaseArtifacts = new ContinuationArtifactStore(join(renewedLeaseRoot, 'artifacts'));
+const renewedLeaseRepository = await SqliteContinuationRepository.open({
+  databasePath: join(renewedLeaseRoot, 'jobs.sqlite'),
+  artifactsDir: join(renewedLeaseRoot, 'artifacts'),
+  artifactStore: renewedLeaseArtifacts,
+  jitter: () => 0,
+});
+const renewedCompletionJob = await renewedLeaseRepository.create(createRequest('renewed-complete-fence'));
+const renewedCompletionClaim = await renewedLeaseRepository.claimDue(
+  'worker-renewed-complete',
+  baseNow,
+  '2026-07-17T00:00:30.000Z',
+);
+assert.ok(renewedCompletionClaim);
+assert.equal(
+  await renewedLeaseRepository.heartbeat(
+    renewedCompletionJob.job.jobId,
+    'worker-renewed-complete',
+    '2026-07-17T00:00:10.000Z',
+    '2026-07-17T00:00:40.000Z',
+  ),
+  true,
+);
+assert.equal(
+  await renewedLeaseRepository.completeStep(renewedCompletionClaim, {
+    outcome: {
+      outcome: 'completed',
+      checkpoint: await completedCheckpoint(
+        renewedCompletionJob.job.jobId,
+        'produce-result',
+        'renewed-complete.json',
+        renewedLeaseArtifacts,
+      ),
+      finalMessage: 'Completion committed under the renewed lease.',
+      resultSummary: 'completed after heartbeat',
+      artifacts: ['renewed-complete.json'],
+    },
+  }, '2026-07-17T00:00:35.000Z'),
+  'committed',
+);
+assert.equal((await renewedLeaseRepository.get(renewedCompletionJob.job.jobId))?.status, 'completed');
+const renewedDeliveryClaim = await renewedLeaseRepository.claimPendingDelivery(
+  'worker-renewed-delivery',
+  '2026-07-17T00:00:36.000Z',
+  '2026-07-17T00:00:50.000Z',
+);
+assert.ok(renewedDeliveryClaim?.durableClaim);
+assert.equal(
+  renewedDeliveryClaim.durableClaim.leaseExpiresAt,
+  '2026-07-17T00:00:50.000Z',
+);
+const renewedDeliveryHeartbeat = await renewedLeaseRepository.durableRuns.heartbeatDelivery?.(
+  renewedDeliveryClaim.durableClaim,
+  '2026-07-17T00:00:40.000Z',
+  '2026-07-17T00:01:00.000Z',
+);
+assert.equal(renewedDeliveryHeartbeat?.leaseExpiresAt, '2026-07-17T00:01:00.000Z');
+
+const renewedFailureJob = await renewedLeaseRepository.create(createRequest('renewed-fail-fence'));
+const renewedFailureClaim = await renewedLeaseRepository.claimDue(
+  'worker-renewed-fail',
+  '2026-07-17T00:01:00.000Z',
+  '2026-07-17T00:01:30.000Z',
+);
+assert.ok(renewedFailureClaim);
+assert.equal(
+  await renewedLeaseRepository.heartbeat(
+    renewedFailureJob.job.jobId,
+    'worker-renewed-fail',
+    '2026-07-17T00:01:10.000Z',
+    '2026-07-17T00:01:40.000Z',
+  ),
+  true,
+);
+assert.equal(
+  await renewedLeaseRepository.failAttempt(renewedFailureClaim, {
+    errorCode: 'renewed_lease_failure',
+    errorSummary: 'Failure committed under the renewed lease.',
+    retryable: false,
+  }, '2026-07-17T00:01:35.000Z'),
+  'committed',
+);
+assert.equal((await renewedLeaseRepository.get(renewedFailureJob.job.jobId))?.status, 'failed');
+renewedLeaseRepository.close();
 
 // The final completeStep transaction rechecks the lease after asynchronous verification.
 const delayedCommitRoot = await mkdtemp(join(tmpdir(), 'continuation-delayed-commit-fence-'));

@@ -138,7 +138,7 @@ let passed = 0;
   await scheduler.start();
   await scheduler.recoverMissedJobs();
   await scheduler.tick();
-  scheduler.stop();
+  await scheduler.stop();
   assert.equal(admission.scheduled.filter((entry) => entry.created).length, 1);
   assert.equal(admission.scheduled.at(-1)?.occurrence, now.toISOString());
   passed++;

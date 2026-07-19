@@ -306,12 +306,13 @@ export function startCodexExecActionChannelRetention(
 
 export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPromptInfo | null): string[] {
   if (!info?.enabled) return [];
+  const blocked = new Set(info.blockedActionTypes ?? []);
   const localCliToolNames = [...new Set(info.localCliToolNames ?? [])].filter(Boolean).sort();
   const continuationHostToolNames = [
     ...new Set(info.continuationHostToolNames ?? localCliToolNames),
   ].filter(Boolean).sort();
   const primaryLocalCliToolName = localCliToolNames[0];
-  const traceQueryLines = info.traceQueryEnabled
+  const traceQueryLines = info.traceQueryEnabled && !blocked.has('get_run_trace')
     ? [
         '  - {"type":"get_run_trace","source":"message","target":"current|quoted","log_id":"optional current-or-quoted message id","run_id":"optional","within_hours":12}',
         '  - {"type":"get_run_trace","source":"cronjob","log_id":"job_id","run_id":"optional","within_hours":12}',
@@ -320,7 +321,7 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
       ]
     : [];
   const localCliToolLines =
-    primaryLocalCliToolName
+    primaryLocalCliToolName && !blocked.has('run_local_cli_tool')
       ? [
           '- Sandbox host-tool bridge: run_local_cli_tool executes one of the listed allowlisted CLI tools on the plugin host, outside the Codex exec sandbox. Use it when sandbox restrictions prevent an in-scope operation and a matching listed tool fits.',
           '- This bridge is an additional capability, not an exclusive tool route. You may use other available skills, connectors, MCP tools, or runtime tools. Do not ask for separate permission to use it when the user already authorized the operation; tool availability does not expand the user request scope.',
@@ -328,7 +329,7 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
           `    Configured host tools: ${localCliToolNames.join(', ')}`,
         ]
       : [];
-  const continuationLines = info.continuationEnabled
+  const continuationLines = info.continuationEnabled && !blocked.has('create_continuation_job')
     ? [
         '  - {"type":"create_continuation_job","title":"...","objective":"...","deliverables":[{"id":"result","description":"...","required":true}],"acceptance_criteria":[{"id":"result_complete","description":"...","deliverable_ids":["result"]}],"verification_requirements":[{"id":"result_evidence","description":"...","kind":"evidence_reference"}],"context_snapshot":{"summary":"...","completed_steps":[],"remaining_steps":["..."],"constraints":[],"decisions":[],"references":[]},"required_tools":[],"working_directory":"."}',
         '    Use this only when work must continue after the current reply. The parent derives caller, route, session, model, retry policy, and Job ID; one turn may create at most one continuation.',
@@ -347,15 +348,19 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
           : ['    No continuation host CLI tools are configured; required_tools must remain empty.']),
       ]
       : [];
-  const sendMessageLines = info.blockedActionTypes?.includes('send_message')
+  const sendMessageLines = blocked.has('send_message')
     ? []
     : [
         '  - {"type":"send_message","message":{"kind":"image|file","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","text":"..."}}',
         '  - {"type":"send_message","message":{"kind":"rich","parts":[{"type":"text","text":"..."},{"type":"image","source":"local_path|current_message:first_image|quoted_message:first_image","path":"...","alt":"..."}]},"reply_in_thread":true}',
       ];
-  const recallMessageLines = info.blockedActionTypes?.includes('recall_message')
+  const recallMessageLines = blocked.has('recall_message')
     ? []
     : ['  - {"type":"recall_message","message_id":"..."}'];
+  const actionLines = (
+    type: CodexExecAction['type'],
+    lines: readonly string[],
+  ): readonly string[] => blocked.has(type) ? [] : lines;
 
   return [
     'Structured Lark actions (optional):',
@@ -364,19 +369,38 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     `- Use token ${info.token}.`,
     `- You may request at most ${info.maxActions} total actions for this turn.`,
     '- Do not include chat_id, thread_id, open_id, user_id, caller, or created_by; the parent Lark bridge derives identity.',
-    '- JSONL schema: {"version":1,"token":"<token>","type":"lark_action_request","actions":[{"type":"list_jobs","status":"all"}]}',
+    '- JSONL schema: {"version":1,"token":"<token>","type":"lark_action_request","actions":[{"type":"<supported_action>","...":"..."}]}',
     '- Supported action payloads inside actions[]:',
-    '  - {"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"public|private","mode":"append|replace"}',
-    '  - {"type":"create_job","name":"...","job_type":"prompt|message","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","target_chat_id":"...","model":"..."}',
-    '  - {"type":"list_jobs","status":"active|paused|all"}',
-    '  - {"type":"run_job","job_id":"..."} or {"type":"run_job","name":"unique existing job name"}',
-    '    Use run_job to execute an existing cronjob immediately from its persisted definition. Do not reconstruct a cronjob rerun as a continuation.',
-    '  - {"type":"update_job","job_id":"...","name":"...","new_name":"...","status":"active|paused","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","model":"..."}',
-    '  - {"type":"disable_job","job_id":"..."} or {"type":"delete_job","job_id":"..."}',
-    '  - {"type":"upsert_job","name":"...","job_type":"prompt|message","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","target_chat_id":"...","model":"...","status":"active|paused"}',
+    ...actionLines('save_memory', [
+      '  - {"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"public|private","mode":"append|replace"}',
+    ]),
+    ...actionLines('create_job', [
+      '  - {"type":"create_job","name":"...","job_type":"prompt|message","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","target_chat_id":"...","model":"..."}',
+    ]),
+    ...actionLines('list_jobs', [
+      '  - {"type":"list_jobs","status":"active|paused|all"}',
+    ]),
+    ...actionLines('run_job', [
+      '  - {"type":"run_job","job_id":"..."} or {"type":"run_job","name":"unique existing job name"}',
+      '    Use run_job to execute an existing cronjob immediately from its persisted definition. Do not reconstruct a cronjob rerun as a continuation.',
+    ]),
+    ...actionLines('update_job', [
+      '  - {"type":"update_job","job_id":"...","name":"...","new_name":"...","status":"active|paused","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","model":"..."}',
+    ]),
+    ...actionLines('disable_job', [
+      '  - {"type":"disable_job","job_id":"..."}',
+    ]),
+    ...actionLines('delete_job', [
+      '  - {"type":"delete_job","job_id":"..."}',
+    ]),
+    ...actionLines('upsert_job', [
+      '  - {"type":"upsert_job","name":"...","job_type":"prompt|message","schedule":"...","timezone":"IANA timezone","prompt":"...","content":"...","target_chat_id":"...","model":"...","status":"active|paused"}',
+    ]),
     ...localCliToolLines,
-    '  - {"type":"manage_access_control","action":"list|add|remove","list":"allowed_user_ids|allowed_chat_ids|group_no_mention_chat_ids","value":"ou_xxx, oc_xxx, or current"}',
-    '    Use value="current" for the current group chat; never guess chat IDs.',
+    ...actionLines('manage_access_control', [
+      '  - {"type":"manage_access_control","action":"list|add|remove","list":"allowed_user_ids|allowed_chat_ids|group_no_mention_chat_ids","value":"ou_xxx, oc_xxx, or current"}',
+      '    Use value="current" for the current group chat; never guess chat IDs.',
+    ]),
     ...traceQueryLines,
     ...continuationLines,
     ...sendMessageLines,

@@ -48,7 +48,11 @@ function harness(options: {
   const scheduledCalls: Array<{ job: JobFile; now: Date }> = [];
   const manualCalls: Array<{ job: JobFile; requestId: string; now: Date }> = [];
   const waitCalls: string[] = [];
+  const repairCalls: string[] = [];
   const admission = {
+    async repairProjection(job: JobFile) {
+      repairCalls.push(job.meta.id);
+    },
     async admitScheduled(job: JobFile, now: Date) {
       scheduledCalls.push({ job, now });
       if (options.scheduledError) throw options.scheduledError;
@@ -75,6 +79,7 @@ function harness(options: {
     scheduledCalls,
     manualCalls,
     waitCalls,
+    repairCalls,
   };
 }
 
@@ -102,6 +107,7 @@ function harness(options: {
   await (test.scheduler as any).tick();
   assert.equal(test.scheduledCalls.length, 1);
   assert.equal(test.scheduledCalls[0].job.meta.id, 'future');
+  assert.deepEqual(test.repairCalls.sort(), ['future', 'paused']);
 }
 
 // Manual execution admits the persisted definition and waits for the durable
@@ -139,6 +145,69 @@ function harness(options: {
   assert.deepEqual(job, before);
 }
 
+// Shutdown is an admission barrier: it waits for an already-running scan to
+// finish before the durable worker/repository can be stopped.
+{
+  let releaseScan!: () => void;
+  let scanEntered!: () => void;
+  const entered = new Promise<void>((resolve) => { scanEntered = resolve; });
+  const blocked = new Promise<void>((resolve) => { releaseScan = resolve; });
+  const scheduler = new JobScheduler({
+    admission: {} as any,
+    repository: {
+      async listAllJobs() {
+        scanEntered();
+        await blocked;
+        return [];
+      },
+    },
+  });
+  const ticking = scheduler.tick();
+  await entered;
+  let stopped = false;
+  const stopping = scheduler.stop().then(() => { stopped = true; });
+  await Promise.resolve();
+  assert.equal(stopped, false);
+  releaseScan();
+  await Promise.all([ticking, stopping]);
+  assert.equal(stopped, true);
+}
+
+// Manual admission participates in the same shutdown barrier. Calls that
+// arrive after stop begins are rejected without touching the admission port.
+{
+  let releaseAdmission!: () => void;
+  let admissionEntered!: () => void;
+  const entered = new Promise<void>((resolve) => { admissionEntered = resolve; });
+  const blocked = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+  let manualCalls = 0;
+  const scheduler = new JobScheduler({
+    admission: {
+      async admitManual() {
+        manualCalls += 1;
+        admissionEntered();
+        await blocked;
+        return { admitted: false as const, reason: 'stale_job' as const };
+      },
+    } as any,
+  });
+  const running = scheduler.runJobNow(makeJob());
+  await entered;
+  let stopped = false;
+  const stopping = scheduler.stop().then(() => { stopped = true; });
+  await Promise.resolve();
+  assert.equal(stopped, false);
+  assert.deepEqual(await scheduler.runJobNow(makeJob()), {
+    started: false,
+    reason: 'stale_job',
+    outcome: 'failed',
+  });
+  assert.equal(manualCalls, 1);
+  releaseAdmission();
+  await Promise.all([running, stopping]);
+  assert.equal(stopped, true);
+}
+
 // Architectural deletion guard: there is one admission path and no dormant
 // direct execution/retry fallback left to revive in a later refactor.
 {
@@ -157,4 +226,4 @@ function harness(options: {
   assert.doesNotMatch(source, /recordCronJobReportDelivery/);
 }
 
-console.log('scheduler smoke: 6/6 PASS');
+console.log('scheduler smoke: 8/8 PASS');

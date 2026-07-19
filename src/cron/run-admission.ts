@@ -4,12 +4,25 @@ import {
   cronScheduledRunIdempotencyKey,
   isDurableRunTerminal,
   type DurableRunCreateRequest,
+  type DurableRunDeliveryResult,
+  type DurableRunDeliverySnapshot,
   type DurableRunRecord,
 } from '../domain/durable-run.js';
 import { computeLatestDueRun, computeNextRun, jobTimezone, mutateJob, readJob } from '../job-store.js';
 import type { JobFile } from '../job-contracts.js';
 import type { DurableRunRepository } from '../ports/durable-run.js';
-import type { CronRunInput, CronRunState } from './contracts.js';
+import {
+  parseCronRunInput,
+  parseCronRunState,
+  type CronRunInput,
+  type CronRunState,
+} from './contracts.js';
+import { parseCronDeliveryRoute, parseCronTerminalPayload } from './delivery.js';
+import {
+  autoPauseCronJobForDeliveryFailure,
+  projectCronDeliveryPending,
+  projectCronDeliveryResult,
+} from './runtime-projection.js';
 
 export type CronAdmissionRejectionReason =
   | 'paused'
@@ -40,7 +53,8 @@ export interface CronRunAdmissionOptions {
   waitPollMs?: number;
 }
 
-const DEFAULT_WAIT_POLL_MS = 50;
+const DEFAULT_WAIT_POLL_MS = 100;
+const MAX_WAIT_POLL_MS = 1_000;
 const CRON_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 
 export class CronRunAdmission {
@@ -73,6 +87,18 @@ export class CronRunAdmission {
       occurrence,
     );
     const runId = cronRunId(idempotencyKey);
+    if (Date.parse(fresh.runtime.next_run_at) > now.getTime()) {
+      if (Date.parse(job.runtime.next_run_at) > now.getTime()) {
+        return { admitted: false, reason: 'not_due' };
+      }
+      const duplicate = await this.options.runRepository.get(runId);
+      return duplicate
+        ? admitted(duplicate, false, occurrence)
+        : { admitted: false, reason: 'not_due' };
+    }
+    if (await this.hasDifferentActiveRun(fresh, runId)) {
+      return { admitted: false, reason: 'already_running' };
+    }
     const existing = await this.options.runRepository.get(runId);
     if (existing) {
       const nextRunAt = computeNextRun(
@@ -80,17 +106,19 @@ export class CronRunAdmission {
         jobTimezone(fresh.meta),
         new Date(occurrence),
       );
-      await this.projectAdmission(fresh, existing.runId, {
-        expectedCursor: fresh.runtime.next_run_at,
-        nextRunAt,
-      });
+      const latestForKey = this.options.runRepository.getLatestByConcurrencyKey;
+      const latest = latestForKey
+        ? await latestForKey.call(this.options.runRepository, cronConcurrencyKey(fresh))
+        : null;
+      if (latest && latest.runId !== existing.runId) {
+        await this.projectScheduleCursor(fresh, fresh.runtime.next_run_at, nextRunAt);
+      } else {
+        await this.projectAdmission(fresh, existing.runId, {
+          expectedCursor: fresh.runtime.next_run_at,
+          nextRunAt,
+        });
+      }
       return admitted(existing, false, occurrence);
-    }
-    if (Date.parse(fresh.runtime.next_run_at) > now.getTime()) {
-      return { admitted: false, reason: 'not_due' };
-    }
-    if (await this.hasDifferentActiveRun(fresh, runId)) {
-      return { admitted: false, reason: 'already_running' };
     }
     const created = await this.options.runRepository.create(
       cronRunCreateRequest(fresh, idempotencyKey, runId, now, occurrence),
@@ -115,6 +143,91 @@ export class CronRunAdmission {
       job.meta.id,
       () => this.admitManualUnlocked(job, requestId, now),
     );
+  }
+
+  async repairProjection(job: JobFile): Promise<void> {
+    return this.withJobAdmissionQueue(job.meta.id, () => this.repairProjectionUnlocked(job));
+  }
+
+  private async repairProjectionUnlocked(job: JobFile): Promise<void> {
+    const latestForKey = this.options.runRepository.getLatestByConcurrencyKey;
+    if (!latestForKey) return;
+    let fresh = await this.currentDefinition(job);
+    if (!fresh) return;
+    const run = await latestForKey.call(
+      this.options.runRepository,
+      cronConcurrencyKey(fresh),
+    );
+    if (!run || !isCronWorkload(run.workloadKind)) return;
+    const input = parseCronRunInput(run.input, run.inputVersion, fresh.meta.type);
+    if (!matchesJobSnapshot(fresh, input)) return;
+    const occurrence = input.job.scheduledOccurrence;
+    const shouldAdvanceCursor = occurrence !== undefined
+      && Date.parse(fresh.runtime.next_run_at) <= Date.parse(occurrence);
+    if (fresh.runtime.run_id !== run.runId || shouldAdvanceCursor) {
+      await this.projectAdmission(
+        fresh,
+        run.runId,
+        shouldAdvanceCursor
+          ? {
+              expectedCursor: fresh.runtime.next_run_at,
+              nextRunAt: computeNextRun(
+                fresh.meta.schedule,
+                jobTimezone(fresh.meta),
+                new Date(occurrence),
+              ),
+            }
+          : undefined,
+      );
+      fresh = await this.currentDefinition(fresh);
+      if (!fresh) return;
+    }
+    if (!isDurableRunTerminal(run.status)) return;
+    const state = parseCronRunState(run.state, run.stateVersion);
+    if (state.phase !== 'completed' || !state.commit) return;
+    const readDelivery = this.options.runRepository.getDeliverySnapshot;
+    if (!readDelivery) return;
+    const delivery = await readDelivery.call(
+      this.options.runRepository,
+      run.runId,
+      'cron_terminal',
+    );
+    if (!delivery) return;
+    const route = parseCronDeliveryRoute(delivery.route);
+    const payload = parseCronTerminalPayload(delivery.payload);
+    if (
+      route.jobId !== input.job.id
+      || route.createdAt !== input.job.createdAt
+      || route.revision !== input.job.revision
+      || payload.jobId !== input.job.id
+      || payload.jobCreatedAt !== input.job.createdAt
+      || payload.jobRevision !== input.job.revision
+    ) {
+      throw new Error(`Cron Run ${run.runId} delivery identity is inconsistent.`);
+    }
+    const result = deliveryResultFromSnapshot(delivery);
+    if (cronProjectionNeedsRepair(fresh, payload, result)) {
+      await projectCronDeliveryPending(
+        run,
+        route,
+        payload,
+        delivery.updatedAt,
+        this.jobs,
+      );
+      if (result) {
+        await projectCronDeliveryResult(run, route, payload, result, this.jobs);
+      }
+    }
+    if (result) {
+      if (result.status === 'failed' && result.errorCode === 'cron_delivery_target_permanent') {
+        await autoPauseCronJobForDeliveryFailure(
+          route,
+          result.errorSummary,
+          this.jobs,
+          run.runId,
+        );
+      }
+    }
   }
 
   private async admitManualUnlocked(
@@ -150,13 +263,15 @@ export class CronRunAdmission {
     runId: string,
     signal?: AbortSignal,
   ): Promise<'success' | 'failed'> {
+    let pollMs = this.waitPollMs;
     for (;;) {
       signal?.throwIfAborted();
       const run = await this.options.runRepository.get(runId);
       if (!run) throw new Error(`Cron Run ${runId} does not exist.`);
       if (run.status === 'completed') return 'success';
       if (isDurableRunTerminal(run.status)) return 'failed';
-      await abortableDelay(this.waitPollMs, signal);
+      await abortableDelay(pollMs, signal);
+      pollMs = Math.min(MAX_WAIT_POLL_MS, pollMs * 2);
     }
   }
 
@@ -202,6 +317,22 @@ export class CronRunAdmission {
         latest.runtime.last_error = null;
       }
       if (schedule) latest.runtime.next_run_at = schedule.nextRunAt;
+    });
+  }
+
+  private async projectScheduleCursor(
+    source: JobFile,
+    expectedCursor: string,
+    nextRunAt: string,
+  ): Promise<void> {
+    await this.jobs.mutateJob(source.meta.id, (latest) => {
+      if (
+        latest.meta.created_at !== source.meta.created_at
+        || latest.meta.revision !== source.meta.revision
+        || latest.meta.status !== 'active'
+        || latest.runtime.next_run_at !== expectedCursor
+      ) return false;
+      latest.runtime.next_run_at = nextRunAt;
     });
   }
 
@@ -300,6 +431,76 @@ function admitted(
     created,
     ...(scheduledOccurrence ? { scheduledOccurrence } : {}),
   };
+}
+
+function isCronWorkload(kind: string): kind is 'cron_prompt' | 'cron_message' {
+  return kind === 'cron_prompt' || kind === 'cron_message';
+}
+
+function matchesJobSnapshot(job: JobFile, input: CronRunInput): boolean {
+  return input.job.id === job.meta.id
+    && input.job.createdAt === job.meta.created_at
+    && input.job.revision === job.meta.revision
+    && input.job.type === job.meta.type;
+}
+
+function deliveryResultFromSnapshot(
+  delivery: DurableRunDeliverySnapshot,
+): DurableRunDeliveryResult | null {
+  if (delivery.status === 'sending') return null;
+  if (delivery.status === 'pending') {
+    return delivery.errorCode && delivery.errorSummary
+      ? {
+          status: 'retry',
+          errorCode: delivery.errorCode,
+          errorSummary: delivery.errorSummary,
+        }
+      : null;
+  }
+  if (delivery.status === 'sent') {
+    return delivery.messageId
+      ? { status: 'sent', messageId: delivery.messageId }
+      : {
+          status: 'unknown',
+          errorCode: 'cron_delivery_confirmation_missing',
+          errorSummary: 'Feishu delivery was recorded without a message ID.',
+        };
+  }
+  if (delivery.status === 'superseded') return { status: 'superseded' };
+  return {
+    status: delivery.status,
+    errorCode: delivery.errorCode ?? `cron_delivery_${delivery.status}`,
+    errorSummary: delivery.errorSummary ?? `CronJob delivery is ${delivery.status}.`,
+  };
+}
+
+function cronProjectionNeedsRepair(
+  job: JobFile,
+  payload: ReturnType<typeof parseCronTerminalPayload>,
+  result: DurableRunDeliveryResult | null,
+): boolean {
+  const expectedReport = payload.kind === 'report' ? payload.report : payload.content;
+  const expectedReportType = payload.kind === 'report' ? payload.reportType : 'job_message';
+  const expectedDeliveryStatus = !result || result.status === 'retry'
+    ? 'pending'
+    : result.status === 'sent'
+      ? 'sent'
+      : 'failed';
+  const expectedDeliveryError = !result || result.status === 'sent'
+    ? null
+    : result.status === 'superseded'
+      ? 'CronJob delivery was superseded.'
+      : result.errorSummary;
+  const expectedLastError = payload.runStatus === 'failed'
+    ? payload.failureReason ?? 'CronJob execution failed.'
+    : null;
+  return job.runtime.run_status !== payload.runStatus
+    || job.runtime.output_status !== 'generated'
+    || job.runtime.delivery_status !== expectedDeliveryStatus
+    || job.runtime.report !== expectedReport
+    || job.runtime.report_type !== expectedReportType
+    || job.runtime.delivery_error !== expectedDeliveryError
+    || job.runtime.last_error !== expectedLastError;
 }
 
 function positiveInteger(value: number | undefined, fallback: number): number {

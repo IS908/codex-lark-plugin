@@ -33,6 +33,8 @@ export class JobScheduler {
   private readonly repository: SchedulerRepository;
   private timer?: NodeJS.Timeout;
   private tickInFlight: Promise<void> | null = null;
+  private readonly manualAdmissions = new Set<Promise<CronAdmissionResult>>();
+  private stopping = false;
 
   constructor(private readonly options: SchedulerOptions) {
     this.clock = options.clock ?? (() => new Date());
@@ -46,8 +48,10 @@ export class JobScheduler {
   }
 
   async start(): Promise<void> {
+    if (this.stopping) throw new Error('Cron scheduler has been stopped.');
     if (this.timer) return;
     await this.recoverMissedJobs();
+    if (this.stopping) return;
     this.timer = setInterval(() => {
       void this.tick().catch((error) => {
         console.error(`[scheduler] Scan failed: ${errorMessage(error)}`);
@@ -57,9 +61,12 @@ export class JobScheduler {
     console.error(`[scheduler] Started (scan every ${this.scanIntervalMs / 1000}s)`);
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    await this.tickInFlight;
+    await Promise.allSettled([...this.manualAdmissions]);
     console.error('[scheduler] Stopped');
   }
 
@@ -68,6 +75,7 @@ export class JobScheduler {
   }
 
   async tick(): Promise<void> {
+    if (this.stopping) return;
     if (this.tickInFlight) {
       console.error('[scheduler] Tick skipped: previous tick still running');
       return this.tickInFlight;
@@ -80,11 +88,19 @@ export class JobScheduler {
   }
 
   async runJobNow(job: JobFile): Promise<RunJobNowResult> {
-    const admission = await this.options.admission.admitManual(
+    if (this.stopping) return { started: false, reason: 'stale_job', outcome: 'failed' };
+    const operation = this.options.admission.admitManual(
       job,
       `manual:${randomUUID()}`,
       this.clock(),
     );
+    this.manualAdmissions.add(operation);
+    let admission: CronAdmissionResult;
+    try {
+      admission = await operation;
+    } finally {
+      this.manualAdmissions.delete(operation);
+    }
     if (!admission.admitted) return rejectedManual(admission);
     const outcome = await this.options.admission.waitForExecution(admission.runId);
     return { started: true, outcome };
@@ -93,6 +109,13 @@ export class JobScheduler {
   private async scan(now: Date): Promise<void> {
     const jobs = await this.repository.listAllJobs();
     for (const job of jobs) {
+      if (typeof this.options.admission.repairProjection === 'function') {
+        try {
+          await this.options.admission.repairProjection(job);
+        } catch (error) {
+          console.error(`[scheduler] Failed to repair job ${job.meta.id}: ${errorMessage(error)}`);
+        }
+      }
       if (job.meta.status !== 'active') continue;
       try {
         const result = await this.options.admission.admitScheduled(job, now);

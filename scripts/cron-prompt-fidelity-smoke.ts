@@ -6,6 +6,7 @@ import { IdentitySession } from '../src/identity-session.js';
 import { cronJobPrompt } from '../src/prompts.js';
 import { createCronPromptExecutor } from '../src/cron/prompt-executor.js';
 import type { CronPromptExecutionInput } from '../src/cron/contracts.js';
+import { CodexExecPreStartError } from '../src/codex-exec.js';
 
 const identity = new IdentitySession(() => null);
 const sessionStore = {
@@ -63,7 +64,17 @@ assert.equal(call.progressVisible, false);
 assert.equal(call.abortSignal, controller.signal);
 assert.equal(call.sessionStore, sessionStore);
 assert.equal(call.actionDispatcher, actionDispatcher);
-assert.deepEqual(call.actionPolicy?.blockedActionTypes, ['send_message', 'recall_message']);
+assert.deepEqual(call.actionPolicy?.blockedActionTypes, [
+  'send_message',
+  'recall_message',
+  'create_job',
+  'run_job',
+  'update_job',
+  'disable_job',
+  'delete_job',
+  'upsert_job',
+  'create_continuation_job',
+]);
 assert.equal(typeof call.deliverySink, 'function');
 assert.equal(call.sendReply, undefined);
 assert.equal(result.report, '# Daily report\n\nDone.');
@@ -79,11 +90,13 @@ const execBaseDir = await mkdtemp(join(tmpdir(), 'cron-prompt-fidelity-'));
 (appConfig as any).codexExecProgressEnabled = true;
 let execRequest: any;
 let directMutationDispatches = 0;
+const dispatchedActionTypes: string[] = [];
 const realDeliveryExecutor = createCronPromptExecutor({
   identitySession: identity,
   sessionStore,
   actionDispatcher: {
     async execute(request) {
+      dispatchedActionTypes.push(...request.actions.map((action: any) => action.type));
       directMutationDispatches += request.actions.filter(
         (action: any) => action.type === 'send_message' || action.type === 'recall_message',
       ).length;
@@ -113,7 +126,29 @@ const realDeliveryExecutor = createCronPromptExecutor({
         version: 1,
         token: request.actions!.token,
         type: 'lark_action_request',
-        actions: [{ type: 'send_message', message: { kind: 'file', source: 'local_path', path: '/tmp/report.txt' } }],
+        actions: [
+          { type: 'send_message', message: { kind: 'file', source: 'local_path', path: '/tmp/report.txt' } },
+          { type: 'run_job', job_id: 'another-cron-job' },
+          {
+            type: 'create_continuation_job',
+            title: 'Nested task',
+            objective: 'This must not be admitted from a Cron prompt.',
+            deliverables: [{ id: 'result', description: 'result', required: true }],
+            acceptance_criteria: [{ id: 'done', description: 'done', deliverable_ids: ['result'] }],
+            verification_requirements: [{ id: 'evidence', description: 'evidence', kind: 'evidence_reference' }],
+            context_snapshot: {
+              summary: 'nested',
+              completed_steps: [],
+              remaining_steps: ['run'],
+              constraints: [],
+              decisions: [],
+              references: [],
+            },
+            required_tools: [],
+            working_directory: '.',
+          },
+          { type: 'run_local_cli_tool', tool: 'report-media-helper', args: ['--preview'] },
+        ],
       })}\n`,
       'utf8',
     );
@@ -129,10 +164,68 @@ assert.equal(execRequest.abortSignal, controller.signal);
 assert.match(execRequest.prompt, /\[CronJob\]/);
 assert.match(execRequest.prompt, /Review yesterday and produce a report\./);
 assert.doesNotMatch(execRequest.prompt, /"type":"send_message"/);
+assert.doesNotMatch(execRequest.prompt, /For cronjob schedule fields/);
+assert.doesNotMatch(execRequest.prompt, /For existing cronjobs/);
+assert.doesNotMatch(execRequest.prompt, /successfully creates an explicit continuation or cronjob/);
+assert.match(execRequest.prompt, /This generation-only turn cannot create background work/);
+for (const blockedType of [
+  'create_job',
+  'run_job',
+  'update_job',
+  'disable_job',
+  'delete_job',
+  'upsert_job',
+  'create_continuation_job',
+]) {
+  assert.doesNotMatch(
+    execRequest.prompt,
+    new RegExp(`"type":"${blockedType}"`),
+    `${blockedType} must not be advertised during Cron generation`,
+  );
+}
 assert.equal(directMutationDispatches, 0);
+assert.deepEqual(dispatchedActionTypes, ['run_local_cli_tool']);
 assert.match(realResult.report, /Generated through the real delivery path\./);
-assert.match(realResult.report, /Direct Feishu message mutations are unavailable/);
+assert.match(realResult.report, /Cron generation cannot mutate Feishu messages/);
 assert.equal(realResult.runStatus, 'failed');
 assert.equal(realResult.diagnostics.progress?.content, 'stage=generate_report Draft complete.');
+
+const retrySafeExecutor = createCronPromptExecutor({
+  identitySession: identity,
+  sessionStore,
+  deliver: async () => {
+    throw new CodexExecPreStartError(Object.assign(
+      new Error('temporary spawn failure before Codex execution'),
+      { code: 'EAGAIN' },
+    ));
+  },
+});
+await assert.rejects(
+  retrySafeExecutor(input, controller.signal),
+  /temporary spawn failure/,
+);
+assert.equal(identity._activeChannelTurnCount(), 0);
+
+let completedExecCalls = 0;
+const postExecutionFailure = createCronPromptExecutor({
+  identitySession: identity,
+  sessionStore: {
+    async get() { return null; },
+    async set() {
+      throw Object.assign(new Error('session store file descriptor exhausted'), { code: 'EMFILE' });
+    },
+    async delete() {},
+  },
+  useCodexSessions: true,
+  runCodexExec: async () => {
+    completedExecCalls += 1;
+    return { text: 'Codex already completed.', sessionId: 'session_completed' };
+  },
+});
+const postExecutionResult = await postExecutionFailure(input, controller.signal);
+assert.equal(completedExecCalls, 1);
+assert.equal(postExecutionResult.runStatus, 'failed');
+assert.equal(postExecutionResult.retrySafe, undefined);
+assert.match(postExecutionResult.failureReason ?? '', /session store file descriptor exhausted/);
 
 console.log('cron prompt fidelity smoke: PASS');

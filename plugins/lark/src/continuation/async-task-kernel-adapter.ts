@@ -33,6 +33,7 @@ import type {
 import type {
   DurableRunClaimMutationResult,
   DurableRunDelivery,
+  DurableRunDeliveryContext,
   DurableRunRepository,
   DurableRunWorkload,
 } from '../ports/durable-run.js';
@@ -80,6 +81,7 @@ export class AsyncTaskKernelAdapter implements
   DurableRunWorkload<AsyncTaskKernelInput, AsyncTaskKernelState, AsyncTaskExecution>,
   DurableRunDelivery {
   readonly kind = 'async_task';
+  readonly managesExternalSendBoundary = true;
   private readonly thrownDeliveryResults = new WeakSet<object>();
 
   constructor(private readonly options: AsyncTaskKernelAdapterOptions) {}
@@ -105,6 +107,16 @@ export class AsyncTaskKernelAdapter implements
 
   getActiveByConcurrencyKey(concurrencyKey: string): Promise<DurableRunRecord | null> {
     return this.options.repository.durableRuns.getActiveByConcurrencyKey(concurrencyKey);
+  }
+
+  getLatestByConcurrencyKey(concurrencyKey: string): Promise<DurableRunRecord | null> {
+    return this.options.repository.durableRuns.getLatestByConcurrencyKey?.(concurrencyKey)
+      ?? Promise.resolve(null);
+  }
+
+  getDeliverySnapshot(runId: string, kind: string) {
+    return this.options.repository.durableRuns.getDeliverySnapshot?.(runId, kind)
+      ?? Promise.resolve(null);
   }
 
   async claimDue(
@@ -134,6 +146,14 @@ export class AsyncTaskKernelAdapter implements
       permissionAuditDetail(continuationClaim),
     );
     return 'committed';
+  }
+
+  releaseClaimBeforeExecution(
+    claim: DurableRunClaim,
+    now: string,
+  ): Promise<DurableRunClaimMutationResult> {
+    return this.options.repository.durableRuns.releaseClaimBeforeExecution?.(claim, now)
+      ?? Promise.resolve('stale');
   }
 
   heartbeat(
@@ -206,19 +226,46 @@ export class AsyncTaskKernelAdapter implements
     now: string,
   ): Promise<DurableRunInterruptedAttempt[]> {
     if (!workloadKinds.includes(this.kind)) return [];
-    const interrupted = await this.options.repository.recoverExpiredLeases(now);
     await this.options.repository.expireOverdue(now);
-    return interrupted;
+    return this.options.repository.recoverExpiredLeases(now);
   }
 
   async claimDelivery(
     workloadKinds: readonly string[],
     workerId: string,
     now: string,
+    leaseExpiresAt?: string,
   ): Promise<DurableRunDeliveryClaim | null> {
     if (!workloadKinds.includes(this.kind)) return null;
-    const claim = await this.options.repository.claimPendingDelivery(workerId, now);
+    const claim = await this.options.repository.claimPendingDelivery(
+      workerId,
+      now,
+      leaseExpiresAt,
+    );
     return claim ? durableDeliveryClaimFromContinuation(claim) : null;
+  }
+
+  markDeliveryStarted(
+    claim: DurableRunDeliveryClaim,
+    now: string,
+  ): Promise<DurableRunClaimMutationResult> {
+    return this.options.repository.durableRuns?.markDeliveryStarted?.(claim, now)
+      ?? Promise.resolve('committed');
+  }
+
+  heartbeatDelivery(
+    claim: DurableRunDeliveryClaim,
+    now: string,
+    leaseExpiresAt: string,
+  ): Promise<DurableRunDeliveryClaim | null> {
+    const heartbeat = this.options.repository.durableRuns.heartbeatDelivery;
+    if (!heartbeat) return Promise.resolve(null);
+    return heartbeat.call(
+      this.options.repository.durableRuns,
+      claim,
+      now,
+      leaseExpiresAt,
+    );
   }
 
   async commitDelivery(
@@ -383,21 +430,44 @@ export class AsyncTaskKernelAdapter implements
     };
   }
 
-  async deliver(claim: DurableRunDeliveryClaim): Promise<DurableRunDeliveryResult> {
+  async deliver(
+    claim: DurableRunDeliveryClaim,
+    context?: DurableRunDeliveryContext,
+  ): Promise<DurableRunDeliveryResult> {
+    if (claim.recoveredFromExpiredLease) {
+      return this.recoverInterruptedDelivery(claim);
+    }
     const continuationClaim = continuationDeliveryClaimFromDurable(claim);
+    let sendBoundaryStarted = false;
     try {
+      if (context && !await context.markExternalSendStarted()) {
+        return { status: 'superseded' };
+      }
+      sendBoundaryStarted = Boolean(context);
       return durableDeliveryResultFromContinuation(
         await this.options.delivery.deliver(continuationClaim),
       );
     } catch (error) {
       const result: DurableRunDeliveryResult = {
-        status: 'retry',
-        errorCode: 'continuation_delivery_failed',
+        status: sendBoundaryStarted ? 'unknown' : 'retry',
+        errorCode: sendBoundaryStarted
+          ? 'continuation_delivery_outcome_unknown'
+          : 'continuation_delivery_failed',
         errorSummary: errorSummary(error),
       };
-      this.thrownDeliveryResults.add(result);
+      if (!sendBoundaryStarted) this.thrownDeliveryResults.add(result);
       return result;
     }
+  }
+
+  async recoverInterruptedDelivery(
+    _claim: DurableRunDeliveryClaim,
+  ): Promise<DurableRunDeliveryResult> {
+    return {
+      status: 'unknown',
+      errorCode: 'continuation_delivery_interrupted_unknown',
+      errorSummary: 'Delivery was interrupted after sending may have started; it was not replayed.',
+    };
   }
 
   async handleWorkerStateError(claim: DurableRunClaim): Promise<void> {

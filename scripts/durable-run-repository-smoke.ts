@@ -425,12 +425,20 @@ try {
         '2026-07-19T00:00:02.000Z',
       );
       assert.ok(staleClaim);
+      assert.equal(
+        await staleDeliveryRepository.markDeliveryStarted(
+          staleClaim,
+          '2026-07-19T00:00:02.500Z',
+        ),
+        'committed',
+      );
       const currentClaim = await staleDeliveryRepository.claimDelivery(
         ['async_task'],
         'stable-delivery-worker',
         '2026-07-19T00:00:33.000Z',
       );
       assert.ok(currentClaim);
+      assert.equal(currentClaim.recoveredFromExpiredLease, true);
       assert.equal(
         await staleDeliveryRepository.commitDelivery(
           staleClaim,
@@ -442,13 +450,253 @@ try {
       assert.equal(
         await staleDeliveryRepository.commitDelivery(
           currentClaim,
-          { status: 'sent', messageId: 'om_current_delivery' },
+          {
+            status: 'unknown',
+            errorCode: 'delivery_interrupted_unknown',
+            errorSummary: 'The prior send may have completed.',
+          },
           '2026-07-19T00:00:34.000Z',
         ),
         'committed',
       );
+
+      await staleDeliveryRepository.create(request('run-safe-pre-send-recovery', 'async_task'));
+      const safeRunClaim = await staleDeliveryRepository.claimDue(
+        ['async_task'],
+        'safe-pre-send-run-worker',
+        '2026-07-19T00:00:40.000Z',
+        '2026-07-19T00:01:40.000Z',
+      );
+      assert.ok(safeRunClaim);
+      assert.equal(await staleDeliveryRepository.commitTransition(safeRunClaim, {
+        status: 'completed',
+        stateVersion: 1,
+        state: { schemaVersion: 1, delivered: false },
+        deliveries: [{
+          kind: 'terminal',
+          idempotencyKey: 'delivery:run-safe-pre-send-recovery:terminal',
+          route: { kind: 'test', target: 'run-safe-pre-send-recovery' },
+          payload: { schemaVersion: 1, text: 'safe pre-send recovery' },
+        }],
+      }, '2026-07-19T00:00:41.000Z'), 'committed');
+      const unstarted = await staleDeliveryRepository.claimDelivery(
+        ['async_task'],
+        'safe-pre-send-delivery-worker',
+        '2026-07-19T00:00:42.000Z',
+      );
+      assert.ok(unstarted);
+      const safelyRecovered = await staleDeliveryRepository.claimDelivery(
+        ['async_task'],
+        'safe-pre-send-recovery-worker',
+        '2026-07-19T00:01:13.000Z',
+      );
+      assert.ok(safelyRecovered);
+      assert.equal(safelyRecovered.recoveredFromExpiredLease, undefined);
+
+      await staleDeliveryRepository.create(request('run-scalar-metadata', 'async_task'));
+      const scalarRunClaim = await staleDeliveryRepository.claimDue(
+        ['async_task'],
+        'scalar-run-worker',
+        '2026-07-19T00:01:20.000Z',
+        '2026-07-19T00:02:20.000Z',
+      );
+      assert.ok(scalarRunClaim);
+      assert.equal(await staleDeliveryRepository.commitTransition(scalarRunClaim, {
+        status: 'completed',
+        stateVersion: 1,
+        state: { schemaVersion: 1, delivered: false },
+        deliveries: [{
+          kind: 'terminal',
+          idempotencyKey: 'delivery:run-scalar-metadata:terminal',
+          route: { kind: 'test', target: 'run-scalar-metadata' },
+          payload: { schemaVersion: 1, text: 'scalar metadata' },
+          metadata: 'legacy scalar metadata',
+        }],
+      }, '2026-07-19T00:01:21.000Z'), 'committed');
+      const scalarDelivery = await staleDeliveryRepository.claimDelivery(
+        ['async_task'],
+        'scalar-delivery-worker',
+        '2026-07-19T00:01:22.000Z',
+      );
+      assert.ok(scalarDelivery);
+      assert.equal(
+        await staleDeliveryRepository.markDeliveryStarted(
+          scalarDelivery,
+          '2026-07-19T00:01:22.500Z',
+        ),
+        'committed',
+      );
+
+      const legacyDb = new DatabaseSync(staleDeliveryPath);
+      try {
+        legacyDb.prepare(`
+          UPDATE durable_outbox
+          SET metadata_json = '"legacy sending metadata"',
+              lease_expires_at = '2026-07-19T00:01:23.000Z'
+          WHERE outbox_id = ?
+        `).run(scalarDelivery.outboxId);
+      } finally {
+        legacyDb.close();
+      }
+      const legacyRecovered = await staleDeliveryRepository.claimDelivery(
+        ['async_task'],
+        'legacy-recovery-worker',
+        '2026-07-19T00:01:24.000Z',
+      );
+      assert.ok(legacyRecovered);
+      assert.equal(legacyRecovered.recoveredFromExpiredLease, true);
     } finally {
       staleDeliveryRepository.close();
+    }
+  });
+
+  await reviewRegression('pre-execution claim release preserves attempt budget', async () => {
+    const releasePath = join(root, 'claim-release.sqlite');
+    const releaseRepository = await SqliteDurableRunRepository.open({ databasePath: releasePath });
+    try {
+      await releaseRepository.create(request('run-claim-release', 'cron_prompt'));
+      const firstClaim = await releaseRepository.claimDue(
+        ['cron_prompt'],
+        'release-worker',
+        now,
+        lease,
+      );
+      assert.ok(firstClaim);
+      assert.equal(
+        await releaseRepository.releaseClaimBeforeExecution(firstClaim, now),
+        'committed',
+      );
+      const released = await releaseRepository.get('run-claim-release');
+      assert.equal(released?.status, 'queued');
+      assert.equal(released?.attemptCount, 0);
+      const reclaimed = await releaseRepository.claimDue(
+        ['cron_prompt'],
+        'replacement-worker',
+        now,
+        lease,
+      );
+      assert.ok(reclaimed);
+      assert.equal(reclaimed.attempt.ordinal, 1);
+      assert.equal(
+        await releaseRepository.releaseClaimBeforeExecution(firstClaim, now),
+        'stale',
+      );
+
+      await releaseRepository.create(request('run-marker-release', 'cron_prompt'));
+      const markerClaim = await releaseRepository.claimDue(
+        ['cron_prompt'],
+        'marker-release-worker',
+        now,
+        lease,
+      );
+      assert.ok(markerClaim);
+      assert.equal(await releaseRepository.markExecutionStarted(markerClaim, now), 'committed');
+      assert.equal(
+        await releaseRepository.releaseClaimBeforeExecution(markerClaim, now),
+        'committed',
+      );
+      assert.equal((await releaseRepository.get('run-marker-release'))?.attemptCount, 0);
+      const markerReclaim = await releaseRepository.claimDue(
+        ['cron_prompt'],
+        'marker-replacement-worker',
+        now,
+        lease,
+      );
+      assert.equal(markerReclaim?.attempt.ordinal, 1);
+    } finally {
+      releaseRepository.close();
+    }
+  });
+
+  await reviewRegression('run expiry fences transition commits', async () => {
+    const expiryPath = join(root, 'commit-expiry.sqlite');
+    const expiryRepository = await SqliteDurableRunRepository.open({ databasePath: expiryPath });
+    try {
+      const expiring = request('run-commit-expiry', 'cron_prompt');
+      expiring.expiresAt = '2026-07-19T00:00:05.000Z';
+      await expiryRepository.create(expiring);
+      const claim = await expiryRepository.claimDue(
+        ['cron_prompt'],
+        'expiry-worker',
+        now,
+        '2026-07-19T00:01:00.000Z',
+      );
+      assert.ok(claim);
+      assert.equal(await expiryRepository.markExecutionStarted(claim, now), 'committed');
+      assert.equal(await expiryRepository.commitTransition(claim, {
+        status: 'completed',
+        stateVersion: 1,
+        state: { schemaVersion: 1, step: 1 },
+      }, '2026-07-19T00:00:05.000Z'), 'stale');
+      assert.equal((await expiryRepository.get(expiring.runId))?.status, 'running');
+      assert.equal(await expiryRepository.commitTransition(claim, {
+        status: 'failed',
+        stateVersion: 1,
+        state: { schemaVersion: 1, step: 0 },
+        errorCode: 'cron_run_expired',
+        errorSummary: 'The Cron Run reached its maximum age.',
+      }, '2026-07-19T00:00:05.000Z'), 'committed');
+      assert.equal((await expiryRepository.get(expiring.runId))?.status, 'failed');
+    } finally {
+      expiryRepository.close();
+    }
+  });
+
+  await reviewRegression('delivery heartbeat renews the ownership fence used by commit', async () => {
+    const renewalPath = join(root, 'delivery-heartbeat.sqlite');
+    const renewalRepository = await SqliteDurableRunRepository.open({ databasePath: renewalPath });
+    try {
+      await renewalRepository.create(request('run-delivery-heartbeat', 'async_task'));
+      const runClaim = await renewalRepository.claimDue(
+        ['async_task'],
+        'worker-delivery-heartbeat-run',
+        now,
+        lease,
+      );
+      assert.ok(runClaim);
+      assert.equal(await renewalRepository.commitTransition(runClaim, {
+        status: 'completed',
+        stateVersion: 1,
+        state: { schemaVersion: 1, delivered: false },
+        deliveries: [{
+          kind: 'terminal',
+          idempotencyKey: 'delivery:run-delivery-heartbeat:terminal',
+          route: { kind: 'test', target: 'run-delivery-heartbeat' },
+          payload: { schemaVersion: 1, text: 'slow delivery' },
+        }],
+      }, now), 'committed');
+      const claim = await renewalRepository.claimDelivery(
+        ['async_task'],
+        'worker-delivery-heartbeat',
+        '2026-07-19T00:00:01.000Z',
+        '2026-07-19T00:00:02.000Z',
+      );
+      assert.ok(claim);
+      const renewed = await renewalRepository.heartbeatDelivery(
+        claim,
+        '2026-07-19T00:00:01.500Z',
+        '2026-07-19T00:00:04.000Z',
+      );
+      assert.ok(renewed);
+      assert.equal(renewed.leaseExpiresAt, '2026-07-19T00:00:04.000Z');
+      assert.equal(
+        await renewalRepository.commitDelivery(
+          renewed,
+          { status: 'sent', messageId: 'om_delivery_heartbeat' },
+          '2026-07-19T00:00:02.500Z',
+        ),
+        'committed',
+      );
+      assert.equal(
+        await renewalRepository.commitDelivery(
+          claim,
+          { status: 'sent', messageId: 'om_delivery_stale_heartbeat' },
+          '2026-07-19T00:00:02.500Z',
+        ),
+        'stale',
+      );
+    } finally {
+      renewalRepository.close();
     }
   });
 
@@ -840,6 +1088,144 @@ try {
     } finally {
       first.close();
       second.close();
+    }
+  });
+
+  await reviewRegression('expired and attempt-exhausted queued runs terminalize before they wedge concurrency', async () => {
+    const terminalizationPath = join(root, 'terminalize-unclaimable.sqlite');
+    const terminalizationRepository = await SqliteDurableRunRepository.open({
+      databasePath: terminalizationPath,
+    });
+    try {
+      const expired = request('run-expired-queued', 'cron_prompt');
+      expired.concurrencyKey = 'cron-job:expired';
+      expired.expiresAt = '2026-07-18T23:59:59.000Z';
+      await terminalizationRepository.create(expired);
+
+      const corrupt = request('run-unclaimable-corrupt', 'cron_prompt');
+      corrupt.concurrencyKey = 'cron-job:corrupt';
+      corrupt.expiresAt = '2026-07-18T23:59:59.000Z';
+      await terminalizationRepository.create(corrupt);
+
+      const exhausted = request('run-attempts-exhausted', 'cron_prompt');
+      exhausted.concurrencyKey = 'cron-job:exhausted';
+      exhausted.maxAttempts = 1;
+      await terminalizationRepository.create(exhausted);
+      const exhaustedClaim = await terminalizationRepository.claimDue(
+        ['cron_prompt'],
+        'worker-exhausted',
+        now,
+        lease,
+      );
+      assert.equal(exhaustedClaim?.run.runId, 'run-attempts-exhausted');
+      assert.equal(await terminalizationRepository.commitTransition(exhaustedClaim!, {
+        status: 'waiting_retry',
+        stateVersion: 1,
+        state: { schemaVersion: 1, step: 1 },
+        nextRunAt: now,
+        deliveries: [{
+          kind: 'progress',
+          idempotencyKey: 'delivery:run-attempts-exhausted:progress',
+          route: { kind: 'test', target: 'run-attempts-exhausted' },
+          payload: { schemaVersion: 1, text: 'stale progress' },
+        }],
+      }, '2026-07-19T00:00:01.000Z'), 'committed');
+
+      const resolveUnclaimable = (run: any, reason: string) => {
+        if (run.runId === 'run-unclaimable-corrupt') throw new Error('invalid Cron envelope');
+        return {
+          errorCode: reason === 'expired' ? 'cron_run_expired' : 'cron_attempts_exhausted',
+          errorSummary: `Cron terminalized: ${reason}`,
+          stateVersion: 2,
+          state: { schemaVersion: 2, phase: 'completed', reason },
+          deliveries: [{
+            kind: 'cron_terminal',
+            idempotencyKey: `cron:${run.runId}:terminal`,
+            route: run.route,
+            payload: { schemaVersion: 1, runId: run.runId, reason },
+          }],
+        };
+      };
+      assert.equal(await terminalizationRepository.claimDue(
+        ['cron_prompt'],
+        'worker-terminalize',
+        '2026-07-19T00:00:02.000Z',
+        '2026-07-19T00:01:02.000Z',
+        undefined,
+        resolveUnclaimable,
+      ), null);
+      assert.equal((await terminalizationRepository.get('run-expired-queued'))?.status, 'failed');
+      assert.equal((await terminalizationRepository.get('run-attempts-exhausted'))?.status, 'failed');
+      assert.deepEqual(
+        (await terminalizationRepository.get('run-expired-queued'))?.state,
+        { schemaVersion: 2, phase: 'completed', reason: 'expired' },
+      );
+      const corruptTerminal = await terminalizationRepository.get('run-unclaimable-corrupt');
+      assert.equal(
+        corruptTerminal?.status,
+        'failed',
+        JSON.stringify(corruptTerminal),
+      );
+      assert.equal(
+        (await terminalizationRepository.get('run-expired-queued'))?.concurrencyKey,
+        'cron-job:expired',
+      );
+      assert.equal(
+        await terminalizationRepository.getActiveByConcurrencyKey('cron-job:expired'),
+        null,
+      );
+      assert.equal(
+        await terminalizationRepository.getActiveByConcurrencyKey('cron-job:exhausted'),
+        null,
+      );
+      assert.equal(
+        await terminalizationRepository.getActiveByConcurrencyKey('cron-job:corrupt'),
+        null,
+      );
+      const terminalizedRunIds = new Set<string>();
+      for (let index = 0; index < 2; index++) {
+        const delivery = await terminalizationRepository.claimDelivery(
+          ['cron_prompt'],
+          `worker-terminal-delivery-${index}`,
+          '2026-07-19T00:00:03.000Z',
+          '2026-07-19T00:01:03.000Z',
+        );
+        assert.ok(delivery);
+        assert.equal(delivery.kind, 'cron_terminal');
+        terminalizedRunIds.add(delivery.runId);
+        assert.equal(await terminalizationRepository.commitDelivery(
+          delivery,
+          { status: 'sent', messageId: `om_terminalized_${index}` },
+          '2026-07-19T00:00:04.000Z',
+        ), 'committed');
+      }
+      assert.deepEqual(terminalizedRunIds, new Set([
+        'run-expired-queued',
+        'run-attempts-exhausted',
+      ]));
+
+      const replacement = request('run-expired-replacement', 'cron_prompt');
+      replacement.concurrencyKey = 'cron-job:expired';
+      assert.equal((await terminalizationRepository.create(replacement)).created, true);
+      const database = new DatabaseSync(terminalizationPath, {
+        enableForeignKeyConstraints: true,
+      });
+      try {
+        const corruptError = database.prepare(`
+          SELECT error_code FROM durable_runs
+          WHERE run_id = 'run-unclaimable-corrupt'
+        `).get();
+        assert.equal(corruptError?.error_code, 'durable_run_persisted_state_invalid');
+        const staleOutbox = database.prepare(`
+          SELECT status FROM durable_outbox
+          WHERE run_id = 'run-attempts-exhausted' AND kind = 'progress'
+        `).get();
+        assert.equal(staleOutbox?.status, 'superseded');
+      } finally {
+        database.close();
+      }
+    } finally {
+      terminalizationRepository.close();
     }
   });
 

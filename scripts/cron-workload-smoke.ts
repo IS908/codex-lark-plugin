@@ -8,6 +8,7 @@ import { materializeDurableRunWorkloadClaim, materializeDurableRunWorkloadContex
 import { CronMessageWorkload } from '../src/cron/message-workload.js';
 import { CronPromptWorkload } from '../src/cron/direct-exec-workload.js';
 import type { CronPromptExecution, CronRunInput, CronRunState } from '../src/cron/contracts.js';
+import { CodexExecPreStartError } from '../src/codex-exec.js';
 
 const baseJob: CronRunInput['job'] = {
   id: 'job-1',
@@ -75,14 +76,21 @@ function diagnostic(status: 'success' | 'failed', error?: string): CronPromptExe
   };
 }
 
-async function executePrompt(result: CronPromptExecution | Error) {
+async function executePrompt(
+  result: CronPromptExecution | Error,
+  options: { maxAttempts?: number; ordinal?: number } = {},
+) {
   const workload = new CronPromptWorkload({
+    now: () => new Date('2026-07-19T00:00:00.000Z'),
     executor: async () => {
       if (result instanceof Error) throw result;
       return result;
     },
   });
   const raw = claimFor('cron_prompt', baseJob);
+  raw.run.maxAttempts = options.maxAttempts ?? raw.run.maxAttempts;
+  raw.run.attemptCount = options.ordinal ?? raw.run.attemptCount;
+  raw.attempt.ordinal = options.ordinal ?? raw.attempt.ordinal;
   const context = materializeDurableRunWorkloadContext(workload, raw.run);
   const claim = materializeDurableRunWorkloadClaim(raw, context);
   const execution = await workload.execute(claim, new AbortController().signal);
@@ -125,8 +133,33 @@ assert.equal(empty.transition.status, 'failed');
 assert.match((empty.transition.deliveries?.[0].payload as any).report, /failed before a complete report could be delivered/i);
 assert.equal((empty.transition.deliveries?.[0].payload as any).reportType, 'error_report');
 
+const transient = await executePrompt(new CodexExecPreStartError(
+  Object.assign(new Error('process table temporarily unavailable'), { code: 'EAGAIN' }),
+));
+assert.equal(transient.transition.status, 'waiting_retry');
+assert.equal(transient.transition.nextRunAt, '2026-07-19T00:00:30.000Z');
+assert.equal(transient.transition.failure?.retrySafety, 'safe');
+assert.equal(transient.transition.attempt?.operationRisk, 'pure');
+assert.equal(transient.transition.deliveries, undefined);
+assert.doesNotThrow(() => assertDurableRunTransition('running', transient.transition));
+
+const untypedTransient = await executePrompt(
+  Object.assign(new Error('late session persistence failure'), { code: 'EMFILE' }),
+);
+assert.equal(untypedTransient.transition.status, 'failed');
+assert.equal(untypedTransient.transition.deliveries?.length, 1);
+
+const unavailableCommand = await executePrompt(new CodexExecPreStartError(
+  Object.assign(new Error('codex executable is unavailable'), { code: 'ENOENT' }),
+));
+assert.equal(unavailableCommand.transition.status, 'failed');
+assert.equal(unavailableCommand.transition.deliveries?.length, 1);
+
 const secret = 'secret=abcdefghijklmnopqrstuvwxyz';
-const failed = await executePrompt(new Error(`exec exploded ${secret} ${'x'.repeat(5000)}`));
+const failed = await executePrompt(
+  new Error(`exec exploded ${secret} ${'x'.repeat(5000)}`),
+  { maxAttempts: 1 },
+);
 const failurePayload = failed.transition.deliveries?.[0].payload as any;
 assert.equal(failed.transition.status, 'failed');
 assert.match(failurePayload.report, /^CronJob "Daily report" failed before a complete report could be delivered\./);
@@ -181,5 +214,74 @@ assert.equal(recovery.status, 'blocked');
 assert.equal(recovery.deliveries?.length, 1);
 assert.match((recovery.deliveries?.[0].payload as any).report, /outcome is unknown/i);
 assert.doesNotThrow(() => assertDurableRunTransition('running', recovery));
+
+const exhaustedPrompt = success.workload.recoverInterruptedAttempt({
+  ...interrupted,
+  claim: {
+    ...interrupted.claim,
+    run: { ...interrupted.claim.run, attemptCount: 4 },
+    attempt: { ...interrupted.claim.attempt, ordinal: 4 },
+  },
+  executionPhase: 'claimed',
+  operationRisk: 'pure',
+});
+assert.equal(exhaustedPrompt.status, 'failed');
+assert.equal(exhaustedPrompt.errorCode, 'cron_attempts_exhausted');
+assert.match((exhaustedPrompt.deliveries?.[0].payload as any).report, /attempt budget/i);
+assert.doesNotThrow(() => assertDurableRunTransition('running', exhaustedPrompt));
+
+const exhaustedStartedPrompt = success.workload.recoverInterruptedAttempt({
+  ...interrupted,
+  claim: {
+    ...interrupted.claim,
+    run: { ...interrupted.claim.run, attemptCount: 4 },
+    attempt: { ...interrupted.claim.attempt, ordinal: 4 },
+  },
+});
+assert.equal(exhaustedStartedPrompt.status, 'blocked');
+assert.equal(exhaustedStartedPrompt.errorCode, 'cron_execution_outcome_unknown');
+assert.equal(exhaustedStartedPrompt.failure?.retrySafety, 'unknown');
+assert.match((exhaustedStartedPrompt.deliveries?.[0].payload as any).report, /outcome is unknown/i);
+assert.doesNotThrow(() => assertDurableRunTransition('running', exhaustedStartedPrompt));
+
+const expiredActivePrompt = success.workload.terminalizeExpiredAttempt?.(success.claim);
+assert.ok(expiredActivePrompt);
+assert.equal(expiredActivePrompt.status, 'blocked');
+assert.equal(expiredActivePrompt.errorCode, 'cron_execution_outcome_unknown');
+assert.equal(expiredActivePrompt.deliveries?.length, 1);
+assert.match((expiredActivePrompt.deliveries?.[0].payload as any).report, /outcome is unknown/i);
+
+const exhaustedMessage = messageWorkload.recoverInterruptedAttempt({
+  claim: {
+    ...rawMessage,
+    run: { ...rawMessage.run, attemptCount: 4 },
+    attempt: { ...rawMessage.attempt, ordinal: 4 },
+  },
+  recoveredAt: '2026-07-19T00:02:00.000Z',
+  executionPhase: 'claimed',
+  operationRisk: 'pure',
+});
+assert.equal(exhaustedMessage.status, 'failed');
+assert.equal(exhaustedMessage.errorCode, 'cron_attempts_exhausted');
+assert.match((exhaustedMessage.deliveries?.[0].payload as any).content, /attempt budget/i);
+assert.doesNotThrow(() => assertDurableRunTransition('running', exhaustedMessage));
+
+const expiredActiveMessage = messageWorkload.terminalizeExpiredAttempt?.(messageClaim);
+assert.ok(expiredActiveMessage);
+assert.equal(expiredActiveMessage.status, 'failed');
+assert.equal(expiredActiveMessage.errorCode, 'cron_run_expired');
+assert.equal(expiredActiveMessage.deliveries?.length, 1);
+assert.match((expiredActiveMessage.deliveries?.[0].payload as any).content, /maximum run age/i);
+
+for (const [workload, run, reason] of [
+  [success.workload, interrupted.claim.run, 'expired'],
+  [messageWorkload, rawMessage.run, 'attempts_exhausted'],
+] as const) {
+  const terminal = workload.terminalizeUnclaimable?.(run, reason);
+  assert.ok(terminal);
+  assert.equal(terminal.deliveries?.length, 1);
+  assert.equal(terminal.deliveries?.[0].kind, 'cron_terminal');
+  assert.match(JSON.stringify(terminal.deliveries?.[0].payload), /failed|maximum run age|attempt budget/i);
+}
 
 console.log('cron workload smoke: PASS');

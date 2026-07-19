@@ -16,7 +16,7 @@ export interface CronRuntimeProjectionRepository {
 }
 
 export async function projectCronDeliveryPending(
-  claim: DurableRunDeliveryClaim,
+  claim: Pick<DurableRunDeliveryClaim, 'runId'>,
   route: CronDeliveryRoute,
   payload: CronTerminalPayload,
   now: string,
@@ -29,13 +29,13 @@ export async function projectCronDeliveryPending(
       job.runtime.run_count += 1;
       job.runtime.last_run_at = now;
     }
-    job.runtime.run_status = payload.kind === 'report' ? payload.runStatus : 'success';
+    job.runtime.run_status = payload.runStatus;
     job.runtime.output_status = 'generated';
     job.runtime.delivery_status = 'pending';
     job.runtime.report = payload.kind === 'report' ? payload.report : payload.content;
     job.runtime.report_type = payload.kind === 'report' ? payload.reportType : 'job_message';
     job.runtime.delivery_error = null;
-    job.runtime.last_error = payload.kind === 'report' && payload.runStatus === 'failed'
+    job.runtime.last_error = payload.runStatus === 'failed'
       ? payload.failureReason ?? 'CronJob execution failed.'
       : null;
     job.runtime.diagnostics = payload.kind === 'report' ? payload.diagnostics : null;
@@ -45,7 +45,7 @@ export async function projectCronDeliveryPending(
 }
 
 export async function projectCronDeliveryResult(
-  claim: DurableRunDeliveryClaim,
+  claim: Pick<DurableRunDeliveryClaim, 'runId'>,
   route: CronDeliveryRoute,
   payload: CronTerminalPayload,
   result: DurableRunDeliveryResult,
@@ -67,7 +67,7 @@ export async function projectCronDeliveryResult(
       job.runtime.delivery_status = 'failed';
       job.runtime.delivery_error = result.errorSummary;
     }
-    if (payload.kind === 'report' && payload.runStatus === 'failed') {
+    if (payload.runStatus === 'failed') {
       job.runtime.last_error = payload.failureReason ?? 'CronJob execution failed.';
     }
     applied = true;

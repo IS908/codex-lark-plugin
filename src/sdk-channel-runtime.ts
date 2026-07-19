@@ -16,6 +16,7 @@ type SdkRuntimeChannel = Pick<
   | 'botIdentity'
   | 'comments'
   | 'connect'
+  | 'disconnect'
   | 'downloadResource'
   | 'fetchMessage'
   | 'on'
@@ -124,7 +125,12 @@ export function startSdkChannelRuntimeWithRetry(
             await options.onConnected?.(sdkChannel);
           } catch (err) {
             logSafeError('[sdk-channel] Runtime post-connect startup failed:', err);
-            await options.onStopped?.(err);
+            try {
+              await sdkChannel.disconnect();
+            } catch (disconnectError) {
+              logSafeError('[sdk-channel] Runtime disconnect after startup failure failed:', disconnectError);
+            }
+            throw err;
           }
         }
         return;

@@ -131,7 +131,11 @@ export interface ContinuationRepository {
   cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob>;
   redactTerminal(jobId: string, now: string): Promise<boolean>;
   setRetained(jobId: string, retained: boolean, now: string): Promise<boolean>;
-  claimPendingDelivery(workerId: string, now: string): Promise<ContinuationDeliveryClaim | null>;
+  claimPendingDelivery(
+    workerId: string,
+    now: string,
+    leaseExpiresAt?: string,
+  ): Promise<ContinuationDeliveryClaim | null>;
   markDeliveryResult(
     claim: ContinuationDeliveryClaim,
     result: ContinuationDeliveryResult,

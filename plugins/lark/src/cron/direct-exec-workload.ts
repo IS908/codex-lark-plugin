@@ -3,11 +3,17 @@ import type {
   DurableRunFailure,
   DurableRunInterruptedAttempt,
   DurableRunPreflight,
+  DurableRunRecord,
   DurableRunTransition,
   DurableRunWorkloadClaim,
   DurableRunWorkloadContext,
 } from '../domain/durable-run.js';
-import type { DurableRunWorkload } from '../ports/durable-run.js';
+import type {
+  DurableRunPersistedStateFailure,
+  DurableRunUnclaimableReason,
+  DurableRunWorkload,
+} from '../ports/durable-run.js';
+import { isRetrySafeCodexExecPreStartError } from '../codex-exec.js';
 import {
   CronJobRunDiagnostics,
   formatCronJobDiagnostics,
@@ -28,6 +34,7 @@ import {
 
 export interface CronPromptWorkloadOptions {
   executor: CronPromptExecutor;
+  now?: () => Date;
 }
 
 export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, CronRunState, CronPromptExecution> {
@@ -58,7 +65,10 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
       return await this.options.executor({ runId: claim.run.runId, job }, signal);
     } catch (error) {
       if (signal.aborted) throw error;
-      return failedExecution(job, claim.run.runId, error);
+      return {
+        ...failedExecution(job, claim.run.runId, error),
+        ...(isRetrySafeCodexExecPreStartError(error) ? { retrySafe: true } : {}),
+      };
     }
   }
 
@@ -67,6 +77,43 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
     execution: CronPromptExecution,
   ): DurableRunTransition {
     const normalized = normalizeExecution(claim.run.input, claim.run.runId, execution);
+    if (
+      normalized.runStatus === 'failed'
+      && normalized.retrySafe === true
+      && claim.attempt.ordinal < claim.run.maxAttempts
+    ) {
+      const reason = sanitizeDiagnosticText(
+        normalized.failureReason ?? 'CronJob prompt execution failed.',
+        1000,
+      );
+      return {
+        status: 'waiting_retry',
+        stateVersion: claim.run.stateVersion,
+        state: claim.run.state,
+        nextRunAt: new Date(
+          (this.options.now ?? (() => new Date()))().getTime()
+          + executionRetryDelayMs(claim.attempt.ordinal),
+        ).toISOString(),
+        errorCode: 'cron_prompt_transient',
+        errorSummary: reason,
+        failure: {
+          category: 'transient',
+          retrySafety: 'safe',
+          capabilityAvailable: true,
+          operationRisk: 'pure',
+          hints: ['Retry the CronJob execution after the transient pre-execution failure.'],
+          failedStep: 'codex_exec_start',
+          diagnostic: reason,
+          fingerprint: `cron-prompt-transient:${reason.slice(0, 80)}`.slice(0, 128),
+        },
+        attempt: {
+          outcome: 'transient_failure',
+          operationRisk: 'pure',
+          errorCode: 'cron_prompt_transient',
+          errorSummary: reason,
+        },
+      };
+    }
     const reportType: 'job_result' | 'error_report' =
       normalized.runStatus === 'success' ? 'job_result' : 'error_report';
     const commit = {
@@ -103,6 +150,43 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
   }
 
   recoverInterruptedAttempt(context: DurableRunInterruptedAttempt): DurableRunTransition {
+    if (
+      context.executionPhase !== 'execution_started'
+      && context.claim.attempt.ordinal >= context.claim.run.maxAttempts
+    ) {
+      const input = this.parseInput(context.claim.run.input, context.claim.run.inputVersion);
+      const reason = 'The CronJob exhausted its execution attempt budget before a report could be committed.';
+      const execution = failedExecution(
+        promptJob(input),
+        context.claim.run.runId,
+        new Error(reason),
+      );
+      return {
+        status: 'failed',
+        stateVersion: CRON_RUN_STATE_VERSION,
+        state: {
+          schemaVersion: 1,
+          phase: 'completed',
+          commit: {
+            kind: 'prompt',
+            report: execution.report,
+            runStatus: 'failed',
+            reportType: 'error_report',
+            failureReason: reason,
+            diagnostics: execution.diagnostics,
+          },
+        } satisfies CronRunState,
+        errorCode: 'cron_attempts_exhausted',
+        errorSummary: reason,
+        attempt: {
+          outcome: 'attempts_exhausted',
+          operationRisk: 'pure',
+          errorCode: 'cron_attempts_exhausted',
+          errorSummary: reason,
+        },
+        deliveries: [promptDelivery(context.claim, input, execution, 'error_report')],
+      };
+    }
     if (context.executionPhase !== 'execution_started') {
       return {
         status: 'recovering',
@@ -112,9 +196,61 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
         attempt: { outcome: 'interrupted_before_execution', operationRisk: 'pure' },
       };
     }
-    const input = this.parseInput(context.claim.run.input, context.claim.run.inputVersion);
+    return interruptedPromptTransition(
+      context.claim,
+      this.parseInput(context.claim.run.input, context.claim.run.inputVersion),
+    );
+  }
+
+  terminalizeExpiredAttempt(
+    claim: DurableRunWorkloadClaim<CronRunInput, CronRunState>,
+  ): DurableRunTransition {
+    return interruptedPromptTransition(claim, claim.run.input);
+  }
+
+  terminalizeUnclaimable(
+    run: DurableRunRecord,
+    reason: DurableRunUnclaimableReason,
+  ): DurableRunPersistedStateFailure {
+    const input = this.parseInput(run.input, run.inputVersion);
+    const detail = reason === 'expired'
+      ? 'The CronJob reached its maximum run age before a report could be committed.'
+      : 'The CronJob exhausted its execution attempt budget before a report could be committed.';
+    const execution = failedExecution(promptJob(input), run.runId, new Error(detail));
+    return {
+      errorCode: reason === 'expired' ? 'cron_run_expired' : 'cron_attempts_exhausted',
+      errorSummary: detail,
+      stateVersion: CRON_RUN_STATE_VERSION,
+      state: {
+        schemaVersion: 1,
+        phase: 'completed',
+        commit: {
+          kind: 'prompt',
+          report: execution.report,
+          runStatus: 'failed',
+          reportType: 'error_report',
+          failureReason: detail,
+          diagnostics: execution.diagnostics,
+        },
+      } satisfies CronRunState,
+      deliveries: [promptDelivery({ run }, input, execution, 'error_report')],
+    };
+  }
+}
+
+function executionRetryDelayMs(attemptOrdinal: number): number {
+  return Math.min(120_000, 30_000 * 2 ** Math.max(0, attemptOrdinal - 1));
+}
+
+function interruptedPromptTransition(
+  claim: {
+    run: { runId: string; route: unknown };
+    attempt: { attemptId: string };
+  },
+  input: CronRunInput,
+): DurableRunTransition {
     const reason = 'The CronJob execution was interrupted after Codex started, so the external outcome is unknown.';
-    const execution = failedExecution(promptJob(input), context.claim.run.runId, new Error(reason));
+    const execution = failedExecution(promptJob(input), claim.run.runId, new Error(reason));
     const failure: DurableRunFailure = {
       category: 'unknown',
       retrySafety: 'unknown',
@@ -123,7 +259,7 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
       hints: ['Confirm the prior Codex execution outcome before retrying this CronJob.'],
       failedStep: 'codex_exec',
       diagnostic: reason,
-      fingerprint: `cron-interrupted:${context.claim.run.runId}`,
+      fingerprint: `cron-interrupted:${claim.run.runId}`,
     };
     return {
       status: 'blocked',
@@ -149,9 +285,8 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
         errorCode: 'cron_execution_outcome_unknown',
         errorSummary: reason,
       },
-      deliveries: [promptDelivery(context.claim, input, execution, 'error_report')],
+      deliveries: [promptDelivery(claim, input, execution, 'error_report')],
     };
-  }
 }
 
 function normalizeExecution(
@@ -169,7 +304,7 @@ function normalizeExecution(
 }
 
 function promptDelivery(
-  claim: { run: { runId: string; route: unknown }; attempt: { attemptId: string } },
+  claim: { run: { runId: string; route: unknown }; attempt?: { attemptId: string } },
   input: CronRunInput,
   execution: CronPromptExecution,
   reportType: 'job_result' | 'error_report',
@@ -189,7 +324,7 @@ function promptDelivery(
   };
   return {
     kind: 'cron_terminal',
-    attemptId: claim.attempt.attemptId,
+    ...(claim.attempt ? { attemptId: claim.attempt.attemptId } : {}),
     idempotencyKey: `cron:${claim.run.runId}:terminal`,
     route: claim.run.route,
     payload,

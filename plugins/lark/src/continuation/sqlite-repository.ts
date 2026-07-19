@@ -536,11 +536,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       !current
       || current.status !== 'running'
       || current.rowVersion !== claim.claimedRowVersion
-      || claim.durableClaim.attempt.leaseExpiresAt <= now
     ) {
       this.forgetActiveDurableClaim(claim.durableClaim);
       return 'stale';
     }
+    // commitTransition atomically fences the current persisted lease, owner, and Attempt.
+    // claim.attempt.leaseExpiresAt is the original claim snapshot and is not updated by heartbeats.
     const prepared = await this.prepareStepTransition(claim, result, now);
     const committed = await this.durableRuns.commitTransition(
       claim.durableClaim,
@@ -621,11 +622,11 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       !current
       || current.status !== 'running'
       || current.rowVersion !== claim.claimedRowVersion
-      || claim.durableClaim.attempt.leaseExpiresAt <= now
     ) {
       this.forgetActiveDurableClaim(claim.durableClaim);
       return 'stale';
     }
+    // failAttempt performs the same atomic persisted-claim fence as commitTransition.
     const prepared = await this.prepareFailureTransition(claim, failure, now);
     const committed = await this.durableRuns.failAttempt(
       claim.durableClaim,
@@ -1147,9 +1148,15 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   async claimPendingDelivery(
     workerId: string,
     now: string,
+    leaseExpiresAt?: string,
   ): Promise<ContinuationDeliveryClaim | null> {
     while (true) {
-      const claim = await this.durableRuns.claimDelivery(['async_task'], workerId, now);
+      const claim = await this.durableRuns.claimDelivery(
+        ['async_task'],
+        workerId,
+        now,
+        leaseExpiresAt,
+      );
       if (!claim) return null;
       const job = await this.get(claim.runId);
       if (!job || !isDeepStrictEqual(claim.route, job.route)) {
@@ -1160,7 +1167,22 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         }, now);
         continue;
       }
-      return continuationDeliveryClaimFromDurable(claim);
+      try {
+        return continuationDeliveryClaimFromDurable(claim);
+      } catch {
+        await this.durableRuns.commitDelivery(claim, claim.recoveredFromExpiredLease
+          ? {
+              status: 'unknown',
+              errorCode: 'continuation_delivery_envelope_interrupted_unknown',
+              errorSummary: 'An interrupted delivery has an invalid stored envelope; it was not replayed.',
+            }
+          : {
+              status: 'failed',
+              errorCode: 'continuation_delivery_envelope_invalid',
+              errorSummary: 'The stored Async Task delivery envelope is invalid.',
+            }, now);
+        continue;
+      }
     }
   }
 

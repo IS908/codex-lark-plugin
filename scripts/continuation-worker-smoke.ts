@@ -685,7 +685,8 @@ assert.ok(workerStateDebugMessages.some((message) => message.includes('event=wor
 assert.deepEqual(workerStateHarness.failures, []);
 await workerStateWorker.stop();
 
-// Delivery errors only reschedule the outbox and never invoke the executor.
+// Once the durable send boundary is committed, a thrown delivery is ambiguous
+// and must never be replayed automatically or invoke the executor.
 const deliveryHarness = createRepositoryHarness();
 deliveryHarness.deliveryClaim = {
   outboxId: 'out_retry',
@@ -721,18 +722,18 @@ const deliveryWorker = new ContinuationWorker({
   maxConcurrency: 1,
 });
 await deliveryWorker.tick();
-await waitFor(() => deliveryHarness.deliveryResults.length === 1, 'delivery retry');
+await waitFor(() => deliveryHarness.deliveryResults.length === 1, 'unknown delivery outcome');
 await waitFor(() => deliveryAuditDetails.length >= 1, 'delivery failure audit');
 assert.equal(deliveryExecutionCalls, 0);
 assert.deepEqual(deliveryHarness.deliveryResults[0], {
-  status: 'retry',
-  errorCode: 'continuation_delivery_failed',
+  status: 'delivery_unknown',
+  errorCode: 'continuation_delivery_outcome_unknown',
   errorSummary: 'temporary Lark failure',
 });
 assert.ok(deliveryAuditDetails.includes(
-  'continuation.deliver:progress:progress:att_retry0000000000000000000:continuation_delivery_failed',
+  'continuation.deliver:progress:progress:att_retry0000000000000000000:delivery_unknown',
 ));
-assert.equal(deliveryDebugMessages.some((message) => message.includes('event=delivery_committed')), false);
+assert.equal(deliveryDebugMessages.some((message) => message.includes('event=delivery_committed')), true);
 await deliveryWorker.stop();
 
 // An explicit retry result keeps the ordinary retry audit and committed diagnostic semantics.

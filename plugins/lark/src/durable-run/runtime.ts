@@ -13,8 +13,10 @@ import type {
   DurableRunClock,
   DurableRunDelivery,
   DurableRunRepository,
+  DurableRunUnclaimableReason,
   DurableRunWorkload,
 } from '../ports/durable-run.js';
+import { materializeDurableRunWorkloadContext } from '../ports/durable-run.js';
 import { DurableRunWorker } from './worker.js';
 
 export interface DurableRunRegistration {
@@ -33,6 +35,8 @@ export interface DurableRunRuntimeOptions {
   scanIntervalMs?: number;
   heartbeatIntervalMs?: number;
   leaseDurationMs?: number;
+  deliveryHeartbeatIntervalMs?: number;
+  deliveryLeaseDurationMs?: number;
   workerId?: string;
 }
 
@@ -60,8 +64,22 @@ export function createDurableRunRuntime(options: DurableRunRuntimeOptions): Dura
   }
   const repository = new RoutedDurableRunRepository(options.baseRepository, registrationByKind);
   const delivery: DurableRunDelivery = {
-    deliver(claim) {
-      return requiredRegistration(registrationByKind, claim.workloadKind).delivery.deliver(claim);
+    managesExternalSendBoundary: true,
+    async deliver(claim, context) {
+      const registered = requiredRegistration(
+        registrationByKind,
+        claim.workloadKind,
+      ).delivery;
+      if (!registered.managesExternalSendBoundary && context) {
+        if (!await context.markExternalSendStarted()) return { status: 'superseded' };
+      }
+      return registered.deliver(claim, context);
+    },
+    recoverInterruptedDelivery(claim) {
+      const registered = requiredRegistration(registrationByKind, claim.workloadKind).delivery;
+      return registered.recoverInterruptedDelivery
+        ? registered.recoverInterruptedDelivery(claim)
+        : Promise.resolve(interruptedDeliveryResult());
     },
   };
   const worker = new DurableRunWorker({
@@ -77,6 +95,12 @@ export function createDurableRunRuntime(options: DurableRunRuntimeOptions): Dura
       ? {}
       : { heartbeatIntervalMs: options.heartbeatIntervalMs }),
     ...(options.leaseDurationMs === undefined ? {} : { leaseDurationMs: options.leaseDurationMs }),
+    ...(options.deliveryHeartbeatIntervalMs === undefined
+      ? {}
+      : { deliveryHeartbeatIntervalMs: options.deliveryHeartbeatIntervalMs }),
+    ...(options.deliveryLeaseDurationMs === undefined
+      ? {}
+      : { deliveryLeaseDurationMs: options.deliveryLeaseDurationMs }),
     workerId: options.workerId ?? 'durable-run-worker',
     onExecutionStateError: async (claim, error) => {
       await requiredRegistration(registrationByKind, claim.run.workloadKind)
@@ -89,6 +113,14 @@ export function createDurableRunRuntime(options: DurableRunRuntimeOptions): Dura
     start: () => worker.start(),
     tick: () => worker.tick(),
     stop: () => worker.stop(),
+  };
+}
+
+function interruptedDeliveryResult(): DurableRunDeliveryResult {
+  return {
+    status: 'unknown',
+    errorCode: 'durable_run_delivery_interrupted_unknown',
+    errorSummary: 'Delivery was interrupted after sending may have started; it was not replayed.',
   };
 }
 
@@ -107,17 +139,34 @@ class RoutedDurableRunRepository implements DurableRunRepository {
   }
   get(runId: string): Promise<DurableRunRecord | null> { return this.base.get(runId); }
   getActiveByConcurrencyKey(key: string) { return this.base.getActiveByConcurrencyKey(key); }
+  getLatestByConcurrencyKey(key: string) {
+    return this.base.getLatestByConcurrencyKey?.(key) ?? Promise.resolve(null);
+  }
+  getDeliverySnapshot(runId: string, kind: string) {
+    return this.base.getDeliverySnapshot?.(runId, kind) ?? Promise.resolve(null);
+  }
 
   async claimDue(kinds: readonly string[], workerId: string, now: string, leaseExpiresAt: string) {
     const groups = repositoryGroups(this.registrations, kinds);
     const result = await roundRobin(groups, this.executionCursor, async (group) =>
-      group.repository.claimDue(group.kinds, workerId, now, leaseExpiresAt));
+      group.repository.claimDue(
+        group.kinds,
+        workerId,
+        now,
+        leaseExpiresAt,
+        persistedStateValidator(this.registrations),
+        unclaimableResolver(this.registrations),
+      ));
     this.executionCursor = result.nextCursor;
     return result.value;
   }
 
   markExecutionStarted(claim: DurableRunClaim, now: string) {
     return this.repositoryForClaim(claim).markExecutionStarted(claim, now);
+  }
+  releaseClaimBeforeExecution(claim: DurableRunClaim, now: string) {
+    return this.repositoryForClaim(claim).releaseClaimBeforeExecution?.(claim, now)
+      ?? Promise.resolve('stale' as const);
   }
   heartbeat(claim: DurableRunClaim, now: string, leaseExpiresAt: string) {
     return this.repositoryForClaim(claim).heartbeat(claim, now, leaseExpiresAt);
@@ -137,17 +186,44 @@ class RoutedDurableRunRepository implements DurableRunRepository {
   async recoverExpiredLeases(kinds: readonly string[], now: string): Promise<DurableRunInterruptedAttempt[]> {
     const groups = repositoryGroups(this.registrations, kinds);
     const recovered = await Promise.all(
-      groups.map((group) => group.repository.recoverExpiredLeases(group.kinds, now)),
+      groups.map((group) => group.repository.recoverExpiredLeases(
+        group.kinds,
+        now,
+        persistedStateValidator(this.registrations),
+        unclaimableResolver(this.registrations),
+      )),
     );
     return recovered.flat();
   }
 
-  async claimDelivery(kinds: readonly string[], workerId: string, now: string) {
+  async claimDelivery(
+    kinds: readonly string[],
+    workerId: string,
+    now: string,
+    leaseExpiresAt?: string,
+  ) {
     const groups = repositoryGroups(this.registrations, kinds);
     const result = await roundRobin(groups, this.deliveryCursor, async (group) =>
-      group.repository.claimDelivery(group.kinds, workerId, now));
+      group.repository.claimDelivery(group.kinds, workerId, now, leaseExpiresAt));
     this.deliveryCursor = result.nextCursor;
     return result.value;
+  }
+
+  markDeliveryStarted(claim: DurableRunDeliveryClaim, now: string) {
+    const repository = requiredRegistration(
+      this.registrations,
+      claim.workloadKind,
+    ).repository;
+    return repository.markDeliveryStarted?.(claim, now) ?? Promise.resolve('committed' as const);
+  }
+
+  heartbeatDelivery(claim: DurableRunDeliveryClaim, now: string, leaseExpiresAt: string) {
+    const repository = requiredRegistration(
+      this.registrations,
+      claim.workloadKind,
+    ).repository;
+    return repository.heartbeatDelivery?.(claim, now, leaseExpiresAt)
+      ?? Promise.resolve(null);
   }
 
   commitDelivery(claim: DurableRunDeliveryClaim, result: DurableRunDeliveryResult, now: string) {
@@ -204,4 +280,22 @@ function requiredRegistration(
   const registration = registrations.get(kind);
   if (!registration) throw new Error(`Unknown Durable Run workload registration: ${kind}`);
   return registration;
+}
+
+function unclaimableResolver(
+  registrations: ReadonlyMap<string, DurableRunRegistration>,
+) {
+  return (run: DurableRunRecord, reason: DurableRunUnclaimableReason) =>
+    requiredRegistration(registrations, run.workloadKind)
+      .workload.terminalizeUnclaimable?.(run, reason) ?? null;
+}
+
+function persistedStateValidator(
+  registrations: ReadonlyMap<string, DurableRunRegistration>,
+) {
+  return (run: DurableRunRecord) => {
+    const workload = requiredRegistration(registrations, run.workloadKind).workload;
+    materializeDurableRunWorkloadContext(workload, run);
+    return null;
+  };
 }

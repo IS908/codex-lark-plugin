@@ -1,6 +1,7 @@
 import type {
   DurableRunClaim,
   DurableRunDeliveryClaim,
+  DurableRunDeliveryResult,
   DurableRunFailure,
   DurableRunPreflight,
   DurableRunTransition,
@@ -29,7 +30,15 @@ interface ActiveExecution {
   expirationTimer?: NodeJS.Timeout;
   confirmedLeaseExpiresAt: string;
   heartbeatInFlight: boolean;
+  executionStarted: boolean;
   abortReason?: AbortReason;
+}
+
+interface ActiveDelivery {
+  claim: DurableRunDeliveryClaim;
+  heartbeatTimer?: NodeJS.Timeout;
+  heartbeatInFlight: boolean;
+  leaseLost: boolean;
 }
 
 export interface DurableRunWorkerOptions {
@@ -41,6 +50,8 @@ export interface DurableRunWorkerOptions {
   scanIntervalMs?: number;
   heartbeatIntervalMs?: number;
   leaseDurationMs?: number;
+  deliveryHeartbeatIntervalMs?: number;
+  deliveryLeaseDurationMs?: number;
   workerId?: string;
   onExecutionStateError?: (claim: DurableRunClaim, error: unknown) => Promise<void> | void;
 }
@@ -56,6 +67,8 @@ export class DurableRunWorker {
   private readonly scanIntervalMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly leaseDurationMs: number;
+  private readonly deliveryHeartbeatIntervalMs: number;
+  private readonly deliveryLeaseDurationMs: number;
   private scanTimer?: NodeJS.Timeout;
   private scheduledTick?: NodeJS.Timeout;
   private executionScanInFlight?: Promise<void>;
@@ -91,6 +104,17 @@ export class DurableRunWorker {
       options.leaseDurationMs,
       DEFAULT_LEASE_DURATION_MS,
     );
+    this.deliveryLeaseDurationMs = positiveInterval(
+      options.deliveryLeaseDurationMs,
+      this.leaseDurationMs,
+    );
+    this.deliveryHeartbeatIntervalMs = positiveInterval(
+      options.deliveryHeartbeatIntervalMs,
+      Math.min(this.heartbeatIntervalMs, Math.max(1, Math.floor(this.deliveryLeaseDurationMs / 2))),
+    );
+    if (this.deliveryHeartbeatIntervalMs >= this.deliveryLeaseDurationMs) {
+      throw new Error('Durable run delivery heartbeat interval must be shorter than its lease duration.');
+    }
   }
 
   get activeCount(): number {
@@ -171,12 +195,20 @@ export class DurableRunWorker {
       let transition: DurableRunTransition;
       try {
         const workload = this.workloadFor(attempt.claim.run.workloadKind);
-        const context = materializeDurableRunWorkloadContext(workload, attempt.claim.run);
-        const claim = materializeDurableRunWorkloadClaim(attempt.claim, context);
-        transition = workload.recoverInterruptedAttempt({
-          ...attempt,
-          claim,
-        });
+        if (attempt.claim.run.expiresAt <= now) {
+          transition = expiredAttemptTransition(
+            workload,
+            attempt.claim,
+            attempt.executionPhase === 'execution_started',
+          );
+        } else {
+          const context = materializeDurableRunWorkloadContext(workload, attempt.claim.run);
+          const claim = materializeDurableRunWorkloadClaim(attempt.claim, context);
+          transition = workload.recoverInterruptedAttempt({
+            ...attempt,
+            claim,
+          });
+        }
       } catch (error) {
         try {
           await this.options.onExecutionStateError?.(attempt.claim, error);
@@ -211,7 +243,10 @@ export class DurableRunWorker {
         addMilliseconds(claimedAt, this.leaseDurationMs),
       );
       if (!claim) break;
-      if (this.stopping) break;
+      if (this.stopping) {
+        await this.options.repository.releaseClaimBeforeExecution?.(claim, this.nowIso());
+        break;
+      }
       if (!availableKinds.includes(claim.run.workloadKind)) {
         throw new Error(`Repository returned unavailable workload ${claim.run.workloadKind}.`);
       }
@@ -225,12 +260,25 @@ export class DurableRunWorker {
 
   private async pumpDelivery(): Promise<void> {
     if (!this.stopping && !this.deliveryInFlight) {
+      const claimedAt = this.nowIso();
       const claim = await this.options.repository.claimDelivery(
         [...this.workloads.keys()],
         `${this.workerId}-delivery`,
-        this.nowIso(),
+        claimedAt,
+        addMilliseconds(claimedAt, this.deliveryLeaseDurationMs),
       );
-      if (claim && !this.stopping) this.startDelivery(claim);
+      if (!claim) return;
+      if (this.stopping) {
+        await this.options.repository.commitDelivery(claim, {
+          status: 'retry',
+          errorCode: 'durable_run_delivery_shutdown_before_send',
+          errorSummary: 'Worker shutdown started before delivery; the claim was released.',
+          retryAt: claimedAt,
+          resetAttemptCount: true,
+        }, claimedAt);
+        return;
+      }
+      this.startDelivery(claim);
     }
   }
 
@@ -242,6 +290,7 @@ export class DurableRunWorker {
       promise: Promise.resolve(),
       confirmedLeaseExpiresAt: claim.attempt.leaseExpiresAt,
       heartbeatInFlight: false,
+      executionStarted: false,
     };
     this.active.set(claim.run.runId, execution);
 
@@ -309,8 +358,22 @@ export class DurableRunWorker {
       execution.claim,
       this.nowIso(),
     );
-    if (!this.acceptClaimMutation(execution, started)) return;
+    if (started !== 'committed') {
+      await this.resolveStaleExecutionMutation(execution);
+      return;
+    }
+    execution.executionStarted = true;
     if (!this.executionCanMutate(execution)) {
+      if (execution.abortReason === 'shutdown') {
+        const released = await this.options.repository.releaseClaimBeforeExecution?.(
+          execution.claim,
+          this.nowIso(),
+        );
+        if (released === 'committed') {
+          execution.executionStarted = false;
+          return;
+        }
+      }
       await this.finishAbortedExecution(execution);
       return;
     }
@@ -344,7 +407,7 @@ export class DurableRunWorker {
       transition,
       this.nowIso(),
     );
-    this.acceptClaimMutation(execution, committed);
+    if (committed !== 'committed') await this.resolveStaleExecutionMutation(execution);
   }
 
   private async executionCannotCommit(execution: ActiveExecution): Promise<boolean> {
@@ -354,6 +417,7 @@ export class DurableRunWorker {
     const latest = await this.options.repository.get(execution.claim.run.runId);
     if (latest?.status === 'cancel_requested') this.abortExecution(execution, 'cancel');
     else if (!latest || latest.status !== 'running') this.abortExecution(execution, 'lease_lost');
+    else if (latest.expiresAt <= this.nowIso()) this.abortExecution(execution, 'expired');
 
     this.abortIfWorkerCannotOwnClaim(execution);
     return Boolean(execution.abortReason || execution.controller.signal.aborted);
@@ -379,6 +443,23 @@ export class DurableRunWorker {
     if (result === 'committed') return true;
     this.abortExecution(execution, 'lease_lost');
     return false;
+  }
+
+  private async resolveStaleExecutionMutation(execution: ActiveExecution): Promise<void> {
+    const now = this.nowIso();
+    const latest = await this.options.repository.get(execution.claim.run.runId);
+    if (
+      !this.stopping
+      && latest?.status === 'running'
+      && latest.expiresAt <= now
+      && execution.confirmedLeaseExpiresAt > now
+    ) {
+      execution.abortReason = 'expired';
+      if (!execution.controller.signal.aborted) execution.controller.abort();
+      await this.finishAbortedExecution(execution);
+      return;
+    }
+    this.acceptClaimMutation(execution, 'stale');
   }
 
   private async handleExecutionError(
@@ -424,23 +505,14 @@ export class DurableRunWorker {
       return;
     }
     if (execution.abortReason === 'expired') {
+      const transition = expiredAttemptTransition(
+        execution.workload,
+        execution.claim,
+        execution.executionStarted,
+      );
       const committed = await this.options.repository.commitTransition(
         execution.claim,
-        {
-          ...unchangedTransition(execution.claim, 'failed'),
-          errorCode: 'durable_run_expired',
-          errorSummary: 'The durable run reached its maximum age.',
-          failure: {
-            category: 'terminal',
-            retrySafety: 'unsafe',
-            capabilityAvailable: true,
-            operationRisk: 'unknown',
-            hints: [],
-            failedStep: execution.claim.run.workloadKind.slice(0, 80),
-            diagnostic: 'The durable run reached its maximum age.',
-            fingerprint: `expired:${execution.claim.run.workloadKind}`.slice(0, 128),
-          },
-        },
+        transition,
         this.nowIso(),
       );
       this.acceptClaimMutation(execution, committed);
@@ -526,7 +598,12 @@ export class DurableRunWorker {
   }
 
   private startDelivery(claim: DurableRunDeliveryClaim): void {
-    const run = this.runDelivery(claim)
+    const active: ActiveDelivery = {
+      claim,
+      heartbeatInFlight: false,
+      leaseLost: false,
+    };
+    const run = this.runDelivery(active)
       .catch(() => {})
       .finally(() => {
         if (this.deliveryInFlight === run) this.deliveryInFlight = undefined;
@@ -535,18 +612,123 @@ export class DurableRunWorker {
     this.deliveryInFlight = run;
   }
 
-  private async runDelivery(claim: DurableRunDeliveryClaim): Promise<void> {
-    let result;
-    try {
-      result = await this.options.delivery.deliver(claim);
-    } catch (error) {
-      result = {
-        status: 'retry' as const,
-        errorCode: 'durable_run_delivery_failed',
-        errorSummary: boundedErrorSummary(error),
-      };
+  private async runDelivery(active: ActiveDelivery): Promise<void> {
+    if (this.options.repository.heartbeatDelivery) {
+      active.heartbeatTimer = setInterval(() => {
+        void this.maintainDelivery(active);
+      }, this.deliveryHeartbeatIntervalMs);
+      active.heartbeatTimer.unref();
     }
-    await this.options.repository.commitDelivery(claim, result, this.nowIso());
+    let result: DurableRunDeliveryResult;
+    let externalSendStarted = false;
+    const markExternalSendStarted = async (): Promise<boolean> => {
+      if (externalSendStarted) return true;
+      if (this.options.repository.markDeliveryStarted) {
+        const started = await this.options.repository.markDeliveryStarted(
+          active.claim,
+          this.nowIso(),
+        );
+        if (started !== 'committed') return false;
+      }
+      externalSendStarted = true;
+      return true;
+    };
+    try {
+      if (active.claim.recoveredFromExpiredLease) {
+        result = await this.recoverInterruptedDelivery(active.claim);
+      } else {
+        if (!this.options.delivery.managesExternalSendBoundary) {
+          const started = await markExternalSendStarted();
+          if (!started) return;
+        }
+        result = await this.options.delivery.deliver(active.claim, {
+          markExternalSendStarted,
+        });
+        if (
+          this.options.delivery.managesExternalSendBoundary
+          && !externalSendStarted
+          && (result.status === 'sent' || result.status === 'unknown')
+        ) {
+          result = {
+            status: 'failed',
+            errorCode: 'durable_run_delivery_boundary_missing',
+            errorSummary: 'The delivery adapter did not persist its external send boundary.',
+          };
+        }
+      }
+    } catch (error) {
+      const now = this.nowIso();
+      result = externalSendStarted
+        ? {
+            status: 'unknown',
+            errorCode: 'durable_run_delivery_outcome_unknown',
+            errorSummary: boundedErrorSummary(error),
+          }
+        : {
+            status: 'retry',
+            errorCode: 'durable_run_delivery_failed',
+            errorSummary: boundedErrorSummary(error),
+            retryAt: addMilliseconds(now, deliveryRetryDelayMs(active.claim.attemptCount)),
+          };
+    } finally {
+      if (active.heartbeatTimer) clearInterval(active.heartbeatTimer);
+    }
+    if (active.heartbeatInFlight) {
+      await new Promise<void>((resolve) => {
+        const wait = setInterval(() => {
+          if (active.heartbeatInFlight) return;
+          clearInterval(wait);
+          resolve();
+        }, 1);
+        wait.unref();
+      });
+    }
+    if (active.leaseLost || active.claim.leaseExpiresAt <= this.nowIso()) {
+      return;
+    }
+    await this.options.repository.commitDelivery(active.claim, result, this.nowIso());
+  }
+
+  private async recoverInterruptedDelivery(
+    claim: DurableRunDeliveryClaim,
+  ): Promise<DurableRunDeliveryResult> {
+    const fallback = interruptedDeliveryResult();
+    try {
+      const result = await this.options.delivery.recoverInterruptedDelivery?.(claim) ?? fallback;
+      return result.status === 'unknown' || result.status === 'failed' || result.status === 'superseded'
+        ? result
+        : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async maintainDelivery(active: ActiveDelivery): Promise<void> {
+    const heartbeat = this.options.repository.heartbeatDelivery;
+    if (!heartbeat || active.heartbeatInFlight || active.leaseLost) return;
+    active.heartbeatInFlight = true;
+    try {
+      const now = this.nowIso();
+      if (active.claim.leaseExpiresAt <= now) {
+        active.leaseLost = true;
+        return;
+      }
+      const renewed = await heartbeat.call(
+        this.options.repository,
+        active.claim,
+        now,
+        addMilliseconds(now, this.deliveryLeaseDurationMs),
+      );
+      if (!renewed) {
+        if (active.claim.leaseExpiresAt <= this.nowIso()) active.leaseLost = true;
+        return;
+      }
+      active.claim = renewed;
+    } catch {
+      if (active.claim.leaseExpiresAt <= this.nowIso()) active.leaseLost = true;
+    } finally {
+      active.heartbeatInFlight = false;
+    }
   }
 
   private availableWorkloadKinds(): string[] {
@@ -592,6 +774,36 @@ export class DurableRunWorker {
   }
 }
 
+function expiredAttemptTransition(
+  workload: RegisteredWorkload,
+  claim: DurableRunClaim,
+  executionStarted: boolean,
+): DurableRunTransition {
+  if (executionStarted) {
+    const context = materializeDurableRunWorkloadContext(workload, claim.run);
+    const workloadClaim = materializeDurableRunWorkloadClaim(claim, context);
+    return workload.terminalizeExpiredAttempt?.(workloadClaim)
+      ?? genericExpiredTransition(claim);
+  }
+  const persistedFailure = workload.terminalizeUnclaimable?.(claim.run, 'expired') ?? null;
+  return {
+    ...genericExpiredTransition(claim),
+    ...(persistedFailure
+      ? {
+          errorCode: persistedFailure.errorCode,
+          errorSummary: persistedFailure.errorSummary,
+          ...(persistedFailure.stateVersion !== undefined
+            ? {
+                stateVersion: persistedFailure.stateVersion,
+                state: persistedFailure.state,
+              }
+            : {}),
+          ...(persistedFailure.deliveries ? { deliveries: persistedFailure.deliveries } : {}),
+        }
+      : {}),
+  };
+}
+
 function unchangedTransition(
   claim: DurableRunClaim,
   status: DurableRunTransition['status'],
@@ -617,6 +829,36 @@ function classifyExecutionFailure(claim: DurableRunClaim, error: unknown): Durab
   };
 }
 
+function expiredRunFailure(workloadKind: string): DurableRunFailure {
+  return {
+    category: 'terminal',
+    retrySafety: 'unsafe',
+    capabilityAvailable: true,
+    operationRisk: 'unknown',
+    hints: [],
+    failedStep: workloadKind.slice(0, 80),
+    diagnostic: 'The durable run reached its maximum age.',
+    fingerprint: `expired:${workloadKind}`.slice(0, 128),
+  };
+}
+
+function genericExpiredTransition(claim: DurableRunClaim): DurableRunTransition {
+  return {
+    ...unchangedTransition(claim, 'failed'),
+    errorCode: 'durable_run_expired',
+    errorSummary: 'The durable run reached its maximum age.',
+    failure: expiredRunFailure(claim.run.workloadKind),
+  };
+}
+
+function interruptedDeliveryResult(): DurableRunDeliveryResult {
+  return {
+    status: 'unknown',
+    errorCode: 'durable_run_delivery_interrupted_unknown',
+    errorSummary: 'Delivery was interrupted after sending may have started; it was not replayed.',
+  };
+}
+
 function boundedErrorSummary(error: unknown): string {
   const summary = (error instanceof Error ? error.message : String(error))
     .replace(/\r/g, '')
@@ -628,6 +870,10 @@ function boundedErrorSummary(error: unknown): string {
 
 function addMilliseconds(timestamp: string, milliseconds: number): string {
   return new Date(Date.parse(timestamp) + milliseconds).toISOString();
+}
+
+function deliveryRetryDelayMs(attemptCount: number): number {
+  return Math.min(5 * 60_000, 30_000 * 2 ** Math.max(0, attemptCount - 1));
 }
 
 function positiveInterval(value: number | undefined, fallback: number): number {

@@ -4,6 +4,7 @@ import type {
   DurableRunCreateResult,
   DurableRunDeliveryRequest,
   DurableRunDeliveryClaim,
+  DurableRunDeliverySnapshot,
   DurableRunDeliveryResult,
   DurableRunFailure,
   DurableRunInterruptedAttempt,
@@ -22,6 +23,13 @@ export interface DurableRunWorkload<Input = unknown, State = unknown, Result = u
   execute(claim: DurableRunWorkloadClaim<Input, State>, signal: AbortSignal): Promise<Result>;
   reduce(claim: DurableRunWorkloadClaim<Input, State>, result: Result): DurableRunTransition;
   recoverInterruptedAttempt(context: DurableRunInterruptedAttempt): DurableRunTransition;
+  terminalizeExpiredAttempt?(
+    claim: DurableRunWorkloadClaim<Input, State>,
+  ): DurableRunTransition;
+  terminalizeUnclaimable?(
+    run: DurableRunRecord,
+    reason: DurableRunUnclaimableReason,
+  ): DurableRunPersistedStateFailure | null;
 }
 
 export type DurableRunClaimMutationResult = 'committed' | 'stale';
@@ -29,8 +37,16 @@ export type DurableRunClaimMutationResult = 'committed' | 'stale';
 export interface DurableRunPersistedStateFailure {
   errorCode: string;
   errorSummary: string;
+  stateVersion?: number;
+  state?: unknown;
   deliveries?: readonly DurableRunDeliveryRequest[];
 }
+
+export type DurableRunUnclaimableReason = 'expired' | 'attempts_exhausted';
+export type DurableRunUnclaimableResolver = (
+  run: DurableRunRecord,
+  reason: DurableRunUnclaimableReason,
+) => DurableRunPersistedStateFailure | null;
 
 export type DurableRunPersistedStateValidator = (
   run: DurableRunRecord,
@@ -68,14 +84,26 @@ export interface DurableRunRepository {
   create(request: DurableRunCreateRequest): Promise<DurableRunCreateResult>;
   get(runId: string): Promise<DurableRunRecord | null>;
   getActiveByConcurrencyKey(concurrencyKey: string): Promise<DurableRunRecord | null>;
+  getLatestByConcurrencyKey?(
+    concurrencyKey: string,
+  ): Promise<DurableRunRecord | null>;
+  getDeliverySnapshot?(
+    runId: string,
+    kind: string,
+  ): Promise<DurableRunDeliverySnapshot | null>;
   claimDue(
     workloadKinds: readonly string[],
     workerId: string,
     now: string,
     leaseExpiresAt: string,
     validateRun?: DurableRunPersistedStateValidator,
+    resolveUnclaimable?: DurableRunUnclaimableResolver,
   ): Promise<DurableRunClaim | null>;
   markExecutionStarted(
+    claim: DurableRunClaim,
+    now: string,
+  ): Promise<DurableRunClaimMutationResult>;
+  releaseClaimBeforeExecution?(
     claim: DurableRunClaim,
     now: string,
   ): Promise<DurableRunClaimMutationResult>;
@@ -95,11 +123,22 @@ export interface DurableRunRepository {
     workloadKinds: readonly string[],
     now: string,
     validateRun?: DurableRunPersistedStateValidator,
+    resolveUnclaimable?: DurableRunUnclaimableResolver,
   ): Promise<DurableRunInterruptedAttempt[]>;
   claimDelivery(
     workloadKinds: readonly string[],
     workerId: string,
     now: string,
+    leaseExpiresAt?: string,
+  ): Promise<DurableRunDeliveryClaim | null>;
+  markDeliveryStarted?(
+    claim: DurableRunDeliveryClaim,
+    now: string,
+  ): Promise<DurableRunClaimMutationResult>;
+  heartbeatDelivery?(
+    claim: DurableRunDeliveryClaim,
+    now: string,
+    leaseExpiresAt: string,
   ): Promise<DurableRunDeliveryClaim | null>;
   commitDelivery(
     claim: DurableRunDeliveryClaim,
@@ -110,7 +149,18 @@ export interface DurableRunRepository {
 }
 
 export interface DurableRunDelivery {
-  deliver(claim: DurableRunDeliveryClaim): Promise<DurableRunDeliveryResult>;
+  managesExternalSendBoundary?: boolean;
+  deliver(
+    claim: DurableRunDeliveryClaim,
+    context?: DurableRunDeliveryContext,
+  ): Promise<DurableRunDeliveryResult>;
+  recoverInterruptedDelivery?(
+    claim: DurableRunDeliveryClaim,
+  ): Promise<DurableRunDeliveryResult>;
+}
+
+export interface DurableRunDeliveryContext {
+  markExternalSendStarted(): Promise<boolean>;
 }
 
 export interface DurableRunClock {

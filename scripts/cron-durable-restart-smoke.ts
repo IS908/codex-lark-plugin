@@ -32,6 +32,10 @@ for (const stage of [
   await verifyCrashBoundary(stage);
 }
 
+for (const maxAttempts of [4, 1]) {
+  await verifyExpiredPreExecutionRecovery(maxAttempts);
+}
+
 async function verifyCrashBoundary(stage: CrashStage): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), `cron-durable-restart-${stage}-`));
   try {
@@ -98,16 +102,43 @@ async function verifyCrashBoundary(stage: CrashStage): Promise<void> {
     await expireLeases(root);
     await runWorker('resume-worker', stage, root);
     assert.equal(await executionCount(root), 1, 'delivery restart must never re-execute the Run');
-    assert.equal(await outboxStatus(root), 'sent');
+    assert.equal(await outboxStatus(root), 'unknown');
     assert.equal(
       await confirmedDeliveryCount(root),
       1,
-      'reusing the durable delivery idempotency key must not confirm a duplicate delivery',
+      'ambiguous delivery recovery must not confirm a duplicate delivery',
     );
     const attempts = await deliveryAttemptKeys(root);
-    assert.equal(attempts.length, 2, 'send-before-commit recovery must retry the durable outbox once');
-    assert.equal(new Set(attempts).size, 1, 'both send attempts must reuse one persisted idempotency key');
+    assert.equal(attempts.length, 1, 'send-before-commit recovery must not replay an ambiguous send');
     assert.match(attempts[0], /^cron:cron_[a-f0-9]{32}:terminal$/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function verifyExpiredPreExecutionRecovery(maxAttempts: number): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), `cron-durable-expired-${maxAttempts}-`));
+  try {
+    const stage: CrashStage = 'after-claim-before-execution';
+    const crashed = spawnWorker('crash', stage, root);
+    await waitForMarker(crashed, `CRASH_READY:${stage}`);
+    crashed.kill('SIGKILL');
+    await waitForExit(crashed);
+
+    await expireRunBeforeResume(root, maxAttempts);
+    await runWorker('resume-worker', stage, root);
+
+    const run = await persistedRun(root);
+    assert.equal(run.status, 'failed');
+    assert.equal(run.state.phase, 'completed');
+    assert.equal(run.attemptCount, 1, 'expired recovery must not consume another Attempt');
+    assert.equal(await executionCount(root), 0, 'expired pre-execution work must not run');
+    assert.equal(await outboxStatus(root), 'sent');
+    assert.equal(await confirmedDeliveryCount(root), 1);
+    const projected = await job(root);
+    assert.equal(projected.runtime.run_count, 1);
+    assert.equal(projected.runtime.run_status, 'failed');
+    assert.equal(projected.runtime.delivery_status, 'sent');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -213,7 +244,33 @@ async function expireLeases(root: string): Promise<void> {
   }
 }
 
-async function job(root: string): Promise<{ runtime: { next_run_at: string } }> {
+async function expireRunBeforeResume(root: string, maxAttempts: number): Promise<void> {
+  const db = new DatabaseSync(join(root, 'durable-runs.sqlite'));
+  try {
+    const expired = '2000-01-01T00:00:00.000Z';
+    db.prepare(`
+      UPDATE durable_runs
+      SET lease_expires_at = ?, expires_at = ?, max_attempts = ?
+      WHERE lease_expires_at IS NOT NULL
+    `).run(expired, expired, maxAttempts);
+    db.prepare(`
+      UPDATE durable_attempts
+      SET lease_expires_at = ?
+      WHERE finished_at IS NULL
+    `).run(expired);
+  } finally {
+    db.close();
+  }
+}
+
+async function job(root: string): Promise<{
+  runtime: {
+    next_run_at: string;
+    run_count: number;
+    run_status?: string | null;
+    delivery_status?: string | null;
+  };
+}> {
   return JSON.parse(await readFile(join(root, 'jobs', 'durable-restart.json'), 'utf8'));
 }
 

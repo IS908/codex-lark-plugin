@@ -97,16 +97,19 @@ function createShortLeaseClaim(kind: string, suffix: string, leaseMs: number): D
 }
 
 function createDeliveryClaim(kind: string, suffix: string): DurableRunDeliveryClaim {
+  const now = new Date();
   return {
     outboxId: `outbox_${suffix}`,
     runId: `run_${suffix}`,
     workloadKind: kind,
+    eventKey: `event_${suffix}`,
     kind: 'terminal',
     workerId: 'durable-run-worker-delivery',
     route: { chatId: `chat_${suffix}` },
     idempotencyKey: `delivery_${suffix}`,
     payload: { message: suffix },
     attemptCount: 1,
+    leaseExpiresAt: new Date(now.getTime() + 35).toISOString(),
   };
 }
 
@@ -119,12 +122,14 @@ interface RepositoryHarness {
   heartbeats: string[];
   claimKindRequests: string[][];
   deliveryKindRequests: string[][];
+  deliveryHeartbeats: DurableRunDeliveryClaim[];
   deliveryClaim: DurableRunDeliveryClaim | null;
   deliveryResults: DurableRunDeliveryResult[];
   interrupted: DurableRunInterruptedAttempt[];
   heartbeatAllowed: boolean;
   failedAttempts: string[];
   failures: DurableRunFailure[];
+  releasedClaims: string[];
   commitError?: Error;
 }
 
@@ -138,12 +143,14 @@ function createRepositoryHarness(initialClaims: DurableRunClaim[] = []): Reposit
     heartbeats: [],
     claimKindRequests: [],
     deliveryKindRequests: [],
+    deliveryHeartbeats: [],
     deliveryClaim: null,
     deliveryResults: [],
     interrupted: [],
     heartbeatAllowed: true,
     failedAttempts: [],
     failures: [],
+    releasedClaims: [],
   } as RepositoryHarness;
   harness.repository = {
     async initialize() {},
@@ -157,6 +164,10 @@ function createRepositoryHarness(initialClaims: DurableRunClaim[] = []): Reposit
     },
     async markExecutionStarted(claim) {
       harness.executionStarts.push(claim.run.runId);
+      return 'committed';
+    },
+    async releaseClaimBeforeExecution(claim) {
+      harness.releasedClaims.push(claim.run.runId);
       return 'committed';
     },
     async heartbeat(claim) {
@@ -192,6 +203,11 @@ function createRepositoryHarness(initialClaims: DurableRunClaim[] = []): Reposit
       harness.deliveryClaim = null;
       return claim;
     },
+    async heartbeatDelivery(claim, _now, leaseExpiresAt) {
+      const renewed = { ...claim, leaseExpiresAt };
+      harness.deliveryHeartbeats.push(renewed);
+      return renewed;
+    },
     async commitDelivery(_claim, result) {
       harness.deliveryResults.push(result);
     },
@@ -217,6 +233,12 @@ function createWorkloadHarness(
     hold?: boolean;
     holdPreflight?: boolean;
     preflightTransition?: DurableRunTransition;
+    expiredTransition?: DurableRunTransition;
+    unclaimableFailure?: {
+      errorCode: string;
+      errorSummary: string;
+      deliveries?: DurableRunTransition['deliveries'];
+    };
   } = {},
 ): WorkloadHarness {
   const harness = {
@@ -291,6 +313,12 @@ function createWorkloadHarness(
           : { nextRunAt: interrupted.recoveredAt }),
       };
     },
+    ...(options.expiredTransition
+      ? { terminalizeExpiredAttempt: () => options.expiredTransition! }
+      : {}),
+    ...(options.unclaimableFailure
+      ? { terminalizeUnclaimable: () => options.unclaimableFailure! }
+      : {}),
   };
   return harness;
 }
@@ -339,6 +367,196 @@ assert.equal(normalRepository.transitions[0].transition.deliveries?.length, 1);
 assert.deepEqual(delivered, ['outbox_normal']);
 assert.deepEqual(normalRepository.deliveryResults, [{ status: 'sent', messageId: 'om_normal' }]);
 await normalWorker.stop();
+
+// An active workload that reaches max age commits the workload-owned terminal
+// transition, including its delivery, instead of a generic silent failure.
+const activeExpiryClaim = createShortLeaseClaim('cron_prompt', 'active-expiry', 500);
+activeExpiryClaim.run.expiresAt = new Date(Date.now() + 80).toISOString();
+const activeExpiryRepository = createRepositoryHarness([activeExpiryClaim]);
+const activeExpiryWorkload = createWorkloadHarness('cron_prompt', {
+  hold: true,
+  expiredTransition: {
+    status: 'blocked',
+    stateVersion: 1,
+    state: { steps: 0 },
+    errorCode: 'cron_execution_outcome_unknown',
+    errorSummary: 'The Cron execution outcome is unknown.',
+    deliveries: [{
+      kind: 'cron_terminal',
+      idempotencyKey: 'cron:active-expiry:terminal',
+      route: activeExpiryClaim.run.route,
+      payload: { message: 'The Cron execution outcome is unknown.' },
+    }],
+  },
+});
+const activeExpiryWorker = new DurableRunWorker({
+  repository: activeExpiryRepository.repository,
+  workloads: [activeExpiryWorkload.workload],
+  delivery,
+  clock: new SystemClock(),
+  maxConcurrencyByWorkload: { cron_prompt: 1 },
+  heartbeatIntervalMs: 20,
+  leaseDurationMs: 500,
+});
+await activeExpiryWorker.tick();
+await waitFor(() => activeExpiryRepository.transitions.length === 1, 'active expiry transition');
+assert.equal(activeExpiryWorkload.signals[0]?.aborted, true);
+assert.equal(activeExpiryRepository.transitions[0].transition.status, 'blocked');
+assert.equal(activeExpiryRepository.transitions[0].transition.deliveries?.length, 1);
+await activeExpiryWorker.stop();
+
+// Expiry before the execution-start commit is a known no-side-effect failure,
+// not an ambiguous execution outcome.
+const preExecutionExpiryClaim = createClaim('cron_prompt', 'pre-execution-expiry');
+preExecutionExpiryClaim.run.expiresAt = clock.now().toISOString();
+const preExecutionExpiryRepository = createRepositoryHarness([preExecutionExpiryClaim]);
+const preExecutionExpiryWorkload = createWorkloadHarness('cron_prompt', {
+  expiredTransition: {
+    status: 'blocked',
+    stateVersion: 1,
+    state: { steps: 0 },
+    errorCode: 'must_not_be_used',
+    errorSummary: 'Execution did not start.',
+  },
+  unclaimableFailure: {
+    errorCode: 'cron_run_expired',
+    errorSummary: 'The Cron run expired before execution started.',
+    deliveries: [{
+      kind: 'cron_terminal',
+      idempotencyKey: 'cron:pre-execution-expiry:terminal',
+      route: preExecutionExpiryClaim.run.route,
+      payload: { message: 'The Cron run expired before execution started.' },
+    }],
+  },
+});
+const preExecutionExpiryWorker = new DurableRunWorker({
+  repository: preExecutionExpiryRepository.repository,
+  workloads: [preExecutionExpiryWorkload.workload],
+  delivery,
+  clock,
+  maxConcurrencyByWorkload: { cron_prompt: 1 },
+});
+await preExecutionExpiryWorker.tick();
+await waitFor(
+  () => preExecutionExpiryRepository.transitions.length === 1,
+  'pre-execution expiry transition',
+);
+assert.deepEqual(preExecutionExpiryRepository.executionStarts, []);
+assert.equal(preExecutionExpiryRepository.transitions[0].transition.status, 'failed');
+assert.equal(preExecutionExpiryRepository.transitions[0].transition.errorCode, 'cron_run_expired');
+assert.equal(preExecutionExpiryRepository.transitions[0].transition.deliveries?.length, 1);
+await preExecutionExpiryWorker.stop();
+
+// An unexpected adapter failure after the kernel-owned send boundary is
+// ambiguous and must not be replayed.
+const thrownDeliveryRepository = createRepositoryHarness();
+thrownDeliveryRepository.deliveryClaim = createDeliveryClaim('async_task', 'thrown-delivery');
+const thrownDeliveryWorker = new DurableRunWorker({
+  repository: thrownDeliveryRepository.repository,
+  workloads: [createWorkloadHarness('async_task').workload],
+  delivery: { async deliver() { throw new Error('malformed delivery adapter state'); } },
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await thrownDeliveryWorker.tick();
+await waitFor(() => thrownDeliveryRepository.deliveryResults.length === 1, 'thrown delivery result');
+assert.deepEqual(thrownDeliveryRepository.deliveryResults[0], {
+  status: 'unknown',
+  errorCode: 'durable_run_delivery_outcome_unknown',
+  errorSummary: 'malformed delivery adapter state',
+});
+await thrownDeliveryWorker.stop();
+
+// A managed adapter that fails before marking the external-send boundary is
+// safe to retry with bounded backoff.
+const preBoundaryFailureRepository = createRepositoryHarness();
+preBoundaryFailureRepository.deliveryClaim = createDeliveryClaim(
+  'async_task',
+  'pre-boundary-failure',
+);
+const preBoundaryFailureWorker = new DurableRunWorker({
+  repository: preBoundaryFailureRepository.repository,
+  workloads: [createWorkloadHarness('async_task').workload],
+  delivery: {
+    managesExternalSendBoundary: true,
+    async deliver() { throw new Error('projection unavailable'); },
+  },
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await preBoundaryFailureWorker.tick();
+await waitFor(
+  () => preBoundaryFailureRepository.deliveryResults.length === 1,
+  'pre-boundary delivery failure',
+);
+assert.deepEqual(preBoundaryFailureRepository.deliveryResults[0], {
+  status: 'retry',
+  errorCode: 'durable_run_delivery_failed',
+  errorSummary: 'projection unavailable',
+  retryAt: '2026-07-19T00:00:30.000Z',
+});
+await preBoundaryFailureWorker.stop();
+
+// Adapters that own the external-send boundary must invoke the worker context
+// before reporting a potentially sent outcome.
+const missingBoundaryRepository = createRepositoryHarness();
+missingBoundaryRepository.deliveryClaim = createDeliveryClaim('async_task', 'missing-boundary');
+const missingBoundaryWorker = new DurableRunWorker({
+  repository: missingBoundaryRepository.repository,
+  workloads: [createWorkloadHarness('async_task').workload],
+  delivery: {
+    managesExternalSendBoundary: true,
+    async deliver() { return { status: 'sent', messageId: 'om_unfenced' }; },
+  },
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await missingBoundaryWorker.tick();
+await waitFor(
+  () => missingBoundaryRepository.deliveryResults.length === 1,
+  'missing delivery boundary result',
+);
+assert.deepEqual(missingBoundaryRepository.deliveryResults[0], {
+  status: 'failed',
+  errorCode: 'durable_run_delivery_boundary_missing',
+  errorSummary: 'The delivery adapter did not persist its external send boundary.',
+});
+await missingBoundaryWorker.stop();
+
+// The kernel owns interrupted-send safety. It never invokes ordinary deliver,
+// and it rejects a recovery adapter that tries to classify the row as sent.
+const interruptedDeliveryRepository = createRepositoryHarness();
+interruptedDeliveryRepository.deliveryClaim = {
+  ...createDeliveryClaim('async_task', 'interrupted-delivery'),
+  recoveredFromExpiredLease: true,
+};
+let ordinaryDeliveryCalls = 0;
+let interruptedRecoveryCalls = 0;
+const interruptedDeliveryWorker = new DurableRunWorker({
+  repository: interruptedDeliveryRepository.repository,
+  workloads: [createWorkloadHarness('async_task').workload],
+  delivery: {
+    async deliver() {
+      ordinaryDeliveryCalls += 1;
+      return { status: 'sent', messageId: 'must_not_send' };
+    },
+    async recoverInterruptedDelivery() {
+      interruptedRecoveryCalls += 1;
+      return { status: 'sent', messageId: 'must_not_confirm' };
+    },
+  },
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await interruptedDeliveryWorker.tick();
+await waitFor(
+  () => interruptedDeliveryRepository.deliveryResults.length === 1,
+  'interrupted delivery terminalization',
+);
+assert.equal(ordinaryDeliveryCalls, 0);
+assert.equal(interruptedRecoveryCalls, 1);
+assert.equal(interruptedDeliveryRepository.deliveryResults[0].status, 'unknown');
+await interruptedDeliveryWorker.stop();
 
 // Preflight can commit without starting execution.
 const preflightClaim = createClaim('async_task', 'preflight');
@@ -611,6 +829,52 @@ assert.deepEqual(deadlineInterleaveRepository.failedAttempts, []);
 assert.deepEqual(deadlineInterleaveRepository.deliveryResults, []);
 await deadlineInterleaveWorker.stop();
 
+// Max-age is rechecked after the status read, so delayed timers cannot allow a
+// normal completion to commit after the Run expires.
+const maxAgeInterleaveClock = new FakeClock();
+const maxAgeInterleaveClaim = createClaim('async_task', 'max-age-interleave');
+maxAgeInterleaveClaim.run.expiresAt = '2026-07-19T00:00:00.010Z';
+const maxAgeInterleaveRepository = createRepositoryHarness([maxAgeInterleaveClaim]);
+const maxAgeInterleaveWorkload = createWorkloadHarness('async_task', {
+  preflightTransition: {
+    status: 'completed',
+    stateVersion: 1,
+    state: { steps: 1 },
+  },
+  unclaimableFailure: {
+    errorCode: 'run_expired',
+    errorSummary: 'The Run expired before completion.',
+  },
+});
+const maxAgeInterleaveGet = maxAgeInterleaveRepository.repository.get.bind(
+  maxAgeInterleaveRepository.repository,
+);
+let maxAgeGetEntered = false;
+let releaseMaxAgeGet!: () => void;
+const maxAgeGetReleased = new Promise<void>((resolve) => { releaseMaxAgeGet = resolve; });
+maxAgeInterleaveRepository.repository.get = async (runId) => {
+  if (!maxAgeGetEntered) {
+    maxAgeGetEntered = true;
+    await maxAgeGetReleased;
+  }
+  return maxAgeInterleaveGet(runId);
+};
+const maxAgeInterleaveWorker = new DurableRunWorker({
+  repository: maxAgeInterleaveRepository.repository,
+  workloads: [maxAgeInterleaveWorkload.workload],
+  delivery,
+  clock: maxAgeInterleaveClock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await maxAgeInterleaveWorker.tick();
+await waitFor(() => maxAgeGetEntered, 'max-age interleave status read');
+maxAgeInterleaveClock.advance(11);
+releaseMaxAgeGet();
+await waitFor(() => maxAgeInterleaveRepository.transitions.length === 1, 'max-age terminal transition');
+assert.equal(maxAgeInterleaveRepository.transitions[0].transition.status, 'failed');
+assert.equal(maxAgeInterleaveRepository.transitions[0].transition.errorCode, 'run_expired');
+await maxAgeInterleaveWorker.stop();
+
 // A rejection observed after the confirmed deadline cannot be persisted as an attempt failure.
 const deadlineFailureClock = new FakeClock();
 const deadlineFailureClaim = createClaim('async_task', 'deadline-failure');
@@ -677,6 +941,47 @@ assert.deepEqual(recoveryWorkload.recoverCalls, [recoveredClaim.run.runId]);
 assert.equal(recoveryRepository.transitions[0].transition.status, 'blocked');
 assert.deepEqual(recoveryWorkload.executeCalls, []);
 await recoveryWorker.stop();
+
+// Expired pre-execution recovery terminalizes immediately, regardless of the
+// remaining attempt budget, so it cannot loop forever behind a concurrency key.
+for (const maxAttempts of [3, 1]) {
+  const expiredClaim = createClaim('async_task', `expired-recovery-${maxAttempts}`);
+  expiredClaim.run.expiresAt = '2026-07-19T00:00:00.000Z';
+  expiredClaim.run.maxAttempts = maxAttempts;
+  const repository = createRepositoryHarness();
+  repository.interrupted.push({
+    claim: expiredClaim,
+    recoveredAt: '2026-07-19T00:00:00.000Z',
+    executionPhase: 'claimed',
+    operationRisk: 'pure',
+  });
+  const terminalDelivery = {
+    kind: 'terminal',
+    idempotencyKey: `terminal:${expiredClaim.run.runId}`,
+    route: expiredClaim.run.route,
+    payload: { message: 'expired before execution' },
+  } as const;
+  const workload = createWorkloadHarness('async_task', {
+    unclaimableFailure: {
+      errorCode: 'cron_run_expired',
+      errorSummary: 'expired before execution',
+      deliveries: [terminalDelivery],
+    },
+  });
+  const worker = new DurableRunWorker({
+    repository: repository.repository,
+    workloads: [workload.workload],
+    delivery,
+    clock,
+    maxConcurrencyByWorkload: { async_task: 1 },
+  });
+  await worker.tick();
+  assert.deepEqual(workload.recoverCalls, []);
+  assert.equal(repository.transitions[0]?.transition.status, 'failed');
+  assert.equal(repository.transitions[0]?.transition.errorCode, 'cron_run_expired');
+  assert.equal(repository.transitions[0]?.transition.deliveries?.length, 1);
+  await worker.stop();
+}
 
 // One malformed recovered row is failed closed without starving later recoveries.
 const malformedRecoveryClaim = createClaim('async_task', 'malformed-recovery');
@@ -945,7 +1250,7 @@ assert.equal(stopRepository.transitions.length, 0);
 await stopWorker.tick();
 assert.equal(stopRepository.claimKindRequests.length, claimCallsBeforeStop);
 
-// A claim that returns after shutdown begins is not started and remains recoverable by lease expiry.
+// A claim that returns after shutdown begins is released without consuming an attempt.
 const claimRaceRepository = createRepositoryHarness([createClaim('async_task', 'claim-race')]);
 const originalClaimDue = claimRaceRepository.repository.claimDue.bind(claimRaceRepository.repository);
 let releaseDelayedClaim: (() => void) | undefined;
@@ -970,6 +1275,33 @@ releaseDelayedClaim?.();
 await Promise.all([racingTick, racingStop]);
 assert.deepEqual(claimRaceWorkload.executeCalls, []);
 assert.equal(claimRaceRepository.transitions.length, 0);
+assert.deepEqual(claimRaceRepository.releasedClaims, ['run_claim-race']);
+
+// Shutdown after the execution marker but before invocation atomically releases
+// the unexecuted Attempt instead of recovering it as an unknown side effect.
+const markerRaceClaim = createClaim('cron_prompt', 'marker-race');
+const markerRaceRepository = createRepositoryHarness([markerRaceClaim]);
+const markerRaceWorkload = createWorkloadHarness('cron_prompt');
+let markerRaceWorker!: DurableRunWorker;
+let markerRaceStop: Promise<void> | undefined;
+markerRaceRepository.repository.markExecutionStarted = async (claim) => {
+  markerRaceRepository.executionStarts.push(claim.run.runId);
+  claim.attempt.executionStartedAt = clock.now().toISOString();
+  markerRaceStop = markerRaceWorker.stop();
+  return 'committed';
+};
+markerRaceWorker = new DurableRunWorker({
+  repository: markerRaceRepository.repository,
+  workloads: [markerRaceWorkload.workload],
+  delivery,
+  clock,
+  maxConcurrencyByWorkload: { cron_prompt: 1 },
+});
+await markerRaceWorker.tick();
+await markerRaceStop;
+assert.deepEqual(markerRaceWorkload.executeCalls, []);
+assert.deepEqual(markerRaceRepository.releasedClaims, ['run_marker-race']);
+assert.deepEqual(markerRaceRepository.transitions, []);
 
 const deliveryRaceRepository = createRepositoryHarness();
 deliveryRaceRepository.deliveryClaim = createDeliveryClaim('async_task', 'delivery-race');
@@ -1002,6 +1334,51 @@ const deliveryRacingStop = deliveryRaceWorker.stop();
 releaseDelayedDelivery?.();
 await Promise.all([deliveryRacingTick, deliveryRacingStop]);
 assert.deepEqual(deliveryRaceCalls, []);
-assert.deepEqual(deliveryRaceRepository.deliveryResults, []);
+assert.deepEqual(deliveryRaceRepository.deliveryResults, [{
+  status: 'retry',
+  errorCode: 'durable_run_delivery_shutdown_before_send',
+  errorSummary: 'Worker shutdown started before delivery; the claim was released.',
+  retryAt: '2026-07-19T00:00:00.000Z',
+  resetAttemptCount: true,
+}]);
+
+// A successful slow delivery must retain its ownership fence by renewing the worker lease.
+const slowDeliveryRepository = createRepositoryHarness();
+const slowClaim = createDeliveryClaim('async_task', 'slow-delivery');
+slowDeliveryRepository.deliveryClaim = slowClaim;
+let releaseSlowDelivery: (() => void) | undefined;
+const slowDeliveryWorker = new DurableRunWorker({
+  repository: slowDeliveryRepository.repository,
+  workloads: [createWorkloadHarness('async_task').workload],
+  delivery: {
+    async deliver() {
+      await new Promise<void>((resolve) => { releaseSlowDelivery = resolve; });
+      return { status: 'sent', messageId: 'om_slow_delivery' };
+    },
+  },
+  clock: new SystemClock(),
+  maxConcurrencyByWorkload: { async_task: 1 },
+  deliveryLeaseDurationMs: 40,
+  deliveryHeartbeatIntervalMs: 10,
+});
+await slowDeliveryWorker.tick();
+await waitFor(
+  () => slowDeliveryRepository.deliveryHeartbeats.length >= 1,
+  'initial delivery lease heartbeat',
+);
+const stoppingSlowDelivery = slowDeliveryWorker.stop();
+const heartbeatsAtShutdown = slowDeliveryRepository.deliveryHeartbeats.length;
+await waitFor(
+  () => slowDeliveryRepository.deliveryHeartbeats.length > heartbeatsAtShutdown,
+  'delivery lease heartbeat during graceful shutdown',
+);
+releaseSlowDelivery?.();
+await stoppingSlowDelivery;
+await waitFor(() => slowDeliveryRepository.deliveryResults.length === 1, 'slow delivery commit');
+assert.equal(slowDeliveryRepository.deliveryResults[0]?.status, 'sent');
+assert.notEqual(
+  slowDeliveryRepository.deliveryHeartbeats.at(-1)?.leaseExpiresAt,
+  slowClaim.leaseExpiresAt,
+);
 
 console.log('durable run worker smoke: PASS');

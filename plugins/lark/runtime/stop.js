@@ -35,9 +35,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/dotenv/package.json
+// plugins/lark/node_modules/dotenv/package.json
 var require_package = __commonJS({
-  "node_modules/dotenv/package.json"(exports, module) {
+  "plugins/lark/node_modules/dotenv/package.json"(exports, module) {
     module.exports = {
       name: "dotenv",
       version: "16.6.1",
@@ -103,9 +103,9 @@ var require_package = __commonJS({
   }
 });
 
-// node_modules/dotenv/lib/main.js
+// plugins/lark/node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
-  "node_modules/dotenv/lib/main.js"(exports, module) {
+  "plugins/lark/node_modules/dotenv/lib/main.js"(exports, module) {
     var fs = __require("fs");
     var path3 = __require("path");
     var os3 = __require("os");
@@ -393,12 +393,12 @@ var require_main = __commonJS({
   }
 });
 
-// src/config.ts
+// plugins/lark/src/config.ts
 var import_dotenv = __toESM(require_main(), 1);
 import path from "node:path";
 import os from "node:os";
 
-// src/runtime-version.ts
+// plugins/lark/src/runtime-version.ts
 var MINIMUM_NODE_VERSION = [24, 15, 0];
 var MINIMUM_NODE_LABEL = MINIMUM_NODE_VERSION.join(".");
 function parseNodeVersion(version) {
@@ -422,7 +422,7 @@ function assertSupportedNodeVersion(version = process.versions.node) {
   }
 }
 
-// src/config.ts
+// plugins/lark/src/config.ts
 assertSupportedNodeVersion();
 var envPath = path.join(os.homedir(), ".codex", "channels", "lark", ".env");
 (0, import_dotenv.config)({ path: envPath });
@@ -661,12 +661,12 @@ var appConfig = {
   )
 };
 
-// src/instance-lock.ts
+// plugins/lark/src/instance-lock.ts
 import os2 from "node:os";
 import path2 from "node:path";
 import { lstat as lstat2, readdir as readdir2 } from "node:fs/promises";
 
-// src/resource-governance.ts
+// plugins/lark/src/resource-governance.ts
 import { execFile as execFile2 } from "node:child_process";
 import {
   appendFile,
@@ -696,7 +696,7 @@ import { gzip } from "node:zlib";
 import { basename, dirname, join } from "node:path";
 import { promisify as promisify2 } from "node:util";
 
-// src/process-identity.ts
+// plugins/lark/src/process-identity.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
@@ -726,7 +726,7 @@ function isSameProcessStart(a, b) {
   return Math.abs(a - b) <= PROCESS_START_TOLERANCE_MS;
 }
 
-// src/resource-governance.ts
+// plugins/lark/src/resource-governance.ts
 var execFileAsync2 = promisify2(execFile2);
 var gzipAsync = promisify2(gzip);
 function sleep(ms) {
@@ -932,7 +932,7 @@ async function stopSingleInstanceLock(lockPath, options = {}) {
   };
 }
 
-// src/instance-lock.ts
+// plugins/lark/src/instance-lock.ts
 var LARK_INSTANCE_LOCK_PATH = path2.join(
   os2.homedir(),
   ".codex",
@@ -977,7 +977,7 @@ async function compatibleLegacyLockPaths(appId, lockRoot, scanAll, currentUid) {
   return [...new Set(ownedPaths.sort())];
 }
 
-// src/stop.ts
+// plugins/lark/src/stop.ts
 var okStatuses = /* @__PURE__ */ new Set(["no_lock", "stale_lock_removed", "process_terminated"]);
 try {
   const results = await stopLarkInstances(appConfig.appId);

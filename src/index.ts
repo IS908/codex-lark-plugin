@@ -55,6 +55,7 @@ import { createCronPromptExecutor } from './cron/prompt-executor.js';
 import { createCronDelivery } from './cron/delivery.js';
 
 let closeContinuationRuntime: (() => Promise<void>) | null = null;
+let stopChannelServices: (() => Promise<void>) | null = null;
 
 async function main() {
   assertSupportedNodeVersion();
@@ -234,6 +235,7 @@ async function main() {
       runRepository: continuationRuntime.durableRepository,
     });
     closeContinuationRuntime = async () => {
+      await stopChannelServices?.();
       await durableRunRuntime?.stop();
       await continuationRuntime.close();
     };
@@ -298,6 +300,7 @@ async function main() {
       runJobNow = scheduler.runJobNow.bind(scheduler);
     },
   });
+  stopChannelServices = startChannelServices.stop;
 
   startSdkChannelRuntimeWithRetry(channel, {
     onConnected: startChannelServices,

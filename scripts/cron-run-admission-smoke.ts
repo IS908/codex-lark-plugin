@@ -149,8 +149,7 @@ await withHarness('scheduled-idempotency', [makeJob('scheduled-stable')], async 
     latest.runtime.report_type = 'job_result';
   });
   const duplicate = await admission.admitScheduled(await job('scheduled-stable'), now);
-  assert.equal(duplicate.admitted, true);
-  assert.equal(duplicate.created, false);
+  assert.deepEqual(duplicate, { admitted: false, reason: 'not_due' });
   const afterDuplicate = await job('scheduled-stable');
   assert.equal(afterDuplicate.runtime.run_status, 'success');
   assert.equal(afterDuplicate.runtime.output_status, 'generated');
@@ -197,6 +196,111 @@ await withHarness('exact-boundary', [makeJob('exact-boundary', {
     createdAt: '2026-07-19T00:00:00.000Z',
     revision: 1,
   });
+});
+
+// A future schedule cursor is authoritative even when the deterministic Run
+// for the previous occurrence already exists. An active manual Run must keep
+// its runtime projection until it reaches a terminal state.
+await withHarness('manual-projection-fence', [makeJob('manual-projection-fence')], async ({
+  admission,
+  runs,
+  job,
+}) => {
+  const now = new Date('2026-07-19T01:17:00.000Z');
+  const scheduled = await admission.admitScheduled(await job('manual-projection-fence'), now);
+  assert.equal(scheduled.admitted, true);
+  const scheduledRun = await runs.get(scheduled.runId);
+  assert.ok(scheduledRun);
+  const scheduledClaim = await runs.claimDue(
+    [scheduledRun.workloadKind],
+    'scheduled-completion-worker',
+    now.toISOString(),
+    '2026-07-19T01:18:00.000Z',
+  );
+  assert.ok(scheduledClaim);
+  assert.equal(await runs.commitTransition(scheduledClaim, {
+    status: 'completed',
+    stateVersion: scheduledRun.stateVersion,
+    state: scheduledRun.state,
+  }, '2026-07-19T01:17:01.000Z'), 'committed');
+
+  const manual = await admission.admitManual(
+    await job('manual-projection-fence'),
+    'manual-active',
+    now,
+  );
+  assert.equal(manual.admitted, true);
+  assert.notEqual(manual.runId, scheduled.runId);
+  assert.equal((await job('manual-projection-fence')).runtime.run_id, manual.runId);
+
+  const scan = await admission.admitScheduled(await job('manual-projection-fence'), now);
+  assert.deepEqual(scan, { admitted: false, reason: 'not_due' });
+  assert.equal((await job('manual-projection-fence')).runtime.run_id, manual.runId);
+});
+
+// A stale scheduled cursor may refer to an older completed Run. Once a newer
+// manual Run exists, repairing that cursor must not replace its runtime
+// projection or reset delivery fields/run_count.
+await withHarness('stale-cursor-after-manual', [makeJob('stale-cursor-after-manual')], async ({
+  admission,
+  runs,
+  job,
+}) => {
+  const now = new Date('2026-07-19T01:17:00.000Z');
+  const scheduled = await admission.admitScheduled(await job('stale-cursor-after-manual'), now);
+  assert.equal(scheduled.admitted, true);
+  const scheduledClaim = await runs.claimDue(
+    ['cron_prompt'],
+    'old-scheduled-worker',
+    now.toISOString(),
+    '2026-07-19T01:18:00.000Z',
+  );
+  assert.ok(scheduledClaim);
+  assert.equal(await runs.commitTransition(scheduledClaim, {
+    status: 'completed',
+    stateVersion: 1,
+    state: scheduledClaim.run.state,
+  }, '2026-07-19T01:17:01.000Z'), 'committed');
+  const manual = await admission.admitManual(
+    await job('stale-cursor-after-manual'),
+    'newer-manual-run',
+    new Date('2026-07-19T01:17:02.000Z'),
+  );
+  assert.equal(manual.admitted, true);
+  const manualClaim = await runs.claimDue(
+    ['cron_prompt'],
+    'newer-manual-worker',
+    '2026-07-19T01:17:02.000Z',
+    '2026-07-19T01:18:02.000Z',
+  );
+  assert.ok(manualClaim);
+  assert.equal(await runs.commitTransition(manualClaim, {
+    status: 'completed',
+    stateVersion: 1,
+    state: manualClaim.run.state,
+  }, '2026-07-19T01:17:03.000Z'), 'committed');
+  await mutateJob('stale-cursor-after-manual', (latest) => {
+    latest.runtime.next_run_at = '2026-07-19T01:00:00.000Z';
+    latest.runtime.run_id = manual.runId;
+    latest.runtime.run_status = 'success';
+    latest.runtime.output_status = 'generated';
+    latest.runtime.delivery_status = 'sent';
+    latest.runtime.run_count = 7;
+    latest.runtime.report = 'newer manual result';
+  });
+  const repairedCursor = await admission.admitScheduled(
+    await job('stale-cursor-after-manual'),
+    now,
+  );
+  assert.equal(repairedCursor.admitted, true);
+  assert.equal(repairedCursor.created, false);
+  assert.equal(repairedCursor.runId, scheduled.runId);
+  const persisted = await job('stale-cursor-after-manual');
+  assert.equal(persisted.runtime.next_run_at, '2026-07-19T01:20:00.000Z');
+  assert.equal(persisted.runtime.run_id, manual.runId);
+  assert.equal(persisted.runtime.run_count, 7);
+  assert.equal(persisted.runtime.delivery_status, 'sent');
+  assert.equal(persisted.runtime.report, 'newer manual result');
 });
 
 // 2. The cursor update is a CAS over definition identity and revision. A
@@ -288,6 +392,224 @@ await withHarness('paused', [makeJob('paused-job', {
   assert.equal(persisted.meta.status, 'paused');
   assert.equal(persisted.runtime.next_run_at, '2099-01-01T00:00:00.000Z');
 });
+
+// SQLite remains authoritative when admission or terminal JSON projection is
+// interrupted. A later scheduler scan repairs even a paused manual Job without
+// re-executing or re-sending its terminal result.
+await withHarness('manual-terminal-projection-repair', [makeJob('manual-repair', {
+  meta: {
+    type: 'message',
+    prompt: undefined,
+    content: 'scheduled message',
+    status: 'paused',
+  },
+  runtime: { next_run_at: '2099-01-01T00:00:00.000Z' },
+})], async ({ admission, runs, job }) => {
+  const now = new Date('2026-07-19T01:17:00.000Z');
+  const admittedRun = await admission.admitManual(
+    await job('manual-repair'),
+    'manual-repair-request',
+    now,
+  );
+  assert.equal(admittedRun.admitted, true);
+  const run = await runs.get(admittedRun.runId);
+  assert.ok(run);
+  const runClaim = await runs.claimDue(
+    ['cron_message'],
+    'manual-repair-run-worker',
+    now.toISOString(),
+    '2026-07-19T01:18:00.000Z',
+  );
+  assert.ok(runClaim);
+  assert.equal(await runs.commitTransition(runClaim, {
+    status: 'completed',
+    stateVersion: 1,
+    state: {
+      schemaVersion: 1,
+      phase: 'completed',
+      commit: {
+        kind: 'message',
+        content: 'delivered result',
+        messageType: 'text',
+        runStatus: 'success',
+        failureReason: null,
+      },
+    },
+    deliveries: [{
+      kind: 'cron_terminal',
+      idempotencyKey: `cron:${run.runId}:terminal`,
+      route: run.route,
+      payload: {
+        schemaVersion: 1,
+        kind: 'message',
+        jobId: 'manual-repair',
+        jobCreatedAt: '2026-07-19T00:00:00.000Z',
+        jobRevision: 1,
+        content: 'delivered result',
+        messageType: 'text',
+        runStatus: 'success',
+        failureReason: null,
+      },
+    }],
+  }, '2026-07-19T01:17:01.000Z'), 'committed');
+  const delivery = await runs.claimDelivery(
+    ['cron_message'],
+    'manual-repair-delivery-worker',
+    '2026-07-19T01:17:02.000Z',
+  );
+  assert.ok(delivery);
+  assert.equal(await runs.markDeliveryStarted?.(
+    delivery,
+    '2026-07-19T01:17:02.500Z',
+  ), 'committed');
+  assert.equal(await runs.commitDelivery(
+    delivery,
+    { status: 'sent', messageId: 'om_manual_repair' },
+    '2026-07-19T01:17:03.000Z',
+  ), 'committed');
+
+  await mutateJob('manual-repair', (latest) => {
+    latest.runtime.run_id = null;
+    latest.runtime.run_status = null;
+    latest.runtime.output_status = null;
+    latest.runtime.delivery_status = null;
+    latest.runtime.report = null;
+  });
+  await admission.repairProjection(await job('manual-repair'));
+  const repaired = await job('manual-repair');
+  assert.equal(repaired.meta.status, 'paused');
+  assert.equal(repaired.runtime.run_id, run.runId);
+  assert.equal(repaired.runtime.run_status, 'success');
+  assert.equal(repaired.runtime.output_status, 'generated');
+  assert.equal(repaired.runtime.delivery_status, 'sent');
+  assert.equal(repaired.runtime.report, 'delivered result');
+  assert.equal(repaired.runtime.next_run_at, '2099-01-01T00:00:00.000Z');
+  assert.equal(repaired.runtime.run_count, 1);
+  await admission.repairProjection(repaired);
+  assert.equal((await job('manual-repair')).runtime.run_count, 1);
+});
+
+// Permanent target failures are projected before auto-pause changes the Job
+// revision, so the terminal compatibility state cannot become unrecoverable.
+{
+  let current = makeJob('repair-autopause', {
+    meta: { type: 'message', prompt: undefined, content: 'message', revision: 1 },
+    runtime: { run_id: 'cron_repair_autopause' },
+  });
+  let failAutoPauseOnce = true;
+  const run = {
+    runId: 'cron_repair_autopause',
+    workloadKind: 'cron_message',
+    idempotencyKey: 'cron:repair-autopause',
+    concurrencyKey: 'cron-job:repair-autopause@2026-07-19T00:00:00.000Z',
+    status: 'failed',
+    inputVersion: 1,
+    input: {
+      schemaVersion: 1,
+      job: {
+        id: 'repair-autopause',
+        createdAt: '2026-07-19T00:00:00.000Z',
+        revision: 1,
+        name: 'repair-autopause',
+        type: 'message',
+        schedule: '*/5 * * * *',
+        scheduleHuman: 'every 5m',
+        timezone: 'UTC',
+        content: 'message',
+        targetChatId: 'oc_target',
+        originChatId: 'oc_origin',
+        createdBy: 'ou_owner',
+      },
+    },
+    stateVersion: 1,
+    state: {
+      schemaVersion: 1,
+      phase: 'completed',
+      commit: {
+        kind: 'message',
+        content: 'delivery failed',
+        messageType: 'text',
+        runStatus: 'failed',
+        failureReason: 'chat not found',
+      },
+    },
+    route: {},
+    actorOpenId: 'ou_owner',
+    nextRunAt: '2026-07-19T01:17:00.000Z',
+    expiresAt: '2026-07-20T01:17:00.000Z',
+    maxAttempts: 4,
+    attemptCount: 1,
+    rowVersion: 2,
+  } as const;
+  const admission = new CronRunAdmission({
+    runRepository: {
+      async getLatestByConcurrencyKey() { return run; },
+      async getDeliverySnapshot() {
+        return {
+          outboxId: 'out_repair_autopause',
+          runId: run.runId,
+          eventKey: 'terminal',
+          kind: 'cron_terminal',
+          route: {
+            kind: 'cron_job',
+            targetChatId: 'oc_target',
+            originChatId: 'oc_origin',
+            jobId: 'repair-autopause',
+            createdAt: '2026-07-19T00:00:00.000Z',
+            revision: 1,
+          },
+          payload: {
+            schemaVersion: 1,
+            kind: 'message',
+            jobId: 'repair-autopause',
+            jobCreatedAt: '2026-07-19T00:00:00.000Z',
+            jobRevision: 1,
+            content: 'delivery failed',
+            messageType: 'text',
+            runStatus: 'failed',
+            failureReason: 'chat not found',
+          },
+          status: 'failed',
+          attemptCount: 1,
+          updatedAt: '2026-07-19T01:17:03.000Z',
+          errorCode: 'cron_delivery_target_permanent',
+          errorSummary: 'chat not found',
+        } as const;
+      },
+    } as any,
+    jobRepository: {
+      async readJob() { return structuredClone(current); },
+      async mutateJob(_id, mutate) {
+        const draft = structuredClone(current);
+        const previousStatus = draft.meta.status;
+        const accepted = await mutate(draft);
+        if (accepted === false) return null;
+        if (draft.meta.status !== previousStatus && failAutoPauseOnce) {
+          failAutoPauseOnce = false;
+          throw new Error('simulated auto-pause write failure');
+        }
+        if (draft.meta.status !== previousStatus) draft.meta.revision += 1;
+        current = draft;
+        return structuredClone(current);
+      },
+    },
+  });
+  await assert.rejects(
+    admission.repairProjection(structuredClone(current)),
+    /simulated auto-pause write failure/,
+  );
+  assert.equal(current.runtime.delivery_status, 'failed');
+  assert.equal(current.meta.status, 'active');
+  await admission.repairProjection(structuredClone(current));
+  assert.equal(current.runtime.run_id, run.runId);
+  assert.equal(current.runtime.run_status, 'failed');
+  assert.equal(current.runtime.delivery_status, 'failed');
+  assert.equal(current.runtime.delivery_error, 'chat not found');
+  assert.equal(current.runtime.run_count, 1);
+  assert.equal(current.runtime.last_run_at, '2026-07-19T01:17:03.000Z');
+  assert.equal(current.meta.status, 'paused');
+  assert.equal(current.meta.revision, 2);
+}
 
 // 4. Manual request IDs are idempotent, while a different manual or scheduled
 // request cannot overlap a non-terminal Run for the same Job instance.

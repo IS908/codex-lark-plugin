@@ -112,6 +112,11 @@ npm run --silent check:plugin-src-sync
 echo "PASS"
 
 echo ""
+echo "=== Plugin runtime bundle sync checks ==="
+npm run --silent check:runtime-bundle-sync
+echo "PASS"
+
+echo ""
 echo "=== Architecture guardrail checks ==="
 npm run --silent check:architecture
 echo "PASS"
