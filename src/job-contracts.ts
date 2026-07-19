@@ -2,6 +2,8 @@ import type { CronJobDiagnosticSnapshot } from './cronjob-diagnostic-contracts.j
 
 export interface JobMeta {
   id: string;
+  /** Monotonic semantic-definition revision. Runtime projection never changes it. */
+  revision: number;
   name: string;
   type: 'prompt' | 'message';
   schedule: string;

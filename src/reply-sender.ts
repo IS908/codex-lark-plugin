@@ -1,4 +1,5 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { appConfig } from './config.js';
@@ -18,12 +19,14 @@ import {
   createOpenApiLarkTransport,
 } from './lark-transport.js';
 import type { LarkTransport, LarkTransportInput } from './lark-transport-contracts.js';
+import type { FeishuRetryOptions } from './feishu-retry.js';
 import {
   fetchedMessageContentText,
   isPlaceholderCardText,
 } from './message-content.js';
 import {
   getFeishuApiCode,
+  isFeishuTimeoutError,
   isFeishuWithdrawnMessageError,
 } from './feishu-retry.js';
 
@@ -51,6 +54,12 @@ export interface ReplyRequest {
   runtimeFooter?: string;
   files?: Array<{ path: string; type: 'image' | 'file' }>;
   richParts?: ReplyRichPart[];
+  /** Stable outbox key used to derive deterministic Feishu UUIDs per emitted chunk. */
+  idempotencyKey?: string;
+  rawMessage?: { msgType: string; content: string };
+  retry?: FeishuRetryOptions;
+  /** Suppress conversational reply inference for scheduled/broadcast delivery. */
+  routing?: 'auto' | 'standalone';
 }
 
 export type ReplyRichPart =
@@ -75,6 +84,7 @@ export interface ReplySendResult {
   isError?: boolean;
   errorText?: string;
   skippedReason?: 'withdrawn_message';
+  messageIds?: string[];
 }
 
 type UploadedRichPart =
@@ -144,6 +154,10 @@ export async function sendFeishuReply(
     runtimeFooter,
     files,
     richParts,
+    idempotencyKey,
+    rawMessage,
+    retry,
+    routing = 'auto',
   } = request;
   const {
     client,
@@ -161,8 +175,7 @@ export async function sendFeishuReply(
     chatId: chat_id,
     threadId: thread_id,
     replyTo: reply_to,
-    turnObligations,
-    latestMessageTracker,
+    ...(routing === 'auto' ? { turnObligations, latestMessageTracker } : {}),
   });
   if (!route.ok) return route.result;
   const { effectiveReplyTo, shouldStayInThread } = route;
@@ -174,11 +187,16 @@ export async function sendFeishuReply(
     replyTo?: string;
     replyInThread?: boolean;
   }) {
+    const uuid = idempotencyKey
+      ? createHash('sha256').update(`${idempotencyKey}:${sendOrdinal++}`).digest('hex').slice(0, 32)
+      : undefined;
     return await transport.sendMessage({
       chatId: chat_id,
       input: args.input,
       ...(args.replyTo ? { replyTo: args.replyTo } : {}),
       ...(args.replyInThread ? { replyInThread: true } : {}),
+      ...(uuid ? { uuid } : {}),
+      ...(retry ? { retry } : {}),
     });
   }
 
@@ -193,8 +211,9 @@ export async function sendFeishuReply(
     messageId: string | undefined,
     quotedContext?: TrackedBotMessageQuotedContext,
   ): void {
-    if (messageId && botMessageTracker) {
-      botMessageTracker.add(messageId, { chatId: chat_id, threadId: thread_id, quotedContext });
+    if (messageId) {
+      deliveredMessageIds.push(messageId);
+      botMessageTracker?.add(messageId, { chatId: chat_id, threadId: thread_id, quotedContext });
     }
   }
 
@@ -214,6 +233,8 @@ export async function sendFeishuReply(
       ...(thread_id ? { threadId: thread_id } : {}),
       messageType: 'text',
     });
+
+    if (routing === 'standalone') return;
 
     if (effectiveReplyTo) {
       turnObligations?.markSatisfied(effectiveReplyTo, 'reply');
@@ -265,6 +286,8 @@ export async function sendFeishuReply(
 
   let sentCount = 0;
   let fileSentCount = 0;
+  let sendOrdinal = 0;
+  const deliveredMessageIds: string[] = [];
 
   async function sendRichPartsAsSplit(parts: ReplyRichPart[], replyText: string): Promise<ReplySendResult> {
     let deliveredAny = false;
@@ -306,6 +329,7 @@ export async function sendFeishuReply(
     } catch (err) {
       const failure = normalizeSendFailure(err);
       if (failure.skipped) return failure.skipped;
+      if (isFeishuTimeoutError(failure.error)) throw failure.error;
       logSafeError('[reply-sender] rich split delivery failed:', failure.error);
       return {
         sentCount,
@@ -314,6 +338,7 @@ export async function sendFeishuReply(
         richDeliveryMode: 'split',
         isError: true,
         errorText: messageFromError(failure.error),
+        ...(deliveredMessageIds.length > 0 ? { messageIds: [...deliveredMessageIds] } : {}),
       };
     }
 
@@ -323,6 +348,7 @@ export async function sendFeishuReply(
       statusText: `Sent ${sentCount} split message(s)`,
       fileSentCount,
       richDeliveryMode: 'split',
+      ...(deliveredMessageIds.length > 0 ? { messageIds: [...deliveredMessageIds] } : {}),
     };
   }
 
@@ -363,10 +389,12 @@ export async function sendFeishuReply(
         statusText: 'Sent 1 rich post message',
         fileSentCount,
         richDeliveryMode: 'rich_post',
+        ...(deliveredMessageIds.length > 0 ? { messageIds: [...deliveredMessageIds] } : {}),
       };
     } catch (err) {
       const failure = normalizeSendFailure(err);
       if (failure.skipped) return failure.skipped;
+      if (isFeishuTimeoutError(failure.error)) throw failure.error;
       console.error(
         '[reply-sender] rich post delivery failed; falling back to ordered split:',
         messageFromError(failure.error),
@@ -375,6 +403,21 @@ export async function sendFeishuReply(
       fileSentCount = 0;
       return sendRichPartsAsSplit(richParts, replyText);
     }
+  }
+
+  if (rawMessage) {
+    const response = await sendTransportMessage({
+      input: { raw: rawMessage },
+      ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
+    });
+    trackBotMessage(response.messageId);
+    deliveredCount++;
+    recordAndRevokeAck(text || '[message]', response.messageId);
+    return {
+      sentCount: 1,
+      statusText: 'Sent 1 raw message',
+      ...(deliveredMessageIds.length > 0 ? { messageIds: [...deliveredMessageIds] } : {}),
+    };
   }
 
   // Raw card JSON path — bypass buildCards entirely.
@@ -411,6 +454,7 @@ export async function sendFeishuReply(
     return {
       sentCount: 1,
       statusText: 'Sent 1 card message',
+      ...(deliveredMessageIds.length > 0 ? { messageIds: [...deliveredMessageIds] } : {}),
     };
   }
 
@@ -469,6 +513,7 @@ export async function sendFeishuReply(
     } catch (err: any) {
       const failure = normalizeSendFailure(err);
       if (failure.skipped) return failure.skipped;
+      if (isFeishuTimeoutError(failure.error)) throw failure.error;
       if (deliveredCount === deliveredBeforeCard) {
         console.error(
           `[reply-sender] generated card build/delivery failed; falling back to text:`,
@@ -530,6 +575,7 @@ export async function sendFeishuReply(
     sentCount,
     statusText: `Sent ${sentCount} message(s)`,
     fileSentCount,
+    ...(deliveredMessageIds.length > 0 ? { messageIds: [...deliveredMessageIds] } : {}),
   };
 }
 

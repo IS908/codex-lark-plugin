@@ -46,4 +46,38 @@ await connectedPromise;
 assert.equal(attempts, 2, 'runtime should retry after the initial failure');
 assert.equal(connected, true);
 
+let postConnectAttempts = 0;
+let postConnectChannels = 0;
+let postConnectDisconnects = 0;
+await new Promise<void>((resolve, reject) => {
+  const controller = startSdkChannelRuntimeWithRetry(new LarkChannel(), {
+    retryDelayMs: () => 1,
+    async onConnected() {
+      postConnectAttempts += 1;
+      if (postConnectAttempts === 1) throw new Error('transient scheduler repair failure');
+      controller.stop();
+      resolve();
+    },
+    onStopped: reject,
+    createChannel: () => {
+      postConnectChannels += 1;
+      return {
+        botIdentity: { openId: 'ou_retry_bot', name: 'Codex Bot' },
+        on() { return () => {}; },
+        async connect() {},
+        async disconnect() { postConnectDisconnects += 1; },
+      } as any;
+    },
+  });
+  setTimeout(() => {
+    if (postConnectAttempts < 2) {
+      controller.stop();
+      reject(new Error('post-connect startup failure was not retried'));
+    }
+  }, 200);
+});
+assert.equal(postConnectAttempts, 2);
+assert.equal(postConnectChannels, 2);
+assert.equal(postConnectDisconnects, 1);
+
 console.log('sdk-runtime-retry smoke: PASS');

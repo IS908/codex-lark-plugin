@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.8.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.9.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -73,13 +73,15 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 ### Scheduled Jobs (CronJob)
 
-- **Two job types**: `message` sends fixed content deterministically; `prompt` runs through the same `codex exec` delivery path as chat messages
+- **Two job types**: `message` commits fixed content without Codex execution; `prompt` runs a generation-only `codex exec` turn. Both commit output to the durable outbox before Feishu delivery.
 - Prompt job failures include structured run diagnostics: run metadata, observable stage timings, diagnostic-only progress, and redacted `codex exec` stdout/stderr tails when available
 - Standard cron expressions + simplified aliases (`every 30m`, `daily at 09:00`, `weekdays at 17:00`)
 - Create and manage jobs through Feishu chat or the `$lark:jobs` skill
 - Quote a bot report and ask to rerun it: the exec bridge derives the trusted cronjob origin and uses `run_job` to execute the persisted definition immediately. Only the job creator may trigger a rerun; a manual run preserves a future schedule and does not unpause the job.
-- Crash recovery: missed jobs are executed once on restart
-- Job storage as JSON files at `~/.codex/channels/lark/jobs/`
+- Crash recovery admits at most the latest missed occurrence on restart. Pre-execution interruptions are safely replayed; a prompt interrupted after Codex starts is blocked as outcome-unknown instead of being blindly rerun.
+- Job definitions and schedule cursors remain JSON files at `~/.codex/channels/lark/jobs/`. Run, Attempt, lease, and delivery-outbox state is stored in `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`; JSON runtime fields are a compatibility projection.
+- Execution retry and delivery retry are independent. A generated report is never regenerated because Feishu delivery failed, ambiguous sends are not blindly repeated, and permanent target errors auto-pause only the matching Job definition revision.
+- `LARK_CONTINUATION_ENABLED=false` disables Async Task creation/execution only; Cron workloads remain registered on the shared durable worker. If shared SQLite initialization fails, Cron execution fails closed without falling back to the removed Scheduler executor.
 
 ### Persistent Continuations
 
@@ -103,7 +105,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
   current and already-running same-user legacy lock names, but it cannot predict a different
   app ID that an old binary may start with later.
 - User and chat ID whitelisting for access control (OR semantics when both lists set)
-- Crash recovery for scheduled jobs (missed executions run once on restart)
+- Durable crash recovery for scheduled jobs (latest missed occurrence only, with separate execution and delivery recovery)
 
 ---
 
@@ -709,10 +711,11 @@ incomplete records are skipped. Set dry-run mode to preview candidates in logs.
 
 ### Persistent Continuation Runtime
 
-v2.0.0 is a direct cutover and requires Node.js 24.15.0 or newer for the built-in
-`node:sqlite` runtime. There is no legacy continuation implementation or rollout
-flag to preserve. Upgrade Node before restarting the plugin; rollback requires
-reinstalling v1.21.4 rather than enabling compatibility code.
+The durable runtime requires Node.js 24.15.0 or newer for built-in
+`node:sqlite`. v2.9.0 moves Async Task and Cron Run/Attempt/lease/outbox mechanics
+onto the same generic kernel in one cutover, with no legacy Cron executor,
+dual-write path, rollout flag, or fallback. Cron definitions remain JSON; only
+run and delivery history lives in SQLite.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -776,9 +779,11 @@ A future coordinator must bind one-time approval to an operation digest,
 requester and approver identities, expiry, decision, and single consumption.
 
 The SQLite database uses WAL mode, process-safe leases, transactional terminal
-outbox creation, and startup lease recovery. Initialization failure degrades
-only continuation actions and `/task`; ordinary chat and cronjob processing stay
-available. `delivery_unknown` means the provider may already have accepted the
+outbox creation, and startup lease recovery. `LARK_CONTINUATION_ENABLED=false`
+removes only Async Task from the shared worker. SQLite initialization failure
+disables Async Task and Cron execution fail-closed; ordinary foreground chat
+remains available and no legacy Cron fallback is started. `delivery_unknown`
+means the provider may already have accepted the
 terminal result, so `/task retry` refuses to rerun it and the user must make a
 new foreground request after checking Lark. Diagnostic logs include Job/attempt
 IDs but omit objectives, checkpoints, result bodies, and credentials.

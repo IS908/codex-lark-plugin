@@ -11,6 +11,8 @@ import {
   backfillJob,
   readJob,
   listAllJobs,
+  mutateJob,
+  writeJob,
   type JobFile,
 } from '../src/job-store.js';
 import { appConfig } from '../src/config.js';
@@ -196,6 +198,40 @@ if (e14.cron !== '0 */24 * * *') fail(`24c: every 24h should be accepted, got ${
 const latestDue = computeLatestDueRun('*/5 * * * *', new Date('2026-06-07T01:15:00.000Z'));
 if (latestDue !== '2026-06-07T01:15:00.000Z') {
   fail(`24d: expected exact-boundary latest due run, got ${latestDue}`);
+}
+
+// 24e. DST boundaries preserve cron-parser's current New York semantics.
+const springForwardDue = computeLatestDueRun(
+  '0 2 * * *',
+  new Date('2026-03-08T07:00:00.000Z'),
+  'America/New_York',
+);
+if (springForwardDue !== '2026-03-07T07:00:00.000Z') {
+  fail(`24e: spring-forward latest due run changed: ${springForwardDue}`);
+}
+const fallBackDue = computeLatestDueRun(
+  '0 1 * * *',
+  new Date('2026-11-01T06:00:00.000Z'),
+  'America/New_York',
+);
+if (fallBackDue !== '2026-11-01T06:00:00.000Z') {
+  fail(`24e: fall-back latest due run changed: ${fallBackDue}`);
+}
+const springForwardNext = computeNextRun(
+  '0 2 * * *',
+  'America/New_York',
+  new Date('2026-03-08T07:00:00.000Z'),
+);
+if (springForwardNext !== '2026-03-09T06:00:00.000Z') {
+  fail(`24e: spring-forward next occurrence changed: ${springForwardNext}`);
+}
+const fallBackNext = computeNextRun(
+  '0 1 * * *',
+  'America/New_York',
+  new Date('2026-11-01T06:00:00.000Z'),
+);
+if (fallBackNext !== '2026-11-02T06:00:00.000Z') {
+  fail(`24e: fall-back next occurrence changed: ${fallBackNext}`);
 }
 
 // ── Backfill tests (v0.9.0) ─────────────────────────────────
@@ -526,6 +562,118 @@ try {
     const listed = await listAllJobs();
     if (listed.length !== 20) {
       failClean3(`34: parallel read missed jobs. expected 20, got ${listed.length}`);
+    }
+  } finally {
+    (appConfig as { jobsDir: string }).jobsDir = origDir;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// ── Definition revision and atomic mutation (Task 5) ──
+
+function jobRevision(job: JobFile): number | undefined {
+  return (job.meta as JobFile['meta'] & { revision?: number }).revision;
+}
+
+// 35. Legacy definitions deterministically backfill to revision 1.
+{
+  const legacy = makeLegacyJob();
+  delete (legacy.meta as JobFile['meta'] & { revision?: number }).revision;
+  const first = backfillJob(structuredClone(legacy));
+  const second = backfillJob(structuredClone(legacy));
+  if (jobRevision(first) !== 1 || jobRevision(second) !== 1) {
+    fail(`35: legacy revision should deterministically backfill to 1, got ${jobRevision(first)} and ${jobRevision(second)}`);
+  }
+}
+
+// 36-39. Definition creates start at revision 1, semantic transactions each
+// increment exactly once, runtime projections do not increment, and queued
+// concurrent edits preserve both changes and both revision increments.
+{
+  const tmp = mkdtempSync(join(tmpdir(), 'job-revision-smoke-'));
+  const origDir = appConfig.jobsDir;
+  (appConfig as { jobsDir: string }).jobsDir = tmp;
+
+  try {
+    const definition = {
+      meta: {
+        id: 'revision-job',
+        name: 'Initial name',
+        type: 'prompt',
+        schedule: '0 9 * * *',
+        schedule_human: 'daily at 09:00',
+        timezone: 'UTC',
+        prompt: 'Initial prompt',
+        model: 'gpt-initial',
+        target_chat_id: 'oc_initial',
+        origin_chat_id: 'oc_origin',
+        status: 'active',
+        created_by: 'ou_owner',
+        created_at: '2026-07-19T00:00:00.000Z',
+      },
+      runtime: createInitialJobRuntime('2026-07-19T09:00:00.000Z'),
+    } as JobFile;
+
+    await writeJob(definition);
+    const created = await readJob(definition.meta.id);
+    if (!created || jobRevision(created) !== 1) {
+      fail(`36: a new definition should persist revision 1, got ${created ? jobRevision(created) : 'missing'}`);
+    }
+
+    const semanticMutations: Array<(job: JobFile) => void> = [
+      (job) => { job.meta.prompt = 'Updated prompt'; },
+      (job) => { job.meta.model = 'gpt-updated'; },
+      (job) => {
+        job.meta.schedule = '*/30 * * * *';
+        job.meta.schedule_human = 'every 30m';
+      },
+      (job) => { job.meta.target_chat_id = 'oc_updated'; },
+      (job) => { job.meta.name = 'Updated name'; },
+      (job) => { job.meta.status = 'paused'; },
+    ];
+    let expectedRevision = 1;
+    for (const mutateDefinition of semanticMutations) {
+      const updated = await mutateJob(definition.meta.id, mutateDefinition);
+      expectedRevision += 1;
+      if (!updated || jobRevision(updated) !== expectedRevision) {
+        fail(`37: semantic update should increment revision to ${expectedRevision}, got ${updated ? jobRevision(updated) : 'missing'}`);
+      }
+    }
+
+    const projected = await mutateJob(definition.meta.id, (job) => {
+      job.runtime.last_run_at = '2026-07-19T09:00:00.000Z';
+      job.runtime.run_count += 1;
+      job.runtime.last_error = null;
+      job.runtime.next_run_at = '2026-07-20T09:00:00.000Z';
+    });
+    if (!projected || jobRevision(projected) !== expectedRevision) {
+      fail(`38: runtime-only projection changed revision ${expectedRevision} -> ${projected ? jobRevision(projected) : 'missing'}`);
+    }
+
+    let releaseFirst!: () => void;
+    let enterFirst!: () => void;
+    const firstEntered = new Promise<void>((resolve) => { enterFirst = resolve; });
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstEdit = mutateJob(definition.meta.id, async (job) => {
+      job.meta.name = 'Concurrent name';
+      enterFirst();
+      await firstGate;
+    });
+    await firstEntered;
+    const secondEdit = mutateJob(definition.meta.id, (job) => {
+      job.meta.model = 'gpt-concurrent';
+    });
+    releaseFirst();
+    await Promise.all([firstEdit, secondEdit]);
+
+    const concurrent = await readJob(definition.meta.id);
+    if (
+      !concurrent
+      || concurrent.meta.name !== 'Concurrent name'
+      || concurrent.meta.model !== 'gpt-concurrent'
+      || jobRevision(concurrent) !== expectedRevision + 2
+    ) {
+      fail(`39: concurrent definition edits were not atomically preserved: ${JSON.stringify(concurrent)}`);
     }
   } finally {
     (appConfig as { jobsDir: string }).jobsDir = origDir;

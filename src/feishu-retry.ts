@@ -128,7 +128,23 @@ export function isRetryableFeishuError(err: any): boolean {
 }
 
 export function isFeishuTimeoutError(err: unknown): boolean {
-  return err instanceof FeishuTimeoutError || (err as any)?.code === 'FEISHU_TIMEOUT';
+  const seen = new Set<unknown>();
+  let current: any = err;
+  for (let depth = 0; current && depth < 6; depth++) {
+    if (seen.has(current)) return false;
+    seen.add(current);
+    const code = String(current?.code ?? '').toUpperCase();
+    const message = errorMessage(current).toLowerCase();
+    if (
+      current instanceof FeishuTimeoutError
+      || code === 'FEISHU_TIMEOUT'
+      || code === 'ETIMEDOUT'
+      || message.includes('timed out')
+      || message.includes('timeout')
+    ) return true;
+    current = current?.cause;
+  }
+  return false;
 }
 
 export async function withTimeout<T>(

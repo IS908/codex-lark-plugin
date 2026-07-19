@@ -17,6 +17,22 @@ echo "=== Continuation domain checks ==="
 node --import tsx scripts/continuation-domain-smoke.ts
 
 echo ""
+echo "=== Durable run domain checks ==="
+node --import tsx scripts/durable-run-domain-smoke.ts
+
+echo ""
+echo "=== Durable run worker checks ==="
+node --import tsx scripts/durable-run-worker-smoke.ts
+
+echo ""
+echo "=== Durable run SQLite repository checks ==="
+node --import tsx scripts/durable-run-repository-smoke.ts
+
+echo ""
+echo "=== Durable run SQLite migration checks ==="
+node --import tsx scripts/durable-run-migration-smoke.ts
+
+echo ""
 echo "=== Continuation recovery policy unit checks ==="
 node --import tsx scripts/continuation-recovery-policy-smoke.ts
 
@@ -27,6 +43,10 @@ node --import tsx scripts/continuation-working-directory-smoke.ts
 echo ""
 echo "=== Continuation repository checks ==="
 node --import tsx scripts/continuation-repository-smoke.ts
+
+echo ""
+echo "=== Continuation durable storage cutover checks ==="
+node --import tsx scripts/continuation-durable-cutover-smoke.ts
 
 echo ""
 echo "=== Continuation local CLI invoker checks ==="
@@ -89,6 +109,11 @@ echo "PASS"
 echo ""
 echo "=== Plugin source sync checks ==="
 npm run --silent check:plugin-src-sync
+echo "PASS"
+
+echo ""
+echo "=== Plugin runtime bundle sync checks ==="
+npm run --silent check:runtime-bundle-sync
 echo "PASS"
 
 echo ""
@@ -211,6 +236,10 @@ node --import tsx scripts/tool-domain-exports-smoke.ts
 echo ""
 echo "=== Job store unit checks ==="
 node --import tsx scripts/job-smoke.ts
+
+echo ""
+echo "=== Cron durable-run admission checks ==="
+node --import tsx scripts/cron-run-admission-smoke.ts
 
 echo ""
 echo "=== Job tool unit checks ==="
@@ -343,6 +372,25 @@ node --import tsx scripts/safe-log-smoke.ts
 echo ""
 echo "=== Scheduler unit checks ==="
 node --import tsx scripts/scheduler-smoke.ts
+
+echo ""
+echo "=== Cron compatibility checks ==="
+node --import tsx scripts/cron-compatibility-smoke.ts
+
+echo ""
+echo "=== Cron durable workload checks ==="
+node --import tsx scripts/cron-workload-smoke.ts
+node --import tsx scripts/cron-prompt-fidelity-smoke.ts
+
+echo ""
+echo "=== Cron durable delivery and runtime checks ==="
+node --import tsx scripts/cron-delivery-smoke.ts
+node --import tsx scripts/durable-run-runtime-smoke.ts
+
+echo ""
+echo "=== Cron durable restart and capacity checks ==="
+node --import tsx scripts/cron-durable-restart-smoke.ts
+node --import tsx scripts/durable-run-capacity-smoke.ts
 
 echo ""
 echo "=== Privacy rules unit checks ==="

@@ -24,7 +24,7 @@ const {
   TRACE_RUN_ID_DISPLAY_LENGTH,
   formatTraceRunIdForDisplay,
 } = await import('../src/trace-run-id.js');
-const { runCodexExecCommand } = await import('../src/codex-exec.js');
+const { CodexExecPreStartError, runCodexExecCommand } = await import('../src/codex-exec.js');
 const { queryRunTrace } = await import('../src/run-trace-query.js');
 const { debugLog } = await import('../src/debug-log.js');
 
@@ -242,6 +242,26 @@ assert.match(metricsDebugLine, /input_tokens=1500 .* total_tokens=1550/);
 assert.match(integrationLog, /github\.get_issue/);
 assert.doesNotMatch(integrationLog, /should-not-appear/);
 assert.doesNotMatch(integrationLog, /final answer only/);
+
+await assert.rejects(
+  runCodexExecCommand({
+    prompt: 'must not start',
+    command: join(root, 'missing-codex-command'),
+    cwd: root,
+    timeoutMs: 5000,
+  }),
+  (error: unknown) => error instanceof CodexExecPreStartError && error.code === 'ENOENT',
+);
+
+await assert.rejects(
+  runCodexExecCommand({
+    prompt: 'x'.repeat(16 * 1024 * 1024),
+    command: '/usr/bin/true',
+    cwd: root,
+    timeoutMs: 5000,
+  }),
+  (error: unknown) => !(error instanceof CodexExecPreStartError),
+);
 
 const failedCodex = join(root, 'failed-codex.js');
 await writeFile(failedCodex, [

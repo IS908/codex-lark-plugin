@@ -5,15 +5,13 @@
  * thread when `thread_id` is present, and fall through to `message.create`
  * otherwise.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerTools } from '../src/tools.js';
 import type { MemoryStore } from '../src/memory/file.js';
 import { IdentitySession } from '../src/identity-session.js';
 import type { LarkChannel } from '../src/channel.js';
-import { appConfig } from '../src/config.js';
-import { JOB_THREAD_PREFIX, jobCreatedAtHash } from '../src/scheduler.js';
 import { sendFeishuReply } from '../src/reply-sender.js';
 
 function fail(msg: string): never {
@@ -381,400 +379,72 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   passed++;
 }
 
-// ── 7. Synthetic cronjob thread_id must NOT trigger reply_in_thread ──
-// Regression guard: cronjob dispatches inject thread_id="job-<id>-<ts>"
-// as an IdentitySession isolation key. That value does not correspond to
-// a real Feishu thread. If the reply tool treated it like one and emitted
-// reply_in_thread:true against a real reply_to, Feishu would fabricate a
-// new thread around that earlier message — an unintended side effect.
+
+// ── 7. Explicit delivery UUID is forwarded through card rendering ────────
+// Durable outbox retries must reuse the same Feishu idempotency key while
+// preserving the existing card, bot tracking, and assistant buffer paths.
 {
-  const { reply } = await setup();
-  await reply({
+  const sends: any[] = [];
+  const tracked: Array<{ id: string; meta: unknown }> = [];
+  const buffered: Array<{ chatId: string; message: any }> = [];
+  const request = {
     chat_id: 'chat_grp',
-    text: 'cron output',
-    reply_to: 'om_some_earlier_msg',
-    thread_id: `${JOB_THREAD_PREFIX}example-1700000000000`,
-    files: [{ path: imgPath, type: 'image' }],
-  });
-  const createCalls = apiCalls.filter((c) => c.method === 'message.create');
-  const replyCalls = apiCalls.filter((c) => c.method === 'message.reply');
-  // text chunk 0 quote-replies (reply without flag); image falls through to create
-  if (replyCalls.length !== 1) fail(`7: expected 1 reply (text chunk 0), got ${replyCalls.length}`);
-  if ('reply_in_thread' in replyCalls[0].args.data) {
-    fail(`7: first chunk must not carry reply_in_thread even for cronjob thread`);
-  }
-  if (createCalls.length !== 1) fail(`7: expected 1 create (image), got ${createCalls.length}`);
-  if ('reply_in_thread' in createCalls[0].args.data) {
-    fail(`7: create must not carry reply_in_thread`);
-  }
-  if (createCalls[0].args.data.msg_type !== 'image') {
-    fail(`7: create msg_type wrong: ${createCalls[0].args.data.msg_type}`);
-  }
-  passed++;
-}
-
-// ── 8. Synthetic cronjob reply permanent target failures auto-pause job ──
-{
-  const originalJobsDir = appConfig.jobsDir;
-  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-autopause-'));
-  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
-  try {
-    const jobId = 'reply-autopause';
-    const createdAt = '2026-06-07T00:00:00.000Z';
-    writeFileSync(
-      join(jobsDir, `${jobId}.json`),
-      JSON.stringify(
-        {
-          meta: {
-            id: jobId,
-            name: 'Reply AutoPause',
-            type: 'prompt',
-            schedule: '* * * * *',
-            schedule_human: 'every 1m',
-            prompt: 'reply',
-            target_chat_id: 'chat_grp',
-            origin_chat_id: 'chat_grp',
-            status: 'active',
-            created_by: 'ou_caller',
-            created_at: createdAt,
-          },
-          runtime: {
-            last_run_at: null,
-            next_run_at: '2099-01-01T00:00:00.000Z',
-            run_count: 1,
-            last_error: null,
-          },
+    text: '# Durable report\n\n- persisted before delivery',
+    format: 'card',
+    idempotencyKey: 'cron:run_123:terminal',
+  } as const;
+  const result = await sendFeishuReply(
+    {
+      client: {} as any,
+      transport: {
+        async sendMessage(request: any) {
+          sends.push(request);
+          return { messageId: 'om_durable_card' };
         },
-        null,
-        2,
-      ),
-    );
-
-    const err = new Error('permission denied') as Error & {
-      response?: { status: number; data: { code: number; msg: string } };
-    };
-    err.response = { status: 403, data: { code: 99991672, msg: 'permission denied' } };
-    const { reply } = await setup({ client: mockClient({ failReply: err }) });
-    const result = await reply({
-      chat_id: 'chat_grp',
-      text: 'cron reply',
-      reply_to: 'om_source',
-      thread_id: `${JOB_THREAD_PREFIX}${jobId}-${jobCreatedAtHash(createdAt)}-1760000000000`,
-      format: 'text',
-    });
-    if (!result.isError) fail('8: expected reply tool to return isError for permanent Feishu failure');
-
-    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
-    if (persisted.meta.status !== 'paused') {
-      fail(`8: expected cronjob auto-paused, got ${persisted.meta.status}`);
-    }
-    if (!persisted.runtime.last_error?.includes('auto-paused')) {
-      fail(`8: expected auto-pause reason in last_error, got ${persisted.runtime.last_error}`);
-    }
-  } finally {
-    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
-    rmSync(jobsDir, { recursive: true, force: true });
+      } as any,
+      botMessageTracker: {
+        add(id: string, meta: unknown) { tracked.push({ id, meta }); },
+      } as any,
+      conversationBuffer: {
+        record(chatId: string, message: any) { buffered.push({ chatId, message }); },
+      } as any,
+    },
+    request,
+  );
+  if (result.isError || result.sentCount !== 1) {
+    fail(`7: explicit UUID card delivery failed: ${JSON.stringify(result)}`);
   }
-  passed++;
-}
-
-// ── 9. Legacy cronjob thread ids without created_at hash do not auto-pause ──
-{
-  const originalJobsDir = appConfig.jobsDir;
-  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-legacy-autopause-'));
-  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
-  try {
-    const jobId = 'reply-legacy-autopause';
-    writeFileSync(
-      join(jobsDir, `${jobId}.json`),
-      JSON.stringify(
-        {
-          meta: {
-            id: jobId,
-            name: 'Reply Legacy AutoPause',
-            type: 'prompt',
-            schedule: '* * * * *',
-            schedule_human: 'every 1m',
-            prompt: 'reply',
-            target_chat_id: 'chat_grp',
-            origin_chat_id: 'chat_grp',
-            status: 'active',
-            created_by: 'ou_caller',
-            created_at: '2026-06-07T00:00:00.000Z',
-          },
-          runtime: {
-            last_run_at: null,
-            next_run_at: '2099-01-01T00:00:00.000Z',
-            run_count: 0,
-            last_error: null,
-          },
+  const firstUuid = sends[0]?.uuid;
+  if (sends.length !== 1 || !firstUuid) {
+    fail(`7: stable idempotency key did not derive a UUID: ${JSON.stringify(sends)}`);
+  }
+  if (!('card' in sends[0].input)) {
+    fail(`7: expected existing card renderer, got ${JSON.stringify(sends[0].input)}`);
+  }
+  if (tracked[0]?.id !== 'om_durable_card' || (tracked[0]?.meta as any)?.chatId !== 'chat_grp') {
+    fail(`7: durable card was not tracked: ${JSON.stringify(tracked)}`);
+  }
+  if (buffered[0]?.chatId !== 'chat_grp' || !buffered[0]?.message?.text?.includes('Durable report')) {
+    fail(`7: durable card was not recorded in assistant buffer: ${JSON.stringify(buffered)}`);
+  }
+  sends.length = 0;
+  await sendFeishuReply(
+    {
+      client: {} as any,
+      transport: {
+        async sendMessage(outbound: any) {
+          sends.push(outbound);
+          return { messageId: 'om_durable_card_retry' };
         },
-        null,
-        2,
-      ),
-    );
-
-    const err = new Error('permission denied') as Error & {
-      response?: { status: number; data: { code: number; msg: string } };
-    };
-    err.response = { status: 403, data: { code: 99991672, msg: 'permission denied' } };
-    const { reply } = await setup({ client: mockClient({ failReply: err }) });
-    const result = await reply({
-      chat_id: 'chat_grp',
-      text: 'cron reply',
-      reply_to: 'om_source',
-      thread_id: `${JOB_THREAD_PREFIX}${jobId}-1760000000000`,
-      format: 'text',
-    });
-    if (!result.isError) fail('9: expected reply tool to return isError for permanent Feishu failure');
-
-    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
-    if (persisted.meta.status !== 'active') {
-      fail(`9: legacy hashless cronjob turn should not auto-pause, got ${persisted.meta.status}`);
-    }
-  } finally {
-    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
-    rmSync(jobsDir, { recursive: true, force: true });
+      } as any,
+    },
+    request,
+  );
+  if (sends[0]?.uuid !== firstUuid) {
+    fail(`7: retry derived a different UUID: ${JSON.stringify(sends)}`);
   }
   passed++;
 }
 
-// ── 10. Stale cronjob reply failures do not pause a recreated same-id job ──
-{
-  const originalJobsDir = appConfig.jobsDir;
-  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-stale-autopause-'));
-  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
-  try {
-    const jobId = 'reply-stale-autopause';
-    const oldCreatedAt = '2026-06-07T00:00:00.000Z';
-    const newCreatedAt = '2026-06-07T00:01:00.000Z';
-    writeFileSync(
-      join(jobsDir, `${jobId}.json`),
-      JSON.stringify(
-        {
-          meta: {
-            id: jobId,
-            name: 'Reply Stale AutoPause',
-            type: 'prompt',
-            schedule: '* * * * *',
-            schedule_human: 'every 1m',
-            prompt: 'reply',
-            target_chat_id: 'chat_grp',
-            origin_chat_id: 'chat_grp',
-            status: 'active',
-            created_by: 'ou_caller',
-            created_at: newCreatedAt,
-          },
-          runtime: {
-            last_run_at: null,
-            next_run_at: '2099-01-01T00:00:00.000Z',
-            run_count: 0,
-            last_error: null,
-          },
-        },
-        null,
-        2,
-      ),
-    );
-
-    const err = new Error('permission denied') as Error & {
-      response?: { status: number; data: { code: number; msg: string } };
-    };
-    err.response = { status: 403, data: { code: 99991672, msg: 'permission denied' } };
-    const { reply } = await setup({ client: mockClient({ failReply: err }) });
-    const result = await reply({
-      chat_id: 'chat_grp',
-      text: 'cron reply',
-      reply_to: 'om_source',
-      thread_id: `${JOB_THREAD_PREFIX}${jobId}-${jobCreatedAtHash(oldCreatedAt)}-1760000000000`,
-      format: 'text',
-    });
-    if (!result.isError) fail('10: expected reply tool to return isError for permanent Feishu failure');
-
-    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
-    if (persisted.meta.status !== 'active') {
-      fail(`10: stale cronjob turn should not pause recreated job, got ${persisted.meta.status}`);
-    }
-    if (persisted.runtime.last_error !== null) {
-      fail(`10: stale cronjob turn should not write last_error, got ${persisted.runtime.last_error}`);
-    }
-  } finally {
-    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
-    rmSync(jobsDir, { recursive: true, force: true });
-  }
-  passed++;
-}
-
-// ── 11. Successful cronjob replies send full report and persist delivery state ──
-{
-  const originalJobsDir = appConfig.jobsDir;
-  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-delivery-state-'));
-  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
-  try {
-    const jobId = 'reply-delivery-state';
-    const createdAt = '2026-06-07T00:00:00.000Z';
-    const runId = '1760000000000';
-    writeFileSync(
-      join(jobsDir, `${jobId}.json`),
-      JSON.stringify(
-        {
-          meta: {
-            id: jobId,
-            name: 'Reply Delivery State',
-            type: 'prompt',
-            schedule: '* * * * *',
-            schedule_human: 'every 1m',
-            prompt: 'reply',
-            target_chat_id: 'chat_grp',
-            origin_chat_id: 'chat_grp',
-            status: 'active',
-            created_by: 'ou_caller',
-            created_at: createdAt,
-          },
-          runtime: {
-            last_run_at: '2026-06-07T00:01:00.000Z',
-            next_run_at: '2099-01-01T00:00:00.000Z',
-            run_count: 1,
-            last_error: null,
-            run_id: runId,
-            run_status: 'started',
-            output_status: 'empty',
-            delivery_status: 'pending',
-            report: null,
-            report_type: null,
-            delivery_error: null,
-          },
-        },
-        null,
-        2,
-      ),
-    );
-
-    const { reply } = await setup();
-    const report = '# Daily report\n\n- shipped\n- verified';
-    const result = await reply({
-      chat_id: 'chat_grp',
-      text: report,
-      thread_id: `${JOB_THREAD_PREFIX}${jobId}-${jobCreatedAtHash(createdAt)}-${runId}`,
-      format: 'text',
-    });
-    if (result.isError) fail(`11: expected successful reply, got ${JSON.stringify(result)}`);
-
-    const createCalls = apiCalls.filter((c) => c.method === 'message.create');
-    if (createCalls.length !== 1) fail(`11: expected one message.create, got ${createCalls.length}`);
-    const sentContent = JSON.parse(createCalls[0].args.data.content);
-    if (sentContent.text !== report) {
-      fail(`11: expected complete report sent through Feishu payload, got ${createCalls[0].args.data.content}`);
-    }
-
-    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
-    if (persisted.runtime.run_status !== 'success') {
-      fail(`11: expected run_status=success, got ${persisted.runtime.run_status}`);
-    }
-    if (persisted.runtime.output_status !== 'generated') {
-      fail(`11: expected output_status=generated, got ${persisted.runtime.output_status}`);
-    }
-    if (persisted.runtime.delivery_status !== 'sent') {
-      fail(`11: expected delivery_status=sent, got ${persisted.runtime.delivery_status}`);
-    }
-    if (persisted.runtime.report !== report) {
-      fail(`11: expected persisted report body, got ${persisted.runtime.report}`);
-    }
-    if (persisted.runtime.report_type !== 'job_result') {
-      fail(`11: expected report_type=job_result, got ${persisted.runtime.report_type}`);
-    }
-    if (persisted.runtime.delivery_error !== null || persisted.runtime.last_error !== null) {
-      fail(`11: expected no delivery errors, got ${JSON.stringify(persisted.runtime)}`);
-    }
-  } finally {
-    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
-    rmSync(jobsDir, { recursive: true, force: true });
-  }
-  passed++;
-}
-
-// ── 12. Empty cronjob replies send a visible failure report instead of blank output ──
-{
-  const originalJobsDir = appConfig.jobsDir;
-  const jobsDir = mkdtempSync(join(tmpdir(), 'reply-cron-empty-report-'));
-  (appConfig as { jobsDir: string }).jobsDir = jobsDir;
-  try {
-    const jobId = 'reply-empty-report';
-    const createdAt = '2026-06-07T00:00:00.000Z';
-    const runId = '1760000000001';
-    writeFileSync(
-      join(jobsDir, `${jobId}.json`),
-      JSON.stringify(
-        {
-          meta: {
-            id: jobId,
-            name: 'Reply Empty Report',
-            type: 'prompt',
-            schedule: '* * * * *',
-            schedule_human: 'every 1m',
-            prompt: 'reply',
-            target_chat_id: 'chat_grp',
-            origin_chat_id: 'chat_grp',
-            status: 'active',
-            created_by: 'ou_caller',
-            created_at: createdAt,
-          },
-          runtime: {
-            last_run_at: '2026-06-07T00:01:00.000Z',
-            next_run_at: '2099-01-01T00:00:00.000Z',
-            run_count: 1,
-            last_error: null,
-            run_id: runId,
-            run_status: 'started',
-            output_status: 'empty',
-            delivery_status: 'pending',
-            report: null,
-            report_type: null,
-            delivery_error: null,
-          },
-        },
-        null,
-        2,
-      ),
-    );
-
-    const { reply } = await setup();
-    const result = await reply({
-      chat_id: 'chat_grp',
-      text: '   ',
-      thread_id: `${JOB_THREAD_PREFIX}${jobId}-${jobCreatedAtHash(createdAt)}-${runId}`,
-      format: 'text',
-    });
-    if (result.isError) fail(`12: expected visible error report delivery, got ${JSON.stringify(result)}`);
-
-    const createCalls = apiCalls.filter((c) => c.method === 'message.create');
-    if (createCalls.length !== 1) fail(`12: expected one message.create, got ${createCalls.length}`);
-    const sentContent = JSON.parse(createCalls[0].args.data.content);
-    if (!sentContent.text?.includes('CronJob produced an empty report.')) {
-      fail(`12: expected empty-output failure report sent through Feishu, got ${createCalls[0].args.data.content}`);
-    }
-
-    const persisted = JSON.parse(readFileSync(join(jobsDir, `${jobId}.json`), 'utf-8'));
-    if (persisted.runtime.run_status !== 'failed') {
-      fail(`12: expected run_status=failed for empty report, got ${persisted.runtime.run_status}`);
-    }
-    if (persisted.runtime.output_status !== 'generated') {
-      fail(`12: expected generated error report output, got ${persisted.runtime.output_status}`);
-    }
-    if (persisted.runtime.delivery_status !== 'sent') {
-      fail(`12: expected delivered failure report, got ${persisted.runtime.delivery_status}`);
-    }
-    if (persisted.runtime.report_type !== 'error_report') {
-      fail(`12: expected error_report, got ${persisted.runtime.report_type}`);
-    }
-    if (!persisted.runtime.last_error?.includes('empty report')) {
-      fail(`12: expected empty report last_error, got ${persisted.runtime.last_error}`);
-    }
-  } finally {
-    (appConfig as { jobsDir: string }).jobsDir = originalJobsDir;
-    rmSync(jobsDir, { recursive: true, force: true });
-  }
-  passed++;
-}
-
-console.log(`reply-thread smoke: ${passed}/15 PASS`);
+rmSync(fixDir, { recursive: true, force: true });
+console.log(`reply-thread smoke: ${passed}/10 PASS`);

@@ -1673,4 +1673,33 @@ assert.match(maliciousPrompt, /source="codex-exec-message-text"/);
 assert.match(maliciousPrompt, /source="codex-exec-parent-message"/);
 assert.match(maliciousPrompt, /source="codex-exec-attachments"/);
 
+const generatedOutputs: Array<{ text: string; runtimeFooter?: string }> = [];
+let generationSendCalled = false;
+const generationAbort = new AbortController();
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'job-1-run-1',
+    chatType: 'cronjob',
+    messageType: 'cronjob',
+  },
+  displayLabel: 'CronJob · report',
+  useCodexSessions: false,
+  progressVisible: false,
+  abortSignal: generationAbort.signal,
+  runCodexExec: async (request) => {
+    assert.equal(request.abortSignal, generationAbort.signal);
+    return 'captured report';
+  },
+  sendReply: async () => {
+    generationSendCalled = true;
+    return { sentCount: 1 };
+  },
+  deliverySink: async (output) => {
+    generatedOutputs.push(output);
+  },
+});
+assert.equal(generationSendCalled, false);
+assert.deepEqual(generatedOutputs.map((output) => output.text), ['captured report']);
+
 console.log('PASS');

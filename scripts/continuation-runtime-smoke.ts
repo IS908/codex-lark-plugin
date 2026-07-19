@@ -7,6 +7,7 @@ import type { ContinuationAuditEvent } from '../src/ports/continuation.js';
 import type { CodexExecRequest } from '../src/codex-exec.js';
 import { handleContinuationCommand } from '../src/continuation/command-handler.js';
 import { createContinuationRuntime } from '../src/continuation/runtime.js';
+import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
 
 const root = await mkdtemp(path.join(tmpdir(), 'continuation-runtime-'));
 const clock = { now: () => new Date('2026-07-17T12:00:00.000Z') };
@@ -84,6 +85,12 @@ function wireCompletedOutcome(finalMessage: string) {
   };
 }
 
+const originalStartupRecovery = SqliteContinuationRepository.prototype.recoverExpiredLeases;
+let eagerStartupRecoveryCalls = 0;
+SqliteContinuationRepository.prototype.recoverExpiredLeases = async function (...args) {
+  eagerStartupRecoveryCalls += 1;
+  return originalStartupRecovery.apply(this, args);
+};
 const runtime = await createContinuationRuntime({
   enabled: true,
   databasePath: path.join(root, 'jobs.sqlite'),
@@ -138,8 +145,10 @@ const runtime = await createContinuationRuntime({
   debug: (line) => { debugLines.push(line); },
   retentionIntervalMs: 60_000,
 });
+SqliteContinuationRepository.prototype.recoverExpiredLeases = originalStartupRecovery;
 
 assert.equal(runtime.health.available, true);
+assert.equal(eagerStartupRecoveryCalls, 0, 'shared worker must own expired-lease recovery');
 assert.ok(runtime.worker);
 const sourceMessage: LarkMessage = {
   messageId: 'om_runtime_source',

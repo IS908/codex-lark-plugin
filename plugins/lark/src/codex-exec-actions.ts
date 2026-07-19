@@ -122,7 +122,7 @@ export interface CreateCodexExecActionDispatcherOptions {
   continuationService?: ContinuationTaskService;
   runJobNow?: (job: JobFile) => Promise<{
     started: boolean;
-    reason?: 'already_running';
+    reason?: 'already_running' | 'stale_job';
     outcome?: 'success' | 'failed';
   }>;
 }
@@ -687,7 +687,9 @@ async function executeRunJob(
       return {
         ok: false,
         action: 'run_job',
-        message: `Job "${resolved.job.meta.id}" is already running.`,
+        message: result.reason === 'already_running'
+          ? `Job "${resolved.job.meta.id}" is already running.`
+          : `Job "${resolved.job.meta.id}" changed or was removed before the rerun could start.`,
       };
     }
     if (result.outcome === 'failed') {
@@ -695,7 +697,7 @@ async function executeRunJob(
       return {
         ok: false,
         action: 'run_job',
-        message: `Job "${resolved.job.meta.id}" rerun completed with a failed outcome; its error report was delivered through the cronjob path.`,
+        message: `Job "${resolved.job.meta.id}" rerun completed with a failed outcome; its error report was queued for durable delivery.`,
       };
     }
     void audit('run_job', caller, { ...auditArgs, job_id: resolved.job.meta.id }, 'ok');

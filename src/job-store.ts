@@ -157,8 +157,15 @@ export function expandSchedule(input: string, timezone = appConfig.cronTimezone)
  * Job callers should pass meta.timezone so cron hours match that job's
  * persisted wall-clock semantics.
  */
-export function computeNextRun(cronExpr: string, timezone = appConfig.cronTimezone): string {
-  const expr = CronExpressionParser.parse(cronExpr, { tz: normalizeJobTimezone(timezone) });
+export function computeNextRun(
+  cronExpr: string,
+  timezone = appConfig.cronTimezone,
+  currentDate?: Date,
+): string {
+  const expr = CronExpressionParser.parse(cronExpr, {
+    tz: normalizeJobTimezone(timezone),
+    ...(currentDate ? { currentDate } : {}),
+  });
   return expr.next().toISOString()!;
 }
 
@@ -290,6 +297,7 @@ export function backfillJob(job: JobFile): JobFile {
   }
 
   if (!job.meta.origin_chat_id) job.meta.origin_chat_id = job.meta.target_chat_id;
+  if (!Number.isSafeInteger(job.meta.revision) || job.meta.revision < 1) job.meta.revision = 1;
   if (!job.meta.timezone) job.meta.timezone = appConfig.cronTimezone;
   job.runtime = {
     ...createInitialJobRuntime(job.runtime.next_run_at),
@@ -342,6 +350,7 @@ export async function writeJob(job: JobFile): Promise<void> {
 
 async function writeJobUnlocked(job: JobFile): Promise<void> {
   await ensureJobsDir();
+  if (!Number.isSafeInteger(job.meta.revision) || job.meta.revision < 1) job.meta.revision = 1;
   await fs.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), 'utf-8');
 }
 
@@ -352,10 +361,34 @@ export async function mutateJob(
   return withJobWriteQueue(id, async () => {
     const job = await readJobUnlocked(id);
     if (!job) return null;
+    const definitionBefore = jobDefinitionSnapshot(job.meta);
+    const revisionBefore = job.meta.revision;
     const shouldContinue = await mutate(job);
     if (shouldContinue === false) return job;
+    if (jobDefinitionSnapshot(job.meta) !== definitionBefore) {
+      job.meta.revision = revisionBefore + 1;
+    } else {
+      job.meta.revision = revisionBefore;
+    }
     await writeJobUnlocked(job);
     return job;
+  });
+}
+
+function jobDefinitionSnapshot(meta: JobMeta): string {
+  return JSON.stringify({
+    name: meta.name,
+    type: meta.type,
+    schedule: meta.schedule,
+    scheduleHuman: meta.schedule_human,
+    timezone: meta.timezone ?? null,
+    prompt: meta.prompt ?? null,
+    content: meta.content ?? null,
+    messageType: meta.msg_type ?? null,
+    targetChatId: meta.target_chat_id,
+    originChatId: meta.origin_chat_id,
+    model: meta.model ?? null,
+    status: meta.status,
   });
 }
 
