@@ -27,6 +27,7 @@ export function migrateSqliteToDurableV10(database: DatabaseSync): void {
     );
   }
   if (version === DURABLE_RUN_SCHEMA_VERSION) {
+    hardenDurableAttemptOwnership(database);
     assertDurableSchema(database);
     return;
   }
@@ -654,18 +655,21 @@ export function createDurableSchema(database: DatabaseSync): void {
       metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
       recovery_pending INTEGER NOT NULL DEFAULT 0 CHECK(recovery_pending IN (0, 1)),
       recovered_at TEXT,
-      UNIQUE(run_id, ordinal)
+      UNIQUE(run_id, ordinal),
+      UNIQUE(run_id, attempt_id)
     ) STRICT;
 
     CREATE INDEX IF NOT EXISTS durable_attempts_active_idx
       ON durable_attempts(run_id, finished_at, ordinal DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS durable_attempts_run_attempt_idx
+      ON durable_attempts(run_id, attempt_id);
 
     CREATE TABLE IF NOT EXISTS durable_outbox (
       outbox_id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES durable_runs(run_id),
       event_key TEXT NOT NULL,
       kind TEXT NOT NULL,
-      attempt_id TEXT REFERENCES durable_attempts(attempt_id),
+      attempt_id TEXT,
       route_json TEXT NOT NULL CHECK(json_valid(route_json)),
       idempotency_key TEXT NOT NULL UNIQUE,
       payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
@@ -684,7 +688,9 @@ export function createDurableSchema(database: DatabaseSync): void {
       error_summary TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      UNIQUE(run_id, event_key)
+      UNIQUE(run_id, event_key),
+      FOREIGN KEY(run_id, attempt_id)
+        REFERENCES durable_attempts(run_id, attempt_id)
     ) STRICT;
 
     CREATE INDEX IF NOT EXISTS durable_outbox_due_idx
@@ -695,7 +701,7 @@ export function createDurableSchema(database: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS durable_operation_receipts (
       receipt_id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES durable_runs(run_id),
-      attempt_id TEXT NOT NULL REFERENCES durable_attempts(attempt_id),
+      attempt_id TEXT NOT NULL,
       operation_key TEXT NOT NULL,
       operation_name TEXT NOT NULL,
       request_hash TEXT NOT NULL,
@@ -709,7 +715,9 @@ export function createDurableSchema(database: DatabaseSync): void {
       completed_at TEXT,
       updated_at TEXT NOT NULL,
       metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
-      UNIQUE(run_id, operation_key, request_hash)
+      UNIQUE(run_id, operation_key, request_hash),
+      FOREIGN KEY(run_id, attempt_id)
+        REFERENCES durable_attempts(run_id, attempt_id)
     ) STRICT;
 
     CREATE UNIQUE INDEX IF NOT EXISTS durable_operation_receipts_running_idx
@@ -718,14 +726,16 @@ export function createDurableSchema(database: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS durable_interrupts (
       interrupt_id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES durable_runs(run_id),
-      attempt_id TEXT NOT NULL REFERENCES durable_attempts(attempt_id),
+      attempt_id TEXT NOT NULL,
       status TEXT NOT NULL CHECK(status IN ('pending', 'resolved')),
       prompt TEXT NOT NULL,
       response_text TEXT,
       created_at TEXT NOT NULL,
       resolved_at TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
-      UNIQUE(run_id, attempt_id)
+      UNIQUE(run_id, attempt_id),
+      FOREIGN KEY(run_id, attempt_id)
+        REFERENCES durable_attempts(run_id, attempt_id)
     ) STRICT;
 
     CREATE UNIQUE INDEX IF NOT EXISTS durable_interrupts_active_run_idx
@@ -920,8 +930,11 @@ function migrateOutbox(
     const kind = optionalString(row, 'kind') ?? 'terminal';
     const invalidRun = invalidRunIds.has(runId);
     const legacyStatus = requiredString(row, 'status');
+    const legacyRouteJson = normalizeJsonText(requiredString(row, 'route_json'));
+    const runRouteJson = requiredString(migratedRun, 'route_json');
+    const routeMatches = continuationRoutesMatch(legacyRouteJson, runRouteJson);
     const payload = invalidRun ? '' : requiredString(row, 'payload');
-    const status = invalidRun
+    const status = invalidRun || !routeMatches
       ? invalidMigrationDeliveryStatus(legacyStatus)
       : migrateDeliveryStatus(legacyStatus);
     insert.run(
@@ -930,7 +943,7 @@ function migrateOutbox(
       eventKey,
       kind,
       optionalString(row, 'attempt_id') ?? null,
-      requiredString(migratedRun, 'route_json'),
+      routeMatches ? runRouteJson : legacyRouteJson,
       requiredString(row, 'idempotency_key'),
       serializeDurableRunJson(payload, `migrated outbox payload for ${runId}`),
       serializeDurableRunJson({ legacySchemaVersion: version }, `migrated outbox metadata for ${runId}`),
@@ -942,11 +955,15 @@ function migrateOutbox(
       optionalString(row, 'first_attempt_at') ?? null,
       optionalString(row, 'last_attempt_at') ?? null,
       optionalString(row, 'message_id') ?? null,
-      invalidRun && status !== 'sent' && status !== 'unknown'
-        ? 'continuation_persisted_state_invalid'
+      (invalidRun || !routeMatches) && status !== 'sent'
+        ? invalidRun
+          ? 'continuation_persisted_state_invalid'
+          : 'continuation_delivery_route_mismatch'
         : optionalString(row, 'error_code') ?? null,
-      invalidRun && status !== 'sent' && status !== 'unknown'
-        ? 'Stored task state failed integrity validation.'
+      (invalidRun || !routeMatches) && status !== 'sent'
+        ? invalidRun
+          ? 'Stored task state failed integrity validation.'
+          : 'Legacy delivery route does not match its Async Task route.'
         : optionalString(row, 'error_summary') ?? null,
       requiredString(row, 'created_at'),
       requiredString(row, 'updated_at'),
@@ -969,8 +986,7 @@ function migrateOperationReceipts(
   for (const row of rows) {
     const attemptId = requiredString(row, 'attempt_id');
     const stepIndex = requiredNumber(row, 'step_index');
-    const stepId = optionalString(row, 'step_id')
-      ?? 'initial-step';
+    const stepId = migratedOperationStepId(database, row, stepIndex);
     const result = parseOptionalJson(row.result_json);
     insert.run(
       requiredString(row, 'call_id'),
@@ -988,6 +1004,61 @@ function migrateOperationReceipts(
       serializeDurableRunJson({ stepIndex, stepId }, `migrated operation metadata ${attemptId}`),
     );
   }
+}
+
+function migratedOperationStepId(database: DatabaseSync, row: SqlRow, stepIndex: number): string {
+  const explicit = optionalString(row, 'step_id');
+  if (explicit && !/^initial-step$|^legacy-step-\d+$/u.test(explicit)) return explicit;
+
+  const runId = requiredString(row, 'job_id');
+  const run = database.prepare(`
+    SELECT state_json FROM durable_runs WHERE run_id = ? AND workload_kind = 'async_task'
+  `).get(runId) as SqlRow | undefined;
+  const envelope = parseOptionalJson(run?.state_json);
+  const job = isRecord(envelope) && isRecord(envelope.job) ? envelope.job : undefined;
+  if (job) {
+    const checkpointValue = isRecord(job.checkpoint) ? job.checkpoint : undefined;
+    const stepCount = typeof job.stepCount === 'number' ? job.stepCount : undefined;
+    if (checkpointValue && stepIndex === stepCount) {
+      const nextAction = isRecord(checkpointValue.nextAction) ? checkpointValue.nextAction : undefined;
+      const current = typeof nextAction?.id === 'string'
+        ? nextAction.id
+        : typeof checkpointValue.currentStepId === 'string'
+          ? checkpointValue.currentStepId
+          : undefined;
+      if (current && current !== 'initial-step') return current;
+    }
+
+    const context = isRecord(job.contextSnapshot) ? job.contextSnapshot : undefined;
+    const completed = context && Array.isArray(context.completedSteps)
+      ? context.completedSteps.filter((value): value is string => typeof value === 'string')
+      : [];
+    if (completed[stepIndex]) return legacyOperationStepId(stepIndex, completed[stepIndex]);
+    const remaining = context && Array.isArray(context.remainingSteps)
+      ? context.remainingSteps.filter((value): value is string => typeof value === 'string')
+      : [];
+    const remainingIndex = stepIndex - completed.length;
+    if (remainingIndex >= 0 && remaining[remainingIndex]) {
+      return legacyOperationStepId(stepIndex, remaining[remainingIndex]);
+    }
+  }
+
+  const identity = [
+    runId,
+    String(stepIndex),
+    requiredString(row, 'call_id'),
+    requiredString(row, 'tool_name'),
+    requiredString(row, 'request_hash'),
+  ].join('\0');
+  return `legacy-unmapped-step-${stepIndex + 1}-${stableHash(identity)}`;
+}
+
+function legacyOperationStepId(stepIndex: number, description: string): string {
+  return `legacy-step-${stepIndex + 1}-${stableHash(description)}`;
+}
+
+function stableHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 12);
 }
 
 function migrateInterrupts(database: DatabaseSync): void {
@@ -1525,6 +1596,23 @@ function invalidMigrationDeliveryStatus(status: string): string {
   return 'failed';
 }
 
+function continuationRoutesMatch(legacyJson: string, runJson: string): boolean {
+  const legacy = parseRequiredJson(legacyJson, 'legacy outbox route');
+  const run = parseRequiredJson(runJson, 'migrated Async Task route');
+  if (!isRecord(legacy) || !isRecord(run) || legacy.kind !== run.kind) return false;
+  if (legacy.kind === 'message_thread') {
+    return legacy.conversationId === run.conversationId
+      && legacy.sourceMessageId === run.sourceMessageId
+      && (legacy.threadId === undefined || legacy.threadId === run.threadId);
+  }
+  if (legacy.kind === 'comment_thread') {
+    return legacy.documentToken === run.documentToken
+      && legacy.commentId === run.commentId
+      && legacy.fileType === run.fileType;
+  }
+  return false;
+}
+
 function normalizeJsonText(value: string): string {
   return serializeDurableRunJson(parseRequiredJson(value, 'migrated JSON'), 'migrated JSON');
 }
@@ -1553,6 +1641,95 @@ function tableExists(database: DatabaseSync, table: string): boolean {
   return row !== undefined;
 }
 
+function hardenDurableAttemptOwnership(database: DatabaseSync): void {
+  const childTables = [
+    {
+      table: 'durable_outbox',
+      indexes: ['durable_outbox_due_idx', 'durable_outbox_message_id_idx'],
+      columns: [
+        'outbox_id', 'run_id', 'event_key', 'kind', 'attempt_id', 'route_json',
+        'idempotency_key', 'payload_json', 'metadata_json', 'status', 'attempt_count',
+        'next_attempt_at', 'worker_id', 'lease_expires_at', 'first_attempt_at',
+        'last_attempt_at', 'message_id', 'error_code', 'error_summary', 'created_at',
+        'updated_at',
+      ],
+    },
+    {
+      table: 'durable_operation_receipts',
+      indexes: ['durable_operation_receipts_running_idx'],
+      columns: [
+        'receipt_id', 'run_id', 'attempt_id', 'operation_key', 'operation_name',
+        'request_hash', 'operation_risk', 'status', 'result_json', 'started_at',
+        'completed_at', 'updated_at', 'metadata_json',
+      ],
+    },
+    {
+      table: 'durable_interrupts',
+      indexes: ['durable_interrupts_active_run_idx'],
+      columns: [
+        'interrupt_id', 'run_id', 'attempt_id', 'status', 'prompt', 'response_text',
+        'created_at', 'resolved_at', 'metadata_json',
+      ],
+    },
+  ] as const;
+  const needsRebuild = childTables.filter(
+    ({ table }) => tableExists(database, table) && !hasCompositeAttemptForeignKey(database, table),
+  );
+  if (needsRebuild.length === 0) return;
+
+  immediateTransaction(database, () => {
+    database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS durable_attempts_run_attempt_idx
+        ON durable_attempts(run_id, attempt_id);
+    `);
+    for (const { table } of needsRebuild) {
+      const invalid = database.prepare(`
+        SELECT child.run_id, child.attempt_id
+        FROM ${table} child
+        LEFT JOIN durable_attempts attempt
+          ON attempt.run_id = child.run_id AND attempt.attempt_id = child.attempt_id
+        WHERE child.attempt_id IS NOT NULL AND attempt.attempt_id IS NULL
+        LIMIT 1
+      `).get() as SqlRow | undefined;
+      if (invalid) {
+        throw new Error(
+          `Durable Run schema cannot fence ${table}: Attempt does not belong to Run.`,
+        );
+      }
+    }
+
+    for (const { table, indexes } of needsRebuild) {
+      for (const index of indexes) database.exec(`DROP INDEX IF EXISTS ${index};`);
+      database.exec(`ALTER TABLE ${table} RENAME TO ${table}_unfenced_v10;`);
+    }
+    createDurableSchema(database);
+    for (const { table, columns } of needsRebuild) {
+      const projection = columns.join(', ');
+      database.exec(`
+        INSERT INTO ${table} (${projection})
+        SELECT ${projection} FROM ${table}_unfenced_v10;
+        DROP TABLE ${table}_unfenced_v10;
+      `);
+    }
+  });
+}
+
+function hasCompositeAttemptForeignKey(database: DatabaseSync, table: string): boolean {
+  const rows = database.prepare(`PRAGMA foreign_key_list(${table})`).all() as SqlRow[];
+  const byConstraint = new Map<number, Array<{ from: string; to: string }>>();
+  for (const row of rows) {
+    if (row.table !== 'durable_attempts') continue;
+    const id = requiredNumber(row, 'id');
+    const entries = byConstraint.get(id) ?? [];
+    entries.push({ from: requiredString(row, 'from'), to: requiredString(row, 'to') });
+    byConstraint.set(id, entries);
+  }
+  return [...byConstraint.values()].some((entries) =>
+    entries.length === 2
+    && entries.some((entry) => entry.from === 'run_id' && entry.to === 'run_id')
+    && entries.some((entry) => entry.from === 'attempt_id' && entry.to === 'attempt_id'));
+}
+
 function assertDurableSchema(database: DatabaseSync): void {
   for (const table of [
     'durable_runs',
@@ -1563,6 +1740,15 @@ function assertDurableSchema(database: DatabaseSync): void {
   ]) {
     if (!tableExists(database, table)) {
       throw new Error(`Durable Run schema is missing ${table}.`);
+    }
+  }
+  for (const table of [
+    'durable_outbox',
+    'durable_operation_receipts',
+    'durable_interrupts',
+  ]) {
+    if (!hasCompositeAttemptForeignKey(database, table)) {
+      throw new Error(`Durable Run schema is missing composite Attempt ownership for ${table}.`);
     }
   }
   const violations = database.prepare('PRAGMA foreign_key_check').all();
