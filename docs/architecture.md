@@ -45,6 +45,11 @@ The check currently enforces:
 - continuation domain/port contracts cannot import continuation or process
   infrastructure, and `src/continuation/**` cannot import the cronjob store,
   service, or scheduler.
+- `src/scheduler.ts` is admission-only: it cannot import or reference Codex
+  delivery, Lark transport send APIs, scheduler retry helpers, retry/sleep
+  constants, or Cron workload implementations. Its sole Cron dependency is
+  `cron/run-admission`, which creates durable-run requests through the
+  domain/ports boundary.
 
 Temporary exceptions must be listed in `scripts/architecture-baseline.json` with
 a reason and removal phase. The current baseline is empty; adding an exception
@@ -67,12 +72,14 @@ The current baseline is empty:
   `src/codex-exec-action-schemas.ts`; dispatch goes through
   `src/codex-exec-action-registry.ts` so action validation/routing is separate
   from the individual handler implementations.
-- Scheduler retry and permanent-target classification live in
-  `src/scheduler-policy.ts`; timer, storage, and delivery effects remain in
-  `src/scheduler.ts`.
-- Synthetic cronjob thread identifiers live in `src/job-thread.ts`; scheduler
-  re-exports them for compatibility, but routing policy can depend on the
-  light contract directly.
+- `src/scheduler.ts` owns only schedule scanning and Cron run admission. Retry,
+  delivery, execution, leases, and recovery belong to the shared durable-run
+  kernel; Cron adapters participate through `src/domain/durable-run.ts` and
+  `src/ports/durable-run.ts`. `src/scheduler-policy.ts` remains a legacy
+  delivery-policy dependency outside the Scheduler boundary.
+- Synthetic cronjob thread identifiers live in `src/job-thread.ts`; the Cron
+  prompt executor and reply-routing policy depend on that focused contract
+  directly, while Scheduler remains unaware of execution-thread mechanics.
 - Reply target planning and invalid/synthetic message handling live in
   `src/reply-routing-policy.ts`; `src/reply-sender.ts` owns upload/send
   adapter behavior.

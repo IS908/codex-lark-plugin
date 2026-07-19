@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 
 const repoRoot = process.cwd();
 const sourceRoot = path.join(repoRoot, 'src');
@@ -173,6 +174,77 @@ function findRestrictedImports(graph) {
   return dedupeViolations(violations).sort(compareViolations);
 }
 
+function findSchedulerBoundaryViolations() {
+  const schedulerPath = path.join(sourceRoot, 'scheduler.ts');
+  const source = fs.readFileSync(schedulerPath, 'utf8');
+  const sourceFile = ts.createSourceFile(
+    schedulerPath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const violations = [];
+  const forbiddenImportPaths = [
+    { pattern: /^\.\/codex-(?:exec(?:-delivery)?|delivery-wiring)\.js$/, rule: 'scheduler-must-not-import-codex-delivery' },
+    { pattern: /^\.\/(?:lark-transport(?:-[^/]+)?|reply-sender)\.js$/, rule: 'scheduler-must-not-import-lark-delivery' },
+    { pattern: /^@larksuite(?:oapi\/node-sdk|\/channel)$/, rule: 'scheduler-must-not-import-lark-delivery' },
+    { pattern: /^\.\/scheduler-policy\.js$/, rule: 'scheduler-must-not-import-retry-policy' },
+  ];
+  const forbiddenIdentifiers = new Map([
+    ['deliverMessageViaCodexExec', 'scheduler-must-not-call-codex-delivery'],
+    ['sendFeishuReply', 'scheduler-must-not-call-lark-delivery'],
+    ['schedulerRetryDelayMs', 'scheduler-must-not-own-retry'],
+    ['isRetryableError', 'scheduler-must-not-own-retry'],
+    ['isPermanentTargetError', 'scheduler-must-not-own-delivery-policy'],
+    ['MAX_SCHEDULER_RETRIES', 'scheduler-must-not-own-retry'],
+  ]);
+
+  function add(rule, to) {
+    violations.push({ rule, from: 'scheduler', to });
+  }
+
+  function inspectImportSpecifier(specifier) {
+    for (const entry of forbiddenImportPaths) {
+      if (entry.pattern.test(specifier)) add(entry.rule, specifier);
+    }
+    if (specifier.startsWith('./cron/') && specifier !== './cron/run-admission.js') {
+      add('scheduler-cron-workload-must-use-admission-boundary', specifier);
+    }
+  }
+
+  function visit(node) {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      inspectImportSpecifier(node.moduleSpecifier.text);
+    }
+    if (
+      ts.isCallExpression(node)
+      && node.expression.kind === ts.SyntaxKind.ImportKeyword
+      && node.arguments.length === 1
+      && ts.isStringLiteral(node.arguments[0])
+    ) {
+      inspectImportSpecifier(node.arguments[0].text);
+    }
+    if (ts.isPropertyAccessExpression(node) && node.name.text === 'sendMessage') {
+      add('scheduler-must-not-call-lark-delivery', 'sendMessage');
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const name = node.expression.text;
+      if (name === 'setTimeout' || /^(?:sleep|delay|backoff|retry)/i.test(name)) {
+        add('scheduler-must-not-own-retry-or-sleep', name);
+      }
+    }
+    if (ts.isIdentifier(node)) {
+      const rule = forbiddenIdentifiers.get(node.text);
+      if (rule) add(rule, node.text);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return dedupeViolations(violations);
+}
+
 function loadBaseline() {
   return JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
 }
@@ -215,7 +287,10 @@ function main() {
   const allowedRestricted = new Set((baseline.allowedRestrictedImports ?? []).map(violationKey));
   const graph = buildGraph();
   const cycleComponents = findCycleComponents(graph);
-  const restrictedImports = findRestrictedImports(graph);
+  const restrictedImports = [
+    ...findRestrictedImports(graph),
+    ...findSchedulerBoundaryViolations(),
+  ].sort(compareViolations);
   const newCycles = cycleComponents.filter((component) => !isAllowedCycle(component, allowedComponents));
   const newRestrictedImports = restrictedImports.filter((violation) => !allowedRestricted.has(violationKey(violation)));
 

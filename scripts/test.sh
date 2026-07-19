@@ -383,6 +383,11 @@ node --import tsx scripts/cron-delivery-smoke.ts
 node --import tsx scripts/durable-run-runtime-smoke.ts
 
 echo ""
+echo "=== Cron durable restart and capacity checks ==="
+node --import tsx scripts/cron-durable-restart-smoke.ts
+node --import tsx scripts/durable-run-capacity-smoke.ts
+
+echo ""
 echo "=== Privacy rules unit checks ==="
 node --import tsx scripts/privacy-rules-smoke.ts
 

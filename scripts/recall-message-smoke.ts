@@ -11,8 +11,17 @@ import type { MemoryStore } from '../src/memory/file.js';
 import { TurnObligationTracker } from '../src/turn-obligation.js';
 import { registerTools } from '../src/tools.js';
 
-async function flushAsyncAudit(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 100));
+async function waitForAuditEntries(path: string, entries: readonly string[]): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const content = readFileSync(path, 'utf-8');
+      if (entries.every((entry) => content.includes(entry))) return content;
+    } catch {
+      // The async audit writer may not have created the file yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return readFileSync(path, 'utf-8');
 }
 
 const tmpDir = mkdtempSync(join(tmpdir(), 'recall-message-'));
@@ -213,8 +222,12 @@ try {
   assert.equal(turnObligations.getStatus('om_current_card_edit_turn'), 'satisfied');
   assert.equal(ackReactions.activeCount, 0);
 
-  await flushAsyncAudit();
-  const audit = readFileSync(appConfig.auditLogPath, 'utf-8');
+  const audit = await waitForAuditEntries(appConfig.auditLogPath, [
+    'recall_message',
+    'edit_message',
+    'ok',
+    'denied',
+  ]);
   assert.match(audit, /recall_message/);
   assert.match(audit, /edit_message/);
   assert.match(audit, /ok/);
