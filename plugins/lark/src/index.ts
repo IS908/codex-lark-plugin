@@ -43,6 +43,16 @@ import { debugLog } from './debug-log.js';
 import type { JobFile } from './job-store.js';
 import type { RunJobNowResult } from './scheduler.js';
 import { acquireLarkInstanceLock } from './instance-lock.js';
+import {
+  createDurableRunRuntime,
+  type DurableRunRegistration,
+  type DurableRunRuntime,
+} from './durable-run/runtime.js';
+import { CronRunAdmission } from './cron/run-admission.js';
+import { CronPromptWorkload } from './cron/direct-exec-workload.js';
+import { CronMessageWorkload } from './cron/message-workload.js';
+import { createCronPromptExecutor } from './cron/prompt-executor.js';
+import { createCronDelivery } from './cron/delivery.js';
 
 let closeContinuationRuntime: (() => Promise<void>) | null = null;
 
@@ -132,6 +142,7 @@ async function main() {
     dryRun: isDryRun,
     debug: debugLog,
     reportError: (error) => logSafeError('[continuation] Runtime unavailable:', error),
+    standaloneWorker: false,
   });
   closeContinuationRuntime = () => continuationRuntime.close();
   console.error(
@@ -152,19 +163,20 @@ async function main() {
     getActionDispatcher: () => codexExecActionDispatcher,
   });
   channel.setConversationBuffer(buffer);
+  const sendReplyViaFeishu = createReplySender({
+    client: () => channel.getClient(),
+    transport: () => channel.getLarkTransport(),
+    conversationBuffer: buffer,
+    ackReactions: channel.getAckReactions(),
+    botMessageTracker: channel.getBotMessageTracker(),
+    latestMessageTracker: channel.getLatestMessageTracker(),
+    turnObligations,
+  });
   codexExecActionDispatcher = createCodexExecActionDispatcher({
     memoryStore,
     identitySession,
     profileDistiller,
-    sendReply: createReplySender({
-      client: () => channel.getClient(),
-      transport: () => channel.getLarkTransport(),
-      conversationBuffer: buffer,
-      ackReactions: channel.getAckReactions(),
-      botMessageTracker: channel.getBotMessageTracker(),
-      latestMessageTracker: channel.getLatestMessageTracker(),
-      turnObligations,
-    }),
+    sendReply: sendReplyViaFeishu,
     larkTransport: () => channel.getLarkTransport(),
     botMessageTracker: channel.getBotMessageTracker(),
     turnObligations,
@@ -175,6 +187,57 @@ async function main() {
       return runJobNow(job);
     },
   });
+
+  let durableRunRuntime: DurableRunRuntime | null = null;
+  let cronAdmission: CronRunAdmission | null = null;
+  if (continuationRuntime.durableRepository) {
+    const cronDelivery = createCronDelivery({ sendReply: sendReplyViaFeishu });
+    const promptExecutor = createCronPromptExecutor({
+      identitySession,
+      sessionStore: codexSessionStore,
+      sessionHealth: sessionHealthMonitor ?? undefined,
+      actionDispatcher: codexExecActionDispatcher,
+    });
+    const registrations: DurableRunRegistration[] = [
+      {
+        kind: 'cron_prompt',
+        repository: continuationRuntime.durableRepository,
+        workload: new CronPromptWorkload({ executor: promptExecutor }),
+        delivery: cronDelivery,
+        maxConcurrency: 1,
+      },
+      {
+        kind: 'cron_message',
+        repository: continuationRuntime.durableRepository,
+        workload: new CronMessageWorkload(),
+        delivery: cronDelivery,
+        maxConcurrency: 2,
+      },
+    ];
+    if (appConfig.continuationEnabled && continuationRuntime.asyncTaskAdapter) {
+      const asyncTask = continuationRuntime.asyncTaskAdapter;
+      registrations.push({
+        kind: 'async_task',
+        repository: asyncTask,
+        workload: asyncTask,
+        delivery: asyncTask,
+        maxConcurrency: appConfig.continuationMaxConcurrency,
+        onExecutionStateError: (claim) => asyncTask.handleWorkerStateError(claim),
+      });
+    }
+    durableRunRuntime = createDurableRunRuntime({
+      baseRepository: continuationRuntime.durableRepository,
+      registrations,
+      clock: { now: () => new Date() },
+    });
+    cronAdmission = new CronRunAdmission({
+      runRepository: continuationRuntime.durableRepository,
+    });
+    closeContinuationRuntime = async () => {
+      await durableRunRuntime?.stop();
+      await continuationRuntime.close();
+    };
+  }
 
   // 5. Register MCP tools (pass buffer so reply records assistant messages)
   registerTools(
@@ -229,12 +292,8 @@ async function main() {
   const startChannelServices = createChannelServicesStarter({
     channel,
     buffer,
-    identitySession,
-    sessionStore: codexSessionStore,
-    sessionHealth: sessionHealthMonitor,
-    turnObligations,
-    actionDispatcher: codexExecActionDispatcher,
-    continuationWorker: continuationRuntime.worker,
+    durableRunRuntime,
+    cronAdmission,
     onSchedulerReady: (scheduler) => {
       runJobNow = scheduler.runJobNow.bind(scheduler);
     },

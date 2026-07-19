@@ -25,6 +25,8 @@ import {
 } from './service.js';
 import { SqliteContinuationRepository } from './sqlite-repository.js';
 import { ContinuationWorker } from './worker.js';
+import { AsyncTaskKernelAdapter } from './async-task-kernel-adapter.js';
+import type { DurableRunRepository } from '../ports/durable-run.js';
 
 const DEFAULT_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 
@@ -59,6 +61,8 @@ export interface ContinuationRuntimeOptions {
     artifactsDir: string;
     inputsDir: string;
   }) => Promise<ContinuationRepository>;
+  /** Defaults to true for compatibility. The application uses one shared worker. */
+  standaloneWorker?: boolean;
 }
 
 export interface ContinuationRuntimeHealth {
@@ -70,6 +74,9 @@ export interface ContinuationRuntimeHealth {
 export interface ContinuationRuntime {
   service: ContinuationTaskService;
   worker: ContinuationWorker | null;
+  repository: ContinuationRepository | null;
+  durableRepository: DurableRunRepository | null;
+  asyncTaskAdapter: AsyncTaskKernelAdapter | null;
   health: ContinuationRuntimeHealth;
   close(): Promise<void>;
 }
@@ -77,8 +84,6 @@ export interface ContinuationRuntime {
 export async function createContinuationRuntime(
   options: ContinuationRuntimeOptions,
 ): Promise<ContinuationRuntime> {
-  if (!options.enabled) return unavailableRuntime({ enabled: false, available: false, reason: 'disabled' });
-
   const clock = options.clock ?? { now: () => new Date() };
   let temporaryRoot: string | undefined;
   let repository: ContinuationRepository | undefined;
@@ -97,6 +102,27 @@ export async function createContinuationRuntime(
       inputsDir: storage.inputsDir,
     });
     await repository.healthCheck();
+    if (!options.enabled) {
+      let closePromise: Promise<void> | undefined;
+      return {
+        service: new UnavailableContinuationService(),
+        worker: null,
+        repository,
+        durableRepository: repository.durableRuns,
+        asyncTaskAdapter: null,
+        health: { enabled: false, available: false, reason: 'disabled' },
+        close() {
+          closePromise ??= (async () => {
+            try {
+              repository!.close();
+            } finally {
+              if (temporaryRoot) await fs.rm(temporaryRoot, { recursive: true, force: true });
+            }
+          })();
+          return closePromise;
+        },
+      };
+    }
     const now = clock.now().toISOString();
     const continuationAudit = options.audit ?? defaultContinuationAudit;
     await repository.recoverExpiredLeases(now);
@@ -139,7 +165,14 @@ export async function createContinuationRuntime(
       ...(options.runCodexExec ? { runCodexExec: options.runCodexExec } : {}),
     });
     const delivery = options.delivery ?? createLarkContinuationDelivery(options.getTransport, clock);
-    const worker = new ContinuationWorker({
+    const adapter = new AsyncTaskKernelAdapter({
+      repository,
+      executor,
+      delivery,
+      audit: continuationAudit,
+      debug: options.debug,
+    });
+    const worker = options.standaloneWorker === false ? null : new ContinuationWorker({
       repository,
       executor,
       delivery,
@@ -171,11 +204,14 @@ export async function createContinuationRuntime(
     return {
       service,
       worker,
+      repository,
+      durableRepository: repository.durableRuns,
+      asyncTaskAdapter: adapter,
       health: { enabled: true, available: true },
       close() {
         closePromise ??= (async () => {
           if (retentionTimer) clearInterval(retentionTimer);
-          await worker.stop();
+          await worker?.stop();
           if (retentionPromise) await retentionPromise;
           try {
             repository!.close();
@@ -205,6 +241,9 @@ function unavailableRuntime(health: ContinuationRuntimeHealth): ContinuationRunt
   return {
     service: new UnavailableContinuationService(),
     worker: null,
+    repository: null,
+    durableRepository: null,
+    asyncTaskAdapter: null,
     health,
     async close() {},
   };

@@ -140,6 +140,22 @@ await withHarness('scheduled-idempotency', [makeJob('scheduled-stable')], async 
   assert.equal(results[1].scheduledOccurrence, '2026-07-19T01:15:00.000Z');
   assert.equal(countCronRuns(databasePath), 1);
   assert.equal((await job('scheduled-stable')).runtime.next_run_at, '2026-07-19T01:20:00.000Z');
+
+  await mutateJob('scheduled-stable', (latest) => {
+    latest.runtime.run_status = 'success';
+    latest.runtime.output_status = 'generated';
+    latest.runtime.delivery_status = 'sent';
+    latest.runtime.report = 'already delivered';
+    latest.runtime.report_type = 'job_result';
+  });
+  const duplicate = await admission.admitScheduled(await job('scheduled-stable'), now);
+  assert.equal(duplicate.admitted, true);
+  assert.equal(duplicate.created, false);
+  const afterDuplicate = await job('scheduled-stable');
+  assert.equal(afterDuplicate.runtime.run_status, 'success');
+  assert.equal(afterDuplicate.runtime.output_status, 'generated');
+  assert.equal(afterDuplicate.runtime.delivery_status, 'sent');
+  assert.equal(afterDuplicate.runtime.report, 'already delivered');
 });
 
 await withHarness('exact-boundary', [makeJob('exact-boundary', {

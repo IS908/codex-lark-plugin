@@ -5,12 +5,6 @@ import { appConfig } from '../config.js';
 import { writeSdkResource } from '../sdk-resource.js';
 import { sendFeishuReply } from '../reply-sender.js';
 import { revokeAckReactionWithTransport } from '../ack-reactions.js';
-import {
-  autoPauseJobForPermanentTargetError,
-  isPermanentTargetError,
-  parseJobThreadId,
-  recordCronJobReportDelivery,
-} from '../scheduler.js';
 import type { ToolContext } from './tool-context.js';
 
 /**
@@ -39,84 +33,6 @@ export function capSanitizedFilename(raw: string, maxLen: number): string {
   const stem = sanitized.slice(0, dotIdx);
   const stemCap = maxLen - safeExt.length;
   return stem.slice(0, stemCap) + safeExt;
-}
-
-async function maybeAutoPauseCronJobReplyFailure(
-  threadId: string | undefined,
-  err: unknown,
-): Promise<void> {
-  const parsed = parseJobThreadId(threadId);
-  if (!parsed?.createdAtHash || !isPermanentTargetError(err)) return;
-  const reason = err instanceof Error ? err.message : String(err);
-  try {
-    const paused = await autoPauseJobForPermanentTargetError(parsed.jobId, reason, {
-      createdAtHash: parsed.createdAtHash,
-    });
-    if (paused) {
-      console.error(`[tools] Auto-paused cronjob ${parsed.jobId} after permanent reply failure: ${reason}`);
-    }
-  } catch (pauseErr) {
-    console.error(
-      `[tools] Failed to auto-pause cronjob ${parsed.jobId} after permanent reply failure:`,
-      pauseErr,
-    );
-  }
-}
-
-async function recordCronJobReplyResult(
-  threadId: string | undefined,
-  input: {
-    runStatus: 'success' | 'failed';
-    deliveryStatus: 'sent' | 'failed';
-    text: string;
-    reportType?: string;
-    runError?: string | null;
-    deliveryError?: string | null;
-  },
-): Promise<void> {
-  const parsed = parseJobThreadId(threadId);
-  if (!parsed?.createdAtHash || !parsed.runId) return;
-  try {
-    await recordCronJobReportDelivery(threadId, {
-      runStatus: input.runStatus,
-      deliveryStatus: input.deliveryStatus,
-      report: input.text,
-      reportType: input.reportType,
-      runError: input.runError,
-      deliveryError: input.deliveryError,
-    });
-  } catch (err) {
-    console.error(`[tools] Failed to record cronjob report delivery for ${parsed.jobId}:`, err);
-  }
-}
-
-function normalizeCronJobReplyText(threadId: string | undefined, text: string): {
-  text: string;
-  runStatus: 'success' | 'failed';
-  reportType: string;
-  runError: string | null;
-} {
-  const parsed = parseJobThreadId(threadId);
-  if (!parsed?.createdAtHash || !parsed.runId || text.trim()) {
-    return {
-      text,
-      runStatus: 'success',
-      reportType: 'job_result',
-      runError: null,
-    };
-  }
-  const runError = 'CronJob produced an empty report.';
-  return {
-    text: [
-      runError,
-      '',
-      `Job ID: ${parsed.jobId}`,
-      'No report body was generated, so this failure report was sent instead of ending silently.',
-    ].join('\n'),
-    runStatus: 'failed',
-    reportType: 'error_report',
-    runError,
-  };
 }
 
 export function registerReplyTools(ctx: ToolContext): void {
@@ -178,16 +94,6 @@ export function registerReplyTools(ctx: ToolContext): void {
       }),
     },
     async ({ chat_id, text, card, reply_to, thread_id, format, footer, files }) => {
-      const normalizedTextReply = card ? null : normalizeCronJobReplyText(thread_id, text);
-      const cronJobReply = normalizedTextReply
-        ? { ...normalizedTextReply, reportText: normalizedTextReply.text }
-        : {
-            text,
-            reportText: text || '[card]',
-            runStatus: 'success' as const,
-            reportType: 'job_result',
-            runError: null,
-          };
       let result;
       try {
         result = await sendFeishuReply(
@@ -200,19 +106,10 @@ export function registerReplyTools(ctx: ToolContext): void {
             latestMessageTracker,
             turnObligations,
           },
-          { chat_id, text: cronJobReply.text, card, reply_to, thread_id, format, footer, files },
+          { chat_id, text, card, reply_to, thread_id, format, footer, files },
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        await maybeAutoPauseCronJobReplyFailure(thread_id, err);
-        await recordCronJobReplyResult(thread_id, {
-          runStatus: 'failed',
-          deliveryStatus: 'failed',
-          text: cronJobReply.reportText,
-          reportType: cronJobReply.reportType,
-          runError: cronJobReply.runError ?? msg,
-          deliveryError: msg,
-        });
         return {
           content: [{ type: 'text' as const, text: msg }],
           isError: true,
@@ -221,29 +118,11 @@ export function registerReplyTools(ctx: ToolContext): void {
 
       if (result.isError) {
         const error = result.errorText ?? result.statusText;
-        await maybeAutoPauseCronJobReplyFailure(thread_id, error);
-        await recordCronJobReplyResult(thread_id, {
-          runStatus: 'failed',
-          deliveryStatus: 'failed',
-          text: cronJobReply.reportText,
-          reportType: cronJobReply.reportType,
-          runError: cronJobReply.runError ?? error,
-          deliveryError: error,
-        });
         return {
           content: [{ type: 'text' as const, text: error }],
           isError: true,
         };
       }
-
-      await recordCronJobReplyResult(thread_id, {
-        runStatus: result.sentCount > 0 ? cronJobReply.runStatus : 'failed',
-        deliveryStatus: result.sentCount > 0 ? 'sent' : 'failed',
-        text: cronJobReply.reportText,
-        reportType: cronJobReply.reportType,
-        runError: result.sentCount > 0 ? cronJobReply.runError : cronJobReply.runError ?? result.statusText,
-        deliveryError: result.sentCount > 0 ? null : result.statusText,
-      });
 
       return {
         content: [{ type: 'text' as const, text: result.statusText }],

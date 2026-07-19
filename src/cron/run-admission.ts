@@ -191,14 +191,16 @@ export class CronRunAdmission {
           || latest.runtime.next_run_at !== schedule.expectedCursor
         ))
       ) return false;
-      latest.runtime.run_id = runId;
-      latest.runtime.run_status = 'started';
-      latest.runtime.output_status = null;
-      latest.runtime.delivery_status = null;
-      latest.runtime.report = null;
-      latest.runtime.report_type = null;
-      latest.runtime.delivery_error = null;
-      latest.runtime.last_error = null;
+      if (latest.runtime.run_id !== runId) {
+        latest.runtime.run_id = runId;
+        latest.runtime.run_status = 'started';
+        latest.runtime.output_status = null;
+        latest.runtime.delivery_status = null;
+        latest.runtime.report = null;
+        latest.runtime.report_type = null;
+        latest.runtime.delivery_error = null;
+        latest.runtime.last_error = null;
+      }
       if (schedule) latest.runtime.next_run_at = schedule.nextRunAt;
     });
   }

@@ -378,6 +378,11 @@ node --import tsx scripts/cron-workload-smoke.ts
 node --import tsx scripts/cron-prompt-fidelity-smoke.ts
 
 echo ""
+echo "=== Cron durable delivery and runtime checks ==="
+node --import tsx scripts/cron-delivery-smoke.ts
+node --import tsx scripts/durable-run-runtime-smoke.ts
+
+echo ""
 echo "=== Privacy rules unit checks ==="
 node --import tsx scripts/privacy-rules-smoke.ts
 

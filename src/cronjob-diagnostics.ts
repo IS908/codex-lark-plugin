@@ -128,7 +128,7 @@ export class CronJobRunDiagnostics {
       this.progressStage = { name: stage, atMs: timestampMs };
     }
     console.error(
-      `[scheduler][cronjob-progress] job=${this.input.job.meta.id} run=${this.input.runId} ` +
+      `[cron][progress] job=${this.input.job.meta.id} run=${this.input.runId} ` +
         `stage=${stage ?? this.currentRunningStage()?.name ?? 'codex_exec'} bytes=${bytes}`,
     );
   }
@@ -171,7 +171,7 @@ export class CronJobRunDiagnostics {
 
   logSnapshot(status: CronJobRunStatus, err?: unknown): CronJobDiagnosticSnapshot {
     const snapshot = this.finish(status, err);
-    console.error(`[scheduler][cronjob-diagnostics] ${JSON.stringify(snapshot)}`);
+    console.error(`[cron][diagnostics] ${JSON.stringify(snapshot)}`);
     return snapshot;
   }
 
