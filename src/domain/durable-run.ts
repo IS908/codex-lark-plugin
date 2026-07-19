@@ -117,10 +117,32 @@ export interface DurableRunWorkloadClaim<Input, State> extends DurableRunClaim {
 }
 
 export interface DurableRunDeliveryRequest {
+  outboxId?: string;
+  eventKey?: string;
   kind: string;
+  attemptId?: string | null;
   idempotencyKey: string;
   route: unknown;
   payload: unknown;
+  metadata?: unknown;
+  createdAt?: string;
+  nextAttemptAt?: string;
+}
+
+export interface DurableRunAttemptTransition {
+  outcome?: string;
+  executionSessionId?: string | null;
+  operationRisk?: DurableRunOperationRisk;
+  errorCode?: string;
+  errorSummary?: string;
+  metadata?: unknown;
+}
+
+export interface DurableRunInterruptRequest {
+  interruptId: string;
+  attemptId: string;
+  prompt: string;
+  metadata?: unknown;
 }
 
 export interface DurableRunTransition {
@@ -131,7 +153,10 @@ export interface DurableRunTransition {
   errorCode?: string;
   errorSummary?: string;
   failure?: DurableRunFailure;
+  attempt?: DurableRunAttemptTransition;
   deliveries?: readonly DurableRunDeliveryRequest[];
+  interrupts?: readonly DurableRunInterruptRequest[];
+  supersedeDeliveryKinds?: readonly string[];
 }
 
 export type DurableRunPreflight =
@@ -157,6 +182,7 @@ export interface DurableRunCreateRequest {
   state: unknown;
   route: unknown;
   actorOpenId: string;
+  createdAt?: string;
   nextRunAt: string;
   expiresAt: string;
   maxAttempts: number;
@@ -171,6 +197,7 @@ export interface DurableRunDeliveryClaim {
   outboxId: string;
   runId: string;
   workloadKind: string;
+  eventKey: string;
   kind: string;
   attemptId?: string;
   workerId: string;
@@ -178,13 +205,30 @@ export interface DurableRunDeliveryClaim {
   idempotencyKey: string;
   payload: unknown;
   attemptCount: number;
+  leaseExpiresAt: string;
+  firstAttemptAt?: string;
+  lastAttemptAt?: string;
+  lastErrorCode?: string;
+  lastErrorSummary?: string;
 }
 
 export type DurableRunDeliveryResult =
   | { status: 'sent'; messageId: string }
-  | { status: 'retry'; errorCode: string; errorSummary: string; retryAt?: string }
-  | { status: 'unknown'; errorCode: string; errorSummary: string }
-  | { status: 'failed'; errorCode: string; errorSummary: string };
+  | {
+      status: 'retry';
+      errorCode: string;
+      errorSummary: string;
+      retryAt?: string;
+      resetAttemptCount?: boolean;
+      terminalConflict?: 'unknown' | 'superseded';
+    }
+  | {
+      status: 'unknown' | 'failed';
+      errorCode: string;
+      errorSummary: string;
+      terminalConflict?: 'unknown' | 'superseded';
+    }
+  | { status: 'superseded' };
 
 export const DURABLE_RUN_WORKLOAD_JSON_MAX_BYTES = 256 * 1024;
 export const DURABLE_RUN_WORKLOAD_JSON_MAX_DEPTH = 64;
@@ -296,13 +340,20 @@ export function assertDurableRunTransition(
   }
   if (transition.failure !== undefined) assertDurableRunFailure(transition.failure);
   serializeDurableRunJson(transition.state, 'state');
-  if (transition.deliveries !== undefined && !Array.isArray(transition.deliveries)) {
-    throw new Error('Durable run transition deliveries must be an array.');
+  assertDurableRunDeliveryRequests(transition.deliveries, 'transition');
+}
+
+export function assertDurableRunDeliveryRequests(
+  deliveriesInput: readonly DurableRunDeliveryRequest[] | undefined,
+  context: string,
+): void {
+  if (deliveriesInput !== undefined && !Array.isArray(deliveriesInput)) {
+    throw new Error(`Durable run ${context} deliveries must be an array.`);
   }
-  const deliveries = transition.deliveries ?? [];
+  const deliveries = deliveriesInput ?? [];
   if (deliveries.length > DURABLE_RUN_DELIVERY_MAX_COUNT) {
     throw new Error(
-      `Durable run transition deliveries exceeds ${DURABLE_RUN_DELIVERY_MAX_COUNT} entries.`,
+      `Durable run ${context} deliveries exceeds ${DURABLE_RUN_DELIVERY_MAX_COUNT} entries.`,
     );
   }
   const deliveryKeys = new Set<string>();
@@ -322,7 +373,7 @@ export function assertDurableRunTransition(
     );
     if (deliveryKeys.has(delivery.idempotencyKey)) {
       throw new Error(
-        `Durable run transition has duplicate delivery idempotencyKey: ${delivery.idempotencyKey}`,
+        `Durable run ${context} has duplicate delivery idempotencyKey: ${delivery.idempotencyKey}`,
       );
     }
     deliveryKeys.add(delivery.idempotencyKey);

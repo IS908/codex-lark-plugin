@@ -36,6 +36,8 @@ import type {
   DurableRunRepository,
   DurableRunWorkload,
 } from '../ports/durable-run.js';
+import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { redactContinuationText } from './redaction.js';
 
 const ASYNC_TASK_INPUT_VERSION = 1;
@@ -86,8 +88,14 @@ export class AsyncTaskKernelAdapter implements
     return this.options.repository.initialize();
   }
 
-  async create(_request: DurableRunCreateRequest): Promise<DurableRunCreateResult> {
-    throw new Error('Async Task creation remains on ContinuationService until schema migration.');
+  async create(request: DurableRunCreateRequest): Promise<DurableRunCreateResult> {
+    if (request.workloadKind !== this.kind) {
+      throw new Error(`Async Task adapter cannot create workload ${request.workloadKind}.`);
+    }
+    const input = parseAsyncTaskInput(request.input, request.inputVersion);
+    const state = parseAsyncTaskState(request.state, request.stateVersion);
+    assertAsyncTaskRunEnvelopeIdentity(request, input.job, state.job);
+    return this.options.repository.durableRuns.create(request);
   }
 
   async get(runId: string): Promise<DurableRunRecord | null> {
@@ -189,7 +197,11 @@ export class AsyncTaskKernelAdapter implements
     }, now);
   }
 
-  async recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]> {
+  async recoverExpiredLeases(
+    workloadKinds: readonly string[],
+    now: string,
+  ): Promise<DurableRunInterruptedAttempt[]> {
+    if (!workloadKinds.includes(this.kind)) return [];
     const interrupted = await this.options.repository.recoverExpiredLeases(now);
     await this.options.repository.expireOverdue(now);
     return interrupted;
@@ -209,12 +221,16 @@ export class AsyncTaskKernelAdapter implements
     claim: DurableRunDeliveryClaim,
     result: DurableRunDeliveryResult,
     now: string,
-  ): Promise<void> {
+  ): Promise<DurableRunClaimMutationResult> {
     const deliveryThrew = this.thrownDeliveryResults.delete(result);
     const continuationClaim = continuationDeliveryClaimFromDurable(claim);
     const continuationResult = continuationDeliveryResultFromDurable(result);
     try {
-      await this.options.repository.markDeliveryResult(continuationClaim, continuationResult, now);
+      await this.options.repository.markDeliveryResult(
+        continuationClaim,
+        continuationResult,
+        now,
+      );
       await this.auditDelivery(
         continuationClaim,
         continuationResult.status === 'delivered' ? 'ok' : 'error',
@@ -227,8 +243,10 @@ export class AsyncTaskKernelAdapter implements
           state: continuationResult.status,
         }));
       }
-    } catch {
+      return 'committed';
+    } catch (error) {
       await this.auditDelivery(continuationClaim, 'error', 'delivery_state_persist_failed');
+      throw error;
     }
   }
 
@@ -473,24 +491,46 @@ export class AsyncTaskKernelAdapter implements
   }
 }
 
-function durableRunFromJob(job: ContinuationJob): DurableRunRecord {
-  const input = parseAsyncTaskInput({
-    schemaVersion: 1,
-    job: omitUndefinedProperties(job),
-  }, ASYNC_TASK_INPUT_VERSION);
-  const state: AsyncTaskKernelState = {
-    schemaVersion: 1,
-    job: input.job,
+export function asyncTaskDurableCreateRequestFromJob(
+  job: ContinuationJob,
+): DurableRunCreateRequest {
+  return {
+    runId: job.jobId,
+    workloadKind: 'async_task',
+    idempotencyKey: job.idempotencyKey,
+    inputVersion: ASYNC_TASK_INPUT_VERSION,
+    input: {
+      schemaVersion: 1,
+      job: omitUndefinedProperties(job) as ContinuationJob,
+    } satisfies AsyncTaskKernelInput,
+    stateVersion: ASYNC_TASK_STATE_VERSION,
+    state: asyncTaskStateEnvelopeFromJob(job),
+    route: job.route,
+    actorOpenId: job.creatorOpenId,
+    createdAt: job.createdAt,
+    nextRunAt: job.nextRunAt,
+    expiresAt: job.expiresAt,
+    maxAttempts: job.maxAttempts,
   };
+}
+
+export function asyncTaskStateEnvelopeFromJob(job: ContinuationJob): AsyncTaskKernelState {
+  return {
+    schemaVersion: 1,
+    job: omitUndefinedProperties(job) as ContinuationJob,
+  };
+}
+
+function durableRunFromJob(job: ContinuationJob): DurableRunRecord {
   return {
     runId: job.jobId,
     workloadKind: 'async_task',
     idempotencyKey: job.idempotencyKey,
     status: job.status,
     inputVersion: ASYNC_TASK_INPUT_VERSION,
-    input,
+    input: { schemaVersion: 1, job } satisfies AsyncTaskKernelInput,
     stateVersion: ASYNC_TASK_STATE_VERSION,
-    state,
+    state: asyncTaskStateEnvelopeFromJob(job),
     route: job.route,
     actorOpenId: job.creatorOpenId,
     nextRunAt: job.nextRunAt,
@@ -498,6 +538,48 @@ function durableRunFromJob(job: ContinuationJob): DurableRunRecord {
     maxAttempts: job.maxAttempts,
     attemptCount: job.attemptCount ?? 0,
     rowVersion: job.rowVersion,
+  };
+}
+
+function durableClaimFromContinuation(claim: ContinuationClaim): DurableRunClaim {
+  if (claim.durableClaim) return claim.durableClaim;
+  return {
+    run: durableRunFromJob(claim.job),
+    workerId: claim.workerId,
+    claimedRowVersion: claim.claimedRowVersion,
+    attempt: {
+      attemptId: claim.attempt.attemptId,
+      runId: claim.job.jobId,
+      ordinal: claim.attempt.ordinal,
+      workerId: claim.attempt.workerId,
+      claimedAt: claim.attempt.startedAt,
+      heartbeatAt: claim.attempt.heartbeatAt,
+      leaseExpiresAt: claim.job.leaseExpiresAt ?? claim.attempt.heartbeatAt,
+    },
+  };
+}
+
+function durableDeliveryClaimFromContinuation(
+  claim: ContinuationDeliveryClaim,
+): DurableRunDeliveryClaim {
+  if (claim.durableClaim) return claim.durableClaim;
+  return {
+    outboxId: claim.outboxId,
+    runId: claim.jobId,
+    workloadKind: 'async_task',
+    eventKey: claim.eventKey,
+    kind: claim.kind,
+    ...(claim.attemptId ? { attemptId: claim.attemptId } : {}),
+    workerId: claim.workerId,
+    route: claim.route,
+    idempotencyKey: claim.idempotencyKey,
+    payload: claim.payload,
+    attemptCount: claim.attemptCount,
+    leaseExpiresAt: '9999-12-31T23:59:59.999Z',
+    ...(claim.firstAttemptAt ? { firstAttemptAt: claim.firstAttemptAt } : {}),
+    ...(claim.lastAttemptAt ? { lastAttemptAt: claim.lastAttemptAt } : {}),
+    ...(claim.lastErrorCode ? { lastErrorCode: claim.lastErrorCode } : {}),
+    ...(claim.lastErrorSummary ? { lastErrorSummary: claim.lastErrorSummary } : {}),
   };
 }
 
@@ -516,31 +598,16 @@ function omitUndefinedProperties(value: unknown): unknown {
   );
 }
 
-function durableClaimFromContinuation(claim: ContinuationClaim): DurableRunClaim {
-  const run = durableRunFromJob(claim.job);
-  return {
-    run,
-    workerId: claim.workerId,
-    claimedRowVersion: claim.claimedRowVersion,
-    attempt: {
-      attemptId: claim.attempt.attemptId,
-      runId: claim.job.jobId,
-      ordinal: claim.attempt.ordinal,
-      workerId: claim.attempt.workerId,
-      claimedAt: claim.attempt.startedAt,
-      heartbeatAt: claim.attempt.heartbeatAt,
-      leaseExpiresAt: claim.job.leaseExpiresAt ?? claim.attempt.heartbeatAt,
-    },
-  };
-}
-
-function continuationClaimFromDurable(claim: DurableRunClaim): ContinuationClaim {
+export function continuationClaimFromDurable(claim: DurableRunClaim): ContinuationClaim {
+  const input = parseAsyncTaskInput(claim.run.input, claim.run.inputVersion);
   const state = parseAsyncTaskState(claim.run.state, claim.run.stateVersion);
+  assertAsyncTaskEnvelopeIdentity(claim, input.job, state.job);
   const job = continuationJobFromDurable(state.job, claim);
   return {
     job,
     workerId: claim.workerId,
     claimedRowVersion: claim.claimedRowVersion,
+    durableClaim: claim,
     attempt: {
       attemptId: claim.attempt.attemptId,
       jobId: claim.run.runId,
@@ -552,6 +619,100 @@ function continuationClaimFromDurable(claim: DurableRunClaim): ContinuationClaim
       startedAt: claim.attempt.claimedAt,
       heartbeatAt: claim.attempt.heartbeatAt,
     },
+  };
+}
+
+function assertAsyncTaskEnvelopeIdentity(
+  claim: DurableRunClaim,
+  input: ContinuationJob,
+  state: ContinuationJob,
+): void {
+  assertAsyncTaskRunEnvelopeIdentity(claim.run, input, state);
+}
+
+function assertAsyncTaskRunEnvelopeIdentity(
+  run: Pick<DurableRunRecord, 'runId' | 'idempotencyKey' | 'actorOpenId' | 'route'>,
+  input: ContinuationJob,
+  state: ContinuationJob,
+): void {
+  const immutableInput = asyncTaskImmutableIdentity(input);
+  const immutableState = asyncTaskImmutableIdentity(state);
+  assertAsyncTaskJobMatchesRun(run, input);
+  assertAsyncTaskJobMatchesRun(run, state);
+  if (!isDeepStrictEqual(immutableInput, immutableState)) {
+    throw new Error('Async Task input/state envelope identity mismatch.');
+  }
+}
+
+function assertAsyncTaskJobMatchesRun(
+  run: Pick<DurableRunRecord, 'runId' | 'idempotencyKey' | 'actorOpenId' | 'route'>,
+  job: ContinuationJob,
+): void {
+  if (
+    job.jobId !== run.runId
+    || job.idempotencyKey !== run.idempotencyKey
+    || job.creatorOpenId !== run.actorOpenId
+    || !isDeepStrictEqual(job.route, run.route)
+  ) {
+    throw new Error('Async Task envelope identity does not match its durable Run.');
+  }
+}
+
+export function validateAsyncTaskPersistedRun(run: DurableRunRecord): {
+  errorCode: string;
+  errorSummary: string;
+  deliveries?: readonly import('../domain/durable-run.js').DurableRunDeliveryRequest[];
+} | null {
+  let trustedInput: ContinuationJob | null = null;
+  try {
+    const input = parseAsyncTaskInput(run.input, run.inputVersion);
+    assertAsyncTaskJobMatchesRun(run, input.job);
+    trustedInput = input.job;
+    const state = parseAsyncTaskState(run.state, run.stateVersion);
+    assertAsyncTaskRunEnvelopeIdentity(run, input.job, state.job);
+    return null;
+  } catch {
+    return {
+      errorCode: 'continuation_persisted_state_invalid',
+      errorSummary: 'Stored task state failed integrity validation.',
+      ...(trustedInput ? {
+        deliveries: [{
+          eventKey: 'terminal',
+          kind: 'terminal',
+          attemptId: null,
+          idempotencyKey: `invalid-state:${run.workloadKind}:${run.runId}:terminal`,
+          route: trustedInput.route,
+          payload: `Task failed: ${run.runId}\nStored task state failed integrity validation.`,
+        }],
+      } : {}),
+    };
+  }
+}
+
+function asyncTaskImmutableIdentity(job: ContinuationJob): unknown {
+  return {
+    jobId: job.jobId,
+    idempotencyKey: job.idempotencyKey,
+    creatorOpenId: job.creatorOpenId,
+    route: job.route,
+    sourceMessageId: job.sourceMessageId,
+    sourceThreadId: job.sourceThreadId,
+    title: job.title,
+    objective: job.objective,
+    acceptanceCriteria: job.acceptanceCriteria,
+    contextSnapshot: job.contextSnapshot,
+    sourceFacts: job.sourceFacts,
+    taskContract: job.taskContract,
+    requiredTools: job.requiredTools,
+    workingDirectory: job.workingDirectory,
+    permissions: job.permissions,
+    model: job.model,
+    parentSessionId: job.parentSessionId,
+    maxAttempts: job.maxAttempts,
+    maxRetries: job.maxRetries,
+    timeoutSeconds: job.timeoutSeconds,
+    createdAt: job.createdAt,
+    expiresAt: job.expiresAt,
   };
 }
 
@@ -617,6 +778,13 @@ function stableStepSuffix(value: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export function parseTrustedAsyncTaskInputJob(
+  value: unknown,
+  version: number,
+): ContinuationJob {
+  return parseAsyncTaskInput(value, version).job;
 }
 
 function parseAsyncTaskInput(value: unknown, version: number): AsyncTaskKernelInput {
@@ -825,7 +993,25 @@ function isCheckpoint(value: unknown): boolean {
 }
 
 function isSourceFacts(value: unknown): boolean {
-  if (!isRecord(value) || value.schemaVersion !== 1) return false;
+  if (!isRecord(value) || value.schemaVersion !== 1 || !hasOnlyKeys(value, [
+    'schemaVersion',
+    'provenance',
+    'originalUserText',
+    'sourceContextText',
+    'quotedMessageText',
+    'creatorOpenId',
+    'chatId',
+    'chatType',
+    'route',
+    'sourceMessageId',
+    'sourceThreadId',
+    'sourceMessageType',
+    'sourceTimestamp',
+    'inputs',
+    'workingDirectory',
+    'model',
+    'permissions',
+  ])) return false;
   if (!Array.isArray(value.inputs) || !value.inputs.every((input) => (
     isRecord(input)
     && requiredString(input.id)
@@ -1093,31 +1279,62 @@ function classifyExecutionFailure(error: unknown): ContinuationFailure {
   };
 }
 
-function durableDeliveryClaimFromContinuation(
-  claim: ContinuationDeliveryClaim,
-): DurableRunDeliveryClaim {
+function durableFailureForContinuationFailure(
+  claim: ContinuationClaim,
+  failure: ContinuationFailure,
+): DurableRunFailure {
+  const diagnostic = sanitizeText(failure.errorSummary);
+  const failedStep = currentContinuationStepId(claim.job);
   return {
-    outboxId: claim.outboxId,
-    runId: claim.jobId,
-    workloadKind: 'async_task',
-    kind: claim.kind,
-    ...(claim.attemptId ? { attemptId: claim.attemptId } : {}),
-    workerId: claim.workerId,
-    route: claim.route,
-    idempotencyKey: claim.idempotencyKey,
-    payload: { schemaVersion: 1, claim } satisfies ContinuationDeliveryEnvelope,
-    attemptCount: claim.attemptCount,
+    category: failure.retryable ? 'transient' : 'terminal',
+    retrySafety: failure.retryable ? 'safe' : 'unsafe',
+    capabilityAvailable: true,
+    operationRisk: 'unknown',
+    hints: [],
+    failedStep,
+    diagnostic,
+    fingerprint: createHash('sha256')
+      .update(`${failure.errorCode}\0${failedStep}\0${diagnostic}`)
+      .digest('hex')
+      .slice(0, 32),
   };
 }
 
-function continuationDeliveryClaimFromDurable(
+export function continuationDeliveryClaimFromDurable(
   claim: DurableRunDeliveryClaim,
 ): ContinuationDeliveryClaim {
-  const payload = claim.payload;
-  if (!isRecord(payload) || payload.schemaVersion !== 1 || !isRecord(payload.claim)) {
+  if (claim.workloadKind !== 'async_task' || typeof claim.payload !== 'string') {
     throw new Error('Invalid Continuation delivery envelope.');
   }
-  return payload.claim as unknown as ContinuationDeliveryClaim;
+  if (
+    (claim.kind === 'terminal' && claim.eventKey !== 'terminal')
+    || (claim.kind === 'progress' && claim.eventKey !== `progress:${claim.attemptId ?? ''}`)
+    || (claim.kind === 'interrupt' && !claim.eventKey.startsWith('interrupt:'))
+    || !['terminal', 'progress', 'interrupt'].includes(claim.kind)
+  ) {
+    throw new Error('Invalid Continuation delivery identity.');
+  }
+  return {
+    outboxId: claim.outboxId,
+    jobId: claim.runId,
+    eventKey: claim.eventKey,
+    kind: claim.kind as ContinuationDeliveryClaim['kind'],
+    ...(claim.attemptId ? { attemptId: claim.attemptId } : {}),
+    ...(claim.kind === 'interrupt'
+      ? { interruptId: claim.eventKey.slice('interrupt:'.length) }
+      : {}),
+    workerId: claim.workerId,
+    route: claim.route as ContinuationDeliveryClaim['route'],
+    idempotencyKey: claim.idempotencyKey,
+    payload: claim.payload,
+    status: 'sending',
+    attemptCount: claim.attemptCount,
+    ...(claim.firstAttemptAt ? { firstAttemptAt: claim.firstAttemptAt } : {}),
+    ...(claim.lastAttemptAt ? { lastAttemptAt: claim.lastAttemptAt } : {}),
+    ...(claim.lastErrorCode ? { lastErrorCode: claim.lastErrorCode } : {}),
+    ...(claim.lastErrorSummary ? { lastErrorSummary: claim.lastErrorSummary } : {}),
+    durableClaim: claim,
+  };
 }
 
 function durableDeliveryResultFromContinuation(
@@ -1145,7 +1362,14 @@ function continuationDeliveryResultFromDurable(
       errorSummary: result.errorSummary,
     };
   }
-  return result;
+  if (result.status === 'retry' || result.status === 'failed') {
+    return {
+      status: result.status,
+      errorCode: result.errorCode,
+      errorSummary: result.errorSummary,
+    };
+  }
+  throw new Error('A superseded delivery is not a workload delivery result.');
 }
 
 function errorSummary(error: unknown): string {
@@ -1173,4 +1397,9 @@ function permissionAuditDetail(claim: ContinuationClaim): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed);
+  return Object.keys(value).every((key) => allowedKeys.has(key));
 }

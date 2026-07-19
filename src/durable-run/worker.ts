@@ -163,16 +163,39 @@ export class DurableRunWorker {
 
   private async scanExecutions(): Promise<void> {
     const now = this.nowIso();
-    const interrupted = await this.options.repository.recoverExpiredLeases(now);
+    const interrupted = await this.options.repository.recoverExpiredLeases(
+      [...this.workloads.keys()],
+      now,
+    );
     for (const attempt of interrupted) {
-      const workload = this.workloadFor(attempt.claim.run.workloadKind);
-      const context = materializeDurableRunWorkloadContext(workload, attempt.claim.run);
-      const claim = materializeDurableRunWorkloadClaim(attempt.claim, context);
-      const transition = workload.recoverInterruptedAttempt({
-        ...attempt,
-        claim,
-      });
-      await this.options.repository.commitTransition(attempt.claim, transition, now);
+      let transition: DurableRunTransition;
+      try {
+        const workload = this.workloadFor(attempt.claim.run.workloadKind);
+        const context = materializeDurableRunWorkloadContext(workload, attempt.claim.run);
+        const claim = materializeDurableRunWorkloadClaim(attempt.claim, context);
+        transition = workload.recoverInterruptedAttempt({
+          ...attempt,
+          claim,
+        });
+      } catch (error) {
+        try {
+          await this.options.onExecutionStateError?.(attempt.claim, error);
+        } catch {
+          // Observability failures never affect durable run state.
+        }
+        await this.options.repository.failAttempt(
+          attempt.claim,
+          classifyExecutionFailure(attempt.claim, error),
+          now,
+        );
+        continue;
+      }
+      const committed = await this.options.repository.commitTransition(
+        attempt.claim,
+        transition,
+        now,
+      );
+      if (committed === 'stale') continue;
     }
 
     await this.inspectActiveExecutions();

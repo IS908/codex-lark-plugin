@@ -678,6 +678,39 @@ assert.equal(recoveryRepository.transitions[0].transition.status, 'blocked');
 assert.deepEqual(recoveryWorkload.executeCalls, []);
 await recoveryWorker.stop();
 
+// One malformed recovered row is failed closed without starving later recoveries.
+const malformedRecoveryClaim = createClaim('async_task', 'malformed-recovery');
+malformedRecoveryClaim.run.stateVersion = 2;
+const validRecoveryClaim = createClaim('async_task', 'valid-recovery');
+const isolatedRecoveryRepository = createRepositoryHarness();
+isolatedRecoveryRepository.interrupted.push(
+  {
+    claim: malformedRecoveryClaim,
+    recoveredAt: '2026-07-19T00:00:00.000Z',
+    executionPhase: 'claimed',
+    operationRisk: 'unknown',
+  },
+  {
+    claim: validRecoveryClaim,
+    recoveredAt: '2026-07-19T00:00:00.000Z',
+    executionPhase: 'claimed',
+    operationRisk: 'unknown',
+  },
+);
+const isolatedRecoveryWorkload = createWorkloadHarness('async_task');
+const isolatedRecoveryWorker = new DurableRunWorker({
+  repository: isolatedRecoveryRepository.repository,
+  workloads: [isolatedRecoveryWorkload.workload],
+  delivery,
+  clock,
+  maxConcurrencyByWorkload: { async_task: 1 },
+});
+await isolatedRecoveryWorker.tick();
+assert.deepEqual(isolatedRecoveryRepository.failedAttempts, [malformedRecoveryClaim.run.runId]);
+assert.deepEqual(isolatedRecoveryWorkload.recoverCalls, [validRecoveryClaim.run.runId]);
+assert.equal(isolatedRecoveryRepository.transitions[0]?.claim.run.runId, validRecoveryClaim.run.runId);
+await isolatedRecoveryWorker.stop();
+
 // An unknown transition commit outcome is left to lease recovery, never converted into a replayable failure.
 const commitUnknownClaim = createClaim('async_task', 'commit-unknown');
 const commitUnknownRepository = createRepositoryHarness([commitUnknownClaim]);

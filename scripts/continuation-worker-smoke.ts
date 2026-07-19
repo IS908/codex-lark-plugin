@@ -916,7 +916,7 @@ const integrityWorker = new ContinuationWorker({
 await integrityWorker.tick();
 await waitFor(() => integrityDeliveryCalls === 1, 'integrity terminal delivery');
 assert.equal(integrityExecutionCalls, 0);
-assert.equal((await integrityRepository.get(integrityJob.jobId))?.attemptCount, 0);
+assert.equal((await integrityRepository.get(integrityJob.jobId))?.attemptCount, 1);
 await integrityWorker.stop();
 integrityRepository.close();
 console.log('continuation worker smoke: PASS');

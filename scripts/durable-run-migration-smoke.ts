@@ -298,6 +298,56 @@ try {
     }
   });
 
+  await reviewRegression('unmappable active operation receipt rolls migration back', async () => {
+    const fixtureRoot = join(root, 'unmappable-active-receipt');
+    const databasePath = join(fixtureRoot, 'runtime.sqlite');
+    const fixture = await seedHistoricalContinuationDatabase({
+      databasePath,
+      now,
+      version: 5,
+      workingDirectory: fixtureRoot,
+    });
+    activateHistoricalFixture(databasePath, fixture);
+    const legacy = new DatabaseSync(databasePath);
+    try {
+      legacy.prepare(`
+        UPDATE continuation_jobs
+        SET checkpoint_json = NULL, step_count = 4,
+            context_snapshot_json = ?
+        WHERE job_id = ?
+      `).run(JSON.stringify({
+        summary: 'Legacy active task without recoverable step identity.',
+        completedSteps: [],
+        remainingSteps: [],
+        constraints: [],
+        decisions: [],
+        references: [],
+      }), fixture.terminalJobId);
+      legacy.prepare(`
+        UPDATE continuation_tool_calls SET step_index = 3
+        WHERE call_id = ?
+      `).run(fixture.operationReceiptId);
+    } finally {
+      legacy.close();
+    }
+    await assert.rejects(
+      SqliteDurableRunRepository.open({ databasePath }),
+      /cannot map operation receipt/u,
+    );
+    const rolledBack = new DatabaseSync(databasePath);
+    try {
+      assert.equal(Number(rolledBack.prepare('PRAGMA user_version').get()?.user_version), 5);
+      assert.equal(Number(rolledBack.prepare(`
+        SELECT COUNT(*) AS count FROM continuation_tool_calls
+      `).get()?.count), 1);
+      assert.deepEqual(rolledBack.prepare(`
+        SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'durable_%'
+      `).all(), []);
+    } finally {
+      rolledBack.close();
+    }
+  });
+
   if (reviewFailures.length > 0) {
     throw new AggregateError(reviewFailures, 'Task 4 migration regressions');
   }

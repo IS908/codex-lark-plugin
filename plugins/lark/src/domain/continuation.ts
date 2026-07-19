@@ -1,4 +1,8 @@
-import type { DurableRunFailure } from './durable-run.js';
+import type {
+  DurableRunClaim,
+  DurableRunDeliveryClaim,
+  DurableRunFailure,
+} from './durable-run.js';
 
 export const CONTINUATION_LIMITS = {
   titleChars: 200,
@@ -425,6 +429,8 @@ export interface ContinuationClaim {
   attempt: ContinuationAttempt;
   workerId: string;
   claimedRowVersion: number;
+  /** Exact persisted claim used by the generic Durable Run repository. */
+  durableClaim?: DurableRunClaim;
 }
 
 export interface ContinuationToolRequest {
@@ -565,6 +571,7 @@ export interface ContinuationDeliveryClaim {
   lastAttemptAt?: string;
   lastErrorCode?: string;
   lastErrorSummary?: string;
+  durableClaim?: DurableRunDeliveryClaim;
 }
 
 export type ContinuationDeliveryResult =

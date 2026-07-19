@@ -15,7 +15,7 @@ const CONTINUATION_COMPATIBILITY_VIEWS = [
   'continuation_outbox',
   'continuation_tool_calls',
 ] as const;
-const CONTINUATION_COMPATIBILITY_TRIGGERS = CONTINUATION_COMPATIBILITY_VIEWS.flatMap(
+const LEGACY_CONTINUATION_COMPATIBILITY_TRIGGERS = CONTINUATION_COMPATIBILITY_VIEWS.flatMap(
   (view) => ['insert', 'update', 'delete'].map((operation) => `${view}_${operation}`),
 );
 
@@ -27,6 +27,7 @@ export function migrateSqliteToDurableV10(database: DatabaseSync): void {
     );
   }
   if (version === DURABLE_RUN_SCHEMA_VERSION) {
+    hardenDurableAttemptOwnership(database);
     assertDurableSchema(database);
     return;
   }
@@ -48,48 +49,10 @@ export function migrateSqliteToDurableV10(database: DatabaseSync): void {
   assertDurableSchema(database);
 }
 
-export function registerContinuationCompatibilityFunctions(
-  database: DatabaseSync,
-  mutationMark: () => number,
-): void {
-  database.function('continuation_mutation_mark', mutationMark);
-  database.function('async_task_envelope', { deterministic: true }, (value) => {
-    if (typeof value !== 'string') throw new Error('Async Task envelope projection must be JSON text.');
-    const parsed = JSON.parse(value) as unknown;
-    if (!isRecord(parsed)) throw new Error('Async Task envelope projection must be an object.');
-    for (const key of [
-      'retryOfJobId',
-      'sourceThreadId',
-      'model',
-      'parentSessionId',
-      'executionSessionId',
-      'checkpoint',
-      'lastAttemptDelta',
-      'lastVerification',
-      'recovery',
-      'currentInterrupt',
-      'leaseOwner',
-      'leaseExpiresAt',
-      'heartbeatAt',
-      'resultSummary',
-      'errorCode',
-      'errorSummary',
-      'startedAt',
-      'completedAt',
-      'deletedAt',
-      'deliveryStatus',
-    ]) {
-      if (parsed[key] === null) delete parsed[key];
-    }
-    parsed.retained = parsed.retained === 1 || parsed.retained === true;
-    return serializeDurableRunJson({ schemaVersion: 1, job: parsed }, 'Async Task envelope');
-  });
-}
-
 export function installContinuationCompatibilitySchema(database: DatabaseSync): void {
   immediateTransaction(database, () => {
     database.exec([
-      ...CONTINUATION_COMPATIBILITY_TRIGGERS.map((name) => `DROP TRIGGER IF EXISTS ${name};`),
+      ...LEGACY_CONTINUATION_COMPATIBILITY_TRIGGERS.map((name) => `DROP TRIGGER IF EXISTS ${name};`),
       ...CONTINUATION_COMPATIBILITY_VIEWS.map((name) => `DROP VIEW IF EXISTS ${name};`),
     ].join('\n'));
 
@@ -147,80 +110,6 @@ export function installContinuationCompatibilitySchema(database: DatabaseSync): 
     FROM durable_runs r
     WHERE r.workload_kind = 'async_task';
 
-    CREATE TRIGGER continuation_jobs_insert
-    INSTEAD OF INSERT ON continuation_jobs
-    BEGIN
-      SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed')
-      WHERE NEW.retry_of_job_id IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM durable_runs
-          WHERE run_id = NEW.retry_of_job_id AND workload_kind = 'async_task'
-        );
-      INSERT OR IGNORE INTO durable_runs (
-        run_id, workload_kind, idempotency_key, status,
-        input_version, input_json, state_version, state_json, route_json,
-        actor_open_id, created_at, next_run_at, expires_at, completed_at,
-        max_attempts, attempt_count, row_version, lease_owner, lease_expires_at,
-        heartbeat_at, error_code, error_summary, retained, deleted_at, updated_at
-      ) VALUES (
-        NEW.job_id, 'async_task', NEW.idempotency_key, NEW.status,
-        1, async_task_envelope(${asyncTaskJobProjectionSql('NEW')}),
-        1, async_task_envelope(${asyncTaskJobProjectionSql('NEW')}), NEW.route_json,
-        NEW.creator_open_id, NEW.created_at, NEW.next_run_at, NEW.expires_at,
-        NEW.completed_at, NEW.max_attempts, 0, NEW.row_version,
-        NEW.lease_owner, NEW.lease_expires_at, NEW.heartbeat_at,
-        NEW.error_code, NEW.error_summary, COALESCE(NEW.retain, 0),
-        NEW.deleted_at, NEW.updated_at
-      );
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_jobs_update
-    INSTEAD OF UPDATE ON continuation_jobs
-    BEGIN
-      SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed')
-      WHERE NEW.retry_of_job_id IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM durable_runs
-          WHERE run_id = NEW.retry_of_job_id AND workload_kind = 'async_task'
-        );
-      UPDATE durable_runs
-      SET idempotency_key = NEW.idempotency_key,
-          status = NEW.status,
-          state_version = 1,
-          state_json = async_task_envelope(${asyncTaskJobProjectionSql('NEW')}),
-          route_json = NEW.route_json,
-          actor_open_id = NEW.creator_open_id,
-          created_at = NEW.created_at,
-          next_run_at = NEW.next_run_at,
-          expires_at = NEW.expires_at,
-          completed_at = NEW.completed_at,
-          max_attempts = NEW.max_attempts,
-          row_version = NEW.row_version,
-          lease_owner = NEW.lease_owner,
-          lease_expires_at = NEW.lease_expires_at,
-          heartbeat_at = NEW.heartbeat_at,
-          error_code = NEW.error_code,
-          error_summary = NEW.error_summary,
-          retained = NEW.retain,
-          deleted_at = NEW.deleted_at,
-          updated_at = NEW.updated_at
-      WHERE run_id = OLD.job_id AND workload_kind = 'async_task';
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_jobs_delete
-    INSTEAD OF DELETE ON continuation_jobs
-    BEGIN
-      SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed')
-      WHERE EXISTS (
-        SELECT 1 FROM durable_runs
-        WHERE workload_kind = 'async_task'
-          AND json_extract(state_json, '$.job.retryOfJobId') = OLD.job_id
-      );
-      DELETE FROM durable_runs WHERE run_id = OLD.job_id AND workload_kind = 'async_task';
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
     `);
     installContinuationAttemptView(database);
     installContinuationOutboxView(database);
@@ -228,59 +117,6 @@ export function installContinuationCompatibilitySchema(database: DatabaseSync): 
     installContinuationInterruptView(database);
     assertContinuationCompatibilitySchema(database);
   });
-}
-
-function asyncTaskJobProjectionSql(alias: string): string {
-  return `json_object(
-    'jobId', ${alias}.job_id,
-    'idempotencyKey', ${alias}.idempotency_key,
-    'retryOfJobId', ${alias}.retry_of_job_id,
-    'creatorOpenId', ${alias}.creator_open_id,
-    'route', json(${alias}.route_json),
-    'sourceMessageId', ${alias}.source_message_id,
-    'sourceThreadId', ${alias}.source_thread_id,
-    'title', ${alias}.title,
-    'objective', ${alias}.objective,
-    'acceptanceCriteria', json(${alias}.acceptance_criteria_json),
-    'contextSnapshot', json(${alias}.context_snapshot_json),
-    'sourceFacts', json(${alias}.source_facts_json),
-    'taskContract', json(${alias}.task_contract_json),
-    'requiredTools', json(${alias}.required_tools_json),
-    'workingDirectory', ${alias}.working_directory,
-    'permissions', json(${alias}.permissions_json),
-    'model', ${alias}.model,
-    'parentSessionId', ${alias}.parent_session_id,
-    'maxAttempts', ${alias}.max_attempts,
-    'maxRetries', ${alias}.max_retries,
-    'timeoutSeconds', ${alias}.timeout_seconds,
-    'createdAt', ${alias}.created_at,
-    'expiresAt', ${alias}.expires_at,
-    'rowVersion', ${alias}.row_version,
-    'status', ${alias}.status,
-    'executionSessionId', ${alias}.execution_session_id,
-    'checkpoint', CASE WHEN ${alias}.checkpoint_json IS NULL
-      THEN NULL ELSE json(${alias}.checkpoint_json) END,
-    'noProgressCount', COALESCE(${alias}.no_progress_count, 0),
-    'recovery', CASE WHEN ${alias}.recovery_json IS NULL
-      THEN NULL ELSE json(${alias}.recovery_json) END,
-    'recoveryTotalCount', COALESCE(${alias}.recovery_total_count, 0),
-    'recoveryFingerprintCounts', json(COALESCE(${alias}.recovery_fingerprint_counts_json, '{}')),
-    'stepCount', COALESCE(${alias}.step_count, 0),
-    'failureCount', COALESCE(${alias}.failure_count, 0),
-    'nextRunAt', ${alias}.next_run_at,
-    'leaseOwner', ${alias}.lease_owner,
-    'leaseExpiresAt', ${alias}.lease_expires_at,
-    'heartbeatAt', ${alias}.heartbeat_at,
-    'resultSummary', ${alias}.result_summary,
-    'resultArtifacts', json(COALESCE(${alias}.result_artifacts_json, '[]')),
-    'errorCode', ${alias}.error_code,
-    'errorSummary', ${alias}.error_summary,
-    'startedAt', ${alias}.started_at,
-    'updatedAt', ${alias}.updated_at,
-    'completedAt', ${alias}.completed_at,
-    'deletedAt', ${alias}.deleted_at,
-    'retained', ${alias}.retain
-  )`;
 }
 
 function installContinuationAttemptView(database: DatabaseSync): void {
@@ -306,87 +142,6 @@ function installContinuationAttemptView(database: DatabaseSync): void {
     FROM durable_attempts a
     JOIN durable_runs r ON r.run_id = a.run_id
     WHERE r.workload_kind = 'async_task';
-
-    CREATE TRIGGER continuation_attempts_insert
-    INSTEAD OF INSERT ON continuation_attempts
-    BEGIN
-      INSERT INTO durable_attempts (
-        attempt_id, run_id, ordinal, worker_id, execution_session_id,
-        claimed_at, heartbeat_at, lease_expires_at, execution_started_at,
-        finished_at, execution_phase, operation_risk, outcome, error_code,
-        error_summary, metadata_json
-      ) VALUES (
-        NEW.attempt_id, NEW.job_id, NEW.ordinal, NEW.worker_id,
-        NEW.execution_session_id, NEW.started_at, NEW.heartbeat_at,
-        COALESCE((SELECT lease_expires_at FROM durable_runs WHERE run_id = NEW.job_id), NEW.heartbeat_at),
-        CASE WHEN COALESCE(NEW.execution_phase, 'claimed') = 'execution_started'
-          THEN NEW.started_at ELSE NULL END,
-        NEW.finished_at, COALESCE(NEW.execution_phase, 'claimed'),
-        COALESCE(json_extract(NEW.recovery_json, '$.failure.operationRisk'), 'unknown'),
-        NEW.outcome, NEW.error_code, NEW.error_summary,
-        json_object(
-          'recovery', CASE WHEN NEW.recovery_json IS NULL THEN NULL ELSE json(NEW.recovery_json) END,
-          'stepId', NEW.step_id,
-          'delta', CASE WHEN NEW.delta_json IS NULL THEN NULL ELSE json(NEW.delta_json) END,
-          'verification', CASE WHEN NEW.verification_json IS NULL THEN NULL ELSE json(NEW.verification_json) END
-        )
-      );
-      UPDATE durable_runs
-      SET attempt_count = (
-        SELECT COUNT(*) FROM durable_attempts WHERE run_id = NEW.job_id
-      )
-      WHERE run_id = NEW.job_id AND workload_kind = 'async_task';
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_attempts_update
-    INSTEAD OF UPDATE ON continuation_attempts
-    BEGIN
-      UPDATE durable_attempts
-      SET ordinal = NEW.ordinal,
-          worker_id = NEW.worker_id,
-          execution_session_id = NEW.execution_session_id,
-          claimed_at = NEW.started_at,
-          heartbeat_at = NEW.heartbeat_at,
-          lease_expires_at = COALESCE(
-            (SELECT lease_expires_at FROM durable_runs WHERE run_id = NEW.job_id),
-            durable_attempts.lease_expires_at
-          ),
-          execution_started_at = CASE
-            WHEN NEW.execution_phase = 'execution_started'
-              THEN COALESCE(durable_attempts.execution_started_at, NEW.started_at)
-            ELSE durable_attempts.execution_started_at
-          END,
-          finished_at = NEW.finished_at,
-          execution_phase = NEW.execution_phase,
-          operation_risk = COALESCE(
-            json_extract(NEW.recovery_json, '$.failure.operationRisk'),
-            durable_attempts.operation_risk
-          ),
-          outcome = NEW.outcome,
-          error_code = NEW.error_code,
-          error_summary = NEW.error_summary,
-          metadata_json = json_object(
-            'recovery', CASE WHEN NEW.recovery_json IS NULL THEN NULL ELSE json(NEW.recovery_json) END,
-            'stepId', NEW.step_id,
-            'delta', CASE WHEN NEW.delta_json IS NULL THEN NULL ELSE json(NEW.delta_json) END,
-            'verification', CASE WHEN NEW.verification_json IS NULL THEN NULL ELSE json(NEW.verification_json) END
-          )
-      WHERE attempt_id = OLD.attempt_id AND run_id = OLD.job_id;
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_attempts_delete
-    INSTEAD OF DELETE ON continuation_attempts
-    BEGIN
-      DELETE FROM durable_attempts WHERE attempt_id = OLD.attempt_id AND run_id = OLD.job_id;
-      UPDATE durable_runs
-      SET attempt_count = (
-        SELECT COUNT(*) FROM durable_attempts WHERE run_id = OLD.job_id
-      )
-      WHERE run_id = OLD.job_id AND workload_kind = 'async_task';
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
   `);
 }
 
@@ -418,61 +173,6 @@ function installContinuationOutboxView(database: DatabaseSync): void {
     FROM durable_outbox o
     JOIN durable_runs r ON r.run_id = o.run_id
     WHERE r.workload_kind = 'async_task';
-
-    CREATE TRIGGER continuation_outbox_insert
-    INSTEAD OF INSERT ON continuation_outbox
-    BEGIN
-      INSERT INTO durable_outbox (
-        outbox_id, run_id, event_key, kind, attempt_id, route_json,
-        idempotency_key, payload_json, metadata_json, status, attempt_count,
-        next_attempt_at, worker_id, lease_expires_at, first_attempt_at,
-        last_attempt_at, message_id, error_code, error_summary, created_at, updated_at
-      ) VALUES (
-        NEW.outbox_id, NEW.job_id, NEW.event_key, NEW.kind, NEW.attempt_id,
-        NEW.route_json, NEW.idempotency_key, json_quote(NEW.payload), '{}',
-        CASE NEW.status WHEN 'delivered' THEN 'sent' WHEN 'delivery_unknown' THEN 'unknown'
-          ELSE NEW.status END,
-        NEW.attempt_count, NEW.next_attempt_at, NEW.worker_id, NEW.lease_expires_at,
-        NEW.first_attempt_at, NEW.last_attempt_at, NEW.message_id,
-        NEW.error_code, NEW.error_summary, NEW.created_at, NEW.updated_at
-      );
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_outbox_update
-    INSTEAD OF UPDATE ON continuation_outbox
-    BEGIN
-      UPDATE durable_outbox
-      SET event_key = NEW.event_key,
-          kind = NEW.kind,
-          attempt_id = NEW.attempt_id,
-          route_json = NEW.route_json,
-          idempotency_key = NEW.idempotency_key,
-          payload_json = json_quote(NEW.payload),
-          status = CASE NEW.status
-            WHEN 'delivered' THEN 'sent' WHEN 'delivery_unknown' THEN 'unknown'
-            ELSE NEW.status END,
-          attempt_count = NEW.attempt_count,
-          next_attempt_at = NEW.next_attempt_at,
-          worker_id = NEW.worker_id,
-          lease_expires_at = NEW.lease_expires_at,
-          first_attempt_at = NEW.first_attempt_at,
-          last_attempt_at = NEW.last_attempt_at,
-          message_id = NEW.message_id,
-          error_code = NEW.error_code,
-          error_summary = NEW.error_summary,
-          created_at = NEW.created_at,
-          updated_at = NEW.updated_at
-      WHERE outbox_id = OLD.outbox_id AND run_id = OLD.job_id;
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_outbox_delete
-    INSTEAD OF DELETE ON continuation_outbox
-    BEGIN
-      DELETE FROM durable_outbox WHERE outbox_id = OLD.outbox_id AND run_id = OLD.job_id;
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
   `);
 }
 
@@ -480,61 +180,21 @@ function installContinuationOperationReceiptView(database: DatabaseSync): void {
   database.exec(`
     CREATE VIEW continuation_tool_calls AS
     SELECT
-      receipt_id AS call_id,
-      run_id AS job_id,
-      COALESCE(json_extract(metadata_json, '$.stepIndex'), 0) AS step_index,
-      COALESCE(json_extract(metadata_json, '$.stepId'), operation_key) AS step_id,
-      attempt_id,
-      operation_name AS tool_name,
-      request_hash,
-      status,
-      result_json,
-      started_at,
-      completed_at,
-      updated_at
-    FROM durable_operation_receipts;
-
-    CREATE TRIGGER continuation_tool_calls_insert
-    INSTEAD OF INSERT ON continuation_tool_calls
-    BEGIN
-      INSERT INTO durable_operation_receipts (
-        receipt_id, run_id, attempt_id, operation_key, operation_name,
-        request_hash, operation_risk, status, result_json, started_at,
-        completed_at, updated_at, metadata_json
-      ) VALUES (
-        NEW.call_id, NEW.job_id, NEW.attempt_id, NEW.step_id, NEW.tool_name,
-        NEW.request_hash, 'unknown', NEW.status, NEW.result_json,
-        NEW.started_at, NEW.completed_at, NEW.updated_at,
-        json_object('stepIndex', NEW.step_index, 'stepId', NEW.step_id)
-      );
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_tool_calls_update
-    INSTEAD OF UPDATE ON continuation_tool_calls
-    BEGIN
-      UPDATE durable_operation_receipts
-      SET attempt_id = NEW.attempt_id,
-          operation_key = NEW.step_id,
-          operation_name = NEW.tool_name,
-          request_hash = NEW.request_hash,
-          status = NEW.status,
-          result_json = NEW.result_json,
-          started_at = NEW.started_at,
-          completed_at = NEW.completed_at,
-          updated_at = NEW.updated_at,
-          metadata_json = json_object('stepIndex', NEW.step_index, 'stepId', NEW.step_id)
-      WHERE receipt_id = OLD.call_id AND run_id = OLD.job_id;
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_tool_calls_delete
-    INSTEAD OF DELETE ON continuation_tool_calls
-    BEGIN
-      DELETE FROM durable_operation_receipts
-      WHERE receipt_id = OLD.call_id AND run_id = OLD.job_id;
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
+      receipt.receipt_id AS call_id,
+      receipt.run_id AS job_id,
+      COALESCE(json_extract(receipt.metadata_json, '$.stepIndex'), 0) AS step_index,
+      COALESCE(json_extract(receipt.metadata_json, '$.stepId'), receipt.operation_key) AS step_id,
+      receipt.attempt_id,
+      receipt.operation_name AS tool_name,
+      receipt.request_hash,
+      receipt.status,
+      receipt.result_json,
+      receipt.started_at,
+      receipt.completed_at,
+      receipt.updated_at
+    FROM durable_operation_receipts receipt
+    JOIN durable_runs r ON r.run_id = receipt.run_id
+    WHERE r.workload_kind = 'async_task';
   `);
 }
 
@@ -542,50 +202,17 @@ function installContinuationInterruptView(database: DatabaseSync): void {
   database.exec(`
     CREATE VIEW continuation_interrupts AS
     SELECT
-      interrupt_id,
-      run_id AS job_id,
-      attempt_id,
-      status,
-      prompt,
-      response_text,
-      created_at,
-      resolved_at
-    FROM durable_interrupts;
-
-    CREATE TRIGGER continuation_interrupts_insert
-    INSTEAD OF INSERT ON continuation_interrupts
-    BEGIN
-      INSERT INTO durable_interrupts (
-        interrupt_id, run_id, attempt_id, status, prompt, response_text,
-        created_at, resolved_at, metadata_json
-      ) VALUES (
-        NEW.interrupt_id, NEW.job_id, NEW.attempt_id, NEW.status, NEW.prompt,
-        NEW.response_text, NEW.created_at, NEW.resolved_at, '{}'
-      );
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_interrupts_update
-    INSTEAD OF UPDATE ON continuation_interrupts
-    BEGIN
-      UPDATE durable_interrupts
-      SET attempt_id = NEW.attempt_id,
-          status = NEW.status,
-          prompt = NEW.prompt,
-          response_text = NEW.response_text,
-          created_at = NEW.created_at,
-          resolved_at = NEW.resolved_at
-      WHERE interrupt_id = OLD.interrupt_id AND run_id = OLD.job_id;
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
-
-    CREATE TRIGGER continuation_interrupts_delete
-    INSTEAD OF DELETE ON continuation_interrupts
-    BEGIN
-      DELETE FROM durable_interrupts
-      WHERE interrupt_id = OLD.interrupt_id AND run_id = OLD.job_id;
-      SELECT continuation_mutation_mark() WHERE changes() > 0;
-    END;
+      i.interrupt_id,
+      i.run_id AS job_id,
+      i.attempt_id,
+      i.status,
+      i.prompt,
+      i.response_text,
+      i.created_at,
+      i.resolved_at
+    FROM durable_interrupts i
+    JOIN durable_runs r ON r.run_id = i.run_id
+    WHERE r.workload_kind = 'async_task';
   `);
 }
 
@@ -654,18 +281,21 @@ export function createDurableSchema(database: DatabaseSync): void {
       metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
       recovery_pending INTEGER NOT NULL DEFAULT 0 CHECK(recovery_pending IN (0, 1)),
       recovered_at TEXT,
-      UNIQUE(run_id, ordinal)
+      UNIQUE(run_id, ordinal),
+      UNIQUE(run_id, attempt_id)
     ) STRICT;
 
     CREATE INDEX IF NOT EXISTS durable_attempts_active_idx
       ON durable_attempts(run_id, finished_at, ordinal DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS durable_attempts_run_attempt_idx
+      ON durable_attempts(run_id, attempt_id);
 
     CREATE TABLE IF NOT EXISTS durable_outbox (
       outbox_id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES durable_runs(run_id),
       event_key TEXT NOT NULL,
       kind TEXT NOT NULL,
-      attempt_id TEXT REFERENCES durable_attempts(attempt_id),
+      attempt_id TEXT,
       route_json TEXT NOT NULL CHECK(json_valid(route_json)),
       idempotency_key TEXT NOT NULL UNIQUE,
       payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
@@ -684,7 +314,9 @@ export function createDurableSchema(database: DatabaseSync): void {
       error_summary TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      UNIQUE(run_id, event_key)
+      UNIQUE(run_id, event_key),
+      FOREIGN KEY(run_id, attempt_id)
+        REFERENCES durable_attempts(run_id, attempt_id)
     ) STRICT;
 
     CREATE INDEX IF NOT EXISTS durable_outbox_due_idx
@@ -695,7 +327,7 @@ export function createDurableSchema(database: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS durable_operation_receipts (
       receipt_id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES durable_runs(run_id),
-      attempt_id TEXT NOT NULL REFERENCES durable_attempts(attempt_id),
+      attempt_id TEXT NOT NULL,
       operation_key TEXT NOT NULL,
       operation_name TEXT NOT NULL,
       request_hash TEXT NOT NULL,
@@ -709,7 +341,9 @@ export function createDurableSchema(database: DatabaseSync): void {
       completed_at TEXT,
       updated_at TEXT NOT NULL,
       metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
-      UNIQUE(run_id, operation_key, request_hash)
+      UNIQUE(run_id, operation_key, request_hash),
+      FOREIGN KEY(run_id, attempt_id)
+        REFERENCES durable_attempts(run_id, attempt_id)
     ) STRICT;
 
     CREATE UNIQUE INDEX IF NOT EXISTS durable_operation_receipts_running_idx
@@ -718,14 +352,16 @@ export function createDurableSchema(database: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS durable_interrupts (
       interrupt_id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES durable_runs(run_id),
-      attempt_id TEXT NOT NULL REFERENCES durable_attempts(attempt_id),
+      attempt_id TEXT NOT NULL,
       status TEXT NOT NULL CHECK(status IN ('pending', 'resolved')),
       prompt TEXT NOT NULL,
       response_text TEXT,
       created_at TEXT NOT NULL,
       resolved_at TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
-      UNIQUE(run_id, attempt_id)
+      UNIQUE(run_id, attempt_id),
+      FOREIGN KEY(run_id, attempt_id)
+        REFERENCES durable_attempts(run_id, attempt_id)
     ) STRICT;
 
     CREATE UNIQUE INDEX IF NOT EXISTS durable_interrupts_active_run_idx
@@ -920,8 +556,11 @@ function migrateOutbox(
     const kind = optionalString(row, 'kind') ?? 'terminal';
     const invalidRun = invalidRunIds.has(runId);
     const legacyStatus = requiredString(row, 'status');
+    const legacyRouteJson = normalizeJsonText(requiredString(row, 'route_json'));
+    const runRouteJson = requiredString(migratedRun, 'route_json');
+    const routeMatches = continuationRoutesMatch(legacyRouteJson, runRouteJson);
     const payload = invalidRun ? '' : requiredString(row, 'payload');
-    const status = invalidRun
+    const status = invalidRun || !routeMatches
       ? invalidMigrationDeliveryStatus(legacyStatus)
       : migrateDeliveryStatus(legacyStatus);
     insert.run(
@@ -930,7 +569,7 @@ function migrateOutbox(
       eventKey,
       kind,
       optionalString(row, 'attempt_id') ?? null,
-      requiredString(migratedRun, 'route_json'),
+      routeMatches ? runRouteJson : legacyRouteJson,
       requiredString(row, 'idempotency_key'),
       serializeDurableRunJson(payload, `migrated outbox payload for ${runId}`),
       serializeDurableRunJson({ legacySchemaVersion: version }, `migrated outbox metadata for ${runId}`),
@@ -942,11 +581,15 @@ function migrateOutbox(
       optionalString(row, 'first_attempt_at') ?? null,
       optionalString(row, 'last_attempt_at') ?? null,
       optionalString(row, 'message_id') ?? null,
-      invalidRun && status !== 'sent' && status !== 'unknown'
-        ? 'continuation_persisted_state_invalid'
+      (invalidRun || !routeMatches) && status !== 'sent'
+        ? invalidRun
+          ? 'continuation_persisted_state_invalid'
+          : 'continuation_delivery_route_mismatch'
         : optionalString(row, 'error_code') ?? null,
-      invalidRun && status !== 'sent' && status !== 'unknown'
-        ? 'Stored task state failed integrity validation.'
+      (invalidRun || !routeMatches) && status !== 'sent'
+        ? invalidRun
+          ? 'Stored task state failed integrity validation.'
+          : 'Legacy delivery route does not match its Async Task route.'
         : optionalString(row, 'error_summary') ?? null,
       requiredString(row, 'created_at'),
       requiredString(row, 'updated_at'),
@@ -969,8 +612,7 @@ function migrateOperationReceipts(
   for (const row of rows) {
     const attemptId = requiredString(row, 'attempt_id');
     const stepIndex = requiredNumber(row, 'step_index');
-    const stepId = optionalString(row, 'step_id')
-      ?? 'initial-step';
+    const stepId = migratedOperationStepId(database, row, stepIndex);
     const result = parseOptionalJson(row.result_json);
     insert.run(
       requiredString(row, 'call_id'),
@@ -988,6 +630,80 @@ function migrateOperationReceipts(
       serializeDurableRunJson({ stepIndex, stepId }, `migrated operation metadata ${attemptId}`),
     );
   }
+}
+
+function migratedOperationStepId(database: DatabaseSync, row: SqlRow, stepIndex: number): string {
+  const explicit = optionalString(row, 'step_id');
+  if (explicit && !/^initial-step$|^legacy-step-\d+$/u.test(explicit)) return explicit;
+
+  const runId = requiredString(row, 'job_id');
+  const run = database.prepare(`
+    SELECT state_json, status FROM durable_runs
+    WHERE run_id = ? AND workload_kind = 'async_task'
+  `).get(runId) as SqlRow | undefined;
+  const envelope = parseOptionalJson(run?.state_json);
+  const job = isRecord(envelope) && isRecord(envelope.job) ? envelope.job : undefined;
+  if (job) {
+    const checkpointValue = isRecord(job.checkpoint) ? job.checkpoint : undefined;
+    const stepCount = typeof job.stepCount === 'number' ? job.stepCount : undefined;
+    if (checkpointValue && stepIndex === stepCount) {
+      const nextAction = isRecord(checkpointValue.nextAction) ? checkpointValue.nextAction : undefined;
+      const current = typeof nextAction?.id === 'string'
+        ? nextAction.id
+        : typeof checkpointValue.currentStepId === 'string'
+          ? checkpointValue.currentStepId
+          : undefined;
+      if (current && current !== 'initial-step') return current;
+    }
+
+    const context = isRecord(job.contextSnapshot) ? job.contextSnapshot : undefined;
+    const completed = context && Array.isArray(context.completedSteps)
+      ? context.completedSteps.filter((value): value is string => typeof value === 'string')
+      : [];
+    if (completed[stepIndex]) return legacyOperationStepId(stepIndex, completed[stepIndex]);
+    const remaining = context && Array.isArray(context.remainingSteps)
+      ? context.remainingSteps.filter((value): value is string => typeof value === 'string')
+      : [];
+    const remainingIndex = stepIndex - completed.length;
+    if (remainingIndex >= 0 && remaining[remainingIndex]) {
+      return legacyOperationStepId(stepIndex, remaining[remainingIndex]);
+    }
+    if (
+      stepIndex === 0
+      && stepCount === 0
+      && !checkpointValue
+      && completed.length === 0
+      && remaining.length === 0
+    ) return 'initial-step';
+  }
+
+  const identity = [
+    runId,
+    String(stepIndex),
+    requiredString(row, 'call_id'),
+    requiredString(row, 'tool_name'),
+    requiredString(row, 'request_hash'),
+  ].join('\0');
+  const status = optionalString(run, 'status');
+  if (status && !isMigratedTerminalStatus(status)) {
+    throw new Error(
+      `Durable Run migration cannot map operation receipt ${requiredString(row, 'call_id')} `
+      + `for active run ${runId}.`,
+    );
+  }
+  return `legacy-unmapped-step-${stepIndex + 1}-${stableHash(identity)}`;
+}
+
+function isMigratedTerminalStatus(status: string): boolean {
+  return ['completed', 'partial', 'blocked', 'failed', 'cancelled'].includes(status);
+}
+
+function legacyOperationStepId(stepIndex: number, description: string): string {
+  return `legacy-step-${stepIndex + 1}-${stableHash(description)}`;
+}
+
+function stableHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 12);
 }
 
 function migrateInterrupts(database: DatabaseSync): void {
@@ -1525,6 +1241,23 @@ function invalidMigrationDeliveryStatus(status: string): string {
   return 'failed';
 }
 
+function continuationRoutesMatch(legacyJson: string, runJson: string): boolean {
+  const legacy = parseRequiredJson(legacyJson, 'legacy outbox route');
+  const run = parseRequiredJson(runJson, 'migrated Async Task route');
+  if (!isRecord(legacy) || !isRecord(run) || legacy.kind !== run.kind) return false;
+  if (legacy.kind === 'message_thread') {
+    return legacy.conversationId === run.conversationId
+      && legacy.sourceMessageId === run.sourceMessageId
+      && (legacy.threadId === undefined || legacy.threadId === run.threadId);
+  }
+  if (legacy.kind === 'comment_thread') {
+    return legacy.documentToken === run.documentToken
+      && legacy.commentId === run.commentId
+      && legacy.fileType === run.fileType;
+  }
+  return false;
+}
+
 function normalizeJsonText(value: string): string {
   return serializeDurableRunJson(parseRequiredJson(value, 'migrated JSON'), 'migrated JSON');
 }
@@ -1553,6 +1286,95 @@ function tableExists(database: DatabaseSync, table: string): boolean {
   return row !== undefined;
 }
 
+function hardenDurableAttemptOwnership(database: DatabaseSync): void {
+  const childTables = [
+    {
+      table: 'durable_outbox',
+      indexes: ['durable_outbox_due_idx', 'durable_outbox_message_id_idx'],
+      columns: [
+        'outbox_id', 'run_id', 'event_key', 'kind', 'attempt_id', 'route_json',
+        'idempotency_key', 'payload_json', 'metadata_json', 'status', 'attempt_count',
+        'next_attempt_at', 'worker_id', 'lease_expires_at', 'first_attempt_at',
+        'last_attempt_at', 'message_id', 'error_code', 'error_summary', 'created_at',
+        'updated_at',
+      ],
+    },
+    {
+      table: 'durable_operation_receipts',
+      indexes: ['durable_operation_receipts_running_idx'],
+      columns: [
+        'receipt_id', 'run_id', 'attempt_id', 'operation_key', 'operation_name',
+        'request_hash', 'operation_risk', 'status', 'result_json', 'started_at',
+        'completed_at', 'updated_at', 'metadata_json',
+      ],
+    },
+    {
+      table: 'durable_interrupts',
+      indexes: ['durable_interrupts_active_run_idx'],
+      columns: [
+        'interrupt_id', 'run_id', 'attempt_id', 'status', 'prompt', 'response_text',
+        'created_at', 'resolved_at', 'metadata_json',
+      ],
+    },
+  ] as const;
+  const needsRebuild = childTables.filter(
+    ({ table }) => tableExists(database, table) && !hasCompositeAttemptForeignKey(database, table),
+  );
+  if (needsRebuild.length === 0) return;
+
+  immediateTransaction(database, () => {
+    database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS durable_attempts_run_attempt_idx
+        ON durable_attempts(run_id, attempt_id);
+    `);
+    for (const { table } of needsRebuild) {
+      const invalid = database.prepare(`
+        SELECT child.run_id, child.attempt_id
+        FROM ${table} child
+        LEFT JOIN durable_attempts attempt
+          ON attempt.run_id = child.run_id AND attempt.attempt_id = child.attempt_id
+        WHERE child.attempt_id IS NOT NULL AND attempt.attempt_id IS NULL
+        LIMIT 1
+      `).get() as SqlRow | undefined;
+      if (invalid) {
+        throw new Error(
+          `Durable Run schema cannot fence ${table}: Attempt does not belong to Run.`,
+        );
+      }
+    }
+
+    for (const { table, indexes } of needsRebuild) {
+      for (const index of indexes) database.exec(`DROP INDEX IF EXISTS ${index};`);
+      database.exec(`ALTER TABLE ${table} RENAME TO ${table}_unfenced_v10;`);
+    }
+    createDurableSchema(database);
+    for (const { table, columns } of needsRebuild) {
+      const projection = columns.join(', ');
+      database.exec(`
+        INSERT INTO ${table} (${projection})
+        SELECT ${projection} FROM ${table}_unfenced_v10;
+        DROP TABLE ${table}_unfenced_v10;
+      `);
+    }
+  });
+}
+
+function hasCompositeAttemptForeignKey(database: DatabaseSync, table: string): boolean {
+  const rows = database.prepare(`PRAGMA foreign_key_list(${table})`).all() as SqlRow[];
+  const byConstraint = new Map<number, Array<{ from: string; to: string }>>();
+  for (const row of rows) {
+    if (row.table !== 'durable_attempts') continue;
+    const id = requiredNumber(row, 'id');
+    const entries = byConstraint.get(id) ?? [];
+    entries.push({ from: requiredString(row, 'from'), to: requiredString(row, 'to') });
+    byConstraint.set(id, entries);
+  }
+  return [...byConstraint.values()].some((entries) =>
+    entries.length === 2
+    && entries.some((entry) => entry.from === 'run_id' && entry.to === 'run_id')
+    && entries.some((entry) => entry.from === 'attempt_id' && entry.to === 'attempt_id'));
+}
+
 function assertDurableSchema(database: DatabaseSync): void {
   for (const table of [
     'durable_runs',
@@ -1563,6 +1385,15 @@ function assertDurableSchema(database: DatabaseSync): void {
   ]) {
     if (!tableExists(database, table)) {
       throw new Error(`Durable Run schema is missing ${table}.`);
+    }
+  }
+  for (const table of [
+    'durable_outbox',
+    'durable_operation_receipts',
+    'durable_interrupts',
+  ]) {
+    if (!hasCompositeAttemptForeignKey(database, table)) {
+      throw new Error(`Durable Run schema is missing composite Attempt ownership for ${table}.`);
     }
   }
   const violations = database.prepare('PRAGMA foreign_key_check').all();
@@ -1581,9 +1412,9 @@ function assertContinuationCompatibilitySchema(database: DatabaseSync): void {
       throw new Error(`Continuation compatibility schema is missing view ${view}.`);
     }
   }
-  for (const trigger of CONTINUATION_COMPATIBILITY_TRIGGERS) {
-    if (objects.get(trigger) !== 'trigger') {
-      throw new Error(`Continuation compatibility schema is missing trigger ${trigger}.`);
+  for (const [name, type] of objects) {
+    if (type === 'trigger') {
+      throw new Error(`Continuation compatibility schema must be read-only; found trigger ${name}.`);
     }
   }
 }

@@ -36,10 +36,8 @@ import {
   continuationJobId,
 } from '../src/continuation/input-store.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
-import {
-  installContinuationCompatibilitySchema,
-  registerContinuationCompatibilityFunctions,
-} from '../src/durable-run/sqlite-migrations.js';
+import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
+import { installContinuationCompatibilitySchema } from '../src/durable-run/sqlite-migrations.js';
 import { currentProcessStartedAt } from '../src/process-identity.js';
 
 if (process.argv[2] === '--hold-managed-input-create') {
@@ -152,10 +150,6 @@ async function waitForChildMarker(
   });
 }
 
-function enableCompatibilityWrites(database: SqliteDatabaseSync): void {
-  registerContinuationCompatibilityFunctions(database, () => 1);
-}
-
 function cloneHistoricalContinuationJob(
   database: SqliteDatabaseSync,
   sourceJobId: string,
@@ -198,7 +192,6 @@ async function verifyConcurrentFreshInitialization(): Promise<void> {
   const { DatabaseSync: InitializationDatabaseSync } = await import('node:sqlite');
   const database = new InitializationDatabaseSync(initializationDatabasePath);
   try {
-    enableCompatibilityWrites(database);
     assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 10);
     const schema = database.prepare(`
       SELECT type, name
@@ -217,7 +210,7 @@ async function verifyConcurrentFreshInitialization(): Promise<void> {
         'continuation_tool_calls',
       ],
     );
-    assert.equal(schema.filter((entry) => entry.type === 'trigger').length, 15);
+    assert.equal(schema.filter((entry) => entry.type === 'trigger').length, 0);
     assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
 
     const definitionsBeforeFailure = database.prepare(`
@@ -443,7 +436,7 @@ async function recoverAndCommit(
   now: string,
 ): Promise<DurableRunInterruptedAttempt[]> {
   const adapter = kernelAdapter(repository);
-  const interrupted = await adapter.recoverExpiredLeases(now);
+  const interrupted = await adapter.recoverExpiredLeases(['async_task'], now);
   for (const attempt of interrupted) {
     assert.equal(
       await adapter.commitTransition(
@@ -480,6 +473,58 @@ async function claimInWorker(
     });
   });
 }
+
+const genericLifecycleCalls = {
+  create: 0,
+  claimDue: 0,
+  markExecutionStarted: 0,
+  heartbeat: 0,
+  commitTransition: 0,
+  failAttempt: 0,
+  claimDelivery: 0,
+  commitDelivery: 0,
+};
+const genericPrototype = SqliteDurableRunRepository.prototype;
+const originalGenericCreate = genericPrototype.create;
+const originalGenericClaimDue = genericPrototype.claimDue;
+const originalGenericMarkExecutionStarted = genericPrototype.markExecutionStarted;
+const originalGenericHeartbeat = genericPrototype.heartbeat;
+const originalGenericCommitTransition = genericPrototype.commitTransition;
+const originalGenericFailAttempt = genericPrototype.failAttempt;
+const originalGenericClaimDelivery = genericPrototype.claimDelivery;
+const originalGenericCommitDelivery = genericPrototype.commitDelivery;
+genericPrototype.create = async function (...args) {
+  genericLifecycleCalls.create += 1;
+  return originalGenericCreate.apply(this, args);
+};
+genericPrototype.claimDue = async function (...args) {
+  genericLifecycleCalls.claimDue += 1;
+  return originalGenericClaimDue.apply(this, args);
+};
+genericPrototype.markExecutionStarted = async function (...args) {
+  genericLifecycleCalls.markExecutionStarted += 1;
+  return originalGenericMarkExecutionStarted.apply(this, args);
+};
+genericPrototype.heartbeat = async function (...args) {
+  genericLifecycleCalls.heartbeat += 1;
+  return originalGenericHeartbeat.apply(this, args);
+};
+genericPrototype.commitTransition = async function (...args) {
+  genericLifecycleCalls.commitTransition += 1;
+  return originalGenericCommitTransition.apply(this, args);
+};
+genericPrototype.failAttempt = async function (...args) {
+  genericLifecycleCalls.failAttempt += 1;
+  return originalGenericFailAttempt.apply(this, args);
+};
+genericPrototype.claimDelivery = async function (...args) {
+  genericLifecycleCalls.claimDelivery += 1;
+  return originalGenericClaimDelivery.apply(this, args);
+};
+genericPrototype.commitDelivery = async function (...args) {
+  genericLifecycleCalls.commitDelivery += 1;
+  return originalGenericCommitDelivery.apply(this, args);
+};
 
 const repository = await SqliteContinuationRepository.open({
   databasePath,
@@ -644,6 +689,15 @@ try {
       resumeAfterSeconds: 0,
     },
   }, '2026-07-17T00:00:11.000Z');
+  assert.equal(
+    await repository.heartbeat(
+      first.job.jobId,
+      'worker-main',
+      '2026-07-17T00:00:11.001Z',
+      '2026-07-17T00:00:41.001Z',
+    ),
+    false,
+  );
   const checkpointed = await repository.get(first.job.jobId);
   assert.equal(checkpointed?.status, 'waiting_retry');
   assert.equal(checkpointed?.stepCount, 1);
@@ -1032,8 +1086,18 @@ try {
   const legacyEnvelope = await repository.create(createRequest('legacy-envelope'));
   const { DatabaseSync } = await import('node:sqlite');
   const rawDatabase = new DatabaseSync(databasePath);
-  enableCompatibilityWrites(rawDatabase);
-  rawDatabase.prepare('UPDATE continuation_jobs SET permissions_json = ? WHERE job_id = ?').run(
+  rawDatabase.prepare(`
+    UPDATE durable_runs
+    SET input_json = json_set(input_json, '$.job.permissions', json(?)),
+        state_json = json_set(state_json, '$.job.permissions', json(?))
+    WHERE run_id = ? AND workload_kind = 'async_task'
+  `).run(
+    JSON.stringify({
+      filesystem: { root, mode: 'workspace-write' },
+      hostTools: [],
+      network: 'none',
+      approval: { mode: 'never' },
+    }),
     JSON.stringify({
       filesystem: { root, mode: 'workspace-write' },
       hostTools: [],
@@ -1051,9 +1115,30 @@ try {
     externalSideEffects: 'denied',
     approval: { mode: 'never' },
   });
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(genericLifecycleCalls).map(([name, count]) => [name, count > 0])),
+    {
+      create: true,
+      claimDue: true,
+      markExecutionStarted: true,
+      heartbeat: true,
+      commitTransition: true,
+      failAttempt: true,
+      claimDelivery: true,
+      commitDelivery: true,
+    },
+  );
 } finally {
   secondRepository.close();
   repository.close();
+  genericPrototype.create = originalGenericCreate;
+  genericPrototype.claimDue = originalGenericClaimDue;
+  genericPrototype.markExecutionStarted = originalGenericMarkExecutionStarted;
+  genericPrototype.heartbeat = originalGenericHeartbeat;
+  genericPrototype.commitTransition = originalGenericCommitTransition;
+  genericPrototype.failAttempt = originalGenericFailAttempt;
+  genericPrototype.claimDelivery = originalGenericClaimDelivery;
+  genericPrototype.commitDelivery = originalGenericCommitDelivery;
 }
 
 // Maintenance scans isolate corrupt rows without blocking healthy lease, expiry, or budget work.
@@ -1067,17 +1152,21 @@ const maintenanceRepository = await SqliteContinuationRepository.open({
 });
 const { DatabaseSync: MaintenanceDatabaseSync } = await import('node:sqlite');
 const maintenanceDatabase = new MaintenanceDatabaseSync(maintenanceDatabasePath);
-enableCompatibilityWrites(maintenanceDatabase);
 const corruptMaintenanceFacts = (jobId: string) => {
-  const row = maintenanceDatabase.prepare(`
-    SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
-  `).get(jobId) as { source_facts_json: string };
   maintenanceDatabase.prepare(`
-    UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
-  `).run(JSON.stringify({
-    ...JSON.parse(row.source_facts_json) as Record<string, unknown>,
-    unexpected: 'maintenance corruption',
-  }), jobId);
+    UPDATE durable_runs
+    SET input_json = json_set(
+          input_json,
+          '$.job.sourceFacts.unexpected',
+          'maintenance corruption'
+        ),
+        state_json = json_set(
+          state_json,
+          '$.job.sourceFacts.unexpected',
+          'maintenance corruption'
+        )
+    WHERE run_id = ? AND workload_kind = 'async_task'
+  `).run(jobId);
 };
 
 const corruptLeaseJob = await maintenanceRepository.create(createRequest(
@@ -1144,16 +1233,22 @@ const healthyBudgetJob = await maintenanceRepository.create(createRequest(
   { maxAttempts: 1 },
 ));
 const insertBudgetAttempt = maintenanceDatabase.prepare(`
-  INSERT INTO continuation_attempts (
-    attempt_id, job_id, ordinal, worker_id, started_at, heartbeat_at,
+  INSERT INTO durable_attempts (
+    attempt_id, run_id, ordinal, worker_id, claimed_at, heartbeat_at,
+    lease_expires_at, execution_phase, operation_risk, metadata_json,
     finished_at, outcome, error_code, error_summary
-  ) VALUES (?, ?, 1, 'maintenance-worker', ?, ?, ?, 'error', 'test', 'test')
+  ) VALUES (?, ?, 1, 'maintenance-worker', ?, ?, ?, 'claimed', 'unknown', '{}',
+    ?, 'error', 'test', 'test')
 `);
 for (const [attemptId, jobId] of [
   ['attempt_maintenance_corrupt', corruptBudgetJob.job.jobId],
   ['attempt_maintenance_healthy', healthyBudgetJob.job.jobId],
 ]) {
-  insertBudgetAttempt.run(attemptId, jobId, baseNow, baseNow, baseNow);
+  insertBudgetAttempt.run(attemptId, jobId, baseNow, baseNow, baseNow, baseNow);
+  maintenanceDatabase.prepare(`
+    UPDATE durable_runs SET attempt_count = 1
+    WHERE run_id = ? AND workload_kind = 'async_task'
+  `).run(jobId);
 }
 corruptMaintenanceFacts(corruptBudgetJob.job.jobId);
 assert.equal(await maintenanceRepository.claimDue(
@@ -1167,7 +1262,13 @@ assert.equal(
 );
 assert.equal(
   (await maintenanceRepository.get(healthyBudgetJob.job.jobId))?.status,
-  'partial',
+  'queued',
+);
+assert.equal(
+  maintenanceDatabase.prepare(`
+    SELECT attempt_count FROM durable_runs WHERE run_id = ?
+  `).get(healthyBudgetJob.job.jobId)?.attempt_count,
+  1,
 );
 maintenanceDatabase.close();
 maintenanceRepository.close();
@@ -1748,10 +1849,23 @@ try {
     false,
     '2026-07-20T00:00:01.000Z',
   ), true);
-  await retentionRepository.markDeliveryResult(
-    heldUndeliveredDelivery!,
-    { status: 'delivered', messageId: 'om_retention_undelivered' },
+  await assert.rejects(
+    retentionRepository.markDeliveryResult(
+      heldUndeliveredDelivery!,
+      { status: 'delivered', messageId: 'om_retention_undelivered' },
+      '2026-07-20T00:00:02.000Z',
+    ),
+    /stale continuation delivery claim/i,
+  );
+  const reclaimedUndeliveredDelivery = await retentionRepository.claimPendingDelivery(
+    'delivery-retention-reclaimed',
     '2026-07-20T00:00:02.000Z',
+  );
+  assert.equal(reclaimedUndeliveredDelivery?.outboxId, heldUndeliveredDelivery?.outboxId);
+  await retentionRepository.markDeliveryResult(
+    reclaimedUndeliveredDelivery!,
+    { status: 'delivered', messageId: 'om_retention_undelivered' },
+    '2026-07-20T00:00:02.001Z',
   );
   assert.equal((await retentionRepository.purgeExpired(
     '2026-07-18T00:00:00.000Z',
@@ -1769,6 +1883,9 @@ const versionThreeDatabasePath = join(root, 'migration-v3', 'jobs.sqlite');
 const versionThreeArtifactsDir = join(root, 'migration-v3', 'artifacts');
 await import('node:fs/promises').then(({ mkdir }) => mkdir(join(root, 'migration-v3'), { recursive: true }));
 const versionThreeDatabase = new DatabaseSync(versionThreeDatabasePath);
+const legacyV3RequestHash = createHash('sha256')
+  .update(JSON.stringify({ tool: 'lark_cli', args: [] }))
+  .digest('hex');
 versionThreeDatabase.exec(`
   CREATE TABLE continuation_jobs (
     job_id TEXT PRIMARY KEY,
@@ -1888,7 +2005,7 @@ versionThreeDatabase.exec(`
     status, result_json, started_at, completed_at, updated_at
   ) VALUES (
     'call_legacy_v3', 'job_legacy_v3', 0, 'attempt_legacy_v3', 'lark_cli',
-    'hash_legacy_v3', 'completed', '{"ok":true,"message":"legacy"}',
+    '${legacyV3RequestHash}', 'completed', '{"ok":true,"message":"legacy"}',
     '${baseNow}', '${baseNow}', '${baseNow}'
   );
   INSERT INTO continuation_outbox (
@@ -1903,6 +2020,37 @@ versionThreeDatabase.exec(`
   PRAGMA user_version = 3;
 `);
 versionThreeDatabase.close();
+
+const runningReceiptV3Root = join(root, 'migration-v3-running-receipt');
+const runningReceiptV3Path = join(runningReceiptV3Root, 'jobs.sqlite');
+await mkdir(runningReceiptV3Root, { recursive: true });
+await copyFile(versionThreeDatabasePath, runningReceiptV3Path);
+const runningReceiptV3Database = new DatabaseSync(runningReceiptV3Path);
+runningReceiptV3Database.prepare(`
+  UPDATE continuation_tool_calls
+  SET status = 'running', result_json = NULL, completed_at = NULL
+  WHERE call_id = 'call_legacy_v3'
+`).run();
+runningReceiptV3Database.close();
+const runningReceiptV3Repository = await SqliteContinuationRepository.open({
+  databasePath: runningReceiptV3Path,
+  artifactsDir: join(runningReceiptV3Root, 'artifacts'),
+});
+try {
+  const claim = await runningReceiptV3Repository.claimDue(
+    'worker-legacy-v3-running-receipt',
+    baseNow,
+    '2026-07-17T00:00:30.000Z',
+  );
+  assert.equal(claim?.job.jobId, 'job_legacy_v3');
+  assert.deepEqual(await runningReceiptV3Repository.beginToolCall(
+    claim!,
+    { tool: 'lark_cli', args: [] },
+    baseNow,
+  ), { status: 'unknown', callId: 'call_legacy_v3' });
+} finally {
+  runningReceiptV3Repository.close();
+}
 
 // Historical schema upgrades remain process-safe when two plugin instances start together.
 for (let index = 0; index < 4; index += 1) {
@@ -1948,19 +2096,34 @@ try {
   assert.equal(migrated?.attemptCount, 1);
   assert.equal(migrated?.deliveryEvents?.[0]?.kind, 'terminal');
   assert.equal(migrated?.permissions.filesystem.root, root);
+  const claim = await authenticVersionTwoRepository.claimDue(
+    'worker-legacy-v2-receipt',
+    baseNow,
+    '2026-07-17T00:00:30.000Z',
+  );
+  assert.equal(claim?.job.jobId, 'job_legacy_v3');
+  assert.deepEqual(await authenticVersionTwoRepository.beginToolCall(
+    claim!,
+    { tool: 'lark_cli', args: [] },
+    baseNow,
+  ), {
+    status: 'replay',
+    callId: 'call_legacy_v3',
+    result: { ok: true, message: 'legacy' },
+  });
 } finally {
   authenticVersionTwoRepository.close();
 }
 const authenticVersionTwoMigratedDatabase = new DatabaseSync(authenticVersionTwoDatabasePath);
 assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
   'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
-).get('job_legacy_v3')?.count), 1);
+).get('job_legacy_v3')?.count), 2);
 assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
   'SELECT COUNT(*) AS count FROM continuation_tool_calls WHERE job_id = ?',
 ).get('job_legacy_v3')?.count), 1);
-assert.equal(authenticVersionTwoMigratedDatabase.prepare(
+assert.equal(String(authenticVersionTwoMigratedDatabase.prepare(
   'SELECT step_id FROM continuation_tool_calls WHERE job_id = ?',
-).get('job_legacy_v3')?.step_id, 'initial-step');
+).get('job_legacy_v3')?.step_id), 'initial-step');
 assert.equal(Number(authenticVersionTwoMigratedDatabase.prepare(
   'SELECT COUNT(*) AS count FROM continuation_outbox WHERE job_id = ?',
 ).get('job_legacy_v3')?.count), 1);
@@ -2493,7 +2656,6 @@ const reopenedManagedJob = await reopenedManagedRepository.get(expectedManagedJo
 assert.equal(reopenedManagedJob?.jobId, expectedManagedJobId);
 assert.equal(reopenedManagedJob?.sourceFacts.sourceTimestamp, '2026-07-18T08:30:00.000Z');
 const managedDatabase = new DatabaseSync(managedDatabasePath);
-enableCompatibilityWrites(managedDatabase);
 const managedRaw = managedDatabase.prepare(`
   SELECT source_facts_json, task_contract_json FROM continuation_jobs WHERE job_id = ?
 `).get(expectedManagedJobId) as { source_facts_json: string; task_contract_json: string };
@@ -2523,7 +2685,10 @@ const invalidContractJob = await reopenedManagedRepository.create(createRequest(
   'invalid-persisted-contract',
 ));
 managedDatabase.prepare(`
-  UPDATE continuation_jobs SET task_contract_json = '{}' WHERE job_id = ?
+  UPDATE durable_runs
+  SET input_json = json_set(input_json, '$.job.taskContract', json('{}')),
+      state_json = json_set(state_json, '$.job.taskContract', json('{}'))
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).run(invalidContractJob.job.jobId);
 assert.equal(
   (await reopenedManagedRepository.get(invalidContractJob.job.jobId))?.errorCode,
@@ -2541,8 +2706,15 @@ const managedFactsWithUnknownField = {
   unexpected: 'must not reach the runner prompt',
 };
 managedDatabase.prepare(`
-  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
-`).run(JSON.stringify(managedFactsWithUnknownField), unknownFactsJob.job.jobId);
+  UPDATE durable_runs
+  SET input_json = json_set(input_json, '$.job.sourceFacts', json(?)),
+      state_json = json_set(state_json, '$.job.sourceFacts', json(?))
+  WHERE run_id = ? AND workload_kind = 'async_task'
+`).run(
+  JSON.stringify(managedFactsWithUnknownField),
+  JSON.stringify(managedFactsWithUnknownField),
+  unknownFactsJob.job.jobId,
+);
 assert.equal(
   (await reopenedManagedRepository.get(unknownFactsJob.job.jobId))?.errorCode,
   'continuation_persisted_state_invalid',
@@ -2601,9 +2773,10 @@ const injectRedactionRace = (): void => {
   if (redactionRaceInjected) return;
   redactionRaceInjected = true;
   const concurrent = new DatabaseSync(redactionRollbackOptions.databasePath);
-  enableCompatibilityWrites(concurrent);
   concurrent.prepare(`
-    UPDATE continuation_jobs SET status = 'queued' WHERE job_id = ?
+    UPDATE durable_runs
+    SET status = 'queued'
+    WHERE run_id = ? AND workload_kind = 'async_task'
   `).run(redactionRollbackCreated.job.jobId);
   concurrent.close();
 };
@@ -2989,8 +3162,9 @@ const crashAdoptionSeed = await SqliteContinuationRepository.open(crashAdoptionO
 const crashAdoptionCreated = await crashAdoptionSeed.create(crashAdoptionRequest);
 crashAdoptionSeed.close();
 const crashAdoptionDatabase = new DatabaseSync(crashAdoptionOptions.databasePath);
-enableCompatibilityWrites(crashAdoptionDatabase);
-crashAdoptionDatabase.prepare('DELETE FROM continuation_jobs WHERE job_id = ?').run(
+crashAdoptionDatabase.prepare(`
+  DELETE FROM durable_runs WHERE run_id = ? AND workload_kind = 'async_task'
+`).run(
   crashAdoptionCreated.job.jobId,
 );
 crashAdoptionDatabase.close();
@@ -3310,8 +3484,8 @@ const fifoChild = spawn(process.execPath, [
 ], { stdio: ['ignore', 'pipe', 'pipe'] });
 await waitForChildMarker(fifoChild, 'BLOCKING_INPUT_REJECTED', 1_000);
 
-// If managed input admission succeeds but the database insert fails, creation compensates by
-// removing only the tree installed by this request and leaves no partial staging directory.
+// Missing retry parents fail before managed input admission. A later artifact preparation failure
+// still compensates the tree installed by that request and leaves no partial staging directory.
 const failedCommitRoot = await mkdtemp(join(tmpdir(), 'continuation-failed-commit-'));
 const failedCommitSource = join(failedCommitRoot, 'source.txt');
 await writeFile(failedCommitSource, 'valid admitted bytes', 'utf8');
@@ -3329,12 +3503,40 @@ const failedCommitRequest = createRequest('failed-commit', {
     kind: 'message_attachment',
   }],
 });
-await assert.rejects(failedCommitRepository.create(failedCommitRequest), /foreign key/i);
+await assert.rejects(failedCommitRepository.create(failedCommitRequest), /retry source/i);
 assert.equal(await failedCommitRepository.get(continuationJobId(failedCommitRequest.idempotencyKey)), null);
+const compensatedCreateRequest = createRequest('failed-after-input-install', {
+  sourceInputs: [{
+    sourcePath: failedCommitSource,
+    fileName: 'source.txt',
+    kind: 'message_attachment',
+  }],
+  resumeCheckpoint: progressCheckpoint({
+    artifacts: [{
+      id: 'missing-artifact',
+      deliverableId: 'result',
+      path: 'missing.txt',
+      sha256: 'a'.repeat(64),
+    }],
+  }),
+  resumeArtifactSourceJobId: 'job_missing_artifact_source',
+});
+await assert.rejects(
+  failedCommitRepository.create(compensatedCreateRequest),
+  (error: unknown) => error instanceof Error
+    && 'code' in error
+    && error.code === 'ENOENT',
+);
+assert.equal(
+  await failedCommitRepository.get(continuationJobId(compensatedCreateRequest.idempotencyKey)),
+  null,
+);
 const failedCommitEntries = await readdir(failedCommitOptions.inputsDir);
 assert.equal(
   failedCommitEntries.some((entry) =>
-    entry === continuationJobId(failedCommitRequest.idempotencyKey) || entry.startsWith('.staging-')),
+    entry === continuationJobId(failedCommitRequest.idempotencyKey)
+    || entry === continuationJobId(compensatedCreateRequest.idempotencyKey)
+    || entry.startsWith('.staging-')),
   false,
 );
 failedCommitRepository.close();
@@ -3455,7 +3657,6 @@ const healthyStateJob = await corruptStateRepository.create(createRequest('healt
   createdAt: '2026-07-16T23:59:59.000Z',
 }));
 const corruptStateDatabase = new DatabaseSync(corruptStateDatabasePath);
-enableCompatibilityWrites(corruptStateDatabase);
 const persistedInput = (index: number, sizeBytes = 1) => ({
   id: `input_${String(index).padStart(3, '0')}`,
   kind: 'message_attachment',
@@ -3466,10 +3667,14 @@ const persistedInput = (index: number, sizeBytes = 1) => ({
 });
 const overwritePersistedInputs = (jobId: string, inputs: unknown[]) => {
   const row = corruptStateDatabase.prepare(`
-    SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+    SELECT json_extract(state_json, '$.job.sourceFacts') AS source_facts_json
+    FROM durable_runs
+    WHERE run_id = ? AND workload_kind = 'async_task'
   `).get(jobId) as { source_facts_json: string };
   corruptStateDatabase.prepare(`
-    UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+    UPDATE durable_runs
+    SET state_json = json_set(state_json, '$.job.sourceFacts', json(?))
+    WHERE run_id = ? AND workload_kind = 'async_task'
   `).run(JSON.stringify({
     ...JSON.parse(row.source_facts_json) as Record<string, unknown>,
     inputs,
@@ -3494,7 +3699,9 @@ assert.equal(
   'continuation_persisted_state_invalid',
 );
 corruptStateDatabase.prepare(`
-  UPDATE continuation_jobs SET checkpoint_json = ? WHERE job_id = ?
+  UPDATE durable_runs
+  SET state_json = json_set(state_json, '$.job.checkpoint', json(?))
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).run(JSON.stringify({
   summary: 'x'.repeat(CONTINUATION_LIMITS.checkpointBytes),
   completedSteps: [],
@@ -3504,7 +3711,9 @@ corruptStateDatabase.prepare(`
   references: [],
 }), corruptCheckpointJob.job.jobId);
 corruptStateDatabase.prepare(`
-  UPDATE continuation_jobs SET result_artifacts_json = ? WHERE job_id = ?
+  UPDATE durable_runs
+  SET state_json = json_set(state_json, '$.job.resultArtifacts', json(?))
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).run(JSON.stringify(Array.from(
   { length: CONTINUATION_LIMITS.artifactCount + 1 },
   (_, index) => `artifact-${index}`,
@@ -3520,10 +3729,14 @@ assert.equal(
   'continuation_persisted_state_invalid',
 );
 const corruptFactsJson = corruptStateDatabase.prepare(`
-  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+  SELECT json_extract(state_json, '$.job.sourceFacts') AS source_facts_json
+  FROM durable_runs
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).get(corruptStateJob.job.jobId) as { source_facts_json: string };
 corruptStateDatabase.prepare(`
-  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+  UPDATE durable_runs
+  SET state_json = json_set(state_json, '$.job.sourceFacts', json(?))
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).run(JSON.stringify({
   ...JSON.parse(corruptFactsJson.source_facts_json) as Record<string, unknown>,
   unexpected: 'github_pat_must_not_leak',
@@ -3620,9 +3833,10 @@ const routeMismatchHealthy = await routeMismatchRepository.create(createRequest(
   { createdAt: '2026-07-16T23:59:59.000Z' },
 ));
 const routeMismatchDatabase = new DatabaseSync(routeMismatchDatabasePath);
-enableCompatibilityWrites(routeMismatchDatabase);
 const routeMismatchFacts = routeMismatchDatabase.prepare(`
-  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+  SELECT json_extract(state_json, '$.job.sourceFacts') AS source_facts_json
+  FROM durable_runs
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).get(routeMismatchJob.job.jobId) as { source_facts_json: string };
 const wrongThreadRoute = {
   kind: 'message_thread',
@@ -3633,7 +3847,10 @@ const wrongThreadRoute = {
   threadId: 'omt_wrong_thread',
 };
 routeMismatchDatabase.prepare(`
-  UPDATE continuation_jobs SET route_json = ?, source_facts_json = ? WHERE job_id = ?
+  UPDATE durable_runs
+  SET route_json = ?,
+      state_json = json_set(state_json, '$.job.sourceFacts', json(?))
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).run(
   JSON.stringify(wrongThreadRoute),
   JSON.stringify({
@@ -3692,14 +3909,19 @@ const commentBindingJob = await routeMismatchRepository.create({
   },
 });
 const commentBindingFacts = routeMismatchDatabase.prepare(`
-  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+  SELECT json_extract(state_json, '$.job.sourceFacts') AS source_facts_json
+  FROM durable_runs
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).get(commentBindingJob.job.jobId) as { source_facts_json: string };
 const wrongCommentRoute = {
   ...expectedCommentRoute,
   commentId: 'comment_persisted_wrong',
 };
 routeMismatchDatabase.prepare(`
-  UPDATE continuation_jobs SET route_json = ?, source_facts_json = ? WHERE job_id = ?
+  UPDATE durable_runs
+  SET route_json = ?,
+      state_json = json_set(state_json, '$.job.sourceFacts', json(?))
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).run(
   JSON.stringify(wrongCommentRoute),
   JSON.stringify({
@@ -3789,12 +4011,15 @@ assert.equal(await terminalCorruptRepository.requestCancel(
   baseNow,
 ), 'cancelled');
 const terminalCorruptDatabase = new DatabaseSync(terminalCorruptDatabasePath);
-enableCompatibilityWrites(terminalCorruptDatabase);
 const terminalCorruptFacts = terminalCorruptDatabase.prepare(`
-  SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
+  SELECT json_extract(state_json, '$.job.sourceFacts') AS source_facts_json
+  FROM durable_runs
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).get(terminalCorruptCreated.job.jobId) as { source_facts_json: string };
 terminalCorruptDatabase.prepare(`
-  UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+  UPDATE durable_runs
+  SET state_json = json_set(state_json, '$.job.sourceFacts', json(?))
+  WHERE run_id = ? AND workload_kind = 'async_task'
 `).run(JSON.stringify({
   ...JSON.parse(terminalCorruptFacts.source_facts_json) as Record<string, unknown>,
   unexpected: 'must_be_scrubbed',
@@ -3832,8 +4057,8 @@ await assert.rejects(
 terminalCorruptDatabase.close();
 terminalCorruptRepository.close();
 
-// Corrupt-state recovery must re-read after taking the cross-process storage lock. A concurrent
-// repair that wins the lock must not be overwritten by a tombstone or have its storage removed.
+// Read-side repair rechecks after taking the storage lock, but claim-time typed validation is
+// authoritative: once a corrupt persisted envelope reaches admission it fails closed atomically.
 const recoveryRaceRoot = await mkdtemp(join(tmpdir(), 'continuation-corrupt-recovery-race-'));
 const recoveryRaceDatabasePath = join(recoveryRaceRoot, 'jobs.sqlite');
 const recoveryRaceInputsDir = join(recoveryRaceRoot, 'inputs');
@@ -3856,7 +4081,9 @@ const recoveryRaceRepository = await SqliteContinuationRepository.open({
         if (restoreHealthyRowOnLock && recoveryRaceDatabase && jobId === recoveryRaceJobId) {
           restoreHealthyRowOnLock = false;
           recoveryRaceDatabase.prepare(`
-            UPDATE continuation_jobs SET source_facts_json = ? WHERE job_id = ?
+            UPDATE durable_runs
+            SET state_json = json_set(state_json, '$.job.sourceFacts', json(?))
+            WHERE run_id = ? AND workload_kind = 'async_task'
           `).run(recoveryRaceHealthyFacts, recoveryRaceJobId);
         }
         return operation();
@@ -3895,7 +4122,6 @@ const recoveryRaceCreated = await recoveryRaceRepository.create(createRequest(
 ));
 recoveryRaceJobId = recoveryRaceCreated.job.jobId;
 recoveryRaceDatabase = new DatabaseSync(recoveryRaceDatabasePath);
-enableCompatibilityWrites(recoveryRaceDatabase);
 recoveryRaceHealthyFacts = String(recoveryRaceDatabase.prepare(`
   SELECT source_facts_json FROM continuation_jobs WHERE job_id = ?
 `).get(recoveryRaceJobId)?.source_facts_json ?? '');
@@ -3914,17 +4140,20 @@ assert.ok((await recoveryRaceRepository.listAll(10)).some(
   (job) => job.jobId === recoveryRaceJobId && job.status === 'queued',
 ));
 corruptRecoveryRaceRow();
-assert.equal((await recoveryRaceRepository.claimDue(
+assert.equal(await recoveryRaceRepository.claimDue(
   'worker-corrupt-recovery-race',
   baseNow,
   '2026-07-17T00:00:30.000Z',
-))?.job.jobId, recoveryRaceJobId);
-assert.equal(recoveryRaceRemoveCount, 0);
-assert.equal((await lstat(join(recoveryRaceInputsDir, recoveryRaceJobId))).isDirectory(), true);
+), null);
+const failedRecoveryRace = await recoveryRaceRepository.get(recoveryRaceJobId);
+assert.equal(failedRecoveryRace?.status, 'failed');
+assert.equal(failedRecoveryRace?.errorCode, 'continuation_persisted_state_invalid');
+assert.equal(recoveryRaceRemoveCount, 1);
+await assert.rejects(lstat(join(recoveryRaceInputsDir, recoveryRaceJobId)), /ENOENT/);
 recoveryRaceDatabase.close();
 recoveryRaceRepository.close();
 
-// A corrupt due input terminates before an attempt/lease, emits one logical terminal event,
+// A corrupt due input closes its generic admission Attempt, emits one logical terminal event,
 // and does not prevent the next healthy due Job from being claimed.
 const integrityRoot = await mkdtemp(join(tmpdir(), 'continuation-integrity-'));
 const integrityDatabasePath = join(integrityRoot, 'jobs.sqlite');
@@ -3990,7 +4219,7 @@ assert.equal(unreadableJob?.errorCode, 'continuation_input_integrity_failed');
 const corruptedJob = await reopenedIntegrityRepository.get(corruptCreated.job.jobId);
 assert.equal(corruptedJob?.status, 'failed');
 assert.equal(corruptedJob?.errorCode, 'continuation_input_integrity_failed');
-assert.equal(corruptedJob?.attemptCount, 0);
+assert.equal(corruptedJob?.attemptCount, 1);
 assert.equal(corruptedJob?.leaseOwner, undefined);
 assert.equal(corruptedJob?.leaseExpiresAt, undefined);
 assert.equal(corruptedJob?.deliveryEvents?.filter((event) => event.kind === 'terminal').length, 1);
@@ -4005,9 +4234,8 @@ await reopenedIntegrityRepository.markDeliveryResult(
   baseNow,
 );
 const integrityOutboxDatabase = new DatabaseSync(integrityDatabasePath);
-enableCompatibilityWrites(integrityOutboxDatabase);
 integrityOutboxDatabase.prepare(`
-  UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
+  UPDATE durable_outbox SET route_json = ? WHERE run_id = ? AND kind = 'terminal'
 `).run(JSON.stringify({
   kind: 'message_thread',
   conversationId: corruptCreated.job.route.kind === 'message_thread'
@@ -4026,9 +4254,9 @@ const invalidRouteOutbox = integrityOutboxDatabase.prepare(`
 assert.equal(invalidRouteOutbox.status, 'failed');
 assert.equal(invalidRouteOutbox.error_code, 'continuation_delivery_route_invalid');
 integrityOutboxDatabase.prepare(`
-  UPDATE continuation_outbox
+  UPDATE durable_outbox
   SET route_json = ?, status = 'pending', error_code = NULL, error_summary = NULL
-  WHERE job_id = ? AND kind = 'terminal'
+  WHERE run_id = ? AND kind = 'terminal'
 `).run(JSON.stringify(corruptCreated.job.route), corruptCreated.job.jobId);
 integrityOutboxDatabase.close();
 const integrityDelivery = await reopenedIntegrityRepository.claimPendingDelivery(
@@ -4071,9 +4299,8 @@ assert.equal(await reopenedIntegrityRepository.requestCancel(
   '2026-07-17T00:00:01.000Z',
 ), 'cancelled');
 const routeInvalidCleanupDatabase = new DatabaseSync(integrityDatabasePath);
-enableCompatibilityWrites(routeInvalidCleanupDatabase);
 routeInvalidCleanupDatabase.prepare(`
-  UPDATE continuation_outbox SET route_json = ? WHERE job_id = ? AND kind = 'terminal'
+  UPDATE durable_outbox SET route_json = ? WHERE run_id = ? AND kind = 'terminal'
 `).run(JSON.stringify({
   ...routeInvalidCleanupJob.job.route,
   threadId: 'omt_route_invalid_cleanup',
@@ -4146,7 +4373,7 @@ assert.equal(
 const failedAfterIoFailure = await unavailableRepository.get(unavailableJob.job.jobId);
 assert.equal(failedAfterIoFailure?.status, 'failed');
 assert.equal(failedAfterIoFailure?.errorCode, 'continuation_input_integrity_failed');
-assert.equal(failedAfterIoFailure?.attemptCount, 0);
+assert.equal(failedAfterIoFailure?.attemptCount, 1);
 assert.equal(failedAfterIoFailure?.deliveryEvents?.length, 1);
 await chmod(unavailableManagedPath, 0o400);
 unavailableRepository.close();
@@ -4214,13 +4441,13 @@ const pendingCancelClaim = cancelRaceClaimRepository.claimDue(
 await delayedCancelStore.verificationStarted;
 assert.equal(
   await cancelRaceMutationRepository.requestCancel(cancelRaceJob.job.jobId, baseNow),
-  'cancelled',
+  'cancel_requested',
 );
 delayedCancelStore.releaseVerification();
 assert.equal(await pendingCancelClaim, null);
 const cancelledDuringVerification = await cancelRaceMutationRepository.get(cancelRaceJob.job.jobId);
 assert.equal(cancelledDuringVerification?.status, 'cancelled');
-assert.equal(cancelledDuringVerification?.attemptCount, 0);
+assert.equal(cancelledDuringVerification?.attemptCount, 1);
 assert.equal(cancelledDuringVerification?.deliveryEvents?.filter((event) => event.kind === 'terminal').length, 1);
 cancelRaceClaimRepository.close();
 cancelRaceMutationRepository.close();
@@ -4262,7 +4489,7 @@ assert.equal(await pendingExpireClaim, null);
 const expiredDuringVerification = await expireRaceMutationRepository.get(expireRaceJob.job.jobId);
 assert.equal(expiredDuringVerification?.status, 'failed');
 assert.equal(expiredDuringVerification?.errorCode, 'continuation_expired');
-assert.equal(expiredDuringVerification?.attemptCount, 0);
+assert.equal(expiredDuringVerification?.attemptCount, 1);
 assert.equal(expiredDuringVerification?.deliveryEvents?.filter((event) => event.kind === 'terminal').length, 1);
 expireRaceClaimRepository.close();
 expireRaceMutationRepository.close();
@@ -4530,7 +4757,7 @@ assert.equal(await priorAttemptRepository.claimDue(
 ), null);
 const failedAfterPriorAttempt = await priorAttemptRepository.get(priorAttemptJob.job.jobId);
 assert.equal(failedAfterPriorAttempt?.status, 'failed');
-assert.equal(failedAfterPriorAttempt?.attemptCount, 1);
+assert.equal(failedAfterPriorAttempt?.attemptCount, 2);
 assert.equal(failedAfterPriorAttempt?.errorCode, 'continuation_input_integrity_failed');
 priorAttemptRepository.close();
 

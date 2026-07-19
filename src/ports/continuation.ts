@@ -16,7 +16,12 @@ import type {
   ContinuationToolRequest,
   ContinuationToolResult,
 } from '../domain/continuation.js';
-import type { DurableRunInterruptedAttempt } from '../domain/durable-run.js';
+import type {
+  DurableRunDeliveryResult,
+  DurableRunInterruptedAttempt,
+  DurableRunTransition,
+} from '../domain/durable-run.js';
+import type { DurableRunRepository } from './durable-run.js';
 
 export interface ContinuationInputInstallResult {
   artifacts: AsyncTaskInputArtifact[];
@@ -24,6 +29,11 @@ export interface ContinuationInputInstallResult {
 }
 
 export type ContinuationClaimMutationResult = 'committed' | 'stale';
+
+export interface ContinuationPreparedTransition {
+  transition: DurableRunTransition;
+  commitAt: string;
+}
 
 export type ContinuationInputVerification =
   | { ok: true }
@@ -57,6 +67,7 @@ export interface ContinuationInputStorePort {
 }
 
 export interface ContinuationRepository {
+  readonly durableRuns: DurableRunRepository;
   initialize(): Promise<void>;
   healthCheck(): Promise<void>;
   create(request: ContinuationCreateRequest): Promise<{ job: ContinuationJob; created: boolean }>;
@@ -90,16 +101,31 @@ export interface ContinuationRepository {
     result: ContinuationExecutionResult,
     now: string,
   ): Promise<ContinuationClaimMutationResult>;
+  prepareStepTransition(
+    claim: ContinuationClaim,
+    result: ContinuationExecutionResult,
+    now: string,
+  ): Promise<ContinuationPreparedTransition>;
   failAttempt(
     claim: ContinuationClaim,
     failure: ContinuationFailure,
     now: string,
   ): Promise<ContinuationClaimMutationResult>;
+  prepareFailureTransition(
+    claim: ContinuationClaim,
+    failure: ContinuationFailure,
+    now: string,
+  ): Promise<ContinuationPreparedTransition>;
   requestCancel(jobId: string, now: string): Promise<'cancelled' | 'cancel_requested' | 'terminal' | 'missing'>;
   completeCancellation(
     claim: ContinuationClaim,
     now: string,
   ): Promise<ContinuationClaimMutationResult>;
+  prepareCancellationTransition(
+    claim: ContinuationClaim,
+    now: string,
+  ): Promise<ContinuationPreparedTransition>;
+  verifyClaimInputs(claim: ContinuationClaim): Promise<ContinuationInputVerification>;
   recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]>;
   expireOverdue(now: string): Promise<number>;
   cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob>;
@@ -111,6 +137,11 @@ export interface ContinuationRepository {
     result: ContinuationDeliveryResult,
     now: string,
   ): Promise<void>;
+  prepareDeliveryResult(
+    claim: ContinuationDeliveryClaim,
+    result: ContinuationDeliveryResult,
+    now: string,
+  ): Promise<DurableRunDeliveryResult>;
   listPendingInterrupts(): Promise<ContinuationPendingInterruptRoute[]>;
   findPendingInterruptByDeliveryMessage(
     messageId: string,

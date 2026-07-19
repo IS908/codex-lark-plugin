@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
+  assertDurableRunDeliveryRequests,
   assertDurableRunTransition,
   isDurableRunTerminal,
   serializeDurableRunJson,
@@ -21,6 +22,8 @@ import {
 } from '../domain/durable-run.js';
 import type {
   DurableRunClaimMutationResult,
+  DurableRunPersistedStateFailure,
+  DurableRunPersistedStateValidator,
   DurableRunRepository,
 } from '../ports/durable-run.js';
 import {
@@ -89,7 +92,7 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
     const inputJson = serializeDurableRunJson(request.input, 'Durable Run input');
     const stateJson = serializeDurableRunJson(request.state, 'Durable Run state');
     const routeJson = serializeDurableRunJson(request.route, 'Durable Run route');
-    const createdAt = new Date().toISOString();
+    const createdAt = request.createdAt ?? new Date().toISOString();
     return this.transaction(() => {
       const existingByKey = this.readRunBy('idempotency_key = ?', request.idempotencyKey);
       if (existingByKey) return { run: existingByKey, created: false };
@@ -133,57 +136,85 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
     workerId: string,
     now: string,
     leaseExpiresAt: string,
+    validateRun?: DurableRunPersistedStateValidator,
   ): Promise<DurableRunClaim | null> {
     if (workloadKinds.length === 0) return null;
     const kinds = uniqueStrings(workloadKinds);
-    return this.transaction(() => {
-      const placeholders = kinds.map(() => '?').join(', ');
-      const candidate = this.database.prepare(`
-        SELECT run_id FROM durable_runs
-        WHERE workload_kind IN (${placeholders})
-          AND status IN ('queued', 'waiting_retry', 'recovering')
-          AND next_run_at <= ? AND expires_at > ?
-          AND attempt_count < max_attempts
-          AND deleted_at IS NULL
-        ORDER BY next_run_at, created_at, run_id
-        LIMIT 1
-      `).get(...kinds, now, now) as SqlRow | undefined;
-      if (!candidate) return null;
-      const runId = requiredString(candidate, 'run_id');
-      const update = this.database.prepare(`
-        UPDATE durable_runs
-        SET status = 'running', attempt_count = attempt_count + 1,
-            lease_owner = ?, lease_expires_at = ?, heartbeat_at = ?,
-            row_version = row_version + 1, updated_at = ?
-        WHERE run_id = ?
-          AND status IN ('queued', 'waiting_retry', 'recovering')
-          AND next_run_at <= ? AND expires_at > ?
-          AND attempt_count < max_attempts AND deleted_at IS NULL
-      `).run(workerId, leaseExpiresAt, now, now, runId, now, now);
-      if (Number(update.changes) !== 1) return null;
-      const run = this.requiredRun(runId);
-      const attemptId = newAttemptId();
-      this.database.prepare(`
-        INSERT INTO durable_attempts (
-          attempt_id, run_id, ordinal, worker_id, claimed_at,
-          heartbeat_at, lease_expires_at, operation_risk, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', '{}')
-      `).run(
-        attemptId,
-        runId,
-        run.attemptCount,
-        workerId,
-        now,
-        now,
-        leaseExpiresAt,
-      );
-      return {
-        run,
-        attempt: this.requiredAttempt(attemptId),
-        workerId,
-        claimedRowVersion: run.rowVersion,
-      };
-    });
+    while (true) {
+      const result = this.transaction<DurableRunClaim | 'invalid' | null>(() => {
+        const placeholders = kinds.map(() => '?').join(', ');
+        const candidate = this.database.prepare(`
+          SELECT run_id FROM durable_runs
+          WHERE workload_kind IN (${placeholders})
+            AND status IN ('queued', 'waiting_retry', 'recovering')
+            AND next_run_at <= ? AND expires_at > ?
+            AND attempt_count < max_attempts
+            AND deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM durable_outbox blocking
+              WHERE blocking.run_id = durable_runs.run_id
+                AND json_extract(blocking.metadata_json, '$.blocksRun') = 1
+                AND (
+                  blocking.status = 'sending'
+                  OR (blocking.status = 'pending' AND blocking.next_attempt_at <= ?)
+                )
+            )
+          ORDER BY next_run_at, created_at, rowid, run_id
+          LIMIT 1
+        `).get(...kinds, now, now, now) as SqlRow | undefined;
+        if (!candidate) return null;
+        const runId = requiredString(candidate, 'run_id');
+        const persisted = this.requiredRun(runId);
+        const invalid = validatePersistedState(persisted, validateRun);
+        if (invalid) {
+          this.terminalizeInvalidRun(runId, persisted.rowVersion, invalid, now);
+          return 'invalid';
+        }
+        const update = this.database.prepare(`
+          UPDATE durable_runs
+          SET status = 'running', attempt_count = attempt_count + 1,
+              lease_owner = ?, lease_expires_at = ?, heartbeat_at = ?,
+              row_version = row_version + 1, updated_at = ?
+          WHERE run_id = ?
+            AND status IN ('queued', 'waiting_retry', 'recovering')
+            AND next_run_at <= ? AND expires_at > ?
+            AND attempt_count < max_attempts AND deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM durable_outbox blocking
+              WHERE blocking.run_id = durable_runs.run_id
+                AND json_extract(blocking.metadata_json, '$.blocksRun') = 1
+                AND (
+                  blocking.status = 'sending'
+                  OR (blocking.status = 'pending' AND blocking.next_attempt_at <= ?)
+                )
+            )
+        `).run(workerId, leaseExpiresAt, now, now, runId, now, now, now);
+        if (Number(update.changes) !== 1) return null;
+        const run = this.requiredRun(runId);
+        const attemptId = newAttemptId();
+        this.database.prepare(`
+          INSERT INTO durable_attempts (
+            attempt_id, run_id, ordinal, worker_id, claimed_at,
+            heartbeat_at, lease_expires_at, operation_risk, metadata_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', '{}')
+        `).run(
+          attemptId,
+          runId,
+          run.attemptCount,
+          workerId,
+          now,
+          now,
+          leaseExpiresAt,
+        );
+        return {
+          run,
+          attempt: this.requiredAttempt(attemptId),
+          workerId,
+          claimedRowVersion: run.rowVersion,
+        };
+      });
+      if (result !== 'invalid') return result;
+    }
   }
 
   async markExecutionStarted(
@@ -198,7 +229,9 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
         WHERE attempt_id = ? AND run_id = ? AND worker_id = ?
           AND finished_at IS NULL AND execution_phase = 'claimed'
       `).run(now, claim.attempt.attemptId, claim.run.runId, claim.workerId);
-      return Number(update.changes) === 1 ? 'committed' : 'stale';
+      if (Number(update.changes) !== 1) return 'stale';
+      claim.attempt.executionStartedAt = now;
+      return 'committed';
     });
   }
 
@@ -255,6 +288,23 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
       ...delivery,
       routeJson: serializeDurableRunJson(delivery.route, 'Durable Run delivery route'),
       payloadJson: serializeDurableRunJson(delivery.payload, 'Durable Run delivery payload'),
+      metadataJson: serializeDurableRunJson(
+        delivery.metadata ?? {},
+        'Durable Run delivery metadata',
+      ),
+    }));
+    const attemptMetadataJson = transition.attempt?.metadata === undefined
+      ? null
+      : serializeDurableRunJson(
+          transition.attempt.metadata,
+          'Durable Run Attempt transition metadata',
+        );
+    const interrupts = (transition.interrupts ?? []).map((interrupt) => ({
+      ...interrupt,
+      metadataJson: serializeDurableRunJson(
+        interrupt.metadata ?? {},
+        'Durable Run interrupt metadata',
+      ),
     }));
     return this.transaction(() => {
       const current = this.readClaimFence(claim);
@@ -291,40 +341,81 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
       if (Number(update.changes) !== 1) return 'stale';
       const attempt = this.database.prepare(`
         UPDATE durable_attempts
-        SET finished_at = ?, outcome = ?, failure_json = ?, error_code = ?,
-            error_summary = ?, recovery_pending = 0
+        SET execution_session_id = CASE WHEN ? THEN ? ELSE execution_session_id END,
+            heartbeat_at = ?, finished_at = ?, outcome = ?,
+            operation_risk = COALESCE(?, operation_risk), failure_json = ?,
+            error_code = ?, error_summary = ?,
+            metadata_json = CASE WHEN ? THEN ? ELSE metadata_json END,
+            recovery_pending = 0
         WHERE attempt_id = ? AND run_id = ? AND finished_at IS NULL
       `).run(
+        transition.attempt ? 1 : 0,
+        transition.attempt?.executionSessionId ?? null,
         now,
-        transition.status,
+        now,
+        transition.attempt?.outcome ?? transition.status,
+        transition.attempt?.operationRisk ?? null,
         failureJson,
-        transition.errorCode ?? null,
-        transition.errorSummary ?? null,
+        transition.attempt?.errorCode ?? transition.errorCode ?? null,
+        transition.attempt?.errorSummary ?? transition.errorSummary ?? null,
+        attemptMetadataJson === null ? 0 : 1,
+        attemptMetadataJson,
         claim.attempt.attemptId,
         claim.run.runId,
       );
       if (Number(attempt.changes) !== 1) {
         throw new Error(`Durable Run transition lost Attempt ${claim.attempt.attemptId}.`);
       }
+      const supersedeKinds = uniqueStrings(transition.supersedeDeliveryKinds ?? []);
+      if (supersedeKinds.length > 0) {
+        const placeholders = supersedeKinds.map(() => '?').join(', ');
+        this.database.prepare(`
+          UPDATE durable_outbox
+          SET status = 'superseded', worker_id = NULL, lease_expires_at = NULL,
+              error_code = NULL, error_summary = NULL, updated_at = ?
+          WHERE run_id = ? AND kind IN (${placeholders})
+            AND (
+              status IN ('pending', 'failed')
+              OR (status = 'sending' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
+            )
+        `).run(now, claim.run.runId, ...supersedeKinds, now);
+      }
+      for (const interrupt of interrupts) {
+        this.database.prepare(`
+          INSERT INTO durable_interrupts (
+            interrupt_id, run_id, attempt_id, status, prompt,
+            created_at, metadata_json
+          ) VALUES (?, ?, ?, 'pending', ?, ?, ?)
+        `).run(
+          interrupt.interruptId,
+          claim.run.runId,
+          interrupt.attemptId,
+          interrupt.prompt,
+          now,
+          interrupt.metadataJson,
+        );
+      }
       for (const delivery of deliveries) {
-        const eventKey = deliveryEventKey(delivery.kind, delivery.idempotencyKey);
+        const eventKey = delivery.eventKey
+          ?? deliveryEventKey(delivery.kind, delivery.idempotencyKey);
         this.database.prepare(`
           INSERT INTO durable_outbox (
             outbox_id, run_id, event_key, kind, attempt_id, route_json,
             idempotency_key, payload_json, metadata_json, status,
             attempt_count, next_attempt_at, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', 'pending', 0, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
         `).run(
-          outboxId(delivery.idempotencyKey),
+          delivery.outboxId ?? outboxId(delivery.idempotencyKey),
           claim.run.runId,
           eventKey,
           delivery.kind,
-          claim.attempt.attemptId,
+          delivery.attemptId === undefined ? claim.attempt.attemptId : delivery.attemptId,
           delivery.routeJson,
           delivery.idempotencyKey,
           delivery.payloadJson,
-          now,
-          now,
+          delivery.metadataJson,
+          delivery.nextAttemptAt ?? now,
+          delivery.createdAt ?? now,
           now,
         );
       }
@@ -336,7 +427,9 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
     claim: DurableRunClaim,
     failure: DurableRunFailure,
     now: string,
+    transition?: DurableRunTransition,
   ): Promise<DurableRunClaimMutationResult> {
+    if (transition) return this.commitTransition(claim, transition, now);
     return this.commitTransition(claim, {
       status: 'failed',
       stateVersion: claim.run.stateVersion,
@@ -347,23 +440,43 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
     }, now);
   }
 
-  async recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]> {
+  async recoverExpiredLeases(
+    workloadKinds: readonly string[],
+    now: string,
+    validateRun?: DurableRunPersistedStateValidator,
+  ): Promise<DurableRunInterruptedAttempt[]> {
+    if (workloadKinds.length === 0) return [];
+    const kinds = uniqueStrings(workloadKinds);
     return this.transaction(() => {
+      const placeholders = kinds.map(() => '?').join(', ');
       const rows = this.database.prepare(`
         SELECT r.run_id, r.row_version, a.attempt_id, a.worker_id,
                a.execution_phase, a.operation_risk, a.recovery_pending
         FROM durable_runs r
         JOIN durable_attempts a ON a.run_id = r.run_id
-        WHERE r.status IN ('running', 'cancel_requested')
+        WHERE r.workload_kind IN (${placeholders})
+          AND r.status IN ('running', 'cancel_requested')
           AND r.lease_expires_at IS NOT NULL AND r.lease_expires_at <= ?
           AND r.deleted_at IS NULL AND a.finished_at IS NULL
           AND a.ordinal = r.attempt_count
         ORDER BY r.lease_expires_at, r.run_id
-      `).all(now) as SqlRow[];
+      `).all(...kinds, now) as SqlRow[];
       const interrupted: DurableRunInterruptedAttempt[] = [];
       for (const row of rows) {
         const runId = requiredString(row, 'run_id');
         const oldVersion = requiredNumber(row, 'row_version');
+        const persisted = this.requiredRun(runId);
+        const invalid = validatePersistedState(persisted, validateRun);
+        if (invalid) {
+          this.terminalizeInvalidRun(
+            runId,
+            oldVersion,
+            invalid,
+            now,
+            requiredString(row, 'attempt_id'),
+          );
+          continue;
+        }
         const recoveryLeaseExpiresAt = addMilliseconds(now, DEFAULT_DELIVERY_LEASE_MS);
         const runUpdate = this.database.prepare(`
           UPDATE durable_runs
@@ -428,7 +541,8 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
             (o.status = 'pending' AND o.next_attempt_at <= ?)
             OR (o.status = 'sending' AND o.lease_expires_at IS NOT NULL AND o.lease_expires_at <= ?)
           )
-        ORDER BY o.next_attempt_at, o.created_at, o.outbox_id
+        ORDER BY CASE o.kind WHEN 'terminal' THEN 0 ELSE 1 END,
+                 o.next_attempt_at, r.created_at, o.created_at, o.outbox_id
         LIMIT 1
       `).get(...kinds, now, now) as SqlRow | undefined;
       if (!row) return null;
@@ -453,10 +567,29 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
 
   async commitDelivery(
     claim: DurableRunDeliveryClaim,
-    result: DurableRunDeliveryResult,
+    requestedResult: DurableRunDeliveryResult,
     now: string,
-  ): Promise<void> {
-    this.transaction(() => {
+  ): Promise<DurableRunClaimMutationResult> {
+    return this.transaction(() => {
+      let result = requestedResult;
+      if (
+        result.status !== 'sent'
+        && result.status !== 'superseded'
+        && result.terminalConflict
+        && this.database.prepare(`
+          SELECT 1 FROM durable_outbox
+          WHERE run_id = ? AND kind = 'terminal' AND outbox_id <> ?
+          LIMIT 1
+        `).get(claim.runId, claim.outboxId)
+      ) {
+        result = result.terminalConflict === 'superseded'
+          ? { status: 'superseded' }
+          : {
+              status: 'unknown',
+              errorCode: result.errorCode,
+              errorSummary: result.errorSummary,
+            };
+      }
       let update;
       if (result.status === 'sent') {
         update = this.database.prepare(`
@@ -464,21 +597,58 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
           SET status = 'sent', message_id = ?, worker_id = NULL, lease_expires_at = NULL,
               error_code = NULL, error_summary = NULL, updated_at = ?
           WHERE outbox_id = ? AND run_id = ? AND status = 'sending' AND worker_id = ?
-        `).run(result.messageId, now, claim.outboxId, claim.runId, claim.workerId);
+            AND attempt_count = ? AND lease_expires_at = ? AND lease_expires_at > ?
+        `).run(
+          result.messageId,
+          now,
+          claim.outboxId,
+          claim.runId,
+          claim.workerId,
+          claim.attemptCount,
+          claim.leaseExpiresAt,
+          now,
+        );
       } else if (result.status === 'retry') {
         update = this.database.prepare(`
           UPDATE durable_outbox
           SET status = 'pending', next_attempt_at = ?, worker_id = NULL,
-              lease_expires_at = NULL, error_code = ?, error_summary = ?, updated_at = ?
+              lease_expires_at = NULL,
+              attempt_count = CASE WHEN ? THEN 0 ELSE attempt_count END,
+              first_attempt_at = CASE WHEN ? THEN NULL ELSE first_attempt_at END,
+              last_attempt_at = CASE WHEN ? THEN NULL ELSE last_attempt_at END,
+              error_code = ?, error_summary = ?, updated_at = ?
           WHERE outbox_id = ? AND run_id = ? AND status = 'sending' AND worker_id = ?
+            AND attempt_count = ? AND lease_expires_at = ? AND lease_expires_at > ?
         `).run(
           result.retryAt ?? now,
+          result.resetAttemptCount ? 1 : 0,
+          result.resetAttemptCount ? 1 : 0,
+          result.resetAttemptCount ? 1 : 0,
           result.errorCode,
           result.errorSummary,
           now,
           claim.outboxId,
           claim.runId,
           claim.workerId,
+          claim.attemptCount,
+          claim.leaseExpiresAt,
+          now,
+        );
+      } else if (result.status === 'superseded') {
+        update = this.database.prepare(`
+          UPDATE durable_outbox
+          SET status = 'superseded', worker_id = NULL, lease_expires_at = NULL,
+              error_code = NULL, error_summary = NULL, updated_at = ?
+          WHERE outbox_id = ? AND run_id = ? AND status = 'sending' AND worker_id = ?
+            AND attempt_count = ? AND lease_expires_at = ? AND lease_expires_at > ?
+        `).run(
+          now,
+          claim.outboxId,
+          claim.runId,
+          claim.workerId,
+          claim.attemptCount,
+          claim.leaseExpiresAt,
+          now,
         );
       } else {
         update = this.database.prepare(`
@@ -486,6 +656,7 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
           SET status = ?, worker_id = NULL, lease_expires_at = NULL,
               error_code = ?, error_summary = ?, updated_at = ?
           WHERE outbox_id = ? AND run_id = ? AND status = 'sending' AND worker_id = ?
+            AND attempt_count = ? AND lease_expires_at = ? AND lease_expires_at > ?
         `).run(
           result.status,
           result.errorCode,
@@ -494,11 +665,12 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
           claim.outboxId,
           claim.runId,
           claim.workerId,
+          claim.attemptCount,
+          claim.leaseExpiresAt,
+          now,
         );
       }
-      if (Number(update.changes) !== 1) {
-        throw new Error(`Stale Durable Run delivery claim for ${claim.outboxId}.`);
-      }
+      return Number(update.changes) === 1 ? 'committed' : 'stale';
     });
   }
 
@@ -539,6 +711,7 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
       outboxId,
       runId: requiredString(row, 'run_id'),
       workloadKind: requiredString(row, 'workload_kind'),
+      eventKey: requiredString(row, 'event_key'),
       kind: requiredString(row, 'kind'),
       ...(optionalString(row, 'attempt_id')
         ? { attemptId: optionalString(row, 'attempt_id') }
@@ -548,6 +721,19 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
       idempotencyKey: requiredString(row, 'idempotency_key'),
       payload: parseBoundedJson(requiredString(row, 'payload_json'), 'Durable Run delivery payload'),
       attemptCount: requiredNumber(row, 'attempt_count'),
+      leaseExpiresAt: requiredString(row, 'lease_expires_at'),
+      ...(optionalString(row, 'first_attempt_at')
+        ? { firstAttemptAt: optionalString(row, 'first_attempt_at') }
+        : {}),
+      ...(optionalString(row, 'last_attempt_at')
+        ? { lastAttemptAt: optionalString(row, 'last_attempt_at') }
+        : {}),
+      ...(optionalString(row, 'error_code')
+        ? { lastErrorCode: optionalString(row, 'error_code') }
+        : {}),
+      ...(optionalString(row, 'error_summary')
+        ? { lastErrorSummary: optionalString(row, 'error_summary') }
+        : {}),
     };
   }
 
@@ -576,6 +762,65 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
       claim.attempt.attemptId,
       claim.workerId,
     ) as SqlRow | undefined;
+  }
+
+  private terminalizeInvalidRun(
+    runId: string,
+    rowVersion: number,
+    failure: DurableRunPersistedStateFailure,
+    now: string,
+    attemptId?: string,
+  ): void {
+    assertPersistedStateFailure(failure);
+    const update = this.database.prepare(`
+      UPDATE durable_runs
+      SET status = 'failed', completed_at = ?, lease_owner = NULL,
+          lease_expires_at = NULL, heartbeat_at = NULL, error_code = ?,
+          error_summary = ?, failure_json = NULL, row_version = row_version + 1,
+          updated_at = ?
+      WHERE run_id = ? AND row_version = ?
+        AND status IN ('queued', 'waiting_retry', 'recovering', 'running', 'cancel_requested')
+        AND deleted_at IS NULL
+    `).run(now, failure.errorCode, failure.errorSummary, now, runId, rowVersion);
+    if (Number(update.changes) !== 1) return;
+    if (attemptId) {
+      const attempt = this.database.prepare(`
+        UPDATE durable_attempts
+        SET finished_at = ?, heartbeat_at = ?, outcome = 'failed',
+            error_code = ?, error_summary = ?, recovery_pending = 0
+        WHERE attempt_id = ? AND run_id = ? AND finished_at IS NULL
+      `).run(now, now, failure.errorCode, failure.errorSummary, attemptId, runId);
+      if (Number(attempt.changes) !== 1) {
+        throw new Error(`Durable Run invalid-state terminalization lost Attempt ${attemptId}.`);
+      }
+    }
+    for (const delivery of failure.deliveries ?? []) {
+      const eventKey = delivery.eventKey
+        ?? deliveryEventKey(delivery.kind, delivery.idempotencyKey);
+      this.database.prepare(`
+        INSERT INTO durable_outbox (
+          outbox_id, run_id, event_key, kind, attempt_id, route_json,
+          idempotency_key, payload_json, metadata_json, status,
+          attempt_count, next_attempt_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+      `).run(
+        delivery.outboxId ?? outboxId(delivery.idempotencyKey),
+        runId,
+        eventKey,
+        delivery.kind,
+        delivery.attemptId ?? null,
+        serializeDurableRunJson(delivery.route, 'Durable Run invalid-state delivery route'),
+        delivery.idempotencyKey,
+        serializeDurableRunJson(delivery.payload, 'Durable Run invalid-state delivery payload'),
+        serializeDurableRunJson(
+          delivery.metadata ?? {},
+          'Durable Run invalid-state delivery metadata',
+        ),
+        delivery.nextAttemptAt ?? now,
+        delivery.createdAt ?? now,
+        now,
+      );
+    }
   }
 
   private transaction<T>(operation: () => T): T {
@@ -615,6 +860,7 @@ function validateCreateRequest(request: DurableRunCreateRequest): void {
   if (!Number.isSafeInteger(request.maxAttempts) || request.maxAttempts < 1 || request.maxAttempts > 20) {
     throw new Error('Durable Run maxAttempts must be an integer between 1 and 20.');
   }
+  if (request.createdAt !== undefined) assertTimestamp(request.createdAt, 'createdAt');
   assertTimestamp(request.nextRunAt, 'nextRunAt');
   assertTimestamp(request.expiresAt, 'expiresAt');
 }
@@ -655,8 +901,42 @@ function mapAttempt(row: SqlRow): DurableRunAttempt {
 }
 
 function claimCanCommit(row: SqlRow, now: string): boolean {
-  if (requiredNumber(row, 'recovery_pending') === 1) return true;
   return requiredString(row, 'lease_expires_at') > now;
+}
+
+function validatePersistedState(
+  run: DurableRunRecord,
+  validator: DurableRunPersistedStateValidator | undefined,
+): DurableRunPersistedStateFailure | null {
+  if (!validator) return null;
+  try {
+    const failure = validator(run);
+    if (failure) assertPersistedStateFailure(failure);
+    return failure;
+  } catch {
+    return {
+      errorCode: 'durable_run_persisted_state_invalid',
+      errorSummary: 'Stored durable run state failed integrity validation.',
+    };
+  }
+}
+
+function assertPersistedStateFailure(failure: DurableRunPersistedStateFailure): void {
+  if (
+    typeof failure.errorCode !== 'string'
+    || !failure.errorCode.trim()
+    || failure.errorCode.length > 128
+  ) {
+    throw new Error('Durable Run persisted-state errorCode is invalid.');
+  }
+  if (
+    typeof failure.errorSummary !== 'string'
+    || !failure.errorSummary.trim()
+    || failure.errorSummary.length > 4_000
+  ) {
+    throw new Error('Durable Run persisted-state errorSummary is invalid.');
+  }
+  assertDurableRunDeliveryRequests(failure.deliveries, 'persisted-state failure');
 }
 
 function parseBoundedJson(value: string, label: string): unknown {
@@ -708,7 +988,7 @@ function outboxId(idempotencyKey: string): string {
 }
 
 function newAttemptId(): string {
-  return `attempt_${randomBytes(16).toString('hex')}`;
+  return `att_${randomBytes(12).toString('hex')}`;
 }
 
 function addMilliseconds(value: string, milliseconds: number): string {

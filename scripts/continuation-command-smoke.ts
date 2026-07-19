@@ -496,6 +496,21 @@ const runResume = (commandMessage: LarkMessage) => handleContinuationCommand({
   auditCommand: async () => {},
 });
 
+async function cancelAndDeliverTask(jobId: string, suffix: string): Promise<void> {
+  assert.equal(await resumeRepository.requestCancel(jobId, now.toISOString()), 'cancelled');
+  const delivery = await resumeRepository.claimPendingDelivery(
+    `delivery-cancelled-${suffix}`,
+    now.toISOString(),
+  );
+  assert.equal(delivery?.jobId, jobId);
+  assert.equal(delivery?.kind, 'terminal');
+  await resumeRepository.markDeliveryResult(
+    delivery!,
+    { status: 'delivered', messageId: `om_cancelled_${suffix}` },
+    now.toISOString(),
+  );
+}
+
 async function createWaitingTask(suffix: string, commitDelivery = true): Promise<{
   jobId: string;
   interruptMessageId: string;
@@ -595,6 +610,7 @@ assert.equal(
   (await resumeRepository.get(explicitResume.jobId))?.recovery?.userInput,
   'approved',
 );
+await cancelAndDeliverTask(explicitResume.jobId, 'explicit');
 
 const quotedResume = await createWaitingTask('quoted');
 assert.equal(await runResume(message({
@@ -617,6 +633,7 @@ assert.equal(
   (await resumeRepository.get(quotedResume.jobId))?.recovery?.userInput,
   'approved from quoted reply',
 );
+await cancelAndDeliverTask(quotedResume.jobId, 'quoted');
 
 const fastQuotedResume = await createWaitingTask('fast-quoted', false);
 assert.equal(await runResume(message({

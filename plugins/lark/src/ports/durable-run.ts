@@ -2,6 +2,7 @@ import type {
   DurableRunClaim,
   DurableRunCreateRequest,
   DurableRunCreateResult,
+  DurableRunDeliveryRequest,
   DurableRunDeliveryClaim,
   DurableRunDeliveryResult,
   DurableRunFailure,
@@ -24,6 +25,16 @@ export interface DurableRunWorkload<Input = unknown, State = unknown, Result = u
 }
 
 export type DurableRunClaimMutationResult = 'committed' | 'stale';
+
+export interface DurableRunPersistedStateFailure {
+  errorCode: string;
+  errorSummary: string;
+  deliveries?: readonly DurableRunDeliveryRequest[];
+}
+
+export type DurableRunPersistedStateValidator = (
+  run: DurableRunRecord,
+) => DurableRunPersistedStateFailure | null;
 
 export function materializeDurableRunWorkloadContext<Input, State>(
   workload: Pick<
@@ -61,6 +72,7 @@ export interface DurableRunRepository {
     workerId: string,
     now: string,
     leaseExpiresAt: string,
+    validateRun?: DurableRunPersistedStateValidator,
   ): Promise<DurableRunClaim | null>;
   markExecutionStarted(
     claim: DurableRunClaim,
@@ -76,8 +88,13 @@ export interface DurableRunRepository {
     claim: DurableRunClaim,
     failure: DurableRunFailure,
     now: string,
+    transition?: DurableRunTransition,
   ): Promise<DurableRunClaimMutationResult>;
-  recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]>;
+  recoverExpiredLeases(
+    workloadKinds: readonly string[],
+    now: string,
+    validateRun?: DurableRunPersistedStateValidator,
+  ): Promise<DurableRunInterruptedAttempt[]>;
   claimDelivery(
     workloadKinds: readonly string[],
     workerId: string,
@@ -87,7 +104,7 @@ export interface DurableRunRepository {
     claim: DurableRunDeliveryClaim,
     result: DurableRunDeliveryResult,
     now: string,
-  ): Promise<void>;
+  ): Promise<DurableRunClaimMutationResult>;
   close(): void;
 }
 
