@@ -2,6 +2,7 @@ import { config } from 'dotenv';
 import path from 'node:path';
 import os from 'node:os';
 import { assertSupportedNodeVersion } from './runtime-version.js';
+import { readConfigValues } from './config-schema.js';
 
 assertSupportedNodeVersion();
 
@@ -11,84 +12,7 @@ config({ path: envPath });
 const channelHome = path.join(os.homedir(), '.codex', 'channels', 'lark');
 const runtimeConfigDir = path.join(channelHome, 'runtime-config');
 const continuationRuntimeDir = path.join(channelHome, 'runtime', 'continuations');
-const logsDir = path.join(channelHome, 'logs');
-const defaultCodexExecCwd = path.join(channelHome, 'codex-exec-workdir');
 const isDryRun = process.argv.includes('--dry-run');
-
-function required(key: string): string {
-  const val = process.env[key];
-  if (!val && isDryRun && (key === 'LARK_APP_ID' || key === 'LARK_APP_SECRET')) {
-    return `dry_run_${key.toLowerCase()}`;
-  }
-  if (!val) throw new Error(`Missing required env var: ${key}`);
-  return val;
-}
-
-function optional(key: string, fallback: string): string {
-  return process.env[key] || fallback;
-}
-
-function optionalAbsolutePath(key: string, fallback: string): string {
-  const value = optional(key, fallback);
-  if (!path.isAbsolute(value)) throw new Error(`Invalid ${key}: expected an absolute path.`);
-  return value;
-}
-
-function optionalAllowEmpty(key: string, fallback: string): string {
-  const val = process.env[key];
-  return val === undefined ? fallback : val;
-}
-
-function optionalNumber(key: string, fallback: number): number {
-  const val = process.env[key];
-  if (!val) return fallback;
-  const parsed = Number(val);
-  if (!Number.isFinite(parsed)) throw new Error(`Invalid ${key}: ${val}. Expected a number.`);
-  return parsed;
-}
-
-function optionalPositiveNumber(key: string, fallback: number): number {
-  const parsed = optionalNumber(key, fallback);
-  if (parsed <= 0) throw new Error(`Invalid ${key}: ${parsed}. Expected a positive number.`);
-  return parsed;
-}
-
-function optionalNonNegativeNumber(key: string, fallback: number): number {
-  const parsed = optionalNumber(key, fallback);
-  if (parsed < 0) throw new Error(`Invalid ${key}: ${parsed}. Expected a non-negative number.`);
-  return parsed;
-}
-
-function optionalIntegerRange(
-  key: string,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-): number {
-  const parsed = optionalNumber(key, fallback);
-  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
-    throw new Error(
-      `Invalid ${key}: ${parsed}. Expected an integer between ${minimum} and ${maximum}.`,
-    );
-  }
-  return parsed;
-}
-
-function optionalBoolean(key: string, fallback: boolean): boolean {
-  const val = process.env[key];
-  if (!val) return fallback;
-  return ['1', 'true', 'yes', 'on'].includes(val.toLowerCase());
-}
-
-function optionalChoice<const T extends readonly string[]>(
-  key: string,
-  fallback: T[number],
-  choices: T,
-): T[number] {
-  const val = process.env[key] || fallback;
-  if ((choices as readonly string[]).includes(val)) return val;
-  throw new Error(`Invalid ${key}: ${val}. Expected one of: ${choices.join(', ')}`);
-}
 
 function rejectRemovedChannelRuntime(): void {
   const key = 'LARK_' + 'CHANNEL_RUNTIME';
@@ -114,145 +38,99 @@ function rejectRemovedCodexDeliveryMode(): void {
 
 rejectRemovedCodexDeliveryMode();
 
-const codexExecTimeoutMs = optionalPositiveNumber('LARK_CODEX_EXEC_TIMEOUT_MS', 10 * 60 * 1000);
-const codexExecReplyBufferMs = 60_000;
-const codexExecCwd = optional('LARK_CODEX_EXEC_CWD', defaultCodexExecCwd);
-const continuationWorkingRoot = optionalAbsolutePath('LARK_CONTINUATION_WORKING_ROOT', codexExecCwd);
-
-function optionalQueueHandlerTimeoutMs(): number {
-  const minimumWithReplyBuffer = codexExecTimeoutMs + codexExecReplyBufferMs;
-  const parsed = optionalNonNegativeNumber('LARK_QUEUE_HANDLER_TIMEOUT_MS', minimumWithReplyBuffer);
-  if (parsed === 0) return 0;
-  return Math.max(parsed, minimumWithReplyBuffer);
-}
+const envValues = readConfigValues({ dryRun: isDryRun });
+const codexExecCwd = envValues.LARK_CODEX_EXEC_CWD;
+const continuationWorkingRoot = envValues.LARK_CONTINUATION_WORKING_ROOT;
 
 export const appConfig = {
   // Required
-  appId: required('LARK_APP_ID'),
-  appSecret: required('LARK_APP_SECRET'),
+  appId: envValues.LARK_APP_ID,
+  appSecret: envValues.LARK_APP_SECRET,
 
-  textChunkLimit: optionalPositiveNumber('LARK_TEXT_CHUNK_LIMIT', 4000),
-  ackEmoji: optional('LARK_ACK_EMOJI', 'MeMeMe'),
-  docCommentAckEmoji: optionalAllowEmpty('LARK_DOC_COMMENT_ACK_EMOJI', 'THUMBSUP'),
-  botMessageTrackerSize: optionalNonNegativeNumber('LARK_BOT_MESSAGE_TRACKER_SIZE', 500),
-  queueHandlerTimeoutMs: optionalQueueHandlerTimeoutMs(),
-  codexExecCommand: optional('LARK_CODEX_EXEC_COMMAND', 'codex'),
+  textChunkLimit: envValues.LARK_TEXT_CHUNK_LIMIT,
+  ackEmoji: envValues.LARK_ACK_EMOJI,
+  docCommentAckEmoji: envValues.LARK_DOC_COMMENT_ACK_EMOJI,
+  botMessageTrackerSize: envValues.LARK_BOT_MESSAGE_TRACKER_SIZE,
+  queueHandlerTimeoutMs: envValues.LARK_QUEUE_HANDLER_TIMEOUT_MS,
+  codexExecCommand: envValues.LARK_CODEX_EXEC_COMMAND,
   codexExecCwd,
-  codexExecTimeoutMs,
-  codexExecSandbox: optionalChoice(
-    'LARK_CODEX_EXEC_SANDBOX',
-    'workspace-write',
-    ['read-only', 'workspace-write', 'danger-full-access'] as const,
-  ),
-  codexExecModel: process.env.LARK_CODEX_EXEC_MODEL || null,
-  codexExecProfile: process.env.LARK_CODEX_EXEC_PROFILE || null,
-  codexExecIgnoreUserConfig: optionalBoolean('LARK_CODEX_EXEC_IGNORE_USER_CONFIG', true),
-  codexExecUseSessions: optionalBoolean('LARK_CODEX_EXEC_USE_SESSIONS', true),
-  codexExecProgressEnabled: optionalBoolean('LARK_EXEC_PROGRESS_ENABLED', true),
-  codexExecProgressMaxMessages: optionalPositiveNumber('LARK_EXEC_PROGRESS_MAX_MESSAGES', 3),
-  codexExecProgressMaxChars: optionalPositiveNumber('LARK_EXEC_PROGRESS_MAX_CHARS', 300),
-  codexExecProgressMinIntervalMs: optionalNonNegativeNumber('LARK_EXEC_PROGRESS_MIN_INTERVAL_MS', 15_000),
-  codexExecProgressPollIntervalMs: optionalPositiveNumber('LARK_EXEC_PROGRESS_POLL_INTERVAL_MS', 250),
-  codexExecToolTraceEnabled: optionalBoolean('LARK_CODEX_EXEC_TOOL_TRACE', false),
-  codexExecToolTraceMode: optionalChoice(
-    'LARK_CODEX_EXEC_TOOL_TRACE_MODE',
-    'compact',
-    ['compact', 'full', 'hidden'] as const,
-  ),
-  cardFooterMetricsEnabled: optionalBoolean('LARK_CARD_FOOTER_METRICS_ENABLED', true),
-  cardFooterMetricsTokenUsageThreshold: optionalNonNegativeNumber(
-    'LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD',
-    20_000,
-  ),
-  codexSessionRetentionDays: optionalPositiveNumber('LARK_CODEX_SESSION_RETENTION_DAYS', 14),
-  codexSessionRetentionScanIntervalHours: optionalNonNegativeNumber(
-    'LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS',
-    24,
-  ),
-  codexSessionRetentionDryRun: optionalBoolean('LARK_CODEX_SESSION_RETENTION_DRY_RUN', false),
-  continuationEnabled: optionalBoolean('LARK_CONTINUATION_ENABLED', true),
-  continuationMaxConcurrency: optionalIntegerRange('LARK_CONTINUATION_MAX_CONCURRENCY', 1, 1, 4),
-  continuationMaxAttempts: optionalIntegerRange('LARK_CONTINUATION_MAX_ATTEMPTS', 5, 1, 20),
-  continuationMaxRetries: optionalIntegerRange('LARK_CONTINUATION_MAX_RETRIES', 3, 0, 10),
-  continuationMaxTotalMinutes: optionalIntegerRange(
-    'LARK_CONTINUATION_MAX_TOTAL_MINUTES',
-    30,
-    5,
-    1440,
-  ),
-  continuationRetentionDays: optionalIntegerRange('LARK_CONTINUATION_RETENTION_DAYS', 30, 1, 3650),
+  codexExecTimeoutMs: envValues.LARK_CODEX_EXEC_TIMEOUT_MS,
+  codexExecSandbox: envValues.LARK_CODEX_EXEC_SANDBOX,
+  codexExecModel: envValues.LARK_CODEX_EXEC_MODEL,
+  codexExecProfile: envValues.LARK_CODEX_EXEC_PROFILE,
+  codexExecIgnoreUserConfig: envValues.LARK_CODEX_EXEC_IGNORE_USER_CONFIG,
+  codexExecUseSessions: envValues.LARK_CODEX_EXEC_USE_SESSIONS,
+  codexExecProgressEnabled: envValues.LARK_EXEC_PROGRESS_ENABLED,
+  codexExecProgressMaxMessages: envValues.LARK_EXEC_PROGRESS_MAX_MESSAGES,
+  codexExecProgressMaxChars: envValues.LARK_EXEC_PROGRESS_MAX_CHARS,
+  codexExecProgressMinIntervalMs: envValues.LARK_EXEC_PROGRESS_MIN_INTERVAL_MS,
+  codexExecProgressPollIntervalMs: envValues.LARK_EXEC_PROGRESS_POLL_INTERVAL_MS,
+  codexExecToolTraceEnabled: envValues.LARK_CODEX_EXEC_TOOL_TRACE,
+  codexExecToolTraceMode: envValues.LARK_CODEX_EXEC_TOOL_TRACE_MODE,
+  cardFooterMetricsEnabled: envValues.LARK_CARD_FOOTER_METRICS_ENABLED,
+  cardFooterMetricsTokenUsageThreshold:
+    envValues.LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD,
+  codexSessionRetentionDays: envValues.LARK_CODEX_SESSION_RETENTION_DAYS,
+  codexSessionRetentionScanIntervalHours:
+    envValues.LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS,
+  codexSessionRetentionDryRun: envValues.LARK_CODEX_SESSION_RETENTION_DRY_RUN,
+  continuationEnabled: envValues.LARK_CONTINUATION_ENABLED,
+  continuationMaxConcurrency: envValues.LARK_CONTINUATION_MAX_CONCURRENCY,
+  continuationMaxAttempts: envValues.LARK_CONTINUATION_MAX_ATTEMPTS,
+  continuationMaxRetries: envValues.LARK_CONTINUATION_MAX_RETRIES,
+  continuationMaxTotalMinutes: envValues.LARK_CONTINUATION_MAX_TOTAL_MINUTES,
+  continuationRetentionDays: envValues.LARK_CONTINUATION_RETENTION_DAYS,
   continuationWorkingRoot,
-  sessionHealthEnabled: optionalBoolean('LARK_SESSION_HEALTH_ENABLED', false),
-  sessionHealthTurnThreshold: optionalPositiveNumber('LARK_SESSION_HEALTH_TURN_THRESHOLD', 80),
-  sessionHealthPromptBytesThreshold: optionalPositiveNumber(
-    'LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD',
-    512 * 1024,
-  ),
-  sessionHealthTokenThreshold: optionalPositiveNumber('LARK_SESSION_HEALTH_TOKEN_THRESHOLD', 160_000),
-  sessionHealthIdleDelayMs: optionalNonNegativeNumber('LARK_SESSION_HEALTH_IDLE_DELAY_MS', 30_000),
-  sessionHealthCooldownMs: optionalPositiveNumber('LARK_SESSION_HEALTH_COOLDOWN_MS', 30 * 60 * 1000),
-  sessionHealthMaxCooldownMs: optionalPositiveNumber('LARK_SESSION_HEALTH_MAX_COOLDOWN_MS', 6 * 60 * 60 * 1000),
-  sessionHealthMaxNudges: optionalPositiveNumber('LARK_SESSION_HEALTH_MAX_NUDGES', 3),
-  replyObligationTimeoutMs: optionalPositiveNumber(
-    'LARK_REPLY_OBLIGATION_TIMEOUT_MS',
-    Math.max(60_000, codexExecTimeoutMs + codexExecReplyBufferMs),
-  ),
-  cronScanInterval: optionalPositiveNumber('LARK_CRON_SCAN_INTERVAL', 60),
-  cronTimezone: optional('LARK_CRON_TIMEZONE', Intl.DateTimeFormat().resolvedOptions().timeZone),
-  feishuApiTimeoutMs: optionalNonNegativeNumber('LARK_FEISHU_API_TIMEOUT_MS', 30_000),
-  feishuApiRetryAttempts: optionalPositiveNumber('LARK_FEISHU_API_RETRY_ATTEMPTS', 3),
-  feishuApiRetryBaseDelayMs: optionalNonNegativeNumber('LARK_FEISHU_API_RETRY_BASE_DELAY_MS', 250),
-  logMaxBytes: optionalNonNegativeNumber('LARK_LOG_MAX_BYTES', 5 * 1024 * 1024),
-  logMaxFiles: optionalNonNegativeNumber('LARK_LOG_MAX_FILES', 5),
-  logArchiveRetentionMonths: optionalNonNegativeNumber('LARK_LOG_ARCHIVE_RETENTION_MONTHS', 6),
+  sessionHealthEnabled: envValues.LARK_SESSION_HEALTH_ENABLED,
+  sessionHealthTurnThreshold: envValues.LARK_SESSION_HEALTH_TURN_THRESHOLD,
+  sessionHealthPromptBytesThreshold: envValues.LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD,
+  sessionHealthTokenThreshold: envValues.LARK_SESSION_HEALTH_TOKEN_THRESHOLD,
+  sessionHealthIdleDelayMs: envValues.LARK_SESSION_HEALTH_IDLE_DELAY_MS,
+  sessionHealthCooldownMs: envValues.LARK_SESSION_HEALTH_COOLDOWN_MS,
+  sessionHealthMaxCooldownMs: envValues.LARK_SESSION_HEALTH_MAX_COOLDOWN_MS,
+  sessionHealthMaxNudges: envValues.LARK_SESSION_HEALTH_MAX_NUDGES,
+  replyObligationTimeoutMs: envValues.LARK_REPLY_OBLIGATION_TIMEOUT_MS,
+  cronScanInterval: envValues.LARK_CRON_SCAN_INTERVAL,
+  cronTimezone: envValues.LARK_CRON_TIMEZONE,
+  feishuApiTimeoutMs: envValues.LARK_FEISHU_API_TIMEOUT_MS,
+  feishuApiRetryAttempts: envValues.LARK_FEISHU_API_RETRY_ATTEMPTS,
+  feishuApiRetryBaseDelayMs: envValues.LARK_FEISHU_API_RETRY_BASE_DELAY_MS,
+  logMaxBytes: envValues.LARK_LOG_MAX_BYTES,
+  logMaxFiles: envValues.LARK_LOG_MAX_FILES,
+  logArchiveRetentionMonths: envValues.LARK_LOG_ARCHIVE_RETENTION_MONTHS,
 
   // Memory
-  minSearchScore: optionalNonNegativeNumber('LARK_MIN_SEARCH_SCORE', 0.3),
-  maxSearchResults: optionalPositiveNumber('LARK_MAX_SEARCH_RESULTS', 2),
-  inactivityHours: optionalPositiveNumber('LARK_INACTIVITY_HOURS', 3),
-  maxEpisodeBytes: optionalNonNegativeNumber('LARK_MAX_EPISODE_BYTES', 64 * 1024),
-  maxEpisodeFilesPerScope: optionalNonNegativeNumber('LARK_MAX_EPISODE_FILES_PER_SCOPE', 200),
-  maxEpisodeScopeBytes: optionalNonNegativeNumber('LARK_MAX_EPISODE_SCOPE_BYTES', 10 * 1024 * 1024),
-  profileDistillationEnabled: optionalBoolean('LARK_PROFILE_DISTILLATION_ENABLED', false),
-  profileDistillationMinEpisodes: optionalPositiveNumber('LARK_PROFILE_DISTILLATION_MIN_EPISODES', 3),
-  profileDistillationMaxEpisodes: optionalPositiveNumber('LARK_PROFILE_DISTILLATION_MAX_EPISODES', 5),
-  profileDistillationCooldownMs: optionalNonNegativeNumber(
-    'LARK_PROFILE_DISTILLATION_COOLDOWN_MS',
-    24 * 60 * 60 * 1000,
-  ),
-  memoryDedupWindowMs: optionalNonNegativeNumber('LARK_MEMORY_DEDUP_WINDOW_MS', 30 * 60 * 1000),
-  downloadMaxBytes: optionalPositiveNumber('LARK_DOWNLOAD_MAX_BYTES', 25 * 1024 * 1024),
-  downloadTimeoutMs: optionalNonNegativeNumber('LARK_DOWNLOAD_TIMEOUT_MS', 60_000),
-  inboxMaxAgeHours: optionalNonNegativeNumber('LARK_INBOX_MAX_AGE_HOURS', 168),
-  inboxMaxBytes: optionalNonNegativeNumber('LARK_INBOX_MAX_BYTES', 200 * 1024 * 1024),
+  minSearchScore: envValues.LARK_MIN_SEARCH_SCORE,
+  maxSearchResults: envValues.LARK_MAX_SEARCH_RESULTS,
+  inactivityHours: envValues.LARK_INACTIVITY_HOURS,
+  maxEpisodeBytes: envValues.LARK_MAX_EPISODE_BYTES,
+  maxEpisodeFilesPerScope: envValues.LARK_MAX_EPISODE_FILES_PER_SCOPE,
+  maxEpisodeScopeBytes: envValues.LARK_MAX_EPISODE_SCOPE_BYTES,
+  profileDistillationEnabled: envValues.LARK_PROFILE_DISTILLATION_ENABLED,
+  profileDistillationMinEpisodes: envValues.LARK_PROFILE_DISTILLATION_MIN_EPISODES,
+  profileDistillationMaxEpisodes: envValues.LARK_PROFILE_DISTILLATION_MAX_EPISODES,
+  profileDistillationCooldownMs: envValues.LARK_PROFILE_DISTILLATION_COOLDOWN_MS,
+  memoryDedupWindowMs: envValues.LARK_MEMORY_DEDUP_WINDOW_MS,
+  downloadMaxBytes: envValues.LARK_DOWNLOAD_MAX_BYTES,
+  downloadTimeoutMs: envValues.LARK_DOWNLOAD_TIMEOUT_MS,
+  inboxMaxAgeHours: envValues.LARK_INBOX_MAX_AGE_HOURS,
+  inboxMaxBytes: envValues.LARK_INBOX_MAX_BYTES,
 
   // Identity / privacy
-  ownerOpenId: process.env.LARK_OWNER_OPEN_ID || null,
-  /**
-   * Session entry TTL. Must comfortably exceed the buffer auto-flush window
-   * (LARK_INACTIVITY_HOURS) so that save_memory / save_skill calls triggered
-   * by a flush still resolve to the last real user of the chat.
-   * Default: max(2h, inactivityHours × 2).
-   */
-  identitySessionTtlMs: optionalPositiveNumber(
-    'LARK_IDENTITY_SESSION_TTL_MS',
-    Math.max(
-      2 * 60 * 60 * 1000,
-      optionalPositiveNumber('LARK_INACTIVITY_HOURS', 3) * 2 * 60 * 60 * 1000,
-    ),
-  ),
-  identitySessionMaxEntries: optionalPositiveNumber('LARK_IDENTITY_SESSION_MAX_ENTRIES', 5000),
-  nameCacheSize: optionalNonNegativeNumber('LARK_NAME_CACHE_SIZE', 1000),
-  chatTypeCacheSize: optionalNonNegativeNumber('LARK_CHAT_TYPE_CACHE_SIZE', 1000),
-  latestMessageTrackerSize: optionalNonNegativeNumber('LARK_LATEST_MESSAGE_TRACKER_SIZE', 1000),
-  cardContextCacheSize: optionalNonNegativeNumber('LARK_CARD_CONTEXT_CACHE_SIZE', 200),
-  cardContextCacheTtlMs: optionalNonNegativeNumber('LARK_CARD_CONTEXT_CACHE_TTL_MS', 30 * 60 * 1000),
-  quotedContextMaxDepth: optionalPositiveNumber('LARK_QUOTED_CONTEXT_MAX_DEPTH', 4),
-  quotedContextMaxBytes: optionalPositiveNumber('LARK_QUOTED_CONTEXT_MAX_BYTES', 12_000),
-  quotedCardUserFetchEnabled: optionalBoolean('LARK_QUOTED_CARD_USER_FETCH_ENABLED', true),
-  quotedCardUserFetchCommand: optional('LARK_QUOTED_CARD_USER_FETCH_COMMAND', 'lark-cli'),
-  quotedCardUserFetchTimeoutMs: optionalPositiveNumber('LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS', 10_000),
-  quotedCardUserFetchMaxBytes: optionalPositiveNumber('LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES', 256 * 1024),
+  ownerOpenId: envValues.LARK_OWNER_OPEN_ID,
+  identitySessionTtlMs: envValues.LARK_IDENTITY_SESSION_TTL_MS,
+  identitySessionMaxEntries: envValues.LARK_IDENTITY_SESSION_MAX_ENTRIES,
+  nameCacheSize: envValues.LARK_NAME_CACHE_SIZE,
+  chatTypeCacheSize: envValues.LARK_CHAT_TYPE_CACHE_SIZE,
+  latestMessageTrackerSize: envValues.LARK_LATEST_MESSAGE_TRACKER_SIZE,
+  cardContextCacheSize: envValues.LARK_CARD_CONTEXT_CACHE_SIZE,
+  cardContextCacheTtlMs: envValues.LARK_CARD_CONTEXT_CACHE_TTL_MS,
+  quotedContextMaxDepth: envValues.LARK_QUOTED_CONTEXT_MAX_DEPTH,
+  quotedContextMaxBytes: envValues.LARK_QUOTED_CONTEXT_MAX_BYTES,
+  quotedCardUserFetchEnabled: envValues.LARK_QUOTED_CARD_USER_FETCH_ENABLED,
+  quotedCardUserFetchCommand: envValues.LARK_QUOTED_CARD_USER_FETCH_COMMAND,
+  quotedCardUserFetchTimeoutMs: envValues.LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS,
+  quotedCardUserFetchMaxBytes: envValues.LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES,
 
   // Paths
   memoriesDir: path.join(os.homedir(), '.codex', 'channels', 'lark', 'memories'),
@@ -265,12 +143,9 @@ export const appConfig = {
   accessControlConfigPath: path.join(runtimeConfigDir, 'access-control.json'),
   localCliToolsConfigPath: path.join(runtimeConfigDir, 'local-cli-tools.json'),
   privacyRulesPath: path.join(runtimeConfigDir, 'privacy-rules.md'),
-  debugLogPath: optional('LARK_DEBUG_LOG', path.join(logsDir, 'debug.log')),
-  auditLogPath: optional('LARK_AUDIT_LOG', path.join(logsDir, 'audit.log')),
-  codexExecTraceLogPath: optional(
-    'LARK_CODEX_EXEC_TRACE_LOG',
-    path.join(logsDir, 'trace.log'),
-  ),
+  debugLogPath: envValues.LARK_DEBUG_LOG,
+  auditLogPath: envValues.LARK_AUDIT_LOG,
+  codexExecTraceLogPath: envValues.LARK_CODEX_EXEC_TRACE_LOG,
 } as const;
 
 export type AppConfig = typeof appConfig;

@@ -32,6 +32,7 @@ const code = `
     continuationWorkingRoot: appConfig.continuationWorkingRoot,
     continuationDbPath: appConfig.continuationDbPath,
     continuationArtifactsDir: appConfig.continuationArtifactsDir,
+    ackEmoji: appConfig.ackEmoji,
     quotedCardUserFetchEnabled: appConfig.quotedCardUserFetchEnabled,
     quotedCardUserFetchCommand: appConfig.quotedCardUserFetchCommand,
     quotedCardUserFetchTimeoutMs: appConfig.quotedCardUserFetchTimeoutMs,
@@ -83,6 +84,7 @@ function expectFail(extraEnv: Record<string, string>, pattern: RegExp): void {
 expectFail({ LARK_CRON_SCAN_INTERVAL: '0' }, /LARK_CRON_SCAN_INTERVAL.*positive/i);
 expectFail({ LARK_TEXT_CHUNK_LIMIT: '-1' }, /LARK_TEXT_CHUNK_LIMIT.*positive/i);
 expectFail({ LARK_MIN_SEARCH_SCORE: 'not-a-number' }, /LARK_MIN_SEARCH_SCORE.*number/i);
+expectFail({ LARK_CONTINUATION_ENABLED: 'sometimes' }, /LARK_CONTINUATION_ENABLED.*true, false/i);
 expectFail({ LARK_MEMORY_DEDUP_WINDOW_MS: '-1' }, /LARK_MEMORY_DEDUP_WINDOW_MS.*non-negative/i);
 expectFail({ LARK_CHANNEL_RUNTIME: 'legacy' }, /LARK_CHANNEL_RUNTIME.*removed/i);
 expectFail({ LARK_CHANNEL_RUNTIME: 'claude' }, /LARK_CHANNEL_RUNTIME.*no longer supported/i);
@@ -160,6 +162,9 @@ assert.equal(customLogArchiveRetention.logArchiveRetentionMonths, 0);
 
 const userFetchDisabled = expectOk({ LARK_QUOTED_CARD_USER_FETCH_ENABLED: 'false' });
 assert.equal(userFetchDisabled.quotedCardUserFetchEnabled, false);
+
+const ackDisabled = expectOk({ LARK_ACK_EMOJI: '' });
+assert.equal(ackDisabled.ackEmoji, '');
 
 const customUserFetch = expectOk({
   LARK_QUOTED_CARD_USER_FETCH_COMMAND: '/usr/local/bin/lark-cli',

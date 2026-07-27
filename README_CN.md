@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.9.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.10.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -286,6 +286,11 @@ git push origin v1.0.0
 ---
 
 ## 配置参考
+
+配置项的类型化元数据以 `src/config-schema.ts` 为唯一来源。完整的类型、默认值、
+约束、敏感性、说明和适用功能请查看生成的
+[配置参考](docs/configuration-reference.zh-CN.md)。修改配置时先编辑 schema，
+再运行 `npm run generate:config`；CI 会拒绝未同步的生成产物。
 
 ### 必填
 

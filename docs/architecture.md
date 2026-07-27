@@ -68,6 +68,10 @@ The current baseline is empty:
 - `src/index.ts` is now a composition root; startup cleanup, session health,
   conversation flush, Codex delivery, and channel service orchestration live in
   focused service modules.
+- Supported environment-variable metadata and parsing live in the infrastructure
+  module `src/config-schema.ts`. Runtime config, generated `.env` examples,
+  configure-skill tables, and bilingual references consume that schema; generated
+  documentation never becomes a runtime dependency.
 - Codex exec action schemas and envelope parsing live in
   `src/codex-exec-action-schemas.ts`; dispatch goes through
   `src/codex-exec-action-registry.ts` so action validation/routing is separate
