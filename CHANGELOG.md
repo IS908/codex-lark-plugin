@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-07-27
+
+### Added
+- Added a typed canonical schema for all supported `LARK_*` configuration keys, including defaults, constraints, sensitivity, localized descriptions, and feature ownership.
+- Added generated English and Chinese configuration references plus CI checks for `.env.example`, configure-skill, README default, and packaged-plugin drift.
+
+### Changed
+- Route runtime environment parsing and validation through the canonical schema, including strict accepted values for boolean settings.
+
+### Fixed
+- Preserve an explicitly empty `LARK_ACK_EMOJI` so operators can disable the inbound acknowledgement reaction as documented.
+
 ## [2.9.0] - 2026-07-19
 
 ### Added
@@ -946,7 +958,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.9.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.10.0...HEAD
+[2.10.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.9.0...v2.10.0
 [2.9.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.2...v2.9.0
 [2.8.2]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.0...v2.8.1

@@ -323,84 +323,93 @@ If user says "use defaults" or "skip", leave these at defaults.
 
 ## Recognized config keys
 
-| Key | Category | Required | Default |
-|-----|----------|----------|---------|
-| `LARK_APP_ID` | Credentials | Yes | - |
-| `LARK_APP_SECRET` | Credentials | Yes | - |
-| `LARK_TEXT_CHUNK_LIMIT` | Messaging | No | `4000` |
-| `LARK_QUEUE_HANDLER_TIMEOUT_MS` | Messaging | No | `660000` / `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` |
-| `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | Messaging | No | `660000` / `LARK_CODEX_EXEC_TIMEOUT_MS + 60000` |
-| `LARK_CODEX_EXEC_COMMAND` | Messaging | No | `codex` |
-| `LARK_CODEX_EXEC_CWD` | Messaging | No | `~/.codex/channels/lark/codex-exec-workdir` |
-| `LARK_CODEX_EXEC_TIMEOUT_MS` | Messaging | No | `600000` |
-| `LARK_CODEX_EXEC_SANDBOX` | Messaging | No | `workspace-write` |
-| `LARK_CODEX_EXEC_MODEL` | Messaging | No | (empty) |
-| `LARK_CODEX_EXEC_PROFILE` | Messaging | No | (empty) |
-| `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | Messaging | No | `true` |
-| `LARK_CODEX_EXEC_USE_SESSIONS` | Messaging | No | `true` |
-| `LARK_EXEC_PROGRESS_ENABLED` | Messaging | No | `true` |
-| `LARK_EXEC_PROGRESS_MAX_MESSAGES` | Messaging | No | `3` |
-| `LARK_EXEC_PROGRESS_MAX_CHARS` | Messaging | No | `300` |
-| `LARK_EXEC_PROGRESS_MIN_INTERVAL_MS` | Messaging | No | `15000` |
-| `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS` | Messaging | No | `250` |
-| `LARK_CODEX_EXEC_TOOL_TRACE` | Messaging | No | `false` |
-| `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | Messaging | No | `compact` |
-| `LARK_CODEX_EXEC_TRACE_LOG` | Messaging | No | `~/.codex/channels/lark/logs/trace.log` |
-| `LARK_CARD_FOOTER_METRICS_ENABLED` | Messaging | No | `true` |
-| `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` | Messaging | No | `20000` |
-| `LARK_CODEX_SESSION_RETENTION_DAYS` | Messaging | No | `14` |
-| `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` | Messaging | No | `24` |
-| `LARK_CODEX_SESSION_RETENTION_DRY_RUN` | Messaging | No | `false` |
-| `LARK_SESSION_HEALTH_ENABLED` | Messaging | No | `false` |
-| `LARK_SESSION_HEALTH_TURN_THRESHOLD` | Messaging | No | `80` |
-| `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD` | Messaging | No | `524288` |
-| `LARK_SESSION_HEALTH_TOKEN_THRESHOLD` | Messaging | No | `160000` |
-| `LARK_SESSION_HEALTH_IDLE_DELAY_MS` | Messaging | No | `30000` |
-| `LARK_SESSION_HEALTH_COOLDOWN_MS` | Messaging | No | `1800000` |
-| `LARK_SESSION_HEALTH_MAX_COOLDOWN_MS` | Messaging | No | `21600000` |
-| `LARK_SESSION_HEALTH_MAX_NUDGES` | Messaging | No | `3` |
-| `LARK_ACK_EMOJI` | Acknowledgement | No | `MeMeMe` |
-| `LARK_DOC_COMMENT_ACK_EMOJI` | Acknowledgement | No | `THUMBSUP` |
-| `LARK_BOT_MESSAGE_TRACKER_SIZE` | Acknowledgement | No | `500` |
-| `LARK_CRON_SCAN_INTERVAL` | CronJob | No | `60` |
-| `LARK_CRON_TIMEZONE` | CronJob | No | system timezone |
-| `LARK_FEISHU_API_TIMEOUT_MS` | Reliability | No | `30000` |
-| `LARK_FEISHU_API_RETRY_ATTEMPTS` | Reliability | No | `3` |
-| `LARK_FEISHU_API_RETRY_BASE_DELAY_MS` | Reliability | No | `250` |
-| `LARK_DOWNLOAD_MAX_BYTES` | Reliability | No | `26214400` |
-| `LARK_DOWNLOAD_TIMEOUT_MS` | Reliability | No | `60000` |
-| `LARK_INACTIVITY_HOURS` | Memory | No | `3` |
-| `LARK_MAX_SEARCH_RESULTS` | Memory | No | `2` |
-| `LARK_MIN_SEARCH_SCORE` | Memory | No | `0.3` |
-| `LARK_MAX_EPISODE_BYTES` | Memory | No | `65536` |
-| `LARK_PROFILE_DISTILLATION_ENABLED` | Memory | No | `false` |
-| `LARK_PROFILE_DISTILLATION_MIN_EPISODES` | Memory | No | `3` |
-| `LARK_PROFILE_DISTILLATION_MAX_EPISODES` | Memory | No | `5` |
-| `LARK_PROFILE_DISTILLATION_COOLDOWN_MS` | Memory | No | `86400000` |
-| `LARK_MEMORY_DEDUP_WINDOW_MS` | Memory | No | `1800000` |
-| `LARK_MAX_EPISODE_FILES_PER_SCOPE` | Resource governance | No | `200` |
-| `LARK_MAX_EPISODE_SCOPE_BYTES` | Resource governance | No | `10485760` |
-| `LARK_DEBUG_LOG` | Resource governance | No | `~/.codex/channels/lark/logs/debug.log` |
-| `LARK_LOG_MAX_BYTES` | Resource governance | No | `5242880` |
-| `LARK_LOG_MAX_FILES` | Resource governance | No | `5` |
-| `LARK_LOG_ARCHIVE_RETENTION_MONTHS` | Resource governance | No | `6` |
-| `LARK_INBOX_MAX_AGE_HOURS` | Resource governance | No | `168` |
-| `LARK_INBOX_MAX_BYTES` | Resource governance | No | `209715200` |
-| `LARK_NAME_CACHE_SIZE` | Resource governance | No | `1000` |
-| `LARK_CHAT_TYPE_CACHE_SIZE` | Resource governance | No | `1000` |
-| `LARK_LATEST_MESSAGE_TRACKER_SIZE` | Resource governance | No | `1000` |
-| `LARK_OWNER_OPEN_ID` | Identity | No | (empty) |
-| `LARK_IDENTITY_SESSION_TTL_MS` | Identity | No | auto |
-| `LARK_IDENTITY_SESSION_MAX_ENTRIES` | Identity | No | `5000` |
-| `LARK_AUDIT_LOG` | Privacy | No | `~/.codex/channels/lark/logs/audit.log` |
-| `LARK_CARD_CONTEXT_CACHE_SIZE` | Quoted cards | No | `200` |
-| `LARK_CARD_CONTEXT_CACHE_TTL_MS` | Quoted cards | No | `1800000` |
-| `LARK_QUOTED_CONTEXT_MAX_DEPTH` | Quoted cards | No | `4` |
-| `LARK_QUOTED_CONTEXT_MAX_BYTES` | Quoted cards | No | `12000` |
-| `LARK_QUOTED_CARD_USER_FETCH_ENABLED` | Quoted cards | No | `true` |
-| `LARK_QUOTED_CARD_USER_FETCH_COMMAND` | Quoted cards | No | `lark-cli` |
-| `LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS` | Quoted cards | No | `10000` |
-| `LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES` | Quoted cards | No | `262144` |
+<!-- BEGIN GENERATED CONFIG TABLE -->
+| Key | Category | Type | Required | Default | Sensitive |
+|-----|----------|------|----------|---------|-----------|
+| `LARK_ACK_EMOJI` | Acknowledgement | string | No | MeMeMe | No |
+| `LARK_APP_ID` | Credentials | string | Yes | - | No |
+| `LARK_APP_SECRET` | Credentials | string | Yes | - | Yes |
+| `LARK_AUDIT_LOG` | Privacy | string | No | ~/.codex/channels/lark/logs/audit.log | No |
+| `LARK_BOT_MESSAGE_TRACKER_SIZE` | Acknowledgement | number | No | 500 | No |
+| `LARK_CARD_CONTEXT_CACHE_SIZE` | Quoted cards | number | No | 200 | No |
+| `LARK_CARD_CONTEXT_CACHE_TTL_MS` | Quoted cards | number | No | 1800000 | No |
+| `LARK_CARD_FOOTER_METRICS_ENABLED` | Messaging | boolean | No | true | No |
+| `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` | Messaging | number | No | 20000 | No |
+| `LARK_CHAT_TYPE_CACHE_SIZE` | Resource governance | number | No | 1000 | No |
+| `LARK_CODEX_EXEC_COMMAND` | Messaging | string | No | codex | No |
+| `LARK_CODEX_EXEC_CWD` | Messaging | string | No | ~/.codex/channels/lark/codex-exec-workdir | No |
+| `LARK_CODEX_EXEC_IGNORE_USER_CONFIG` | Messaging | boolean | No | true | No |
+| `LARK_CODEX_EXEC_MODEL` | Messaging | string | No | (empty) | No |
+| `LARK_CODEX_EXEC_PROFILE` | Messaging | string | No | (empty) | No |
+| `LARK_CODEX_EXEC_SANDBOX` | Messaging | enum(read-only, workspace-write, danger-full-access) | No | workspace-write | No |
+| `LARK_CODEX_EXEC_TIMEOUT_MS` | Messaging | number | No | 600000 | No |
+| `LARK_CODEX_EXEC_TOOL_TRACE` | Messaging | boolean | No | false | No |
+| `LARK_CODEX_EXEC_TOOL_TRACE_MODE` | Messaging | enum(compact, full, hidden) | No | compact | No |
+| `LARK_CODEX_EXEC_TRACE_LOG` | Messaging | string | No | ~/.codex/channels/lark/logs/trace.log | No |
+| `LARK_CODEX_EXEC_USE_SESSIONS` | Messaging | boolean | No | true | No |
+| `LARK_CODEX_SESSION_RETENTION_DAYS` | Messaging | number | No | 14 | No |
+| `LARK_CODEX_SESSION_RETENTION_DRY_RUN` | Messaging | boolean | No | false | No |
+| `LARK_CODEX_SESSION_RETENTION_SCAN_INTERVAL_HOURS` | Messaging | number | No | 24 | No |
+| `LARK_CONTINUATION_ENABLED` | Messaging | boolean | No | true | No |
+| `LARK_CONTINUATION_MAX_ATTEMPTS` | Messaging | number | No | 5 | No |
+| `LARK_CONTINUATION_MAX_CONCURRENCY` | Messaging | number | No | 1 | No |
+| `LARK_CONTINUATION_MAX_RETRIES` | Messaging | number | No | 3 | No |
+| `LARK_CONTINUATION_MAX_TOTAL_MINUTES` | Messaging | number | No | 30 | No |
+| `LARK_CONTINUATION_RETENTION_DAYS` | Messaging | number | No | 30 | No |
+| `LARK_CONTINUATION_WORKING_ROOT` | Messaging | absolute path | No | LARK_CODEX_EXEC_CWD | No |
+| `LARK_CRON_SCAN_INTERVAL` | CronJob | number | No | 60 | No |
+| `LARK_CRON_TIMEZONE` | CronJob | string | No | system timezone | No |
+| `LARK_DEBUG_LOG` | Resource governance | string | No | ~/.codex/channels/lark/logs/debug.log | No |
+| `LARK_DOC_COMMENT_ACK_EMOJI` | Acknowledgement | string | No | THUMBSUP | No |
+| `LARK_DOWNLOAD_MAX_BYTES` | Reliability | number | No | 26214400 | No |
+| `LARK_DOWNLOAD_TIMEOUT_MS` | Reliability | number | No | 60000 | No |
+| `LARK_EXEC_PROGRESS_ENABLED` | Messaging | boolean | No | true | No |
+| `LARK_EXEC_PROGRESS_MAX_CHARS` | Messaging | number | No | 300 | No |
+| `LARK_EXEC_PROGRESS_MAX_MESSAGES` | Messaging | number | No | 3 | No |
+| `LARK_EXEC_PROGRESS_MIN_INTERVAL_MS` | Messaging | number | No | 15000 | No |
+| `LARK_EXEC_PROGRESS_POLL_INTERVAL_MS` | Messaging | number | No | 250 | No |
+| `LARK_FEISHU_API_RETRY_ATTEMPTS` | Reliability | number | No | 3 | No |
+| `LARK_FEISHU_API_RETRY_BASE_DELAY_MS` | Reliability | number | No | 250 | No |
+| `LARK_FEISHU_API_TIMEOUT_MS` | Reliability | number | No | 30000 | No |
+| `LARK_IDENTITY_SESSION_MAX_ENTRIES` | Identity | number | No | 5000 | No |
+| `LARK_IDENTITY_SESSION_TTL_MS` | Identity | number | No | max(2h, LARK_INACTIVITY_HOURS x 2h) | No |
+| `LARK_INACTIVITY_HOURS` | Memory | number | No | 3 | No |
+| `LARK_INBOX_MAX_AGE_HOURS` | Resource governance | number | No | 168 | No |
+| `LARK_INBOX_MAX_BYTES` | Resource governance | number | No | 209715200 | No |
+| `LARK_LATEST_MESSAGE_TRACKER_SIZE` | Resource governance | number | No | 1000 | No |
+| `LARK_LOG_ARCHIVE_RETENTION_MONTHS` | Resource governance | number | No | 6 | No |
+| `LARK_LOG_MAX_BYTES` | Resource governance | number | No | 5242880 | No |
+| `LARK_LOG_MAX_FILES` | Resource governance | number | No | 5 | No |
+| `LARK_MAX_EPISODE_BYTES` | Memory | number | No | 65536 | No |
+| `LARK_MAX_EPISODE_FILES_PER_SCOPE` | Memory | number | No | 200 | No |
+| `LARK_MAX_EPISODE_SCOPE_BYTES` | Memory | number | No | 10485760 | No |
+| `LARK_MAX_SEARCH_RESULTS` | Memory | number | No | 2 | No |
+| `LARK_MEMORY_DEDUP_WINDOW_MS` | Memory | number | No | 1800000 | No |
+| `LARK_MIN_SEARCH_SCORE` | Memory | number | No | 0.3 | No |
+| `LARK_NAME_CACHE_SIZE` | Resource governance | number | No | 1000 | No |
+| `LARK_OWNER_OPEN_ID` | Identity | string | No | (empty) | No |
+| `LARK_PROFILE_DISTILLATION_COOLDOWN_MS` | Memory | number | No | 86400000 | No |
+| `LARK_PROFILE_DISTILLATION_ENABLED` | Memory | boolean | No | false | No |
+| `LARK_PROFILE_DISTILLATION_MAX_EPISODES` | Memory | number | No | 5 | No |
+| `LARK_PROFILE_DISTILLATION_MIN_EPISODES` | Memory | number | No | 3 | No |
+| `LARK_QUEUE_HANDLER_TIMEOUT_MS` | Messaging | number | No | LARK_CODEX_EXEC_TIMEOUT_MS + 60000 | No |
+| `LARK_QUOTED_CARD_USER_FETCH_COMMAND` | Quoted cards | string | No | lark-cli | No |
+| `LARK_QUOTED_CARD_USER_FETCH_ENABLED` | Quoted cards | boolean | No | true | No |
+| `LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES` | Quoted cards | number | No | 262144 | No |
+| `LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS` | Quoted cards | number | No | 10000 | No |
+| `LARK_QUOTED_CONTEXT_MAX_BYTES` | Quoted cards | number | No | 12000 | No |
+| `LARK_QUOTED_CONTEXT_MAX_DEPTH` | Quoted cards | number | No | 4 | No |
+| `LARK_REPLY_OBLIGATION_TIMEOUT_MS` | Messaging | number | No | max(60000, LARK_CODEX_EXEC_TIMEOUT_MS + 60000) | No |
+| `LARK_SESSION_HEALTH_COOLDOWN_MS` | Messaging | number | No | 1800000 | No |
+| `LARK_SESSION_HEALTH_ENABLED` | Messaging | boolean | No | false | No |
+| `LARK_SESSION_HEALTH_IDLE_DELAY_MS` | Messaging | number | No | 30000 | No |
+| `LARK_SESSION_HEALTH_MAX_COOLDOWN_MS` | Messaging | number | No | 21600000 | No |
+| `LARK_SESSION_HEALTH_MAX_NUDGES` | Messaging | number | No | 3 | No |
+| `LARK_SESSION_HEALTH_PROMPT_BYTES_THRESHOLD` | Messaging | number | No | 524288 | No |
+| `LARK_SESSION_HEALTH_TOKEN_THRESHOLD` | Messaging | number | No | 160000 | No |
+| `LARK_SESSION_HEALTH_TURN_THRESHOLD` | Messaging | number | No | 80 | No |
+| `LARK_TEXT_CHUNK_LIMIT` | Messaging | number | No | 4000 | No |
+<!-- END GENERATED CONFIG TABLE -->
 
 ## Notes
 
