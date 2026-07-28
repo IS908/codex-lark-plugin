@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-07-28
+
+### Added
+- Added `$lark:configure doctor`, a safe read-only live diagnostic for local configuration, Node.js, Lark credentials, application identity, tenant permissions, WebSocket mode, and event-subscription readiness.
+- Added success, warning, failure, environment-only configuration, and secret-redaction smoke coverage for the doctor report.
+
+### Changed
+- Updated setup guidance to use the current reaction write scope and document the reaction read scope required by reaction events.
+
 ## [2.10.0] - 2026-07-27
 
 ### Added

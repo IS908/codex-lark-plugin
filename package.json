@@ -1,6 +1,6 @@
 {
   "name": "codex-lark-plugin",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "description": "Codex channel plugin for Feishu/Lark — chat with Codex through Feishu with local-file memory and scheduled jobs",
   "keywords": [
     "codex",
@@ -26,6 +26,7 @@
   "scripts": {
     "start": "node --import tsx src/index.ts",
     "stop": "node --import tsx src/stop.ts",
+    "doctor": "node --import tsx src/configure-doctor-cli.ts",
     "build": "tsc && node scripts/build-runtime-bundles.js --target . && npm --prefix plugins/lark run --silent build",
     "build:plugin": "npm --prefix plugins/lark run --silent build",
     "typecheck": "tsc --noEmit",

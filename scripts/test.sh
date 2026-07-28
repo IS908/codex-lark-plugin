@@ -90,6 +90,10 @@ echo "=== Config validation checks ==="
 node --import tsx scripts/config-validation-smoke.ts
 
 echo ""
+echo "=== Configure doctor checks ==="
+node --import tsx scripts/configure-doctor-smoke.ts
+
+echo ""
 echo "=== Config surface sync checks ==="
 node --import tsx scripts/config-surface-sync-smoke.ts
 node --import tsx scripts/generate-config-artifacts.ts --check

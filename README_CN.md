@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.10.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.11.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -109,7 +109,7 @@
 
 1. 前往[飞书开放平台](https://open.feishu.cn/)创建自建应用
 2. 启用「机器人」能力
-3. 添加以下权限：`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`、`im:message:send_as_bot`、`im:resource`、`im:message.reactions:write`、`docs:document.comment:read`、`docs:document.comment:create`、`drive:drive.metadata:readonly`
+3. 添加以下权限：`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`、`im:message:send_as_bot`、`im:resource`、`im:message.reactions:write_only`、`im:message.reactions:read`、`docs:document.comment:read`、`docs:document.comment:create`、`drive:drive.metadata:readonly`
 4. 在「事件订阅」中启用 WebSocket 模式，并订阅 `im.message.receive_v1`、`im.message.reaction.created_v1`、`drive.notice.comment_add_v1`
 5. 获取 App ID 和 App Secret
 
@@ -175,6 +175,16 @@ LARK_APP_ID=cli_your_app_id
 LARK_APP_SECRET=your_app_secret
 EOF
 ```
+
+保存凭据后执行 live 诊断：
+
+```text
+$lark:configure doctor
+```
+
+doctor 会只读核验凭据、应用身份、权限和 WebSocket 配置。飞书当前的只读应用
+API 不返回消息事件订阅清单，因此这些事件会明确显示为需要人工核对的 `WARN`，
+不会误报为 `PASS`。
 
 ### 第 4 步：启动
 
@@ -734,6 +744,7 @@ SQLite 初始化失败会 fail-closed 地关闭 Async Task 与 Cron 执行；普
 | `$lark:configure` | 查看当前配置状态（敏感信息脱敏显示） |
 | `$lark:configure <app_id> <app_secret>` | 快速配置凭据 |
 | `$lark:configure setup` | 完整交互式引导配置 |
+| `$lark:configure doctor` | 执行安全、只读的 live 配置诊断 |
 | `$lark:configure clear` | 清除所有配置 |
 
 ### `$lark:configure setup` 流程
