@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.11.1] - 2026-07-28
+
+### Security
+- Upgraded the Lark and MCP SDK dependency lines and refreshed transitive security overrides for Axios, Hono, fast-uri, protobufjs, and body-parser.
+- Cleared all production findings from `npm run audit:deps` in both the root and packaged-plugin dependency graphs.
+
 ## [2.11.0] - 2026-07-28
 
 ### Added
