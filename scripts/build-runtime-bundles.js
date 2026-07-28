@@ -1,5 +1,11 @@
 import { build } from 'esbuild';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,6 +26,15 @@ const nodeEsmCompatBanner = [
   'const __filename = __larkFileURLToPath(import.meta.url);',
   'const __dirname = __larkPathDirname(__filename);',
 ].join(' ');
+
+function normalizeGeneratedFile(file) {
+  if (!file.path.endsWith('.js')) return Buffer.from(file.contents);
+  return Buffer.from(
+    Buffer.from(file.contents)
+      .toString('utf8')
+      .replace(/[ \t]+$/gm, ''),
+  );
+}
 
 for (const target of targets) {
   const packageRoot = path.resolve(repoRoot, target);
@@ -43,12 +58,12 @@ for (const target of targets) {
     sourcemap: target !== 'plugins/lark',
     banner: { js: nodeEsmCompatBanner },
     logLevel: 'silent',
-    write: !checkOnly,
+    write: false,
   });
 
   const label = `${path.relative(repoRoot, packageRoot) || '.'}/${outputDir}`;
+  const generated = result.outputFiles ?? [];
   if (checkOnly) {
-    const generated = result.outputFiles ?? [];
     const generatedNames = new Set(generated.map((file) => path.basename(file.path)));
     const actualNames = existsSync(outputPath)
       ? readdirSync(outputPath).filter((name) => name.endsWith('.js') || name.endsWith('.js.map'))
@@ -56,7 +71,7 @@ for (const target of targets) {
     const extra = actualNames.filter((name) => !generatedNames.has(name));
     const changed = generated.filter((file) => {
       if (!existsSync(file.path)) return true;
-      return !Buffer.from(file.contents).equals(readFileSync(file.path));
+      return !normalizeGeneratedFile(file).equals(readFileSync(file.path));
     });
     if (extra.length > 0 || changed.length > 0) {
       const details = [
@@ -67,6 +82,10 @@ for (const target of targets) {
     }
     console.error(`[build-runtime] bundle sync ok ${label}`);
   } else {
+    mkdirSync(outputPath, { recursive: true });
+    for (const file of generated) {
+      writeFileSync(file.path, normalizeGeneratedFile(file));
+    }
     console.error(`[build-runtime] bundled ${label}`);
   }
 }

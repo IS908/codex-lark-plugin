@@ -3783,6 +3783,7 @@ var require_fast_uri = __commonJS({
       return uriTokens.join("");
     }
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
+    var AUTHORITY_PREFIX = /^(?:[^#/:?]+:)?\/\/([^/?#]*)/;
     function getParseError(parsed, matches) {
       if (matches[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
         return 'URI path must start with "/" when authority is present.';
@@ -3811,6 +3812,11 @@ var require_fast_uri = __commonJS({
         } else {
           uri = "//" + uri;
         }
+      }
+      const authorityMatch = uri.match(AUTHORITY_PREFIX);
+      if (authorityMatch !== null && authorityMatch[1].indexOf("\\") !== -1) {
+        parsed.error = "URI authority must not contain a literal backslash.";
+        malformedAuthorityOrPort = true;
       }
       const matches = uri.match(URI_PARSE);
       if (matches) {
@@ -3855,7 +3861,7 @@ var require_fast_uri = __commonJS({
         if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport)) {
           if (parsed.host && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP3 === false && nonSimpleDomain(parsed.host)) {
             try {
-              parsed.host = URL.domainToASCII(parsed.host.toLowerCase());
+              parsed.host = new URL("http://" + parsed.host).hostname;
             } catch (e) {
               parsed.error = parsed.error || "Host's domain name can not be converted to ASCII: " + e;
             }
@@ -20069,6 +20075,25 @@ var require_axios = __commonJS({
       iterator,
       toStringTag
     } = Symbol;
+    var hasOwnProperty = (({
+      hasOwnProperty: hasOwnProperty2
+    }) => (obj, prop) => hasOwnProperty2.call(obj, prop))(Object.prototype);
+    var hasOwnInPrototypeChain = (thing, prop) => {
+      let obj = thing;
+      const seen = [];
+      while (obj != null && obj !== Object.prototype) {
+        if (seen.indexOf(obj) !== -1) {
+          return false;
+        }
+        seen.push(obj);
+        if (hasOwnProperty(obj, prop)) {
+          return true;
+        }
+        obj = getPrototypeOf(obj);
+      }
+      return false;
+    };
+    var getSafeProp = (obj, prop) => obj != null && hasOwnInPrototypeChain(obj, prop) ? obj[prop] : void 0;
     var kindOf = /* @__PURE__ */ ((cache) => (thing) => {
       const str = toString.call(thing);
       return cache[str] || (cache[str] = str.slice(8, -1).toLowerCase());
@@ -20101,11 +20126,14 @@ var require_axios = __commonJS({
     var isObject2 = (thing) => thing !== null && typeof thing === "object";
     var isBoolean = (thing) => thing === true || thing === false;
     var isPlainObject3 = (val) => {
-      if (kindOf(val) !== "object") {
+      if (!isObject2(val)) {
         return false;
       }
       const prototype2 = getPrototypeOf(val);
-      return (prototype2 === null || prototype2 === Object.prototype || Object.getPrototypeOf(prototype2) === null) && !(toStringTag in val) && !(iterator in val);
+      return (prototype2 === null || prototype2 === Object.prototype || getPrototypeOf(prototype2) === null) && // Treat any genuine (non-Object.prototype-polluted) Symbol.toStringTag or
+      // Symbol.iterator as evidence the value is a tagged/iterable type rather
+      // than a plain object, while ignoring keys injected onto Object.prototype.
+      !hasOwnInPrototypeChain(val, toStringTag) && !hasOwnInPrototypeChain(val, iterator);
     };
     var isEmptyObject = (val) => {
       if (!isObject2(val) || isBuffer(val)) {
@@ -20358,9 +20386,6 @@ var require_axios = __commonJS({
         return p1.toUpperCase() + p2;
       });
     };
-    var hasOwnProperty = (({
-      hasOwnProperty: hasOwnProperty2
-    }) => (obj, prop) => hasOwnProperty2.call(obj, prop))(Object.prototype);
     var {
       propertyIsEnumerable
     } = Object.prototype;
@@ -20461,6 +20486,7 @@ var require_axios = __commonJS({
     })(typeof setImmediate === "function", isFunction$1(_global.postMessage));
     var asap = typeof queueMicrotask !== "undefined" ? queueMicrotask.bind(_global) : typeof process !== "undefined" && process.nextTick || _setImmediate;
     var isIterable = (thing) => thing != null && isFunction$1(thing[iterator]);
+    var isSafeIterable = (thing) => thing != null && hasOwnInPrototypeChain(thing, iterator) && isIterable(thing);
     var utils$1 = {
       isArray,
       isArrayBuffer,
@@ -20506,6 +20532,8 @@ var require_axios = __commonJS({
       hasOwnProperty,
       hasOwnProp: hasOwnProperty,
       // an alias to avoid ESLint no-prototype-builtins detection
+      hasOwnInPrototypeChain,
+      getSafeProp,
       reduceDescriptors,
       freezeMethods,
       toObjectSet,
@@ -20521,7 +20549,8 @@ var require_axios = __commonJS({
       isThenable,
       setImmediate: _setImmediate,
       asap,
-      isIterable
+      isIterable,
+      isSafeIterable
     };
     var ignoreDuplicateOf = utils$1.toObjectSet(["age", "authorization", "content-length", "content-type", "etag", "expires", "from", "host", "if-modified-since", "if-unmodified-since", "last-modified", "location", "max-forwards", "proxy-authorization", "referer", "retry-after", "user-agent"]);
     var parseHeaders = (rawHeaders) => {
@@ -20659,13 +20688,19 @@ var require_axios = __commonJS({
           setHeaders(header, valueOrRewrite);
         } else if (utils$1.isString(header) && (header = header.trim()) && !isValidHeaderName(header)) {
           setHeaders(parseHeaders(header), valueOrRewrite);
-        } else if (utils$1.isObject(header) && utils$1.isIterable(header)) {
-          let obj = {}, dest, key;
+        } else if (utils$1.isObject(header) && utils$1.isSafeIterable(header)) {
+          let obj = /* @__PURE__ */ Object.create(null), dest, key;
           for (const entry of header) {
             if (!utils$1.isArray(entry)) {
               throw new TypeError("Object iterator must return a key-value pair");
             }
-            obj[key = entry[0]] = (dest = obj[key]) ? utils$1.isArray(dest) ? [...dest, entry[1]] : [dest, entry[1]] : entry[1];
+            key = entry[0];
+            if (utils$1.hasOwnProp(obj, key)) {
+              dest = obj[key];
+              obj[key] = utils$1.isArray(dest) ? [...dest, entry[1]] : [dest, entry[1]];
+            } else {
+              obj[key] = entry[1];
+            }
           }
           setHeaders(obj, valueOrRewrite);
         } else {
@@ -20870,7 +20905,13 @@ var require_axios = __commonJS({
     var AxiosError = class _AxiosError extends Error {
       static from(error2, code, config3, request, response, customProps) {
         const axiosError = new _AxiosError(error2.message, code || error2.code, config3, request, response);
-        axiosError.cause = error2;
+        Object.defineProperty(axiosError, "cause", {
+          __proto__: null,
+          value: error2,
+          writable: true,
+          enumerable: false,
+          configurable: true
+        });
         axiosError.name = error2.name;
         if (error2.status != null && axiosError.status == null) {
           axiosError.status = error2.status;
@@ -20947,6 +20988,7 @@ var require_axios = __commonJS({
     AxiosError.ERR_NOT_SUPPORT = "ERR_NOT_SUPPORT";
     AxiosError.ERR_INVALID_URL = "ERR_INVALID_URL";
     AxiosError.ERR_FORM_DATA_DEPTH_EXCEEDED = "ERR_FORM_DATA_DEPTH_EXCEEDED";
+    var DEFAULT_FORM_DATA_MAX_DEPTH = 100;
     function isVisitable(thing) {
       return utils$1.isPlainObject(thing) || utils$1.isArray(thing);
     }
@@ -20983,8 +21025,9 @@ var require_axios = __commonJS({
       const dots = options.dots;
       const indexes = options.indexes;
       const _Blob = options.Blob || typeof Blob !== "undefined" && Blob;
-      const maxDepth = options.maxDepth === void 0 ? 100 : options.maxDepth;
+      const maxDepth = options.maxDepth === void 0 ? DEFAULT_FORM_DATA_MAX_DEPTH : options.maxDepth;
       const useBlob = _Blob && utils$1.isSpecCompliantForm(formData);
+      const stack = [];
       if (!utils$1.isFunction(visitor)) {
         throw new TypeError("visitor must be a function");
       }
@@ -21000,9 +21043,37 @@ var require_axios = __commonJS({
           throw new AxiosError("Blob is not supported. Use a Buffer instead.");
         }
         if (utils$1.isArrayBuffer(value) || utils$1.isTypedArray(value)) {
-          return useBlob && typeof Blob === "function" ? new Blob([value]) : Buffer.from(value);
+          if (useBlob && typeof _Blob === "function") {
+            return new _Blob([value]);
+          }
+          if (typeof Buffer !== "undefined") {
+            return Buffer.from(value);
+          }
+          throw new AxiosError("Blob is not supported. Use a Buffer instead.", AxiosError.ERR_NOT_SUPPORT);
         }
         return value;
+      }
+      function throwIfMaxDepthExceeded(depth) {
+        if (depth > maxDepth) {
+          throw new AxiosError("Object is too deeply nested (" + depth + " levels). Max depth: " + maxDepth, AxiosError.ERR_FORM_DATA_DEPTH_EXCEEDED);
+        }
+      }
+      function stringifyWithDepthLimit(value, depth) {
+        if (maxDepth === Infinity) {
+          return JSON.stringify(value);
+        }
+        const ancestors = [];
+        return JSON.stringify(value, function limitDepth(_key, currentValue) {
+          if (!utils$1.isObject(currentValue)) {
+            return currentValue;
+          }
+          while (ancestors.length && ancestors[ancestors.length - 1] !== this) {
+            ancestors.pop();
+          }
+          ancestors.push(currentValue);
+          throwIfMaxDepthExceeded(depth + ancestors.length - 1);
+          return currentValue;
+        });
       }
       function defaultVisitor(value, key, path27) {
         let arr = value;
@@ -21013,7 +21084,7 @@ var require_axios = __commonJS({
         if (value && !path27 && typeof value === "object") {
           if (utils$1.endsWith(key, "{}")) {
             key = metaTokens ? key : key.slice(0, -2);
-            value = JSON.stringify(value);
+            value = stringifyWithDepthLimit(value, 1);
           } else if (utils$1.isArray(value) && isFlatArray(value) || (utils$1.isFileList(value) || utils$1.endsWith(key, "[]")) && (arr = utils$1.toArray(value))) {
             key = removeBrackets(key);
             arr.forEach(function each(el, index) {
@@ -21032,7 +21103,6 @@ var require_axios = __commonJS({
         formData.append(renderKey(path27, key, dots), convertValue(value));
         return false;
       }
-      const stack = [];
       const exposedHelpers = Object.assign(predicates, {
         defaultVisitor,
         convertValue,
@@ -21040,9 +21110,7 @@ var require_axios = __commonJS({
       });
       function build(value, path27, depth = 0) {
         if (utils$1.isUndefined(value)) return;
-        if (depth > maxDepth) {
-          throw new AxiosError("Object is too deeply nested (" + depth + " levels). Max depth: " + maxDepth, AxiosError.ERR_FORM_DATA_DEPTH_EXCEEDED);
-        }
+        throwIfMaxDepthExceeded(depth);
         if (stack.indexOf(value) !== -1) {
           throw new Error("Circular reference detected in " + path27.join("."));
         }
@@ -21083,9 +21151,7 @@ var require_axios = __commonJS({
       this._pairs.push([name, value]);
     };
     prototype.toString = function toString2(encoder) {
-      const _encode = encoder ? function(value) {
-        return encoder.call(this, value, encode$1);
-      } : encode$1;
+      const _encode = encoder ? (value) => encoder.call(this, value, encode$1) : encode$1;
       return this._pairs.map(function each(pair) {
         return _encode(pair[0]) + "=" + _encode(pair[1]);
       }, "").join("&");
@@ -21097,11 +21163,12 @@ var require_axios = __commonJS({
       if (!params) {
         return url2;
       }
-      const _encode = options && options.encode || encode;
+      url2 = url2 || "";
       const _options = utils$1.isFunction(options) ? {
         serialize: options
       } : options;
-      const serializeFn = _options && _options.serialize;
+      const _encode = utils$1.getSafeProp(_options, "encode") || encode;
+      const serializeFn = utils$1.getSafeProp(_options, "serialize");
       let serializedParams;
       if (serializeFn) {
         serializedParams = serializeFn(params, _options);
@@ -21184,7 +21251,8 @@ var require_axios = __commonJS({
       forcedJSONParsing: true,
       clarifyTimeoutError: false,
       legacyInterceptorReqResOrdering: true,
-      advertiseZstdAcceptEncoding: false
+      advertiseZstdAcceptEncoding: false,
+      validateStatusUndefinedResolves: true
     };
     var URLSearchParams2 = url.URLSearchParams;
     var ALPHA = "abcdefghijklmnopqrstuvwxyz";
@@ -21249,10 +21317,21 @@ var require_axios = __commonJS({
         ...options
       });
     }
+    var MAX_DEPTH2 = DEFAULT_FORM_DATA_MAX_DEPTH;
+    function throwIfDepthExceeded(index) {
+      if (index > MAX_DEPTH2) {
+        throw new AxiosError("FormData field is too deeply nested (" + index + " levels). Max depth: " + MAX_DEPTH2, AxiosError.ERR_FORM_DATA_DEPTH_EXCEEDED);
+      }
+    }
     function parsePropPath(name) {
-      return utils$1.matchAll(/\w+|\[(\w*)]/g, name).map((match) => {
-        return match[0] === "[]" ? "" : match[1] || match[0];
-      });
+      const path27 = [];
+      const pattern = /\w+|\[(\w*)]/g;
+      let match;
+      while ((match = pattern.exec(name)) !== null) {
+        throwIfDepthExceeded(path27.length);
+        path27.push(match[0] === "[]" ? "" : match[1] || match[0]);
+      }
+      return path27;
     }
     function arrayToObject(arr) {
       const obj = {};
@@ -21268,6 +21347,7 @@ var require_axios = __commonJS({
     }
     function formDataToJSON(formData) {
       function buildPath(path27, value, target, index) {
+        throwIfDepthExceeded(index);
         let name = path27[index++];
         if (name === "__proto__") return true;
         const isNumericKey = Number.isFinite(+name);
@@ -21454,9 +21534,28 @@ var require_axios = __commonJS({
     function combineURLs(baseURL, relativeURL) {
       return relativeURL ? baseURL.replace(/\/?\/$/, "") + "/" + relativeURL.replace(/^\/+/, "") : baseURL;
     }
-    function buildFullPath(baseURL, requestedURL, allowAbsoluteUrls) {
+    var malformedHttpProtocol = /^https?:(?!\/\/)/i;
+    var httpProtocolControlCharacters = /[\t\n\r]/g;
+    function stripLeadingC0ControlOrSpace(url2) {
+      let i = 0;
+      while (i < url2.length && url2.charCodeAt(i) <= 32) {
+        i++;
+      }
+      return url2.slice(i);
+    }
+    function normalizeURLForProtocolCheck(url2) {
+      return stripLeadingC0ControlOrSpace(url2).replace(httpProtocolControlCharacters, "");
+    }
+    function assertValidHttpProtocolURL(url2, config3) {
+      if (typeof url2 === "string" && malformedHttpProtocol.test(normalizeURLForProtocolCheck(url2))) {
+        throw new AxiosError('Invalid URL: missing "//" after protocol', AxiosError.ERR_INVALID_URL, config3);
+      }
+    }
+    function buildFullPath(baseURL, requestedURL, allowAbsoluteUrls, config3) {
+      assertValidHttpProtocolURL(requestedURL, config3);
       let isRelativeUrl = !isAbsoluteURL(requestedURL);
       if (baseURL && (isRelativeUrl || allowAbsoluteUrls === false)) {
+        assertValidHttpProtocolURL(baseURL, config3);
         return combineURLs(baseURL, requestedURL);
       }
       return requestedURL;
@@ -21526,7 +21625,7 @@ var require_axios = __commonJS({
     function getEnv(key) {
       return process.env[key.toLowerCase()] || process.env[key.toUpperCase()] || "";
     }
-    var VERSION = "1.17.0";
+    var VERSION = "1.18.1";
     function parseProtocol(url2) {
       const match = /^([-+\w]{1,25}):(?:\/\/)?/.exec(url2);
       return match && match[1] || "";
@@ -21548,13 +21647,13 @@ var require_axios = __commonJS({
         const params = match[2];
         const encoding = match[3] ? "base64" : "utf8";
         const body = match[4];
-        let mime;
+        let mime = "";
         if (type) {
           mime = params ? type + params : type;
         } else if (params) {
           mime = "text/plain" + params;
         }
-        const buffer = Buffer.from(decodeURIComponent(body), encoding);
+        const buffer = encoding === "base64" ? Buffer.from(body, "base64") : Buffer.from(decodeURIComponent(body), encoding);
         if (asBlob) {
           if (!_Blob) {
             throw new AxiosError("Blob is not supported", AxiosError.ERR_NOT_SUPPORT);
@@ -21878,12 +21977,28 @@ var require_axios = __commonJS({
         }, cb);
       } : fn;
     };
-    var LOOPBACK_HOSTNAMES = /* @__PURE__ */ new Set(["localhost"]);
+    var LOOPBACK_HOSTNAMES = /* @__PURE__ */ new Set(["localhost", "0.0.0.0"]);
     var isIPv4Loopback = (host) => {
       const parts = host.split(".");
       if (parts.length !== 4) return false;
       if (parts[0] !== "127") return false;
       return parts.every((p) => /^\d+$/.test(p) && Number(p) >= 0 && Number(p) <= 255);
+    };
+    var isIPv6ZeroGroup = (group) => /^0{1,4}$/.test(group);
+    var isIPv6Unspecified = (host) => {
+      if (host === "::") return true;
+      const compressionIndex = host.indexOf("::");
+      if (compressionIndex !== -1) {
+        if (compressionIndex !== host.lastIndexOf("::")) return false;
+        const left = host.slice(0, compressionIndex);
+        const right = host.slice(compressionIndex + 2);
+        const leftGroups = left ? left.split(":") : [];
+        const rightGroups = right ? right.split(":") : [];
+        const explicitGroups = leftGroups.length + rightGroups.length;
+        return explicitGroups < 8 && leftGroups.every(isIPv6ZeroGroup) && rightGroups.every(isIPv6ZeroGroup);
+      }
+      const groups = host.split(":");
+      return groups.length === 8 && groups.every(isIPv6ZeroGroup);
     };
     var isIPv6Loopback = (host) => {
       if (host === "::1") return true;
@@ -21907,6 +22022,7 @@ var require_axios = __commonJS({
       if (!host) return false;
       if (LOOPBACK_HOSTNAMES.has(host)) return true;
       if (isIPv4Loopback(host)) return true;
+      if (isIPv6Unspecified(host)) return true;
       return isIPv6Loopback(host);
     };
     var DEFAULT_PORTS = {
@@ -22099,6 +22215,8 @@ var require_axios = __commonJS({
       }), throttled[1]];
     };
     var asyncDecorator = (fn) => (...args) => utils$1.asap(() => fn(...args));
+    var isHexDigit = (charCode) => charCode >= 48 && charCode <= 57 || charCode >= 65 && charCode <= 70 || charCode >= 97 && charCode <= 102;
+    var isPercentEncodedByte = (str, i, len) => i + 2 < len && isHexDigit(str.charCodeAt(i + 1)) && isHexDigit(str.charCodeAt(i + 2));
     function estimateDataURLDecodedBytes(url2) {
       if (!url2 || typeof url2 !== "string") return 0;
       if (!url2.startsWith("data:")) return 0;
@@ -22114,7 +22232,7 @@ var require_axios = __commonJS({
           if (body.charCodeAt(i) === 37 && i + 2 < len) {
             const a = body.charCodeAt(i + 1);
             const b = body.charCodeAt(i + 2);
-            const isHex = (a >= 48 && a <= 57 || a >= 65 && a <= 70 || a >= 97 && a <= 102) && (b >= 48 && b <= 57 || b >= 65 && b <= 70 || b >= 97 && b <= 102);
+            const isHex = isHexDigit(a) && isHexDigit(b);
             if (isHex) {
               effectiveLen -= 2;
               i += 2;
@@ -22146,13 +22264,13 @@ var require_axios = __commonJS({
         const bytes2 = groups * 3 - (pad || 0);
         return bytes2 > 0 ? bytes2 : 0;
       }
-      if (typeof Buffer !== "undefined" && typeof Buffer.byteLength === "function") {
-        return Buffer.byteLength(body, "utf8");
-      }
       let bytes = 0;
       for (let i = 0, len = body.length; i < len; i++) {
         const c = body.charCodeAt(i);
-        if (c < 128) {
+        if (c === 37 && isPercentEncodedByte(body, i, len)) {
+          bytes += 1;
+          i += 2;
+        } else if (c < 128) {
           bytes += 1;
         } else if (c < 2048) {
           bytes += 2;
@@ -22208,6 +22326,33 @@ var require_axios = __commonJS({
     var kAxiosInstalledTunnel = /* @__PURE__ */ Symbol("axios.http.installedTunnel");
     var tunnelingAgentCache = /* @__PURE__ */ new Map();
     var tunnelingAgentCacheUser = /* @__PURE__ */ new WeakMap();
+    var NODE_NATIVE_ENV_PROXY_SUPPORT = {
+      22: 21,
+      24: 5
+    };
+    function isNodeNativeEnvProxySupported(nodeVersion = process.versions && process.versions.node) {
+      if (!nodeVersion) {
+        return false;
+      }
+      const [major, minor] = nodeVersion.split(".").map((part) => Number(part));
+      if (!Number.isInteger(major) || !Number.isInteger(minor)) {
+        return false;
+      }
+      if (major > 24) {
+        return true;
+      }
+      return NODE_NATIVE_ENV_PROXY_SUPPORT[major] != null && minor >= NODE_NATIVE_ENV_PROXY_SUPPORT[major];
+    }
+    function isNodeEnvProxyEnabled(agent, nodeVersion = process.versions && process.versions.node) {
+      if (!isNodeNativeEnvProxySupported(nodeVersion)) {
+        return false;
+      }
+      const agentOptions = agent && agent.options;
+      return Boolean(agentOptions && utils$1.hasOwnProp(agentOptions, "proxyEnv") && agentOptions.proxyEnv != null);
+    }
+    function getProxyEnvAgent(options, configHttpAgent, configHttpsAgent) {
+      return isHttps.test(options.protocol) ? configHttpsAgent || https2.globalAgent : configHttpAgent || http3.globalAgent;
+    }
     function getTunnelingAgent(agentOptions, userHttpsAgent) {
       const key = agentOptions.protocol + "//" + agentOptions.hostname + ":" + (agentOptions.port || "") + "#" + (agentOptions.auth || "");
       const cache = userHttpsAgent ? tunnelingAgentCacheUser.get(userHttpsAgent) || tunnelingAgentCacheUser.set(userHttpsAgent, /* @__PURE__ */ new Map()).get(userHttpsAgent) : tunnelingAgentCache;
@@ -22259,13 +22404,37 @@ var require_axios = __commonJS({
       if (options.beforeRedirects.auth) {
         options.beforeRedirects.auth(options);
       }
+      if (options.beforeRedirects.sensitiveHeaders) {
+        options.beforeRedirects.sensitiveHeaders(options, requestDetails);
+      }
       if (options.beforeRedirects.config) {
         options.beforeRedirects.config(options, responseDetails, requestDetails);
       }
     }
-    function setProxy(options, configProxy, location, isRedirect, configHttpsAgent) {
+    function stripMatchingHeaders(headers, sensitiveSet) {
+      if (!headers) {
+        return;
+      }
+      Object.keys(headers).forEach((header) => {
+        if (sensitiveSet.has(header.toLowerCase())) {
+          delete headers[header];
+        }
+      });
+    }
+    function isSameOriginRedirect(redirectOptions, requestDetails) {
+      if (!requestDetails) {
+        return false;
+      }
+      try {
+        return new URL(requestDetails.url).origin === new URL(redirectOptions.href).origin;
+      } catch (e) {
+        return false;
+      }
+    }
+    function setProxy(options, configProxy, location, isRedirect, configHttpsAgent, configHttpAgent) {
       let proxy = configProxy;
-      if (!proxy && proxy !== false) {
+      const proxyEnvAgent = getProxyEnvAgent(options, configHttpAgent, configHttpsAgent);
+      if (!proxy && proxy !== false && !isNodeEnvProxyEnabled(proxyEnvAgent)) {
         const proxyUrl = getProxyForUrl(location);
         if (proxyUrl) {
           if (!shouldBypassProxy(location)) {
@@ -22356,7 +22525,7 @@ var require_axios = __commonJS({
         }
       }
       options.beforeRedirects.proxy = function beforeRedirect(redirectOptions) {
-        setProxy(redirectOptions, configProxy, redirectOptions.href, true, configHttpsAgent);
+        setProxy(redirectOptions, configProxy, redirectOptions.href, true, configHttpsAgent, configHttpAgent);
       };
     }
     var isHttpAdapterSupported = typeof process !== "undefined" && utils$1.kindOf(process) === "process";
@@ -22433,7 +22602,7 @@ var require_axios = __commonJS({
     };
     var httpAdapter = isHttpAdapterSupported && function httpAdapter2(config3) {
       return wrapAsync(async function dispatchHttpRequest(resolve, reject, onDone) {
-        const own2 = (key) => utils$1.hasOwnProp(config3, key) ? config3[key] : void 0;
+        const own2 = (key) => utils$1.getSafeProp(config3, key);
         const transitional = own2("transitional") || transitionalDefaults;
         let data = own2("data");
         let lookup = own2("lookup");
@@ -22441,9 +22610,17 @@ var require_axios = __commonJS({
         let httpVersion = own2("httpVersion");
         if (httpVersion === void 0) httpVersion = 1;
         let http2Options = own2("http2Options");
+        const httpAgent = own2("httpAgent");
+        const httpsAgent = own2("httpsAgent");
+        const configProxy = own2("proxy");
         const responseType = own2("responseType");
         const responseEncoding = own2("responseEncoding");
-        const method = config3.method.toUpperCase();
+        const socketPath = own2("socketPath");
+        const method = own2("method").toUpperCase();
+        const maxRedirects = own2("maxRedirects");
+        const maxBodyLength = own2("maxBodyLength");
+        const maxContentLength = own2("maxContentLength");
+        const decompress = own2("decompress");
         let isDone;
         let rejected = false;
         let req;
@@ -22482,9 +22659,11 @@ var require_axios = __commonJS({
           }
         }
         function createTimeoutError() {
-          let timeoutErrorMessage = config3.timeout ? "timeout of " + config3.timeout + "ms exceeded" : "timeout exceeded";
-          if (config3.timeoutErrorMessage) {
-            timeoutErrorMessage = config3.timeoutErrorMessage;
+          const configTimeout = own2("timeout");
+          let timeoutErrorMessage = configTimeout ? "timeout of " + configTimeout + "ms exceeded" : "timeout exceeded";
+          const configTimeoutErrorMessage = own2("timeoutErrorMessage");
+          if (configTimeoutErrorMessage) {
+            timeoutErrorMessage = configTimeoutErrorMessage;
           }
           return new AxiosError(timeoutErrorMessage, transitional.clarifyTimeoutError ? AxiosError.ETIMEDOUT : AxiosError.ECONNABORTED, config3, req);
         }
@@ -22525,15 +22704,16 @@ var require_axios = __commonJS({
             onFinished();
           }
         });
-        const fullPath = buildFullPath(config3.baseURL, config3.url, config3.allowAbsoluteUrls);
-        const parsed = new URL(fullPath, platform.hasBrowserEnv ? platform.origin : void 0);
+        const fullPath = buildFullPath(own2("baseURL"), own2("url"), own2("allowAbsoluteUrls"), config3);
+        const urlBase = socketPath ? "http://localhost" : platform.hasBrowserEnv ? platform.origin : void 0;
+        const parsed = new URL(fullPath, urlBase);
         const protocol = parsed.protocol || supportedProtocols[0];
         if (protocol === "data:") {
-          if (config3.maxContentLength > -1) {
-            const dataUrl = String(config3.url || fullPath || "");
+          if (maxContentLength > -1) {
+            const dataUrl = String(own2("url") || fullPath || "");
             const estimated = estimateDataURLDecodedBytes(dataUrl);
-            if (estimated > config3.maxContentLength) {
-              return reject(new AxiosError("maxContentLength size of " + config3.maxContentLength + " exceeded", AxiosError.ERR_BAD_RESPONSE, config3));
+            if (estimated > maxContentLength) {
+              return reject(new AxiosError("maxContentLength size of " + maxContentLength + " exceeded", AxiosError.ERR_BAD_RESPONSE, config3));
             }
           }
           let convertedData;
@@ -22546,7 +22726,7 @@ var require_axios = __commonJS({
             });
           }
           try {
-            convertedData = fromDataURI(config3.url, responseType === "blob", {
+            convertedData = fromDataURI(own2("url"), responseType === "blob", {
               Blob: config3.env && config3.env.Blob
             });
           } catch (err) {
@@ -22611,7 +22791,7 @@ var require_axios = __commonJS({
             return reject(new AxiosError("Data after transformation must be a string, an ArrayBuffer, a Buffer, or a Stream", AxiosError.ERR_BAD_REQUEST, config3));
           }
           headers.setContentLength(data.length, false);
-          if (config3.maxBodyLength > -1 && data.length > config3.maxBodyLength) {
+          if (maxBodyLength > -1 && data.length > maxBodyLength) {
             return reject(new AxiosError("Request body larger than maxBodyLength limit", AxiosError.ERR_BAD_REQUEST, config3));
           }
         }
@@ -22636,8 +22816,8 @@ var require_axios = __commonJS({
         let auth = void 0;
         const configAuth = own2("auth");
         if (configAuth) {
-          const username = configAuth.username || "";
-          const password = configAuth.password || "";
+          const username = utils$1.getSafeProp(configAuth, "username") || "";
+          const password = utils$1.getSafeProp(configAuth, "password") || "";
           auth = username + ":" + password;
         }
         if (!auth && (parsed.username || parsed.password)) {
@@ -22648,13 +22828,12 @@ var require_axios = __commonJS({
         auth && headers.delete("authorization");
         let path$1;
         try {
-          path$1 = buildURL(parsed.pathname + parsed.search, config3.params, config3.paramsSerializer).replace(/^\?/, "");
+          path$1 = buildURL(parsed.pathname + parsed.search, own2("params"), own2("paramsSerializer")).replace(/^\?/, "");
         } catch (err) {
-          const customErr = new Error(err.message);
-          customErr.config = config3;
-          customErr.url = config3.url;
-          customErr.exists = true;
-          return reject(customErr);
+          return reject(AxiosError.from(err, AxiosError.ERR_BAD_REQUEST, config3, null, null, {
+            url: own2("url"),
+            exists: true
+          }));
         }
         headers.set("Accept-Encoding", utils$1.hasOwnProp(transitional, "advertiseZstdAcceptEncoding") && transitional.advertiseZstdAcceptEncoding === true ? ACCEPT_ENCODING_WITH_ZSTD : ACCEPT_ENCODING, false);
         const options = Object.assign(/* @__PURE__ */ Object.create(null), {
@@ -22662,8 +22841,8 @@ var require_axios = __commonJS({
           method,
           headers: toByteStringHeaderObject(headers),
           agents: {
-            http: config3.httpAgent,
-            https: config3.httpsAgent
+            http: httpAgent,
+            https: httpsAgent
           },
           auth,
           protocol,
@@ -22673,7 +22852,6 @@ var require_axios = __commonJS({
           http2Options
         });
         !utils$1.isUndefined(lookup) && (options.lookup = lookup);
-        const socketPath = own2("socketPath");
         if (socketPath) {
           if (typeof socketPath !== "string") {
             return reject(new AxiosError("socketPath must be a string", AxiosError.ERR_BAD_OPTION_VALUE, config3));
@@ -22691,13 +22869,14 @@ var require_axios = __commonJS({
         } else {
           options.hostname = parsed.hostname.startsWith("[") ? parsed.hostname.slice(1, -1) : parsed.hostname;
           options.port = parsed.port;
-          setProxy(options, config3.proxy, protocol + "//" + parsed.hostname + (parsed.port ? ":" + parsed.port : "") + options.path, false, config3.httpsAgent);
+          setProxy(options, configProxy, protocol + "//" + parsed.hostname + (parsed.port ? ":" + parsed.port : "") + options.path, false, httpsAgent, httpAgent);
         }
         let transport;
         let isNativeTransport = false;
+        let transportEnforcesMaxBodyLength = false;
         const isHttpsRequest = isHttps.test(options.protocol);
         if (options.agent == null) {
-          options.agent = isHttpsRequest ? config3.httpsAgent : config3.httpAgent;
+          options.agent = isHttpsRequest ? httpsAgent : httpAgent;
         }
         if (isHttp2) {
           transport = http2Transport;
@@ -22705,12 +22884,14 @@ var require_axios = __commonJS({
           const configTransport = own2("transport");
           if (configTransport) {
             transport = configTransport;
-          } else if (config3.maxRedirects === 0) {
+          } else if (maxRedirects === 0) {
             transport = isHttpsRequest ? https2 : http3;
             isNativeTransport = true;
           } else {
-            if (config3.maxRedirects) {
-              options.maxRedirects = config3.maxRedirects;
+            transportEnforcesMaxBodyLength = true;
+            options.sensitiveHeaders = [];
+            if (maxRedirects) {
+              options.maxRedirects = maxRedirects;
             }
             const configBeforeRedirect = own2("beforeRedirect");
             if (configBeforeRedirect) {
@@ -22728,11 +22909,32 @@ var require_axios = __commonJS({
                 }
               };
             }
+            const sensitiveHeaders = own2("sensitiveHeaders");
+            if (sensitiveHeaders != null) {
+              if (!utils$1.isArray(sensitiveHeaders)) {
+                return reject(new AxiosError("sensitiveHeaders must be an array of strings", AxiosError.ERR_BAD_OPTION_VALUE, config3));
+              }
+              const sensitiveSet = /* @__PURE__ */ new Set();
+              for (const header of sensitiveHeaders) {
+                if (!utils$1.isString(header)) {
+                  return reject(new AxiosError("sensitiveHeaders must be an array of strings", AxiosError.ERR_BAD_OPTION_VALUE, config3));
+                }
+                sensitiveSet.add(header.toLowerCase());
+              }
+              if (sensitiveSet.size) {
+                options.sensitiveHeaders = Array.from(sensitiveSet);
+                options.beforeRedirects.sensitiveHeaders = function beforeRedirectSensitiveHeaders(redirectOptions, requestDetails) {
+                  if (!isSameOriginRedirect(redirectOptions, requestDetails)) {
+                    stripMatchingHeaders(redirectOptions.headers, sensitiveSet);
+                  }
+                };
+              }
+            }
             transport = isHttpsRequest ? httpsFollow : httpFollow;
           }
         }
-        if (config3.maxBodyLength > -1) {
-          options.maxBodyLength = config3.maxBodyLength;
+        if (maxBodyLength > -1) {
+          options.maxBodyLength = maxBodyLength;
         } else {
           options.maxBodyLength = Infinity;
         }
@@ -22751,7 +22953,7 @@ var require_axios = __commonJS({
           }
           let responseStream = res;
           const lastRequest = res.req || req;
-          if (config3.decompress !== false && res.headers["content-encoding"]) {
+          if (decompress !== false && res.headers["content-encoding"]) {
             if (method === "HEAD" || res.statusCode === 204) {
               delete res.headers["content-encoding"];
             }
@@ -22792,8 +22994,8 @@ var require_axios = __commonJS({
             request: lastRequest
           };
           if (responseType === "stream") {
-            if (config3.maxContentLength > -1) {
-              const limit = config3.maxContentLength;
+            if (maxContentLength > -1) {
+              const limit = maxContentLength;
               const source = responseStream;
               async function* enforceMaxContentLength() {
                 let totalResponseBytes = 0;
@@ -22817,10 +23019,10 @@ var require_axios = __commonJS({
             responseStream.on("data", function handleStreamData(chunk) {
               responseBuffer.push(chunk);
               totalResponseBytes += chunk.length;
-              if (config3.maxContentLength > -1 && totalResponseBytes > config3.maxContentLength) {
+              if (maxContentLength > -1 && totalResponseBytes > maxContentLength) {
                 rejected = true;
                 responseStream.destroy();
-                abort(new AxiosError("maxContentLength size of " + config3.maxContentLength + " exceeded", AxiosError.ERR_BAD_RESPONSE, config3, lastRequest));
+                abort(new AxiosError("maxContentLength size of " + maxContentLength + " exceeded", AxiosError.ERR_BAD_RESPONSE, config3, lastRequest));
               }
             });
             responseStream.on("aborted", function handlerStreamAborted() {
@@ -22870,7 +23072,9 @@ var require_axios = __commonJS({
         });
         const boundSockets = /* @__PURE__ */ new Set();
         req.on("socket", function handleRequestSocket(socket) {
-          socket.setKeepAlive(true, 1e3 * 60);
+          if (typeof socket.setKeepAlive === "function") {
+            socket.setKeepAlive(true, 1e3 * 60);
+          }
           if (!socket[kAxiosSocketListener]) {
             socket.on("error", function handleSocketError(err) {
               const current = socket[kAxiosCurrentReq];
@@ -22892,8 +23096,8 @@ var require_axios = __commonJS({
           }
           boundSockets.clear();
         });
-        if (config3.timeout) {
-          const timeout = parseInt(config3.timeout, 10);
+        if (own2("timeout")) {
+          const timeout = parseInt(own2("timeout"), 10);
           if (Number.isNaN(timeout)) {
             abort(new AxiosError("error trying to parse `config.timeout` to int", AxiosError.ERR_BAD_OPTION_VALUE, config3, req));
             return;
@@ -22925,8 +23129,8 @@ var require_axios = __commonJS({
             }
           });
           let uploadStream = data;
-          if (config3.maxBodyLength > -1 && config3.maxRedirects === 0) {
-            const limit = config3.maxBodyLength;
+          if (maxBodyLength > -1 && !transportEnforcesMaxBodyLength) {
+            const limit = maxBodyLength;
             let bytesSent = 0;
             uploadStream = stream.pipeline([data, new stream.Transform({
               transform(chunk, _enc, cb) {
@@ -22982,7 +23186,11 @@ var require_axios = __commonJS({
             const cookie = cookies2[i].replace(/^\s+/, "");
             const eq = cookie.indexOf("=");
             if (eq !== -1 && cookie.slice(0, eq) === name) {
-              return decodeURIComponent(cookie.slice(eq + 1));
+              try {
+                return decodeURIComponent(cookie.slice(eq + 1));
+              } catch (e) {
+                return cookie.slice(eq + 1);
+              }
             }
           }
           return null;
@@ -23007,6 +23215,7 @@ var require_axios = __commonJS({
       ...thing
     } : thing;
     function mergeConfig(config1, config22) {
+      config1 = config1 || {};
       config22 = config22 || {};
       const config3 = /* @__PURE__ */ Object.create(null);
       Object.defineProperty(config3, "hasOwnProperty", {
@@ -23048,6 +23257,23 @@ var require_axios = __commonJS({
         } else if (!utils$1.isUndefined(a)) {
           return getMergedValue(void 0, a);
         }
+      }
+      function getMergedTransitionalOption(prop) {
+        const transitional2 = utils$1.hasOwnProp(config22, "transitional") ? config22.transitional : void 0;
+        if (!utils$1.isUndefined(transitional2)) {
+          if (utils$1.isPlainObject(transitional2)) {
+            if (utils$1.hasOwnProp(transitional2, prop)) {
+              return transitional2[prop];
+            }
+          } else {
+            return void 0;
+          }
+        }
+        const transitional1 = utils$1.hasOwnProp(config1, "transitional") ? config1.transitional : void 0;
+        if (utils$1.isPlainObject(transitional1) && utils$1.hasOwnProp(transitional1, prop)) {
+          return transitional1[prop];
+        }
+        return void 0;
       }
       function mergeDirectKeys(a, b, prop) {
         if (utils$1.hasOwnProp(config22, prop)) {
@@ -23099,6 +23325,13 @@ var require_axios = __commonJS({
         const configValue = merge3(a, b, prop);
         utils$1.isUndefined(configValue) && merge3 !== mergeDirectKeys || (config3[prop] = configValue);
       });
+      if (utils$1.hasOwnProp(config22, "validateStatus") && utils$1.isUndefined(config22.validateStatus) && getMergedTransitionalOption("validateStatusUndefinedResolves") === false) {
+        if (utils$1.hasOwnProp(config1, "validateStatus")) {
+          config3.validateStatus = getMergedValue(void 0, config1.validateStatus);
+        } else {
+          delete config3.validateStatus;
+        }
+      }
       return config3;
     }
     var FORM_DATA_CONTENT_HEADERS = ["content-type", "content-length"];
@@ -23107,7 +23340,7 @@ var require_axios = __commonJS({
         headers.set(formHeaders);
         return;
       }
-      Object.entries(formHeaders).forEach(([key, val]) => {
+      Object.entries(formHeaders || {}).forEach(([key, val]) => {
         if (FORM_DATA_CONTENT_HEADERS.includes(key.toLowerCase())) {
           headers.set(key, val);
         }
@@ -23127,9 +23360,15 @@ var require_axios = __commonJS({
       const allowAbsoluteUrls = own2("allowAbsoluteUrls");
       const url2 = own2("url");
       newConfig.headers = headers = AxiosHeaders.from(headers);
-      newConfig.url = buildURL(buildFullPath(baseURL, url2, allowAbsoluteUrls), own2("params"), own2("paramsSerializer"));
+      newConfig.url = buildURL(buildFullPath(baseURL, url2, allowAbsoluteUrls, newConfig), own2("params"), own2("paramsSerializer"));
       if (auth) {
-        headers.set("Authorization", "Basic " + btoa((auth.username || "") + ":" + (auth.password ? encodeUTF8$1(auth.password) : "")));
+        const username = utils$1.getSafeProp(auth, "username") || "";
+        const password = utils$1.getSafeProp(auth, "password") || "";
+        try {
+          headers.set("Authorization", "Basic " + btoa(username + ":" + (password ? encodeUTF8$1(password) : "")));
+        } catch (e) {
+          throw AxiosError.from(e, AxiosError.ERR_BAD_OPTION_VALUE, config3);
+        }
       }
       if (utils$1.isFormData(data)) {
         if (platform.hasStandardBrowserEnv || platform.hasStandardBrowserWebWorkerEnv || utils$1.isReactNative(data)) {
@@ -23276,6 +23515,7 @@ var require_axios = __commonJS({
         const protocol = parseProtocol(_config.url);
         if (protocol && !platform.protocols.includes(protocol)) {
           reject(new AxiosError("Unsupported protocol " + protocol + ":", AxiosError.ERR_BAD_REQUEST, config3));
+          done();
           return;
         }
         request.send(requestData || null);
@@ -23311,7 +23551,9 @@ var require_axios = __commonJS({
         });
         signals = null;
       };
-      signals.forEach((signal2) => signal2.addEventListener("abort", onabort));
+      signals.forEach((signal2) => signal2.addEventListener("abort", onabort, {
+        once: true
+      }));
       const {
         signal
       } = controller;
@@ -23541,12 +23783,14 @@ var require_axios = __commonJS({
           composedSignal.unsubscribe();
         });
         let requestContentLength;
+        let pendingBodyError = null;
+        const maxBodyLengthError = () => new AxiosError("Request body larger than maxBodyLength limit", AxiosError.ERR_BAD_REQUEST, config3, request);
         try {
           let auth = void 0;
           const configAuth = own2("auth");
           if (configAuth) {
-            const username = configAuth.username || "";
-            const password = configAuth.password || "";
+            const username = utils$1.getSafeProp(configAuth, "username") || "";
+            const password = utils$1.getSafeProp(configAuth, "password") || "";
             auth = {
               username,
               password
@@ -23579,25 +23823,42 @@ var require_axios = __commonJS({
             }
           }
           if (hasMaxBodyLength && method !== "get" && method !== "head") {
-            const outboundLength = await resolveBodyLength(headers, data);
-            if (typeof outboundLength === "number" && isFinite(outboundLength) && outboundLength > maxBodyLength) {
-              throw new AxiosError("Request body larger than maxBodyLength limit", AxiosError.ERR_BAD_REQUEST, config3, request);
+            const outboundLength = await getBodyLength(data);
+            if (typeof outboundLength === "number" && isFinite(outboundLength)) {
+              requestContentLength = outboundLength;
+              if (outboundLength > maxBodyLength) {
+                throw maxBodyLengthError();
+              }
             }
           }
-          if (onUploadProgress && supportsRequestStream && method !== "get" && method !== "head" && (requestContentLength = await resolveBodyLength(headers, data)) !== 0) {
-            let _request = new Request(url2, {
-              method: "POST",
-              body: data,
-              duplex: "half"
-            });
-            let contentTypeHeader;
-            if (utils$1.isFormData(data) && (contentTypeHeader = _request.headers.get("content-type"))) {
-              headers.setContentType(contentTypeHeader);
+          const mustEnforceStreamBody = hasMaxBodyLength && (utils$1.isReadableStream(data) || utils$1.isStream(data));
+          const trackRequestStream = (stream2, onProgress, flush) => trackStream(stream2, DEFAULT_CHUNK_SIZE, (loadedBytes) => {
+            if (hasMaxBodyLength && loadedBytes > maxBodyLength) {
+              throw pendingBodyError = maxBodyLengthError();
             }
-            if (_request.body) {
-              const [onProgress, flush] = progressEventDecorator(requestContentLength, progressEventReducer(asyncDecorator(onUploadProgress)));
-              data = trackStream(_request.body, DEFAULT_CHUNK_SIZE, onProgress, flush);
+            onProgress && onProgress(loadedBytes);
+          }, flush);
+          if (supportsRequestStream && method !== "get" && method !== "head" && (onUploadProgress || mustEnforceStreamBody)) {
+            requestContentLength = requestContentLength == null ? await resolveBodyLength(headers, data) : requestContentLength;
+            if (requestContentLength !== 0 || mustEnforceStreamBody) {
+              let _request = new Request(url2, {
+                method: "POST",
+                body: data,
+                duplex: "half"
+              });
+              let contentTypeHeader;
+              if (utils$1.isFormData(data) && (contentTypeHeader = _request.headers.get("content-type"))) {
+                headers.setContentType(contentTypeHeader);
+              }
+              if (_request.body) {
+                const [onProgress, flush] = onUploadProgress && progressEventDecorator(requestContentLength, progressEventReducer(asyncDecorator(onUploadProgress))) || [];
+                data = trackRequestStream(_request.body, onProgress, flush);
+              }
             }
+          } else if (mustEnforceStreamBody && !isRequestSupported && isReadableStreamSupported && method !== "get" && method !== "head") {
+            data = trackRequestStream(data);
+          } else if (mustEnforceStreamBody && isRequestSupported && !supportsRequestStream && method !== "get" && method !== "head") {
+            throw new AxiosError("Stream request bodies are not supported by the current fetch implementation", AxiosError.ERR_NOT_SUPPORT, config3, request);
           }
           if (!utils$1.isString(withCredentials)) {
             withCredentials = withCredentials ? "include" : "omit";
@@ -23621,8 +23882,9 @@ var require_axios = __commonJS({
           };
           request = isRequestSupported && new Request(url2, resolvedOptions);
           let response = await (isRequestSupported ? _fetch(request, fetchOptions) : _fetch(url2, resolvedOptions));
+          const responseHeaders = AxiosHeaders.from(response.headers);
           if (hasMaxContentLength) {
-            const declaredLength = utils$1.toFiniteNumber(response.headers.get("content-length"));
+            const declaredLength = utils$1.toFiniteNumber(responseHeaders.getContentLength());
             if (declaredLength != null && declaredLength > maxContentLength) {
               throw new AxiosError("maxContentLength size of " + maxContentLength + " exceeded", AxiosError.ERR_BAD_RESPONSE, config3, request);
             }
@@ -23633,7 +23895,7 @@ var require_axios = __commonJS({
             ["status", "statusText", "headers"].forEach((prop) => {
               options[prop] = response[prop];
             });
-            const responseContentLength = utils$1.toFiniteNumber(response.headers.get("content-length"));
+            const responseContentLength = utils$1.toFiniteNumber(responseHeaders.getContentLength());
             const [onProgress, flush] = onDownloadProgress && progressEventDecorator(responseContentLength, progressEventReducer(asyncDecorator(onDownloadProgress), true)) || [];
             let bytesRead = 0;
             const onChunkProgress = (loadedBytes) => {
@@ -23684,13 +23946,35 @@ var require_axios = __commonJS({
             const canceledError = composedSignal.reason;
             canceledError.config = config3;
             request && (canceledError.request = request);
-            err !== canceledError && (canceledError.cause = err);
+            if (err !== canceledError) {
+              Object.defineProperty(canceledError, "cause", {
+                __proto__: null,
+                value: err,
+                writable: true,
+                enumerable: false,
+                configurable: true
+              });
+            }
             throw canceledError;
           }
+          if (pendingBodyError) {
+            request && !pendingBodyError.request && (pendingBodyError.request = request);
+            throw pendingBodyError;
+          }
+          if (err instanceof AxiosError) {
+            request && !err.request && (err.request = request);
+            throw err;
+          }
           if (err && err.name === "TypeError" && /Load failed|fetch/i.test(err.message)) {
-            throw Object.assign(new AxiosError("Network Error", AxiosError.ERR_NETWORK, config3, request, err && err.response), {
-              cause: err.cause || err
+            const networkError = new AxiosError("Network Error", AxiosError.ERR_NETWORK, config3, request, err && err.response);
+            Object.defineProperty(networkError, "cause", {
+              __proto__: null,
+              value: err.cause || err,
+              writable: true,
+              enumerable: false,
+              configurable: true
             });
+            throw networkError;
           }
           throw AxiosError.from(err, err && err.code, config3, request, err && err.response);
         }
@@ -23765,7 +24049,7 @@ var require_axios = __commonJS({
       if (!adapter) {
         const reasons = Object.entries(rejectedReasons).map(([id, state]) => `adapter ${id} ` + (state === false ? "is not supported by the environment" : "is not available in the build"));
         let s = length ? reasons.length > 1 ? "since :\n" + reasons.map(renderReason).join("\n") : " " + renderReason(reasons[0]) : "as no adapter specified";
-        throw new AxiosError(`There is no suitable adapter to dispatch the request ` + s, "ERR_NOT_SUPPORT");
+        throw new AxiosError(`There is no suitable adapter to dispatch the request ` + s, AxiosError.ERR_NOT_SUPPORT);
       }
       return adapter;
     }
@@ -23852,7 +24136,7 @@ var require_axios = __commonJS({
       };
     };
     function assertOptions(options, schema, allowUnknown) {
-      if (typeof options !== "object") {
+      if (typeof options !== "object" || options === null) {
         throw new AxiosError("options must be an object", AxiosError.ERR_BAD_OPTION_VALUE);
       }
       const keys = Object.keys(options);
@@ -23944,7 +24228,8 @@ var require_axios = __commonJS({
             forcedJSONParsing: validators.transitional(validators.boolean),
             clarifyTimeoutError: validators.transitional(validators.boolean),
             legacyInterceptorReqResOrdering: validators.transitional(validators.boolean),
-            advertiseZstdAcceptEncoding: validators.transitional(validators.boolean)
+            advertiseZstdAcceptEncoding: validators.transitional(validators.boolean),
+            validateStatusUndefinedResolves: validators.transitional(validators.boolean)
           }, false);
         }
         if (paramsSerializer != null) {
@@ -24034,7 +24319,7 @@ var require_axios = __commonJS({
       }
       getUri(config3) {
         config3 = mergeConfig(this.defaults, config3);
-        const fullPath = buildFullPath(config3.baseURL, config3.url, config3.allowAbsoluteUrls);
+        const fullPath = buildFullPath(config3.baseURL, config3.url, config3.allowAbsoluteUrls, config3);
         return buildURL(fullPath, config3.params, config3.paramsSerializer);
       }
     };
@@ -24043,7 +24328,7 @@ var require_axios = __commonJS({
         return this.request(mergeConfig(config3 || {}, {
           method,
           url: url2,
-          data: (config3 || {}).data
+          data: config3 && utils$1.hasOwnProp(config3, "data") ? config3.data : void 0
         }));
       };
     });
@@ -31706,7 +31991,7 @@ var require_utf8 = __commonJS({
   "plugins/lark/node_modules/@protobufjs/utf8/index.js"(exports) {
     "use strict";
     var utf8 = exports;
-    var replacementChar = "\uFFFD";
+    var replacementCharCode = 65533;
     utf8.length = function utf8_length(string3) {
       var len = 0, c = 0;
       for (var i = 0; i < string3.length; ++i) {
@@ -31724,32 +32009,40 @@ var require_utf8 = __commonJS({
       return len;
     };
     utf8.read = function utf8_read(buffer, start, end) {
-      if (end - start < 1) {
+      if (end - start < 1)
         return "";
-      }
-      var str = "";
-      for (var i = start; i < end; ) {
-        var t = buffer[i++];
+      var parts = null, chunk = [], i = 0, t, t2, c2, c3;
+      while (start < end) {
+        t = buffer[start++];
         if (t <= 127) {
-          str += String.fromCharCode(t);
+          chunk[i++] = t;
         } else if (t >= 192 && t < 224) {
-          var c2 = (t & 31) << 6 | buffer[i++] & 63;
-          str += c2 >= 128 ? String.fromCharCode(c2) : replacementChar;
+          c2 = (t & 31) << 6 | buffer[start++] & 63;
+          chunk[i++] = c2 >= 128 ? c2 : replacementCharCode;
         } else if (t >= 224 && t < 240) {
-          var c3 = (t & 15) << 12 | (buffer[i++] & 63) << 6 | buffer[i++] & 63;
-          str += c3 >= 2048 ? String.fromCharCode(c3) : replacementChar;
+          c3 = (t & 15) << 12 | (buffer[start++] & 63) << 6 | buffer[start++] & 63;
+          chunk[i++] = c3 >= 2048 ? c3 : replacementCharCode;
         } else if (t >= 240) {
-          var t2 = (t & 7) << 18 | (buffer[i++] & 63) << 12 | (buffer[i++] & 63) << 6 | buffer[i++] & 63;
+          t2 = (t & 7) << 18 | (buffer[start++] & 63) << 12 | (buffer[start++] & 63) << 6 | buffer[start++] & 63;
           if (t2 < 65536 || t2 > 1114111)
-            str += replacementChar;
+            chunk[i++] = replacementCharCode;
           else {
             t2 -= 65536;
-            str += String.fromCharCode(55296 + (t2 >> 10));
-            str += String.fromCharCode(56320 + (t2 & 1023));
+            chunk[i++] = 55296 + (t2 >> 10);
+            chunk[i++] = 56320 + (t2 & 1023);
           }
         }
+        if (i > 8191) {
+          (parts || (parts = [])).push(String.fromCharCode.apply(String, chunk.slice(0, i)));
+          i = 0;
+        }
       }
-      return str;
+      if (parts) {
+        if (i)
+          parts.push(String.fromCharCode.apply(String, chunk.slice(0, i)));
+        return parts.join("");
+      }
+      return String.fromCharCode.apply(String, chunk.slice(0, i));
     };
     utf8.write = function utf8_write(string3, buffer, offset) {
       var start = offset, c1, c2;
@@ -34027,13 +34320,17 @@ var require_lib2 = __commonJS({
         const errors = [filteredErrorInfo];
         const specificError = (_a = e === null || e === void 0 ? void 0 : e.response) === null || _a === void 0 ? void 0 : _a.data;
         if (specificError) {
-          errors.push(Object.assign(Object.assign({}, specificError), specificError.error ? specificError.error : {}));
+          if (typeof specificError === "object") {
+            errors.push(Object.assign(Object.assign({}, specificError), specificError.error ? specificError.error : {}));
+          } else {
+            errors.push(specificError);
+          }
         }
         return errors;
       }
       return [e];
     };
-    var Client$16 = class {
+    var Client$1Q = class {
       constructor() {
         this.acs = {
           /**
@@ -35029,7 +35326,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$15 = class extends Client$16 {
+    var Client$1P = class extends Client$1Q {
       constructor() {
         super(...arguments);
         this.admin = {
@@ -36052,11 +36349,232 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$14 = class extends Client$15 {
+    var Client$1O = class extends Client$1P {
+      constructor() {
+        super(...arguments);
+        this.aily_rag = {};
+      }
+    };
+    var Client$1N = class extends Client$1O {
       constructor() {
         super(...arguments);
         this.aily = {
           v1: {
+            /**
+             * agent.agent_artifact
+             */
+            agentAgentArtifact: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=agent.agent_artifact&apiName=get&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=aily&resource=agent.agent_artifact&version=v1 document }
+               *
+               * 获取Agent产物
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/agents/:agent_id/artifacts/:agent_artifact_id`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * agent.agent_attachment
+             */
+            agentAgentAttachment: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=agent.agent_attachment&apiName=create&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=aily&resource=agent.agent_attachment&version=v1 document }
+               *
+               * 上传文件
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/agents/:agent_id/attachments`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers: Object.assign(Object.assign({}, headers), { "Content-Type": "multipart/form-data" }),
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+                return (res === null || res === void 0 ? void 0 : res.data) || null;
+              })
+            },
+            /**
+             * agent.agent_chat
+             */
+            agentAgentChat: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=agent.agent_chat&apiName=create&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=aily&resource=agent.agent_chat&version=v1 document }
+               *
+               * 发起对话
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/agents/:agent_id/chats`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=agent.agent_chat&apiName=get&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=aily&resource=agent.agent_chat&version=v1 document }
+               *
+               * 获取对话内容
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/agents/:agent_id/chats/:agent_chat_id`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * agent.agent_chat_session
+             */
+            agentAgentChatSession: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=agent.agent_chat_session&apiName=create&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=aily&resource=agent.agent_chat_session&version=v1 document }
+               *
+               * 创建智能体会话
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/agents/:agent_id/sessions`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=agent.agent_chat_session&apiName=delete&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=delete&project=aily&resource=agent.agent_chat_session&version=v1 document }
+               *
+               * 删除会话
+               */
+              delete: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/agents/:agent_id/sessions/:agent_chat_session_id`, path27),
+                  method: "DELETE",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=agent.agent_chat_session&apiName=get&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=aily&resource=agent.agent_chat_session&version=v1 document }
+               *
+               * 获取指定会话信息
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/agents/:agent_id/sessions/:agent_chat_session_id`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=agent.agent_chat_session&apiName=list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=aily&resource=agent.agent_chat_session&version=v1 document }
+               *
+               * 会话列表
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/agents/:agent_id/sessions`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * agent.agent_visibility
+             */
+            agentAgentVisibility: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=agent.agent_visibility&apiName=check&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=check&project=aily&resource=agent.agent_visibility&version=v1 document }
+               *
+               * 校验当前用户是否可访问Agent
+               */
+              check: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/agents/:agent_id/agent_visibility/check`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
             /**
              * aily_session.aily_message
              */
@@ -36783,12 +37301,88 @@ var require_lib2 = __commonJS({
                   throw e;
                 });
               })
+            },
+            /**
+             * tenant.app_stat
+             */
+            tenantAppStat: {
+              listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/aily/v1/app_stats`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=aily&resource=tenant.app_stat&apiName=list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=aily&resource=tenant.app_stat&version=v1 document }
+               *
+               * ## 功能介绍获取租户下应用的统计数据列表，支持按时间范围筛选，包含日活用户数、运行次数、额度使用等核心指标，用于租户级应用运营分析与成本监控场景。
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/aily/v1/app_stats`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
             }
           }
         };
       }
     };
-    var Client$13 = class extends Client$14 {
+    var Client$1M = class extends Client$1N {
       constructor() {
         super(...arguments);
         this.apaas = {
@@ -37638,6 +38232,30 @@ var require_lib2 = __commonJS({
               })
             },
             /**
+             * tenant_app_metrics
+             */
+            tenantAppMetrics: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=apaas&resource=tenant_app_metrics&apiName=query&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=query&project=apaas&resource=tenant_app_metrics&version=v1 document }
+               */
+              query: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/apaas/v1/tenant_app_metrics/query`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
              * user_task
              */
             userTask: {
@@ -38011,13 +38629,10 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$12 = class extends Client$13 {
+    var Client$1L = class extends Client$1M {
       constructor() {
         super(...arguments);
         this.application = {
-          /**
-           * 应用红点
-           */
           appBadge: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=app_badge&apiName=set&version=v6 click to debug }
@@ -38043,9 +38658,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * 我的常用推荐规则
-           */
           appRecommendRule: {
             listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
               const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
@@ -38119,9 +38731,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * 应用使用情况
-           */
           applicationAppUsage: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.app_usage&apiName=department_overview&version=v6 click to debug }
@@ -38199,9 +38808,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * 事件
-           */
           applicationAppVersion: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.app_version&apiName=contacts_range_suggest&version=v6 click to debug }
@@ -38342,9 +38948,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * application.collaborators
-           */
           applicationCollaborators: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.collaborators&apiName=get&version=v6 click to debug }
@@ -38385,9 +38988,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * application.contacts_range
-           */
           applicationContactsRange: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.contacts_range&apiName=patch&version=v6 click to debug }
@@ -38410,7 +39010,7 @@ var require_lib2 = __commonJS({
             })
           },
           /**
-           * 应用
+           * application
            */
           application: {
             /**
@@ -38621,9 +39221,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * 应用反馈
-           */
           applicationFeedback: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.feedback&apiName=list&version=v6 click to debug }
@@ -38672,9 +39269,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * application.management
-           */
           applicationManagement: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.management&apiName=update&version=v6 click to debug }
@@ -38696,9 +39290,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * application.owner
-           */
           applicationOwner: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.owner&apiName=update&version=v6 click to debug }
@@ -38720,9 +39311,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * 事件
-           */
           applicationVisibility: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.visibility&apiName=check_white_black_list&version=v6 click to debug }
@@ -38763,9 +39351,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * scope
-           */
           scope: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=application&resource=scope&apiName=apply&version=v6 click to debug }
@@ -38805,6 +39390,151 @@ var require_lib2 = __commonJS({
                 throw e;
               });
             })
+          },
+          v5: {
+            /**
+             * application
+             */
+            application: {
+              favouriteWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/application/v5/applications/favourite`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=application&resource=application&apiName=favourite&version=v5 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=favourite&project=application&resource=application&version=v5 document }
+               */
+              favourite: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/application/v5/applications/favourite`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              recommendWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/application/v5/applications/recommend`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=application&resource=application&apiName=recommend&version=v5 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=recommend&project=application&resource=application&version=v5 document }
+               */
+              recommend: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/application/v5/applications/recommend`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            }
           },
           v6: {
             /**
@@ -39206,7 +39936,7 @@ var require_lib2 = __commonJS({
               })
             },
             /**
-             * 应用
+             * 应用管理
              */
             application: {
               /**
@@ -39606,16 +40336,139 @@ var require_lib2 = __commonJS({
                 });
               })
             }
+          },
+          v7: {
+            /**
+             * app_avatar.upload
+             */
+            appAvatarUpload: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=application&resource=app_avatar.upload&apiName=create&version=v7 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=application&resource=app_avatar.upload&version=v7 document }
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/application/v7/app_avatar/upload`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers: Object.assign(Object.assign({}, headers), { "Content-Type": "multipart/form-data" }),
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+                return (res === null || res === void 0 ? void 0 : res.data) || null;
+              })
+            },
+            /**
+             * application.ability
+             */
+            applicationAbility: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.ability&apiName=patch&version=v7 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=patch&project=application&resource=application.ability&version=v7 document }
+               */
+              patch: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/application/v7/applications/:app_id/ability`, path27),
+                  method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * application.base
+             */
+            applicationBase: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.base&apiName=patch&version=v7 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=patch&project=application&resource=application.base&version=v7 document }
+               */
+              patch: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/application/v7/applications/:app_id/base`, path27),
+                  method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * application.config
+             */
+            applicationConfig: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.config&apiName=patch&version=v7 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=patch&project=application&resource=application.config&version=v7 document }
+               */
+              patch: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/application/v7/applications/:app_id/config`, path27),
+                  method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * application.publish
+             */
+            applicationPublish: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=application&resource=application.publish&apiName=create&version=v7 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=application&resource=application.publish&version=v7 document }
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/application/v7/applications/:app_id/publish`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            }
           }
         };
       }
     };
-    var Client$11 = class extends Client$12 {
+    var Client$1K = class extends Client$1L {
       constructor() {
         super(...arguments);
         this.approval = {
           /**
-           * 原生审批定义
+           * 事件
            */
           approval: {
             /**
@@ -40033,6 +40886,27 @@ var require_lib2 = __commonJS({
            */
           instance: {
             /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=add_cc&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=add_cc&project=approval&resource=instance&version=v4 document }
+             *
+             * 抄送审批实例
+             */
+            addCc: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/add_cc`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
              * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=add_sign&version=v4 click to debug }
              *
              * {@link https://open.feishu.cn/document/ukTMukTMukTM/ukTM5UjL5ETO14SOxkTN/approval-task-addsign document }
@@ -40121,6 +40995,27 @@ var require_lib2 = __commonJS({
               });
             }),
             /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=detail&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=detail&project=approval&resource=instance&version=v4 document }
+             *
+             * 查看审批实例详情
+             */
+            detail: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/detail`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
              * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=get&version=v4 click to debug }
              *
              * {@link https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/approval-v4/instance/get document }
@@ -40133,6 +41028,75 @@ var require_lib2 = __commonJS({
               const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
               return this.httpInstance.request({
                 url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/:instance_id`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            initiatedWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/initiated`, path27),
+                  method: "GET",
+                  headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                  params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                  data,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                });
+                return res;
+              });
+              const Iterable = {
+                [Symbol.asyncIterator]() {
+                  return __asyncGenerator(this, arguments, function* _a() {
+                    let hasMore = true;
+                    let pageToken;
+                    while (hasMore) {
+                      try {
+                        const res = yield __await(sendRequest({
+                          headers,
+                          params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                          data
+                        }));
+                        const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                          // @ts-ignore
+                          has_more,
+                          // @ts-ignore
+                          page_token,
+                          // @ts-ignore
+                          next_page_token
+                        } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                        yield yield __await(rest);
+                        hasMore = Boolean(has_more);
+                        pageToken = page_token || next_page_token;
+                      } catch (e) {
+                        yield yield __await(null);
+                        break;
+                      }
+                    }
+                  });
+                }
+              };
+              return Iterable;
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=initiated&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=initiated&project=approval&resource=instance&version=v4 document }
+             *
+             * 查询用户的已发起列表
+             */
+            initiated: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/initiated`, path27),
                 method: "GET",
                 data,
                 params,
@@ -40294,6 +41258,48 @@ var require_lib2 = __commonJS({
               const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
               return this.httpInstance.request({
                 url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/query`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=recall&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=recall&project=approval&resource=instance&version=v4 document }
+             *
+             * 撤回审批实例
+             */
+            recall: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/recall`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=remind&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=remind&project=approval&resource=instance&version=v4 document }
+             *
+             * 催办
+             */
+            remind: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/remind`, path27),
                 method: "POST",
                 data,
                 params,
@@ -40501,6 +41507,27 @@ var require_lib2 = __commonJS({
            */
           task: {
             /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=add_sign&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=add_sign&project=approval&resource=task&version=v4 document }
+             *
+             * 审批任务加签
+             */
+            addSign: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/add_sign`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
              * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=approve&version=v4 click to debug }
              *
              * {@link https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/approval-v4/task/approve document }
@@ -40513,6 +41540,115 @@ var require_lib2 = __commonJS({
               const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
               return this.httpInstance.request({
                 url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/approve`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=forward&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=forward&project=approval&resource=task&version=v4 document }
+             *
+             * 转交审批任务
+             */
+            forward: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/forward`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks`, path27),
+                  method: "GET",
+                  headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                  params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                  data,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                });
+                return res;
+              });
+              const Iterable = {
+                [Symbol.asyncIterator]() {
+                  return __asyncGenerator(this, arguments, function* _a() {
+                    let hasMore = true;
+                    let pageToken;
+                    while (hasMore) {
+                      try {
+                        const res = yield __await(sendRequest({
+                          headers,
+                          params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                          data
+                        }));
+                        const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                          // @ts-ignore
+                          has_more,
+                          // @ts-ignore
+                          page_token,
+                          // @ts-ignore
+                          next_page_token
+                        } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                        yield yield __await(rest);
+                        hasMore = Boolean(has_more);
+                        pageToken = page_token || next_page_token;
+                      } catch (e) {
+                        yield yield __await(null);
+                        break;
+                      }
+                    }
+                  });
+                }
+              };
+              return Iterable;
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=list&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=approval&resource=task&version=v4 document }
+             */
+            list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=pass&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=pass&project=approval&resource=task&version=v4 document }
+             *
+             * 同意审批任务
+             */
+            pass: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/pass`, path27),
                 method: "POST",
                 data,
                 params,
@@ -40595,6 +41731,27 @@ var require_lib2 = __commonJS({
               });
             }),
             /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=refuse&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=refuse&project=approval&resource=task&version=v4 document }
+             *
+             * 拒绝审批任务
+             */
+            refuse: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/refuse`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
              * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=reject&version=v4 click to debug }
              *
              * {@link https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/approval-v4/task/reject document }
@@ -40630,6 +41787,27 @@ var require_lib2 = __commonJS({
               const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
               return this.httpInstance.request({
                 url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/resubmit`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=rollback&version=v4 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=rollback&project=approval&resource=task&version=v4 document }
+             *
+             * 退回审批任务
+             */
+            rollback: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/rollback`, path27),
                 method: "POST",
                 data,
                 params,
@@ -40689,7 +41867,7 @@ var require_lib2 = __commonJS({
           },
           v4: {
             /**
-             * 原生审批定义
+             * 事件
              */
             approval: {
               /**
@@ -41113,6 +42291,27 @@ var require_lib2 = __commonJS({
              */
             instance: {
               /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=add_cc&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=add_cc&project=approval&resource=instance&version=v4 document }
+               *
+               * 抄送审批实例
+               */
+              addCc: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/add_cc`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
                * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=add_sign&version=v4 click to debug }
                *
                * {@link https://open.feishu.cn/document/ukTMukTMukTM/ukTM5UjL5ETO14SOxkTN/approval-task-addsign document }
@@ -41201,6 +42400,27 @@ var require_lib2 = __commonJS({
                 });
               }),
               /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=detail&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=detail&project=approval&resource=instance&version=v4 document }
+               *
+               * 查看审批实例详情
+               */
+              detail: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/detail`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
                * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=get&version=v4 click to debug }
                *
                * {@link https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/approval-v4/instance/get document }
@@ -41213,6 +42433,77 @@ var require_lib2 = __commonJS({
                 const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
                 return this.httpInstance.request({
                   url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/:instance_id`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              initiatedWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/initiated`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=initiated&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=initiated&project=approval&resource=instance&version=v4 document }
+               *
+               * 查询用户的已发起列表
+               */
+              initiated: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/initiated`, path27),
                   method: "GET",
                   data,
                   params,
@@ -41378,6 +42669,48 @@ var require_lib2 = __commonJS({
                 const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
                 return this.httpInstance.request({
                   url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/query`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=recall&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=recall&project=approval&resource=instance&version=v4 document }
+               *
+               * 撤回审批实例
+               */
+              recall: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/recall`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=instance&apiName=remind&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=remind&project=approval&resource=instance&version=v4 document }
+               *
+               * 催办
+               */
+              remind: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/instances/remind`, path27),
                   method: "POST",
                   data,
                   params,
@@ -41587,6 +42920,27 @@ var require_lib2 = __commonJS({
              */
             task: {
               /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=add_sign&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=add_sign&project=approval&resource=task&version=v4 document }
+               *
+               * 审批任务加签
+               */
+              addSign: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/add_sign`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
                * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=approve&version=v4 click to debug }
                *
                * {@link https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/approval-v4/task/approve document }
@@ -41599,6 +42953,117 @@ var require_lib2 = __commonJS({
                 const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
                 return this.httpInstance.request({
                   url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/approve`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=forward&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=forward&project=approval&resource=task&version=v4 document }
+               *
+               * 转交审批任务
+               */
+              forward: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/forward`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=list&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=approval&resource=task&version=v4 document }
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=pass&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=pass&project=approval&resource=task&version=v4 document }
+               *
+               * 同意审批任务
+               */
+              pass: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/pass`, path27),
                   method: "POST",
                   data,
                   params,
@@ -41683,6 +43148,27 @@ var require_lib2 = __commonJS({
                 });
               }),
               /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=refuse&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=refuse&project=approval&resource=task&version=v4 document }
+               *
+               * 拒绝审批任务
+               */
+              refuse: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/refuse`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
                * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=reject&version=v4 click to debug }
                *
                * {@link https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/approval-v4/task/reject document }
@@ -41718,6 +43204,27 @@ var require_lib2 = __commonJS({
                 const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
                 return this.httpInstance.request({
                   url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/resubmit`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=approval&resource=task&apiName=rollback&version=v4 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=rollback&project=approval&resource=task&version=v4 document }
+               *
+               * 退回审批任务
+               */
+              rollback: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/approval/v4/tasks/rollback`, path27),
                   method: "POST",
                   data,
                   params,
@@ -41779,7 +43286,13 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$10 = class extends Client$11 {
+    var Client$1J = class extends Client$1K {
+      constructor() {
+        super(...arguments);
+        this.attendance_machine = {};
+      }
+    };
+    var Client$1I = class extends Client$1J {
       constructor() {
         super(...arguments);
         this.attendance = {
@@ -44064,7 +45577,13 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$$ = class extends Client$10 {
+    var Client$1H = class extends Client$1I {
+      constructor() {
+        super(...arguments);
+        this.audio_video_ai = {};
+      }
+    };
+    var Client$1G = class extends Client$1H {
       constructor() {
         super(...arguments);
         this.auth = {
@@ -44293,7 +45812,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$_ = class extends Client$$ {
+    var Client$1F = class extends Client$1G {
       constructor() {
         super(...arguments);
         this.authen = {
@@ -44542,13 +46061,19 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$Z = class extends Client$_ {
+    var Client$1E = class extends Client$1F {
+      constructor() {
+        super(...arguments);
+        this.authz = {};
+      }
+    };
+    var Client$1D = class extends Client$1E {
       constructor() {
         super(...arguments);
         this.aweme_ecosystem = {};
       }
     };
-    var Client$Y = class extends Client$Z {
+    var Client$1C = class extends Client$1D {
       constructor() {
         super(...arguments);
         this.baike = {
@@ -45561,7 +47086,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$X = class extends Client$Y {
+    var Client$1B = class extends Client$1C {
       constructor() {
         super(...arguments);
         this.base = {
@@ -45688,10 +47213,42 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$W = class extends Client$X {
+    var Client$1A = class extends Client$1B {
+      constructor() {
+        super(...arguments);
+        this.batch = {};
+      }
+    };
+    var Client$1z = class extends Client$1A {
       constructor() {
         super(...arguments);
         this.bitable = {
+          /**
+           * app.block_workflow
+           */
+          appBlockWorkflow: {
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=bitable&resource=app.block_workflow&apiName=list&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=bitable&resource=app.block_workflow&version=v1 document }
+             *
+             * 列出工作流
+             */
+            list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/bitable/v1/apps/:app_token/block_workflows`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            })
+          },
           /**
            * 多维表格
            */
@@ -46554,6 +48111,32 @@ var require_lib2 = __commonJS({
             })
           },
           /**
+           * app.table.field_group
+           */
+          appTableFieldGroup: {
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=bitable&resource=app.table.field_group&apiName=create&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=bitable&resource=app.table.field_group&version=v1 document }
+             *
+             * 新增字段编组
+             */
+            create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/bitable/v1/apps/:app_token/tables/:table_id/field_groups`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            })
+          },
+          /**
            * 表单
            */
           appTableFormField: {
@@ -46701,6 +48284,27 @@ var require_lib2 = __commonJS({
               return this.httpInstance.request({
                 url: fillApiPath(`${this.domain}/open-apis/bitable/v1/apps/:app_token/tables/:table_id/forms/:form_id`, path27),
                 method: "PATCH",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=bitable&resource=app.table.form&apiName=upgrade&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=upgrade&project=bitable&resource=app.table.form&version=v1 document }
+             *
+             * 升级表单
+             */
+            upgrade: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/bitable/v1/apps/:app_token/tables/:table_id/forms/:form_id/upgrade`, path27),
+                method: "POST",
                 data,
                 params,
                 headers,
@@ -47320,6 +48924,32 @@ var require_lib2 = __commonJS({
             })
           },
           v1: {
+            /**
+             * app.block_workflow
+             */
+            appBlockWorkflow: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=bitable&resource=app.block_workflow&apiName=list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=bitable&resource=app.block_workflow&version=v1 document }
+               *
+               * 列出工作流
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/bitable/v1/apps/:app_token/block_workflows`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
             /**
              * 多维表格
              */
@@ -48192,6 +49822,32 @@ var require_lib2 = __commonJS({
               })
             },
             /**
+             * app.table.field_group
+             */
+            appTableFieldGroup: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=bitable&resource=app.table.field_group&apiName=create&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=bitable&resource=app.table.field_group&version=v1 document }
+               *
+               * 新增字段编组
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/bitable/v1/apps/:app_token/tables/:table_id/field_groups`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
              * 表单
              */
             appTableFormField: {
@@ -48341,6 +49997,27 @@ var require_lib2 = __commonJS({
                 return this.httpInstance.request({
                   url: fillApiPath(`${this.domain}/open-apis/bitable/v1/apps/:app_token/tables/:table_id/forms/:form_id`, path27),
                   method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=bitable&resource=app.table.form&apiName=upgrade&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=upgrade&project=bitable&resource=app.table.form&version=v1 document }
+               *
+               * 升级表单
+               */
+              upgrade: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/bitable/v1/apps/:app_token/tables/:table_id/forms/:form_id/upgrade`, path27),
+                  method: "POST",
                   data,
                   params,
                   headers,
@@ -48971,7 +50648,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$V = class extends Client$W {
+    var Client$1y = class extends Client$1z {
       constructor() {
         super(...arguments);
         this.block = {
@@ -49138,7 +50815,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$U = class extends Client$V {
+    var Client$1x = class extends Client$1y {
       constructor() {
         super(...arguments);
         this.board = {
@@ -49245,6 +50922,27 @@ var require_lib2 = __commonJS({
              */
             whiteboardNode: {
               /**
+               * {@link https://open.feishu.cn/api-explorer?project=board&resource=whiteboard.node&apiName=batch_delete&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=batch_delete&project=board&resource=whiteboard.node&version=v1 document }
+               *
+               * 批量删除画板内的节点，存在子节点时子节点也被删除
+               */
+              batchDelete: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/board/v1/whiteboards/:whiteboard_id/nodes/batch_delete`, path27),
+                  method: "DELETE",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
                * {@link https://open.feishu.cn/api-explorer?project=board&resource=whiteboard.node&apiName=create&version=v1 click to debug }
                *
                * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=board&resource=whiteboard.node&version=v1 document }
@@ -49312,7 +51010,19 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$T = class extends Client$U {
+    var Client$1w = class extends Client$1x {
+      constructor() {
+        super(...arguments);
+        this.bot = {};
+      }
+    };
+    var Client$1v = class extends Client$1w {
+      constructor() {
+        super(...arguments);
+        this.c360 = {};
+      }
+    };
+    var Client$1u = class extends Client$1v {
       constructor() {
         super(...arguments);
         this.calendar = {
@@ -51977,7 +53687,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$S = class extends Client$T {
+    var Client$1t = class extends Client$1u {
       constructor() {
         super(...arguments);
         this.cardkit = {
@@ -52206,13 +53916,25 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$R = class extends Client$S {
+    var Client$1s = class extends Client$1t {
+      constructor() {
+        super(...arguments);
+        this.ccm_unified_resource = {};
+      }
+    };
+    var Client$1r = class extends Client$1s {
+      constructor() {
+        super(...arguments);
+        this.collab_plugins = {};
+      }
+    };
+    var Client$1q = class extends Client$1r {
       constructor() {
         super(...arguments);
         this.comment_sdk = {};
       }
     };
-    var Client$Q = class extends Client$R {
+    var Client$1p = class extends Client$1q {
       constructor() {
         super(...arguments);
         this.compensation = {
@@ -53148,7 +54870,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$P = class extends Client$Q {
+    var Client$1o = class extends Client$1p {
       constructor() {
         super(...arguments);
         this.contact = {
@@ -57873,19 +59595,19 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$O = class extends Client$P {
+    var Client$1n = class extends Client$1o {
       constructor() {
         super(...arguments);
         this.content_check = {};
       }
     };
-    var Client$N = class extends Client$O {
+    var Client$1m = class extends Client$1n {
       constructor() {
         super(...arguments);
         this.contract = {};
       }
     };
-    var Client$M = class extends Client$N {
+    var Client$1l = class extends Client$1m {
       constructor() {
         super(...arguments);
         this.corehr = {
@@ -68585,7 +70307,19 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$L = class extends Client$M {
+    var Client$1k = class extends Client$1l {
+      constructor() {
+        super(...arguments);
+        this.data_cube = {};
+      }
+    };
+    var Client$1j = class extends Client$1k {
+      constructor() {
+        super(...arguments);
+        this.device = {};
+      }
+    };
+    var Client$1i = class extends Client$1j {
       constructor() {
         super(...arguments);
         this.directory = {
@@ -69210,13 +70944,19 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$K = class extends Client$L {
+    var Client$1h = class extends Client$1i {
+      constructor() {
+        super(...arguments);
+        this.docs_ai = {};
+      }
+    };
+    var Client$1g = class extends Client$1h {
       constructor() {
         super(...arguments);
         this.docs_tool = {};
       }
     };
-    var Client$J = class extends Client$K {
+    var Client$1f = class extends Client$1g {
       constructor() {
         super(...arguments);
         this.docs = {
@@ -69251,7 +70991,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$I = class extends Client$J {
+    var Client$1e = class extends Client$1f {
       constructor() {
         super(...arguments);
         this.document_ai = {
@@ -69710,7 +71450,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$H = class extends Client$I {
+    var Client$1d = class extends Client$1e {
       constructor() {
         super(...arguments);
         this.docx = {
@@ -70965,7 +72705,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$G = class extends Client$H {
+    var Client$1c = class extends Client$1d {
       constructor() {
         super(...arguments);
         this.drive = {
@@ -71382,7 +73122,7 @@ var require_lib2 = __commonJS({
             })
           },
           /**
-           * 分片上传
+           * 文件夹
            */
           file: {
             /**
@@ -73167,7 +74907,7 @@ var require_lib2 = __commonJS({
               })
             },
             /**
-             * 分片上传
+             * 文件夹
              */
             file: {
               /**
@@ -74691,13 +76431,19 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$F = class extends Client$G {
+    var Client$1b = class extends Client$1c {
+      constructor() {
+        super(...arguments);
+        this.ea_symphony = {};
+      }
+    };
+    var Client$1a = class extends Client$1b {
       constructor() {
         super(...arguments);
         this.edu = {};
       }
     };
-    var Client$E = class extends Client$F {
+    var Client$19 = class extends Client$1a {
       constructor() {
         super(...arguments);
         this.ehr = {
@@ -74978,16 +76724,40 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$D = class extends Client$E {
+    var Client$18 = class extends Client$19 {
       constructor() {
         super(...arguments);
         this.elearning = {};
       }
     };
-    var Client$C = class extends Client$D {
+    var Client$17 = class extends Client$18 {
       constructor() {
         super(...arguments);
         this.event = {
+          /**
+           * connection
+           */
+          connection: {
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=event&resource=connection&apiName=get&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=event&resource=connection&version=v1 document }
+             */
+            get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/event/v1/connection`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            })
+          },
           /**
            * 事件订阅
            */
@@ -75067,6 +76837,30 @@ var require_lib2 = __commonJS({
             })
           },
           v1: {
+            /**
+             * connection
+             */
+            connection: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=event&resource=connection&apiName=get&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=event&resource=connection&version=v1 document }
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/event/v1/connection`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
             /**
              * 事件订阅
              */
@@ -75151,25 +76945,43 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$B = class extends Client$C {
+    var Client$16 = class extends Client$17 {
       constructor() {
         super(...arguments);
         this.exam = {};
       }
     };
-    var Client$A = class extends Client$B {
+    var Client$15 = class extends Client$16 {
       constructor() {
         super(...arguments);
         this.face_detection = {};
       }
     };
-    var Client$z = class extends Client$A {
+    var Client$14 = class extends Client$15 {
       constructor() {
         super(...arguments);
         this.feelgood = {};
       }
     };
-    var Client$y = class extends Client$z {
+    var Client$13 = class extends Client$14 {
+      constructor() {
+        super(...arguments);
+        this.financial_access_platform = {};
+      }
+    };
+    var Client$12 = class extends Client$13 {
+      constructor() {
+        super(...arguments);
+        this.grounding = {};
+      }
+    };
+    var Client$11 = class extends Client$12 {
+      constructor() {
+        super(...arguments);
+        this.gtm_ai = {};
+      }
+    };
+    var Client$10 = class extends Client$11 {
       constructor() {
         super(...arguments);
         this.helpdesk = {
@@ -78018,7 +79830,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$x = class extends Client$y {
+    var Client$$ = class extends Client$10 {
       constructor() {
         super(...arguments);
         this.hire = {
@@ -78201,7 +80013,7 @@ var require_lib2 = __commonJS({
             })
           },
           /**
-           * 投递
+           * 入职
            */
           application: {
             /**
@@ -83936,7 +85748,7 @@ var require_lib2 = __commonJS({
               })
             },
             /**
-             * 投递
+             * 入职
              */
             application: {
               /**
@@ -89680,7 +91492,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$w = class extends Client$x {
+    var Client$_ = class extends Client$$ {
       constructor() {
         super(...arguments);
         this.human_authentication = {
@@ -89749,7 +91561,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$v = class extends Client$w {
+    var Client$Z = class extends Client$_ {
       constructor() {
         super(...arguments);
         this.im = {
@@ -91280,6 +93092,75 @@ var require_lib2 = __commonJS({
                 throw e;
               });
             }),
+            searchWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/im/v1/messages/search`, path27),
+                  method: "POST",
+                  headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                  params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                  data,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                });
+                return res;
+              });
+              const Iterable = {
+                [Symbol.asyncIterator]() {
+                  return __asyncGenerator(this, arguments, function* _a() {
+                    let hasMore = true;
+                    let pageToken;
+                    while (hasMore) {
+                      try {
+                        const res = yield __await(sendRequest({
+                          headers,
+                          params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                          data
+                        }));
+                        const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                          // @ts-ignore
+                          has_more,
+                          // @ts-ignore
+                          page_token,
+                          // @ts-ignore
+                          next_page_token
+                        } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                        yield yield __await(rest);
+                        hasMore = Boolean(has_more);
+                        pageToken = page_token || next_page_token;
+                      } catch (e) {
+                        yield yield __await(null);
+                        break;
+                      }
+                    }
+                  });
+                }
+              };
+              return Iterable;
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=im&resource=message&apiName=search&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=search&project=im&resource=message&version=v1 document }
+             *
+             * 搜索消息
+             */
+            search: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/im/v1/messages/search`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
             /**
              * {@link https://open.feishu.cn/api-explorer?project=im&resource=message&apiName=update&version=v1 click to debug }
              *
@@ -91680,6 +93561,94 @@ var require_lib2 = __commonJS({
                 },
                 headers: res.headers
               };
+            })
+          },
+          /**
+           * message_cot
+           */
+          messageCot: {
+            /**
+                     * {@link https://open.feishu.cn/api-explorer?project=im&resource=message_cot&apiName=complete&version=v1 click to debug }
+             *
+            * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=complete&project=im&resource=message_cot&version=v1 document }
+             *
+            * ## 功能介绍
+            标记指定智能对话思考过程为完成状态，同步完成原因，用于终止对话机器人的思考流程并反馈处理结果，适用于智能客服、自动问答等场景。
+
+            ### 注意事项
+            - 思考过程标记完成后将无法继续修改或恢复，需确保流程已真正结束。
+            - 若传入`error`或`timeout`原因，系统将记录异常日志用于问题排查。
+                     */
+            complete: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/im/v1/message_cot/complete/:cot_id`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+                     * {@link https://open.feishu.cn/api-explorer?project=im&resource=message_cot&apiName=create&version=v1 click to debug }
+             *
+            * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=im&resource=message_cot&version=v1 document }
+             *
+            * ## 功能介绍
+            生成并发送带有智能思考过程的消息内容，支持向单聊或群组发送结构化消息，适用于需要展示AI推导逻辑的对话场景。
+
+            ### 注意事项
+            - 消息内容需符合平台内容安全规范，违规内容将被拦截。
+            - 思考过程仅在特定客户端版本可见，旧版本客户端将仅展示最终消息内容。
+                     */
+            create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/im/v1/message_cot`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+                     * {@link https://open.feishu.cn/api-explorer?project=im&resource=message_cot&apiName=update&version=v1 click to debug }
+             *
+            * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=update&project=im&resource=message_cot&version=v1 document }
+             *
+            * ## 功能介绍
+            更新指定思考过程关联的消息事件列表，支持添加或替换AG2UI交互事件，用于同步AI助手与用户端的对话交互轨迹，确保思考过程与实际展示内容一致。
+
+            ### 前提条件
+            - 需拥有目标消息及思考过程的编辑权限
+            - 待更新的思考过程需处于可编辑状态
+
+            ### 注意事项
+            - 事件列表将完全覆盖原有内容，增量更新需先获取当前事件列表后合并再提交
+            - 时间戳需严格按照事件发生顺序填写，否则会导致交互轨迹展示异常
+            - 事件内容需符合JSON格式规范，否则会导致解析失败
+                     */
+            update: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/im/v1/message_cot`, path27),
+                method: "PUT",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
             })
           },
           /**
@@ -93374,6 +95343,77 @@ var require_lib2 = __commonJS({
                   throw e;
                 });
               }),
+              searchWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/im/v1/messages/search`, path27),
+                    method: "POST",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=im&resource=message&apiName=search&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=search&project=im&resource=message&version=v1 document }
+               *
+               * 搜索消息
+               */
+              search: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/im/v1/messages/search`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
               /**
                * {@link https://open.feishu.cn/api-explorer?project=im&resource=message&apiName=update&version=v1 click to debug }
                *
@@ -93779,6 +95819,94 @@ var require_lib2 = __commonJS({
               })
             },
             /**
+             * message_cot
+             */
+            messageCot: {
+              /**
+                       * {@link https://open.feishu.cn/api-explorer?project=im&resource=message_cot&apiName=complete&version=v1 click to debug }
+               *
+              * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=complete&project=im&resource=message_cot&version=v1 document }
+               *
+              * ## 功能介绍
+              标记指定智能对话思考过程为完成状态，同步完成原因，用于终止对话机器人的思考流程并反馈处理结果，适用于智能客服、自动问答等场景。
+
+              ### 注意事项
+              - 思考过程标记完成后将无法继续修改或恢复，需确保流程已真正结束。
+              - 若传入`error`或`timeout`原因，系统将记录异常日志用于问题排查。
+                       */
+              complete: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/im/v1/message_cot/complete/:cot_id`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+                       * {@link https://open.feishu.cn/api-explorer?project=im&resource=message_cot&apiName=create&version=v1 click to debug }
+               *
+              * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=im&resource=message_cot&version=v1 document }
+               *
+              * ## 功能介绍
+              生成并发送带有智能思考过程的消息内容，支持向单聊或群组发送结构化消息，适用于需要展示AI推导逻辑的对话场景。
+
+              ### 注意事项
+              - 消息内容需符合平台内容安全规范，违规内容将被拦截。
+              - 思考过程仅在特定客户端版本可见，旧版本客户端将仅展示最终消息内容。
+                       */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/im/v1/message_cot`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+                       * {@link https://open.feishu.cn/api-explorer?project=im&resource=message_cot&apiName=update&version=v1 click to debug }
+               *
+              * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=update&project=im&resource=message_cot&version=v1 document }
+               *
+              * ## 功能介绍
+              更新指定思考过程关联的消息事件列表，支持添加或替换AG2UI交互事件，用于同步AI助手与用户端的对话交互轨迹，确保思考过程与实际展示内容一致。
+
+              ### 前提条件
+              - 需拥有目标消息及思考过程的编辑权限
+              - 待更新的思考过程需处于可编辑状态
+
+              ### 注意事项
+              - 事件列表将完全覆盖原有内容，增量更新需先获取当前事件列表后合并再提交
+              - 时间戳需严格按照事件发生顺序填写，否则会导致交互轨迹展示异常
+              - 事件内容需符合JSON格式规范，否则会导致解析失败
+                       */
+              update: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/im/v1/message_cot`, path27),
+                  method: "PUT",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
              * 消息 - Pin
              */
             pin: {
@@ -94066,6 +96194,82 @@ var require_lib2 = __commonJS({
               })
             },
             /**
+             * chat
+             */
+            chat: {
+              searchWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/im/v2/chats/search`, path27),
+                    method: "POST",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=im&resource=chat&apiName=search&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=search&project=im&resource=chat&version=v2 document }
+               *
+               * 搜索群组
+               */
+              search: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/im/v2/chats/search`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
              * chat_button
              */
             chatButton: {
@@ -94203,7 +96407,13 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$u = class extends Client$v {
+    var Client$Y = class extends Client$Z {
+      constructor() {
+        super(...arguments);
+        this.inline_platform = {};
+      }
+    };
+    var Client$X = class extends Client$Y {
       constructor() {
         super(...arguments);
         this.lingo = {
@@ -94683,7 +96893,13 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$t = class extends Client$u {
+    var Client$W = class extends Client$X {
+      constructor() {
+        super(...arguments);
+        this.llpp = {};
+      }
+    };
+    var Client$V = class extends Client$W {
       constructor() {
         super(...arguments);
         this.mail = {
@@ -95441,6 +97657,32 @@ var require_lib2 = __commonJS({
             })
           },
           /**
+           * multi_entity
+           */
+          multiEntity: {
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=mail&resource=multi_entity&apiName=search&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=search&project=mail&resource=multi_entity&version=v1 document }
+             *
+             * 适用于写信联系人搜索
+             */
+            search: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/mail/v1/multi_entity/search`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            })
+          },
+          /**
            * 公共邮箱别名
            */
           publicMailboxAlias: {
@@ -96005,6 +98247,96 @@ var require_lib2 = __commonJS({
                 this.logger.error(formatErrors(e));
                 throw e;
               });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox&apiName=profile&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=profile&project=mail&resource=user_mailbox&version=v1 document }
+             *
+             * 用于在用户身份下获取自己的邮箱主地址。当用户没有邮箱时，返回的 primary_email_address 为空。
+             */
+            profile: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/profile`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            searchWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/search`, path27),
+                  method: "POST",
+                  headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                  params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                  data,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                });
+                return res;
+              });
+              const Iterable = {
+                [Symbol.asyncIterator]() {
+                  return __asyncGenerator(this, arguments, function* _a() {
+                    let hasMore = true;
+                    let pageToken;
+                    while (hasMore) {
+                      try {
+                        const res = yield __await(sendRequest({
+                          headers,
+                          params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                          data
+                        }));
+                        const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                          // @ts-ignore
+                          has_more,
+                          // @ts-ignore
+                          page_token,
+                          // @ts-ignore
+                          next_page_token
+                        } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                        yield yield __await(rest);
+                        hasMore = Boolean(has_more);
+                        pageToken = page_token || next_page_token;
+                      } catch (e) {
+                        yield yield __await(null);
+                        break;
+                      }
+                    }
+                  });
+                }
+              };
+              return Iterable;
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox&apiName=search&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=search&project=mail&resource=user_mailbox&version=v1 document }
+             *
+             * 搜索邮件
+             */
+            search: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/search`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
             })
           },
           /**
@@ -96133,6 +98465,27 @@ var require_lib2 = __commonJS({
            * user_mailbox.draft
            */
           userMailboxDraft: {
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.draft&apiName=cancel_scheduled_send&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=cancel_scheduled_send&project=mail&resource=user_mailbox.draft&version=v1 document }
+             *
+             * 取消定时发送
+             */
+            cancelScheduledSend: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/messages/:message_id/cancel_scheduled_send`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
             /**
              * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.draft&apiName=create&version=v1 click to debug }
              *
@@ -96999,6 +99352,27 @@ var require_lib2 = __commonJS({
               });
             }),
             /**
+             * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.message&apiName=send_status&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=send_status&project=mail&resource=user_mailbox.message&version=v1 document }
+             *
+             * 查询邮件发送状态
+             */
+            sendStatus: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/messages/:message_id/send_status`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
              * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.message&apiName=trash&version=v1 click to debug }
              *
              * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=trash&project=mail&resource=user_mailbox.message&version=v1 document }
@@ -97127,9 +99501,77 @@ var require_lib2 = __commonJS({
             })
           },
           /**
+           * user_mailbox.sent_message
+           */
+          userMailboxSentMessage: {
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.sent_message&apiName=get_recall_detail&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_recall_detail&project=mail&resource=user_mailbox.sent_message&version=v1 document }
+             *
+             * 查询指定邮件的撤回结果详情，包括整体撤回进度、成功/失败/处理中的收件人数量，以及每个收件人的撤回状态和失败原因。
+             */
+            getRecallDetail: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/messages/:message_id/recall`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.sent_message&apiName=recall&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=recall&project=mail&resource=user_mailbox.sent_message&version=v1 document }
+             *
+             * 撤回指定邮件。前置条件：邮件须已投递，且发送时间在 24 小时以内；搬家中的域名不支持撤回。返回说明：若用户或邮件不满足撤回条件，接口仍返回 200，响应体中 recall_status 为 unavailable，recall_restriction_reason 标明具体原因。返回成功仅表示撤回请求已受理，实际撤回结果请调用「查询邮件撤回进度」接口获取。
+             */
+            recall: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/messages/:message_id/recall`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            })
+          },
+          /**
            * user_mailbox.setting
            */
           userMailboxSetting: {
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.setting&apiName=get_signatures&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_signatures&project=mail&resource=user_mailbox.setting&version=v1 document }
+             *
+             * 获取用户邮箱签名列表
+             */
+            getSignatures: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/settings/signatures`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
             /**
              * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.setting&apiName=send_as&version=v1 click to debug }
              *
@@ -98230,6 +100672,32 @@ var require_lib2 = __commonJS({
               })
             },
             /**
+             * multi_entity
+             */
+            multiEntity: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=mail&resource=multi_entity&apiName=search&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=search&project=mail&resource=multi_entity&version=v1 document }
+               *
+               * 适用于写信联系人搜索
+               */
+              search: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/mail/v1/multi_entity/search`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
              * 公共邮箱别名
              */
             publicMailboxAlias: {
@@ -98798,6 +101266,98 @@ var require_lib2 = __commonJS({
                   this.logger.error(formatErrors(e));
                   throw e;
                 });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox&apiName=profile&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=profile&project=mail&resource=user_mailbox&version=v1 document }
+               *
+               * 用于在用户身份下获取自己的邮箱主地址。当用户没有邮箱时，返回的 primary_email_address 为空。
+               */
+              profile: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/profile`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              searchWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/search`, path27),
+                    method: "POST",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox&apiName=search&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=search&project=mail&resource=user_mailbox&version=v1 document }
+               *
+               * 搜索邮件
+               */
+              search: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/search`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
               })
             },
             /**
@@ -98928,6 +101488,27 @@ var require_lib2 = __commonJS({
              * user_mailbox.draft
              */
             userMailboxDraft: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.draft&apiName=cancel_scheduled_send&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=cancel_scheduled_send&project=mail&resource=user_mailbox.draft&version=v1 document }
+               *
+               * 取消定时发送
+               */
+              cancelScheduledSend: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/messages/:message_id/cancel_scheduled_send`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
               /**
                * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.draft&apiName=create&version=v1 click to debug }
                *
@@ -99800,6 +102381,27 @@ var require_lib2 = __commonJS({
                 });
               }),
               /**
+               * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.message&apiName=send_status&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=send_status&project=mail&resource=user_mailbox.message&version=v1 document }
+               *
+               * 查询邮件发送状态
+               */
+              sendStatus: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/messages/:message_id/send_status`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
                * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.message&apiName=trash&version=v1 click to debug }
                *
                * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=trash&project=mail&resource=user_mailbox.message&version=v1 document }
@@ -99928,9 +102530,77 @@ var require_lib2 = __commonJS({
               })
             },
             /**
+             * user_mailbox.sent_message
+             */
+            userMailboxSentMessage: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.sent_message&apiName=get_recall_detail&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_recall_detail&project=mail&resource=user_mailbox.sent_message&version=v1 document }
+               *
+               * 查询指定邮件的撤回结果详情，包括整体撤回进度、成功/失败/处理中的收件人数量，以及每个收件人的撤回状态和失败原因。
+               */
+              getRecallDetail: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/messages/:message_id/recall`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.sent_message&apiName=recall&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=recall&project=mail&resource=user_mailbox.sent_message&version=v1 document }
+               *
+               * 撤回指定邮件。前置条件：邮件须已投递，且发送时间在 24 小时以内；搬家中的域名不支持撤回。返回说明：若用户或邮件不满足撤回条件，接口仍返回 200，响应体中 recall_status 为 unavailable，recall_restriction_reason 标明具体原因。返回成功仅表示撤回请求已受理，实际撤回结果请调用「查询邮件撤回进度」接口获取。
+               */
+              recall: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/messages/:message_id/recall`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
              * user_mailbox.setting
              */
             userMailboxSetting: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.setting&apiName=get_signatures&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_signatures&project=mail&resource=user_mailbox.setting&version=v1 document }
+               *
+               * 获取用户邮箱签名列表
+               */
+              getSignatures: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/mail/v1/user_mailboxes/:user_mailbox_id/settings/signatures`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
               /**
                * {@link https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.setting&apiName=send_as&version=v1 click to debug }
                *
@@ -100274,7 +102944,13 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$s = class extends Client$t {
+    var Client$U = class extends Client$V {
+      constructor() {
+        super(...arguments);
+        this.mcp = {};
+      }
+    };
+    var Client$T = class extends Client$U {
       constructor() {
         super(...arguments);
         this.mdm = {
@@ -100439,13 +103115,13 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$r = class extends Client$s {
+    var Client$S = class extends Client$T {
       constructor() {
         super(...arguments);
         this.meeting_room = {};
       }
     };
-    var Client$q = class extends Client$r {
+    var Client$R = class extends Client$S {
       constructor() {
         super(...arguments);
         this.minutes = {
@@ -100557,6 +103233,48 @@ var require_lib2 = __commonJS({
                 const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
                 return this.httpInstance.request({
                   url: fillApiPath(`${this.domain}/open-apis/minutes/v1/minutes/search`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=minutes&resource=minute&apiName=subscription&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=subscription&project=minutes&resource=minute&version=v1 document }
+               *
+               * 订阅妙记变更事件
+               */
+              subscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/minutes/v1/minutes/subscription`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=minutes&resource=minute&apiName=unsubscription&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=unsubscription&project=minutes&resource=minute&version=v1 document }
+               *
+               * 取消订阅妙记变更事件
+               */
+              unsubscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/minutes/v1/minutes/unsubscription`, path27),
                   method: "POST",
                   data,
                   params,
@@ -100679,7 +103397,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$p = class extends Client$q {
+    var Client$Q = class extends Client$R {
       constructor() {
         super(...arguments);
         this.moments = {
@@ -100736,7 +103454,79 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$o = class extends Client$p {
+    var Client$P = class extends Client$Q {
+      constructor() {
+        super(...arguments);
+        this.myai_ai_extension = {};
+      }
+    };
+    var Client$O = class extends Client$P {
+      constructor() {
+        super(...arguments);
+        this.myai_assistant = {};
+      }
+    };
+    var Client$N = class extends Client$O {
+      constructor() {
+        super(...arguments);
+        this.myai_base_ai = {};
+      }
+    };
+    var Client$M = class extends Client$N {
+      constructor() {
+        super(...arguments);
+        this.myai_ccm_extension = {};
+      }
+    };
+    var Client$L = class extends Client$M {
+      constructor() {
+        super(...arguments);
+        this.myai_data = {};
+      }
+    };
+    var Client$K = class extends Client$L {
+      constructor() {
+        super(...arguments);
+        this.myai_im_extension = {};
+      }
+    };
+    var Client$J = class extends Client$K {
+      constructor() {
+        super(...arguments);
+        this.myai_mail = {};
+      }
+    };
+    var Client$I = class extends Client$J {
+      constructor() {
+        super(...arguments);
+        this.myai_memory_reflection = {};
+      }
+    };
+    var Client$H = class extends Client$I {
+      constructor() {
+        super(...arguments);
+        this.myai_scenario_summary = {};
+      }
+    };
+    var Client$G = class extends Client$H {
+      constructor() {
+        super(...arguments);
+        this.myai_slides = {};
+      }
+    };
+    var Client$F = class extends Client$G {
+      constructor() {
+        super(...arguments);
+        this.myai_url_extension = {};
+      }
+    };
+    var Client$E = class extends Client$F {
+      constructor() {
+        super(...arguments);
+        this.myai = {};
+      }
+    };
+    var Client$D = class extends Client$E {
       constructor() {
         super(...arguments);
         this.okr = {
@@ -101377,11 +104167,953 @@ var require_lib2 = __commonJS({
                 });
               })
             }
+          },
+          v2: {
+            /**
+             * okr.alignment
+             */
+            okrAlignment: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.alignment&apiName=delete&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=delete&project=okr&resource=okr.alignment&version=v2 document }
+               *
+               * 删除对齐关系
+               */
+              delete: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/alignments/:alignment_id`, path27),
+                  method: "DELETE",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.alignment&apiName=get&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=okr&resource=okr.alignment&version=v2 document }
+               *
+               * 获取对齐关系
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/alignments/:alignment_id`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.category
+             */
+            okrCategory: {
+              listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/okr/v2/categories`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.category&apiName=list&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=okr&resource=okr.category&version=v2 document }
+               *
+               * 批量获取分类
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/categories`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.cycle
+             */
+            okrCycle: {
+              listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/okr/v2/cycles`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.cycle&apiName=list&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=okr&resource=okr.cycle&version=v2 document }
+               *
+               * 批量获取用户周期
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/cycles`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.cycle&apiName=objectives_position&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=objectives_position&project=okr&resource=okr.cycle&version=v2 document }
+               *
+               * 更新用户周期下全部目标的位置
+               */
+              objectivesPosition: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/cycles/:cycle_id/objectives_position`, path27),
+                  method: "PUT",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.cycle&apiName=objectives_weight&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=objectives_weight&project=okr&resource=okr.cycle&version=v2 document }
+               *
+               * 更新用户周期下全部目标的权重
+               */
+              objectivesWeight: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/cycles/:cycle_id/objectives_weight`, path27),
+                  method: "PUT",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.cycle.objective
+             */
+            okrCycleObjective: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.cycle.objective&apiName=create&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=okr&resource=okr.cycle.objective&version=v2 document }
+               *
+               * 创建目标
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/cycles/:cycle_id/objectives`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/okr/v2/cycles/:cycle_id/objectives`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.cycle.objective&apiName=list&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=okr&resource=okr.cycle.objective&version=v2 document }
+               *
+               * 批量获取用户周期下的目标
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/cycles/:cycle_id/objectives`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.indicator
+             */
+            okrIndicator: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.indicator&apiName=patch&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=patch&project=okr&resource=okr.indicator&version=v2 document }
+               *
+               * 更新指标
+               */
+              patch: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/indicators/:indicator_id`, path27),
+                  method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.key_result
+             */
+            okrKeyResult: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.key_result&apiName=delete&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=delete&project=okr&resource=okr.key_result&version=v2 document }
+               *
+               * 删除关键结果
+               */
+              delete: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/key_results/:key_result_id`, path27),
+                  method: "DELETE",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.key_result&apiName=get&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=okr&resource=okr.key_result&version=v2 document }
+               *
+               * 获取关键结果
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/key_results/:key_result_id`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.key_result&apiName=patch&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=patch&project=okr&resource=okr.key_result&version=v2 document }
+               *
+               * 更新关键结果
+               */
+              patch: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/key_results/:key_result_id`, path27),
+                  method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.key_result.indicator
+             */
+            okrKeyResultIndicator: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.key_result.indicator&apiName=list&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=okr&resource=okr.key_result.indicator&version=v2 document }
+               *
+               * 获取关键结果的指标
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/key_results/:key_result_id/indicators`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.key_result.progress
+             */
+            okrKeyResultProgress: {
+              listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/okr/v2/key_results/:key_result_id/progresses`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.key_result.progress&apiName=list&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=okr&resource=okr.key_result.progress&version=v2 document }
+               *
+               * 批量获取关键结果下的进展
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/key_results/:key_result_id/progresses`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.objective.alignment
+             */
+            okrObjectiveAlignment: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective.alignment&apiName=create&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=okr&resource=okr.objective.alignment&version=v2 document }
+               *
+               * 创建对齐关系
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/alignments`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/alignments`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective.alignment&apiName=list&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=okr&resource=okr.objective.alignment&version=v2 document }
+               *
+               * 批量获取目标下的对齐关系
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/alignments`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.objective
+             */
+            okrObjective: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective&apiName=delete&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=delete&project=okr&resource=okr.objective&version=v2 document }
+               *
+               * 删除目标
+               */
+              delete: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id`, path27),
+                  method: "DELETE",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective&apiName=get&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=okr&resource=okr.objective&version=v2 document }
+               *
+               * 获取目标
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective&apiName=key_results_position&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=key_results_position&project=okr&resource=okr.objective&version=v2 document }
+               *
+               * 更新全部关键结果的位置
+               */
+              keyResultsPosition: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/key_results_position`, path27),
+                  method: "PUT",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective&apiName=key_results_weight&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=key_results_weight&project=okr&resource=okr.objective&version=v2 document }
+               *
+               * 更新全部关键结果的权重
+               */
+              keyResultsWeight: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/key_results_weight`, path27),
+                  method: "PUT",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective&apiName=patch&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=patch&project=okr&resource=okr.objective&version=v2 document }
+               *
+               * 更新目标
+               */
+              patch: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id`, path27),
+                  method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.objective.indicator
+             */
+            okrObjectiveIndicator: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective.indicator&apiName=list&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=okr&resource=okr.objective.indicator&version=v2 document }
+               *
+               * 获取目标的指标
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/indicators`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.objective.key_result
+             */
+            okrObjectiveKeyResult: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective.key_result&apiName=create&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=okr&resource=okr.objective.key_result&version=v2 document }
+               *
+               * 创建关键结果
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/key_results`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/key_results`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective.key_result&apiName=list&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=okr&resource=okr.objective.key_result&version=v2 document }
+               *
+               * 批量获取目标下的关键结果
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/key_results`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * okr.objective.progress
+             */
+            okrObjectiveProgress: {
+              listWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/progresses`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=okr&resource=okr.objective.progress&apiName=list&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=okr&resource=okr.objective.progress&version=v2 document }
+               *
+               * 批量获取目标下的进展
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/okr/v2/objectives/:objective_id/progresses`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            }
           }
         };
       }
     };
-    var Client$n = class extends Client$o {
+    var Client$C = class extends Client$D {
       constructor() {
         super(...arguments);
         this.optical_char_recognition = {
@@ -101450,7 +105182,13 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$m = class extends Client$n {
+    var Client$B = class extends Client$C {
+      constructor() {
+        super(...arguments);
+        this.partner_ai = {};
+      }
+    };
+    var Client$A = class extends Client$B {
       constructor() {
         super(...arguments);
         this.passport = {
@@ -101553,7 +105291,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$l = class extends Client$m {
+    var Client$z = class extends Client$A {
       constructor() {
         super(...arguments);
         this.payroll = {
@@ -102256,22 +105994,125 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$k = class extends Client$l {
+    var Client$y = class extends Client$z {
       constructor() {
         super(...arguments);
         this.people_admin = {};
       }
     };
-    var Client$j = class extends Client$k {
+    var Client$x = class extends Client$y {
+      constructor() {
+        super(...arguments);
+        this.people_ai = {};
+      }
+    };
+    var Client$w = class extends Client$x {
       constructor() {
         super(...arguments);
         this.people_bytedance = {};
       }
     };
-    var Client$i = class extends Client$j {
+    var Client$v = class extends Client$w {
       constructor() {
         super(...arguments);
         this.performance = {
+          v1: {
+            /**
+             * 绩效
+             */
+            reviewData: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=performance&resource=review_data&apiName=query&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/performance-v1/review_data/query document }
+               *
+               * 获取绩效结果
+               *
+               * 获取绩效结果
+               */
+              query: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/performance/v1/review_datas/query`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * semester
+             */
+            semester: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=performance&resource=semester&apiName=list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=performance&resource=semester&version=v1 document }
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/performance/v1/semesters`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * stage_task
+             */
+            stageTask: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=performance&resource=stage_task&apiName=find_by_page&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=find_by_page&project=performance&resource=stage_task&version=v1 document }
+               */
+              findByPage: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/performance/v1/stage_tasks/find_by_page`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=performance&resource=stage_task&apiName=find_by_user_list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=find_by_user_list&project=performance&resource=stage_task&version=v1 document }
+               */
+              findByUserList: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/performance/v1/stage_tasks/find_by_user_list`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            }
+          },
           v2: {
             /**
              * activity
@@ -102957,7 +106798,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$h = class extends Client$i {
+    var Client$u = class extends Client$v {
       constructor() {
         super(...arguments);
         this.personal_settings = {
@@ -103362,7 +107203,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$g = class extends Client$h {
+    var Client$t = class extends Client$u {
       constructor() {
         super(...arguments);
         this.report = {
@@ -103539,13 +107380,31 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$f = class extends Client$g {
+    var Client$s = class extends Client$t {
+      constructor() {
+        super(...arguments);
+        this.rule_engine = {};
+      }
+    };
+    var Client$r = class extends Client$s {
+      constructor() {
+        super(...arguments);
+        this.saasbi = {};
+      }
+    };
+    var Client$q = class extends Client$r {
+      constructor() {
+        super(...arguments);
+        this.scim = {};
+      }
+    };
+    var Client$p = class extends Client$q {
       constructor() {
         super(...arguments);
         this.search_in_app = {};
       }
     };
-    var Client$e = class extends Client$f {
+    var Client$o = class extends Client$p {
       constructor() {
         super(...arguments);
         this.search = {
@@ -104480,7 +108339,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$d = class extends Client$e {
+    var Client$n = class extends Client$o {
       constructor() {
         super(...arguments);
         this.security_and_compliance = {
@@ -104942,7 +108801,19 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$c = class extends Client$d {
+    var Client$m = class extends Client$n {
+      constructor() {
+        super(...arguments);
+        this.security_plugin = {};
+      }
+    };
+    var Client$l = class extends Client$m {
+      constructor() {
+        super(...arguments);
+        this.sheet_ai = {};
+      }
+    };
+    var Client$k = class extends Client$l {
       constructor() {
         super(...arguments);
         this.sheets = {
@@ -105374,7 +109245,7 @@ var require_lib2 = __commonJS({
             })
           },
           /**
-           * 工作表
+           * 单元格
            */
           spreadsheetSheet: {
             /**
@@ -106050,7 +109921,7 @@ var require_lib2 = __commonJS({
               })
             },
             /**
-             * 工作表
+             * 单元格
              */
             spreadsheetSheet: {
               /**
@@ -106301,7 +110172,567 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$b = class extends Client$c {
+    var Client$j = class extends Client$k {
+      constructor() {
+        super(...arguments);
+        this.slides_ai = {};
+      }
+    };
+    var Client$i = class extends Client$j {
+      constructor() {
+        super(...arguments);
+        this.slides = {};
+      }
+    };
+    var Client$h = class extends Client$i {
+      constructor() {
+        super(...arguments);
+        this.spark = {
+          v1: {
+            /**
+             * app
+             */
+            app: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app&apiName=create&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=create&project=spark&resource=app&version=v1 document }
+               *
+               * 创建妙搭应用
+               */
+              create: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app&apiName=get_app_visibility&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_app_visibility&project=spark&resource=app&version=v1 document }
+               *
+               * 查询妙搭应用可见范围
+               */
+              getAppVisibility: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/access-scope`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app&apiName=icon&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=icon&project=spark&resource=app&version=v1 document }
+               *
+               * 上传妙搭应用图标（multipart/form-data，返回图标 URL；不绑定具体 App）
+               */
+              icon: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/icon`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers: Object.assign(Object.assign({}, headers), { "Content-Type": "multipart/form-data" }),
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+                return (res === null || res === void 0 ? void 0 : res.data) || null;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app&apiName=list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list&project=spark&resource=app&version=v1 document }
+               *
+               * 列出当前用户的妙搭应用
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app&apiName=patch&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=patch&project=spark&resource=app&version=v1 document }
+               *
+               * 更新妙搭应用
+               */
+              patch: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id`, path27),
+                  method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app&apiName=sql_commands&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=sql_commands&project=spark&resource=app&version=v1 document }
+               *
+               * 执行 SQL
+               */
+              sqlCommands: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/sql_commands`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app&apiName=update_app_visibility&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=update_app_visibility&project=spark&resource=app&version=v1 document }
+               *
+               * 更新妙搭应用可见范围（access-scope）
+               */
+              updateAppVisibility: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/access-scope`, path27),
+                  method: "PUT",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app&apiName=upload_html_code_and_release&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=upload_html_code_and_release&project=spark&resource=app&version=v1 document }
+               *
+               * 上传 HTML 代码并发布应用
+               */
+              uploadHtmlCodeAndRelease: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/upload_and_release_html_code`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers: Object.assign(Object.assign({}, headers), { "Content-Type": "multipart/form-data" }),
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+                return (res === null || res === void 0 ? void 0 : res.data) || null;
+              })
+            },
+            /**
+             * app.enum
+             */
+            appEnum: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.enum&apiName=get_enum_detail&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_enum_detail&project=spark&resource=app.enum&version=v1 document }
+               *
+               * 获取自定义枚举详细信息
+               */
+              getEnumDetail: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/enums/:enum_name`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.enum&apiName=get_enum_list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_enum_list&project=spark&resource=app.enum&version=v1 document }
+               *
+               * 获取自定义枚举列表
+               */
+              getEnumList: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/enums`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * app.storage
+             */
+            appStorage: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.storage&apiName=download&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=download&project=spark&resource=app.storage&version=v1 document }
+               *
+               * 下载文件
+               */
+              download: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/storage`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers: Object.assign(Object.assign({}, headers), { "Content-Type": "multipart/form-data" }),
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+                return (res === null || res === void 0 ? void 0 : res.data) || null;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.storage&apiName=upload&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=upload&project=spark&resource=app.storage&version=v1 document }
+               *
+               * 上传文件
+               */
+              upload: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/storage/upload`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers: Object.assign(Object.assign({}, headers), { "Content-Type": "multipart/form-data" }),
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+                return (res === null || res === void 0 ? void 0 : res.data) || null;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.storage&apiName=upload_complete&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=upload_complete&project=spark&resource=app.storage&version=v1 document }
+               *
+               * 分片上传文件 - 完成上传
+               */
+              uploadComplete: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/storage/upload/complete`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.storage&apiName=upload_initialize&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=upload_initialize&project=spark&resource=app.storage&version=v1 document }
+               *
+               * 分片上传文件 - 创建上传请求
+               */
+              uploadInitialize: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/storage/upload/initialize`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.storage&apiName=upload_part&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=upload_part&project=spark&resource=app.storage&version=v1 document }
+               *
+               * 分片上传文件 - 上传分片
+               */
+              uploadPart: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/storage/upload/part`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers: Object.assign(Object.assign({}, headers), { "Content-Type": "multipart/form-data" }),
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+                return (res === null || res === void 0 ? void 0 : res.data) || null;
+              })
+            },
+            /**
+             * app.table
+             */
+            appTable: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.table&apiName=batch_update_table_records&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=batch_update_table_records&project=spark&resource=app.table&version=v1 document }
+               *
+               * 批量更新数据表中的记录
+               */
+              batchUpdateTableRecords: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/tables/:table_name/records_batch_update`, path27),
+                  method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.table&apiName=delete_table_records&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=delete_table_records&project=spark&resource=app.table&version=v1 document }
+               *
+               * 删除数据表中的记录
+               */
+              deleteTableRecords: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/tables/:table_name/records`, path27),
+                  method: "DELETE",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.table&apiName=get_table_detail&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_table_detail&project=spark&resource=app.table&version=v1 document }
+               *
+               * 获取数据表详细信息
+               */
+              getTableDetail: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/tables/:table_name`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.table&apiName=get_table_list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_table_list&project=spark&resource=app.table&version=v1 document }
+               *
+               * 获取数据表列表
+               */
+              getTableList: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/tables`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.table&apiName=get_table_record_list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_table_record_list&project=spark&resource=app.table&version=v1 document }
+               *
+               * 查询数据表数据记录
+               */
+              getTableRecordList: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/tables/:table_name/records`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.table&apiName=patch_table_records&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=patch_table_records&project=spark&resource=app.table&version=v1 document }
+               *
+               * 按条件更新数据表中的记录
+               */
+              patchTableRecords: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/tables/:table_name/records`, path27),
+                  method: "PATCH",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.table&apiName=post_table_records&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=post_table_records&project=spark&resource=app.table&version=v1 document }
+               *
+               * 向数据表中添加或更新记录
+               */
+              postTableRecords: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/tables/:table_name/records`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * app.view
+             */
+            appView: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=app.view&apiName=get_view_record_list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get_view_record_list&project=spark&resource=app.view&version=v1 document }
+               *
+               * 查询视图数据记录
+               */
+              getViewRecordList: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/apps/:app_id/views/:view_name/records`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * directory.user
+             */
+            directoryUser: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=spark&resource=directory.user&apiName=id_convert&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=id_convert&project=spark&resource=directory.user&version=v1 document }
+               *
+               * open api\nIDConvert: 飞书和force id转换\noapi.post = "/v1/directory/user/id_convert",
+               */
+              idConvert: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/spark/v1/directory/user/id_convert`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            }
+          }
+        };
+      }
+    };
+    var Client$g = class extends Client$h {
       constructor() {
         super(...arguments);
         this.speech_to_text = {
@@ -106420,19 +110851,25 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$a = class extends Client$b {
+    var Client$f = class extends Client$g {
       constructor() {
         super(...arguments);
         this.spend = {};
       }
     };
-    var Client$9 = class extends Client$a {
+    var Client$e = class extends Client$f {
+      constructor() {
+        super(...arguments);
+        this.subscriptions = {};
+      }
+    };
+    var Client$d = class extends Client$e {
       constructor() {
         super(...arguments);
         this.sup_project = {};
       }
     };
-    var Client$8 = class extends Client$9 {
+    var Client$c = class extends Client$d {
       constructor() {
         super(...arguments);
         this.task = {
@@ -109051,6 +113488,96 @@ var require_lib2 = __commonJS({
                   throw e;
                 });
               }),
+              searchWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/task/v2/tasks/search`, path27),
+                    method: "POST",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=task&resource=task&apiName=search&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=search&project=task&resource=task&version=v2 document }
+               *
+               * 搜索任务
+               */
+              search: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/task/v2/tasks/search`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=task&resource=task&apiName=set_ancestor_task&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=set_ancestor_task&project=task&resource=task&version=v2 document }
+               */
+              setAncestorTask: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/task/v2/tasks/:task_guid/set_ancestor_task`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
               /**
                * {@link https://open.feishu.cn/api-explorer?project=task&resource=task&apiName=tasklists&version=v2 click to debug }
                *
@@ -109154,6 +113681,99 @@ var require_lib2 = __commonJS({
                 return this.httpInstance.request({
                   url: fillApiPath(`${this.domain}/open-apis/task/v2/tasks/:task_guid/subtasks`, path27),
                   method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * task_v2
+             */
+            taskV2: {
+              listRelatedTaskWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/task/v2/task_v2/list_related_task`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=task&resource=task_v2&apiName=list_related_task&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=list_related_task&project=task&resource=task_v2&version=v2 document }
+               */
+              listRelatedTask: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/task/v2/task_v2/list_related_task`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=task&resource=task_v2&apiName=task_subscription&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=task_subscription&project=task&resource=task_v2&version=v2 document }
+               */
+              taskSubscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/task/v2/task_v2/task_subscription`, path27),
+                  method: "POST",
                   data,
                   params,
                   headers,
@@ -109451,6 +114071,77 @@ var require_lib2 = __commonJS({
                   throw e;
                 });
               }),
+              searchWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/task/v2/tasklists/search`, path27),
+                    method: "POST",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=task&resource=tasklist&apiName=search&version=v2 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=search&project=task&resource=tasklist&version=v2 document }
+               *
+               * 搜索任务清单
+               */
+              search: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/task/v2/tasklists/search`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
               /**
                * {@link https://open.feishu.cn/api-explorer?project=task&resource=tasklist&apiName=tasks&version=v2 click to debug }
                *
@@ -109475,13 +114166,10 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$7 = class extends Client$8 {
+    var Client$b = class extends Client$c {
       constructor() {
         super(...arguments);
         this.tenant = {
-          /**
-           * tenant.product_assign_info
-           */
           tenantProductAssignInfo: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=tenant&resource=tenant.product_assign_info&apiName=query&version=v2 click to debug }
@@ -109503,9 +114191,6 @@ var require_lib2 = __commonJS({
               });
             })
           },
-          /**
-           * 企业信息
-           */
           tenant: {
             /**
              * {@link https://open.feishu.cn/api-explorer?project=tenant&resource=tenant&apiName=query&version=v2 click to debug }
@@ -109592,7 +114277,7 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$6 = class extends Client$7 {
+    var Client$a = class extends Client$b {
       constructor() {
         super(...arguments);
         this.translation = {
@@ -109711,10 +114396,155 @@ var require_lib2 = __commonJS({
         };
       }
     };
-    var Client$5 = class extends Client$6 {
+    var Client$9 = class extends Client$a {
+      constructor() {
+        super(...arguments);
+        this.trust_layer = {};
+      }
+    };
+    var Client$8 = class extends Client$9 {
+      constructor() {
+        super(...arguments);
+        this.trust_party = {
+          v1: {
+            /**
+             * collaboration_tenant.collaboration_department
+             */
+            collaborationTenantCollaborationDepartment: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=trust_party&resource=collaboration_tenant.collaboration_department&apiName=get&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=trust_party&resource=collaboration_tenant.collaboration_department&version=v1 document }
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/trust_party/v1/collaboration_tenants/:target_tenant_key/collaboration_departments/:target_department_id`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * collaboration_tenant.collaboration_user
+             */
+            collaborationTenantCollaborationUser: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=trust_party&resource=collaboration_tenant.collaboration_user&apiName=get&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=trust_party&resource=collaboration_tenant.collaboration_user&version=v1 document }
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/trust_party/v1/collaboration_tenants/:target_tenant_key/collaboration_users/:target_user_id`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
+             * 关联组织（灰度租户可见）
+             */
+            collaborationTenant: {
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=trust_party&resource=collaboration_tenant&apiName=get&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=get&project=trust_party&resource=collaboration_tenant&version=v1 document }
+               */
+              get: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/trust_party/v1/collaboration_tenants/:target_tenant_key`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=trust_party&resource=collaboration_tenant&apiName=list&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/trust_party-v1/collaboration_tenant/list document }
+               *
+               * 获取关联租户的列表
+               *
+               * 分页获取用户可见的关联租户列表。
+               */
+              list: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/trust_party/v1/collaboration_tenants`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=trust_party&resource=collaboration_tenant&apiName=visible_organization&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/trust_party-v1/collaboration_tenant/visible_organization document }
+               *
+               * 获取关联组织的部门和成员信息
+               *
+               * 该接口会返回用户在外部部门下可见的下级部门和用户
+               */
+              visibleOrganization: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/trust_party/v1/collaboration_tenants/:target_tenant_key/visible_organization`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            }
+          }
+        };
+      }
+    };
+    var Client$7 = class extends Client$8 {
       constructor() {
         super(...arguments);
         this.unified_kms_log = {};
+      }
+    };
+    var Client$6 = class extends Client$7 {
+      constructor() {
+        super(...arguments);
+        this.unified_kms = {};
+      }
+    };
+    var Client$5 = class extends Client$6 {
+      constructor() {
+        super(...arguments);
+        this.vault = {};
       }
     };
     var Client$4 = class extends Client$5 {
@@ -109786,6 +114616,105 @@ var require_lib2 = __commonJS({
               const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
               return this.httpInstance.request({
                 url: fillApiPath(`${this.domain}/open-apis/vc/v1/alerts`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            })
+          },
+          /**
+           * bot
+           */
+          bot: {
+            eventsWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                const res = yield this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/vc/v1/bots/events`, path27),
+                  method: "GET",
+                  headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                  params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                  data,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                });
+                return res;
+              });
+              const Iterable = {
+                [Symbol.asyncIterator]() {
+                  return __asyncGenerator(this, arguments, function* _a() {
+                    let hasMore = true;
+                    let pageToken;
+                    while (hasMore) {
+                      try {
+                        const res = yield __await(sendRequest({
+                          headers,
+                          params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                          data
+                        }));
+                        const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                          // @ts-ignore
+                          has_more,
+                          // @ts-ignore
+                          page_token,
+                          // @ts-ignore
+                          next_page_token
+                        } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                        yield yield __await(rest);
+                        hasMore = Boolean(has_more);
+                        pageToken = page_token || next_page_token;
+                      } catch (e) {
+                        yield yield __await(null);
+                        break;
+                      }
+                    }
+                  });
+                }
+              };
+              return Iterable;
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=vc&resource=bot&apiName=events&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=events&project=vc&resource=bot&version=v1 document }
+             *
+             * 获取机器人会议事件接口
+             */
+            events: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/vc/v1/bots/events`, path27),
+                method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+                     * {@link https://open.feishu.cn/api-explorer?project=vc&resource=bot&apiName=user_active_meeting&version=v1 click to debug }
+             *
+            * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=user_active_meeting&project=vc&resource=bot&version=v1 document }
+             *
+            * ## 功能介绍
+            查询指定用户当前正在参与的所有会议列表，包含会议号、会议ID及会议标题等核心信息，用于实时同步用户参会状态或会议管理场景。
+
+            ### 注意事项
+            - 返回结果仅包含用户当前处于活跃状态的会议，已结束或未开始的会议不会被返回。
+                     */
+            userActiveMeeting: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/vc/v1/bots/user_active_meeting`, path27),
                 method: "GET",
                 data,
                 params,
@@ -110235,6 +115164,48 @@ var require_lib2 = __commonJS({
                 this.logger.error(formatErrors(e));
                 throw e;
               });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=vc&resource=meeting&apiName=subscription&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=subscription&project=vc&resource=meeting&version=v1 document }
+             *
+             * 订阅会议变更事件
+             */
+            subscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/vc/v1/meetings/subscription`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=vc&resource=meeting&apiName=unsubscription&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=unsubscription&project=vc&resource=meeting&version=v1 document }
+             *
+             * 取消订阅会议变更事件
+             */
+            unsubscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/vc/v1/meetings/unsubscription`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
             })
           },
           /**
@@ -110428,6 +115399,48 @@ var require_lib2 = __commonJS({
               return this.httpInstance.request({
                 url: fillApiPath(`${this.domain}/open-apis/vc/v1/notes/:note_id`, path27),
                 method: "GET",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=vc&resource=note&apiName=subscription&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=subscription&project=vc&resource=note&version=v1 document }
+             *
+             * 订阅纪要变更事件
+             */
+            subscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/vc/v1/notes/subscription`, path27),
+                method: "POST",
+                data,
+                params,
+                headers,
+                paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+              }).catch((e) => {
+                this.logger.error(formatErrors(e));
+                throw e;
+              });
+            }),
+            /**
+             * {@link https://open.feishu.cn/api-explorer?project=vc&resource=note&apiName=unsubscription&version=v1 click to debug }
+             *
+             * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=unsubscription&project=vc&resource=note&version=v1 document }
+             *
+             * 取消订阅纪要变更事件
+             */
+            unsubscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+              const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+              return this.httpInstance.request({
+                url: fillApiPath(`${this.domain}/open-apis/vc/v1/notes/unsubscription`, path27),
+                method: "POST",
                 data,
                 params,
                 headers,
@@ -111659,6 +116672,107 @@ var require_lib2 = __commonJS({
               })
             },
             /**
+             * bot
+             */
+            bot: {
+              eventsWithIterator: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                const sendRequest = (innerPayload) => __awaiter(this, void 0, void 0, function* () {
+                  const res = yield this.httpInstance.request({
+                    url: fillApiPath(`${this.domain}/open-apis/vc/v1/bots/events`, path27),
+                    method: "GET",
+                    headers: pickBy__default["default"](innerPayload.headers, identity__default["default"]),
+                    params: pickBy__default["default"](innerPayload.params, identity__default["default"]),
+                    data,
+                    paramsSerializer: (params2) => qs.stringify(params2, {
+                      arrayFormat: "repeat"
+                    })
+                  }).catch((e) => {
+                    this.logger.error(formatErrors(e));
+                  });
+                  return res;
+                });
+                const Iterable = {
+                  [Symbol.asyncIterator]() {
+                    return __asyncGenerator(this, arguments, function* _a() {
+                      let hasMore = true;
+                      let pageToken;
+                      while (hasMore) {
+                        try {
+                          const res = yield __await(sendRequest({
+                            headers,
+                            params: Object.assign(Object.assign({}, params), { page_token: pageToken }),
+                            data
+                          }));
+                          const _b = (res === null || res === void 0 ? void 0 : res.data) || {}, {
+                            // @ts-ignore
+                            has_more,
+                            // @ts-ignore
+                            page_token,
+                            // @ts-ignore
+                            next_page_token
+                          } = _b, rest = __rest(_b, ["has_more", "page_token", "next_page_token"]);
+                          yield yield __await(rest);
+                          hasMore = Boolean(has_more);
+                          pageToken = page_token || next_page_token;
+                        } catch (e) {
+                          yield yield __await(null);
+                          break;
+                        }
+                      }
+                    });
+                  }
+                };
+                return Iterable;
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=vc&resource=bot&apiName=events&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=events&project=vc&resource=bot&version=v1 document }
+               *
+               * 获取机器人会议事件接口
+               */
+              events: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/vc/v1/bots/events`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+                       * {@link https://open.feishu.cn/api-explorer?project=vc&resource=bot&apiName=user_active_meeting&version=v1 click to debug }
+               *
+              * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=user_active_meeting&project=vc&resource=bot&version=v1 document }
+               *
+              * ## 功能介绍
+              查询指定用户当前正在参与的所有会议列表，包含会议号、会议ID及会议标题等核心信息，用于实时同步用户参会状态或会议管理场景。
+
+              ### 注意事项
+              - 返回结果仅包含用户当前处于活跃状态的会议，已结束或未开始的会议不会被返回。
+                       */
+              userActiveMeeting: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/vc/v1/bots/user_active_meeting`, path27),
+                  method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              })
+            },
+            /**
              * 导出
              */
             export: {
@@ -112100,6 +117214,48 @@ var require_lib2 = __commonJS({
                   this.logger.error(formatErrors(e));
                   throw e;
                 });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=vc&resource=meeting&apiName=subscription&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=subscription&project=vc&resource=meeting&version=v1 document }
+               *
+               * 订阅会议变更事件
+               */
+              subscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/vc/v1/meetings/subscription`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=vc&resource=meeting&apiName=unsubscription&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=unsubscription&project=vc&resource=meeting&version=v1 document }
+               *
+               * 取消订阅会议变更事件
+               */
+              unsubscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/vc/v1/meetings/unsubscription`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
               })
             },
             /**
@@ -112295,6 +117451,48 @@ var require_lib2 = __commonJS({
                 return this.httpInstance.request({
                   url: fillApiPath(`${this.domain}/open-apis/vc/v1/notes/:note_id`, path27),
                   method: "GET",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=vc&resource=note&apiName=subscription&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=subscription&project=vc&resource=note&version=v1 document }
+               *
+               * 订阅纪要变更事件
+               */
+              subscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/vc/v1/notes/subscription`, path27),
+                  method: "POST",
+                  data,
+                  params,
+                  headers,
+                  paramsSerializer: (params2) => qs.stringify(params2, { arrayFormat: "repeat" })
+                }).catch((e) => {
+                  this.logger.error(formatErrors(e));
+                  throw e;
+                });
+              }),
+              /**
+               * {@link https://open.feishu.cn/api-explorer?project=vc&resource=note&apiName=unsubscription&version=v1 click to debug }
+               *
+               * {@link https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=unsubscription&project=vc&resource=note&version=v1 document }
+               *
+               * 取消订阅纪要变更事件
+               */
+              unsubscription: (payload, options) => __awaiter(this, void 0, void 0, function* () {
+                const { headers, params, data, path: path27 } = yield this.formatPayload(payload, options);
+                return this.httpInstance.request({
+                  url: fillApiPath(`${this.domain}/open-apis/vc/v1/notes/unsubscription`, path27),
+                  method: "POST",
                   data,
                   params,
                   headers,
@@ -114803,6 +120001,81 @@ var require_lib2 = __commonJS({
         });
       }
     };
+    var OAUTH_TOKEN_URI = "/oauth/v3/token";
+    var GRANT_TYPE_JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+    var CLIENT_ASSERTION_TYPE_JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+    var GRANT_TYPE_AUTHORIZATION_CODE = "authorization_code";
+    var GRANT_TYPE_REFRESH_TOKEN = "refresh_token";
+    var X_TARGET_SERVICE = "X-Target-Service";
+    var ERR_CODE_CLIENT_ASSERTION_PROVIDER_NOT_CONFIGURED = 7100;
+    var ERR_CODE_CLIENT_ASSERTION_TOKEN_EMPTY = 7101;
+    var ERR_CODE_CLIENT_ASSERTION_RETRIEVE_FAILED = 7102;
+    var ERR_CODE_APP_SECRET_AND_CLIENT_ASSERTION_EMPTY = 7104;
+    var OAUTH_DOMAIN_MAP = Object.freeze({
+      "open.feishu.cn": "https://accounts.feishu.cn",
+      "open.larksuite.com": "https://accounts.larksuite.com"
+    });
+    var ClientAssertionError = class extends Error {
+      constructor(code, msg) {
+        super(msg);
+        this.name = "ClientAssertionError";
+        this.code = code;
+        this.msg = msg;
+      }
+    };
+    var AccessTokenError = class extends Error {
+      constructor(statusCode, code, error2, errorDescription) {
+        super(errorDescription || error2 || "access token request failed");
+        this.name = "AccessTokenError";
+        this.statusCode = statusCode;
+        this.code = code;
+        this.error = error2;
+        this.errorDescription = errorDescription;
+      }
+    };
+    var ensureScheme = (raw) => raw.includes("://") ? raw : `https://${raw}`;
+    function extractAudFromUrl(rawUrl) {
+      const parsed = new URL(ensureScheme(rawUrl));
+      if (!parsed.host) {
+        throw new Error(`invalid url: ${rawUrl}`);
+      }
+      return parsed.host;
+    }
+    function resolveOauthBaseUrl(config3) {
+      if (config3.oauthBaseUrl) {
+        return ensureScheme(config3.oauthBaseUrl).replace(/\/+$/, "");
+      }
+      const aud = extractAudFromUrl(config3.domain);
+      const mapped = OAUTH_DOMAIN_MAP[aud];
+      if (mapped) {
+        return mapped;
+      }
+      throw new Error("oauthBaseUrl is not configured. When domain is a non-default value (neither open.feishu.cn nor open.larksuite.com), set oauthBaseUrl explicitly.");
+    }
+    function resolveOauthAud(config3) {
+      return extractAudFromUrl(resolveOauthBaseUrl(config3));
+    }
+    function buildProxyUrl(targetInfo, apiPath) {
+      const parsed = new URL(ensureScheme(targetInfo.targetService));
+      if (parsed.protocol !== "https:") {
+        throw new Error("targetService must use https");
+      }
+      if (parsed.username || parsed.password) {
+        throw new Error("targetService must not contain userinfo");
+      }
+      const prefix = targetInfo.targetPrefix || "";
+      const path27 = `${prefix}${apiPath}`.replace(/\/{2,}/g, "/");
+      if (/(^|\/)\.\.(\/|$)/.test(path27)) {
+        throw new Error("targetPrefix must not contain path traversal");
+      }
+      return `${parsed.protocol}//${parsed.host}${path27}`;
+    }
+    function buildTokenError(field, response) {
+      var _a, _b;
+      const code = (_a = response === null || response === void 0 ? void 0 : response.code) !== null && _a !== void 0 ? _a : "unknown";
+      const msg = (_b = response === null || response === void 0 ? void 0 : response.msg) !== null && _b !== void 0 ? _b : "no message";
+      return `failed to get ${field}, code: ${code}, msg: ${msg}`;
+    }
     var TokenManager = class {
       constructor(params) {
         this.appId = params.appId;
@@ -114812,6 +120085,8 @@ var require_lib2 = __commonJS({
         this.logger = params.logger;
         this.appType = params.appType;
         this.httpInstance = params.httpInstance;
+        this.clientAssertionProvider = params.clientAssertionProvider;
+        this.oauthBaseUrl = params.oauthBaseUrl;
         this.appTicketManager = new AppTicketManager({
           appId: this.appId,
           appSecret: this.appSecret,
@@ -114823,9 +120098,33 @@ var require_lib2 = __commonJS({
         });
         this.logger.debug("token manager is ready");
       }
+      /**
+       * POST a token endpoint and return the validated response body.
+       *
+       * On transport failure the original error is logged and rethrown — so the
+       * caller sees the real cause (EPIPE, timeout, ...) instead of a secondary
+       * "Cannot destructure ... of undefined". On an HTTP-200 business failure the
+       * required field is absent; we throw an error carrying only the API's
+       * code/msg and never cache an undefined token.
+       */
+      requestToken(url, body, requiredField) {
+        return __awaiter(this, void 0, void 0, function* () {
+          const response = yield this.httpInstance.post(url, body).catch((e) => {
+            this.logger.error(e);
+            throw e;
+          });
+          if (!response || !response[requiredField]) {
+            throw new Error(buildTokenError(requiredField, response));
+          }
+          return response;
+        });
+      }
       getCustomTenantAccessToken() {
         var _a, _b;
         return __awaiter(this, void 0, void 0, function* () {
+          if (this.clientAssertionProvider) {
+            return this.getTenantTokenByClientAssertion();
+          }
           const cachedTenantAccessToken = yield (_a = this.cache) === null || _a === void 0 ? void 0 : _a.get(CTenantAccessToken, {
             namespace: this.appId
           });
@@ -114834,12 +120133,10 @@ var require_lib2 = __commonJS({
             return cachedTenantAccessToken;
           }
           this.logger.debug("request token");
-          const { tenant_access_token, expire } = yield this.httpInstance.post(`${this.domain}/open-apis/auth/v3/tenant_access_token/internal`, {
+          const { tenant_access_token, expire } = yield this.requestToken(`${this.domain}/open-apis/auth/v3/tenant_access_token/internal`, {
             app_id: this.appId,
             app_secret: this.appSecret
-          }).catch((e) => {
-            this.logger.error(e);
-          });
+          }, "tenant_access_token");
           yield (_b = this.cache) === null || _b === void 0 ? void 0 : _b.set(
             CTenantAccessToken,
             tenant_access_token,
@@ -114852,9 +120149,81 @@ var require_lib2 = __commonJS({
           return tenant_access_token;
         });
       }
+      /**
+       * Exchange a ClientAssertion for a tenant access token at the OAuth token
+       * endpoint (`jwt-bearer` grant). Credential failures are surfaced as
+       * {@link ClientAssertionError} — never swallowed.
+       */
+      getTenantTokenByClientAssertion() {
+        var _a, _b, _c, _d, _e, _f, _g, _h;
+        return __awaiter(this, void 0, void 0, function* () {
+          const oauthBaseUrl = resolveOauthBaseUrl({
+            oauthBaseUrl: this.oauthBaseUrl,
+            domain: this.domain
+          });
+          const aud = resolveOauthAud({
+            oauthBaseUrl: this.oauthBaseUrl,
+            domain: this.domain
+          });
+          const cachedTenantAccessToken = yield (_a = this.cache) === null || _a === void 0 ? void 0 : _a.get(CTenantAccessToken, { namespace: this.appId });
+          if (cachedTenantAccessToken) {
+            this.logger.debug("use cache token");
+            return cachedTenantAccessToken;
+          }
+          let assertion;
+          try {
+            assertion = yield this.clientAssertionProvider.retrieveToken(aud);
+          } catch (e) {
+            throw new ClientAssertionError(ERR_CODE_CLIENT_ASSERTION_RETRIEVE_FAILED, (e === null || e === void 0 ? void 0 : e.message) || "client assertion provider failed");
+          }
+          if (!assertion || !assertion.value) {
+            throw new ClientAssertionError(ERR_CODE_CLIENT_ASSERTION_TOKEN_EMPTY, "client assertion token is empty");
+          }
+          let url = `${oauthBaseUrl}${OAUTH_TOKEN_URI}`;
+          const headers = {};
+          if (assertion.targetInfo) {
+            url = buildProxyUrl(assertion.targetInfo, OAUTH_TOKEN_URI);
+            headers[X_TARGET_SERVICE] = aud;
+          }
+          this.logger.debug("request token (client assertion)");
+          let resp;
+          try {
+            resp = yield this.httpInstance.request({
+              method: "post",
+              url,
+              headers,
+              data: {
+                grant_type: GRANT_TYPE_JWT_BEARER,
+                client_assertion_type: CLIENT_ASSERTION_TYPE_JWT_BEARER,
+                client_assertion: assertion.value,
+                client_id: this.appId
+              }
+            });
+          } catch (e) {
+            this.logger.error(e);
+            throw new ClientAssertionError(((_c = (_b = e === null || e === void 0 ? void 0 : e.response) === null || _b === void 0 ? void 0 : _b.data) === null || _c === void 0 ? void 0 : _c.code) || 0, ((_e = (_d = e === null || e === void 0 ? void 0 : e.response) === null || _d === void 0 ? void 0 : _d.data) === null || _e === void 0 ? void 0 : _e.error_description) || ((_g = (_f = e === null || e === void 0 ? void 0 : e.response) === null || _f === void 0 ? void 0 : _f.data) === null || _g === void 0 ? void 0 : _g.error) || "client assertion token exchange failed");
+          }
+          const tenantAccessToken = resp === null || resp === void 0 ? void 0 : resp.access_token;
+          if (!tenantAccessToken) {
+            throw new ClientAssertionError((resp === null || resp === void 0 ? void 0 : resp.code) || 0, (resp === null || resp === void 0 ? void 0 : resp.error_description) || (resp === null || resp === void 0 ? void 0 : resp.error) || "oauth token response missing access token");
+          }
+          const expiresIn = Number(resp === null || resp === void 0 ? void 0 : resp.expires_in) || 0;
+          yield (_h = this.cache) === null || _h === void 0 ? void 0 : _h.set(
+            CTenantAccessToken,
+            tenantAccessToken,
+            // Expire 180s early to absorb network latency.
+            (/* @__PURE__ */ new Date()).getTime() + Math.max(expiresIn - 180, 0) * 1e3,
+            { namespace: this.appId }
+          );
+          return tenantAccessToken;
+        });
+      }
       getMarketTenantAccessToken(tenantKey) {
         var _a;
         return __awaiter(this, void 0, void 0, function* () {
+          if (this.clientAssertionProvider) {
+            throw new ClientAssertionError(ERR_CODE_CLIENT_ASSERTION_PROVIDER_NOT_CONFIGURED, "ClientAssertion mode is not supported for ISV apps");
+          }
           if (!tenantKey) {
             this.logger.error("market app request need tenant key");
             return void 0;
@@ -114873,20 +120242,16 @@ var require_lib2 = __commonJS({
             return void 0;
           }
           this.logger.debug("get app access token");
-          const { app_access_token } = yield this.httpInstance.post(`${this.domain}/open-apis/auth/v3/app_access_token`, {
+          const { app_access_token } = yield this.requestToken(`${this.domain}/open-apis/auth/v3/app_access_token`, {
             app_id: this.appId,
             app_secret: this.appSecret,
             app_ticket: appTicket
-          }).catch((e) => {
-            this.logger.error(e);
-          });
+          }, "app_access_token");
           this.logger.debug("get tenant access token");
-          const { tenant_access_token, expire } = yield this.httpInstance.post(`${this.domain}/open-apis/auth/v3/tenant_access_token`, {
+          const { tenant_access_token, expire } = yield this.requestToken(`${this.domain}/open-apis/auth/v3/tenant_access_token`, {
             app_access_token,
             tenant_key: tenantKey
-          }).catch((e) => {
-            this.logger.error(e);
-          });
+          }, "tenant_access_token");
           yield this.cache.set(
             `larkMarketAccessToken${tenantKey}`,
             tenant_access_token,
@@ -115029,6 +120394,122 @@ var require_lib2 = __commonJS({
         });
       }
     };
+    var valueIfNotEmpty = (value) => value === "" || value === 0 || value === null || value === void 0 ? void 0 : value;
+    var isErrorResponse = (resp) => {
+      if (!resp) {
+        return true;
+      }
+      if (resp.error) {
+        return true;
+      }
+      const { code } = resp;
+      return code !== void 0 && code !== 0 && code !== "0" && code !== "";
+    };
+    var AccessToken = class {
+      constructor(params) {
+        this.appId = params.appId;
+        this.appSecret = params.appSecret;
+        this.clientAssertionProvider = params.clientAssertionProvider;
+        this.oauthBaseUrl = params.oauthBaseUrl;
+        this.domain = params.domain;
+        this.httpInstance = params.httpInstance;
+        this.logger = params.logger;
+      }
+      retrieveByAuthorizationCode(params) {
+        return __awaiter(this, void 0, void 0, function* () {
+          return this.doRequest({
+            grant_type: GRANT_TYPE_AUTHORIZATION_CODE,
+            code: params.code,
+            redirect_uri: params.redirectUri,
+            code_verifier: params.codeVerifier,
+            scope: params.scope
+          }, params.headers);
+        });
+      }
+      refresh(params) {
+        return __awaiter(this, void 0, void 0, function* () {
+          return this.doRequest({
+            grant_type: GRANT_TYPE_REFRESH_TOKEN,
+            refresh_token: params.refreshToken,
+            scope: params.scope
+          }, params.headers);
+        });
+      }
+      doRequest(rawBody, callerHeaders) {
+        return __awaiter(this, void 0, void 0, function* () {
+          const oauthBaseUrl = resolveOauthBaseUrl({
+            oauthBaseUrl: this.oauthBaseUrl,
+            domain: this.domain
+          });
+          const aud = resolveOauthAud({
+            oauthBaseUrl: this.oauthBaseUrl,
+            domain: this.domain
+          });
+          const body = { client_id: this.appId };
+          for (const [k, v] of Object.entries(rawBody)) {
+            if (v !== void 0 && v !== null) {
+              body[k] = v;
+            }
+          }
+          let url = `${oauthBaseUrl}${OAUTH_TOKEN_URI}`;
+          const headers = Object.assign({}, callerHeaders || {});
+          if (this.clientAssertionProvider) {
+            let assertion;
+            try {
+              assertion = yield this.clientAssertionProvider.retrieveToken(aud);
+            } catch (e) {
+              throw new ClientAssertionError(ERR_CODE_CLIENT_ASSERTION_RETRIEVE_FAILED, (e === null || e === void 0 ? void 0 : e.message) || "client assertion provider failed");
+            }
+            if (!assertion || !assertion.value) {
+              throw new ClientAssertionError(ERR_CODE_CLIENT_ASSERTION_TOKEN_EMPTY, "client assertion token is empty");
+            }
+            body.client_assertion_type = CLIENT_ASSERTION_TYPE_JWT_BEARER;
+            body.client_assertion = assertion.value;
+            if (assertion.targetInfo) {
+              url = buildProxyUrl(assertion.targetInfo, OAUTH_TOKEN_URI);
+              headers[X_TARGET_SERVICE] = aud;
+            }
+          } else if (this.appSecret) {
+            body.client_secret = this.appSecret;
+          } else {
+            throw new ClientAssertionError(ERR_CODE_APP_SECRET_AND_CLIENT_ASSERTION_EMPTY, "appSecret and clientAssertionProvider cannot both be empty for accessToken APIs");
+          }
+          let status = 200;
+          let resp;
+          try {
+            resp = yield this.httpInstance.request({
+              method: "post",
+              url,
+              headers,
+              data: body
+            });
+          } catch (e) {
+            this.logger.error(e);
+            if (e === null || e === void 0 ? void 0 : e.response) {
+              status = e.response.status;
+              resp = e.response.data;
+            } else {
+              throw new AccessTokenError(0, 0, "", (e === null || e === void 0 ? void 0 : e.message) || "oauth token request failed");
+            }
+          }
+          if (status !== 200 || isErrorResponse(resp)) {
+            throw new AccessTokenError(status, (resp === null || resp === void 0 ? void 0 : resp.code) || 0, (resp === null || resp === void 0 ? void 0 : resp.error) || "", (resp === null || resp === void 0 ? void 0 : resp.error_description) || (resp === null || resp === void 0 ? void 0 : resp.msg) || "");
+          }
+          const accessToken = valueIfNotEmpty(resp === null || resp === void 0 ? void 0 : resp.access_token);
+          if (!accessToken) {
+            throw new AccessTokenError(status, (resp === null || resp === void 0 ? void 0 : resp.code) || 0, (resp === null || resp === void 0 ? void 0 : resp.error) || "", (resp === null || resp === void 0 ? void 0 : resp.error_description) || "oauth token response missing access_token");
+          }
+          return {
+            accessToken,
+            tokenType: valueIfNotEmpty(resp.token_type),
+            expiresIn: valueIfNotEmpty(resp.expires_in),
+            refreshToken: valueIfNotEmpty(resp.refresh_token),
+            refreshTokenExpiresIn: valueIfNotEmpty(resp.refresh_token_expires_in),
+            scope: valueIfNotEmpty(resp.scope)
+          };
+        });
+      }
+    };
     var Client3 = class extends Client$1 {
       constructor(params) {
         super();
@@ -115039,14 +120520,21 @@ var require_lib2 = __commonJS({
         this.appType = exports.AppType.SelfBuild;
         this.logger = new LoggerProxy2(params.loggerLevel || exports.LoggerLevel.info, params.logger || defaultLogger2);
         this.appId = params.appId;
-        this.appSecret = params.appSecret;
+        this.appSecret = params.appSecret || "";
+        this.clientAssertionProvider = params.clientAssertionProvider;
+        this.oauthBaseUrl = params.oauthBaseUrl;
         this.disableTokenCache = params.disableTokenCache;
         this.userAgent = buildUserAgent(params.source, { extraTags: params.extraUaTags });
         assert3(!this.appId, () => this.logger.error("appId is needed"));
-        assert3(!this.appSecret, () => this.logger.error("appSecret is needed"));
         this.helpDeskId = params.helpDeskId;
         this.helpDeskToken = params.helpDeskToken;
         this.appType = (params === null || params === void 0 ? void 0 : params.appType) || exports.AppType.SelfBuild;
+        if (!this.appSecret && !this.clientAssertionProvider) {
+          throw new ClientAssertionError(ERR_CODE_APP_SECRET_AND_CLIENT_ASSERTION_EMPTY, "appSecret or clientAssertionProvider is required");
+        }
+        if (this.clientAssertionProvider && this.appType === exports.AppType.ISV) {
+          throw new ClientAssertionError(ERR_CODE_CLIENT_ASSERTION_PROVIDER_NOT_CONFIGURED, "ClientAssertion mode is not supported for ISV apps");
+        }
         this.domain = formatDomain(params.domain || exports.Domain.Feishu);
         this.logger.debug(`use domain url: ${this.domain}`);
         this.cache = params.cache || internalCache2;
@@ -115058,9 +120546,20 @@ var require_lib2 = __commonJS({
           domain: this.domain,
           logger: this.logger,
           appType: this.appType,
-          httpInstance: this.httpInstance
+          httpInstance: this.httpInstance,
+          clientAssertionProvider: this.clientAssertionProvider,
+          oauthBaseUrl: this.oauthBaseUrl
         });
         this.userAccessToken = new UserAccessToken({ client: this });
+        this.accessToken = new AccessToken({
+          appId: this.appId,
+          appSecret: this.appSecret,
+          clientAssertionProvider: this.clientAssertionProvider,
+          oauthBaseUrl: this.oauthBaseUrl,
+          domain: this.domain,
+          httpInstance: this.httpInstance,
+          logger: this.logger
+        });
         this.logger.info("client ready");
       }
       formatPayload(payload, options) {
@@ -115999,9 +121498,14 @@ var require_lib2 = __commonJS({
       deleteCache(message_id) {
         this.cache.delete(message_id);
       }
+      // Idempotent: re-arming an already-running sweep is a no-op, so it is safe
+      // to call again on start() after a previous destroy().
       clearAtInterval() {
+        if (this.timer) {
+          return;
+        }
         const clearIntervalMs = 1e4;
-        setInterval(() => {
+        this.timer = setInterval(() => {
           const now = Date.now();
           this.cache.forEach((value, key) => {
             var _a;
@@ -116012,6 +121516,18 @@ var require_lib2 = __commonJS({
             }
           });
         }, clearIntervalMs);
+        if (typeof this.timer.unref === "function") {
+          this.timer.unref();
+        }
+      }
+      // Stop the sweep timer and drop cached fragments. Called from
+      // WSClient.close() so the client releases its event-loop handle.
+      destroy() {
+        if (this.timer) {
+          clearInterval(this.timer);
+          this.timer = void 0;
+        }
+        this.cache.clear();
       }
     };
     var ErrorCode2;
@@ -116065,17 +121581,20 @@ var require_lib2 = __commonJS({
         this.hasEverConnected = false;
         this.terminalError = false;
         this.currentReconnectAttempts = 0;
-        const { appId, appSecret, agent, domain = exports.Domain.Feishu, httpInstance = defaultHttpInstance2, loggerLevel = exports.LoggerLevel.info, logger = defaultLogger2, autoReconnect = true, source, extraUaTags, onReady, onError, onReconnecting, onReconnected, handshakeTimeoutMs, wsConfig: userWsConfig } = params;
+        const { appId, appSecret, clientAssertionProvider, agent, domain = exports.Domain.Feishu, httpInstance = defaultHttpInstance2, loggerLevel = exports.LoggerLevel.info, logger = defaultLogger2, autoReconnect = true, source, extraUaTags, onReady, onError, onReconnecting, onReconnected, handshakeTimeoutMs, wsConfig: userWsConfig } = params;
         this.userAgent = buildUserAgent(source, { extraTags: extraUaTags });
         this.logger = new LoggerProxy2(loggerLevel, logger);
         assert3(!appId, () => this.logger.error("appId is needed"));
-        assert3(!appSecret, () => this.logger.error("appSecret is needed"));
+        if (!appSecret && !clientAssertionProvider) {
+          throw new ClientAssertionError(ERR_CODE_APP_SECRET_AND_CLIENT_ASSERTION_EMPTY, "appSecret or clientAssertionProvider is required");
+        }
         this.agent = agent;
         this.dataCache = new DataCache({ logger: this.logger });
         this.httpInstance = httpInstance;
         this.wsConfig.updateClient({
           appId,
-          appSecret,
+          appSecret: appSecret || "",
+          clientAssertionProvider,
           domain: formatDomain(domain)
         });
         this.wsConfig.updateWs({
@@ -116138,20 +121657,36 @@ var require_lib2 = __commonJS({
       }
       pullConnectConfig() {
         return __awaiter(this, void 0, void 0, function* () {
-          const { appId, appSecret } = this.wsConfig.getClient();
+          const { appId, appSecret, clientAssertionProvider, domain } = this.wsConfig.getClient();
+          const WS_ENDPOINT_URI = "/callback/ws/endpoint";
+          let url = this.wsConfig.wsConfigUrl;
+          const headers = {
+            // consumed by gateway
+            "locale": "zh",
+            "User-Agent": this.userAgent
+          };
+          const body = { AppID: appId };
           try {
+            if (clientAssertionProvider) {
+              const aud = extractAudFromUrl(domain);
+              const assertion = yield clientAssertionProvider.retrieveToken(aud);
+              if (!assertion || !assertion.value) {
+                throw new ClientAssertionError(ERR_CODE_CLIENT_ASSERTION_TOKEN_EMPTY, "client assertion token is empty");
+              }
+              body.AppSecret = "";
+              body.ClientAssertion = assertion.value;
+              if (assertion.targetInfo) {
+                url = buildProxyUrl(assertion.targetInfo, WS_ENDPOINT_URI);
+                headers[X_TARGET_SERVICE] = aud;
+              }
+            } else {
+              body.AppSecret = appSecret;
+            }
             const { code, data: { URL: URL3, ClientConfig }, msg } = yield this.httpInstance.request({
               method: "post",
-              url: this.wsConfig.wsConfigUrl,
-              data: {
-                AppID: appId,
-                AppSecret: appSecret
-              },
-              // consumed by gateway
-              headers: {
-                "locale": "zh",
-                "User-Agent": this.userAgent
-              },
+              url,
+              data: body,
+              headers,
               timeout: 15e3
             });
             if (code !== ErrorCode2.ok) {
@@ -116180,6 +121715,9 @@ var require_lib2 = __commonJS({
             return { ok: true };
           } catch (e) {
             this.logger.error("[ws]", (e === null || e === void 0 ? void 0 : e.message) || "system busy");
+            if (e instanceof ClientAssertionError) {
+              return { ok: false, retryable: false, error: e.message };
+            }
             return { ok: false, retryable: true };
           }
         });
@@ -116507,6 +122045,7 @@ var require_lib2 = __commonJS({
           this.reconnectInterval = void 0;
         }
         this.clearLiveness();
+        this.dataCache.destroy();
         this.isConnecting = false;
         this.currentReconnectAttempts = 0;
         const wsInstance = this.wsConfig.getWSInstance();
@@ -116535,6 +122074,7 @@ var require_lib2 = __commonJS({
           }
           this.terminalError = false;
           this.currentReconnectAttempts = 0;
+          this.dataCache.clearAtInterval();
           this.logger.info("[ws]", `receive events or callbacks through persistent connection only available in self-build & Feishu app, Configured in:
         Developer Console(\u5F00\u53D1\u8005\u540E\u53F0)
           ->
@@ -116836,7 +122376,7 @@ var require_lib2 = __commonJS({
     }
     function normalizeAddons(addons) {
       assertPlainObject(addons, "addons");
-      assertAllowedKeys(addons, ["scopes", "events", "callbacks"], "addons");
+      assertAllowedKeys(addons, ["preset", "scopes", "events", "callbacks"], "addons");
       let itemCount = 0;
       const pick3 = (value, path27) => {
         var _a;
@@ -116845,6 +122385,12 @@ var require_lib2 = __commonJS({
         return items;
       };
       const normalized = {};
+      if (addons.preset !== void 0) {
+        if (typeof addons.preset !== "boolean") {
+          throw new Error("addons.preset must be a boolean");
+        }
+        normalized.preset = addons.preset;
+      }
       if (addons.scopes !== void 0) {
         assertPlainObject(addons.scopes, "addons.scopes");
         assertAllowedKeys(addons.scopes, ["tenant", "user"], "addons.scopes");
@@ -116874,7 +122420,7 @@ var require_lib2 = __commonJS({
           items: pick3(addons.callbacks.items, "addons.callbacks.items")
         };
       }
-      if (itemCount === 0) {
+      if (itemCount === 0 && addons.preset !== false) {
         throw new Error("addons must contain at least one scope, event or callback");
       }
       return normalized;
@@ -120304,11 +125850,13 @@ ${lines.join("\n")}
       return `${action.tag}|${(_b = action.name) !== null && _b !== void 0 ? _b : ""}|${(_c = action.option) !== null && _c !== void 0 ? _c : ""}|${valuePart2}`;
     }
     exports.AESCipher = AESCipher;
+    exports.AccessTokenError = AccessTokenError;
     exports.Aily = Aily;
     exports.CAppTicket = CAppTicket;
     exports.CTenantAccessToken = CTenantAccessToken;
     exports.CardActionHandler = CardActionHandler;
     exports.Client = Client3;
+    exports.ClientAssertionError = ClientAssertionError;
     exports.DefaultCache = DefaultCache;
     exports.EventDispatcher = EventDispatcher2;
     exports.LarkChannel = LarkChannel3;
@@ -137708,16 +143256,32 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
+function getDotPath(path26) {
+  if (path26.length === 0) {
+    return "object root";
+  }
+  return path26.reduce((acc, seg, index) => {
+    if (index === 0) {
+      return String(seg);
+    }
+    if (typeof seg === "number") {
+      return `${acc}[${seg}]`;
+    }
+    return `${acc}.${seg}`;
+  }, "");
+}
 function getParseErrorMessage(error2) {
   if (error2 && typeof error2 === "object") {
+    if ("issues" in error2 && Array.isArray(error2.issues) && error2.issues.length > 0) {
+      return error2.issues.map((i) => {
+        if (!i.path?.length) {
+          return i.message;
+        }
+        return `${i.message} at ${getDotPath(i.path)}`;
+      }).join("\n");
+    }
     if ("message" in error2 && typeof error2.message === "string") {
       return error2.message;
-    }
-    if ("issues" in error2 && Array.isArray(error2.issues) && error2.issues.length > 0) {
-      const firstIssue = error2.issues[0];
-      if (firstIssue && typeof firstIssue === "object" && "message" in firstIssue) {
-        return String(firstIssue.message);
-      }
     }
     try {
       return JSON.stringify(error2);
@@ -142661,16 +148225,7 @@ var Server = class extends Protocol {
     if (!methodSchema) {
       throw new Error("Schema is missing a method literal");
     }
-    let methodValue;
-    if (isZ4Schema(methodSchema)) {
-      const v4Schema = methodSchema;
-      const v4Def = v4Schema._zod?.def;
-      methodValue = v4Def?.value ?? v4Schema.value;
-    } else {
-      const v3Schema = methodSchema;
-      const legacyDef = v3Schema._def;
-      methodValue = legacyDef?.value ?? v3Schema.value;
-    }
+    const methodValue = getLiteralValue(methodSchema);
     if (typeof methodValue !== "string") {
       throw new Error("Schema method literal must be a string");
     }
@@ -143858,8 +149413,17 @@ var EMPTY_COMPLETION_RESULT = {
 import process2 from "node:process";
 
 // plugins/lark/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 var ReadBuffer = class {
+  constructor(options) {
+    this._maxBufferSize = options?.maxBufferSize ?? STDIO_DEFAULT_MAX_BUFFER_SIZE;
+  }
   append(chunk) {
+    const newSize = (this._buffer?.length ?? 0) + chunk.length;
+    if (newSize > this._maxBufferSize) {
+      this.clear();
+      throw new Error(`ReadBuffer exceeded maximum size of ${this._maxBufferSize} bytes`);
+    }
     this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
   }
   readMessage() {
@@ -143887,18 +149451,24 @@ function serializeMessage(message) {
 
 // plugins/lark/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 var StdioServerTransport = class {
-  constructor(_stdin = process2.stdin, _stdout = process2.stdout) {
+  constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
     this._stdin = _stdin;
     this._stdout = _stdout;
-    this._readBuffer = new ReadBuffer();
     this._started = false;
     this._ondata = (chunk) => {
-      this._readBuffer.append(chunk);
-      this.processReadBuffer();
+      try {
+        this._readBuffer.append(chunk);
+        this.processReadBuffer();
+      } catch (error2) {
+        this.onerror?.(error2);
+        this.close().catch(() => {
+        });
+      }
     };
     this._onerror = (error2) => {
       this.onerror?.(error2);
     };
+    this._readBuffer = new ReadBuffer({ maxBufferSize: options?.maxBufferSize });
   }
   /**
    * Starts listening for messages on stdin.
@@ -176844,7 +182414,7 @@ mime-types/index.js:
    *)
 
 axios/dist/node/axios.cjs:
-  (*! Axios v1.17.0 Copyright (c) 2026 Matt Zabriskie and contributors *)
+  (*! Axios v1.18.1 Copyright (c) 2026 Matt Zabriskie and contributors *)
 
 long/umd/index.js:
   (**
