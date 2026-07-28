@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.11.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -254,13 +254,14 @@ npm run audit:deps
 git status --short --ignored
 ```
 
-The repository intentionally tracks `.env.example`, `.mcp.json`, `.codex-plugin/`, `.agents/plugins/marketplace.json`, and the `plugins/lark` marketplace wrapper. Generated output, dependencies, local `.env*` files, logs, and editor/tool state are ignored by `.gitignore`.
+The repository intentionally tracks `.env.example`, `.mcp.json`, `.codex-plugin/`, `.agents/plugins/marketplace.json`, and the self-contained `plugins/lark` marketplace wrapper. Root `src/` is the only application source tree; `npm run build:plugin` bundles it into the checked-in `plugins/lark/runtime/` entrypoints used after marketplace installation. Do not edit those generated runtime files directly. Other generated output, dependencies, local `.env*` files, logs, and editor/tool state are ignored by `.gitignore`.
 
 Release version checklist:
 
 - Bump `package.json`, `package-lock.json`, `plugins/lark/package.json`, and `plugins/lark/package-lock.json`.
 - Bump `.codex-plugin/plugin.json` and `plugins/lark/.codex-plugin/plugin.json`; Codex uses manifest versions when selecting plugin cache directories, so stale manifest versions can leave a new package running from an old runtime cache.
 - Update the README badges and `CHANGELOG.md` release heading.
+- Run `npm run build:plugin` and `npm run check:runtime-bundle-sync` so the self-contained `start`, `stop`, and `doctor` entrypoints match root `src/`.
 - Run `npm run check:release-version` before tagging. The MCP server-info version is read from `package.json` at startup, so it follows the package version automatically once the package bump is correct.
 
 For a fresh repository:

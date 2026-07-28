@@ -1,6 +1,6 @@
 {
   "name": "codex-lark-plugin",
-  "version": "2.11.1",
+  "version": "2.12.0",
   "description": "Codex channel plugin for Feishu/Lark — chat with Codex through Feishu with local-file memory and scheduled jobs",
   "keywords": [
     "codex",
@@ -27,13 +27,12 @@
     "start": "node --import tsx src/index.ts",
     "stop": "node --import tsx src/stop.ts",
     "doctor": "node --import tsx src/configure-doctor-cli.ts",
-    "build": "tsc && node scripts/build-runtime-bundles.js --target . && npm --prefix plugins/lark run --silent build",
-    "build:plugin": "npm --prefix plugins/lark run --silent build",
+    "build": "tsc && node scripts/build-runtime-bundles.js --target . && node scripts/build-runtime-bundles.js --target plugins/lark",
+    "build:plugin": "node scripts/build-runtime-bundles.js --target plugins/lark",
     "typecheck": "tsc --noEmit",
     "test": "bash scripts/test.sh",
     "smoke:sdk": "node --import tsx scripts/sdk-channel-scaffold-smoke.ts && node --import tsx scripts/sdk-identity-smoke.ts && node --import tsx scripts/sdk-message-parity-smoke.ts && node --import tsx scripts/sdk-outbound-parity-smoke.ts && node --import tsx scripts/lark-transport-smoke.ts && node --import tsx scripts/sdk-runtime-smoke.ts && node --import tsx scripts/sdk-rollout-doc-smoke.ts",
     "check:release-version": "node scripts/check-release-version.js",
-    "check:plugin-src-sync": "node scripts/check-plugin-src-sync.js",
     "check:runtime-bundle-sync": "node scripts/build-runtime-bundles.js --target plugins/lark --check",
     "generate:config": "node --import tsx scripts/generate-config-artifacts.ts",
     "check:config-artifacts": "node --import tsx scripts/generate-config-artifacts.ts --check",

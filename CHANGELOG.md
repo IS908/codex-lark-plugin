@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-07-28
+
+### Changed
+- Made root `src/` the single application source tree and changed the marketplace wrapper to run generated `start`, `stop`, and `doctor` bundles without a checked-in TypeScript source mirror.
+
 ## [2.11.1] - 2026-07-28
 
 ### Security

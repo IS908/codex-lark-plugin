@@ -28,6 +28,18 @@ Inner layers must not import outer layers.
   persistence, timers, cron, process-global configuration, and runtime adapters.
 - **Entrypoints/bootstrap** wire dependencies and process lifecycle only.
 
+## Source And Packaging Boundary
+
+`src/` is the only application source tree. The marketplace wrapper under
+`plugins/lark/` is a self-contained deployment package, not a second source
+package. `scripts/build-runtime-bundles.js` bundles the root `index`, `stop`,
+and `doctor` entrypoints into `plugins/lark/runtime/`; the installed plugin must
+run only from those artifacts and must not reach outside its cache directory.
+
+Generated runtime files are checked in for installation but are never edited
+directly. `npm run check:runtime-bundle-sync` rejects stale, missing, or extra
+runtime entrypoints.
+
 ## Automated Guardrails
 
 `npm run check:architecture` runs `scripts/architecture-check.js`.
