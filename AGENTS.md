@@ -105,7 +105,8 @@ The `$lark:configure` skill (in `skills/configure/SKILL.md`) provides interactiv
 Debug logs are written to `~/.codex/channels/lark/debug.log`. Contains raw event data (sender, mentions, chatType) for diagnosing message flow issues.
 When `LARK_CODEX_EXEC_TOOL_TRACE=true`, sanitized local Codex exec tool execution events are written to `~/.codex/channels/lark/trace.log` (or `LARK_CODEX_EXEC_TRACE_LOG`) and are never rendered into Feishu replies.
 
-Plugin code runs from three locations — all must stay in sync during development:
-- `workspace` (source of truth)
-- `~/.codex/plugins/marketplaces/codex-lark-plugin/` (marketplace clone)
-- `~/.codex/plugins/cache/codex-lark-plugin/lark/<version>/` (Codex runtime cache)
+Root `src/` is the only application source tree. `npm run build:plugin` creates
+the checked-in, self-contained `plugins/lark/runtime/{index,stop,doctor}.js`
+entrypoints consumed from the marketplace clone and versioned Codex runtime
+cache. Never edit generated runtime bundles directly or add a mirrored source
+tree under `plugins/lark/`.

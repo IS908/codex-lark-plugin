@@ -66,7 +66,12 @@ assert.equal(wrappedPackage.type, 'module');
 assert.equal(wrappedPackage.main, 'runtime/index.js');
 assert.equal(wrappedPackage.scripts.start, 'node runtime/index.js');
 assert.equal(wrappedPackage.scripts.stop, 'node runtime/stop.js');
-assert.ok(fs.existsSync(path.join(root, 'plugins/lark/src/index.ts')));
+assert.equal(wrappedPackage.scripts.doctor, 'node runtime/doctor.js');
+assert.equal(wrappedPackage.scripts.build, undefined, 'installed wrapper must not expose a repo-relative build');
+assert.ok(fs.existsSync(path.join(root, 'plugins/lark/runtime/index.js')));
+assert.ok(fs.existsSync(path.join(root, 'plugins/lark/runtime/stop.js')));
+assert.ok(fs.existsSync(path.join(root, 'plugins/lark/runtime/doctor.js')));
+assert.ok(!fs.existsSync(path.join(root, 'plugins/lark/src')));
 
 const mcp = readJson('.mcp.json');
 assert.equal(mcp.mcpServers.lark.command, 'npm');
@@ -75,14 +80,11 @@ assert.equal(mcp.mcpServers.lark.cwd, '.');
 assert.equal(pkg.scripts.start, 'node --import tsx src/index.ts');
 
 const index = read('src/index.ts');
-const wrappedIndex = read('plugins/lark/src/index.ts');
 const scheduler = read('src/scheduler.ts');
 assert.ok(fs.existsSync(path.join(root, 'scripts/check-release-version.js')));
 assert.equal(pkg.scripts['check:release-version'], 'node scripts/check-release-version.js');
 assert.match(index, /packageVersion/);
-assert.match(wrappedIndex, /packageVersion/);
 assert.doesNotMatch(index, /version:\s*['"]\d+\.\d+\.\d+['"]/);
-assert.doesNotMatch(wrappedIndex, /version:\s*['"]\d+\.\d+\.\d+['"]/);
 assert.doesNotMatch(index, /'Codex\/channel'/);
 assert.doesNotMatch(index, /notifications\/Codex\/channel/);
 assert.doesNotMatch(scheduler, /notifications\/Codex\/channel/);

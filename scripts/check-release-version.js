@@ -65,7 +65,6 @@ checkEqual(
 checkReadmeBadge('README.md', version);
 checkReadmeBadge('README_CN.md', version);
 checkIndexUsesPackageVersion('src/index.ts');
-checkIndexUsesPackageVersion('plugins/lark/src/index.ts');
 
 if (!read('CHANGELOG.md').includes(`## [${version}]`)) {
   errors.push(`CHANGELOG.md: missing release heading for ${version}`);

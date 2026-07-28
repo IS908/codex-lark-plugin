@@ -112,11 +112,6 @@ npm run --silent check:release-version
 echo "PASS"
 
 echo ""
-echo "=== Plugin source sync checks ==="
-npm run --silent check:plugin-src-sync
-echo "PASS"
-
-echo ""
 echo "=== Plugin runtime bundle sync checks ==="
 npm run --silent check:runtime-bundle-sync
 echo "PASS"
