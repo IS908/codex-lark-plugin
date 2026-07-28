@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.10.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.11.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -121,7 +121,8 @@ Create a custom app at [Feishu Open Platform](https://open.feishu.cn/app) and en
 | `im:message.group_at_msg:readonly` | Receive group @bot messages |
 | `im:message:send_as_bot` | Send messages as the bot |
 | `im:resource` | Download attachments |
-| `im:message.reactions:write` | Add emoji reactions |
+| `im:message.reactions:write_only` | Add emoji reactions |
+| `im:message.reactions:read` | Receive user emoji reaction events |
 | `docs:document.comment:read` | Pre-fetch doc-comment bodies and selected text |
 | `docs:document.comment:create` | Post doc-comment replies and new top-level comments |
 | `drive:drive.metadata:readonly` | Fetch document titles for doc-comment context |
@@ -194,6 +195,17 @@ LARK_APP_ID=cli_your_app_id
 LARK_APP_SECRET=your_app_secret
 EOF
 ```
+
+Validate the live setup after saving credentials:
+
+```text
+$lark:configure doctor
+```
+
+The doctor performs read-only credential, app identity, permission, and
+WebSocket configuration checks. Feishu does not expose message-event
+subscriptions through the read-only application API, so those events are
+reported as a manual `WARN` check instead of a false `PASS`.
 
 ### 4. Start
 
@@ -856,6 +868,7 @@ The plugin includes an interactive setup command accessible within Codex:
 | `$lark:configure` | Show current configuration status (secrets are masked) |
 | `$lark:configure <app_id> <app_secret>` | Quick credential setup |
 | `$lark:configure setup` | Full interactive walkthrough |
+| `$lark:configure doctor` | Run safe, read-only live setup diagnostics |
 | `$lark:configure clear` | Remove all configuration |
 
 ### `$lark:configure setup` Flow

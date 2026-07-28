@@ -13,6 +13,25 @@ User arguments: `$ARGUMENTS`
 
 ---
 
+## `doctor` — Run live setup diagnostics
+
+1. Resolve this skill's plugin root as two directories above this `SKILL.md`.
+2. Run `npm --prefix <plugin-root> run --silent doctor`.
+3. Show the complete `PASS` / `WARN` / `FAIL` output to the user.
+4. Treat a non-zero exit as a failed diagnosis, not as a tool crash.
+5. Do not print the `.env` contents or rerun the underlying APIs manually. The
+   doctor already redacts credentials, tokens, authorization headers, and raw
+   remote responses.
+6. Explain that `event_subscriptions=WARN` requires manual verification in the
+   Feishu Open Platform when the read-only application API does not expose the
+   subscription list.
+
+The doctor is read-only. It validates local configuration, Node.js, live
+credentials, app identity, required/recommended tenant permissions, WebSocket
+mode, and the verifiable portion of event subscription readiness.
+
+---
+
 ## No args — Show current status
 
 1. Read `~/.codex/channels/lark/.env` if it exists.
