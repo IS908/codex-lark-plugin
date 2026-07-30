@@ -11,11 +11,17 @@ export interface CodexExecUsage {
   contextWindowTokens?: number;
 }
 
+export type CodexExecMetricStatus = 'complete' | 'partial' | 'unavailable';
+
+export type CodexExecCountMetric =
+  | { value: number; status: Exclude<CodexExecMetricStatus, 'unavailable'> }
+  | { value: null; status: 'unavailable' };
+
 export interface CodexExecRuntimeMetrics {
   elapsedMs: number;
-  toolCalls: number;
-  skillUsages: number;
-  subagents: number;
+  toolCalls: CodexExecCountMetric;
+  skillsLoaded: CodexExecCountMetric;
+  subagentsSpawned: CodexExecCountMetric;
   usage?: CodexExecUsage | null;
 }
 
@@ -24,23 +30,82 @@ export interface CodexExecRuntimeMetricsCollector {
   finish(endedAtMs?: number): CodexExecRuntimeMetrics;
 }
 
-const START_PATTERN = /\b(start|started|begin|began|running|in_progress|created|requested)\b/i;
-const TOOL_PATTERN = /(tool|function[_\s.-]?call|mcp|connector|command[_\s.-]?execution|command|exec|shell|bash|web[_\s.-]?(search|fetch)|browser|apply_patch|patch|file[_\s.-]?(read|write|edit)|edit_file|read_file|write_file)/i;
-const SKILL_PATTERN = /(^|[._:\-\s])skills?($|[._:\-\s])|skill[_\s.-]?(use|usage|call|invocation|started|completed)/i;
-const SUBAGENT_PATTERN = /(sub[_\s.-]?agent|multi[_\s.-]?agent|agent[_\s.-]?(spawn|delegate|dispatch))/i;
 const RUNTIME_FOOTER_SEGMENT =
   /^(?:🔧\d+|🧩\d+|🤖\d+|⏱(?:\d+ms|\d+s|\d+m(?:\d{2}s)?)|📊\s+I[0-9.]+k?(?:\(C[0-9.]+k?\))?\s+O[0-9.]+k?\s+T[0-9.]+k?)$/;
 const MAX_MERGED_FOOTER_CHARS = 1000;
 
-type RuntimeMetricKind = 'tool' | 'skill' | 'subagent';
+type EventPhase = 'started' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+
+const TOOL_ITEM_TYPES = new Set([
+  'collab_tool_call',
+  'command_execution',
+  'computer_tool_call',
+  'file_change',
+  'file_read',
+  'function_call',
+  'mcp_tool_call',
+  'read_file',
+  'tool_call',
+  'web_search',
+  'web_search_call',
+]);
+const NON_TOOL_ITEM_TYPES = new Set([
+  'agent_message',
+  'error',
+  'image_generation',
+  'reasoning',
+  'skill',
+  'subagent',
+  'todo_list',
+]);
+const KNOWN_EVENT_BASE_TYPES = new Set([
+  'agent',
+  'item',
+  'skill',
+  'skill_call',
+  'skill_invocation',
+  'skill_usage',
+  'skill_use',
+  'subagent',
+  'thread',
+  'turn',
+]);
+const READ_TOOL_NAMES = new Set([
+  'file_read',
+  'filesystem_read_file',
+  'filesystem_read_text_file',
+  'get_file_content',
+  'read_file',
+  'read_text_file',
+]);
+const SUBAGENT_SPAWN_TOOL_NAMES = new Set([
+  'create_agent',
+  'delegate_agent',
+  'dispatch_agent',
+  'spawn_agent',
+]);
+const EXPLICIT_SUBAGENT_START_EVENTS = new Set([
+  'agent_spawn',
+  'agent_spawned',
+  'subagent_spawn',
+  'subagent_spawned',
+  'subagent_started',
+]);
+const READ_COMMAND_PATTERN =
+  /(?:^|[\s;&|('"`])(?:cat|sed|head|tail|less|bat|awk|grep|rg|type|read|get-content)\b/i;
 
 class JsonlCodexExecRuntimeMetricsCollector implements CodexExecRuntimeMetricsCollector {
   private usage: CodexExecUsage | null = null;
-  private readonly countedKeys = new Set<string>();
+  private readonly toolCallKeys = new Set<string>();
+  private readonly skillReadKeys = new Set<string>();
+  private readonly explicitSkillKeys = new Set<string>();
+  private readonly explicitSkillKeysById = new Map<string, string>();
+  private readonly subagentKeys = new Set<string>();
+  private readonly anonymousStarted = new Map<string, number>();
+  private parsedEvents = 0;
+  private sawTurnCompleted = false;
+  private toolObservationUncertain = false;
   private sequence = 0;
-  private toolCalls = 0;
-  private skillUsages = 0;
-  private subagents = 0;
 
   constructor(private readonly startedAtMs: number) {}
 
@@ -53,44 +118,164 @@ class JsonlCodexExecRuntimeMetricsCollector implements CodexExecRuntimeMetricsCo
     } catch {
       return;
     }
+    if (!event || typeof event !== 'object' || Array.isArray(event)) return;
 
+    this.parsedEvents++;
     this.usage = mergeCodexExecUsage(this.usage, extractUsageFromObject(event));
     this.recordRuntimeMetric(event);
   }
 
   finish(endedAtMs = Date.now()): CodexExecRuntimeMetrics {
+    const skillKeys = new Set([...this.skillReadKeys, ...this.explicitSkillKeys]);
+    const toolCalls =
+      this.parsedEvents === 0
+        ? unavailableMetric()
+        : observedMetric(
+            this.toolCallKeys.size,
+            this.sawTurnCompleted && !this.toolObservationUncertain ? 'complete' : 'partial',
+          );
     return {
       elapsedMs: Math.max(0, endedAtMs - this.startedAtMs),
-      toolCalls: this.toolCalls,
-      skillUsages: this.skillUsages,
-      subagents: this.subagents,
+      toolCalls,
+      skillsLoaded:
+        skillKeys.size > 0
+          ? observedMetric(skillKeys.size, 'partial')
+          : unavailableMetric(),
+      subagentsSpawned:
+        this.subagentKeys.size > 0
+          ? observedMetric(this.subagentKeys.size, 'partial')
+          : unavailableMetric(),
       ...(this.usage ? { usage: this.usage } : {}),
     };
   }
 
   private recordRuntimeMetric(event: unknown): void {
-    if (!event || typeof event !== 'object' || Array.isArray(event)) return;
     const record = event as Record<string, unknown>;
     const nested = firstObject(record, ['item', 'tool', 'call', 'function', 'data']) ?? {};
-    const eventType = firstString(record, ['type', 'event', 'event_type', 'eventType']) ?? '';
-    const status = firstString(record, ['status', 'state', 'result']) ?? firstString(nested, ['status', 'state', 'result']) ?? '';
-    if (!isStartEvent(eventType, status)) return;
+    const eventType = normalizeMetricIdentifier(
+      firstString(record, ['type', 'event', 'event_type', 'eventType']) ?? '',
+    );
+    const status =
+      firstString(nested, ['status', 'state', 'result']) ??
+      firstString(record, ['status', 'state', 'result']) ??
+      '';
+    const phase = inferEventPhase(eventType, status);
+    const baseType = stripLifecycleSuffix(eventType);
+    const nestedType = normalizeMetricIdentifier(firstString(nested, ['type', 'kind']) ?? '');
+    const itemType = baseType === 'item' ? nestedType : baseType;
+    const toolName = normalizeMetricIdentifier(
+      firstString(nested, ['tool', 'name', 'tool_name', 'toolName']) ??
+        firstString(record, ['tool', 'name', 'tool_name', 'toolName']) ??
+        nestedFunctionName(nested) ??
+        nestedFunctionName(record) ??
+        '',
+    );
 
-    const kind = inferRuntimeMetricKind(record, nested, eventType);
-    if (!kind) return;
-    const id = inferMetricId(record, nested) ?? `anonymous-${++this.sequence}`;
-    const key = `${kind}:${id}`;
-    if (this.countedKeys.has(key)) return;
-    this.countedKeys.add(key);
+    if (eventType === 'turn_completed') this.sawTurnCompleted = true;
+    if (
+      baseType === 'item' &&
+      nestedType &&
+      !TOOL_ITEM_TYPES.has(nestedType) &&
+      !NON_TOOL_ITEM_TYPES.has(nestedType)
+    ) {
+      this.toolObservationUncertain = true;
+    }
+    if (
+      baseType !== 'item' &&
+      phase !== 'unknown' &&
+      !TOOL_ITEM_TYPES.has(baseType) &&
+      !KNOWN_EVENT_BASE_TYPES.has(baseType)
+    ) {
+      this.toolObservationUncertain = true;
+    }
 
-    if (kind === 'tool') this.toolCalls++;
-    if (kind === 'skill') this.skillUsages++;
-    if (kind === 'subagent') this.subagents++;
+    if (TOOL_ITEM_TYPES.has(itemType) && phase !== 'unknown') {
+      this.recordToolCall(itemType, toolName, phase, record, nested);
+    }
+
+    if (isExplicitSkillEvent(itemType, eventType)) {
+      this.recordExplicitSkillEvent(phase, record, nested);
+    }
+    if (phase === 'completed' && isSkillRead(itemType, toolName, record, nested)) {
+      for (const skillKey of extractSkillKeys(record, nested)) {
+        this.skillReadKeys.add(skillKey);
+      }
+    }
+
+    if (EXPLICIT_SUBAGENT_START_EVENTS.has(eventType)) {
+      this.subagentKeys.add(inferNamedMetricKey(record, nested, 'subagent', ++this.sequence));
+    }
+    if (
+      phase === 'completed' &&
+      isSubagentSpawnOperation(itemType, toolName)
+    ) {
+      this.subagentKeys.add(inferSubagentKey(record, nested, ++this.sequence));
+    }
+  }
+
+  private recordExplicitSkillEvent(
+    phase: EventPhase,
+    record: Record<string, unknown>,
+    nested: Record<string, unknown>,
+  ): void {
+    const id = inferMetricId(record, nested);
+    const key =
+      (id ? this.explicitSkillKeysById.get(id) : undefined) ??
+      inferNamedMetricKey(record, nested, 'skill', ++this.sequence);
+    if (phase === 'failed' || phase === 'cancelled') {
+      this.explicitSkillKeys.delete(key);
+      if (id) this.explicitSkillKeysById.delete(id);
+      return;
+    }
+    if (!isObservedStartOrSuccess(phase)) return;
+    this.explicitSkillKeys.add(key);
+    if (id) this.explicitSkillKeysById.set(id, key);
+  }
+
+  private recordToolCall(
+    itemType: string,
+    toolName: string,
+    phase: EventPhase,
+    record: Record<string, unknown>,
+    nested: Record<string, unknown>,
+  ): void {
+    const id = inferMetricId(record, nested);
+    if (id) {
+      this.toolCallKeys.add(`tool:${id}`);
+      return;
+    }
+
+    const fingerprint = anonymousToolFingerprint(itemType, toolName);
+    if (phase === 'started') {
+      this.toolCallKeys.add(`${fingerprint}:anonymous-${++this.sequence}`);
+      this.anonymousStarted.set(fingerprint, (this.anonymousStarted.get(fingerprint) ?? 0) + 1);
+      this.toolObservationUncertain = true;
+      return;
+    }
+
+    const pending = this.anonymousStarted.get(fingerprint) ?? 0;
+    if (pending > 0) {
+      this.anonymousStarted.set(fingerprint, pending - 1);
+      return;
+    }
+    this.toolCallKeys.add(`${fingerprint}:anonymous-terminal-${++this.sequence}`);
+    this.toolObservationUncertain = true;
   }
 }
 
 export function createCodexExecRuntimeMetricsCollector(startedAtMs = Date.now()): CodexExecRuntimeMetricsCollector {
   return new JsonlCodexExecRuntimeMetricsCollector(startedAtMs);
+}
+
+function observedMetric(
+  value: number,
+  status: Exclude<CodexExecMetricStatus, 'unavailable'>,
+): CodexExecCountMetric {
+  return { value, status };
+}
+
+function unavailableMetric(): CodexExecCountMetric {
+  return { value: null, status: 'unavailable' };
 }
 
 function finiteNonNegativeNumber(value: unknown): number | undefined {
@@ -193,37 +378,164 @@ export function extractCodexExecUsage(jsonl: string): CodexExecUsage | null {
   return usage;
 }
 
-function isStartEvent(eventType: string, status: string): boolean {
-  return START_PATTERN.test(status) || START_PATTERN.test(eventType);
+function normalizeMetricIdentifier(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
-function inferRuntimeMetricKind(
+function stripLifecycleSuffix(eventType: string): string {
+  return eventType.replace(/_(?:started|completed|failed|cancelled|canceled|spawned)$/, '');
+}
+
+function inferEventPhase(eventType: string, rawStatus: string): EventPhase {
+  const status = normalizeMetricIdentifier(rawStatus);
+  if (['error', 'failed', 'failure'].includes(status)) return 'failed';
+  if (['cancelled', 'canceled'].includes(status)) return 'cancelled';
+  if (['complete', 'completed', 'ok', 'success', 'succeeded'].includes(status)) return 'completed';
+  if (['created', 'in_progress', 'requested', 'running', 'start', 'started'].includes(status)) {
+    return 'started';
+  }
+  if (eventType.endsWith('_failed')) return 'failed';
+  if (eventType.endsWith('_cancelled') || eventType.endsWith('_canceled')) return 'cancelled';
+  if (eventType.endsWith('_completed')) return 'completed';
+  if (
+    eventType.endsWith('_started') ||
+    eventType.endsWith('_spawned') ||
+    eventType.endsWith('_spawn')
+  ) {
+    return 'started';
+  }
+  return 'unknown';
+}
+
+function isObservedStartOrSuccess(phase: EventPhase): boolean {
+  return phase === 'started' || phase === 'completed';
+}
+
+function isExplicitSkillEvent(itemType: string, eventType: string): boolean {
+  if (itemType === 'skill') return true;
+  const baseType = stripLifecycleSuffix(eventType);
+  return ['skill', 'skill_call', 'skill_invocation', 'skill_usage', 'skill_use'].includes(baseType);
+}
+
+function inferNamedMetricKey(
   record: Record<string, unknown>,
   nested: Record<string, unknown>,
-  eventType: string,
-): RuntimeMetricKind | null {
-  const candidates = [
-    eventType,
-    firstString(record, ['type', 'event', 'event_type', 'eventType', 'name', 'tool_name', 'toolName']),
-    firstString(nested, ['type', 'kind', 'name', 'tool_name', 'toolName']),
-    nestedFunctionName(record),
-    nestedFunctionName(nested),
-  ].filter(Boolean).join(' ');
+  kind: 'skill' | 'subagent',
+  sequence: number,
+): string {
+  const name =
+    firstString(nested, ['skill_name', 'skillName', 'agent_name', 'agentName', 'name']) ??
+    firstString(record, ['skill_name', 'skillName', 'agent_name', 'agentName', 'name']);
+  if (name) return `${kind}:name:${normalizeMetricIdentifier(name)}`;
+  const id = inferMetricId(record, nested);
+  return id ? `${kind}:id:${id}` : `${kind}:anonymous-${sequence}`;
+}
 
-  if (SUBAGENT_PATTERN.test(candidates)) return 'subagent';
-  if (SKILL_PATTERN.test(candidates)) return 'skill';
-  if (TOOL_PATTERN.test(candidates)) return 'tool';
-  if (
-    record.tool !== undefined ||
-    record.call !== undefined ||
-    record.function !== undefined ||
-    nested.command !== undefined ||
-    nested.arguments !== undefined ||
-    nested.args !== undefined
-  ) {
-    return 'tool';
+function inferSubagentKey(
+  record: Record<string, unknown>,
+  nested: Record<string, unknown>,
+  sequence: number,
+): string {
+  const agentId =
+    firstString(nested, ['agent_id', 'agentId', 'subagent_id', 'subagentId']) ??
+    firstString(record, ['agent_id', 'agentId', 'subagent_id', 'subagentId']);
+  if (agentId) return `subagent:id:${agentId}`;
+  const invocationId = inferMetricId(record, nested);
+  if (invocationId) return `subagent:invocation:${invocationId}`;
+  return inferNamedMetricKey(record, nested, 'subagent', sequence);
+}
+
+function anonymousToolFingerprint(
+  itemType: string,
+  toolName: string,
+): string {
+  return `${itemType}:${toolName || '-'}`;
+}
+
+function serializeMetricValue(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '';
   }
-  return null;
+}
+
+function isSkillRead(
+  itemType: string,
+  toolName: string,
+  record: Record<string, unknown>,
+  nested: Record<string, unknown>,
+): boolean {
+  if (extractSkillKeys(record, nested).length === 0) return false;
+  if (itemType === 'file_read' || itemType === 'read_file' || READ_TOOL_NAMES.has(toolName)) {
+    return true;
+  }
+  if (itemType !== 'command_execution') return false;
+  if (!hasSuccessfulCommandOutcome(record, nested)) return false;
+  const command =
+    firstString(nested, ['command', 'cmd']) ??
+    firstString(record, ['command', 'cmd']) ??
+    '';
+  return READ_COMMAND_PATTERN.test(command);
+}
+
+function hasSuccessfulCommandOutcome(
+  record: Record<string, unknown>,
+  nested: Record<string, unknown>,
+): boolean {
+  const exitCode =
+    finiteNonNegativeNumber(nested.exit_code ?? nested.exitCode) ??
+    finiteNonNegativeNumber(record.exit_code ?? record.exitCode);
+  return exitCode === undefined || exitCode === 0;
+}
+
+function extractSkillKeys(
+  record: Record<string, unknown>,
+  nested: Record<string, unknown>,
+): string[] {
+  const payloads = [
+    ...collectMetricStrings(record),
+    ...collectMetricStrings(nested),
+  ];
+  const keys = new Set<string>();
+  const quotedPattern =
+    /(["'])((?:[a-z]:)?[^"'`\r\n]*?[\\/]skills[\\/][^"'`\\/]+[\\/]skill\.md)\1/gi;
+  const unquotedPattern =
+    /(?:^|[\s"'`=:(])((?:[a-z]:)?(?:[^"'`\s|;&<>]*[\\/])?skills[\\/][^"'`\s|;&<>]+[\\/]skill\.md)(?=$|[\s"'`),;|&<>])/gi;
+  for (const payload of payloads) {
+    for (const match of payload.matchAll(quotedPattern)) {
+      addSkillPathKey(keys, match[2]);
+    }
+    for (const match of payload.matchAll(unquotedPattern)) {
+      addSkillPathKey(keys, match[1]);
+    }
+  }
+  return [...keys];
+}
+
+function addSkillPathKey(keys: Set<string>, rawPath: string): void {
+  const normalizedPath = rawPath.replace(/\\/g, '/');
+  const identity = normalizedPath.match(/(?:^|\/)skills\/([^/]+)\/skill\.md$/i)?.[1];
+  if (identity) keys.add(`skill:name:${normalizeMetricIdentifier(identity)}`);
+}
+
+function collectMetricStrings(record: Record<string, unknown>): string[] {
+  const values = [
+    ...['command', 'cmd', 'path', 'file_path', 'filePath'].map((key) => record[key]),
+    record.arguments,
+    record.args,
+    record.input,
+  ];
+  return values.map(serializeMetricValue).filter(Boolean);
+}
+
+function isSubagentSpawnOperation(itemType: string, toolName: string): boolean {
+  return (
+    SUBAGENT_SPAWN_TOOL_NAMES.has(toolName) &&
+    (itemType === 'collab_tool_call' || TOOL_ITEM_TYPES.has(itemType))
+  );
 }
 
 function firstString(record: Record<string, unknown>, keys: string[]): string | undefined {
@@ -258,9 +570,11 @@ export function formatCodexExecRuntimeMetricsFooter(
 ): string | undefined {
   if (!metrics) return undefined;
   const parts: string[] = [];
-  if (metrics.toolCalls > 0) parts.push(`🔧${metrics.toolCalls}`);
-  if (metrics.skillUsages > 0) parts.push(`🧩${metrics.skillUsages}`);
-  if (metrics.subagents > 0) parts.push(`🤖${metrics.subagents}`);
+  if ((metrics.toolCalls.value ?? 0) > 0) parts.push(`🔧${metrics.toolCalls.value}`);
+  if ((metrics.skillsLoaded.value ?? 0) > 0) parts.push(`🧩${metrics.skillsLoaded.value}`);
+  if ((metrics.subagentsSpawned.value ?? 0) > 0) {
+    parts.push(`🤖${metrics.subagentsSpawned.value}`);
+  }
   parts.push(`⏱${formatElapsed(metrics.elapsedMs)}`);
 
   const usage = metrics.usage ?? null;
@@ -349,12 +663,19 @@ function runtimeMetricsLogFields(metrics: CodexExecRuntimeMetrics): string[] {
   const usage = metrics.usage ?? null;
   return [
     `elapsed_ms=${metrics.elapsedMs}`,
-    `tool_calls=${metrics.toolCalls}`,
-    `skill_usages=${metrics.skillUsages}`,
-    `subagents=${metrics.subagents}`,
+    ...formatCountMetricLogFields('tool_calls', metrics.toolCalls),
+    ...formatCountMetricLogFields('skills_loaded', metrics.skillsLoaded),
+    ...formatCountMetricLogFields('subagents_spawned', metrics.subagentsSpawned),
     `input_tokens=${usage?.inputTokens ?? 'unavailable'}`,
     `cached_input_tokens=${usage?.cachedInputTokens ?? 'unavailable'}`,
     `output_tokens=${usage?.outputTokens ?? 'unavailable'}`,
     `total_tokens=${usage?.totalTokens ?? 'unavailable'}`,
+  ];
+}
+
+function formatCountMetricLogFields(name: string, metric: CodexExecCountMetric): string[] {
+  return [
+    `${name}=${metric.value ?? 'unavailable'}`,
+    `${name}_status=${metric.status}`,
   ];
 }

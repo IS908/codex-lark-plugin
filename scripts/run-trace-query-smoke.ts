@@ -26,7 +26,7 @@ writeFileSync(traceLog, [
   '2026-07-12T10:01:00.000+08:00  om_msg  runmsg1  mcp.github.issue_create  failed  call_2  500ms  {"error":"Bearer should-not-appear"}',
   '2026-07-12T10:01:30.000+08:00  om_msg  runmsg2  exec_command  started  call_1  -  {"cmd":"npm run typecheck"}',
   '2026-07-12T10:01:32.000+08:00  om_msg  runmsg2  exec_command  completed  call_1  2000ms  -',
-  '2026-07-12T10:01:33.000+08:00  om_msg  metrics  elapsed_ms=93000  tool_calls=3  skill_usages=0  input_tokens=100  output_tokens=20',
+  '2026-07-12T10:01:33.000+08:00  om_msg  metrics  elapsed_ms=93000  tool_calls=3  tool_calls_status=complete  skills_loaded=unavailable  skills_loaded_status=unavailable  subagents_spawned=unavailable  subagents_spawned_status=unavailable  input_tokens=100  output_tokens=20',
   '2026-07-12T10:02:00.000+08:00  om_full  runfull  trace  full  tool_call.completed  github.get_issue  completed  -  -  {"issue":248}',
   `2026-07-12T10:03:00.000+08:00  om_uuid  ${shortUuidRunId}  exec_command  completed  call_uuid  3000ms  {"cmd":"uuid"}`,
   '2026-07-12T10:04:00.000+08:00  om_legacy  run_legacy_1  exec_command  completed  call_legacy  4000ms  {"cmd":"legacy"}',

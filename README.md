@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.12.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -513,6 +513,14 @@ for example `🔧4 · 🧩2 · ⏱18s · 📊 I62.4k(C48.2k) O1.3k T63.7k`. Exis
 business footer text is preserved before the runtime footer. Token usage is
 omitted when usage is unavailable or `total_tokens` does not exceed
 `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD`; elapsed time is still shown.
+Tool calls are deduplicated by the maintained Codex JSONL item/call allowlist
+and count attempted invocations, including failed or cancelled calls. Skill
+loading is a best-effort unique count of successful `*/skills/*/SKILL.md`
+reads, while subagents count explicit starts or successful observable spawn
+calls. Skill and subagent observations are marked `partial`; when they are not
+observable, trace/debug logs emit `unavailable` and the footer omits their
+segments rather than displaying an authoritative zero. An unknown JSONL item
+type also downgrades tool-call collection from `complete` to `partial`.
 
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:

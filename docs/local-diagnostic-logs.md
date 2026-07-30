@@ -96,6 +96,21 @@ If `codex exec` fails before emitting tool events, the trace contains one
 sanitized `codex_exec failed` record with a stable failure stage and error code.
 Raw prompts and process stderr/stdout are not written to this record.
 
+Each successful exec also appends a metrics record:
+
+```text
+2026-07-06T20:00:18.000+08:00  om_xxx  metrics  elapsed_ms=18000  tool_calls=4  tool_calls_status=complete  skills_loaded=unavailable  skills_loaded_status=unavailable  subagents_spawned=1  subagents_spawned_status=partial  input_tokens=1200  cached_input_tokens=800  output_tokens=90  total_tokens=1290
+```
+
+Count metrics carry `complete`, `partial`, or `unavailable` collection status.
+Known tool item/call types count attempted invocations once by stable ID,
+including failed and cancelled attempts. A successful unique `SKILL.md` read
+and an explicit or successfully completed subagent spawn are best-effort
+`partial` observations. When the JSONL stream cannot expose Skill or subagent
+activity, both value and status are `unavailable`; absence is never logged as
+an authoritative zero. Unknown JSONL lifecycle/item types downgrade tool-call
+status to `partial`.
+
 When tracing is enabled, the exec action bridge can serve bounded
 `get_run_trace` requests. Message queries are limited to the current or quoted
 message trace. Cronjob queries require an authorized `job_id`. Queries return

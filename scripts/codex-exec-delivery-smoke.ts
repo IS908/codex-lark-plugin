@@ -339,9 +339,9 @@ await deliverMessageViaCodexExec({
     text: '# Summary\n\n- point one\n- point two',
     runtimeMetrics: {
       elapsedMs: 18_400,
-      toolCalls: 2,
-      skillUsages: 1,
-      subagents: 0,
+      toolCalls: { value: 2, status: 'complete' },
+      skillsLoaded: { value: 1, status: 'partial' },
+      subagentsSpawned: { value: null, status: 'unavailable' },
       usage: {
         inputTokens: 62400,
         cachedInputTokens: 48200,
