@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.12.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -456,7 +456,13 @@ debug、audit 和 trace 日志时间都使用 `LARK_CRON_TIMEZONE`
 `🔧4 · 🧩2 · ⏱18s · 📊 I62.4k(C48.2k) O1.3k T63.7k`。已有业务 footer
 会保留在前面，runtime footer 追加在后面。usage 不可用或 `total_tokens`
 未超过 `LARK_CARD_FOOTER_METRICS_TOKEN_USAGE_THRESHOLD` 时不会显示 token
-段，但仍会显示耗时。
+段，但仍会显示耗时。工具调用按维护的 Codex JSONL item/call allowlist
+和稳定 ID 去重，失败或取消的调用尝试也计一次。Skill 指标是成功读取
+`*/skills/*/SKILL.md` 后按 Skill 去重的 best-effort 数量；Subagent 指标只统计
+明确的启动事件或成功且可观察的 spawn 调用。Skill/Subagent 观察状态为
+`partial`；完全不可观察时，trace/debug 日志记录 `unavailable`，footer 隐藏对应
+段而不会显示成权威的零。遇到未知 JSONL item 类型时，工具调用状态也会从
+`complete` 降为 `partial`。
 
 exec delivery 可以为长时间运行的可见 IM / 文档评论 turn 暴露一个有界过程消息侧通道。
 父进程创建临时 JSONL 文件，并把文件路径和本 turn token 传给子 `codex exec` 进程；

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.12.1] - 2026-07-30
+
+### Fixed
+- Distinguish complete, partial, and unavailable Codex exec runtime metrics; report successful unique Skill loads and observable subagent spawns without presenting heuristic misses as authoritative zeroes.
+
 ## [2.12.0] - 2026-07-28
 
 ### Changed

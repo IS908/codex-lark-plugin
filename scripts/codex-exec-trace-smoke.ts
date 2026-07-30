@@ -222,7 +222,15 @@ assert.deepEqual(result.runtimeMetrics?.usage, {
   outputTokens: 50,
   totalTokens: 1550,
 });
-assert.equal(result.runtimeMetrics?.toolCalls, 1);
+assert.deepEqual(result.runtimeMetrics?.toolCalls, { value: 1, status: 'complete' });
+assert.deepEqual(result.runtimeMetrics?.skillsLoaded, {
+  value: null,
+  status: 'unavailable',
+});
+assert.deepEqual(result.runtimeMetrics?.subagentsSpawned, {
+  value: null,
+  status: 'unavailable',
+});
 const integrationLog = readFileSync(integrationTraceLog, 'utf-8');
 const integrationLines = lines(integrationTraceLog);
 assert.ok(integrationLines.length >= 3);
@@ -236,7 +244,10 @@ integrationToolLines.forEach((line) => {
 const metricsLine = integrationLines.find((line) => /om_integration_001  metrics  /.test(line));
 assert.ok(metricsLine);
 assertNotJsonl(metricsLine);
-assert.match(metricsLine, /elapsed_ms=\d+  tool_calls=1  skill_usages=0  subagents=0  input_tokens=1500  cached_input_tokens=1000  output_tokens=50  total_tokens=1550/);
+assert.match(
+  metricsLine,
+  /elapsed_ms=\d+  tool_calls=1  tool_calls_status=complete  skills_loaded=unavailable  skills_loaded_status=unavailable  subagents_spawned=unavailable  subagents_spawned_status=unavailable  input_tokens=1500  cached_input_tokens=1000  output_tokens=50  total_tokens=1550/,
+);
 const metricsDebugLine = await waitForLine(debugLogPath, /codex-exec-metrics log_id=om_integration_001/);
 assert.match(metricsDebugLine, /input_tokens=1500 .* total_tokens=1550/);
 assert.match(integrationLog, /github\.get_issue/);
