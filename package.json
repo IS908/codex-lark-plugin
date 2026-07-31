@@ -1,6 +1,6 @@
 {
   "name": "codex-lark-plugin",
-  "version": "2.12.1",
+  "version": "2.12.2",
   "description": "Codex channel plugin for Feishu/Lark — chat with Codex through Feishu with local-file memory and scheduled jobs",
   "keywords": [
     "codex",
@@ -34,6 +34,7 @@
     "smoke:sdk": "node --import tsx scripts/sdk-channel-scaffold-smoke.ts && node --import tsx scripts/sdk-identity-smoke.ts && node --import tsx scripts/sdk-message-parity-smoke.ts && node --import tsx scripts/sdk-outbound-parity-smoke.ts && node --import tsx scripts/lark-transport-smoke.ts && node --import tsx scripts/sdk-runtime-smoke.ts && node --import tsx scripts/sdk-rollout-doc-smoke.ts",
     "check:release-version": "node scripts/check-release-version.js",
     "check:runtime-bundle-sync": "node scripts/build-runtime-bundles.js --target plugins/lark --check",
+    "check:skill-mirror": "node --import tsx scripts/skill-mirror-sync-smoke.ts",
     "generate:config": "node --import tsx scripts/generate-config-artifacts.ts",
     "check:config-artifacts": "node --import tsx scripts/generate-config-artifacts.ts --check",
     "check:architecture": "node scripts/architecture-check.js",

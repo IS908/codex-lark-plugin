@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.12.2] - 2026-07-31
+
+### Fixed
+- Clarify that marketplace installations start with Codex while manual startup commands are source-only, and enforce exact full-tree synchronization between canonical and packaged Skill directories.
+
 ## [2.12.1] - 2026-07-30
 
 ### Fixed

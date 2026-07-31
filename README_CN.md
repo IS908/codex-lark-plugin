@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.12.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.2-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -188,13 +188,17 @@ API 不返回消息事件订阅清单，因此这些事件会明确显示为需�
 
 ### 第 4 步：启动
 
-```bash
-# 本地直接启动 MCP server：
-bash scripts/start.sh
+通过插件市场安装时，插件会随 Codex 自动启动，首次运行时会自动安装依赖。
+不要再执行下面的手动启动命令，否则可能启动第二个本地实例。
 
-# 或使用 npm：
+只有从源码安装或开发时才需要手动启动：
+
+```bash
 npm start
 ```
+
+源码 checkout 也支持 `bash scripts/start.sh` 启动脚本，用于加载本地 `.env`、
+校验 Node.js 版本并为 stderr 日志增加时间戳；插件市场安装不需要该脚本。
 
 ### 更新插件
 
@@ -235,7 +239,7 @@ npm run audit:deps
 git status --short --ignored
 ```
 
-仓库会有意提交 `.env.example`、`.mcp.json`、`.codex-plugin/`、`.agents/plugins/marketplace.json` 和可独立运行的 `plugins/lark` 插件市场包装目录。根目录 `src/` 是唯一应用源码；`npm run build:plugin` 会将其打包为安装后使用的 `plugins/lark/runtime/` 入口文件。不要直接修改这些生成的 runtime 文件。其他生成产物、依赖、本地 `.env*` 文件、日志、编辑器/工具状态会由 `.gitignore` 忽略。
+仓库会有意提交 `.env.example`、`.mcp.json`、`.codex-plugin/`、`.agents/plugins/marketplace.json` 和可独立运行的 `plugins/lark` 插件市场包装目录。根目录 `src/` 是唯一应用源码；`npm run build:plugin` 会将其打包为安装后使用的 `plugins/lark/runtime/` 入口文件。不要直接修改这些生成的 runtime 文件。根目录 `skills/` 是共享 Skill package 的规范目录，`plugins/lark/skills/` 是内容必须完全一致的插件市场发布镜像，`npm run check:skill-mirror` 会校验两者。其他生成产物、依赖、本地 `.env*` 文件、日志、编辑器/工具状态会由 `.gitignore` 忽略。
 
 发布版本检查清单：
 

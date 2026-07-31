@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.12.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.2-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -254,7 +254,7 @@ npm run audit:deps
 git status --short --ignored
 ```
 
-The repository intentionally tracks `.env.example`, `.mcp.json`, `.codex-plugin/`, `.agents/plugins/marketplace.json`, and the self-contained `plugins/lark` marketplace wrapper. Root `src/` is the only application source tree; `npm run build:plugin` bundles it into the checked-in `plugins/lark/runtime/` entrypoints used after marketplace installation. Do not edit those generated runtime files directly. Other generated output, dependencies, local `.env*` files, logs, and editor/tool state are ignored by `.gitignore`.
+The repository intentionally tracks `.env.example`, `.mcp.json`, `.codex-plugin/`, `.agents/plugins/marketplace.json`, and the self-contained `plugins/lark` marketplace wrapper. Root `src/` is the only application source tree; `npm run build:plugin` bundles it into the checked-in `plugins/lark/runtime/` entrypoints used after marketplace installation. Do not edit those generated runtime files directly. The root `skills/` directory is the canonical shared Skill package tree; `plugins/lark/skills/` is its exact marketplace mirror, enforced by `npm run check:skill-mirror`. Other generated output, dependencies, local `.env*` files, logs, and editor/tool state are ignored by `.gitignore`.
 
 Release version checklist:
 

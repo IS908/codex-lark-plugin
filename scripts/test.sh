@@ -86,6 +86,14 @@ node scripts/codex-adapter-smoke.js
 echo "PASS"
 
 echo ""
+echo "=== Skill mirror sync checks ==="
+node --import tsx scripts/skill-mirror-sync-smoke.ts
+
+echo ""
+echo "=== Startup documentation checks ==="
+node --import tsx scripts/startup-doc-smoke.ts
+
+echo ""
 echo "=== Config validation checks ==="
 node --import tsx scripts/config-validation-smoke.ts
 
