@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.12.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.3-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -247,7 +247,12 @@ git status --short --ignored
 - 同步更新 `.codex-plugin/plugin.json` 和 `plugins/lark/.codex-plugin/plugin.json`；Codex 会根据 manifest version 选择插件 runtime cache 目录，manifest 版本滞后可能导致新 package 仍从旧 cache 运行。
 - 更新 README 徽章和 `CHANGELOG.md` release heading。
 - 运行 `npm run build:plugin` 和 `npm run check:runtime-bundle-sync`，确保独立运行的 `start`、`stop`、`doctor` 入口与根 `src/` 一致。
+- 运行 `npm run audit:deps` 和 `npm --prefix plugins/lark run audit:deps`；根项目和打包插件的生产依赖图都必须在打 tag 前通过审计。
 - 打 tag 前运行 `npm run check:release-version`。MCP server-info version 会在启动时读取 `package.json`，因此 package 版本正确后运行时版本会自动跟随。
+
+保留作用域限定的 `express-rate-limit > ip-address` override，是因为
+`express-rate-limit@8.3.2` 精确依赖存在漏洞的 `ip-address@10.1.0`。在上游接受
+修复版本前，根项目与打包插件必须同步维护该 override。
 
 新仓库可以这样初始化并发布：
 

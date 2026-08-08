@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.12.3] - 2026-08-08
+
+### Security
+- Removed stale `fast-uri` and Hono overrides so the MCP SDK resolves patched compatible releases, and narrowed the required `ip-address` override to the vulnerable exact dependency under `express-rate-limit`.
+- Added offline lockfile regression checks, root/plugin dependency synchronization checks, and mandatory production audits to the release checklist.
+
 ## [2.12.2] - 2026-07-31
 
 ### Fixed

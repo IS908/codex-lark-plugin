@@ -54,6 +54,16 @@ assert.equal(wrappedPlugin.mcpServers, './.mcp.json');
 assert.equal(wrappedPlugin.skills, './skills/');
 assert.equal(wrappedPlugin.version, pkg.version, 'wrapped plugin manifest version must match package.json');
 assert.equal(wrappedPackage.version, pkg.version, 'wrapped package version must match package.json');
+assert.deepEqual(
+  wrappedPackage.dependencies,
+  pkg.dependencies,
+  'root and wrapped plugin production dependencies must stay synchronized',
+);
+assert.deepEqual(
+  wrappedPackage.overrides,
+  pkg.overrides,
+  'root and wrapped plugin dependency overrides must stay synchronized',
+);
 assert.equal(readSkillFrontmatter('configure', 'plugins/lark/skills').name, 'configure');
 assert.equal(readSkillFrontmatter('jobs', 'plugins/lark/skills').name, 'jobs');
 

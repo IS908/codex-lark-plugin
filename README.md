@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.12.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.3-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -262,7 +262,13 @@ Release version checklist:
 - Bump `.codex-plugin/plugin.json` and `plugins/lark/.codex-plugin/plugin.json`; Codex uses manifest versions when selecting plugin cache directories, so stale manifest versions can leave a new package running from an old runtime cache.
 - Update the README badges and `CHANGELOG.md` release heading.
 - Run `npm run build:plugin` and `npm run check:runtime-bundle-sync` so the self-contained `start`, `stop`, and `doctor` entrypoints match root `src/`.
+- Run `npm run audit:deps` and `npm --prefix plugins/lark run audit:deps`; both production dependency graphs must pass before tagging.
 - Run `npm run check:release-version` before tagging. The MCP server-info version is read from `package.json` at startup, so it follows the package version automatically once the package bump is correct.
+
+The scoped `express-rate-limit > ip-address` override is retained because
+`express-rate-limit@8.3.2` pins vulnerable `ip-address@10.1.0` exactly. Keep the
+root and packaged-plugin override synchronized until upstream accepts a patched
+version.
 
 For a fresh repository:
 
