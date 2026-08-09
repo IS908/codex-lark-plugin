@@ -8,7 +8,10 @@ import type { ReplyRequest, ReplyRichPart, ReplySendResult } from './reply-sende
 import { downloadInboundResource } from './inbound-attachment-downloader.js';
 import type { IdentitySession } from './identity-session.js';
 import { SYSTEM_FLUSH_CALLER } from './identity-session.js';
-import type { MemoryStore } from './memory/file.js';
+import {
+  MemoryCredentialMaterialError,
+  type MemoryStore,
+} from './memory/file.js';
 import {
   formatCronDateTime,
   jobTimezone,
@@ -220,7 +223,16 @@ async function executeSaveMemory(
   if (action.memory_type === 'profile') {
     const tier = action.tier ?? 'private';
     const mode = action.mode ?? 'append';
-    await deps.memoryStore.saveProfile(caller, action.content, tier, mode);
+    try {
+      await deps.memoryStore.saveProfile(caller, action.content, tier, mode);
+    } catch (err) {
+      if (!(err instanceof MemoryCredentialMaterialError)) throw err;
+      void audit('save_memory', caller, {
+        ...auditArgs,
+        blocked_classes: err.blockedClasses,
+      }, 'denied');
+      return { ok: false, action: 'save_memory', message: err.message };
+    }
     void audit('save_memory', caller, auditArgs, 'ok');
     return { ok: true, action: 'save_memory', message: `Saved ${tier} profile for ${caller} (mode: ${mode}).` };
   }
@@ -234,10 +246,19 @@ async function executeSaveMemory(
     };
   }
 
-  await deps.memoryStore.saveEpisode(action.memory_type, action.content, {
-    chatId: message.chatId,
-    threadId: message.threadId,
-  });
+  try {
+    await deps.memoryStore.saveEpisode(action.memory_type, action.content, {
+      chatId: message.chatId,
+      threadId: message.threadId,
+    });
+  } catch (err) {
+    if (!(err instanceof MemoryCredentialMaterialError)) throw err;
+    void audit('save_memory', caller, {
+      ...auditArgs,
+      blocked_classes: err.blockedClasses,
+    }, 'denied');
+    return { ok: false, action: 'save_memory', message: err.message };
+  }
   if (deps.profileDistiller) {
     void deps.profileDistiller
       .maybeDispatch({

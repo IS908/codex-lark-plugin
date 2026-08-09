@@ -15,9 +15,11 @@ import {
 } from "./chunks/chunk-H4O4G4QK.js";
 import {
   applyL1,
+  detectCredentialMaterial,
   extractL2PrivatePhrases,
+  filterCredentialMaterial,
   loadL2Rules
-} from "./chunks/chunk-WJGOBIRR.js";
+} from "./chunks/chunk-LEFLDLEG.js";
 import {
   appConfig
 } from "./chunks/chunk-IEHY4GE3.js";
@@ -33216,6 +33218,7 @@ function positiveInt2(value, fallback) {
 // src/codex-session-store.ts
 import fs2 from "node:fs/promises";
 import path2 from "node:path";
+var GROUP_MEMORY_VISIBILITY_POLICY = "group-public-v1";
 function buildCodexExecSessionKey(chatId, threadId) {
   return threadId ? `chat:${chatId}:thread:${threadId}` : `chat:${chatId}`;
 }
@@ -33516,6 +33519,12 @@ function capUtf8Text(text, maxBytes) {
 }
 
 // src/memory-enricher.ts
+async function auditProfileAccess(deps, record3) {
+  try {
+    await deps.auditProfileAccess?.(record3);
+  } catch {
+  }
+}
 async function enrichLarkMessageWithMemory(msg, deps) {
   const boundary = deps.conversationBoundary ?? null;
   const bufferedMessages = deps.conversationBuffer ? filterBufferedMessagesAfterBoundary(deps.conversationBuffer.getMessages(msg.chatId), boundary) : [];
@@ -33548,7 +33557,18 @@ async function enrichLarkMessageWithMemory(msg, deps) {
       searchQuery = `${context} ${msg.text}`;
     }
   }
-  const profile = await deps.memoryStore.getProfile(msg.senderId, msg.senderId).catch(() => null);
+  const profile = await deps.memoryStore.getProfile(msg.senderId, msg.senderId, {
+    includePrivate: msg.chatType === "p2p"
+  }).catch(() => null);
+  await auditProfileAccess(deps, {
+    messageId: msg.messageId,
+    chatId: msg.chatId,
+    chatType: msg.chatType,
+    requesterId: msg.senderId,
+    profileOwnerId: msg.senderId,
+    consultedTiers: msg.chatType === "p2p" ? ["public", "private"] : ["public"],
+    decision: msg.chatType === "p2p" ? "owner_private_chat" : "group_public_only"
+  });
   if (profile) {
     blocks.push({
       key: `profile:${msg.senderId}`,
@@ -33561,6 +33581,15 @@ async function enrichLarkMessageWithMemory(msg, deps) {
     for (const mention of msg.mentions) {
       if (mention.id && mention.id !== msg.senderId) {
         const mentionProfile = await deps.memoryStore.getProfile(mention.id, msg.senderId).catch(() => null);
+        await auditProfileAccess(deps, {
+          messageId: msg.messageId,
+          chatId: msg.chatId,
+          chatType: msg.chatType,
+          requesterId: msg.senderId,
+          profileOwnerId: mention.id,
+          consultedTiers: ["public"],
+          decision: "mentioned_user_public_only"
+        });
         if (mentionProfile) {
           blocks.push({
             key: `mentioned_profile:${mention.id}`,
@@ -33627,6 +33656,59 @@ async function enrichLarkMessageWithMemory(msg, deps) {
     msg.text,
     recentThreadContext
   );
+}
+
+// src/audit-log.ts
+async function audit(tool, caller, args, outcome) {
+  try {
+    let argsForLog;
+    try {
+      argsForLog = redact(args);
+      JSON.stringify(argsForLog);
+    } catch {
+      argsForLog = { serialization_error: "<unserializable>" };
+    }
+    const line = formatDiagnosticLine([
+      formatZonedDiagnosticTime(/* @__PURE__ */ new Date(), appConfig.cronTimezone),
+      inferAuditLogId(argsForLog),
+      "audit",
+      tool,
+      outcome,
+      caller ?? "-",
+      diagnosticRaw(formatDiagnosticPayload(argsForLog))
+    ]);
+    await appendRotatingLine(appConfig.auditLogPath, line, {
+      maxBytes: appConfig.logMaxBytes,
+      maxFiles: appConfig.logMaxFiles,
+      archiveRetentionMonths: appConfig.logArchiveRetentionMonths
+    });
+  } catch {
+  }
+}
+function inferAuditLogId(args) {
+  for (const key of ["job_id", "jobId", "message_id", "messageId", "reply_to", "fallback_message_id", "thread_id", "threadId", "chat_id", "chatId"]) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return "-";
+}
+function redact(args) {
+  const out = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (/(token|secret|password|authorization|cookie|api[_-]?key|credential)/i.test(k)) {
+      out[k] = "[redacted]";
+      continue;
+    }
+    if (typeof v === "string" && v.length > 80) {
+      const redacted = redactDiagnosticString(v);
+      out[k] = `${redacted.slice(0, 60)}... (${v.length} chars)`;
+    } else if (typeof v === "string") {
+      out[k] = redactDiagnosticString(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 // src/doc-comment-inbound.ts
@@ -34592,6 +34674,19 @@ ${parentBody}` : ""
       conversationBuffer: this.conversationBuffer,
       memoryDeduper: this.memoryDeduper,
       conversationBoundary,
+      auditProfileAccess: (record3) => audit(
+        "memory_profile_context",
+        record3.requesterId,
+        {
+          message_id: record3.messageId,
+          chat_id: record3.chatId,
+          chat_type: record3.chatType,
+          profile_owner_id: record3.profileOwnerId,
+          consulted_tiers: record3.consultedTiers,
+          decision: record3.decision
+        },
+        "ok"
+      ),
       log: debugLog
     });
     debugLog(`[channel] Memory enrichment complete for message ${messageId}`);
@@ -34713,61 +34808,6 @@ function sdkCommentReplyText(reply) {
 import { spawn as spawn2 } from "node:child_process";
 import fs3 from "node:fs/promises";
 import path4 from "node:path";
-
-// src/audit-log.ts
-async function audit(tool, caller, args, outcome) {
-  try {
-    let argsForLog;
-    try {
-      argsForLog = redact(args);
-      JSON.stringify(argsForLog);
-    } catch {
-      argsForLog = { serialization_error: "<unserializable>" };
-    }
-    const line = formatDiagnosticLine([
-      formatZonedDiagnosticTime(/* @__PURE__ */ new Date(), appConfig.cronTimezone),
-      inferAuditLogId(argsForLog),
-      "audit",
-      tool,
-      outcome,
-      caller ?? "-",
-      diagnosticRaw(formatDiagnosticPayload(argsForLog))
-    ]);
-    await appendRotatingLine(appConfig.auditLogPath, line, {
-      maxBytes: appConfig.logMaxBytes,
-      maxFiles: appConfig.logMaxFiles,
-      archiveRetentionMonths: appConfig.logArchiveRetentionMonths
-    });
-  } catch {
-  }
-}
-function inferAuditLogId(args) {
-  for (const key of ["job_id", "jobId", "message_id", "messageId", "reply_to", "fallback_message_id", "thread_id", "threadId", "chat_id", "chatId"]) {
-    const value = args[key];
-    if (typeof value === "string" && value.trim()) return value;
-  }
-  return "-";
-}
-function redact(args) {
-  const out = {};
-  for (const [k, v] of Object.entries(args)) {
-    if (/(token|secret|password|authorization|cookie|api[_-]?key|credential)/i.test(k)) {
-      out[k] = "[redacted]";
-      continue;
-    }
-    if (typeof v === "string" && v.length > 80) {
-      const redacted = redactDiagnosticString(v);
-      out[k] = `${redacted.slice(0, 60)}... (${v.length} chars)`;
-    } else if (typeof v === "string") {
-      out[k] = redactDiagnosticString(v);
-    } else {
-      out[k] = v;
-    }
-  }
-  return out;
-}
-
-// src/local-cli-tools.ts
 var LocalCliToolAbortedError = class extends Error {
   constructor() {
     super("Local CLI tool execution was aborted.");
@@ -37872,6 +37912,630 @@ function registerMessageMutationTools(ctx) {
   );
 }
 
+// src/memory/file.ts
+import fs7 from "node:fs/promises";
+import { existsSync } from "node:fs";
+import path8 from "node:path";
+
+// src/memory/profile-policy.ts
+import { createHash as createHash4 } from "node:crypto";
+function lineHash(text) {
+  return createHash4("sha1").update(text).digest("hex").slice(0, 8);
+}
+function normalizeProfileLine(line) {
+  return line.trim().replace(/^[-*]\s+/, "").toLowerCase();
+}
+function isL2Private(line, l2PrivatePhrases) {
+  if (l2PrivatePhrases.length === 0) return false;
+  const lower = line.toLowerCase();
+  return l2PrivatePhrases.some((phrase) => lower.includes(phrase));
+}
+function isDeterministicPrivate(line, l2PrivatePhrases) {
+  return applyL1(line) === "private" || isL2Private(line, l2PrivatePhrases);
+}
+function splitProfileContentByPrivacy(content, l2PrivatePhrases) {
+  const publicLines = [];
+  const privateLines = [];
+  for (const raw of content.split("\n")) {
+    if (!raw.trim()) {
+      publicLines.push(raw);
+      continue;
+    }
+    if (isDeterministicPrivate(raw, l2PrivatePhrases)) privateLines.push(raw);
+    else publicLines.push(raw);
+  }
+  return {
+    publicContent: publicLines.join("\n"),
+    privateContent: privateLines.join("\n")
+  };
+}
+function mergeProfileLines(existing, incoming, ctx) {
+  const existingLinesRaw = existing.split("\n").filter((l) => l.trim());
+  const existingKeys = new Set(existingLinesRaw.map(normalizeProfileLine));
+  const existingNormalized = existingLinesRaw.map(normalizeProfileLine);
+  const newLines = [];
+  for (const raw of incoming.split("\n")) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const key = normalizeProfileLine(trimmed);
+    if (existingKeys.has(key)) continue;
+    newLines.push(trimmed);
+    existingKeys.add(key);
+    for (const other of existingNormalized) {
+      if (key !== other && (key.startsWith(other) || other.startsWith(key))) {
+        const where = ctx?.userId && ctx?.tier ? ` in ${ctx.userId}/${ctx.tier}.md` : "";
+        console.error(
+          `[memory] Possible near-duplicate${where}: incoming "${trimmed}" resembles existing entry "${existingLinesRaw[existingNormalized.indexOf(other)]}"`
+        );
+        break;
+      }
+    }
+  }
+  if (newLines.length === 0) return existing;
+  const appended = newLines.map((l) => /^[-*]\s+/.test(l) ? l : `- ${l}`).join("\n");
+  const sep = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
+  return existing + sep + appended + "\n";
+}
+
+// src/memory/file.ts
+function capUtf8Bytes(content, maxBytes) {
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) return content;
+  const bytes = Buffer.byteLength(content, "utf8");
+  if (bytes <= maxBytes) return content;
+  const marker = `
+
+[truncated to ${maxBytes} bytes]
+`;
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  if (markerBytes >= maxBytes) return marker.slice(0, maxBytes);
+  const keepBytes = maxBytes - markerBytes;
+  let used = 0;
+  let prefix = "";
+  for (const char of content) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (used + charBytes > keepBytes) break;
+    prefix += char;
+    used += charBytes;
+  }
+  return prefix + marker;
+}
+function capEpisodeContent(content) {
+  return capUtf8Bytes(content, appConfig.maxEpisodeBytes);
+}
+var MemoryCredentialMaterialError = class extends Error {
+  constructor(blockedClasses) {
+    super("Memory content contains credential material and cannot be stored.");
+    this.blockedClasses = blockedClasses;
+    this.name = "MemoryCredentialMaterialError";
+  }
+  blockedClasses;
+};
+function assertNoCredentialMaterial(content) {
+  const blockedClasses = detectCredentialMaterial(content);
+  if (blockedClasses.length > 0) {
+    throw new MemoryCredentialMaterialError(blockedClasses);
+  }
+}
+var MemoryStore = class {
+  baseDir;
+  profileLocks = /* @__PURE__ */ new Map();
+  constructor(baseDir) {
+    this.baseDir = baseDir ?? appConfig.memoriesDir;
+  }
+  async healthCheck() {
+    return true;
+  }
+  // ── User Profile (tiered, v0.10.0+) ──
+  profileDir(userId) {
+    return path8.join(this.baseDir, "profiles", userId);
+  }
+  profileTierPath(userId, tier) {
+    return path8.join(this.profileDir(userId), `${tier}.md`);
+  }
+  legacyProfilePath(userId) {
+    return path8.join(this.baseDir, "profiles", `${userId}.md`);
+  }
+  async loadL2PrivatePhrases() {
+    return extractL2PrivatePhrases(await loadL2Rules()).map((p) => p.toLowerCase());
+  }
+  /**
+   * Migrate a pre-v0.10 single-file profile to the tiered layout, applying
+   * the L1 classifier line-by-line to split into public/private.
+   *
+   * Idempotent: runs at most once per user. Partial-failure safe: legacy file
+   * is deleted only after both target files are successfully written.
+   *
+   *  legacy: profiles/{userId}.md
+   *  target: profiles/{userId}/{public,private}.md
+   *
+   * See spec's "Migration" section for the trade-off discussion (approach B:
+   * deterministic L1 filter, no LLM dependency).
+   */
+  async withProfileLock(userId, fn) {
+    const previous = this.profileLocks.get(userId) ?? Promise.resolve();
+    let release;
+    const current = previous.catch(() => {
+    }).then(() => new Promise((resolve) => {
+      release = resolve;
+    }));
+    this.profileLocks.set(userId, current);
+    await previous.catch(() => {
+    });
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.profileLocks.get(userId) === current) {
+        this.profileLocks.delete(userId);
+      }
+    }
+  }
+  async migrateIfNeededUnlocked(userId) {
+    const legacy = this.legacyProfilePath(userId);
+    const dir = this.profileDir(userId);
+    if (!existsSync(legacy)) return;
+    if (existsSync(dir)) {
+      try {
+        await fs7.unlink(legacy);
+      } catch {
+      }
+      return;
+    }
+    const content = await fs7.readFile(legacy, "utf-8");
+    const l2Phrases = await this.loadL2PrivatePhrases();
+    const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
+    const publicCount = publicContent.split("\n").filter((line) => line.trim()).length;
+    const privateCount = privateContent.split("\n").filter((line) => line.trim()).length;
+    await fs7.mkdir(dir, { recursive: true });
+    await fs7.writeFile(this.profileTierPath(userId, "public"), publicContent, "utf-8");
+    if (privateContent.trim()) {
+      await fs7.writeFile(this.profileTierPath(userId, "private"), privateContent, "utf-8");
+    }
+    try {
+      await fs7.unlink(legacy);
+    } catch {
+    }
+    console.error(
+      `[migrate] profile ${userId}: ${publicCount} public, ${privateCount} private`
+    );
+  }
+  /**
+   * Load a user's profile, filtered by rendering visibility.
+   * - caller === ownerId and includePrivate !== false → return public + private tiers joined
+   * - caller !== ownerId → return public tier only
+   * - includePrivate === false → return public tier only, even for the owner
+   *
+   * Returns null if neither tier file has content.
+   *
+   * Output is the raw tier file bytes (bullets preserved). This is the
+   * representation the channel-side memory enricher feeds to Codex as
+   * conversational context. The display/edit representation in
+   * {@link listProfileLines} strips bullets — the two return formats are
+   * intentionally different, and their consumers are disjoint.
+   */
+  async getProfile(ownerId, caller, options = {}) {
+    return this.withProfileLock(ownerId, async () => {
+      await this.migrateIfNeededUnlocked(ownerId);
+      const readOpt = async (p) => {
+        if (!existsSync(p)) return "";
+        try {
+          return await fs7.readFile(p, "utf-8");
+        } catch {
+          return "";
+        }
+      };
+      const pub = filterCredentialMaterial(
+        await readOpt(this.profileTierPath(ownerId, "public"))
+      ).content.trim();
+      if (caller === ownerId && options.includePrivate !== false) {
+        const priv = filterCredentialMaterial(
+          await readOpt(this.profileTierPath(ownerId, "private"))
+        ).content.trim();
+        const joined = [pub, priv].filter(Boolean).join("\n\n");
+        return joined || null;
+      }
+      return pub || null;
+    });
+  }
+  /**
+   * Persist a profile tier. Creates the user directory if missing.
+   *
+   * Runs {@link migrateIfNeeded} first so that a save on an unmigrated user
+   * does not silently drop their legacy profile content. Without this call,
+   * the order save → read would see dir-exists-early-return in migration and
+   * throw away the legacy file without classifying it.
+   *
+   * Mode:
+   * - `'append'` (default, safe): read the existing tier, merge new lines
+   *   (exact-match deduped after `trim + strip-bullet + lowercase`), preserve
+   *   all original content. Used by one-off save_memory calls where `content`
+   *   is a single fact. Never destroys existing entries.
+   * - `'replace'`: overwrite the entire tier file. Reserved for the distiller
+   *   auto-flush path, which intentionally rewrites the full tier based on a
+   *   fresh read of recent history.
+   */
+  async saveProfile(userId, content, tier, mode = "append") {
+    assertNoCredentialMaterial(content);
+    await this.withProfileLock(userId, async () => {
+      await this.migrateIfNeededUnlocked(userId);
+      const dir = this.profileDir(userId);
+      await fs7.mkdir(dir, { recursive: true });
+      if (tier === "public") {
+        const l2Phrases = await this.loadL2PrivatePhrases();
+        const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
+        await this.writeProfileTierUnlocked(userId, "public", publicContent, mode, l2Phrases);
+        if (privateContent.trim()) {
+          await this.writeProfileTierUnlocked(userId, "private", privateContent, "append", l2Phrases);
+        }
+        return;
+      }
+      await this.writeProfileTierUnlocked(userId, tier, content, mode, await this.loadL2PrivatePhrases());
+    });
+  }
+  async writeProfileTierUnlocked(userId, tier, content, mode, l2PrivatePhrases) {
+    const filePath = this.profileTierPath(userId, tier);
+    if (mode === "replace") {
+      if (tier !== "private" || !existsSync(filePath)) {
+        await fs7.writeFile(filePath, content, "utf-8");
+        return;
+      }
+      const existing2 = await fs7.readFile(filePath, "utf-8");
+      const deterministicExisting = existing2.split("\n").filter((line) => line.trim() && isDeterministicPrivate(line, l2PrivatePhrases)).join("\n");
+      const next = deterministicExisting ? mergeProfileLines(content, deterministicExisting, { userId, tier }) : content;
+      await fs7.writeFile(filePath, next, "utf-8");
+      return;
+    }
+    const existing = existsSync(filePath) ? await fs7.readFile(filePath, "utf-8") : "";
+    const merged = mergeProfileLines(existing, content, { userId, tier });
+    if (merged === existing) return;
+    await fs7.writeFile(filePath, merged, "utf-8");
+  }
+  /**
+   * Return the lines of a profile tier as addressable items. Each line carries
+   * a short sha1-based hash that is stable per content — callers (e.g. the
+   * forget_memory tool) use the hash to identify a line without the file
+   * needing a durable row id.
+   *
+   * Blank lines are skipped. Leading/trailing whitespace is trimmed. A leading
+   * `-`/`*` bullet marker is also stripped so `text` (and the derived hash) is
+   * storage-format-independent — a fact saved as "foo" by the distiller and
+   * later merged via append as "- foo" shares one hash and renders identically
+   * in `what_do_you_know`.
+   */
+  async listProfileLines(ownerId, tier) {
+    return this.withProfileLock(ownerId, async () => {
+      await this.migrateIfNeededUnlocked(ownerId);
+      return this.listProfileLinesUnlocked(ownerId, tier);
+    });
+  }
+  async listProfileLinesUnlocked(ownerId, tier) {
+    const p = this.profileTierPath(ownerId, tier);
+    if (!existsSync(p)) return [];
+    const content = filterCredentialMaterial(await fs7.readFile(p, "utf-8")).content;
+    return content.split("\n").map((raw) => raw.trim().replace(/^[-*]\s+/, "")).filter(Boolean).map((text, index) => ({ index, hash: lineHash(text), text }));
+  }
+  /**
+   * Remove a single line (identified by its hash from {@link listProfileLines})
+   * from the given tier file. Returns true if a line was removed, false if
+   * nothing matched. Idempotent — removing the same hash twice returns false
+   * on the second call.
+   *
+   * The rewritten file is bullet-normalized: every remaining line is written
+   * back with a `- ` prefix so the tier stays visually consistent with the
+   * append-mode storage convention.
+   */
+  async removeProfileLine(ownerId, tier, hash) {
+    return this.withProfileLock(ownerId, async () => {
+      await this.migrateIfNeededUnlocked(ownerId);
+      const lines = await this.listProfileLinesUnlocked(ownerId, tier);
+      const kept = lines.filter((l) => l.hash !== hash);
+      if (kept.length === lines.length) return false;
+      const next = kept.map((l) => `- ${l.text}`).join("\n") + (kept.length > 0 ? "\n" : "");
+      await fs7.writeFile(this.profileTierPath(ownerId, tier), next, "utf-8");
+      return true;
+    });
+  }
+  // ── Episodes ──
+  async searchEpisodes(query, scope) {
+    if (!scope?.chatId) return [];
+    const dir = scope.threadId ? path8.join(this.baseDir, "episodes", scope.chatId, "threads", scope.threadId) : path8.join(this.baseDir, "episodes", scope.chatId);
+    try {
+      const files = await fs7.readdir(dir);
+      const mdFiles = files.filter((f) => f.endsWith(".md") && !f.startsWith("archive-"));
+      const keywords = this.extractKeywords(query);
+      const scored = [];
+      for (const file of mdFiles) {
+        const filePath = path8.join(dir, file);
+        const content = filterCredentialMaterial(
+          await fs7.readFile(filePath, "utf-8")
+        ).content;
+        if (!content.trim()) continue;
+        const stat2 = await fs7.stat(filePath);
+        const firstLines = content.split("\n").slice(0, 3).join(" ").toLowerCase();
+        const filenameLower = file.toLowerCase();
+        let keywordScore = 0;
+        for (const kw of keywords) {
+          if (firstLines.includes(kw) || filenameLower.includes(kw)) {
+            keywordScore++;
+          }
+        }
+        const ageMs = Date.now() - stat2.mtimeMs;
+        const ageDays = ageMs / (1e3 * 60 * 60 * 24);
+        const recencyScore = Math.max(0, 1 - ageDays / 30);
+        const totalScore = keywordScore + recencyScore;
+        scored.push({
+          episode: {
+            id: file,
+            content,
+            timestamp: stat2.mtime.toISOString(),
+            chatId: scope.chatId,
+            threadId: scope.threadId
+          },
+          score: totalScore
+        });
+      }
+      scored.sort((a, b) => b.score - a.score);
+      return scored.slice(0, appConfig.maxSearchResults).map((s) => ({
+        ...s.episode,
+        score: s.score
+      }));
+    } catch {
+      return [];
+    }
+  }
+  async saveEpisode(type, content, meta) {
+    assertNoCredentialMaterial(content);
+    const dir = type === "thread" && meta.threadId ? path8.join(this.baseDir, "episodes", meta.chatId, "threads", meta.threadId) : path8.join(this.baseDir, "episodes", meta.chatId);
+    await fs7.mkdir(dir, { recursive: true });
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+    let fileName = `${timestamp}.md`;
+    for (let i = 1; existsSync(path8.join(dir, fileName)); i++) {
+      fileName = `${timestamp}-${i}.md`;
+    }
+    await fs7.writeFile(path8.join(dir, fileName), capEpisodeContent(content), "utf-8");
+    await this.pruneEpisodeDir(dir, {
+      maxFilesPerScope: appConfig.maxEpisodeFilesPerScope,
+      maxBytesPerScope: appConfig.maxEpisodeScopeBytes
+    });
+  }
+  async listEpisodes(chatId, threadId) {
+    const dir = threadId ? path8.join(this.baseDir, "episodes", chatId, "threads", threadId) : path8.join(this.baseDir, "episodes", chatId);
+    try {
+      const files = await fs7.readdir(dir);
+      const episodes = [];
+      for (const file of files.filter((f) => f.endsWith(".md"))) {
+        const filePath = path8.join(dir, file);
+        const content = filterCredentialMaterial(
+          await fs7.readFile(filePath, "utf-8")
+        ).content;
+        if (!content.trim()) continue;
+        const stat2 = await fs7.stat(filePath);
+        episodes.push({
+          id: file,
+          content,
+          timestamp: stat2.mtime.toISOString(),
+          chatId,
+          ...threadId ? { threadId } : {}
+        });
+      }
+      episodes.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      return episodes;
+    } catch {
+      return [];
+    }
+  }
+  async deleteEpisodes(chatId, ids) {
+    const dir = path8.join(this.baseDir, "episodes", chatId);
+    for (const id of ids) {
+      try {
+        await fs7.unlink(path8.join(dir, id));
+      } catch {
+      }
+    }
+  }
+  async pruneEpisodes(options = {}) {
+    const episodesDir = path8.join(this.baseDir, "episodes");
+    const totals = { removedFiles: 0, removedBytes: 0 };
+    await this.walkEpisodeDirs(episodesDir, async (dir) => {
+      const result = await this.pruneEpisodeDir(dir, {
+        maxFilesPerScope: Number.isFinite(options.maxFilesPerScope) ? options.maxFilesPerScope : appConfig.maxEpisodeFilesPerScope,
+        maxBytesPerScope: Number.isFinite(options.maxBytesPerScope) ? options.maxBytesPerScope : appConfig.maxEpisodeScopeBytes
+      });
+      totals.removedFiles += result.removedFiles;
+      totals.removedBytes += result.removedBytes;
+    });
+    return totals;
+  }
+  async walkEpisodeDirs(dir, visit2) {
+    let entries;
+    try {
+      entries = await fs7.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    if (entries.some((entry) => entry.isFile() && entry.name.endsWith(".md"))) {
+      await visit2(dir);
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) await this.walkEpisodeDirs(path8.join(dir, entry.name), visit2);
+    }
+  }
+  async pruneEpisodeDir(dir, options) {
+    const maxFiles = Number.isFinite(options.maxFilesPerScope) ? Math.max(0, Math.floor(options.maxFilesPerScope)) : 0;
+    const maxBytes = Number.isFinite(options.maxBytesPerScope) ? Math.max(0, Math.floor(options.maxBytesPerScope)) : 0;
+    if (maxFiles <= 0 && maxBytes <= 0) return { removedFiles: 0, removedBytes: 0 };
+    const entries = await fs7.readdir(dir, { withFileTypes: true }).catch(() => []);
+    const files = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const filePath = path8.join(dir, entry.name);
+      try {
+        const s = await fs7.stat(filePath);
+        files.push({ path: filePath, mtimeMs: s.mtimeMs, size: s.size });
+      } catch {
+      }
+    }
+    files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    let keptCount = 0;
+    let keptBytes = 0;
+    const remove = [];
+    for (const file of files) {
+      const overCount = maxFiles > 0 && keptCount >= maxFiles;
+      const overBytes = maxBytes > 0 && keptBytes + file.size > maxBytes;
+      if (overCount || overBytes) {
+        remove.push(file);
+      } else {
+        keptCount++;
+        keptBytes += file.size;
+      }
+    }
+    let removedFiles = 0;
+    let removedBytes = 0;
+    for (const file of remove) {
+      try {
+        await fs7.unlink(file.path);
+        removedFiles++;
+        removedBytes += file.size;
+      } catch {
+      }
+    }
+    return { removedFiles, removedBytes };
+  }
+  // ── Skills ──
+  async searchSkills(query) {
+    const dir = path8.join(this.baseDir, "skills");
+    try {
+      const files = await fs7.readdir(dir);
+      const keywords = this.extractKeywords(query);
+      const results = [];
+      for (const file of files.filter((f) => f.endsWith(".md"))) {
+        const filePath = path8.join(dir, file);
+        const filtered = filterCredentialMaterial(await fs7.readFile(filePath, "utf-8"));
+        if (filtered.blockedClasses.length > 0) continue;
+        const content = filtered.content;
+        const lines = content.split("\n");
+        const name = (lines[0] ?? "").replace(/^#\s*/, "").trim();
+        const description = (lines[1] ?? "").trim();
+        let score = 0;
+        const searchText = `${name} ${description} ${file}`.toLowerCase();
+        for (const kw of keywords) {
+          if (searchText.includes(kw)) score++;
+        }
+        if (score > 0) {
+          results.push({ skill: { name, description, content }, score });
+        }
+      }
+      results.sort((a, b) => b.score - a.score);
+      return results.slice(0, appConfig.maxSearchResults).map((r) => ({
+        ...r.skill,
+        score: r.score
+      }));
+    } catch {
+      return [];
+    }
+  }
+  async saveSkill(name, description, content) {
+    assertNoCredentialMaterial(`${name}
+${description}
+${content}`);
+    const dir = path8.join(this.baseDir, "skills");
+    await fs7.mkdir(dir, { recursive: true });
+    const fileName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".md";
+    const fileContent = `# ${name}
+${description}
+
+${content}`;
+    await fs7.writeFile(path8.join(dir, fileName), fileContent, "utf-8");
+  }
+  // ── Helpers ──
+  extractKeywords(query) {
+    const stopWords = /* @__PURE__ */ new Set([
+      "the",
+      "a",
+      "an",
+      "is",
+      "are",
+      "was",
+      "were",
+      "be",
+      "been",
+      "being",
+      "have",
+      "has",
+      "had",
+      "do",
+      "does",
+      "did",
+      "will",
+      "would",
+      "could",
+      "should",
+      "may",
+      "might",
+      "can",
+      "shall",
+      "to",
+      "of",
+      "in",
+      "for",
+      "on",
+      "with",
+      "at",
+      "by",
+      "from",
+      "as",
+      "into",
+      "about",
+      "it",
+      "its",
+      "this",
+      "that",
+      "these",
+      "those",
+      "i",
+      "me",
+      "my",
+      "we",
+      "our",
+      "you",
+      "your",
+      "he",
+      "she",
+      "they",
+      "them",
+      "and",
+      "or",
+      "but",
+      "not",
+      "no",
+      "\u7684",
+      "\u4E86",
+      "\u5728",
+      "\u662F",
+      "\u6211",
+      "\u6709",
+      "\u548C",
+      "\u5C31",
+      "\u4E0D",
+      "\u4EBA",
+      "\u90FD",
+      "\u4E00",
+      "\u4E0A",
+      "\u4E5F",
+      "\u4ED6",
+      "\u5979",
+      "\u4EEC",
+      "\u8FD9",
+      "\u90A3",
+      "\u4F60",
+      "\u5417",
+      "\u4EC0\u4E48",
+      "\u600E\u4E48"
+    ]);
+    return query.toLowerCase().split(/[\s,;.!?，。！？、；：]+/).filter((w) => w.length > 1 && !stopWords.has(w));
+  }
+};
+
 // src/tools/memory.ts
 function registerMemoryTools(ctx) {
   const { server, memoryStore, resolveCaller, triggerProfileDistillation } = ctx;
@@ -37917,7 +38581,19 @@ function registerMemoryTools(ctx) {
       if (type === "profile") {
         const effectiveTier = tier ?? "private";
         const effectiveMode = mode ?? "append";
-        await memoryStore.saveProfile(caller, content, effectiveTier, effectiveMode);
+        try {
+          await memoryStore.saveProfile(caller, content, effectiveTier, effectiveMode);
+        } catch (err) {
+          if (!(err instanceof MemoryCredentialMaterialError)) throw err;
+          void audit("save_memory", caller, {
+            ...auditArgs,
+            blocked_classes: err.blockedClasses
+          }, "denied");
+          return {
+            content: [{ type: "text", text: err.message }],
+            isError: true
+          };
+        }
         void audit("save_memory", caller, auditArgs, "ok");
         return {
           content: [
@@ -37937,10 +38613,22 @@ function registerMemoryTools(ctx) {
           isError: true
         };
       }
-      await memoryStore.saveEpisode(type, content, {
-        chatId: chat_id,
-        threadId: thread_id
-      });
+      try {
+        await memoryStore.saveEpisode(type, content, {
+          chatId: chat_id,
+          threadId: thread_id
+        });
+      } catch (err) {
+        if (!(err instanceof MemoryCredentialMaterialError)) throw err;
+        void audit("save_memory", caller, {
+          ...auditArgs,
+          blocked_classes: err.blockedClasses
+        }, "denied");
+        return {
+          content: [{ type: "text", text: err.message }],
+          isError: true
+        };
+      }
       triggerProfileDistillation(caller, chat_id, thread_id);
       void audit("save_memory", caller, auditArgs, "ok");
       return {
@@ -37981,6 +38669,16 @@ function registerMemoryTools(ctx) {
         await memoryStore.saveSkill(name, description, content);
         void audit("save_skill", caller, auditArgs, "ok");
       } catch (err) {
+        if (err instanceof MemoryCredentialMaterialError) {
+          void audit("save_skill", caller, {
+            ...auditArgs,
+            blocked_classes: err.blockedClasses
+          }, "denied");
+          return {
+            content: [{ type: "text", text: err.message }],
+            isError: true
+          };
+        }
         void audit("save_skill", caller, auditArgs, "error");
         return {
           content: [{ type: "text", text: `Failed to save skill "${name}": ${err?.message ?? String(err)}` }],
@@ -37996,8 +38694,8 @@ function registerMemoryTools(ctx) {
 
 // src/job-store.ts
 var import_cron_parser = __toESM(require_dist2(), 1);
-import fs7 from "node:fs/promises";
-import path8 from "node:path";
+import fs8 from "node:fs/promises";
+import path9 from "node:path";
 
 // src/job-timezone.ts
 function normalizeJobTimezone(input) {
@@ -38164,14 +38862,14 @@ function formatCronDateTime(isoTimestamp2, timezone = appConfig.cronTimezone, em
 }
 async function ensureJobsDir() {
   const dir = appConfig.jobsDir;
-  await fs7.mkdir(dir, { recursive: true });
+  await fs8.mkdir(dir, { recursive: true });
   return dir;
 }
 function jobPath(id) {
-  return path8.join(appConfig.jobsDir, `${id}.json`);
+  return path9.join(appConfig.jobsDir, `${id}.json`);
 }
 function canonicalJobIdFromFile(file) {
-  return path8.basename(file, ".json");
+  return path9.basename(file, ".json");
 }
 var jobWriteQueues = /* @__PURE__ */ new Map();
 async function withJobWriteQueue(id, fn) {
@@ -38234,7 +38932,7 @@ async function readJob(id) {
 }
 async function readJobUnlocked(id) {
   try {
-    const data = await fs7.readFile(jobPath(id), "utf-8");
+    const data = await fs8.readFile(jobPath(id), "utf-8");
     return applyCanonicalJobId(backfillJob(JSON.parse(data)), id, `${id}.json`);
   } catch {
     return null;
@@ -38246,7 +38944,7 @@ async function writeJob(job) {
 async function writeJobUnlocked(job) {
   await ensureJobsDir();
   if (!Number.isSafeInteger(job.meta.revision) || job.meta.revision < 1) job.meta.revision = 1;
-  await fs7.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), "utf-8");
+  await fs8.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), "utf-8");
 }
 async function mutateJob(id, mutate) {
   return withJobWriteQueue(id, async () => {
@@ -38284,7 +38982,7 @@ function jobDefinitionSnapshot(meta) {
 async function deleteJob(id) {
   return withJobWriteQueue(id, async () => {
     try {
-      await fs7.unlink(jobPath(id));
+      await fs8.unlink(jobPath(id));
       return true;
     } catch {
       return false;
@@ -38295,7 +38993,7 @@ async function listAllJobs() {
   const dir = appConfig.jobsDir;
   let files;
   try {
-    files = await fs7.readdir(dir);
+    files = await fs8.readdir(dir);
   } catch {
     return [];
   }
@@ -38303,7 +39001,7 @@ async function listAllJobs() {
   const results = await Promise.all(
     jsonFiles.map(async (file) => {
       try {
-        const data = await fs7.readFile(path8.join(dir, file), "utf-8");
+        const data = await fs8.readFile(path9.join(dir, file), "utf-8");
         const id = canonicalJobIdFromFile(file);
         return applyCanonicalJobId(backfillJob(JSON.parse(data)), id, file);
       } catch (err) {
@@ -38321,7 +39019,7 @@ async function listAllJobs() {
 }
 async function jobExists(id) {
   try {
-    await fs7.access(jobPath(id));
+    await fs8.access(jobPath(id));
     return true;
   } catch {
     return false;
@@ -38924,7 +39622,7 @@ ${parts.join("\n\n")}${footer}`
       let tail = "";
       if (promote_to_rule) {
         try {
-          const { addL2Rule } = await import("./chunks/privacy-rules-C6XXOFN6.js");
+          const { addL2Rule } = await import("./chunks/privacy-rules-JJVUPFYQ.js");
           await addL2Rule(target.text, "Always private");
           tail = ' Also appended to privacy-rules.md under "Always private" \u2014 future distillations will classify similar content accordingly.';
         } catch (err) {
@@ -39052,8 +39750,8 @@ function registerTools(server, client, memoryStore, identitySession, channel, co
 }
 
 // src/memory/buffer.ts
-import fs8 from "node:fs/promises";
-import path9 from "node:path";
+import fs9 from "node:fs/promises";
+import path10 from "node:path";
 var ConversationBuffer = class {
   buffers = /* @__PURE__ */ new Map();
   timers = /* @__PURE__ */ new Map();
@@ -39116,21 +39814,21 @@ var ConversationBuffer = class {
    * If a chat's most recent episode is older than LARK_INACTIVITY_HOURS, trigger flush.
    */
   async rearmFromDisk() {
-    const episodesDir = path9.join(appConfig.memoriesDir, "episodes");
+    const episodesDir = path10.join(appConfig.memoriesDir, "episodes");
     try {
-      const chatDirs = await fs8.readdir(episodesDir);
+      const chatDirs = await fs9.readdir(episodesDir);
       const thresholdMs = appConfig.inactivityHours * 60 * 60 * 1e3;
       const now = Date.now();
       for (const chatId of chatDirs) {
-        const chatDir = path9.join(episodesDir, chatId);
-        const stat2 = await fs8.stat(chatDir);
+        const chatDir = path10.join(episodesDir, chatId);
+        const stat2 = await fs9.stat(chatDir);
         if (!stat2.isDirectory()) continue;
-        const files = await fs8.readdir(chatDir);
+        const files = await fs9.readdir(chatDir);
         const mdFiles = files.filter((f) => f.endsWith(".md"));
         if (mdFiles.length === 0) continue;
         let latestMs = 0;
         for (const f of mdFiles) {
-          const fStat = await fs8.stat(path9.join(chatDir, f));
+          const fStat = await fs9.stat(path10.join(chatDir, f));
           if (fStat.mtimeMs > latestMs) latestMs = fStat.mtimeMs;
         }
         if (now - latestMs < thresholdMs * 2) {
@@ -39180,598 +39878,6 @@ var ConversationBuffer = class {
     }
     this.buffers.set(chatId, remaining);
     this.resetTimer(chatId);
-  }
-};
-
-// src/memory/file.ts
-import fs9 from "node:fs/promises";
-import { existsSync } from "node:fs";
-import path10 from "node:path";
-
-// src/memory/profile-policy.ts
-import { createHash as createHash4 } from "node:crypto";
-function lineHash(text) {
-  return createHash4("sha1").update(text).digest("hex").slice(0, 8);
-}
-function normalizeProfileLine(line) {
-  return line.trim().replace(/^[-*]\s+/, "").toLowerCase();
-}
-function isL2Private(line, l2PrivatePhrases) {
-  if (l2PrivatePhrases.length === 0) return false;
-  const lower = line.toLowerCase();
-  return l2PrivatePhrases.some((phrase) => lower.includes(phrase));
-}
-function isDeterministicPrivate(line, l2PrivatePhrases) {
-  return applyL1(line) === "private" || isL2Private(line, l2PrivatePhrases);
-}
-function splitProfileContentByPrivacy(content, l2PrivatePhrases) {
-  const publicLines = [];
-  const privateLines = [];
-  for (const raw of content.split("\n")) {
-    if (!raw.trim()) {
-      publicLines.push(raw);
-      continue;
-    }
-    if (isDeterministicPrivate(raw, l2PrivatePhrases)) privateLines.push(raw);
-    else publicLines.push(raw);
-  }
-  return {
-    publicContent: publicLines.join("\n"),
-    privateContent: privateLines.join("\n")
-  };
-}
-function mergeProfileLines(existing, incoming, ctx) {
-  const existingLinesRaw = existing.split("\n").filter((l) => l.trim());
-  const existingKeys = new Set(existingLinesRaw.map(normalizeProfileLine));
-  const existingNormalized = existingLinesRaw.map(normalizeProfileLine);
-  const newLines = [];
-  for (const raw of incoming.split("\n")) {
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-    const key = normalizeProfileLine(trimmed);
-    if (existingKeys.has(key)) continue;
-    newLines.push(trimmed);
-    existingKeys.add(key);
-    for (const other of existingNormalized) {
-      if (key !== other && (key.startsWith(other) || other.startsWith(key))) {
-        const where = ctx?.userId && ctx?.tier ? ` in ${ctx.userId}/${ctx.tier}.md` : "";
-        console.error(
-          `[memory] Possible near-duplicate${where}: incoming "${trimmed}" resembles existing entry "${existingLinesRaw[existingNormalized.indexOf(other)]}"`
-        );
-        break;
-      }
-    }
-  }
-  if (newLines.length === 0) return existing;
-  const appended = newLines.map((l) => /^[-*]\s+/.test(l) ? l : `- ${l}`).join("\n");
-  const sep = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-  return existing + sep + appended + "\n";
-}
-
-// src/memory/file.ts
-function capUtf8Bytes(content, maxBytes) {
-  if (!Number.isFinite(maxBytes) || maxBytes <= 0) return content;
-  const bytes = Buffer.byteLength(content, "utf8");
-  if (bytes <= maxBytes) return content;
-  const marker = `
-
-[truncated to ${maxBytes} bytes]
-`;
-  const markerBytes = Buffer.byteLength(marker, "utf8");
-  if (markerBytes >= maxBytes) return marker.slice(0, maxBytes);
-  const keepBytes = maxBytes - markerBytes;
-  let used = 0;
-  let prefix = "";
-  for (const char of content) {
-    const charBytes = Buffer.byteLength(char, "utf8");
-    if (used + charBytes > keepBytes) break;
-    prefix += char;
-    used += charBytes;
-  }
-  return prefix + marker;
-}
-function capEpisodeContent(content) {
-  return capUtf8Bytes(content, appConfig.maxEpisodeBytes);
-}
-var MemoryStore = class {
-  baseDir;
-  profileLocks = /* @__PURE__ */ new Map();
-  constructor(baseDir) {
-    this.baseDir = baseDir ?? appConfig.memoriesDir;
-  }
-  async healthCheck() {
-    return true;
-  }
-  // ── User Profile (tiered, v0.10.0+) ──
-  profileDir(userId) {
-    return path10.join(this.baseDir, "profiles", userId);
-  }
-  profileTierPath(userId, tier) {
-    return path10.join(this.profileDir(userId), `${tier}.md`);
-  }
-  legacyProfilePath(userId) {
-    return path10.join(this.baseDir, "profiles", `${userId}.md`);
-  }
-  async loadL2PrivatePhrases() {
-    return extractL2PrivatePhrases(await loadL2Rules()).map((p) => p.toLowerCase());
-  }
-  /**
-   * Migrate a pre-v0.10 single-file profile to the tiered layout, applying
-   * the L1 classifier line-by-line to split into public/private.
-   *
-   * Idempotent: runs at most once per user. Partial-failure safe: legacy file
-   * is deleted only after both target files are successfully written.
-   *
-   *  legacy: profiles/{userId}.md
-   *  target: profiles/{userId}/{public,private}.md
-   *
-   * See spec's "Migration" section for the trade-off discussion (approach B:
-   * deterministic L1 filter, no LLM dependency).
-   */
-  async withProfileLock(userId, fn) {
-    const previous = this.profileLocks.get(userId) ?? Promise.resolve();
-    let release;
-    const current = previous.catch(() => {
-    }).then(() => new Promise((resolve) => {
-      release = resolve;
-    }));
-    this.profileLocks.set(userId, current);
-    await previous.catch(() => {
-    });
-    try {
-      return await fn();
-    } finally {
-      release();
-      if (this.profileLocks.get(userId) === current) {
-        this.profileLocks.delete(userId);
-      }
-    }
-  }
-  async migrateIfNeededUnlocked(userId) {
-    const legacy = this.legacyProfilePath(userId);
-    const dir = this.profileDir(userId);
-    if (!existsSync(legacy)) return;
-    if (existsSync(dir)) {
-      try {
-        await fs9.unlink(legacy);
-      } catch {
-      }
-      return;
-    }
-    const content = await fs9.readFile(legacy, "utf-8");
-    const l2Phrases = await this.loadL2PrivatePhrases();
-    const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
-    const publicCount = publicContent.split("\n").filter((line) => line.trim()).length;
-    const privateCount = privateContent.split("\n").filter((line) => line.trim()).length;
-    await fs9.mkdir(dir, { recursive: true });
-    await fs9.writeFile(this.profileTierPath(userId, "public"), publicContent, "utf-8");
-    if (privateContent.trim()) {
-      await fs9.writeFile(this.profileTierPath(userId, "private"), privateContent, "utf-8");
-    }
-    try {
-      await fs9.unlink(legacy);
-    } catch {
-    }
-    console.error(
-      `[migrate] profile ${userId}: ${publicCount} public, ${privateCount} private`
-    );
-  }
-  /**
-   * Load a user's profile, filtered by rendering visibility.
-   * - caller === ownerId → return public + private tiers joined
-   * - caller !== ownerId → return public tier only
-   *
-   * Returns null if neither tier file has content.
-   *
-   * Output is the raw tier file bytes (bullets preserved). This is the
-   * representation the channel-side memory enricher feeds to Codex as
-   * conversational context. The display/edit representation in
-   * {@link listProfileLines} strips bullets — the two return formats are
-   * intentionally different, and their consumers are disjoint.
-   */
-  async getProfile(ownerId, caller) {
-    return this.withProfileLock(ownerId, async () => {
-      await this.migrateIfNeededUnlocked(ownerId);
-      const readOpt = async (p) => {
-        if (!existsSync(p)) return "";
-        try {
-          return await fs9.readFile(p, "utf-8");
-        } catch {
-          return "";
-        }
-      };
-      const pub = (await readOpt(this.profileTierPath(ownerId, "public"))).trim();
-      if (caller === ownerId) {
-        const priv = (await readOpt(this.profileTierPath(ownerId, "private"))).trim();
-        const joined = [pub, priv].filter(Boolean).join("\n\n");
-        return joined || null;
-      }
-      return pub || null;
-    });
-  }
-  /**
-   * Persist a profile tier. Creates the user directory if missing.
-   *
-   * Runs {@link migrateIfNeeded} first so that a save on an unmigrated user
-   * does not silently drop their legacy profile content. Without this call,
-   * the order save → read would see dir-exists-early-return in migration and
-   * throw away the legacy file without classifying it.
-   *
-   * Mode:
-   * - `'append'` (default, safe): read the existing tier, merge new lines
-   *   (exact-match deduped after `trim + strip-bullet + lowercase`), preserve
-   *   all original content. Used by one-off save_memory calls where `content`
-   *   is a single fact. Never destroys existing entries.
-   * - `'replace'`: overwrite the entire tier file. Reserved for the distiller
-   *   auto-flush path, which intentionally rewrites the full tier based on a
-   *   fresh read of recent history.
-   */
-  async saveProfile(userId, content, tier, mode = "append") {
-    await this.withProfileLock(userId, async () => {
-      await this.migrateIfNeededUnlocked(userId);
-      const dir = this.profileDir(userId);
-      await fs9.mkdir(dir, { recursive: true });
-      if (tier === "public") {
-        const l2Phrases = await this.loadL2PrivatePhrases();
-        const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
-        await this.writeProfileTierUnlocked(userId, "public", publicContent, mode, l2Phrases);
-        if (privateContent.trim()) {
-          await this.writeProfileTierUnlocked(userId, "private", privateContent, "append", l2Phrases);
-        }
-        return;
-      }
-      await this.writeProfileTierUnlocked(userId, tier, content, mode, await this.loadL2PrivatePhrases());
-    });
-  }
-  async writeProfileTierUnlocked(userId, tier, content, mode, l2PrivatePhrases) {
-    const filePath = this.profileTierPath(userId, tier);
-    if (mode === "replace") {
-      if (tier !== "private" || !existsSync(filePath)) {
-        await fs9.writeFile(filePath, content, "utf-8");
-        return;
-      }
-      const existing2 = await fs9.readFile(filePath, "utf-8");
-      const deterministicExisting = existing2.split("\n").filter((line) => line.trim() && isDeterministicPrivate(line, l2PrivatePhrases)).join("\n");
-      const next = deterministicExisting ? mergeProfileLines(content, deterministicExisting, { userId, tier }) : content;
-      await fs9.writeFile(filePath, next, "utf-8");
-      return;
-    }
-    const existing = existsSync(filePath) ? await fs9.readFile(filePath, "utf-8") : "";
-    const merged = mergeProfileLines(existing, content, { userId, tier });
-    if (merged === existing) return;
-    await fs9.writeFile(filePath, merged, "utf-8");
-  }
-  /**
-   * Return the lines of a profile tier as addressable items. Each line carries
-   * a short sha1-based hash that is stable per content — callers (e.g. the
-   * forget_memory tool) use the hash to identify a line without the file
-   * needing a durable row id.
-   *
-   * Blank lines are skipped. Leading/trailing whitespace is trimmed. A leading
-   * `-`/`*` bullet marker is also stripped so `text` (and the derived hash) is
-   * storage-format-independent — a fact saved as "foo" by the distiller and
-   * later merged via append as "- foo" shares one hash and renders identically
-   * in `what_do_you_know`.
-   */
-  async listProfileLines(ownerId, tier) {
-    return this.withProfileLock(ownerId, async () => {
-      await this.migrateIfNeededUnlocked(ownerId);
-      return this.listProfileLinesUnlocked(ownerId, tier);
-    });
-  }
-  async listProfileLinesUnlocked(ownerId, tier) {
-    const p = this.profileTierPath(ownerId, tier);
-    if (!existsSync(p)) return [];
-    const content = await fs9.readFile(p, "utf-8");
-    return content.split("\n").map((raw) => raw.trim().replace(/^[-*]\s+/, "")).filter(Boolean).map((text, index) => ({ index, hash: lineHash(text), text }));
-  }
-  /**
-   * Remove a single line (identified by its hash from {@link listProfileLines})
-   * from the given tier file. Returns true if a line was removed, false if
-   * nothing matched. Idempotent — removing the same hash twice returns false
-   * on the second call.
-   *
-   * The rewritten file is bullet-normalized: every remaining line is written
-   * back with a `- ` prefix so the tier stays visually consistent with the
-   * append-mode storage convention.
-   */
-  async removeProfileLine(ownerId, tier, hash) {
-    return this.withProfileLock(ownerId, async () => {
-      await this.migrateIfNeededUnlocked(ownerId);
-      const lines = await this.listProfileLinesUnlocked(ownerId, tier);
-      const kept = lines.filter((l) => l.hash !== hash);
-      if (kept.length === lines.length) return false;
-      const next = kept.map((l) => `- ${l.text}`).join("\n") + (kept.length > 0 ? "\n" : "");
-      await fs9.writeFile(this.profileTierPath(ownerId, tier), next, "utf-8");
-      return true;
-    });
-  }
-  // ── Episodes ──
-  async searchEpisodes(query, scope) {
-    if (!scope?.chatId) return [];
-    const dir = scope.threadId ? path10.join(this.baseDir, "episodes", scope.chatId, "threads", scope.threadId) : path10.join(this.baseDir, "episodes", scope.chatId);
-    try {
-      const files = await fs9.readdir(dir);
-      const mdFiles = files.filter((f) => f.endsWith(".md") && !f.startsWith("archive-"));
-      const keywords = this.extractKeywords(query);
-      const scored = [];
-      for (const file of mdFiles) {
-        const filePath = path10.join(dir, file);
-        const content = await fs9.readFile(filePath, "utf-8");
-        const stat2 = await fs9.stat(filePath);
-        const firstLines = content.split("\n").slice(0, 3).join(" ").toLowerCase();
-        const filenameLower = file.toLowerCase();
-        let keywordScore = 0;
-        for (const kw of keywords) {
-          if (firstLines.includes(kw) || filenameLower.includes(kw)) {
-            keywordScore++;
-          }
-        }
-        const ageMs = Date.now() - stat2.mtimeMs;
-        const ageDays = ageMs / (1e3 * 60 * 60 * 24);
-        const recencyScore = Math.max(0, 1 - ageDays / 30);
-        const totalScore = keywordScore + recencyScore;
-        scored.push({
-          episode: {
-            id: file,
-            content,
-            timestamp: stat2.mtime.toISOString(),
-            chatId: scope.chatId,
-            threadId: scope.threadId
-          },
-          score: totalScore
-        });
-      }
-      scored.sort((a, b) => b.score - a.score);
-      return scored.slice(0, appConfig.maxSearchResults).map((s) => ({
-        ...s.episode,
-        score: s.score
-      }));
-    } catch {
-      return [];
-    }
-  }
-  async saveEpisode(type, content, meta) {
-    const dir = type === "thread" && meta.threadId ? path10.join(this.baseDir, "episodes", meta.chatId, "threads", meta.threadId) : path10.join(this.baseDir, "episodes", meta.chatId);
-    await fs9.mkdir(dir, { recursive: true });
-    const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-    let fileName = `${timestamp}.md`;
-    for (let i = 1; existsSync(path10.join(dir, fileName)); i++) {
-      fileName = `${timestamp}-${i}.md`;
-    }
-    await fs9.writeFile(path10.join(dir, fileName), capEpisodeContent(content), "utf-8");
-    await this.pruneEpisodeDir(dir, {
-      maxFilesPerScope: appConfig.maxEpisodeFilesPerScope,
-      maxBytesPerScope: appConfig.maxEpisodeScopeBytes
-    });
-  }
-  async listEpisodes(chatId, threadId) {
-    const dir = threadId ? path10.join(this.baseDir, "episodes", chatId, "threads", threadId) : path10.join(this.baseDir, "episodes", chatId);
-    try {
-      const files = await fs9.readdir(dir);
-      const episodes = [];
-      for (const file of files.filter((f) => f.endsWith(".md"))) {
-        const filePath = path10.join(dir, file);
-        const content = await fs9.readFile(filePath, "utf-8");
-        const stat2 = await fs9.stat(filePath);
-        episodes.push({
-          id: file,
-          content,
-          timestamp: stat2.mtime.toISOString(),
-          chatId,
-          ...threadId ? { threadId } : {}
-        });
-      }
-      episodes.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      return episodes;
-    } catch {
-      return [];
-    }
-  }
-  async deleteEpisodes(chatId, ids) {
-    const dir = path10.join(this.baseDir, "episodes", chatId);
-    for (const id of ids) {
-      try {
-        await fs9.unlink(path10.join(dir, id));
-      } catch {
-      }
-    }
-  }
-  async pruneEpisodes(options = {}) {
-    const episodesDir = path10.join(this.baseDir, "episodes");
-    const totals = { removedFiles: 0, removedBytes: 0 };
-    await this.walkEpisodeDirs(episodesDir, async (dir) => {
-      const result = await this.pruneEpisodeDir(dir, {
-        maxFilesPerScope: Number.isFinite(options.maxFilesPerScope) ? options.maxFilesPerScope : appConfig.maxEpisodeFilesPerScope,
-        maxBytesPerScope: Number.isFinite(options.maxBytesPerScope) ? options.maxBytesPerScope : appConfig.maxEpisodeScopeBytes
-      });
-      totals.removedFiles += result.removedFiles;
-      totals.removedBytes += result.removedBytes;
-    });
-    return totals;
-  }
-  async walkEpisodeDirs(dir, visit2) {
-    let entries;
-    try {
-      entries = await fs9.readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    if (entries.some((entry) => entry.isFile() && entry.name.endsWith(".md"))) {
-      await visit2(dir);
-    }
-    for (const entry of entries) {
-      if (entry.isDirectory()) await this.walkEpisodeDirs(path10.join(dir, entry.name), visit2);
-    }
-  }
-  async pruneEpisodeDir(dir, options) {
-    const maxFiles = Number.isFinite(options.maxFilesPerScope) ? Math.max(0, Math.floor(options.maxFilesPerScope)) : 0;
-    const maxBytes = Number.isFinite(options.maxBytesPerScope) ? Math.max(0, Math.floor(options.maxBytesPerScope)) : 0;
-    if (maxFiles <= 0 && maxBytes <= 0) return { removedFiles: 0, removedBytes: 0 };
-    const entries = await fs9.readdir(dir, { withFileTypes: true }).catch(() => []);
-    const files = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      const filePath = path10.join(dir, entry.name);
-      try {
-        const s = await fs9.stat(filePath);
-        files.push({ path: filePath, mtimeMs: s.mtimeMs, size: s.size });
-      } catch {
-      }
-    }
-    files.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    let keptCount = 0;
-    let keptBytes = 0;
-    const remove = [];
-    for (const file of files) {
-      const overCount = maxFiles > 0 && keptCount >= maxFiles;
-      const overBytes = maxBytes > 0 && keptBytes + file.size > maxBytes;
-      if (overCount || overBytes) {
-        remove.push(file);
-      } else {
-        keptCount++;
-        keptBytes += file.size;
-      }
-    }
-    let removedFiles = 0;
-    let removedBytes = 0;
-    for (const file of remove) {
-      try {
-        await fs9.unlink(file.path);
-        removedFiles++;
-        removedBytes += file.size;
-      } catch {
-      }
-    }
-    return { removedFiles, removedBytes };
-  }
-  // ── Skills ──
-  async searchSkills(query) {
-    const dir = path10.join(this.baseDir, "skills");
-    try {
-      const files = await fs9.readdir(dir);
-      const keywords = this.extractKeywords(query);
-      const results = [];
-      for (const file of files.filter((f) => f.endsWith(".md"))) {
-        const filePath = path10.join(dir, file);
-        const content = await fs9.readFile(filePath, "utf-8");
-        const lines = content.split("\n");
-        const name = (lines[0] ?? "").replace(/^#\s*/, "").trim();
-        const description = (lines[1] ?? "").trim();
-        let score = 0;
-        const searchText = `${name} ${description} ${file}`.toLowerCase();
-        for (const kw of keywords) {
-          if (searchText.includes(kw)) score++;
-        }
-        if (score > 0) {
-          results.push({ skill: { name, description, content }, score });
-        }
-      }
-      results.sort((a, b) => b.score - a.score);
-      return results.slice(0, appConfig.maxSearchResults).map((r) => ({
-        ...r.skill,
-        score: r.score
-      }));
-    } catch {
-      return [];
-    }
-  }
-  async saveSkill(name, description, content) {
-    const dir = path10.join(this.baseDir, "skills");
-    await fs9.mkdir(dir, { recursive: true });
-    const fileName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".md";
-    const fileContent = `# ${name}
-${description}
-
-${content}`;
-    await fs9.writeFile(path10.join(dir, fileName), fileContent, "utf-8");
-  }
-  // ── Helpers ──
-  extractKeywords(query) {
-    const stopWords = /* @__PURE__ */ new Set([
-      "the",
-      "a",
-      "an",
-      "is",
-      "are",
-      "was",
-      "were",
-      "be",
-      "been",
-      "being",
-      "have",
-      "has",
-      "had",
-      "do",
-      "does",
-      "did",
-      "will",
-      "would",
-      "could",
-      "should",
-      "may",
-      "might",
-      "can",
-      "shall",
-      "to",
-      "of",
-      "in",
-      "for",
-      "on",
-      "with",
-      "at",
-      "by",
-      "from",
-      "as",
-      "into",
-      "about",
-      "it",
-      "its",
-      "this",
-      "that",
-      "these",
-      "those",
-      "i",
-      "me",
-      "my",
-      "we",
-      "our",
-      "you",
-      "your",
-      "he",
-      "she",
-      "they",
-      "them",
-      "and",
-      "or",
-      "but",
-      "not",
-      "no",
-      "\u7684",
-      "\u4E86",
-      "\u5728",
-      "\u662F",
-      "\u6211",
-      "\u6709",
-      "\u548C",
-      "\u5C31",
-      "\u4E0D",
-      "\u4EBA",
-      "\u90FD",
-      "\u4E00",
-      "\u4E0A",
-      "\u4E5F",
-      "\u4ED6",
-      "\u5979",
-      "\u4EEC",
-      "\u8FD9",
-      "\u90A3",
-      "\u4F60",
-      "\u5417",
-      "\u4EC0\u4E48",
-      "\u600E\u4E48"
-    ]);
-    return query.toLowerCase().split(/[\s,;.!?，。！？、；：]+/).filter((w) => w.length > 1 && !stopWords.has(w));
   }
 };
 
@@ -41567,7 +41673,16 @@ async function executeSaveMemory(action, message, deps) {
   if (action.memory_type === "profile") {
     const tier = action.tier ?? "private";
     const mode = action.mode ?? "append";
-    await deps.memoryStore.saveProfile(caller, action.content, tier, mode);
+    try {
+      await deps.memoryStore.saveProfile(caller, action.content, tier, mode);
+    } catch (err) {
+      if (!(err instanceof MemoryCredentialMaterialError)) throw err;
+      void audit("save_memory", caller, {
+        ...auditArgs,
+        blocked_classes: err.blockedClasses
+      }, "denied");
+      return { ok: false, action: "save_memory", message: err.message };
+    }
     void audit("save_memory", caller, auditArgs, "ok");
     return { ok: true, action: "save_memory", message: `Saved ${tier} profile for ${caller} (mode: ${mode}).` };
   }
@@ -41579,10 +41694,19 @@ async function executeSaveMemory(action, message, deps) {
       message: "save_memory(type=thread) requires the current thread_id."
     };
   }
-  await deps.memoryStore.saveEpisode(action.memory_type, action.content, {
-    chatId: message.chatId,
-    threadId: message.threadId
-  });
+  try {
+    await deps.memoryStore.saveEpisode(action.memory_type, action.content, {
+      chatId: message.chatId,
+      threadId: message.threadId
+    });
+  } catch (err) {
+    if (!(err instanceof MemoryCredentialMaterialError)) throw err;
+    void audit("save_memory", caller, {
+      ...auditArgs,
+      blocked_classes: err.blockedClasses
+    }, "denied");
+    return { ok: false, action: "save_memory", message: err.message };
+  }
   if (deps.profileDistiller) {
     void deps.profileDistiller.maybeDispatch({
       userId: caller,
@@ -47753,8 +47877,10 @@ async function deliverMessageViaCodexExec(opts) {
   const useCodexSessions = opts.useCodexSessions ?? appConfig.codexExecUseSessions;
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
   const sessionKey = buildCodexExecSessionKey(message.chatId, message.threadId);
-  const existingSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
-  const sessionModel = useCodexSessions && existingSession?.model ? existingSession.model : null;
+  const storedSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
+  const requiresGroupPublicSession = message.chatType === "group";
+  const existingSession = requiresGroupPublicSession && storedSession?.memoryVisibilityPolicy !== GROUP_MEMORY_VISIBILITY_POLICY ? null : storedSession;
+  const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
   const progressBaseDir = opts.progressBaseDir ?? appConfig.codexExecCwd;
   const actionBaseDir = opts.actionBaseDir ?? appConfig.codexExecCwd;
@@ -47862,8 +47988,9 @@ async function deliverMessageViaCodexExec(opts) {
       chatId: message.chatId,
       ...message.threadId ? { threadId: message.threadId } : {},
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      ...preserveConversationBoundaryFields(existingSession),
-      ...sessionModel ? { model: sessionModel } : {}
+      ...preserveConversationBoundaryFields(storedSession),
+      ...sessionModel ? { model: sessionModel } : {},
+      ...requiresGroupPublicSession ? { memoryVisibilityPolicy: GROUP_MEMORY_VISIBILITY_POLICY } : {}
     });
   }
   let sideChannelActions = [];
@@ -48968,7 +49095,8 @@ Source: LARK_CODEX_EXEC_MODEL.`;
       chatId: opts.message.chatId,
       ...opts.message.threadId ? { threadId: opts.message.threadId } : {},
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      ...preserveConversationBoundaryFields(existing)
+      ...preserveConversationBoundaryFields(existing),
+      ...existing.memoryVisibilityPolicy ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy } : {}
     });
     return appConfig.codexExecModel ? `Chat/thread model override cleared. Effective Codex model now falls back to LARK_CODEX_EXEC_MODEL: ${appConfig.codexExecModel}.` : "Chat/thread model override cleared. Effective Codex model now falls back to the Codex CLI default.";
   }
@@ -48979,6 +49107,7 @@ Source: LARK_CODEX_EXEC_MODEL.`;
     ...opts.message.threadId ? { threadId: opts.message.threadId } : {},
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     ...preserveConversationBoundaryFields(existing),
+    ...existing?.memoryVisibilityPolicy ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy } : {},
     model: command.model
   });
   return `Chat/thread Codex model override set to ${command.model}. Subsequent realtime turns in this chat/thread will use it.`;
@@ -49038,6 +49167,7 @@ async function clearCodexSessionPointer(opts, flushResult) {
     ...opts.message.threadId ? { threadId: opts.message.threadId } : {},
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     ...existing?.model ? { model: existing.model } : {},
+    ...existing?.memoryVisibilityPolicy ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy } : {},
     ...createNextConversationBoundaryFields({
       existing,
       cutoffMessageId: opts.message.messageId,

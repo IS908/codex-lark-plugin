@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.12.3-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.4-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -53,7 +53,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Optional Stage 2 profile distillation from recent episodes, default off and gated by per-user cooldowns / minimum episode thresholds
 - Local markdown-file storage under `~/.codex/channels/lark/memories/`
 - User profiles (tiered public/private since v0.10.0), chat episodes, thread episodes, and global skills
-- Memory-enriched context injection on every incoming message, filtered by caller identity
+- Memory-enriched context injection on every incoming message, filtered by caller identity and recipient visibility
 
 ### Privacy & Security (v0.9.0+)
 
@@ -62,10 +62,10 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **Memory transparency (v0.11.0+)**: `what_do_you_know` lists what the bot has stored about the caller (filtered by current-chat visibility); `forget_memory` removes a specific line by hash. Optional `promote_to_rule` feeds corrections into `privacy-rules.md` — a self-learning loop that makes future misclassifications less likely
 - **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/logs/audit.log` records every sensitive-tool invocation as compact text lines (time / log id / `audit` / tool / outcome / caller / redacted args) so the operator can retrospectively inspect what was accessed on their machine
 - **Terminal skills default to redacted output (v0.11.0+)**: `$lark:jobs` hides prompt bodies by default; verbose opt-in is required. Destructive operations require interactive confirmation
-- **Tiered profile memory (v0.10.0+)**: each user's profile is split into `public.md` (visible to anyone who @mentions the user) and `private.md` (owner-only). Private-chat preferences no longer leak into groups via @mention injection
+- **Tiered profile memory (v0.10.0+)**: each user's profile is split into `public.md` and `private.md`. Direct messages from the owner may use both tiers; every group-chat execution is public-only, including turns initiated by the owner and @mention lookups. Upgrades rotate legacy group Codex sessions once so previously injected private context cannot survive through session resume
 - **L1/L2/L3 classification** (v0.10.0+): hardcoded regex + keyword rules catch phones / credentials / sensitive Chinese keywords. Email is intentionally NOT in L1 — the plugin targets **work-chat use cases** where emails are commonly shared via signatures/directories; personal deployments can add their own "Always private" email rule to `privacy-rules.md`. User-editable `privacy-rules.md` covers personal/org-specific cases; LLM handles the nuance. `parseTieredProfile` applies an L1 safety net over LLM output so misclassified credentials get forced to private
 - **Legacy-profile migration respects L2 rules (v0.11.1+)**: if the operator authors `privacy-rules.md` before (or during) the upgrade, `## Always private` phrases are applied as case-insensitive substring matches during migration — org-specific codenames, client names, and people mentions get routed to `private.md` even though L1 alone wouldn't flag them
-- **Memory hardening**: public profile writes are server-side checked with L1 and deterministic L2 always-private rules, with sensitive spillover routed to `private.md`; same-user profile operations are serialized; stored memory, quotes, flush buffers, cron prompts, Codex exec prompts, and L2 rules are wrapped as untrusted data in prompts; episode files are capped by `LARK_MAX_EPISODE_BYTES`
+- **Memory hardening**: public profile writes are server-side checked with L1 and deterministic L2 always-private rules, with sensitive spillover routed to `private.md`; credential/token/account-identifier material is rejected from new profile, episode, and skill writes and filtered from legacy memory reads; profile access decisions are audited without copying memory text; same-user profile operations are serialized; stored memory, quotes, flush buffers, cron prompts, Codex exec prompts, and L2 rules are wrapped as untrusted data in prompts; episode files are capped by `LARK_MAX_EPISODE_BYTES`
 - **`list_jobs` visibility filter**: in a group chat, members only see jobs whose `target_chat_id` matches that group (with prompt bodies redacted for non-owners); in a private chat, the caller sees their own jobs. Group members can no longer inspect each other's private jobs
 - **Owner-only mutations**: `update_job` / `delete_job` require `caller == created_by`
 - **CronJob isolation**: each cronjob execution runs under a unique `thread_id` so scheduled actions don't collide with concurrent human messages in the same chat
@@ -301,8 +301,8 @@ If you publish under a different GitHub owner or repository name, update the URL
 
 On every incoming message, the plugin injects relevant memory context in this order:
 
-1. **User profile** -- always loaded for the sender (hot injection)
-2. **Mentioned user profiles** -- loaded for any @mentioned users
+1. **User profile** -- loaded for the sender; owner public+private in direct messages, public-only in groups
+2. **Mentioned user profiles** -- public-only for any @mentioned users
 3. **Thread episodes** -- searched by relevance if the message is in a thread
 4. **Chat episodes** -- searched by relevance for the current chat
 5. **Skills** -- globally searched by relevance
@@ -967,8 +967,8 @@ The plugin registers the following MCP tools for Codex to use:
 | `defer_reply` | Mark the current Lark turn as intentionally deferred or no-reply without sending a Feishu message. Used by the reply-obligation guard. |
 | `reply_doc_comment` | Reply to the triggering Feishu doc-comment thread. Owner-only and scoped to the current `doc:<file_token>` turn. |
 | `create_doc_comment` | Create a new top-level comment in the triggering Feishu document. Owner-only and scoped to the current `doc:<file_token>` turn. |
-| `save_memory` | Save a memory entry (profile / chat episode / thread episode) for cross-session recall. Profile writes target the resolved caller (server-derived, v0.9.0+) and go into the chosen `tier` (`public` or `private`, default `private`, v0.10.0+). Requires `chat_id`. |
-| `save_skill` | Save a reusable procedure as a globally searchable skill. Owner-only because skills are visible across users/chats; requires `chat_id` and optional `thread_id` for server-derived caller identity. |
+| `save_memory` | Save a memory entry (profile / chat episode / thread episode) for cross-session recall. Profile writes target the resolved caller (server-derived, v0.9.0+) and go into the chosen `tier` (`public` or `private`, default `private`, v0.10.0+). Credential/token/account-identifier material is rejected. Requires `chat_id`. |
+| `save_skill` | Save a reusable procedure as a globally searchable skill. Owner-only because skills are visible across users/chats; credential/token/account-identifier material is rejected. Requires `chat_id` and optional `thread_id` for server-derived caller identity. |
 | `create_job` | Create a scheduled cronjob (message or prompt type). Creator derived from session; requires `chat_id` (used to populate `origin_chat_id`). Optional `timezone` stores an explicit IANA timezone in the job file. |
 | `list_jobs` | List cronjobs visible in the current chat. Filter follows rendering-visibility: private → caller's own jobs, group → jobs with `target_chat_id == currentChat` (prompts redacted for non-owners). Requires `chat_id`; renders each job's own timezone plus UTC. |
 | `update_job` | Update a cronjob (schedule, timezone, content, pause/resume). Owner-only. Requires `chat_id`. |

@@ -1163,6 +1163,39 @@ const sessionStore = {
   },
 };
 
+const legacyGroupSessionRecords = new Map<string, any>([
+  ['chat:oc_group_001:thread:omt_thread_001', {
+    key: 'chat:oc_group_001:thread:omt_thread_001',
+    sessionId: 'legacy-group-session-with-private-context',
+    chatId: 'oc_group_001',
+    threadId: 'omt_thread_001',
+    updatedAt: new Date(0).toISOString(),
+  }],
+]);
+const legacyGroupSessionRequests: any[] = [];
+await deliverMessageViaCodexExec({
+  message,
+  displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
+  sessionStore: {
+    async get(key: string) {
+      return legacyGroupSessionRecords.get(key) ?? null;
+    },
+    async set(record: any) {
+      legacyGroupSessionRecords.set(record.key, record);
+    },
+  },
+  runCodexExec: async (request) => {
+    legacyGroupSessionRequests.push(request);
+    return { text: 'rotated answer', sessionId: 'group-public-session' };
+  },
+  sendReply: async () => ({ sentCount: 1 }),
+});
+assert.equal(legacyGroupSessionRequests[0].resumeSessionId, null);
+assert.equal(
+  legacyGroupSessionRecords.get('chat:oc_group_001:thread:omt_thread_001')?.memoryVisibilityPolicy,
+  'group-public-v1',
+);
+
 await deliverMessageViaCodexExec({
   message,
   displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
@@ -1225,6 +1258,7 @@ sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   chatId: 'oc_group_001',
   threadId: 'omt_thread_001',
   updatedAt: new Date(0).toISOString(),
+  memoryVisibilityPolicy: 'group-public-v1',
   model: 'gpt-4',
   generation: 5,
   cutoffMessageId: 'om_new_boundary',
@@ -1373,6 +1407,7 @@ sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   chatId: 'oc_group_001',
   threadId: 'omt_thread_001',
   updatedAt: new Date(0).toISOString(),
+  memoryVisibilityPolicy: 'group-public-v1',
 });
 const fallbackRequests: any[] = [];
 
@@ -1408,6 +1443,7 @@ sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   chatId: 'oc_group_001',
   threadId: 'omt_thread_001',
   updatedAt: new Date(0).toISOString(),
+  memoryVisibilityPolicy: 'group-public-v1',
 });
 const timeoutFallbackRequests: any[] = [];
 

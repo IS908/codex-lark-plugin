@@ -361,6 +361,9 @@ async function executeCodexModelCommand(
       ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
       updatedAt: new Date().toISOString(),
       ...preserveConversationBoundaryFields(existing),
+      ...(existing.memoryVisibilityPolicy
+        ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy }
+        : {}),
     });
     return appConfig.codexExecModel
       ? `Chat/thread model override cleared. Effective Codex model now falls back to LARK_CODEX_EXEC_MODEL: ${appConfig.codexExecModel}.`
@@ -374,6 +377,9 @@ async function executeCodexModelCommand(
     ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
     updatedAt: new Date().toISOString(),
     ...preserveConversationBoundaryFields(existing),
+    ...(existing?.memoryVisibilityPolicy
+      ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy }
+      : {}),
     model: command.model,
   });
   return `Chat/thread Codex model override set to ${command.model}. Subsequent realtime turns in this chat/thread will use it.`;
@@ -441,6 +447,9 @@ async function clearCodexSessionPointer(
     ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
     updatedAt: new Date().toISOString(),
     ...(existing?.model ? { model: existing.model } : {}),
+    ...(existing?.memoryVisibilityPolicy
+      ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy }
+      : {}),
     ...createNextConversationBoundaryFields({
       existing,
       cutoffMessageId: opts.message.messageId,

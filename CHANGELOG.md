@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.12.4] - 2026-08-09
+
+### Security
+- Restrict every group-chat profile enrichment to the public tier and rotate legacy group Codex sessions before resuming, preventing previously injected private profile context from crossing the recipient boundary.
+- Reject credential, token, and account-identifier material from profile, episode, and skill writes; filter matching content from existing memory reads; and audit profile-tier access decisions without logging memory text.
+
 ## [2.12.3] - 2026-08-08
 
 ### Security

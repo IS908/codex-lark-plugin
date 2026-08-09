@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { appConfig } from '../config.js';
-import { loadL2Rules, extractL2PrivatePhrases } from '../privacy-rules.js';
+import {
+  detectCredentialMaterial,
+  filterCredentialMaterial,
+  loadL2Rules,
+  extractL2PrivatePhrases,
+} from '../privacy-rules.js';
 import type { ProfileLine, Tier } from './profile-policy.js';
 import {
   isDeterministicPrivate,
@@ -39,6 +44,20 @@ function capEpisodeContent(content: string): string {
   return capUtf8Bytes(content, appConfig.maxEpisodeBytes);
 }
 
+export class MemoryCredentialMaterialError extends Error {
+  constructor(readonly blockedClasses: string[]) {
+    super('Memory content contains credential material and cannot be stored.');
+    this.name = 'MemoryCredentialMaterialError';
+  }
+}
+
+function assertNoCredentialMaterial(content: string): void {
+  const blockedClasses = detectCredentialMaterial(content);
+  if (blockedClasses.length > 0) {
+    throw new MemoryCredentialMaterialError(blockedClasses);
+  }
+}
+
 export interface Episode {
   id: string;
   content: string;
@@ -64,6 +83,15 @@ export interface Skill {
   description: string;
   content: string;
   score?: number;
+}
+
+export interface ProfileReadOptions {
+  /**
+   * Private profile data is owner-only and must also be explicitly enabled by
+   * the rendering context. Group chats always set this to false because every
+   * member is a recipient of the generated response.
+   */
+  includePrivate?: boolean;
 }
 
 /**
@@ -173,8 +201,9 @@ export class MemoryStore {
 
   /**
    * Load a user's profile, filtered by rendering visibility.
-   * - caller === ownerId → return public + private tiers joined
+   * - caller === ownerId and includePrivate !== false → return public + private tiers joined
    * - caller !== ownerId → return public tier only
+   * - includePrivate === false → return public tier only, even for the owner
    *
    * Returns null if neither tier file has content.
    *
@@ -184,7 +213,11 @@ export class MemoryStore {
    * {@link listProfileLines} strips bullets — the two return formats are
    * intentionally different, and their consumers are disjoint.
    */
-  async getProfile(ownerId: string, caller: string): Promise<string | null> {
+  async getProfile(
+    ownerId: string,
+    caller: string,
+    options: ProfileReadOptions = {},
+  ): Promise<string | null> {
     return this.withProfileLock(ownerId, async () => {
       await this.migrateIfNeededUnlocked(ownerId);
 
@@ -193,9 +226,13 @@ export class MemoryStore {
         try { return await fs.readFile(p, 'utf-8'); } catch { return ''; }
       };
 
-      const pub = (await readOpt(this.profileTierPath(ownerId, 'public'))).trim();
-      if (caller === ownerId) {
-        const priv = (await readOpt(this.profileTierPath(ownerId, 'private'))).trim();
+      const pub = filterCredentialMaterial(
+        await readOpt(this.profileTierPath(ownerId, 'public')),
+      ).content.trim();
+      if (caller === ownerId && options.includePrivate !== false) {
+        const priv = filterCredentialMaterial(
+          await readOpt(this.profileTierPath(ownerId, 'private')),
+        ).content.trim();
         const joined = [pub, priv].filter(Boolean).join('\n\n');
         return joined || null;
       }
@@ -226,6 +263,7 @@ export class MemoryStore {
     tier: Tier,
     mode: 'append' | 'replace' = 'append',
   ): Promise<void> {
+    assertNoCredentialMaterial(content);
     await this.withProfileLock(userId, async () => {
       await this.migrateIfNeededUnlocked(userId);
       const dir = this.profileDir(userId);
@@ -300,7 +338,7 @@ export class MemoryStore {
   private async listProfileLinesUnlocked(ownerId: string, tier: Tier): Promise<ProfileLine[]> {
     const p = this.profileTierPath(ownerId, tier);
     if (!existsSync(p)) return [];
-    const content = await fs.readFile(p, 'utf-8');
+    const content = filterCredentialMaterial(await fs.readFile(p, 'utf-8')).content;
     return content
       .split('\n')
       .map((raw) => raw.trim().replace(/^[-*]\s+/, ''))
@@ -353,7 +391,10 @@ export class MemoryStore {
 
       for (const file of mdFiles) {
         const filePath = path.join(dir, file);
-        const content = await fs.readFile(filePath, 'utf-8');
+        const content = filterCredentialMaterial(
+          await fs.readFile(filePath, 'utf-8'),
+        ).content;
+        if (!content.trim()) continue;
         const stat = await fs.stat(filePath);
 
         // Score: keyword match on first two lines + filename
@@ -401,6 +442,7 @@ export class MemoryStore {
     content: string,
     meta: EpisodeMeta
   ): Promise<void> {
+    assertNoCredentialMaterial(content);
     const dir =
       type === 'thread' && meta.threadId
         ? path.join(this.baseDir, 'episodes', meta.chatId, 'threads', meta.threadId)
@@ -430,7 +472,10 @@ export class MemoryStore {
 
       for (const file of files.filter(f => f.endsWith('.md'))) {
         const filePath = path.join(dir, file);
-        const content = await fs.readFile(filePath, 'utf-8');
+        const content = filterCredentialMaterial(
+          await fs.readFile(filePath, 'utf-8'),
+        ).content;
+        if (!content.trim()) continue;
         const stat = await fs.stat(filePath);
         episodes.push({
           id: file,
@@ -554,7 +599,9 @@ export class MemoryStore {
 
       for (const file of files.filter(f => f.endsWith('.md'))) {
         const filePath = path.join(dir, file);
-        const content = await fs.readFile(filePath, 'utf-8');
+        const filtered = filterCredentialMaterial(await fs.readFile(filePath, 'utf-8'));
+        if (filtered.blockedClasses.length > 0) continue;
+        const content = filtered.content;
 
         // Parse skill file: first line = name, second line = description
         const lines = content.split('\n');
@@ -583,6 +630,7 @@ export class MemoryStore {
   }
 
   async saveSkill(name: string, description: string, content: string): Promise<void> {
+    assertNoCredentialMaterial(`${name}\n${description}\n${content}`);
     const dir = path.join(this.baseDir, 'skills');
     await fs.mkdir(dir, { recursive: true });
 

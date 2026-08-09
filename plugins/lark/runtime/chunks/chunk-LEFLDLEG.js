@@ -15,6 +15,44 @@ var L1_BLACKLIST_REGEX = [
   { name: "token-like", regex: /\b(?:sk|pk|api|token|secret)[-_][a-zA-Z0-9]{16,}\b/i },
   { name: "money-amount", regex: /\b\d+\s*[wk万千]\s*(?:元|块|RMB|CNY|USD)?\b|\$\d{3,}/ }
 ];
+var CREDENTIAL_MATERIAL_REGEX = [
+  {
+    name: "private-key",
+    regex: /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/i
+  },
+  {
+    name: "authorization-header",
+    regex: /\b(?:proxy-)?authorization\s*[:=]\s*(?:bearer|basic)\s+[^\s"'`]{8,}/i
+  },
+  {
+    name: "secret-assignment",
+    regex: /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|pwd|secret)\s*[:=]\s*["']?[^\s"'`]{8,}/i
+  },
+  {
+    name: "provider-token",
+    regex: /\b(?:sk|pk|api|token|secret)[-_][a-z0-9]{16,}\b|\bgh[pousr]_[a-z0-9]{20,}\b/i
+  },
+  {
+    name: "aws-access-key",
+    regex: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/
+  },
+  {
+    name: "account-identifier",
+    regex: /\b(?:account[_ -]?(?:id|number|no)|(?:tenant|user|client|open|union|app)[_-]?id)\s*[:=]\s*["']?[a-z0-9][a-z0-9_-]{7,}/i
+  }
+];
+function detectCredentialMaterial(content) {
+  return CREDENTIAL_MATERIAL_REGEX.filter(({ regex }) => regex.test(content)).map(({ name }) => name);
+}
+function filterCredentialMaterial(content) {
+  const blockedClasses = detectCredentialMaterial(content);
+  if (blockedClasses.length === 0) return { content, blockedClasses };
+  if (blockedClasses.includes("private-key")) return { content: "", blockedClasses };
+  return {
+    content: content.split("\n").filter((line) => detectCredentialMaterial(line).length === 0).join("\n"),
+    blockedClasses
+  };
+}
 var L1_BLACKLIST_KEYWORDS = [
   // 财务
   "\u85AA\u8D44",
@@ -217,6 +255,8 @@ ${next.slice(insertAt)}`;
 
 export {
   L1_BLACKLIST_REGEX,
+  detectCredentialMaterial,
+  filterCredentialMaterial,
   L1_BLACKLIST_KEYWORDS,
   L1_WHITELIST_KEYWORDS,
   applyL1,

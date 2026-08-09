@@ -21,7 +21,29 @@ export interface MemoryEnrichmentDeps {
   conversationBuffer: ConversationBuffer | null;
   memoryDeduper: MemoryContextDeduper;
   conversationBoundary?: ConversationBoundary | null;
+  auditProfileAccess?: (record: MemoryProfileAccessAuditRecord) => Promise<void> | void;
   log?: (line: string) => void;
+}
+
+export interface MemoryProfileAccessAuditRecord {
+  messageId: string;
+  chatId: string;
+  chatType: string;
+  requesterId: string;
+  profileOwnerId: string;
+  consultedTiers: Array<'public' | 'private'>;
+  decision: 'owner_private_chat' | 'group_public_only' | 'mentioned_user_public_only';
+}
+
+async function auditProfileAccess(
+  deps: MemoryEnrichmentDeps,
+  record: MemoryProfileAccessAuditRecord,
+): Promise<void> {
+  try {
+    await deps.auditProfileAccess?.(record);
+  } catch {
+    // Memory access auditing is best-effort and must not break message delivery.
+  }
 }
 
 export async function enrichLarkMessageWithMemory(
@@ -68,8 +90,19 @@ export async function enrichLarkMessageWithMemory(
   }
 
   const profile = await deps.memoryStore
-    .getProfile(msg.senderId, msg.senderId)
+    .getProfile(msg.senderId, msg.senderId, {
+      includePrivate: msg.chatType === 'p2p',
+    })
     .catch(() => null);
+  await auditProfileAccess(deps, {
+    messageId: msg.messageId,
+    chatId: msg.chatId,
+    chatType: msg.chatType,
+    requesterId: msg.senderId,
+    profileOwnerId: msg.senderId,
+    consultedTiers: msg.chatType === 'p2p' ? ['public', 'private'] : ['public'],
+    decision: msg.chatType === 'p2p' ? 'owner_private_chat' : 'group_public_only',
+  });
   if (profile) {
     blocks.push({
       key: `profile:${msg.senderId}`,
@@ -85,6 +118,15 @@ export async function enrichLarkMessageWithMemory(
         const mentionProfile = await deps.memoryStore
           .getProfile(mention.id, msg.senderId)
           .catch(() => null);
+        await auditProfileAccess(deps, {
+          messageId: msg.messageId,
+          chatId: msg.chatId,
+          chatType: msg.chatType,
+          requesterId: msg.senderId,
+          profileOwnerId: mention.id,
+          consultedTiers: ['public'],
+          decision: 'mentioned_user_public_only',
+        });
         if (mentionProfile) {
           blocks.push({
             key: `mentioned_profile:${mention.id}`,

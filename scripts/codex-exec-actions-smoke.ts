@@ -929,6 +929,28 @@ try {
   assertInitialRuntimeShape(JSON.parse(readFileSync(join(jobsDir, 'exec-action-job.json'), 'utf-8')));
   assert.match(results[2].message, /hello-from-action/);
 
+  const blockedCredentialMemory = await dispatcher.execute({
+    message: {
+      messageId: 'om_exec_credential_memory',
+      chatId: 'oc_exec',
+      threadId: 'thread_exec',
+      chatType: 'group',
+      senderId: 'ou_user',
+      text: 'remember this credential',
+      messageType: 'text',
+      rawContent: '{}',
+    },
+    actions: [{
+      type: 'save_memory',
+      memory_type: 'profile',
+      content: 'api_key=sk-1234567890abcdefghijklmnop',
+      reason: 'Must be rejected by memory policy',
+      tier: 'private',
+    }],
+  });
+  assert.equal(blockedCredentialMemory[0].ok, false);
+  assert.match(blockedCredentialMemory[0].message, /credential material/i);
+
   const runJobResults = await dispatcher.execute({
     message: {
       messageId: 'om_exec_run_job',
