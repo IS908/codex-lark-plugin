@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { appConfig } from '../config.js';
 import { SYSTEM_FLUSH_CALLER } from '../identity-session.js';
 import { audit } from '../audit-log.js';
+import { MemoryCredentialMaterialError } from '../memory/file.js';
 import type { ToolContext } from './tool-context.js';
 
 export function registerMemoryTools(ctx: ToolContext): void {
@@ -69,7 +70,19 @@ export function registerMemoryTools(ctx: ToolContext): void {
       if (type === 'profile') {
         const effectiveTier = tier ?? 'private';
         const effectiveMode = mode ?? 'append';
-        await memoryStore.saveProfile(caller, content, effectiveTier, effectiveMode);
+        try {
+          await memoryStore.saveProfile(caller, content, effectiveTier, effectiveMode);
+        } catch (err) {
+          if (!(err instanceof MemoryCredentialMaterialError)) throw err;
+          void audit('save_memory', caller, {
+            ...auditArgs,
+            blocked_classes: err.blockedClasses,
+          }, 'denied');
+          return {
+            content: [{ type: 'text' as const, text: err.message }],
+            isError: true,
+          };
+        }
         void audit('save_memory', caller, auditArgs, 'ok');
         return {
           content: [
@@ -91,10 +104,22 @@ export function registerMemoryTools(ctx: ToolContext): void {
         };
       }
 
-      await memoryStore.saveEpisode(type, content, {
-        chatId: chat_id,
-        threadId: thread_id,
-      });
+      try {
+        await memoryStore.saveEpisode(type, content, {
+          chatId: chat_id,
+          threadId: thread_id,
+        });
+      } catch (err) {
+        if (!(err instanceof MemoryCredentialMaterialError)) throw err;
+        void audit('save_memory', caller, {
+          ...auditArgs,
+          blocked_classes: err.blockedClasses,
+        }, 'denied');
+        return {
+          content: [{ type: 'text' as const, text: err.message }],
+          isError: true,
+        };
+      }
       triggerProfileDistillation(caller, chat_id, thread_id);
       void audit('save_memory', caller, auditArgs, 'ok');
 
@@ -138,6 +163,16 @@ export function registerMemoryTools(ctx: ToolContext): void {
         await memoryStore.saveSkill(name, description, content);
         void audit('save_skill', caller, auditArgs, 'ok');
       } catch (err: any) {
+        if (err instanceof MemoryCredentialMaterialError) {
+          void audit('save_skill', caller, {
+            ...auditArgs,
+            blocked_classes: err.blockedClasses,
+          }, 'denied');
+          return {
+            content: [{ type: 'text' as const, text: err.message }],
+            isError: true,
+          };
+        }
         void audit('save_skill', caller, auditArgs, 'error');
         return {
           content: [{ type: 'text' as const, text: `Failed to save skill "${name}": ${err?.message ?? String(err)}` }],

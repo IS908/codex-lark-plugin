@@ -5,10 +5,12 @@ import {
   L1_WHITELIST_KEYWORDS,
   addL2Rule,
   applyL1,
+  detectCredentialMaterial,
   extractL2PrivatePhrases,
+  filterCredentialMaterial,
   loadL2Rules,
   validateL2Rule
-} from "./chunk-WJGOBIRR.js";
+} from "./chunk-LEFLDLEG.js";
 import "./chunk-IEHY4GE3.js";
 import "./chunk-VT5EWFRM.js";
 export {
@@ -17,7 +19,9 @@ export {
   L1_WHITELIST_KEYWORDS,
   addL2Rule,
   applyL1,
+  detectCredentialMaterial,
   extractL2PrivatePhrases,
+  filterCredentialMaterial,
   loadL2Rules,
   validateL2Rule
 };

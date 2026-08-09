@@ -40,6 +40,57 @@ export const L1_BLACKLIST_REGEX: { name: string; regex: RegExp }[] = [
   { name: 'money-amount', regex: /\b\d+\s*[wk万千]\s*(?:元|块|RMB|CNY|USD)?\b|\$\d{3,}/ },
 ];
 
+const CREDENTIAL_MATERIAL_REGEX: { name: string; regex: RegExp }[] = [
+  {
+    name: 'private-key',
+    regex: /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/i,
+  },
+  {
+    name: 'authorization-header',
+    regex: /\b(?:proxy-)?authorization\s*[:=]\s*(?:bearer|basic)\s+[^\s"'`]{8,}/i,
+  },
+  {
+    name: 'secret-assignment',
+    regex: /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|pwd|secret)\s*[:=]\s*["']?[^\s"'`]{8,}/i,
+  },
+  {
+    name: 'provider-token',
+    regex: /\b(?:sk|pk|api|token|secret)[-_][a-z0-9]{16,}\b|\bgh[pousr]_[a-z0-9]{20,}\b/i,
+  },
+  {
+    name: 'aws-access-key',
+    regex: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
+  },
+  {
+    name: 'account-identifier',
+    regex: /\b(?:account[_ -]?(?:id|number|no)|(?:tenant|user|client|open|union|app)[_-]?id)\s*[:=]\s*["']?[a-z0-9][a-z0-9_-]{7,}/i,
+  },
+];
+
+/** Return deterministic credential classes without retaining matched values. */
+export function detectCredentialMaterial(content: string): string[] {
+  return CREDENTIAL_MATERIAL_REGEX
+    .filter(({ regex }) => regex.test(content))
+    .map(({ name }) => name);
+}
+
+export function filterCredentialMaterial(content: string): {
+  content: string;
+  blockedClasses: string[];
+} {
+  const blockedClasses = detectCredentialMaterial(content);
+  if (blockedClasses.length === 0) return { content, blockedClasses };
+  if (blockedClasses.includes('private-key')) return { content: '', blockedClasses };
+
+  return {
+    content: content
+      .split('\n')
+      .filter((line) => detectCredentialMaterial(line).length === 0)
+      .join('\n'),
+    blockedClasses,
+  };
+}
+
 /** Keywords that force a fact into `private` when present. */
 export const L1_BLACKLIST_KEYWORDS: string[] = [
   // 财务

@@ -163,6 +163,23 @@ if (!saveMemory) fail('save_memory handler not registered');
   passed++;
 }
 
+// ── 5b. save_memory rejects credential material with a user-facing error ──
+{
+  identitySession.setCaller('oc_thread_chat', undefined, SYSTEM_FLUSH_CALLER);
+  const r = await saveMemory!({
+    type: 'chat',
+    content: 'Authorization: Bearer ghp_1234567890abcdefghijklmnopqrstuvwxyz',
+    reason: 'must not become ordinary memory',
+    chat_id: 'oc_thread_chat',
+  });
+  if (!r.isError) fail('5b: credential-bearing memory must be denied');
+  const txt = r.content[0].text as string;
+  if (!/credential material/i.test(txt)) fail(`5b: unexpected error: ${txt}`);
+  const files = readdirSync(join(memRoot, 'episodes', 'oc_thread_chat')).filter((f) => f.endsWith('.md'));
+  if (files.length !== 1) fail(`5b: rejected credential memory must not create a file, got ${files.length}`);
+  passed++;
+}
+
 // Audit log writes are fire-and-forget (`void audit(...)` inside tools.ts).
 // Wait briefly for the queued appendFile calls to land before reading.
 // Retry-loop up to 1s — should land in <50ms on a healthy disk.
@@ -264,4 +281,4 @@ const auditLog = await waitForAuditLog();
 
 rmSync(tmp, { recursive: true, force: true });
 
-console.log(`auto-flush smoke: ${passed}/10 PASS`);
+console.log(`auto-flush smoke: ${passed}/11 PASS`);

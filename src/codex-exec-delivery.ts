@@ -5,6 +5,7 @@ import { isCodexExecTimeoutError, normalizeCodexExecResult, runCodexExecCommand 
 import {
   buildCodexExecSessionKey,
   FileCodexExecSessionStore,
+  GROUP_MEMORY_VISIBILITY_POLICY,
   type CodexExecSessionStore,
 } from './codex-session-store.js';
 import { preserveConversationBoundaryFields } from './conversation-boundary.js';
@@ -436,8 +437,13 @@ export async function deliverMessageViaCodexExec(
   const useCodexSessions = opts.useCodexSessions ?? appConfig.codexExecUseSessions;
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
   const sessionKey = buildCodexExecSessionKey(message.chatId, message.threadId);
-  const existingSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
-  const sessionModel = useCodexSessions && existingSession?.model ? existingSession.model : null;
+  const storedSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
+  const requiresGroupPublicSession = message.chatType === 'group';
+  const existingSession = requiresGroupPublicSession
+    && storedSession?.memoryVisibilityPolicy !== GROUP_MEMORY_VISIBILITY_POLICY
+    ? null
+    : storedSession;
+  const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
   const progressBaseDir = opts.progressBaseDir ?? appConfig.codexExecCwd;
   const actionBaseDir = opts.actionBaseDir ?? appConfig.codexExecCwd;
@@ -563,8 +569,11 @@ export async function deliverMessageViaCodexExec(
       chatId: message.chatId,
       ...(message.threadId ? { threadId: message.threadId } : {}),
       updatedAt: new Date().toISOString(),
-      ...preserveConversationBoundaryFields(existingSession),
+      ...preserveConversationBoundaryFields(storedSession),
       ...(sessionModel ? { model: sessionModel } : {}),
+      ...(requiresGroupPublicSession
+        ? { memoryVisibilityPolicy: GROUP_MEMORY_VISIBILITY_POLICY }
+        : {}),
     });
   }
 

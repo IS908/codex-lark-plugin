@@ -34,6 +34,7 @@ import {
 } from './reaction-router.js';
 import { DisplayNameResolver, generateUserAlias } from './display-name-resolver.js';
 import { enrichLarkMessageWithMemory } from './memory-enricher.js';
+import { audit } from './audit-log.js';
 import { handleCommentEvent } from './doc-comment-inbound.js';
 import { prepareInboundTurn } from './inbound-turn-pipeline.js';
 import { filterParentContentAfterBoundary } from './conversation-boundary.js';
@@ -398,6 +399,19 @@ export class LarkChannel {
       conversationBuffer: this.conversationBuffer,
       memoryDeduper: this.memoryDeduper,
       conversationBoundary,
+      auditProfileAccess: (record) => audit(
+        'memory_profile_context',
+        record.requesterId,
+        {
+          message_id: record.messageId,
+          chat_id: record.chatId,
+          chat_type: record.chatType,
+          profile_owner_id: record.profileOwnerId,
+          consulted_tiers: record.consultedTiers,
+          decision: record.decision,
+        },
+        'ok',
+      ),
       log: debugLog,
     });
     debugLog(`[channel] Memory enrichment complete for message ${messageId}`);

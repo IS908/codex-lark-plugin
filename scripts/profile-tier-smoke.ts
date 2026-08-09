@@ -33,6 +33,15 @@ if (!ownSelf?.includes('engineer')) fail('1: owner should see public');
 if (!ownSelf?.includes('afternoon')) fail('1: owner should see private');
 passed++;
 
+const ownGroupView = await store.getProfile(
+  'ou_alice',
+  'ou_alice',
+  { includePrivate: false },
+);
+if (!ownGroupView?.includes('engineer')) fail('1b: owner group view should see public');
+if (ownGroupView?.includes('afternoon')) fail('1b: owner group view must NOT see private');
+passed++;
+
 // ── 2. non-owner sees only public ───────────────────────────
 const byOther = await store.getProfile('ou_alice', 'ou_bob');
 if (!byOther?.includes('engineer')) fail('2: non-owner should see public');
@@ -465,6 +474,113 @@ passed++;
 
 // ── parseTieredProfile: well-formed JSON ─────────────────────
 {
+  const r = mkdtempSync(join(tmpdir(), 'memory-credential-block-'));
+  const s = new MemoryStore(r);
+  let profileRejected = false;
+  try {
+    await s.saveProfile(
+      'ou_secret',
+      'api_key=sk-1234567890abcdefghijklmnop',
+      'private',
+    );
+  } catch (err) {
+    profileRejected = /credential material/i.test(String(err));
+  }
+  if (!profileRejected) fail('19a: profile memory must reject credential material');
+  let accountIdRejected = false;
+  try {
+    await s.saveProfile(
+      'ou_secret',
+      'open_id=ou_7dbb8e4cc91c6dff636edf804e1cbccc',
+      'private',
+    );
+  } catch (err) {
+    accountIdRejected = /credential material/i.test(String(err));
+  }
+  if (!accountIdRejected) fail('19a: profile memory must reject account identifiers');
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
+{
+  const r = mkdtempSync(join(tmpdir(), 'episode-credential-block-'));
+  const s = new MemoryStore(r);
+  let episodeRejected = false;
+  try {
+    await s.saveEpisode(
+      'chat',
+      'Authorization: Bearer ghp_1234567890abcdefghijklmnopqrstuvwxyz',
+      { chatId: 'oc_secret' },
+    );
+  } catch (err) {
+    episodeRejected = /credential material/i.test(String(err));
+  }
+  if (!episodeRejected) fail('19b: episode memory must reject credential material');
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
+{
+  const r = mkdtempSync(join(tmpdir(), 'existing-memory-credential-filter-'));
+  const profileDir = join(r, 'profiles', 'ou_existing_secret');
+  mkdirSync(profileDir, { recursive: true });
+  writeFileSync(
+    join(profileDir, 'public.md'),
+    '- TypeScript engineer\n- api_key=sk-1234567890abcdefghijklmnop\n',
+    'utf-8',
+  );
+  writeFileSync(
+    join(profileDir, 'private.md'),
+    '- prefers concise replies\n- password=super-secret-password\n',
+    'utf-8',
+  );
+  const s = new MemoryStore(r);
+  const loaded = await s.getProfile('ou_existing_secret', 'ou_existing_secret');
+  if (!loaded?.includes('TypeScript engineer') || !loaded.includes('concise replies')) {
+    fail('19c: credential filtering must preserve safe profile lines');
+  }
+  if (/api_key|super-secret-password/.test(loaded)) {
+    fail('19c: existing credential material must not be injected');
+  }
+  const publicLines = await s.listProfileLines('ou_existing_secret', 'public');
+  const privateLines = await s.listProfileLines('ou_existing_secret', 'private');
+  if ([...publicLines, ...privateLines].some((line) => /api_key|super-secret-password/.test(line.text))) {
+    fail('19c: existing credential material must not be emitted by introspection');
+  }
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
+{
+  const r = mkdtempSync(join(tmpdir(), 'skill-credential-block-'));
+  const s = new MemoryStore(r);
+  let skillRejected = false;
+  try {
+    await s.saveSkill(
+      'unsafe-deploy',
+      'Deploy with a stored credential',
+      'access_token=token-1234567890abcdefghijklmnop',
+    );
+  } catch (err) {
+    skillRejected = /credential material/i.test(String(err));
+  }
+  if (!skillRejected) fail('19d: skill memory must reject credential material');
+  const skillsDir = join(r, 'skills');
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(
+    join(skillsDir, 'unsafe-deploy.md'),
+    '# Unsafe deploy\nunsafe deployment\n\naccess_token=token-1234567890abcdefghijklmnop\n',
+    'utf-8',
+  );
+  if ((await s.searchSkills('unsafe deploy')).length !== 0) {
+    fail('19d: existing credential-bearing skill must not be injected');
+  }
+  rmSync(r, { recursive: true, force: true });
+  passed++;
+}
+
+// ── parseTieredProfile: well-formed JSON ─────────────────────
+{
   const { public: pub, private: priv } = parseTieredProfile(
     '{"public":["a","b"],"private":["c"]}'
   );
@@ -524,4 +640,4 @@ rmSync(legacyRoot, { recursive: true, force: true });
 rmSync(partialRoot, { recursive: true, force: true });
 rmSync(writeRoot, { recursive: true, force: true });
 
-console.log(`profile-tier smoke: ${passed}/32 PASS`);
+console.log(`profile-tier smoke: ${passed}/37 PASS`);
