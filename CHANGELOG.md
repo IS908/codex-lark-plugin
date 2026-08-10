@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.12.5] - 2026-08-10
+
+### Fixed
+- Restore the current sender's private profile context for ordinary group turns while keeping broad profile/memory introspection public-only, and bind resumable group sessions to both the visibility mode and sender identity to prevent cross-user private-context reuse.
+
 ## [2.12.4] - 2026-08-09
 
 ### Security
@@ -1000,7 +1005,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - One-shot `codex exec` delivery mode for running Codex from a persistent Lark bridge process.
 - Codex plugin metadata, MCP configuration, Lark skills, bilingual README documentation, and GitHub publishing guidance.
 
-[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.10.0...HEAD
+[Unreleased]: https://github.com/IS908/codex-lark-plugin/compare/v2.12.5...HEAD
+[2.12.5]: https://github.com/IS908/codex-lark-plugin/compare/v2.12.4...v2.12.5
+[2.12.4]: https://github.com/IS908/codex-lark-plugin/compare/v2.12.3...v2.12.4
+[2.12.3]: https://github.com/IS908/codex-lark-plugin/compare/v2.12.2...v2.12.3
+[2.12.2]: https://github.com/IS908/codex-lark-plugin/compare/v2.12.1...v2.12.2
+[2.12.1]: https://github.com/IS908/codex-lark-plugin/compare/v2.12.0...v2.12.1
+[2.12.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.11.1...v2.12.0
+[2.11.1]: https://github.com/IS908/codex-lark-plugin/compare/v2.11.0...v2.11.1
+[2.11.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.10.0...v2.11.0
 [2.10.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.9.0...v2.10.0
 [2.9.0]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.2...v2.9.0
 [2.8.2]: https://github.com/IS908/codex-lark-plugin/compare/v2.8.1...v2.8.2

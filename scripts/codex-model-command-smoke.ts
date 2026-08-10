@@ -119,6 +119,7 @@ await deliverMessageViaCodexExec({
     ...baseMessage,
     messageId: 'om_after_model_001',
     text: 'Use the selected model now.',
+    currentUserText: 'Use the selected model now.',
     rawContent: '{"text":"Use the selected model now."}',
   },
   displayLabel: 'Kevin · thread_model',
@@ -138,6 +139,8 @@ assert.equal(execRequests.length, 1);
 record = await store.get(sessionKey);
 assert.equal(record?.sessionId, 'codex-session-1');
 assert.equal(record?.model, 'gpt-5.6-sol');
+assert.equal(record?.memoryVisibilityPolicy, 'group-sender-private-v2');
+assert.equal(record?.memoryContextSenderId, 'ou_sender');
 
 assert.equal(await runCommand({
   ...baseMessage,
@@ -156,6 +159,8 @@ assert.equal(await runCommand({
 record = await store.get(sessionKey);
 assert.equal(record?.sessionId, 'codex-session-1');
 assert.equal(record?.model, undefined);
+assert.equal(record?.memoryVisibilityPolicy, 'group-sender-private-v2');
+assert.equal(record?.memoryContextSenderId, 'ou_sender');
 assert.match(replies.at(-1)?.text ?? '', /falls back to LARK_CODEX_EXEC_MODEL: gpt-global/);
 
 const afterResetRequests: any[] = [];
@@ -164,6 +169,7 @@ await deliverMessageViaCodexExec({
     ...baseMessage,
     messageId: 'om_after_reset_001',
     text: 'Use the global model now.',
+    currentUserText: 'Use the global model now.',
     rawContent: '{"text":"Use the global model now."}',
   },
   displayLabel: 'Kevin · thread_model',
@@ -286,7 +292,27 @@ assert.equal(record?.cutoffMessageId, 'om_new');
 assert.equal(record?.cutoffTimestampMs, 1781744460000);
 assert.equal(record?.handoffSummary, 'Short distilled summary.');
 assert.equal(record?.handoffConsumedAt, undefined);
+assert.equal(record?.memoryVisibilityPolicy, 'group-sender-private-v2');
+assert.equal(record?.memoryContextSenderId, 'ou_sender');
 assert.equal(sessionHealthResets.at(-1), sessionKey);
+
+await store.set({
+  ...record!,
+  sessionId: 'private-session-from-a',
+  memoryContextSenderId: 'ou_sender_a',
+});
+assert.equal(await runCommand({
+  ...baseMessage,
+  messageId: 'om_new_cross_user',
+  senderId: 'ou_sender_b',
+  timestampMs: 1781744461000,
+  text: '/new',
+  rawContent: '{"text":"/new"}',
+}), true);
+record = await store.get(sessionKey);
+assert.equal(record?.sessionId, '');
+assert.equal(record?.memoryVisibilityPolicy, 'group-sender-private-v2');
+assert.equal(record?.memoryContextSenderId, 'ou_sender_b');
 
 await store.set({
   key: sessionKey,

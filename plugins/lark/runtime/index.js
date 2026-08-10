@@ -32973,7 +32973,7 @@ function cronJobPrompt(jobName, sendChatId, prompt) {
     untrustedDataBlock("cronjob-user-prompt", prompt)
   ].join("\n");
 }
-function enrichmentPrompt(memoryContext, parentContent, senderId, chatId, text, recentThreadContext) {
+function enrichmentPrompt(memoryContext, parentContent, senderId, chatId, text, recentThreadContext, profileContextPolicy) {
   const recoveryNote = quotedInteractiveCardRecoveryNote(parentContent);
   const recentContext = recentThreadContext ? `
 [Recent Thread Context]
@@ -32983,9 +32983,13 @@ ${untrustedDataBlock("recent-thread-context", recentThreadContext)}
 [Quoted Message]
 ${recoveryNote}${untrustedDataBlock("quoted-message", parentContent)}
 ` : "";
+  const profilePolicy = profileContextPolicy ? `
+[Profile Context Policy]
+${profileContextPolicy}
+` : "";
   return `[Memory Context]
 ${untrustedDataBlock("memory-context", memoryContext)}
-${recentContext}${parentContext}
+${profilePolicy}${recentContext}${parentContext}
 [Current Message]
 From: ${senderId} in ${chatId}
 ${untrustedDataBlock("current-feishu-message", text)}`;
@@ -33218,7 +33222,6 @@ function positiveInt2(value, fallback) {
 // src/codex-session-store.ts
 import fs2 from "node:fs/promises";
 import path2 from "node:path";
-var GROUP_MEMORY_VISIBILITY_POLICY = "group-public-v1";
 function buildCodexExecSessionKey(chatId, threadId) {
   return threadId ? `chat:${chatId}:thread:${threadId}` : `chat:${chatId}`;
 }
@@ -33406,7 +33409,9 @@ function conversationBoundaryFromSession(record3) {
     cutoffTimestampMs,
     ...record3.handoffSummary ? { handoffSummary: record3.handoffSummary } : {},
     ...record3.handoffConsumedAt ? { handoffConsumedAt: record3.handoffConsumedAt } : {},
-    ...record3.boundaryUpdatedAt ? { boundaryUpdatedAt: record3.boundaryUpdatedAt } : {}
+    ...record3.boundaryUpdatedAt ? { boundaryUpdatedAt: record3.boundaryUpdatedAt } : {},
+    ...record3.memoryVisibilityPolicy ? { memoryVisibilityPolicy: record3.memoryVisibilityPolicy } : {},
+    ...record3.memoryContextSenderId ? { memoryContextSenderId: record3.memoryContextSenderId } : {}
   };
 }
 function createNextConversationBoundaryFields(input) {
@@ -33518,6 +33523,65 @@ function capUtf8Text(text, maxBytes) {
   return `${buf.subarray(0, cut).toString("utf8")} ...[truncated]`;
 }
 
+// src/memory/profile-context-policy.ts
+var GROUP_SENDER_PRIVATE_MEMORY_POLICY = "group-sender-private-v2";
+var GROUP_PUBLIC_MEMORY_POLICY = "group-public-v2";
+function isBroadProfileIntrospection(text) {
+  const normalized = text.normalize("NFKC").replace(/\s+/g, " ").trim();
+  if (/\bwhat_do_you_know\b/i.test(normalized)) return true;
+  const englishBulk = /\b(?:all|every|everything|entire|complete|private|what|which|anything)\b/i.test(normalized);
+  const englishAboutSelf = /\b(?:about|of|on)\s+me\b/i.test(normalized);
+  const englishPersonalProfile = /\bmy\s+(?:(?:private|personal|stored|saved|all|every|complete|entire)\s+){0,3}(?:profile(?!\s+(?:picture|photo|photograph|image|avatar)\b)|memories)\b/i.test(normalized);
+  const englishProfileAboutMe = /\b(?:profile|memories|memory)\b.{0,48}\b(?:about|of|on)\s+me\b/i.test(normalized);
+  const englishKnowledgeAboutMe = /\b(?:know|remember|recall|store(?:d)?|save(?:d)?|have|information|info|details|facts|data|knowledge|history)\b.{0,48}\b(?:about|of|on)\s+me\b/i.test(normalized) || /\b(?:about|of|on)\s+me\b.{0,48}\b(?:know|remember|recall|store(?:d)?|save(?:d)?|have|information|info|details|facts|data|knowledge|history)\b/i.test(normalized);
+  const englishBulkObjectDisclosure = /\b(?:list|show|print|dump|export|enumerate|display|reveal|tell|share|give|send|recite|expose|disclose|publish|output)\b.{0,32}\b(?:(?:all|every|entire|complete|private|stored|saved)\s+){1,3}(?:profile|memories|memory)\b(?:\s+(?:you|the\s+bot|codex)\s+(?:have|stored|saved))?(?=\s*(?:$|[.?!]|please\b))/i.test(normalized);
+  if (englishAboutSelf && englishBulk || englishPersonalProfile || englishProfileAboutMe || englishKnowledgeAboutMe && englishBulk || englishBulkObjectDisclosure) {
+    return true;
+  }
+  const chineseAboutSelfBulk = /(?:关于我|对我)/.test(normalized) && /(?:什么|哪些|啥|全部|所有|都|有多少|有什么)/.test(normalized);
+  const chineseBulkObjectDisclosure = /(?:列出|展示|显示|导出|总结|枚举|打印|公开|透露|说出|说出来|告诉).{0,16}(?:(?:全部|所有|私人|私有|完整|已保存的)\s*){1,3}(?:记忆|资料(?!\s*(?:照片|图片|图像|头像))|画像|档案|profile)(?=\s*(?:$|[。！？?!]))/i.test(normalized);
+  const chinesePersonalProfile = /(?:我的|关于我的)\s*(?:(?:全部|所有|私人|私有|完整|已保存的)\s*){0,3}(?:记忆|资料(?!\s*(?:照片|图片|图像|头像))|画像|档案|profile)/i.test(normalized);
+  const chinesePrivateObject = /(?:私人|私有)\s*(?:记忆|资料|画像|档案|profile)/i.test(normalized);
+  const chineseKnowledgeAboutMe = /(?:知道|了解|记得|记住|想得起|存了|保存了).{0,16}(?:关于我|对我|我(?!的)).{0,12}(?:(?:什么|哪些|啥|全部|所有|都)(?:事|事情|信息|资料|内容|偏好|习惯|记忆)|(?:什么|啥)(?=$|[？?。!！]))/.test(normalized) || /(?:关于我|对我).{0,16}(?:都|全部|所有)?.{0,8}(?:知道|了解|记得|记住|想得起|存了|保存了).{0,12}(?:(?:什么|哪些|啥|全部|所有|都)(?:事|事情|信息|资料|内容|偏好|习惯|记忆)|(?:什么|啥)(?=$|[？?。!！]))/.test(normalized);
+  return chineseAboutSelfBulk || chineseBulkObjectDisclosure || chinesePersonalProfile || chinesePrivateObject || chineseKnowledgeAboutMe;
+}
+function resolveProfileContextPolicy(message) {
+  if (message.chatType === "p2p") {
+    return { mode: "sender-private", reason: "sender_private_chat" };
+  }
+  if (message.chatType === "group") {
+    const currentUserText = message.currentUserText ?? "";
+    if (!currentUserText.trim()) {
+      return { mode: "public-only", reason: "group_missing_source_public_only" };
+    }
+    if (isBroadProfileIntrospection(currentUserText)) {
+      return { mode: "public-only", reason: "group_introspection_public_only" };
+    }
+    return { mode: "sender-private", reason: "sender_group_private_context" };
+  }
+  return { mode: "public-only", reason: "non_chat_public_only" };
+}
+function profileSessionBinding(message) {
+  if (message.chatType !== "group") return null;
+  const policy = resolveProfileContextPolicy(message);
+  return {
+    memoryVisibilityPolicy: policy.mode === "sender-private" ? GROUP_SENDER_PRIVATE_MEMORY_POLICY : GROUP_PUBLIC_MEMORY_POLICY,
+    memoryContextSenderId: message.senderId
+  };
+}
+function isProfileSessionCompatible(message, context) {
+  const required2 = profileSessionBinding(message);
+  if (!required2) return true;
+  return context?.memoryVisibilityPolicy === required2.memoryVisibilityPolicy && context?.memoryContextSenderId === required2.memoryContextSenderId;
+}
+function profileContextPromptPolicy(message, policy) {
+  if (message.chatType !== "group") return void 0;
+  if (policy.mode === "public-only") {
+    return "This group turn is a broad profile or memory introspection request. Use and display public profile context only. Do not enumerate, summarize, hint at, or infer private profile entries.";
+  }
+  return "The current sender initiated this group turn, so their private profile may guide personalization. The response is visible to the whole group: do not enumerate, quote, summarize, or disclose private profile facts. Other users cannot authorize access to this sender-private context.";
+}
+
 // src/memory-enricher.ts
 async function auditProfileAccess(deps, record3) {
   try {
@@ -33527,6 +33591,7 @@ async function auditProfileAccess(deps, record3) {
 }
 async function enrichLarkMessageWithMemory(msg, deps) {
   const boundary = deps.conversationBoundary ?? null;
+  const profilePolicy = resolveProfileContextPolicy(msg);
   const bufferedMessages = deps.conversationBuffer ? filterBufferedMessagesAfterBoundary(deps.conversationBuffer.getMessages(msg.chatId), boundary) : [];
   const parentContent = filterParentContentAfterBoundary(msg.parentContent, boundary);
   const recentThreadContext = deps.conversationBuffer ? buildRecentThreadContext({
@@ -33543,7 +33608,8 @@ async function enrichLarkMessageWithMemory(msg, deps) {
       msg.senderId,
       msg.chatId,
       msg.text,
-      recentThreadContext
+      recentThreadContext,
+      profileContextPromptPolicy(msg, profilePolicy)
     );
   }
   deps.memoryDeduper.setWindowMs(appConfig.memoryDedupWindowMs);
@@ -33558,7 +33624,7 @@ async function enrichLarkMessageWithMemory(msg, deps) {
     }
   }
   const profile = await deps.memoryStore.getProfile(msg.senderId, msg.senderId, {
-    includePrivate: msg.chatType === "p2p"
+    includePrivate: profilePolicy.mode === "sender-private"
   }).catch(() => null);
   await auditProfileAccess(deps, {
     messageId: msg.messageId,
@@ -33566,14 +33632,14 @@ async function enrichLarkMessageWithMemory(msg, deps) {
     chatType: msg.chatType,
     requesterId: msg.senderId,
     profileOwnerId: msg.senderId,
-    consultedTiers: msg.chatType === "p2p" ? ["public", "private"] : ["public"],
-    decision: msg.chatType === "p2p" ? "owner_private_chat" : "group_public_only"
+    consultedTiers: profilePolicy.mode === "sender-private" ? ["public", "private"] : ["public"],
+    decision: profilePolicy.reason
   });
   if (profile) {
     blocks.push({
       key: `profile:${msg.senderId}`,
       kind: "profile",
-      label: "[User Profile]",
+      label: profilePolicy.mode === "sender-private" && msg.chatType === "group" ? "[User Profile: public + current-sender private]" : "[User Profile]",
       content: profile
     });
   }
@@ -33654,7 +33720,8 @@ async function enrichLarkMessageWithMemory(msg, deps) {
     msg.senderId,
     msg.chatId,
     msg.text,
-    recentThreadContext
+    recentThreadContext,
+    profileContextPromptPolicy(msg, profilePolicy)
   );
 }
 
@@ -34664,7 +34731,8 @@ ${parentBody}` : ""
       ...larkMessage.messagePosition ? { messagePosition: larkMessage.messagePosition } : {}
     });
     debugLog(`[channel] Enriching memory for message ${messageId}`);
-    const conversationBoundary = this.conversationBoundaryProvider ? await this.conversationBoundaryProvider.get(chatId, threadId) : null;
+    const storedConversationBoundary = this.conversationBoundaryProvider ? await this.conversationBoundaryProvider.get(chatId, threadId) : null;
+    const conversationBoundary = isProfileSessionCompatible(larkMessage, storedConversationBoundary) ? storedConversationBoundary : null;
     const boundaryFilteredMessage = {
       ...larkMessage,
       parentContent: filterParentContentAfterBoundary(larkMessage.parentContent, conversationBoundary)
@@ -34692,7 +34760,6 @@ ${parentBody}` : ""
     debugLog(`[channel] Memory enrichment complete for message ${messageId}`);
     const enrichedMessage = {
       ...boundaryFilteredMessage,
-      currentUserText: boundaryFilteredMessage.currentUserText ?? boundaryFilteredMessage.text,
       text: enrichedText
     };
     if (this.messageHandler) {
@@ -34749,6 +34816,8 @@ ${parentBody}` : ""
       senderId: operatorId,
       ...senderName ? { senderName } : {},
       text: lines.join("\n"),
+      currentUserText: `[Reaction]
+emoji_type: ${emojiType}`,
       messageType: "reaction",
       parentId: event.messageId,
       ...trackedMessage.threadId ? { threadId: trackedMessage.threadId } : {},
@@ -47878,8 +47947,8 @@ async function deliverMessageViaCodexExec(opts) {
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
   const sessionKey = buildCodexExecSessionKey(message.chatId, message.threadId);
   const storedSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
-  const requiresGroupPublicSession = message.chatType === "group";
-  const existingSession = requiresGroupPublicSession && storedSession?.memoryVisibilityPolicy !== GROUP_MEMORY_VISIBILITY_POLICY ? null : storedSession;
+  const requiredProfileSession = profileSessionBinding(message);
+  const existingSession = isProfileSessionCompatible(message, storedSession) ? storedSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
   const progressBaseDir = opts.progressBaseDir ?? appConfig.codexExecCwd;
@@ -47988,9 +48057,9 @@ async function deliverMessageViaCodexExec(opts) {
       chatId: message.chatId,
       ...message.threadId ? { threadId: message.threadId } : {},
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      ...preserveConversationBoundaryFields(storedSession),
+      ...preserveConversationBoundaryFields(existingSession),
       ...sessionModel ? { model: sessionModel } : {},
-      ...requiresGroupPublicSession ? { memoryVisibilityPolicy: GROUP_MEMORY_VISIBILITY_POLICY } : {}
+      ...requiredProfileSession ?? {}
     });
   }
   let sideChannelActions = [];
@@ -49096,7 +49165,8 @@ Source: LARK_CODEX_EXEC_MODEL.`;
       ...opts.message.threadId ? { threadId: opts.message.threadId } : {},
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       ...preserveConversationBoundaryFields(existing),
-      ...existing.memoryVisibilityPolicy ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy } : {}
+      ...existing.memoryVisibilityPolicy ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy } : {},
+      ...existing.memoryContextSenderId ? { memoryContextSenderId: existing.memoryContextSenderId } : {}
     });
     return appConfig.codexExecModel ? `Chat/thread model override cleared. Effective Codex model now falls back to LARK_CODEX_EXEC_MODEL: ${appConfig.codexExecModel}.` : "Chat/thread model override cleared. Effective Codex model now falls back to the Codex CLI default.";
   }
@@ -49108,6 +49178,7 @@ Source: LARK_CODEX_EXEC_MODEL.`;
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     ...preserveConversationBoundaryFields(existing),
     ...existing?.memoryVisibilityPolicy ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy } : {},
+    ...existing?.memoryContextSenderId ? { memoryContextSenderId: existing.memoryContextSenderId } : {},
     model: command.model
   });
   return `Chat/thread Codex model override set to ${command.model}. Subsequent realtime turns in this chat/thread will use it.`;
@@ -49160,6 +49231,10 @@ async function clearCodexSessionPointer(opts, flushResult) {
   const sessionStore = opts.sessionStore ?? defaultSessionStore2;
   const sessionKey = buildCodexExecSessionKey(opts.message.chatId, opts.message.threadId);
   const existing = await sessionStore.get(sessionKey);
+  const profileBinding = profileSessionBinding({
+    ...opts.message,
+    currentUserText: commandTextCandidate(opts.message)
+  });
   await sessionStore.set({
     key: sessionKey,
     sessionId: "",
@@ -49167,7 +49242,7 @@ async function clearCodexSessionPointer(opts, flushResult) {
     ...opts.message.threadId ? { threadId: opts.message.threadId } : {},
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     ...existing?.model ? { model: existing.model } : {},
-    ...existing?.memoryVisibilityPolicy ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy } : {},
+    ...profileBinding ?? {},
     ...createNextConversationBoundaryFields({
       existing,
       cutoffMessageId: opts.message.messageId,

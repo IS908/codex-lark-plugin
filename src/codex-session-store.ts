@@ -1,8 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export const GROUP_MEMORY_VISIBILITY_POLICY = 'group-public-v1';
-
 export interface CodexExecSessionRecord {
   key: string;
   sessionId: string;
@@ -17,6 +15,7 @@ export interface CodexExecSessionRecord {
   handoffConsumedAt?: string;
   boundaryUpdatedAt?: string;
   memoryVisibilityPolicy?: string;
+  memoryContextSenderId?: string;
 }
 
 export interface CodexExecSessionStore {
