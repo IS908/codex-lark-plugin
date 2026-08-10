@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.12.4-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.5-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -62,7 +62,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **Memory transparency (v0.11.0+)**: `what_do_you_know` lists what the bot has stored about the caller (filtered by current-chat visibility); `forget_memory` removes a specific line by hash. Optional `promote_to_rule` feeds corrections into `privacy-rules.md` — a self-learning loop that makes future misclassifications less likely
 - **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/logs/audit.log` records every sensitive-tool invocation as compact text lines (time / log id / `audit` / tool / outcome / caller / redacted args) so the operator can retrospectively inspect what was accessed on their machine
 - **Terminal skills default to redacted output (v0.11.0+)**: `$lark:jobs` hides prompt bodies by default; verbose opt-in is required. Destructive operations require interactive confirmation
-- **Tiered profile memory (v0.10.0+)**: each user's profile is split into `public.md` and `private.md`. Direct messages from the owner may use both tiers; every group-chat execution is public-only, including turns initiated by the owner and @mention lookups. Upgrades rotate legacy group Codex sessions once so previously injected private context cannot survive through session resume
+- **Tiered profile memory (v0.10.0+)**: each user's profile is split into `public.md` and `private.md`. Direct messages and ordinary group turns may use the current sender's own public+private profile for personalization, while broad profile/memory introspection and @mention lookups remain public-only. Group Codex sessions are bound to both visibility mode and sender identity, so one member cannot resume another member's private-context session
 - **L1/L2/L3 classification** (v0.10.0+): hardcoded regex + keyword rules catch phones / credentials / sensitive Chinese keywords. Email is intentionally NOT in L1 — the plugin targets **work-chat use cases** where emails are commonly shared via signatures/directories; personal deployments can add their own "Always private" email rule to `privacy-rules.md`. User-editable `privacy-rules.md` covers personal/org-specific cases; LLM handles the nuance. `parseTieredProfile` applies an L1 safety net over LLM output so misclassified credentials get forced to private
 - **Legacy-profile migration respects L2 rules (v0.11.1+)**: if the operator authors `privacy-rules.md` before (or during) the upgrade, `## Always private` phrases are applied as case-insensitive substring matches during migration — org-specific codenames, client names, and people mentions get routed to `private.md` even though L1 alone wouldn't flag them
 - **Memory hardening**: public profile writes are server-side checked with L1 and deterministic L2 always-private rules, with sensitive spillover routed to `private.md`; credential/token/account-identifier material is rejected from new profile, episode, and skill writes and filtered from legacy memory reads; profile access decisions are audited without copying memory text; same-user profile operations are serialized; stored memory, quotes, flush buffers, cron prompts, Codex exec prompts, and L2 rules are wrapped as untrusted data in prompts; episode files are capped by `LARK_MAX_EPISODE_BYTES`
@@ -301,7 +301,7 @@ If you publish under a different GitHub owner or repository name, update the URL
 
 On every incoming message, the plugin injects relevant memory context in this order:
 
-1. **User profile** -- loaded for the sender; owner public+private in direct messages, public-only in groups
+1. **User profile** -- loaded for the current sender; public+private in direct messages and ordinary group turns, but public-only for broad profile/memory introspection in a group
 2. **Mentioned user profiles** -- public-only for any @mentioned users
 3. **Thread episodes** -- searched by relevance if the message is in a thread
 4. **Chat episodes** -- searched by relevance for the current chat

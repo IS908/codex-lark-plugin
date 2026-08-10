@@ -15,6 +15,10 @@ import {
   formatConversationHandoffBlock,
   type ConversationBoundary,
 } from './conversation-boundary.js';
+import {
+  profileContextPromptPolicy,
+  resolveProfileContextPolicy,
+} from './memory/profile-context-policy.js';
 
 export interface MemoryEnrichmentDeps {
   memoryStore: MemoryStore | null;
@@ -32,7 +36,13 @@ export interface MemoryProfileAccessAuditRecord {
   requesterId: string;
   profileOwnerId: string;
   consultedTiers: Array<'public' | 'private'>;
-  decision: 'owner_private_chat' | 'group_public_only' | 'mentioned_user_public_only';
+  decision:
+    | 'sender_private_chat'
+    | 'sender_group_private_context'
+    | 'group_introspection_public_only'
+    | 'group_missing_source_public_only'
+    | 'non_chat_public_only'
+    | 'mentioned_user_public_only';
 }
 
 async function auditProfileAccess(
@@ -51,6 +61,7 @@ export async function enrichLarkMessageWithMemory(
   deps: MemoryEnrichmentDeps,
 ): Promise<string> {
   const boundary = deps.conversationBoundary ?? null;
+  const profilePolicy = resolveProfileContextPolicy(msg);
   const bufferedMessages = deps.conversationBuffer
     ? filterBufferedMessagesAfterBoundary(deps.conversationBuffer.getMessages(msg.chatId), boundary)
     : [];
@@ -73,6 +84,7 @@ export async function enrichLarkMessageWithMemory(
       msg.chatId,
       msg.text,
       recentThreadContext,
+      profileContextPromptPolicy(msg, profilePolicy),
     );
   }
 
@@ -91,7 +103,7 @@ export async function enrichLarkMessageWithMemory(
 
   const profile = await deps.memoryStore
     .getProfile(msg.senderId, msg.senderId, {
-      includePrivate: msg.chatType === 'p2p',
+      includePrivate: profilePolicy.mode === 'sender-private',
     })
     .catch(() => null);
   await auditProfileAccess(deps, {
@@ -100,14 +112,16 @@ export async function enrichLarkMessageWithMemory(
     chatType: msg.chatType,
     requesterId: msg.senderId,
     profileOwnerId: msg.senderId,
-    consultedTiers: msg.chatType === 'p2p' ? ['public', 'private'] : ['public'],
-    decision: msg.chatType === 'p2p' ? 'owner_private_chat' : 'group_public_only',
+    consultedTiers: profilePolicy.mode === 'sender-private' ? ['public', 'private'] : ['public'],
+    decision: profilePolicy.reason,
   });
   if (profile) {
     blocks.push({
       key: `profile:${msg.senderId}`,
       kind: 'profile',
-      label: '[User Profile]',
+      label: profilePolicy.mode === 'sender-private' && msg.chatType === 'group'
+        ? '[User Profile: public + current-sender private]'
+        : '[User Profile]',
       content: profile,
     });
   }
@@ -199,5 +213,6 @@ export async function enrichLarkMessageWithMemory(
     msg.chatId,
     msg.text,
     recentThreadContext,
+    profileContextPromptPolicy(msg, profilePolicy),
   );
 }

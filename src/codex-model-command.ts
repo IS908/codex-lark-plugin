@@ -27,6 +27,7 @@ import {
   type AccessControlValidationInput,
 } from './access-control-validation.js';
 import { CONTINUATION_COMMAND_DEFINITION } from './continuation/command-handler.js';
+import { profileSessionBinding } from './memory/profile-context-policy.js';
 
 export interface CodexModelCommandOptions {
   message: LarkMessage;
@@ -364,6 +365,9 @@ async function executeCodexModelCommand(
       ...(existing.memoryVisibilityPolicy
         ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy }
         : {}),
+      ...(existing.memoryContextSenderId
+        ? { memoryContextSenderId: existing.memoryContextSenderId }
+        : {}),
     });
     return appConfig.codexExecModel
       ? `Chat/thread model override cleared. Effective Codex model now falls back to LARK_CODEX_EXEC_MODEL: ${appConfig.codexExecModel}.`
@@ -379,6 +383,9 @@ async function executeCodexModelCommand(
     ...preserveConversationBoundaryFields(existing),
     ...(existing?.memoryVisibilityPolicy
       ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy }
+      : {}),
+    ...(existing?.memoryContextSenderId
+      ? { memoryContextSenderId: existing.memoryContextSenderId }
       : {}),
     model: command.model,
   });
@@ -440,6 +447,10 @@ async function clearCodexSessionPointer(
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
   const sessionKey = buildCodexExecSessionKey(opts.message.chatId, opts.message.threadId);
   const existing = await sessionStore.get(sessionKey);
+  const profileBinding = profileSessionBinding({
+    ...opts.message,
+    currentUserText: commandTextCandidate(opts.message),
+  });
   await sessionStore.set({
     key: sessionKey,
     sessionId: '',
@@ -447,9 +458,7 @@ async function clearCodexSessionPointer(
     ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
     updatedAt: new Date().toISOString(),
     ...(existing?.model ? { model: existing.model } : {}),
-    ...(existing?.memoryVisibilityPolicy
-      ? { memoryVisibilityPolicy: existing.memoryVisibilityPolicy }
-      : {}),
+    ...(profileBinding ?? {}),
     ...createNextConversationBoundaryFields({
       existing,
       cutoffMessageId: opts.message.messageId,

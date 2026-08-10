@@ -38,6 +38,7 @@ import { audit } from './audit-log.js';
 import { handleCommentEvent } from './doc-comment-inbound.js';
 import { prepareInboundTurn } from './inbound-turn-pipeline.js';
 import { filterParentContentAfterBoundary } from './conversation-boundary.js';
+import { isProfileSessionCompatible } from './memory/profile-context-policy.js';
 import type {
   ControlMessageHandler,
   ConversationBoundaryProvider,
@@ -387,8 +388,11 @@ export class LarkChannel {
 
     // Build memory-enriched context
     debugLog(`[channel] Enriching memory for message ${messageId}`);
-    const conversationBoundary = this.conversationBoundaryProvider
+    const storedConversationBoundary = this.conversationBoundaryProvider
       ? await this.conversationBoundaryProvider.get(chatId, threadId)
+      : null;
+    const conversationBoundary = isProfileSessionCompatible(larkMessage, storedConversationBoundary)
+      ? storedConversationBoundary
       : null;
     const boundaryFilteredMessage = {
       ...larkMessage,
@@ -419,7 +423,6 @@ export class LarkChannel {
     // Forward to handler with enriched context
     const enrichedMessage = {
       ...boundaryFilteredMessage,
-      currentUserText: boundaryFilteredMessage.currentUserText ?? boundaryFilteredMessage.text,
       text: enrichedText,
     };
 
@@ -484,6 +487,7 @@ export class LarkChannel {
       senderId: operatorId,
       ...(senderName ? { senderName } : {}),
       text: lines.join('\n'),
+      currentUserText: `[Reaction]\nemoji_type: ${emojiType}`,
       messageType: 'reaction',
       parentId: event.messageId,
       ...(trackedMessage.threadId ? { threadId: trackedMessage.threadId } : {}),

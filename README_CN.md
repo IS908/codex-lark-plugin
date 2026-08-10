@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.12.4-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.12.5-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -49,7 +49,7 @@
 - 自动蒸馏：对话静默超时后自动触发摘要；系统触发的 flush turn 是后台行为，exec 失败只记日志，不会作为可见飞书回复发送
 - 可选阶段 2：从近期 episode 提取用户画像，默认关闭，并受最小 episode 数、按用户冷却、L1/L2 安全网和审计日志约束
 - 本地 markdown 文件存储，路径 `~/.codex/channels/lark/memories/`
-- 用户 profile 分层存储（v0.10.0+）：`public.md`（@mention 可见）/ `private.md`（仅 owner 可见）
+- 用户 profile 分层存储（v0.10.0+）：`public.md`（@mention 可见）/ `private.md`（当前用户的私聊和日常群聊回合可用于个性化）
 
 ### 隐私与安全（v0.9.0+）
 
@@ -58,7 +58,7 @@
 - **记忆透明度（v0.11.0+）**：`what_do_you_know` 列出 bot 记住了调用者的哪些信息（按当前 chat 可见性过滤）；`forget_memory` 按 hash 删除特定条目，可选 `promote_to_rule` 把删除动作沉淀为 `privacy-rules.md` 中的规则——**自学习闭环**让误判随使用递减
 - **追加式审计日志（v0.11.0+）**：`~/.codex/channels/lark/logs/audit.log` 以紧凑文本行记录每次敏感工具调用（时间 / log id / `audit` / 工具名 / 结果 / 调用者 / 脱敏参数），运营者可事后回溯查看本机上发生了什么
 - **终端技能默认脱敏（v0.11.0+）**：`$lark:jobs` 默认不展示 prompt 正文，需显式要求 verbose；破坏性操作需交互确认
-- **分层 profile 记忆（v0.10.0+）**：每个用户的 profile 拆成 `public.md`（他人 @mention 时可见）和 `private.md`（仅 owner 可见）。私聊里的偏好不会通过 @mention 注入泄露到群聊
+- **分层 profile 记忆（v0.10.0+）**：每个用户的 profile 拆成 `public.md` 和 `private.md`。私聊和日常群聊会注入当前发言者自己的 public+private profile 以支持个性化；群内宽泛的记忆/画像查询及他人 @mention 查询只使用 public。群聊 Codex session 同时绑定可见性模式和发言者身份，群成员不能续接他人的 private 上下文
 - **L1/L2/L3 分类体系**（v0.10.0+）：硬编码的 regex + 关键词规则拦截手机/凭据/敏感中文词。邮箱**不在** L1——本插件定位为**工作 IM 场景**，工作邮箱常通过签名和通讯录公开；个人使用的部署可以在自己的 `privacy-rules.md` 里加一条 "Always private" 规则专门归类邮箱。用户可编辑的 `privacy-rules.md` 处理个人和组织特有场景；LLM 处理灰色地带。`parseTieredProfile` 在 LLM 分类之上加 L1 兜底——误判为 public 的凭据被强制归 private
 - **老版本 profile 迁移尊重 L2 规则（v0.11.1+）**：操作者在升级前（或同步）编辑 `privacy-rules.md`，`## Always private` 段的短语会以 case-insensitive 子串方式在迁移时生效——组织内项目代号、客户名、人名提及等 L1 无法覆盖的内容会被直接分到 `private.md`
 - **记忆硬化**：public profile 写入会在服务端经过 L1 和 deterministic L2 always-private 规则检查，敏感 spillover 会转写到 `private.md`；同一用户的 profile 操作串行化；已存记忆、引用、flush buffer、cron prompt、Codex exec prompt、L2 规则在 prompt 中都以 untrusted data 包裹；episode 文件受 `LARK_MAX_EPISODE_BYTES` 限制

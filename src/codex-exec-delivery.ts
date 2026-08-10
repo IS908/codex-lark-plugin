@@ -5,7 +5,6 @@ import { isCodexExecTimeoutError, normalizeCodexExecResult, runCodexExecCommand 
 import {
   buildCodexExecSessionKey,
   FileCodexExecSessionStore,
-  GROUP_MEMORY_VISIBILITY_POLICY,
   type CodexExecSessionStore,
 } from './codex-session-store.js';
 import { preserveConversationBoundaryFields } from './conversation-boundary.js';
@@ -36,6 +35,10 @@ import {
 import { listConfiguredLocalCliToolNames } from './local-cli-tools.js';
 import { logSafeError } from './safe-log.js';
 import { accessControlStore } from './runtime-access-control.js';
+import {
+  isProfileSessionCompatible,
+  profileSessionBinding,
+} from './memory/profile-context-policy.js';
 
 export interface CodexExecDeliveryBaseOptions {
   message: LarkMessage;
@@ -438,11 +441,10 @@ export async function deliverMessageViaCodexExec(
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
   const sessionKey = buildCodexExecSessionKey(message.chatId, message.threadId);
   const storedSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
-  const requiresGroupPublicSession = message.chatType === 'group';
-  const existingSession = requiresGroupPublicSession
-    && storedSession?.memoryVisibilityPolicy !== GROUP_MEMORY_VISIBILITY_POLICY
-    ? null
-    : storedSession;
+  const requiredProfileSession = profileSessionBinding(message);
+  const existingSession = isProfileSessionCompatible(message, storedSession)
+    ? storedSession
+    : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
   const progressBaseDir = opts.progressBaseDir ?? appConfig.codexExecCwd;
@@ -569,11 +571,9 @@ export async function deliverMessageViaCodexExec(
       chatId: message.chatId,
       ...(message.threadId ? { threadId: message.threadId } : {}),
       updatedAt: new Date().toISOString(),
-      ...preserveConversationBoundaryFields(storedSession),
+      ...preserveConversationBoundaryFields(existingSession),
       ...(sessionModel ? { model: sessionModel } : {}),
-      ...(requiresGroupPublicSession
-        ? { memoryVisibilityPolicy: GROUP_MEMORY_VISIBILITY_POLICY }
-        : {}),
+      ...(requiredProfileSession ?? {}),
     });
   }
 

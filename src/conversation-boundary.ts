@@ -14,6 +14,8 @@ export interface ConversationBoundary {
   handoffSummary?: string;
   handoffConsumedAt?: string;
   boundaryUpdatedAt?: string;
+  memoryVisibilityPolicy?: string;
+  memoryContextSenderId?: string;
 }
 
 export interface ConversationBoundaryCommitInput {
@@ -60,6 +62,12 @@ export function conversationBoundaryFromSession(
     ...(record.handoffSummary ? { handoffSummary: record.handoffSummary } : {}),
     ...(record.handoffConsumedAt ? { handoffConsumedAt: record.handoffConsumedAt } : {}),
     ...(record.boundaryUpdatedAt ? { boundaryUpdatedAt: record.boundaryUpdatedAt } : {}),
+    ...(record.memoryVisibilityPolicy
+      ? { memoryVisibilityPolicy: record.memoryVisibilityPolicy }
+      : {}),
+    ...(record.memoryContextSenderId
+      ? { memoryContextSenderId: record.memoryContextSenderId }
+      : {}),
   };
 }
 

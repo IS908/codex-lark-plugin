@@ -1154,6 +1154,10 @@ assert.deepEqual(longDocAssistantRecords, [
 const sessionRequests: any[] = [];
 const sessionRecords = new Map<string, any>();
 const sessionHealthRecords: any[] = [];
+const sessionMessage: LarkMessage = {
+  ...message,
+  currentUserText: '@Codex ping',
+};
 const sessionStore = {
   async get(key: string) {
     return sessionRecords.get(key) ?? null;
@@ -1174,7 +1178,7 @@ const legacyGroupSessionRecords = new Map<string, any>([
 ]);
 const legacyGroupSessionRequests: any[] = [];
 await deliverMessageViaCodexExec({
-  message,
+  message: sessionMessage,
   displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
   sessionStore: {
     async get(key: string) {
@@ -1193,11 +1197,95 @@ await deliverMessageViaCodexExec({
 assert.equal(legacyGroupSessionRequests[0].resumeSessionId, null);
 assert.equal(
   legacyGroupSessionRecords.get('chat:oc_group_001:thread:omt_thread_001')?.memoryVisibilityPolicy,
-  'group-public-v1',
+  'group-sender-private-v2',
+);
+assert.equal(
+  legacyGroupSessionRecords.get('chat:oc_group_001:thread:omt_thread_001')?.memoryContextSenderId,
+  'ou_sender_001',
 );
 
+const contextSessionRecords = new Map<string, any>();
+const contextSessionRequests: any[] = [];
+const contextSessionStore = {
+  async get(key: string) {
+    return contextSessionRecords.get(key) ?? null;
+  },
+  async set(record: any) {
+    contextSessionRecords.set(record.key, record);
+  },
+};
+async function deliverContextSessionTurn(
+  input: Pick<LarkMessage, 'messageId' | 'senderId' | 'currentUserText'>,
+  sessionId: string,
+): Promise<void> {
+  await deliverMessageViaCodexExec({
+    message: {
+      ...message,
+      ...input,
+      text: `[Current Message]\n${input.currentUserText}`,
+    },
+    displayLabel: 'Context policy test',
+    sessionStore: contextSessionStore,
+    runCodexExec: async (request) => {
+      contextSessionRequests.push(request);
+      return { text: 'context answer', sessionId };
+    },
+    sendReply: async () => ({ sentCount: 1 }),
+  });
+}
+
+await deliverContextSessionTurn({
+  messageId: 'om_context_a_1',
+  senderId: 'ou_context_a',
+  currentUserText: 'Use my preferences for this review.',
+}, 'session-context-a');
+await deliverContextSessionTurn({
+  messageId: 'om_context_a_2',
+  senderId: 'ou_context_a',
+  currentUserText: 'Continue the review.',
+}, 'session-context-a');
+contextSessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
+  ...contextSessionRecords.get('chat:oc_group_001:thread:omt_thread_001'),
+  generation: 7,
+  handoffSummary: 'PRIVATE_HANDOFF_FROM_A',
+  boundaryUpdatedAt: '2026-08-10T00:00:00.000Z',
+});
+await deliverContextSessionTurn({
+  messageId: 'om_context_b_1',
+  senderId: 'ou_context_b',
+  currentUserText: 'Use my preferences for this summary.',
+}, 'session-context-b');
+assert.equal(
+  contextSessionRecords.get('chat:oc_group_001:thread:omt_thread_001')?.handoffSummary,
+  undefined,
+  'a new sender-private session must not inherit the previous sender handoff',
+);
+await deliverContextSessionTurn({
+  messageId: 'om_context_b_public',
+  senderId: 'ou_context_b',
+  currentUserText: 'what_do_you_know about me? List every memory.',
+}, 'session-context-public');
+await deliverContextSessionTurn({
+  messageId: 'om_context_a_public',
+  senderId: 'ou_context_a',
+  currentUserText: 'what_do_you_know about me? List every memory.',
+}, 'session-context-public');
+await deliverContextSessionTurn({
+  messageId: 'om_context_a_3',
+  senderId: 'ou_context_a',
+  currentUserText: 'Now continue my normal review.',
+}, 'session-context-a-fresh');
+
+assert.deepEqual(
+  contextSessionRequests.map((request) => request.resumeSessionId),
+  [null, 'session-context-a', null, null, null, null],
+);
+const contextRecord = contextSessionRecords.get('chat:oc_group_001:thread:omt_thread_001');
+assert.equal(contextRecord?.memoryVisibilityPolicy, 'group-sender-private-v2');
+assert.equal(contextRecord?.memoryContextSenderId, 'ou_context_a');
+
 await deliverMessageViaCodexExec({
-  message,
+  message: sessionMessage,
   displayLabel: 'Kevin · Codex Test Group · thread_ad_001',
   sessionStore,
   runCodexExec: async (request) => {
@@ -1218,7 +1306,7 @@ await deliverMessageViaCodexExec({
 
 await deliverMessageViaCodexExec({
   message: {
-    ...message,
+    ...sessionMessage,
     messageId: 'om_inbound_002',
     text: '[Current Message]\ncontinue from before',
   },
@@ -1258,7 +1346,8 @@ sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   chatId: 'oc_group_001',
   threadId: 'omt_thread_001',
   updatedAt: new Date(0).toISOString(),
-  memoryVisibilityPolicy: 'group-public-v1',
+  memoryVisibilityPolicy: 'group-sender-private-v2',
+  memoryContextSenderId: 'ou_sender_001',
   model: 'gpt-4',
   generation: 5,
   cutoffMessageId: 'om_new_boundary',
@@ -1268,7 +1357,7 @@ sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
 const boundarySessionRequests: any[] = [];
 await deliverMessageViaCodexExec({
   message: {
-    ...message,
+    ...sessionMessage,
     messageId: 'om_boundary_first_turn',
     text: '[Current Message]\nfirst turn after /new',
   },
@@ -1407,13 +1496,14 @@ sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   chatId: 'oc_group_001',
   threadId: 'omt_thread_001',
   updatedAt: new Date(0).toISOString(),
-  memoryVisibilityPolicy: 'group-public-v1',
+  memoryVisibilityPolicy: 'group-sender-private-v2',
+  memoryContextSenderId: 'ou_sender_001',
 });
 const fallbackRequests: any[] = [];
 
 await deliverMessageViaCodexExec({
   message: {
-    ...message,
+    ...sessionMessage,
     messageId: 'om_inbound_003',
     text: '[Current Message]\nresume after stale session',
   },
@@ -1443,14 +1533,15 @@ sessionRecords.set('chat:oc_group_001:thread:omt_thread_001', {
   chatId: 'oc_group_001',
   threadId: 'omt_thread_001',
   updatedAt: new Date(0).toISOString(),
-  memoryVisibilityPolicy: 'group-public-v1',
+  memoryVisibilityPolicy: 'group-sender-private-v2',
+  memoryContextSenderId: 'ou_sender_001',
 });
 const timeoutFallbackRequests: any[] = [];
 
 await assert.rejects(
   deliverMessageViaCodexExec({
     message: {
-      ...message,
+      ...sessionMessage,
       messageId: 'om_inbound_resume_timeout',
       text: '[Current Message]\nresume times out',
     },

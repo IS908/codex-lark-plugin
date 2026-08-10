@@ -56,6 +56,7 @@ try {
   assert.equal(reactionMessage.senderId, 'ou_reactor_001');
   assert.equal(reactionMessage.senderName, 'Kevin');
   assert.equal(reactionMessage.messageType, 'reaction');
+  assert.equal(reactionMessage.currentUserText, '[Reaction]\nemoji_type: OK');
   assert.equal(reactionMessage.reaction.emojiType, 'OK');
   assert.equal(reactionMessage.reaction.targetMessageId, 'om_bot_reply_001');
   assert.match(reactionMessage.text, /User Kevin .*reacted to a previous bot reply with emoji OK/);
