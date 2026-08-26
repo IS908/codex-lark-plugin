@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import ts from 'typescript';
+import * as ts from 'typescript/unstable/ast';
+import { API as TypeScriptApi } from 'typescript/unstable/sync';
 
 const repoRoot = process.cwd();
 const sourceRoot = path.join(repoRoot, 'src');
@@ -176,14 +177,16 @@ function findRestrictedImports(graph) {
 
 function findSchedulerBoundaryViolations() {
   const schedulerPath = path.join(sourceRoot, 'scheduler.ts');
-  const source = fs.readFileSync(schedulerPath, 'utf8');
-  const sourceFile = ts.createSourceFile(
-    schedulerPath,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const configPath = path.join(repoRoot, 'tsconfig.json');
+  const api = new TypeScriptApi({ cwd: repoRoot });
+  const snapshot = api.updateSnapshot({ openProjects: [configPath] });
+  const project = snapshot.getProject(configPath);
+  const sourceFile = project?.program.getSourceFile(schedulerPath);
+  if (!sourceFile) {
+    snapshot.dispose();
+    api.close();
+    throw new Error(`TypeScript project did not load ${schedulerPath}`);
+  }
   const violations = [];
   const forbiddenImportPaths = [
     { pattern: /^\.\/codex-(?:exec(?:-delivery)?|delivery-wiring)\.js$/, rule: 'scheduler-must-not-import-codex-delivery' },
@@ -238,11 +241,16 @@ function findSchedulerBoundaryViolations() {
       const rule = forbiddenIdentifiers.get(node.text);
       if (rule) add(rule, node.text);
     }
-    ts.forEachChild(node, visit);
+    node.forEachChild(visit);
   }
 
-  visit(sourceFile);
-  return dedupeViolations(violations);
+  try {
+    visit(sourceFile);
+    return dedupeViolations(violations);
+  } finally {
+    snapshot.dispose();
+    api.close();
+  }
 }
 
 function loadBaseline() {

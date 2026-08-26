@@ -90,6 +90,10 @@ echo "=== Dependency security checks ==="
 node --import tsx scripts/dependency-security-smoke.ts
 
 echo ""
+echo "=== Dependency upgrade policy checks ==="
+node --import tsx scripts/dependency-upgrade-policy-smoke.ts
+
+echo ""
 echo "=== Skill mirror sync checks ==="
 node --import tsx scripts/skill-mirror-sync-smoke.ts
 
