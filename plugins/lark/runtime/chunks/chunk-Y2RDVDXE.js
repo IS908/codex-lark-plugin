@@ -4,7 +4,7 @@ import {
   assertSupportedNodeVersion,
   readConfigValues,
   require_main
-} from "./chunk-VT5EWFRM.js";
+} from "./chunk-WOBAO6HM.js";
 
 // src/config.ts
 var import_dotenv = __toESM(require_main(), 1);
@@ -12,7 +12,7 @@ import path from "node:path";
 import os from "node:os";
 assertSupportedNodeVersion();
 var envPath = path.join(os.homedir(), ".codex", "channels", "lark", ".env");
-(0, import_dotenv.config)({ path: envPath });
+(0, import_dotenv.config)({ path: envPath, quiet: true });
 var channelHome = path.join(os.homedir(), ".codex", "channels", "lark");
 var runtimeConfigDir = path.join(channelHome, "runtime-config");
 var continuationRuntimeDir = path.join(channelHome, "runtime", "continuations");
