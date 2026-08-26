@@ -41,8 +41,8 @@
     "audit:deps": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
-    "@larksuite/channel": "^0.2.0",
-    "@larksuiteoapi/node-sdk": "^1.71.1",
+    "@larksuite/channel": "^0.5.0",
+    "@larksuiteoapi/node-sdk": "^1.73.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "cron-parser": "^5.5.0",
     "dotenv": "^16.4.7",

@@ -12,7 +12,7 @@ import {
 import {
   require_lib,
   require_src
-} from "./chunks/chunk-H4O4G4QK.js";
+} from "./chunks/chunk-VEUQ7PA7.js";
 import {
   applyL1,
   detectCredentialMaterial,
@@ -1868,8 +1868,8 @@ var require_keyword = __commonJS({
       var _a;
       const { gen, keyword, schema, parentSchema, $data, it } = cxt;
       checkAsyncKeyword(it, def);
-      const validate = !$data && def.compile ? def.compile.call(it.self, schema, parentSchema, it) : def.validate;
-      const validateRef = useKeyword(gen, keyword, validate);
+      const validate2 = !$data && def.compile ? def.compile.call(it.self, schema, parentSchema, it) : def.validate;
+      const validateRef = useKeyword(gen, keyword, validate2);
       const valid = gen.let("valid");
       cxt.block$data(valid, validateKeyword);
       cxt.ok((_a = def.valid) !== null && _a !== void 0 ? _a : valid);
@@ -2942,28 +2942,28 @@ var require_compile = __commonJS({
         if (this.opts.code.process)
           sourceCode = this.opts.code.process(sourceCode, sch);
         const makeValidate = new Function(`${names_1.default.self}`, `${names_1.default.scope}`, sourceCode);
-        const validate = makeValidate(this, this.scope.get());
-        this.scope.value(validateName, { ref: validate });
-        validate.errors = null;
-        validate.schema = sch.schema;
-        validate.schemaEnv = sch;
+        const validate2 = makeValidate(this, this.scope.get());
+        this.scope.value(validateName, { ref: validate2 });
+        validate2.errors = null;
+        validate2.schema = sch.schema;
+        validate2.schemaEnv = sch;
         if (sch.$async)
-          validate.$async = true;
+          validate2.$async = true;
         if (this.opts.code.source === true) {
-          validate.source = { validateName, validateCode, scopeValues: gen._values };
+          validate2.source = { validateName, validateCode, scopeValues: gen._values };
         }
         if (this.opts.unevaluated) {
           const { props, items } = schemaCxt;
-          validate.evaluated = {
+          validate2.evaluated = {
             props: props instanceof codegen_1.Name ? void 0 : props,
             items: items instanceof codegen_1.Name ? void 0 : items,
             dynamicProps: props instanceof codegen_1.Name,
             dynamicItems: items instanceof codegen_1.Name
           };
-          if (validate.source)
-            validate.source.evaluated = (0, codegen_1.stringify)(validate.evaluated);
+          if (validate2.source)
+            validate2.source.evaluated = (0, codegen_1.stringify)(validate2.evaluated);
         }
-        sch.validate = validate;
+        sch.validate = validate2;
         return sch;
       } catch (e) {
         delete sch.validate;
@@ -6602,8 +6602,8 @@ var require_formats = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatNames = exports.fastFormats = exports.fullFormats = void 0;
-    function fmtDef(validate, compare) {
-      return { validate, compare };
+    function fmtDef(validate2, compare) {
+      return { validate: validate2, compare };
     }
     exports.fullFormats = {
       // date: http://tools.ietf.org/html/rfc3339#section-5.6
@@ -9097,7 +9097,7 @@ var require_luxon = __commonJS({
       const offMin = parseInt(offMinuteStr, 10) || 0, offMinSigned = offHour < 0 || Object.is(offHour, -0) ? -offMin : offMin;
       return offHour * 60 + offMinSigned;
     }
-    function asNumber(value) {
+    function asNumber2(value) {
       const numericValue = Number(value);
       if (typeof value === "boolean" || value === "" || !Number.isFinite(numericValue)) throw new InvalidArgumentError(`Invalid unit value ${value}`);
       return numericValue;
@@ -9108,7 +9108,7 @@ var require_luxon = __commonJS({
         if (hasOwnProperty(obj, u)) {
           const v = obj[u];
           if (v === void 0 || v === null) continue;
-          normalized[normalizer(u)] = asNumber(v);
+          normalized[normalizer(u)] = asNumber2(v);
         }
       }
       return normalized;
@@ -10353,7 +10353,7 @@ var require_luxon = __commonJS({
         if (!this.isValid) return this;
         const result = {};
         for (const k of Object.keys(this.values)) {
-          result[k] = asNumber(fn(this.values[k], k));
+          result[k] = asNumber2(fn(this.values[k], k));
         }
         return clone$1(this, {
           values: result
@@ -43420,12 +43420,133 @@ function omit2(obj, ...keys) {
 }
 
 // node_modules/@larksuite/channel/dist/index.mjs
+import { createHash as createHash7, randomUUID as randomUUID3 } from "node:crypto";
+import { inspect } from "node:util";
 import fs14 from "fs";
 import http2 from "http";
 import https from "https";
 import path15 from "path";
 import { promises } from "dns";
 import { isIP as isIP2 } from "net";
+var AMBIGUOUS = /* @__PURE__ */ Symbol("ambiguous");
+var DEFAULT_TTL_MS = 5 * 6e4;
+var DEFAULT_MAX_CHATS = 500;
+var DEFAULT_MAX_ENTRIES_PER_CHAT = 1e3;
+var ChatMemberCache = class {
+  chats = /* @__PURE__ */ new Map();
+  now;
+  ttlMs;
+  maxChats;
+  maxEntriesPerChat;
+  constructor(opts = {}) {
+    this.now = opts.now ?? Date.now;
+    this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
+    this.maxChats = opts.maxChats ?? DEFAULT_MAX_CHATS;
+    this.maxEntriesPerChat = opts.maxEntriesPerChat ?? DEFAULT_MAX_ENTRIES_PER_CHAT;
+  }
+  setMembers(chatId, members, source) {
+    const roster = this.rosterForWrite(chatId);
+    this.indexAll(roster, members, source);
+    if (source === "api") {
+      roster.apiMembers = members;
+      roster.apiFetchedAt = this.now();
+    }
+    roster.updatedAt = this.now();
+    this.store(chatId, roster);
+  }
+  /** Cache an authoritative bot list (from `getChatBots`) — separate from the
+  *  user list so neither clobbers the other. Indexed as an 'api' source. */
+  setBots(chatId, bots) {
+    const roster = this.rosterForWrite(chatId);
+    this.indexAll(roster, bots, "api");
+    roster.apiBots = bots;
+    roster.apiBotsFetchedAt = this.now();
+    roster.updatedAt = this.now();
+    this.store(chatId, roster);
+  }
+  /**
+  * The last API user list, or `undefined` when absent or expired. Uses its
+  * own `apiFetchedAt` clock so ongoing 'mention' writes to an active chat
+  * don't keep the API cache alive past the TTL (spec §5).
+  */
+  getMembers(chatId) {
+    return this.liveList(chatId, "members");
+  }
+  /** The last API bot list, or `undefined` when absent or expired. */
+  getBots(chatId) {
+    return this.liveList(chatId, "bots");
+  }
+  liveList(chatId, kind) {
+    const roster = this.liveRoster(chatId);
+    const list = kind === "members" ? roster?.apiMembers : roster?.apiBots;
+    const fetchedAt = kind === "members" ? roster?.apiFetchedAt : roster?.apiBotsFetchedAt;
+    if (!list || fetchedAt === void 0) return void 0;
+    if (this.now() - fetchedAt > this.ttlMs) return void 0;
+    return list;
+  }
+  indexAll(roster, members, source) {
+    for (const m of members) {
+      if (!m.id || !m.name) continue;
+      this.indexMember(roster, m.id, m.name, source);
+    }
+  }
+  resolveName(chatId, openId) {
+    return this.liveRoster(chatId)?.byOpenId.get(openId);
+  }
+  resolveOpenId(chatId, name) {
+    const target = this.liveRoster(chatId)?.byName.get(name);
+    return typeof target === "string" ? target : void 0;
+  }
+  indexMember(roster, openId, name, source) {
+    const prevSource = roster.nameSource.get(openId);
+    const prevName = roster.byOpenId.get(openId);
+    if (source === "api" || prevSource !== "api") {
+      roster.byOpenId.set(openId, name);
+      roster.nameSource.set(openId, source);
+      if (prevName !== void 0 && prevName !== name && roster.byName.get(prevName) === openId) roster.byName.delete(prevName);
+    }
+    const existing = roster.byName.get(name);
+    if (existing === void 0) roster.byName.set(name, openId);
+    else if (existing !== openId) roster.byName.set(name, AMBIGUOUS);
+    this.capEntries(roster);
+  }
+  /** Per-chat hard backstop: evict oldest-inserted entries past the cap. */
+  capEntries(roster) {
+    evictOldest(roster.byName, this.maxEntriesPerChat);
+    evictOldest(roster.byOpenId, this.maxEntriesPerChat);
+    evictOldest(roster.nameSource, this.maxEntriesPerChat);
+  }
+  rosterForWrite(chatId) {
+    return this.liveRoster(chatId) ?? {
+      byOpenId: /* @__PURE__ */ new Map(),
+      byName: /* @__PURE__ */ new Map(),
+      nameSource: /* @__PURE__ */ new Map(),
+      updatedAt: this.now()
+    };
+  }
+  liveRoster(chatId) {
+    const roster = this.chats.get(chatId);
+    if (!roster) return void 0;
+    if (this.now() - roster.updatedAt > this.ttlMs) {
+      this.chats.delete(chatId);
+      return;
+    }
+    return roster;
+  }
+  /** Re-insert (LRU touch) and evict the oldest chats past the cap. */
+  store(chatId, roster) {
+    this.chats.delete(chatId);
+    this.chats.set(chatId, roster);
+    evictOldest(this.chats, this.maxChats);
+  }
+};
+function evictOldest(map, max) {
+  while (map.size > max) {
+    const oldest = map.keys().next().value;
+    if (oldest === void 0) break;
+    map.delete(oldest);
+  }
+}
 var ChatModeCache = class {
   cache = /* @__PURE__ */ new Map();
   async resolve(chatId, fetch2) {
@@ -43715,6 +43836,1423 @@ async function httpProbe(domain) {
   } catch {
     return false;
   }
+}
+var LarkChannelError = class extends Error {
+  code;
+  cause;
+  context;
+  constructor(code, message, opts) {
+    super(message);
+    this.name = "LarkChannelError";
+    this.code = code;
+    this.cause = opts?.cause;
+    this.context = opts?.context;
+  }
+};
+function asDict(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? v : void 0;
+}
+function asArray(v) {
+  return Array.isArray(v) ? v.filter((x) => asDict(x) !== void 0) : [];
+}
+function asString(v) {
+  return typeof v === "string" && v.length > 0 ? v : void 0;
+}
+function asNumber(v) {
+  return typeof v === "number" ? v : void 0;
+}
+function asBoolean(v) {
+  return typeof v === "boolean" ? v : void 0;
+}
+function asMs(v) {
+  if (typeof v === "number") return v;
+  if (typeof v !== "string" || v.length === 0) return void 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : void 0;
+}
+function asStringArray(v) {
+  return Array.isArray(v) && v.every((x) => typeof x === "string") ? v : void 0;
+}
+var DEFAULT_BATCH = {
+  delayMs: 600,
+  longThresholdChars: 1e3,
+  longDelayMs: 2e3,
+  maxMessages: 8,
+  maxChars: 4e3,
+  mergeWhileBusy: false
+};
+var DEFAULT_DEDUP = {
+  ttl: 12 * 36e5,
+  maxEntries: 5e3,
+  sweepIntervalMs: 5 * 6e4,
+  namespace: "channel:seen"
+};
+var DEFAULT_STALE_MS = 30 * 6e4;
+var DEFAULT_LOCK_TTL_MS = 5 * 6e4;
+function resolveBatchConfig(cfg) {
+  const t = cfg?.batch?.text ?? {};
+  return {
+    delayMs: t.delayMs ?? DEFAULT_BATCH.delayMs,
+    longThresholdChars: t.longThresholdChars ?? DEFAULT_BATCH.longThresholdChars,
+    longDelayMs: t.longDelayMs ?? DEFAULT_BATCH.longDelayMs,
+    maxMessages: t.maxMessages ?? DEFAULT_BATCH.maxMessages,
+    maxChars: t.maxChars ?? DEFAULT_BATCH.maxChars,
+    mergeWhileBusy: cfg?.chatQueue?.mergeWhileBusy ?? DEFAULT_BATCH.mergeWhileBusy
+  };
+}
+var SeenCache = class {
+  cache;
+  memory = /* @__PURE__ */ new Map();
+  sweeper;
+  ttlMs;
+  maxMem;
+  ns;
+  constructor(cache, opts = {}) {
+    this.cache = cache;
+    this.ttlMs = opts.ttlMs ?? DEFAULT_DEDUP.ttl;
+    this.maxMem = opts.maxMemEntries ?? DEFAULT_DEDUP.maxEntries;
+    this.ns = opts.namespace ?? DEFAULT_DEDUP.namespace;
+    const sweepMs = opts.sweepMs ?? DEFAULT_DEDUP.sweepIntervalMs;
+    this.sweeper = setInterval(() => this.sweep(), sweepMs);
+    this.sweeper.unref?.();
+  }
+  async has(id) {
+    const now = Date.now();
+    const exp = this.memory.get(id);
+    if (exp && exp > now) {
+      this.memory.delete(id);
+      this.memory.set(id, exp);
+      return true;
+    }
+    if (await this.cache.get(id, { namespace: this.ns })) {
+      this.memory.set(id, now + this.ttlMs);
+      this.evictIfNeeded();
+      return true;
+    }
+    return false;
+  }
+  async add(id) {
+    const expireAt = Date.now() + this.ttlMs;
+    this.memory.set(id, expireAt);
+    this.evictIfNeeded();
+    try {
+      await this.cache.set(id, "1", expireAt, { namespace: this.ns });
+    } catch {
+    }
+  }
+  evictIfNeeded() {
+    while (this.memory.size > this.maxMem) {
+      const first = this.memory.keys().next().value;
+      if (first === void 0) break;
+      this.memory.delete(first);
+    }
+  }
+  sweep() {
+    const now = Date.now();
+    for (const [k, v] of this.memory) if (v <= now) this.memory.delete(k);
+  }
+  dispose() {
+    clearInterval(this.sweeper);
+    this.memory.clear();
+  }
+};
+var ITEMS_FIELD = /* @__PURE__ */ new Map([
+  ["transcript_received", "transcript_received_items"],
+  ["chat_received", "chat_received_items"],
+  ["participant_joined", "participant_joined_items"],
+  ["participant_left", "participant_left_items"],
+  ["magic_share_started", "magic_share_started_items"],
+  ["magic_share_ended", "magic_share_ended_items"],
+  ["document_context_changed", "document_context_changed_items"]
+]);
+var EVENT_NAME = /* @__PURE__ */ new Map([
+  ["transcript_received", "transcript"],
+  ["chat_received", "chat"],
+  ["participant_joined", "participant"],
+  ["participant_left", "participant"],
+  ["magic_share_started", "share"],
+  ["magic_share_ended", "share"],
+  ["document_context_changed", "documentContext"]
+]);
+var CONTEXT_TYPE_BY_NAME = /* @__PURE__ */ new Map([
+  ["comment_focus", "commentFocus"],
+  ["section_location", "sectionLocation"],
+  ["element_preview", "elementPreview"]
+]);
+function readPushActivities(payload) {
+  const envelope = payload;
+  const envelopeId = asString(envelope?.event_id);
+  return asArray(envelope?.meeting_activity_items).map((activity, index) => {
+    const parsed = toRawActivity(activity);
+    return {
+      ...parsed,
+      eventId: parsed.eventId ?? (envelopeId ? `${envelopeId}#${index}` : void 0)
+    };
+  });
+}
+function readPollActivities(data) {
+  return asArray(data?.events).map((event) => {
+    return {
+      ...toRawActivity(asDict(event.payload) ?? {}),
+      eventId: asString(event.event_id)
+    };
+  });
+}
+function toRawActivity(carrier) {
+  const activityType = asString(carrier.activity_event_type) ?? "";
+  const field = ITEMS_FIELD.get(activityType);
+  return {
+    meetingId: asString(asDict(carrier.meeting)?.id),
+    activityType,
+    items: field ? asArray(carrier[field] ?? asDict(carrier.payload)?.[field]) : [],
+    eventId: asString(carrier.event_id)
+  };
+}
+function normalizeActivity(activity, ctx) {
+  const name = EVENT_NAME.get(activity.activityType);
+  if (!name) return {
+    events: [],
+    forwardCompatible: false
+  };
+  const events = [];
+  let dropped = 0;
+  for (const item of activity.items) {
+    const event = buildEvent(name, activity.activityType, item, ctx);
+    if (!event) {
+      dropped++;
+      continue;
+    }
+    events.push({
+      name,
+      activityType: activity.activityType,
+      event
+    });
+  }
+  return {
+    events,
+    forwardCompatible: activity.activityType === "document_context_changed" && dropped > 0 && events.length === 0
+  };
+}
+function buildEvent(name, activityType, item, ctx) {
+  const actor = readActor(item);
+  const base = {
+    meetingId: ctx.meetingId,
+    actor,
+    selfEcho: isSelfEcho(actor, ctx),
+    ...ctx.includeRaw ? { raw: item } : {}
+  };
+  switch (name) {
+    case "transcript":
+      return {
+        ...base,
+        text: asString(item.text) ?? "",
+        sentenceId: asString(item.sentence_id),
+        language: asString(item.language),
+        startMs: asMs(item.start_time_ms),
+        endMs: asMs(item.end_time_ms)
+      };
+    case "chat":
+      return {
+        ...base,
+        content: asString(item.content) ?? "",
+        messageId: asString(item.message_id),
+        messageType: asNumber(item.message_type),
+        sendTime: asMs(item.send_time)
+      };
+    case "participant":
+      return {
+        ...base,
+        action: activityType === "participant_left" ? "left" : "joined",
+        joinTime: asMs(item.join_time),
+        leaveTime: asMs(item.leave_time),
+        leaveReason: asNumber(item.leave_reason)
+      };
+    case "share":
+      return {
+        ...base,
+        action: activityType === "magic_share_ended" ? "ended" : "started",
+        shareId: asString(item.share_id),
+        doc: readDoc(item.share_doc),
+        time: asMs(item.time)
+      };
+    case "documentContext":
+      return buildDocumentContext(base, item);
+    default:
+      return;
+  }
+}
+function buildDocumentContext(base, item) {
+  const declared = asString(item.context_type);
+  const commentFocus = asDict(item.comment_focus);
+  const sectionLocation = asDict(item.section_location);
+  const elementPreview = asDict(item.element_preview);
+  const contextType = pickContextType(declared, {
+    commentFocus,
+    sectionLocation,
+    elementPreview
+  });
+  if (!contextType) return void 0;
+  const shared = {
+    ...base,
+    contextType,
+    shareId: asString(item.share_id),
+    doc: readDoc(item.share_doc),
+    time: asMs(item.time)
+  };
+  if (contextType === "commentFocus") shared.commentFocus = {
+    commentId: asString(commentFocus?.comment_id),
+    focused: asBoolean(commentFocus?.focused)
+  };
+  else if (contextType === "sectionLocation") shared.sectionLocation = {
+    title: asString(sectionLocation?.title),
+    level: asNumber(sectionLocation?.level),
+    parentTitles: asStringArray(sectionLocation?.parent_titles)
+  };
+  else shared.elementPreview = {
+    action: asString(elementPreview?.action),
+    elementType: asString(elementPreview?.element_type),
+    elementToken: asString(elementPreview?.element_token),
+    blockId: asString(elementPreview?.block_id)
+  };
+  return shared;
+}
+function pickContextType(declared, present) {
+  const named = declared ? CONTEXT_TYPE_BY_NAME.get(declared) : void 0;
+  if (declared && !named) return void 0;
+  if (named && present[named]) return named;
+  if (present.commentFocus) return "commentFocus";
+  if (present.sectionLocation) return "sectionLocation";
+  if (present.elementPreview) return "elementPreview";
+}
+function readActor(item) {
+  const raw = asDict(item.speaker) ?? asDict(item.operator) ?? asDict(item.participant) ?? {};
+  return {
+    id: readActorId(raw),
+    name: asString(raw.user_name) ?? asString(raw.name),
+    userType: asNumber(raw.user_type),
+    userRole: asNumber(raw.user_role)
+  };
+}
+function readActorId(raw) {
+  const nested = asDict(raw.id);
+  if (nested) return asString(nested.open_id) ?? asString(nested.user_id) ?? asString(nested.union_id) ?? "";
+  return asString(raw.id) ?? asString(raw.open_id) ?? asString(raw.user_id) ?? asString(raw.union_id) ?? "";
+}
+function isSelfEcho(actor, ctx) {
+  if (ctx.mode === "uat") return false;
+  if (!ctx.botOpenId) return true;
+  return actor.id === ctx.botOpenId;
+}
+function readDoc(value) {
+  const doc = asDict(value);
+  if (!doc) return void 0;
+  return {
+    url: asString(doc.url),
+    title: asString(doc.title)
+  };
+}
+var NAMESPACE = "channel:meeting:seen";
+var MAX_ENTRIES = 1e4;
+var DIGEST_LENGTH = 24;
+var MeetingDedup = class {
+  seen;
+  constructor(cache) {
+    this.seen = new SeenCache(cache, {
+      namespace: NAMESPACE,
+      maxMemEntries: MAX_ENTRIES
+    });
+  }
+  /**
+  * True when this activity has already been delivered to `scope`.
+  *
+  * `scope` isolates sessions: one meeting can carry both an app-identity bot and a
+  * user-identity follower, reading the same endpoint.
+  */
+  async isDuplicate(activity, scope) {
+    const keys = [activity.eventId ? `${scope}|d|${activity.eventId}` : void 0, `${scope}|c|${contentKey(activity)}`].filter((k) => k !== void 0);
+    if ((await Promise.all(keys.map((k) => this.seen.has(k)))).some(Boolean)) return true;
+    await Promise.all(keys.map((k) => this.seen.add(k)));
+    return false;
+  }
+  dispose() {
+    this.seen.dispose();
+  }
+};
+function contentKey(activity) {
+  const parts = activity.items.map((item) => [
+    item.sentence_id ?? item.message_id ?? item.share_id ?? null,
+    item.text ?? item.content ?? null,
+    item.start_time_ms ?? item.send_time ?? item.time ?? item.join_time ?? item.leave_time ?? null,
+    readActor(item).id || null
+  ]);
+  return createHash7("sha256").update(JSON.stringify([activity.activityType, parts])).digest("base64url").slice(0, DIGEST_LENGTH);
+}
+var INCONCLUSIVE_STATUS = /* @__PURE__ */ new Set([
+  408,
+  502,
+  504
+]);
+var RETRYABLE_STATUS = /* @__PURE__ */ new Set([
+  ...INCONCLUSIVE_STATUS,
+  429,
+  500,
+  503
+]);
+var PERMISSION_CODES = /* @__PURE__ */ new Set([
+  99991400,
+  99991401,
+  99991663,
+  99991668,
+  99991672,
+  20017
+]);
+function readFailureData(err) {
+  const raw = err;
+  return raw?.response?.data ?? raw?.data;
+}
+function summarizeApiFailure(err) {
+  const raw = err;
+  const data = readFailureData(err);
+  return {
+    status: raw?.response?.status ?? raw?.status,
+    feishuCode: numberOrUndefined(data?.code),
+    msg: stringOrUndefined(data?.msg) ?? raw?.message,
+    logId: stringOrUndefined(data?.log_id) ?? stringOrUndefined(raw?.response?.headers?.["x-tt-logid"])
+  };
+}
+function extractConsoleUrl(err) {
+  const data = readFailureData(err);
+  const nested = data?.error;
+  const candidate = stringOrUndefined(nested?.console_url) ?? stringOrUndefined(data?.console_url);
+  if (!candidate) return void 0;
+  try {
+    return new URL(candidate).protocol === "https:" ? candidate : void 0;
+  } catch {
+    return;
+  }
+}
+function classifyMeetingError(err) {
+  const { status, feishuCode } = summarizeApiFailure(err);
+  const code = err?.code;
+  if (feishuCode !== void 0 && PERMISSION_CODES.has(feishuCode)) return "permission_denied";
+  if (status === 401 || status === 403) return "permission_denied";
+  if (status === 429) return "rate_limited";
+  if (status === 400) return "format_error";
+  if (status === 404) return "target_revoked";
+  if (code === "ECONNABORTED" || code === "ETIMEDOUT") return "send_timeout";
+  return "unknown";
+}
+function meetingError(err, context) {
+  if (err instanceof LarkChannelError) return err;
+  const failure = summarizeApiFailure(err);
+  const consoleUrl = extractConsoleUrl(err);
+  const merged = {
+    ...context,
+    ...consoleUrl ? { consoleUrl } : {}
+  };
+  return new LarkChannelError(classifyMeetingError(err), failure.msg ?? String(err), {
+    cause: failure,
+    ...Object.keys(merged).length > 0 ? { context: merged } : {}
+  });
+}
+function isRetryableMeetingError(err) {
+  if (err.code === "permission_denied" || err.code === "format_error") return false;
+  const status = err.cause?.status;
+  if (status !== void 0) return RETRYABLE_STATUS.has(status);
+  return true;
+}
+function isInconclusiveFailure(err) {
+  if (err instanceof LarkChannelError) return false;
+  const status = summarizeApiFailure(err).status;
+  return status === void 0 || INCONCLUSIVE_STATUS.has(status);
+}
+function numberOrUndefined(v) {
+  return typeof v === "number" ? v : void 0;
+}
+function stringOrUndefined(v) {
+  return typeof v === "string" && v.length > 0 ? v : void 0;
+}
+var MAX_DISTINCT_KEYS = 5e3;
+var OVERFLOW_KEY = "__other__";
+var MeetingHealth = class {
+  received = 0;
+  lastAt;
+  perType = /* @__PURE__ */ new Map();
+  /**
+  * Record one received activity. `itemCount` of 0 counts as empty, including for an
+  * unrecognized activity type — that is the "SDK has fallen behind" signal.
+  * `forwardCompatible` opts out, for a sub-variant the platform just added.
+  */
+  record(activityType, itemCount, opts) {
+    this.received++;
+    this.lastAt = Date.now();
+    const key = this.keyFor(activityType);
+    const stats = this.perType.get(key) ?? {
+      received: 0,
+      empty: 0
+    };
+    stats.received++;
+    if (itemCount === 0 && !opts?.forwardCompatible) stats.empty++;
+    this.perType.set(key, stats);
+  }
+  stats() {
+    return Object.fromEntries([...this.perType].map(([k, v]) => [k, { ...v }]));
+  }
+  counters() {
+    return {
+      received: this.received,
+      ...this.lastAt ? { lastAt: this.lastAt } : {},
+      stats: this.stats()
+    };
+  }
+  keyFor(activityType) {
+    if (this.perType.has(activityType)) return activityType;
+    return this.perType.size >= MAX_DISTINCT_KEYS ? OVERFLOW_KEY : activityType;
+  }
+};
+function sessionKey(mode, meetingId) {
+  return `${mode}:${meetingId}`;
+}
+var MeetingRegistry = class {
+  logger;
+  maxConcurrentSessions;
+  sessions = /* @__PURE__ */ new Map();
+  /**
+  * Meetings this process has joined and not left, session or no session, mapped to the
+  * number `joinMeeting` takes — the id alone cannot be rejoined.
+  */
+  membership = /* @__PURE__ */ new Map();
+  constructor(logger, maxConcurrentSessions) {
+    this.logger = logger;
+    this.maxConcurrentSessions = maxConcurrentSessions;
+  }
+  list() {
+    return [...this.sessions.values()];
+  }
+  /** Push events and `meeting_ended_v1` are app-identity, so they route to tat. */
+  get(meetingId) {
+    return this.sessions.get(sessionKey("tat", meetingId));
+  }
+  /**
+  * Throws before any API call when the cap is reached.
+  *
+  * A meeting the bot is already in is exempt: after `disconnect()` the membership
+  * outlives the session, and re-attaching to it takes no new slot. Without the
+  * exemption a process at the cap could never recover the sessions it just disposed.
+  */
+  assertCanJoin(meetingNo) {
+    if (meetingNo !== void 0 && [...this.membership.values()].includes(meetingNo)) return;
+    if (this.membership.size >= this.maxConcurrentSessions) throw new LarkChannelError("too_many_sessions", `already in ${this.membership.size} meetings (maxConcurrentSessions)`);
+  }
+  /** Record that the bot is now a participant, whether or not a session lives. */
+  addMembership(meetingId, meetingNo) {
+    this.membership.set(meetingId, meetingNo);
+  }
+  /**
+  * Meetings the bot is still in that have no live session — what `disconnect()` leaves
+  * behind. Nothing routes their pushes and nothing can leave them until a caller
+  * re-attaches, so this is the only way to find them again after losing the session
+  * references.
+  */
+  retained() {
+    return [...this.membership].filter(([meetingId]) => !this.sessions.has(sessionKey("tat", meetingId))).map(([meetingId, meetingNo]) => ({
+      meetingId,
+      meetingNo
+    }));
+  }
+  releaseMembership(meetingId) {
+    this.membership.delete(meetingId);
+  }
+  /**
+  * Register a session, tearing down any predecessor under the same key.
+  *
+  * A replaced session would be unreachable but still running: not routed to, unable to
+  * remove itself (its `onEnded` identity check no longer matches), invisible to
+  * `disconnect()`, and for a follow session still polling with the caller's token.
+  */
+  add(session) {
+    const key = sessionKey(session.mode, session.meetingId);
+    const previous = this.sessions.get(key);
+    this.sessions.set(key, session);
+    if (previous && previous !== session) {
+      this.logger.warn?.("meeting: replacing an existing session for this meeting", {
+        meetingId: session.meetingId,
+        mode: session.mode
+      });
+      previous.dispose();
+    }
+  }
+  remove(session) {
+    const key = sessionKey(session.mode, session.meetingId);
+    if (this.sessions.get(key) === session) this.sessions.delete(key);
+  }
+  /**
+  * Find a live session by meeting number — the only id `joinMeeting` is given.
+  * Mode-scoped, because handing a follow session to a `joinMeeting` caller would give
+  * them one whose `sendMessage` rejects.
+  */
+  findByMeetingNo(meetingNo, mode) {
+    return this.list().find((s) => s.meetingNo === meetingNo && s.mode === mode);
+  }
+  /**
+  * Fan one `vc.bot.meeting_activity_v1` push out to the sessions it belongs to. The
+  * push is app-level, so each activity is routed by its own `meeting.id`; activities
+  * for meetings this process does not own are dropped at debug level.
+  */
+  async route(payload) {
+    for (const activity of readPushActivities(payload)) {
+      const session = activity.meetingId ? this.get(activity.meetingId) : void 0;
+      if (!session) {
+        this.logger.debug?.("meeting: activity for an unmanaged meeting", {
+          meetingId: activity.meetingId,
+          activityType: activity.activityType
+        });
+        continue;
+      }
+      await session.deliver(activity, "push");
+    }
+  }
+  /**
+  * Dispose every session without leaving any meeting. Membership is untouched: the
+  * slots stay taken because the participants remain.
+  */
+  disposeAll() {
+    for (const session of this.list()) session.dispose();
+  }
+};
+function createCursor() {
+  let value;
+  return {
+    get: () => value,
+    set: (next) => {
+      value = next ?? value;
+    }
+  };
+}
+var NOT_IN_MEETING_CODES = /* @__PURE__ */ new Set([120004]);
+var LivenessProbe = class {
+  opts;
+  constructor(opts) {
+    this.opts = opts;
+  }
+  /** Never throws: the caller has no failure branch to take. */
+  async check() {
+    const { client, meetingId, cursor, onActivities } = this.opts;
+    try {
+      const cursorValue = cursor?.get();
+      const res = await client.vc.v1.bot.events({ params: {
+        meeting_id: meetingId,
+        page_size: 100,
+        user_id_type: "open_id",
+        ...cursorValue ? { page_token: cursorValue } : {}
+      } });
+      cursor?.set(res?.data?.page_token ?? cursorValue);
+      const activities = readPollActivities(res?.data);
+      if (activities.length > 0) await onActivities?.(activities);
+      return activities.length > 0 ? "active" : "unknown";
+    } catch (err) {
+      return this.classifyFailure(err);
+    }
+  }
+  classifyFailure(err) {
+    const feishuCode = err?.response?.data?.code;
+    if (typeof feishuCode === "number" && NOT_IN_MEETING_CODES.has(feishuCode)) return "gone";
+    this.opts.logger.debug?.("meeting: liveness probe inconclusive", {
+      meetingId: this.opts.meetingId,
+      code: classifyMeetingError(err)
+    });
+    return "unknown";
+  }
+};
+var WINDOW_MS = 6e4;
+var SendRateLimiter = class {
+  maxPerMinute;
+  sentAt = [];
+  constructor(maxPerMinute) {
+    this.maxPerMinute = maxPerMinute;
+  }
+  /** Consume one slot, or report that the window is full. */
+  tryAcquire() {
+    const cutoff = Date.now() - WINDOW_MS;
+    while (this.sentAt.length > 0 && this.sentAt[0] <= cutoff) this.sentAt.shift();
+    if (this.sentAt.length >= this.maxPerMinute) return false;
+    this.sentAt.push(Date.now());
+    return true;
+  }
+};
+var SerialQueue = class {
+  tail = Promise.resolve();
+  /**
+  * Queue `task` and resolve with its result. Awaiting the result applies
+  * backpressure; a rejection reaches the caller without stalling the queue.
+  *
+  * The barrier is published before the task can start: `.then` defers the call while
+  * `this.tail` is reassigned in the same synchronous step. A task's synchronous
+  * prefix can re-enter `run` — a settled caption invokes a handler, the handler calls
+  * `leave()`, teardown queues `end` — and any arrangement that runs the task first
+  * would let that nested call queue behind the *previous* barrier.
+  */
+  run(task) {
+    const result = this.tail.then(task, task);
+    this.tail = result.then(noop, noop);
+    return result;
+  }
+};
+function noop() {
+}
+var EMPTY_BASE_MS = 3e3;
+var EMPTY_MAX_MS = 1e4;
+var FAILURE_MAX_MS = 6e4;
+var MAX_CONSECUTIVE_FAILURES = 12;
+var END_CHECK_INTERVAL_MS = 3e4;
+var PAGE_SIZE = 100;
+var MAX_DRAIN_ROUNDS = 20;
+var FailureBackoff = class {
+  rounds = 0;
+  reset() {
+    this.rounds = 0;
+  }
+  /** The next delay, or `null` when this loop has failed too many times running. */
+  next() {
+    this.rounds++;
+    if (this.rounds >= MAX_CONSECUTIVE_FAILURES) return null;
+    return Math.min(EMPTY_BASE_MS * 2 ** (this.rounds - 1), FAILURE_MAX_MS);
+  }
+};
+var PollSource = class {
+  opts;
+  emptyRounds = 0;
+  drainRounds = 0;
+  pollFailures = new FailureBackoff();
+  endCheckFailures = new FailureBackoff();
+  pollTimer;
+  endCheckTimer;
+  running = false;
+  constructor(opts) {
+    this.opts = opts;
+  }
+  start() {
+    if (this.running) return;
+    this.running = true;
+    this.schedulePoll(0);
+    this.scheduleEndCheck(END_CHECK_INTERVAL_MS);
+  }
+  stop() {
+    this.running = false;
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    if (this.endCheckTimer) clearTimeout(this.endCheckTimer);
+    this.pollTimer = void 0;
+    this.endCheckTimer = void 0;
+  }
+  schedulePoll(delayMs) {
+    if (!this.running) return;
+    this.pollTimer = setTimeout(() => {
+      this.poll();
+    }, delayMs);
+    this.pollTimer.unref?.();
+  }
+  scheduleEndCheck(delayMs) {
+    if (!this.running) return;
+    this.endCheckTimer = setTimeout(() => {
+      this.checkStillActive();
+    }, delayMs);
+    this.endCheckTimer.unref?.();
+  }
+  async poll() {
+    if (!this.running) return;
+    try {
+      const { activities, hasMore } = await this.fetchActivities();
+      this.pollFailures.reset();
+      for (const activity of activities) {
+        if (!this.running) return;
+        await this.opts.callbacks.onActivity(activity);
+      }
+      this.schedulePoll(this.nextPollDelay(activities.length > 0, hasMore));
+    } catch (err) {
+      this.handleFailure(meetingError(err, { meetingId: this.opts.meetingId }), this.pollFailures, (delay) => this.schedulePoll(delay));
+    }
+  }
+  async fetchActivities() {
+    const cursorValue = this.opts.cursor.get();
+    const res = await this.opts.client.vc.v1.bot.events({ params: {
+      meeting_id: this.opts.meetingId,
+      page_size: PAGE_SIZE,
+      user_id_type: "open_id",
+      ...cursorValue ? { page_token: cursorValue } : {}
+    } }, (0, import_node_sdk.withUserAccessToken)(await this.opts.token()));
+    this.opts.cursor.set(res?.data?.page_token ?? cursorValue);
+    return {
+      activities: readPollActivities(res?.data),
+      hasMore: res?.data?.has_more === true
+    };
+  }
+  /**
+  * A backlog drains at full speed; an idle meeting backs off. Pacing a backlog would
+  * make a busy meeting arrive minutes late, one page at a time.
+  */
+  nextPollDelay(hadActivity, hasMore) {
+    if (hasMore && this.drainRounds < MAX_DRAIN_ROUNDS) {
+      this.drainRounds++;
+      return 0;
+    }
+    this.drainRounds = 0;
+    if (hadActivity) {
+      this.emptyRounds = 0;
+      return EMPTY_BASE_MS;
+    }
+    const delay = Math.min(EMPTY_BASE_MS * 2 ** this.emptyRounds, EMPTY_MAX_MS);
+    this.emptyRounds++;
+    return delay;
+  }
+  /**
+  * The follow path has no end event, so absence from the active list is the
+  * signal. Fails open: only a successful response that omits this meeting ends
+  * the session, because a failed request means "unknown", and probes across
+  * sessions fail together.
+  */
+  async checkStillActive() {
+    if (!this.running) return;
+    try {
+      const res = await this.opts.client.vc.v1.bot.userActiveMeeting({ params: { user_id_type: "open_id" } }, (0, import_node_sdk.withUserAccessToken)(await this.opts.token()));
+      this.endCheckFailures.reset();
+      const meetings = res?.data?.meetings;
+      if (Array.isArray(meetings) && !meetings.some((m) => m?.meeting_id === this.opts.meetingId)) {
+        this.stop();
+        this.opts.callbacks.onNoLongerActive();
+        return;
+      }
+      this.scheduleEndCheck(END_CHECK_INTERVAL_MS);
+    } catch (err) {
+      this.handleFailure(meetingError(err, { meetingId: this.opts.meetingId }), this.endCheckFailures, (delay) => this.scheduleEndCheck(delay), { terminateOnExhaustion: false });
+    }
+  }
+  /**
+  * One policy for both loops. A rejected credential always terminates, since it is
+  * shared; running out of retries only terminates for the loop carrying the session's
+  * actual purpose.
+  */
+  handleFailure(err, backoff, reschedule, opts = {}) {
+    if (!this.running) return;
+    this.opts.callbacks.onError(err);
+    if (!isRetryableMeetingError(err)) {
+      this.terminate(err);
+      return;
+    }
+    const delay = backoff.next();
+    if (delay !== null) {
+      reschedule(delay);
+      return;
+    }
+    if (opts.terminateOnExhaustion === false) {
+      reschedule(FAILURE_MAX_MS);
+      return;
+    }
+    this.terminate(err);
+  }
+  terminate(err) {
+    this.stop();
+    this.opts.callbacks.onTerminate(err);
+  }
+};
+var DEFAULT_MAX_PENDING = 200;
+var TranscriptStabilizer = class {
+  stabilizeMs;
+  maxPending;
+  onFlush;
+  /** Insertion-ordered, which is what makes "evict the oldest" well defined. */
+  pending = /* @__PURE__ */ new Map();
+  disposed = false;
+  constructor(opts) {
+    this.stabilizeMs = opts.stabilizeMs;
+    this.maxPending = opts.maxPending ?? DEFAULT_MAX_PENDING;
+    this.onFlush = opts.onFlush;
+  }
+  push(event) {
+    if (this.disposed) return;
+    if (this.stabilizeMs <= 0 || !event.sentenceId) {
+      this.onFlush(event);
+      return;
+    }
+    const key = event.sentenceId;
+    if (this.isStale(event, this.pending.get(key)?.event)) return;
+    this.clearTimer(key);
+    const timer = setTimeout(() => this.flush(key), this.stabilizeMs);
+    timer.unref?.();
+    this.pending.set(key, {
+      event,
+      timer
+    });
+    this.evictOldestIfFull(key);
+  }
+  /** Flush everything still pending. Idempotent. */
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const key of [...this.pending.keys()]) this.flush(key);
+  }
+  /** True when `incoming` describes an earlier state of the sentence than `held`. */
+  isStale(incoming, held) {
+    if (held?.endMs === void 0 || incoming.endMs === void 0) return false;
+    return incoming.endMs < held.endMs;
+  }
+  evictOldestIfFull(justAdded) {
+    while (this.pending.size > this.maxPending) {
+      const oldest = this.pending.keys().next().value;
+      if (oldest === void 0 || oldest === justAdded) break;
+      this.flush(oldest);
+    }
+  }
+  flush(key) {
+    const entry = this.pending.get(key);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    this.pending.delete(key);
+    this.onFlush(entry.event);
+  }
+  clearTimer(key) {
+    const existing = this.pending.get(key);
+    if (existing) clearTimeout(existing.timer);
+  }
+};
+var LiveMeetingSession = class {
+  deps;
+  meetingId;
+  meetingNo;
+  topic;
+  mode;
+  /**
+  * Replaceable on purpose: the wire signal for "not in this meeting" has not
+  * been observed yet, so this is the one seam where that classification lives.
+  */
+  liveness;
+  handlers = /* @__PURE__ */ new Map();
+  health = new MeetingHealth();
+  rateLimiter;
+  stabilizer;
+  /** Shared by the poll loop and the liveness probe — see {@link Cursor}. */
+  cursor = createCursor();
+  source;
+  idleTimer;
+  probeTimer;
+  ended = false;
+  /** The bot is a participant of this meeting and the slot is still taken. */
+  membershipHeld;
+  /**
+  * Serializes everything the caller observes: two producers feed a session, so this is
+  * what keeps ordering true across both and the duplicate check atomic.
+  */
+  queue = new SerialQueue();
+  constructor(deps) {
+    this.deps = deps;
+    this.meetingId = deps.meetingId;
+    this.meetingNo = deps.meetingNo;
+    this.topic = deps.topic;
+    this.mode = deps.mode;
+    this.membershipHeld = deps.mode === "tat";
+    this.rateLimiter = new SendRateLimiter(deps.config.sendRateLimitPerMinute);
+    this.stabilizer = new TranscriptStabilizer({
+      stabilizeMs: deps.stabilizeMs,
+      onFlush: (event) => {
+        this.queue.run(() => this.emit("transcript", event));
+      }
+    });
+  }
+  /** Begin whatever this mode needs: a poll loop, or timers around the push feed. */
+  start() {
+    if (this.mode === "uat") {
+      this.startPolling();
+      return;
+    }
+    if (this.deps.config.livenessProbeIntervalMs > 0) {
+      this.liveness = new LivenessProbe({
+        client: this.deps.client,
+        meetingId: this.meetingId,
+        logger: this.deps.logger,
+        cursor: this.cursor,
+        onActivities: async (activities) => {
+          for (const activity of activities) await this.deliver(activity, "poll");
+        }
+      });
+      this.scheduleProbe();
+    }
+    this.resetIdleTimer();
+  }
+  startPolling() {
+    const token = this.deps.token;
+    if (!token) throw new LarkChannelError("format_error", "follow mode requires a token provider");
+    this.source = new PollSource({
+      client: this.deps.client,
+      logger: this.deps.logger,
+      meetingId: this.meetingId,
+      token,
+      cursor: this.cursor,
+      callbacks: {
+        onActivity: (activity) => this.deliver(activity, "poll"),
+        onError: (err) => this.emitError(err),
+        onTerminate: () => {
+          this.endOnce("error");
+        },
+        onNoLongerActive: () => {
+          this.endOnce("no_longer_active");
+        }
+      }
+    });
+    this.source.start();
+  }
+  on(name, handler) {
+    let set = this.handlers.get(name);
+    if (!set) {
+      set = /* @__PURE__ */ new Set();
+      this.handlers.set(name, set);
+    }
+    const fn = handler;
+    set.add(fn);
+    return () => {
+      set?.delete(fn);
+    };
+  }
+  /**
+  * Unpack one activity and hand its items to the caller in order. Health is counted
+  * before dedup, since a suppressed duplicate did arrive.
+  */
+  async deliver(activity, link) {
+    return this.queue.run(() => this.deliverNow(activity, link));
+  }
+  async deliverNow(activity, link) {
+    if (this.ended) return;
+    const { events, forwardCompatible } = normalizeActivity(activity, {
+      meetingId: this.meetingId,
+      mode: this.mode,
+      botOpenId: this.deps.botOpenId(),
+      includeRaw: this.deps.includeRaw
+    });
+    this.health.record(activity.activityType, events.length, { forwardCompatible });
+    this.deps.recordHealth(link, activity.activityType, events.length, { forwardCompatible });
+    this.resetIdleTimer();
+    if (await this.deps.dedup.isDuplicate(activity, `${this.mode}:${this.meetingId}`)) return;
+    for (const { name, event } of events) {
+      if (this.ended) return;
+      if (name === "transcript" && this.deps.stabilizeMs > 0) {
+        this.stabilizer.push(event);
+        continue;
+      }
+      await this.emit(name, event);
+    }
+  }
+  getStats() {
+    return this.health.stats();
+  }
+  /**
+  * A small representation for logging: without it both `JSON.stringify` and
+  * `util.inspect` walk into the SDK `Client`, which is circular.
+  */
+  toJSON() {
+    return this.describe();
+  }
+  [inspect.custom]() {
+    return this.describe();
+  }
+  describe() {
+    return {
+      meetingId: this.meetingId,
+      meetingNo: this.meetingNo,
+      topic: this.topic,
+      mode: this.mode,
+      ended: this.ended
+    };
+  }
+  /**
+  * Post a text message into the meeting chat.
+  *
+  * `content` goes out as plain text, unlike IM: `im.v1.message.create` wants a JSON
+  * string (`'{"text":"hi"}'`), while `vc.v1.bot.message` displays whatever it is given
+  * verbatim, so the IM encoding would show up as a JSON literal in the meeting. Any
+  * future `msg_type` here must have its own encoding confirmed against a live meeting —
+  * the generated types say only `content?: string`.
+  */
+  async sendMessage(text) {
+    if (this.mode !== "tat") throw new LarkChannelError("not_supported", "sendMessage requires the bot to be in the meeting; follow mode cannot post");
+    if (this.ended) throw new LarkChannelError("not_supported", "this meeting session has already ended");
+    if (!this.rateLimiter.tryAcquire()) throw new LarkChannelError("rate_limited", "in-meeting message rate limit exceeded for this session");
+    try {
+      await this.deps.client.vc.v1.bot.message({ data: {
+        meeting_id: this.meetingId,
+        msg_type: "text",
+        content: text,
+        uuid: randomUUID3()
+      } });
+    } catch (err) {
+      throw meetingError(err, { meetingId: this.meetingId });
+    }
+  }
+  /**
+  * End the session without leaving the meeting. Idempotent.
+  *
+  * The bot stays a participant, which is what makes a reconnect safe — and why a
+  * process must still `leave()` before exiting.
+  */
+  dispose() {
+    this.endOnce("disposed");
+  }
+  /**
+  * Leave the meeting and give up the slot, then end the session. Idempotent, and
+  * still effective after the session has already ended by another route.
+  */
+  async leave() {
+    this.endOnce("left");
+    await this.giveUpSeat();
+  }
+  /** Reaction to `vc.bot.meeting_ended_v1`: end, then leave the meeting once. */
+  async endedByPlatform() {
+    this.endOnce("meeting_ended");
+    await this.giveUpSeat();
+  }
+  /**
+  * Call `bots/leave` once and release the slot regardless of the outcome — released on
+  * attempt, or a permanently failing leave would burn a slot for the life of the process.
+  */
+  async giveUpSeat() {
+    if (!this.membershipHeld) return;
+    this.membershipHeld = false;
+    try {
+      await this.deps.client.vc.v1.bot.leave({ data: { meeting_id: this.meetingId } });
+    } catch (err) {
+      this.emitError(meetingError(err, { meetingId: this.meetingId }));
+    } finally {
+      this.deps.onMembershipReleased();
+    }
+  }
+  /** The bot is already out (the server said so), so release without calling. */
+  releaseSeatWithoutLeaving() {
+    if (!this.membershipHeld) return;
+    this.membershipHeld = false;
+    this.deps.onMembershipReleased();
+  }
+  /**
+  * Stop everything and announce the end, exactly once. Returns false when the session
+  * had already ended, without preventing `leave()` from still giving up the seat.
+  */
+  endOnce(reason) {
+    if (this.ended) return false;
+    this.ended = true;
+    this.source?.stop();
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    if (this.probeTimer) clearTimeout(this.probeTimer);
+    this.idleTimer = void 0;
+    this.probeTimer = void 0;
+    this.stabilizer.dispose();
+    this.deps.onEnded(this);
+    this.queue.run(() => this.emit("end", {
+      meetingId: this.meetingId,
+      reason
+    }));
+    return true;
+  }
+  /** App-identity only: a follow session has its own end signal and a healthy poll loop. */
+  resetIdleTimer() {
+    const { idleTimeoutMs } = this.deps.config;
+    if (this.ended || this.mode !== "tat" || idleTimeoutMs <= 0) return;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => this.reclaimIdle(), idleTimeoutMs);
+    this.idleTimer.unref?.();
+  }
+  /** Silent for too long: end, and hand the seat back rather than burning it. */
+  reclaimIdle() {
+    if (!this.endOnce("idle_timeout")) return;
+    this.giveUpSeat();
+  }
+  scheduleProbe() {
+    if (this.ended) return;
+    this.probeTimer = setTimeout(() => {
+      this.probe();
+    }, this.deps.config.livenessProbeIntervalMs);
+    this.probeTimer.unref?.();
+  }
+  /** Only a confirmed departure ends the session; see {@link LivenessProbe}. */
+  async probe() {
+    if (this.ended || !this.liveness) return;
+    const verdict = await this.liveness.check();
+    if (this.ended) return;
+    if (verdict === "gone") {
+      if (this.endOnce("no_longer_active")) this.releaseSeatWithoutLeaving();
+      return;
+    }
+    this.scheduleProbe();
+  }
+  async emit(name, payload) {
+    const handlers = this.handlers.get(name);
+    if (!handlers || handlers.size === 0) return;
+    for (const handler of [...handlers]) try {
+      await handler(payload);
+    } catch (err) {
+      this.emitError(meetingError(err, { meetingId: this.meetingId }));
+    }
+  }
+  emitError(err) {
+    const handlers = this.handlers.get("error");
+    if (handlers && handlers.size > 0) {
+      for (const handler of [...handlers]) try {
+        handler(err);
+      } catch {
+      }
+      return;
+    }
+    this.deps.logger.error?.("meeting: unhandled session error", {
+      meetingId: this.meetingId,
+      code: err.code,
+      message: err.message,
+      cause: err.cause
+    });
+  }
+};
+function toTokenProvider(source) {
+  if (typeof source === "function") return async () => validate(await source());
+  const fixed = validate(source);
+  return async () => fixed;
+}
+function validate(token) {
+  if (typeof token !== "string" || token.length === 0) throw new LarkChannelError("format_error", "userAccessToken resolved to an empty value");
+  return token;
+}
+var DEFAULTS$1 = {
+  maxConcurrentSessions: 32,
+  idleTimeoutMs: 0,
+  livenessProbeIntervalMs: 5 * 6e4,
+  sendRateLimitPerMinute: 20
+};
+var JOIN_TYPE_BY_MEETING_NO = 1;
+var MeetingChannel = class {
+  deps;
+  config;
+  registry;
+  dedup;
+  /**
+  * Joins currently in flight, by meeting number.
+  *
+  * The "already in this meeting" check cannot cover a concurrent pair on its own:
+  * both callers look before either has a session, so both would call `bots/join`
+  * and the second would replace the first's session. Feishu redelivers
+  * `meeting_invited_v1` and the documented handler joins unconditionally, so the
+  * pair is routine rather than hypothetical.
+  */
+  joining = /* @__PURE__ */ new Map();
+  /**
+  * One counter per link, owned here rather than by the registry: the registry keys
+  * sessions and membership, and has no view of which transport an activity came in on
+  * — nor of push registration, which is the channel's own act.
+  */
+  linkHealth = {
+    push: new MeetingHealth(),
+    poll: new MeetingHealth()
+  };
+  pushRegistered = false;
+  pushUnregisteredReason = "channel not connected";
+  constructor(deps) {
+    this.deps = deps;
+    this.config = {
+      ...DEFAULTS$1,
+      ...stripUndefined(deps.config)
+    };
+    this.registry = new MeetingRegistry(deps.logger, this.config.maxConcurrentSessions);
+    this.dedup = new MeetingDedup(deps.cache);
+  }
+  /** Live sessions. Also the seam teardown assertions look at. */
+  list() {
+    return this.registry.list();
+  }
+  health() {
+    return {
+      push: {
+        registered: this.pushRegistered,
+        ...this.pushUnregisteredReason ? { reason: this.pushUnregisteredReason } : {},
+        ...this.linkHealth.push.counters()
+      },
+      poll: {
+        sessions: this.registry.list().filter((s) => s.mode === "uat").length,
+        ...this.linkHealth.poll.counters()
+      }
+    };
+  }
+  markRegistered() {
+    this.pushRegistered = true;
+    this.pushUnregisteredReason = void 0;
+  }
+  /** Meetings the bot is in with no session listening. See {@link MeetingRegistry.retained}. */
+  retainedMeetings() {
+    return this.registry.retained();
+  }
+  disposeAll() {
+    this.registry.disposeAll();
+  }
+  /**
+  * Put the bot in a meeting as a visible participant.
+  *
+  * Requires a live connection: this path depends on `meeting_activity_v1`
+  * pushes, so without one the bot would join and then hear nothing at all —
+  * failing loudly beats joining deaf.
+  */
+  async joinMeeting(meetingNo, opts = {}) {
+    if (!this.deps.isConnected()) throw new LarkChannelError("not_connected", "joinMeeting needs the event connection for in-meeting activity \u2014 call connect() first");
+    const existing = this.registry.findByMeetingNo(meetingNo, "tat");
+    if (existing) {
+      this.deps.logger.debug?.("meeting: already in this meeting, reusing the session", { meetingId: existing.meetingId });
+      return existing;
+    }
+    const inFlight = this.joining.get(meetingNo);
+    if (inFlight) return inFlight;
+    this.registry.assertCanJoin(meetingNo);
+    const attempt = this.performJoin(meetingNo, opts).finally(() => {
+      this.joining.delete(meetingNo);
+    });
+    this.joining.set(meetingNo, attempt);
+    return attempt;
+  }
+  async performJoin(meetingNo, opts) {
+    const meeting = await this.callJoin(meetingNo, opts);
+    const meetingId = meeting?.id;
+    if (!meetingId) throw new LarkChannelError("meeting_not_found", "bots/join returned no meeting id");
+    this.registry.addMembership(meetingId, meeting.meeting_no ?? meetingNo);
+    return this.startSession({
+      meetingId,
+      meetingNo: meeting.meeting_no ?? meetingNo,
+      topic: meeting.topic,
+      mode: "tat",
+      stabilizeMs: opts.stabilizeMs ?? 0
+    });
+  }
+  /**
+  * Follow the meeting the token's owner is currently in, without joining it.
+  *
+  * Deliberately does not require `connect()`: this path is REST polling only, so
+  * demanding a WebSocket would be pure overhead for an app that never touches
+  * the IM side.
+  */
+  async followMyMeeting(opts) {
+    const token = toTokenProvider(opts.userAccessToken);
+    const meetings = await this.listActiveMeetings(token);
+    const chosen = opts.meetingNo ? meetings.find((m) => m.meeting_no === opts.meetingNo) : meetings[0];
+    if (!chosen?.meeting_id) throw new LarkChannelError("meeting_not_found", opts.meetingNo ? "the requested meeting is not among the active meetings" : "no active meeting to follow");
+    if (!opts.meetingNo && meetings.length > 1) this.deps.logger.warn?.("meeting: several active meetings, following the first", {
+      followedMeetingNo: chosen.meeting_no,
+      otherActiveCount: meetings.length - 1
+    });
+    return this.startSession({
+      meetingId: chosen.meeting_id,
+      meetingNo: chosen.meeting_no ?? "",
+      topic: chosen.meeting_title,
+      mode: "uat",
+      stabilizeMs: opts.stabilizeMs ?? 0,
+      token
+    });
+  }
+  /**
+  * The three `vc.bot.*` handlers the channel registers internally.
+  *
+  * Each is guarded, matching how the IM built-ins are written. The failure that
+  * matters is the documented one: the `meetingInvited` handler is *supposed* to
+  * call `joinMeeting()`, which rejects on `too_many_sessions` /
+  * `permission_denied` / `not_connected` — unguarded, that becomes an unhandled
+  * rejection at the transport instead of reaching `channel.on('error')`.
+  */
+  handlers() {
+    return {
+      "vc.bot.meeting_invited_v1": (raw) => this.guard(async () => {
+        const handler = this.deps.invitedHandler();
+        if (handler) await handler(toInvitedEvent(raw, this.deps.includeRaw));
+      }),
+      "vc.bot.meeting_activity_v1": (raw) => this.guard(() => this.registry.route(raw)),
+      "vc.bot.meeting_ended_v1": (raw) => this.guard(async () => {
+        const meetingId = asString(readMeeting(raw)?.id);
+        await this.registry.get(meetingId ?? "")?.endedByPlatform();
+      })
+    };
+  }
+  /** Route a handler failure to the channel's `error` event, never to the transport. */
+  async guard(run) {
+    try {
+      await run();
+    } catch (err) {
+      this.deps.onError(meetingError(err));
+    }
+  }
+  async callJoin(meetingNo, opts) {
+    try {
+      return (await this.deps.client.vc.v1.bot.join({ data: {
+        join_type: JOIN_TYPE_BY_MEETING_NO,
+        join_identify: { meeting_no: meetingNo },
+        ...opts.password ? { password: opts.password } : {},
+        ...opts.callId ? { call_id: opts.callId } : {}
+      } }))?.data?.meeting;
+    } catch (err) {
+      if (isInconclusiveFailure(err)) this.warnAboutInconclusiveJoin(meetingNo);
+      throw meetingError(err);
+    }
+  }
+  /**
+  * A join whose outcome is unknown may well have succeeded server-side, leaving a
+  * participant with no local handle — a bot visible in a meeting that nothing is
+  * listening to, until the meeting ends.
+  *
+  * Nothing can be done about it automatically, and this used to try. The long
+  * meeting id was in the response that never arrived, so the only handle available
+  * is the meeting number — and `bots/leave` was observed to reject one outright
+  * (HTTP 400, `121105 meeting not exist`). Issuing that call was therefore a request
+  * guaranteed to fail, on a path that had already failed. So this warns and stops:
+  * reclaiming the orphan needs an operator, or the meeting ending on its own.
+  */
+  warnAboutInconclusiveJoin(meetingNo) {
+    this.deps.logger.warn?.("meeting: join outcome unknown \u2014 the bot may be a participant with no session, and cannot be removed automatically (bots/leave needs the long meeting id, which never arrived)", { meetingNo });
+  }
+  async listActiveMeetings(token) {
+    try {
+      return (await this.deps.client.vc.v1.bot.userActiveMeeting({ params: { user_id_type: "open_id" } }, (0, import_node_sdk.withUserAccessToken)(await token())))?.data?.meetings ?? [];
+    } catch (err) {
+      throw meetingError(err);
+    }
+  }
+  startSession(spec) {
+    const session = new LiveMeetingSession({
+      client: this.deps.client,
+      logger: this.deps.logger,
+      meetingId: spec.meetingId,
+      meetingNo: spec.meetingNo,
+      topic: spec.topic,
+      mode: spec.mode,
+      config: this.config,
+      dedup: this.dedup,
+      includeRaw: this.deps.includeRaw,
+      botOpenId: this.deps.botOpenId,
+      stabilizeMs: spec.stabilizeMs,
+      token: spec.token,
+      recordHealth: (link, type, count, opts) => this.linkHealth[link].record(type, count, opts),
+      onEnded: (s) => this.registry.remove(s),
+      onMembershipReleased: () => this.registry.releaseMembership(spec.meetingId)
+    });
+    this.registry.add(session);
+    session.start();
+    return session;
+  }
+};
+function stripUndefined(config2) {
+  if (!config2) return {};
+  return Object.fromEntries(Object.entries(config2).filter(([, v]) => v !== void 0));
+}
+function readMeeting(raw) {
+  return asDict(raw?.meeting);
+}
+function toInvitedEvent(raw, includeRaw) {
+  const event = asDict(raw) ?? {};
+  const meeting = readMeeting(raw);
+  return {
+    meetingNo: asString(meeting?.meeting_no) ?? "",
+    meetingId: asString(meeting?.id),
+    topic: asString(meeting?.topic),
+    inviter: readActor({ operator: event.inviter }),
+    bot: readActor({ operator: event.bot }),
+    callId: asString(event.call_id),
+    inviteTime: asMs(event.invite_time),
+    ...includeRaw ? { raw } : {}
+  };
 }
 function isMentionAll(m) {
   return m.key === "@_all";
@@ -44017,6 +45555,7 @@ var convertLocation = async (raw, _ctx) => {
   };
 };
 var MAX_ITEMS = 50;
+var FORWARDED_FETCH_FAILED = '<forwarded_messages status="fetch_failed"/>';
 var convertMergeForward = async (_raw, ctx) => {
   const { messageId, fetchSubMessages, dispatch } = ctx;
   if (!fetchSubMessages || !dispatch) return {
@@ -44028,7 +45567,7 @@ var convertMergeForward = async (_raw, ctx) => {
     items = await fetchSubMessages(messageId);
   } catch {
     return {
-      content: "<forwarded_messages/>",
+      content: FORWARDED_FETCH_FAILED,
       resources: []
     };
   }
@@ -44049,9 +45588,10 @@ var convertMergeForward = async (_raw, ctx) => {
     } catch {
     }
   }
+  const { content, resources } = await formatSubTree(messageId, buildChildrenMap(capped, messageId), ctx, truncated);
   return {
-    content: await formatSubTree(messageId, buildChildrenMap(capped, messageId), ctx, truncated),
-    resources: []
+    content,
+    resources
   };
 };
 function buildChildrenMap(items, rootId) {
@@ -44073,17 +45613,28 @@ function buildChildrenMap(items, rootId) {
 }
 async function formatSubTree(parentId, map, ctx, truncated = false) {
   const children = map.get(parentId);
-  if (!children || children.length === 0) return "<forwarded_messages/>";
+  if (!children || children.length === 0) return {
+    content: "<forwarded_messages/>",
+    resources: []
+  };
   const parts = [];
+  const resources = [];
   for (const item of children) try {
     const sub = await renderItem(item, map, ctx);
-    if (sub) parts.push(sub);
+    if (sub.content) parts.push(sub.content);
+    resources.push(...sub.resources);
   } catch {
   }
-  if (parts.length === 0) return "<forwarded_messages/>";
-  return `<forwarded_messages>
+  if (parts.length === 0) return {
+    content: "<forwarded_messages/>",
+    resources
+  };
+  return {
+    content: `<forwarded_messages>
 ${parts.join("\n")}${truncated ? "\n... (truncated)" : ""}
-</forwarded_messages>`;
+</forwarded_messages>`,
+    resources
+  };
 }
 async function renderItem(item, map, ctx) {
   const msgType = item.msg_type ?? "text";
@@ -44092,16 +45643,28 @@ async function renderItem(item, map, ctx) {
   const timestamp = createMs > 0 ? formatRFC3339Beijing(createMs) : "unknown";
   const displayName = ctx.resolveUserName?.(senderId) ?? senderId;
   let content;
+  let resources = [];
   if (msgType === "merge_forward") {
     const nestedId = item.message_id;
-    content = nestedId ? await formatSubTree(nestedId, map, ctx) : "<forwarded_messages/>";
+    if (nestedId) {
+      const sub = await formatSubTree(nestedId, map, ctx);
+      content = sub.content;
+      resources = sub.resources;
+    } else content = "<forwarded_messages/>";
   } else {
     const rawContent = item.body?.content ?? "{}";
     if (!ctx.dispatch) content = rawContent;
-    else content = (await ctx.dispatch(rawContent, msgType, ctx)).content;
+    else {
+      const r = await ctx.dispatch(rawContent, msgType, ctx);
+      content = r.content;
+      resources = r.resources;
+    }
   }
-  return `[${timestamp}] ${displayName}:
-${indentLines(content, "    ")}`;
+  return {
+    content: `[${timestamp}] ${displayName}:
+${indentLines(content, "    ")}`,
+    resources
+  };
 }
 var atMentionRe = /<at(\s+)user_id(\s*)=(\s*)"(.*?)">(.*?)<\/at>/g;
 var imageKeyRe = /!\[(.*?)\]\(([^)]+)\)/g;
@@ -44477,6 +46040,8 @@ async function normalize(event, opts) {
   const senderFallbackId = event.sender.sender_id.user_id ?? event.sender.sender_id.union_id ?? "";
   const senderId = senderOpenId ?? senderFallbackId;
   const senderName = senderOpenId ? opts.resolveSenderName?.(senderOpenId) : void 0;
+  const senderType = event.sender.sender_type;
+  const senderIsBot = senderType === void 0 ? void 0 : senderType === "bot";
   const createMs = msg.create_time ? parseInt(msg.create_time, 10) : 0;
   return {
     messageId: msg.message_id,
@@ -44484,6 +46049,8 @@ async function normalize(event, opts) {
     chatType: msg.chat_type,
     senderId,
     senderName,
+    senderType,
+    senderIsBot,
     content,
     rawContentType: msg.message_type,
     resources,
@@ -44501,18 +46068,6 @@ function detectMentionAllInContent(content) {
   if (!content) return false;
   return /@_all\b/.test(content);
 }
-var LarkChannelError = class extends Error {
-  code;
-  cause;
-  context;
-  constructor(code, message, opts) {
-    super(message);
-    this.name = "LarkChannelError";
-    this.code = code;
-    this.cause = opts?.cause;
-    this.context = opts?.context;
-  }
-};
 function classifyError(err, context) {
   if (err instanceof LarkChannelError) return err;
   return new LarkChannelError(inferCode(err), extractMessage(err), {
@@ -44551,13 +46106,19 @@ function isFormatError(err) {
 function isReplyTargetGone(err) {
   return err.code === "target_revoked";
 }
+var OPEN_ID = /^(ou_|on_)[A-Za-z0-9_-]+$/;
+function isValidOpenId(id) {
+  return !!id && OPEN_ID.test(id);
+}
+function escapeAtName(name) {
+  return name.replace(/[<>"]/g, "");
+}
 function composeMentionsTextPrefix(mentions) {
   if (!mentions?.length) return "";
   const parts = [];
   for (const m of mentions) {
-    if (!m.openId) continue;
-    const name = m.name ?? "";
-    parts.push(`<at user_id="${m.openId}">${name}</at>`);
+    if (!isValidOpenId(m.openId)) continue;
+    parts.push(`<at user_id="${m.openId}">${escapeAtName(m.name ?? "")}</at>`);
   }
   return parts.length > 0 ? parts.join(" ") + " " : "";
 }
@@ -45009,7 +46570,8 @@ async function retry(op, opts = {}) {
   } catch (raw) {
     const err = classifyError(raw, { attempt });
     lastErr = err;
-    if (attempt >= max || !isRetryable(err)) throw err;
+    const retryable = isRetryable(err) || !!opts.retryTimeouts && err.code === "send_timeout";
+    if (attempt >= max || !retryable) throw err;
     await sleep2(base * 3 ** (attempt - 1));
   }
   throw lastErr;
@@ -45213,15 +46775,6 @@ var CardStreamController = class {
     return this.impl.run(producer);
   }
 };
-function mergeStreamingText(prev, next) {
-  if (!prev) return next;
-  if (!next) return prev;
-  if (next.startsWith(prev)) return next;
-  if (prev.startsWith(next)) return prev;
-  const maxOverlap = Math.min(prev.length, next.length);
-  for (let len = maxOverlap; len > 0; len--) if (prev.endsWith(next.substring(0, len))) return prev + next.substring(len);
-  return prev + next;
-}
 var DEFAULT_THROTTLE_MS = 100;
 var DEFAULT_THROTTLE_CHARS = 50;
 var DEFAULT_INITIAL = "Thinking...";
@@ -45262,13 +46815,6 @@ var MarkdownStreamControllerImpl = class {
   opts;
   /** Content of the current (latest) card's markdown element. */
   content = "";
-  /**
-  * Full upstream-side accumulated text. Kept separate from `content` so
-  * that accumulated-mode producers (where each `append` chunk contains
-  * the full history) merge correctly even after rollover has discarded
-  * the head from `content`.
-  */
-  fullAccumulated = "";
   _messageId = "";
   cardId = "";
   sequence = 0;
@@ -45302,15 +46848,11 @@ var MarkdownStreamControllerImpl = class {
   async append(chunk) {
     if (!chunk) return;
     await this.ensureStarted();
-    const merged = mergeStreamingText(this.fullAccumulated, chunk);
-    const delta = merged.slice(this.fullAccumulated.length);
-    this.fullAccumulated = merged;
-    this.content += delta;
+    this.content += chunk;
     this.throttle.note(chunk.length);
   }
   async setContent(full) {
     await this.ensureStarted();
-    this.fullAccumulated = full ?? "";
     this.content = full ?? "";
     this.throttle.note(Number.MAX_SAFE_INTEGER);
   }
@@ -45471,7 +47013,7 @@ var OutboundSender = class {
         idType,
         msgType: "post",
         content: post,
-        replyTo: i === 0 ? opts.replyTo : void 0,
+        replyTo: replyTargetForChunk(i, opts, ids),
         replyInThread: opts.replyInThread
       });
       ids.push(id);
@@ -45487,7 +47029,7 @@ var OutboundSender = class {
         idType,
         msgType: "text",
         content: { text: chunks[i] },
-        replyTo: i === 0 ? opts.replyTo : void 0,
+        replyTo: replyTargetForChunk(i, opts, ids),
         replyInThread: opts.replyInThread
       });
       ids.push(id);
@@ -45772,11 +47314,89 @@ var OutboundSender = class {
     };
   }
 };
+function replyTargetForChunk(i, opts, ids) {
+  if (i === 0) return opts.replyTo;
+  return opts.replyTo != null || opts.replyInThread === true ? ids[i - 1] : void 0;
+}
 function splitPlain(text, limit) {
   if (text.length <= limit) return [text];
   const out = [];
   for (let i = 0; i < text.length; i += limit) out.push(text.slice(i, i + limit));
   return out;
+}
+function resolveNameMentions(mentions, lookup) {
+  const out = [];
+  for (const m of mentions) {
+    if (m.openId) {
+      out.push(m);
+      continue;
+    }
+    if (!m.name) continue;
+    const openId = lookup(m.name);
+    if (openId) out.push({
+      ...m,
+      openId
+    });
+  }
+  return out;
+}
+var MAX_NAME_WORDS = 5;
+var MAX_NAME_CHARS = 64;
+var TRAILING_PUNCTUATION = /[.,!?;:)\]}]+$/;
+function resolveMentionsInText(text, lookup) {
+  if (!text.includes("@")) return text;
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const at = text.indexOf("@", i);
+    if (at === -1) {
+      out += text.slice(i);
+      break;
+    }
+    out += text.slice(i, at);
+    const match = at === 0 || /\s/.test(text[at - 1]) ? matchNameAt(text, at + 1, lookup) : void 0;
+    if (match) {
+      out += `<at user_id="${match.openId}">${escapeAtName(match.name)}</at>`;
+      i = at + 1 + match.length;
+    } else {
+      out += "@";
+      i = at + 1;
+    }
+  }
+  return out;
+}
+function matchNameAt(text, start, lookup) {
+  const window = text.slice(start, start + MAX_NAME_CHARS);
+  for (const candidate of candidatePrefixes(window)) {
+    const direct = lookup(candidate);
+    if (isValidOpenId(direct)) return {
+      name: candidate,
+      openId: direct,
+      length: candidate.length
+    };
+    const trimmed = candidate.replace(TRAILING_PUNCTUATION, "");
+    if (trimmed !== candidate) {
+      const t = lookup(trimmed);
+      if (isValidOpenId(t)) return {
+        name: trimmed,
+        openId: t,
+        length: trimmed.length
+      };
+    }
+  }
+}
+function candidatePrefixes(window) {
+  if (!window || /^\s/.test(window)) return [];
+  const wordEnds = [];
+  let inWord = false;
+  for (let k = 0; k < window.length; k++) if (!/\s/.test(window[k])) inWord = true;
+  else if (inWord) {
+    wordEnds.push(k);
+    inWord = false;
+    if (wordEnds.length >= MAX_NAME_WORDS) break;
+  }
+  if (inWord && wordEnds.length < MAX_NAME_WORDS) wordEnds.push(window.length);
+  return wordEnds.map((end) => window.slice(0, end)).reverse();
 }
 var ChatPipeline = class {
   config;
@@ -45933,95 +47553,84 @@ function dedupBy(items, key) {
   }
   return out;
 }
-var DEFAULT_BATCH = {
-  delayMs: 600,
-  longThresholdChars: 1e3,
-  longDelayMs: 2e3,
-  maxMessages: 8,
-  maxChars: 4e3,
-  mergeWhileBusy: false
+var DEFAULTS = {
+  windowMs: 6e4,
+  maxBotMentions: 5,
+  scope: "chat",
+  onTrip: "drop"
 };
-var DEFAULT_DEDUP = {
-  ttl: 12 * 36e5,
-  maxEntries: 5e3,
-  sweepIntervalMs: 5 * 6e4,
-  namespace: "channel:seen"
-};
-var DEFAULT_STALE_MS = 30 * 6e4;
-var DEFAULT_LOCK_TTL_MS = 5 * 6e4;
-function resolveBatchConfig(cfg) {
-  const t = cfg?.batch?.text ?? {};
-  return {
-    delayMs: t.delayMs ?? DEFAULT_BATCH.delayMs,
-    longThresholdChars: t.longThresholdChars ?? DEFAULT_BATCH.longThresholdChars,
-    longDelayMs: t.longDelayMs ?? DEFAULT_BATCH.longDelayMs,
-    maxMessages: t.maxMessages ?? DEFAULT_BATCH.maxMessages,
-    maxChars: t.maxChars ?? DEFAULT_BATCH.maxChars,
-    mergeWhileBusy: cfg?.chatQueue?.mergeWhileBusy ?? DEFAULT_BATCH.mergeWhileBusy
-  };
-}
-var SeenCache = class {
-  cache;
-  memory = /* @__PURE__ */ new Map();
-  sweeper;
-  ttlMs;
-  maxMem;
-  ns;
-  constructor(cache, opts = {}) {
-    this.cache = cache;
-    this.ttlMs = opts.ttlMs ?? DEFAULT_DEDUP.ttl;
-    this.maxMem = opts.maxMemEntries ?? DEFAULT_DEDUP.maxEntries;
-    this.ns = opts.namespace ?? DEFAULT_DEDUP.namespace;
-    const sweepMs = opts.sweepMs ?? DEFAULT_DEDUP.sweepIntervalMs;
-    this.sweeper = setInterval(() => this.sweep(), sweepMs);
-    this.sweeper.unref?.();
+var MAX_KEYS = 5e3;
+var LoopGuard = class {
+  logger;
+  enabled;
+  onTrip;
+  windowMs;
+  threshold;
+  scope;
+  states = /* @__PURE__ */ new Map();
+  constructor(cfg, logger) {
+    this.logger = logger;
+    this.enabled = cfg?.enabled ?? false;
+    this.windowMs = cfg?.windowMs ?? DEFAULTS.windowMs;
+    this.threshold = cfg?.maxBotMentions ?? DEFAULTS.maxBotMentions;
+    this.scope = cfg?.scope ?? DEFAULTS.scope;
+    this.onTrip = cfg?.onTrip ?? DEFAULTS.onTrip;
   }
-  async has(id) {
-    const now = Date.now();
-    const exp = this.memory.get(id);
-    if (exp && exp > now) {
-      this.memory.delete(id);
-      this.memory.set(id, exp);
-      return true;
+  /**
+  * Record a message; return whether its key is now tripped. A human message
+  * resets the key and never trips; messages that aren't "another bot @'d me"
+  * don't count. A re-delivered `messageId` already inside the window is
+  * counted once. The first trip of a key emits exactly one warn.
+  */
+  record(msg) {
+    if (!this.enabled) return false;
+    const key = this.keyFor(msg);
+    if (msg.senderType === "user") {
+      this.states.delete(key);
+      return false;
     }
-    if (await this.cache.get(id, { namespace: this.ns })) {
-      this.memory.set(id, now + this.ttlMs);
-      this.evictIfNeeded();
-      return true;
-    }
-    return false;
+    if (!(msg.senderType === "bot" && msg.mentionedBot)) return false;
+    const state = this.states.get(key) ?? {
+      entries: [],
+      warned: false
+    };
+    const cutoff = msg.createTime - this.windowMs;
+    state.entries = state.entries.filter((e) => e.time >= cutoff);
+    if (!state.entries.some((e) => e.messageId === msg.messageId)) state.entries.push({
+      messageId: msg.messageId,
+      time: msg.createTime
+    });
+    const tripped = state.entries.length >= this.threshold;
+    if (tripped && !state.warned) {
+      this.logger.warn?.(`channel: botLoopGuard tripped for ${key} \u2014 >=${this.threshold} bot @-mentions within ${this.windowMs}ms (onTrip=${this.onTrip})`);
+      state.warned = true;
+    } else if (!tripped) state.warned = false;
+    this.remember(key, state);
+    return tripped;
   }
-  async add(id) {
-    const expireAt = Date.now() + this.ttlMs;
-    this.memory.set(id, expireAt);
-    this.evictIfNeeded();
-    try {
-      await this.cache.set(id, "1", expireAt, { namespace: this.ns });
-    } catch {
-    }
-  }
-  evictIfNeeded() {
-    while (this.memory.size > this.maxMem) {
-      const first = this.memory.keys().next().value;
-      if (first === void 0) break;
-      this.memory.delete(first);
+  /** Store the key's state (LRU touch) and cap the number of tracked keys. */
+  remember(key, state) {
+    this.states.delete(key);
+    this.states.set(key, state);
+    while (this.states.size > MAX_KEYS) {
+      const oldest = this.states.keys().next().value;
+      if (oldest === void 0) break;
+      this.states.delete(oldest);
     }
   }
-  sweep() {
-    const now = Date.now();
-    for (const [k, v] of this.memory) if (v <= now) this.memory.delete(k);
-  }
-  dispose() {
-    clearInterval(this.sweeper);
-    this.memory.clear();
+  keyFor(msg) {
+    return this.scope === "chat+sender" ? `${msg.chatId}::${msg.senderId}` : msg.chatId;
   }
 };
 var PolicyGate = class {
   cfg;
   bot;
-  constructor(cfg, bot) {
+  logger;
+  constructor(cfg, bot, logger) {
     this.cfg = { ...cfg ?? {} };
     this.bot = bot;
+    this.logger = logger;
+    this.warnOnMisconfiguredAllowlists();
   }
   evaluate(msg) {
     if (msg.chatType === "group") return this.evaluateGroup(msg);
@@ -46062,6 +47671,23 @@ var PolicyGate = class {
       ...this.cfg,
       ...partial2
     };
+    this.warnOnMisconfiguredAllowlists();
+  }
+  /**
+  * Flag the most common allowlist misconfiguration: an app id (`cli_…`) in a
+  * list that expects sender ids / chat ids, which silently matches nothing.
+  * Logs only the field name and the single offending value — never the whole
+  * list (no PII / full-table dumps).
+  */
+  warnOnMisconfiguredAllowlists() {
+    this.warnOnCliEntry("dmAllowlist", "sender ids (ou_/user_id/union_id)", this.cfg.dmAllowlist);
+    this.warnOnCliEntry("groupAllowlist", "chat ids (oc_)", this.cfg.groupAllowlist);
+  }
+  warnOnCliEntry(field, accepts, list) {
+    if (!this.logger) return;
+    const offending = list?.find((entry) => entry.startsWith("cli_"));
+    if (!offending) return;
+    this.logger.warn?.(`channel: PolicyConfig.${field} contains an app id ("${offending}") \u2014 it accepts ${accepts}, not cli_; this entry matches nothing`);
   }
   getConfig() {
     return this.cfg;
@@ -46110,6 +47736,7 @@ var SafetyPipeline = class {
   seenCache;
   lock;
   policy;
+  loopGuard;
   manager;
   staleWindow;
   queueEnabled;
@@ -46128,7 +47755,8 @@ var SafetyPipeline = class {
       sweepMs: opts.config?.dedup?.sweepIntervalMs
     });
     this.lock = new ProcessingLock();
-    this.policy = new PolicyGate(opts.policy, opts.botIdentity);
+    this.policy = new PolicyGate(opts.policy, opts.botIdentity, opts.logger);
+    this.loopGuard = new LoopGuard(opts.policy?.botLoopGuard, opts.logger);
     this.manager = new ChatPipelineManager(resolveBatchConfig(opts.config));
   }
   async pushMessage(msg) {
@@ -46148,6 +47776,16 @@ var SafetyPipeline = class {
         senderId: msg.senderId,
         reason: decision.reason ?? "group_not_allowed"
       });
+      return;
+    }
+    if (this.loopGuard.enabled && this.loopGuard.record(msg)) {
+      if (this.loopGuard.onTrip === "reject") this.onReject({
+        messageId: msg.messageId,
+        chatId: msg.chatId,
+        senderId: msg.senderId,
+        reason: "bot_loop"
+      });
+      else this.logger.debug?.(`safety: drop bot-loop message ${msg.messageId}`);
       return;
     }
     if (!this.lock.acquire(msg.messageId)) {
@@ -46186,9 +47824,10 @@ var SafetyPipeline = class {
     }
     const task = async () => {
       try {
-        await handler();
+        return await handler();
       } catch (e) {
         this.logger.error?.(`safety: action handler threw`, e);
+        return;
       } finally {
         try {
           await this.seenCache.add(eventId);
@@ -46197,8 +47836,8 @@ var SafetyPipeline = class {
         this.lock.release(eventId);
       }
     };
-    if (this.queueEnabled) await this.manager.run(queueScope, task);
-    else await task();
+    if (this.queueEnabled) return this.manager.run(queueScope, task);
+    return task();
   }
   async pushLight(eventId, handler) {
     if (await this.seenCache.has(eventId)) return;
@@ -46230,6 +47869,12 @@ var LarkChannel2 = class {
   botIdentity;
   /** Cloud-doc comment surface: fetch / reply / reactions with quirk fallbacks. */
   comments;
+  /**
+  * Meeting channel internals. Private so its wiring methods do not become de
+  * facto public API of a pre-1.0 package — the supported surface is
+  * {@link joinMeeting}, {@link followMyMeeting} and {@link getMeetingEventHealth}.
+  */
+  meetings;
   opts;
   logger;
   dispatcher;
@@ -46239,8 +47884,22 @@ var LarkChannel2 = class {
   sender;
   safety;
   chatModeCache = new ChatModeCache();
+  chatMemberCache = new ChatMemberCache();
   keepaliveHandle;
   proxyAgent;
+  /**
+  * The channel's own dispatcher handlers, keyed by event type. Read at dispatch
+  * time rather than captured, so `onRawEvent` can compose with them whether it
+  * is called before or after `connect()`.
+  */
+  builtinHandlers = {};
+  rawHandlers = /* @__PURE__ */ new Map();
+  /**
+  * Event types already wired into the dispatcher. `EventDispatcher.register`
+  * logs an error when a key is re-registered, so each type gets exactly one
+  * composed entry and the composition reads mutable state instead.
+  */
+  dispatchedTypes = /* @__PURE__ */ new Set();
   constructor(opts) {
     this.opts = opts;
     this.logger = new import_node_sdk.LoggerProxy(opts.loggerLevel ?? import_node_sdk.LoggerLevel.info, opts.logger ?? import_node_sdk.defaultLogger);
@@ -46264,6 +47923,17 @@ var LarkChannel2 = class {
     });
     this.sender = new OutboundSender(this.rawClient, opts.outbound ?? {}, this.logger);
     this.comments = new CommentSurface(this.rawClient, this.logger);
+    this.meetings = new MeetingChannel({
+      client: this.rawClient,
+      logger: this.logger,
+      cache: opts.cache ?? import_node_sdk.internalCache,
+      config: opts.meeting,
+      includeRaw: opts.includeRawEvent ?? opts.includeRawInMessage ?? false,
+      botOpenId: () => this.botIdentity?.openId,
+      isConnected: () => this.connected,
+      invitedHandler: () => this.handlers.meetingInvited,
+      onError: (e) => this.emitError(e)
+    });
     this.configureHttp();
     this.safety = new SafetyPipeline({
       config: opts.safety,
@@ -46412,6 +48082,7 @@ var LarkChannel2 = class {
     if (!this.connected) return;
     this.keepaliveHandle?.stop();
     this.keepaliveHandle = void 0;
+    this.meetings.disposeAll();
     try {
       this.rawWsClient?.close({});
     } catch {
@@ -46431,6 +48102,18 @@ var LarkChannel2 = class {
   */
   getConnectionStatus() {
     return this.rawWsClient?.getConnectionStatus();
+  }
+  /**
+  * This bot's own identity ({@link BotIdentity}) — useful to inline into an
+  * agent's system prompt ("you are @… / your open_id is …") so it can tell
+  * itself apart from other bots and decide whom to reply to. Resolved during
+  * {@link connect}; throws `LarkChannelError('not_connected')` if called
+  * before then, rather than returning `undefined`, so callers don't silently
+  * build a prompt with a missing identity.
+  */
+  getBotIdentity() {
+    if (!this.botIdentity) throw new LarkChannelError("not_connected", "bot identity not resolved yet \u2014 call connect() first");
+    return this.botIdentity;
   }
   on(nameOrMap, handler) {
     if (typeof nameOrMap === "string") return this.attachSingle(nameOrMap, handler);
@@ -46453,10 +48136,57 @@ var LarkChannel2 = class {
     };
   }
   async send(to, input, opts) {
-    return this.sender.send(to, input, opts);
+    const resolved = this.resolveOutboundMentions(to, input, opts);
+    return this.sender.send(to, resolved.input, resolved.opts);
   }
   async stream(to, input, opts) {
     return this.sender.stream(to, input, opts);
+  }
+  /**
+  * Reply to a received message: defaults `replyTo` to `msg.messageId` and,
+  * when the trigger is inside a topic thread (`msg.threadId` present), keeps
+  * the reply in that thread — fixing the common "replied to the wrong place /
+  * fell out of the topic" mistake of computing the reply target by hand.
+  * `opts` overrides either default. Semantically a {@link send}; streaming
+  * replies still use `stream(to, input, { replyTo })`.
+  */
+  async reply(msg, input, opts) {
+    return this.send(msg.chatId, input, {
+      ...opts,
+      replyTo: opts?.replyTo ?? msg.messageId,
+      replyInThread: opts?.replyInThread ?? Boolean(msg.threadId)
+    });
+  }
+  /**
+  * Resolve "@name" into real mentions against the target chat's roster before
+  * sending: fill `openId` on name-only structured mentions, and — when
+  * `resolveMentionsInText` is set — rewrite `@name` tokens in a text/markdown
+  * body. Both no-ops when there is nothing to resolve, so the default send
+  * path is untouched.
+  */
+  resolveOutboundMentions(to, input, opts) {
+    if (!opts) return { input };
+    const lookup = (name) => this.chatMemberCache.resolveOpenId(to, name);
+    let nextOpts = opts;
+    if (opts.mentions?.length) nextOpts = {
+      ...opts,
+      mentions: resolveNameMentions(opts.mentions, lookup)
+    };
+    let nextInput = input;
+    if (opts.resolveMentionsInText) {
+      if ("text" in input) nextInput = {
+        ...input,
+        text: resolveMentionsInText(input.text, lookup)
+      };
+      else if ("markdown" in input) nextInput = {
+        ...input,
+        markdown: resolveMentionsInText(input.markdown, lookup)
+      };
+    }
+    return {
+      input: nextInput,
+      opts: nextOpts
+    };
   }
   async updateCard(messageId, card) {
     await this.sender.patchCard(messageId, card);
@@ -46708,6 +48438,126 @@ var LarkChannel2 = class {
     return "group";
   }
   /**
+  * List a chat's members (`im.v1.chatMembers.get`), following pagination.
+  * Returns **users only** — Feishu's chat-members API filters bots out, so
+  * `isBot` is never `true` here. Use {@link getChatBots} for the bots.
+  * `pageSize` is clamped to Feishu's max of 100; `maxPages` (default 10) caps
+  * paging. Results are cached per chat and reused by `senderName` resolution
+  * and "@name → open_id"; a second call hits the cache and `force` bypasses
+  * it. A `resolveChatMembers` option, if provided, overrides the API.
+  * Throws {@link LarkChannelError} on API failure.
+  */
+  async getChatMembers(chatId, opts) {
+    if (!opts?.force) {
+      const cached2 = this.chatMemberCache.getMembers(chatId);
+      if (cached2) return cached2;
+    }
+    const members = await this.fetchChatMembers(chatId, opts);
+    this.chatMemberCache.setMembers(chatId, members, "api");
+    return members;
+  }
+  async fetchChatMembers(chatId, opts) {
+    const fromHook = await this.opts.resolveChatMembers?.(chatId);
+    if (fromHook) return fromHook;
+    const idType = opts?.idType ?? "open_id";
+    const pageSize = Math.min(Math.max(opts?.pageSize ?? 100, 1), 100);
+    const maxPages = opts?.maxPages ?? 10;
+    const out = [];
+    let pageToken;
+    try {
+      for (let page = 0; page < maxPages; page++) {
+        const d = (await this.rawClient.im.v1.chatMembers.get({
+          path: { chat_id: chatId },
+          params: {
+            member_id_type: idType,
+            page_size: pageSize,
+            page_token: pageToken
+          }
+        }))?.data;
+        for (const it of d?.items ?? []) {
+          if (!it.member_id) continue;
+          out.push({
+            id: it.member_id,
+            idType: it.member_id_type ?? idType,
+            name: it.name,
+            tenantKey: it.tenant_key,
+            isBot: false
+          });
+        }
+        if (!d?.has_more || !d.page_token) break;
+        pageToken = d.page_token;
+      }
+    } catch (e) {
+      throw classifyError(e, { to: chatId });
+    }
+    return out;
+  }
+  /**
+  * List the **bots** in a chat (`GET .../members/bots`) — the companion to
+  * {@link getChatMembers}, which returns users only (Feishu filters bots from
+  * that list). Returns {@link ChatMember}s with `isBot: true`, and seeds them
+  * into the roster so another bot can be `@`-ed by name **without** having
+  * appeared in an inbound mention first. Cached per chat like
+  * {@link getChatMembers} (`force` bypasses). Throws {@link LarkChannelError}
+  * on API failure.
+  *
+  * There is no typed node-sdk method for this endpoint, so it goes through the
+  * raw request; the response is `{ data: { items: [{ bot_id, bot_name }] } }`.
+  */
+  async getChatBots(chatId, opts) {
+    if (!opts?.force) {
+      const cached2 = this.chatMemberCache.getBots(chatId);
+      if (cached2) return cached2;
+    }
+    const bots = await this.fetchChatBots(chatId);
+    this.chatMemberCache.setBots(chatId, bots);
+    return bots;
+  }
+  async fetchChatBots(chatId) {
+    try {
+      const body = await this.rawClient.request({
+        url: `/open-apis/im/v1/chats/${encodeURIComponent(chatId)}/members/bots`,
+        method: "GET"
+      });
+      const items = body.data?.items ?? body.items ?? [];
+      const out = [];
+      for (const it of items) {
+        if (!it.bot_id) continue;
+        out.push({
+          id: it.bot_id,
+          idType: "open_id",
+          name: it.bot_name,
+          isBot: true
+        });
+      }
+      return out;
+    } catch (e) {
+      throw classifyError(e, { to: chatId });
+    }
+  }
+  /** Warm the roster for `senderName` resolution; failures degrade silently. */
+  async warmChatRoster(chatId) {
+    try {
+      await this.getChatMembers(chatId);
+    } catch (e) {
+      this.logger.debug?.("channel: roster warm failed", e);
+    }
+  }
+  /**
+  * Record identities seen in a message's mentions (incl. bots) into the
+  * roster, so a bot that has "shown its face" can later be @'d by name.
+  * Source is 'mention' so it never overwrites authoritative API user names.
+  */
+  collectMentionsIntoRoster(chatId, mentions) {
+    const seen = [];
+    for (const m of mentions) if (m.openId && m.name) seen.push({
+      id: m.openId,
+      name: m.name,
+      isBot: m.isBot
+    });
+    if (seen.length) this.chatMemberCache.setMembers(chatId, seen, "mention");
+  }
+  /**
   * Fetch a message by id and return it as a {@link NormalizedMessage} — the
   * same shape live `message` events produce. Useful for resolving a
   * reply-quoted message: `im.v1.message.get` returns a flat item list
@@ -46749,14 +48599,7 @@ var LarkChannel2 = class {
     }
     const parent = items[0];
     if (!parent || !parent.message_id) return void 0;
-    const fetchSubMessages = async (mid) => {
-      if (mid === parent.message_id) return items;
-      try {
-        return (await this.rawClient.im.v1.message.get({ path: { message_id: mid } }))?.data?.items ?? [];
-      } catch {
-        return [];
-      }
-    };
+    const fetchSubMessages = (mid) => mid === parent.message_id ? Promise.resolve(items) : this.fetchMessageItemsWithRetry(mid);
     const fakeRaw = {
       sender: { sender_id: { open_id: parent.sender?.id } },
       message: {
@@ -46782,6 +48625,28 @@ var LarkChannel2 = class {
       this.logger.warn?.("channel: fetchMessage normalize failed", e);
       return;
     }
+  }
+  /**
+  * Read a message's `data.items[]` (`im.v1.message.get`) with retry — used to
+  * expand merge-forward sub-messages. Wraps the GET in the shared
+  * exponential-backoff {@link retry}: transient upstream failures
+  * (5xx → `unknown`, `rate_limited`) and — since this is an idempotent read —
+  * timeouts are retried; non-transient errors (permission / not-found /
+  * format) fail fast. On exhaustion it **throws** the classified
+  * {@link LarkChannelError} instead of degrading to `[]`, so the converter can
+  * tell "fetch failed" apart from "genuinely empty". The failure is warn-logged
+  * here (once, after retries) before re-throwing.
+  */
+  fetchMessageItemsWithRetry(messageId) {
+    return retry(async () => {
+      return (await this.rawClient.im.v1.message.get({ path: { message_id: messageId } }))?.data?.items ?? [];
+    }, {
+      ...this.opts.outbound?.retry ?? {},
+      retryTimeouts: true
+    }).catch((e) => {
+      this.logger.warn?.("channel: fetchSubMessages failed", e);
+      throw e;
+    });
   }
   updatePolicy(partial2) {
     this.safety.updatePolicy(partial2);
@@ -46809,14 +48674,7 @@ var LarkChannel2 = class {
     throw new LarkChannelError(classified.code === "unknown" ? "not_connected" : classified.code, "could not resolve bot identity via /open-apis/bot/v3/info \u2014 required for channel to function", { cause: lastError });
   }
   registerDispatcherHandlers() {
-    const fetchSubMessages = async (mid) => {
-      try {
-        return (await this.rawClient.im.v1.message.get({ path: { message_id: mid } })).data?.items ?? [];
-      } catch (e) {
-        this.logger.warn?.("channel: fetchSubMessages failed", e);
-        return [];
-      }
-    };
+    const fetchSubMessages = (mid) => this.fetchMessageItemsWithRetry(mid);
     const includeRaw = this.opts.includeRawEvent ?? this.opts.includeRawInMessage ?? false;
     const normalizeOpts = {
       botIdentity: this.botIdentity,
@@ -46824,10 +48682,21 @@ var LarkChannel2 = class {
       includeRaw,
       fetchSubMessages
     };
-    this.dispatcher.register({
+    this.builtinHandlers = {
       "im.message.receive_v1": async (raw) => {
         try {
-          const msg = await normalize(raw, normalizeOpts);
+          const event = raw;
+          const chatId = event.message.chat_id;
+          let resolveSenderName;
+          if (this.opts.resolveSenderNames) {
+            await this.warmChatRoster(chatId);
+            resolveSenderName = (openId) => this.chatMemberCache.resolveName(chatId, openId);
+          }
+          const msg = await normalize(event, {
+            ...normalizeOpts,
+            resolveSenderName
+          });
+          this.collectMentionsIntoRoster(chatId, msg.mentions);
           if (this.opts.resolveChatMode) msg.chatMode = await this.chatModeCache.resolve(msg.chatId, (id) => this.getChatMode(id));
           await this.safety.pushMessage(msg);
         } catch (e) {
@@ -46836,11 +48705,11 @@ var LarkChannel2 = class {
       },
       "card.action.trigger": async (raw) => {
         const evt = normalizeCardAction(raw, { includeRaw });
-        if (!evt) return;
+        if (!evt) return void 0;
         const actionId = cardActionId(evt.action);
-        await this.safety.pushAction(`card:${evt.messageId}:${evt.operator.openId}:${actionId}`, evt.chatId, async () => {
+        return this.safety.pushAction(`card:${evt.messageId}:${evt.operator.openId}:${actionId}`, evt.chatId, async () => {
           const h = this.handlers.cardAction;
-          if (h) await h(evt);
+          return h ? h(evt) : void 0;
         });
       },
       "im.message.reaction.created_v1": async (raw) => {
@@ -46871,8 +48740,109 @@ var LarkChannel2 = class {
           const h = this.handlers.comment;
           if (h) await h(evt);
         });
-      }
-    });
+      },
+      ...this.meetings.handlers()
+    };
+    this.meetings.markRegistered();
+    for (const type of Object.keys(this.builtinHandlers)) this.ensureDispatchEntry(type);
+  }
+  /**
+  * Subscribe to a Feishu event type the channel does not wrap.
+  *
+  * Multicast; the returned function removes only this handler. Without this the
+  * alternatives are reaching into the dispatcher's private map, which breaks on
+  * a version bump, or opening a second long-lived connection — and a second
+  * connection for the same app makes Feishu split delivery between them, so the
+  * channel's own IM traffic starts disappearing.
+  *
+  * **Raw handlers run outside the safety pipeline.** They run after signature
+  * verification and decryption, but `PolicyGate` (`dmMode`, `dmAllowlist`,
+  * `groupAllowlist`, `requireMention`), dedup, the per-chat processing lock, the
+  * loop guard and the stale-message filter are all downstream of normalization
+  * and do not apply here. Registering a raw handler for an event type the channel
+  * already handles therefore opens a path around those checks — deliberately,
+  * but worth knowing before using it on `im.message.receive_v1`.
+  *
+  * The payload is the decrypted platform event, unredacted and unaffected by
+  * `includeRawEvent: false`: it carries `tenant_key`, full user ids and message
+  * bodies.
+  *
+  * Handlers are awaited before the dispatcher replies to Feishu, so that replies
+  * stay ordered after them. On `card.action.trigger` that matters: a slow raw
+  * handler delays the callback response past Feishu's timeout even though its
+  * return value is discarded. Keep raw handlers on that event type cheap, or hand
+  * the work to a queue.
+  */
+  onRawEvent(eventType, handler) {
+    let set = this.rawHandlers.get(eventType);
+    if (!set) {
+      set = /* @__PURE__ */ new Set();
+      this.rawHandlers.set(eventType, set);
+    }
+    set.add(handler);
+    this.ensureDispatchEntry(eventType);
+    return () => {
+      set?.delete(handler);
+    };
+  }
+  ensureDispatchEntry(eventType) {
+    if (this.dispatchedTypes.has(eventType)) return;
+    this.dispatchedTypes.add(eventType);
+    this.dispatcher.register({ [eventType]: (raw) => this.dispatchToHandlers(eventType, raw) });
+  }
+  /**
+  * Built-in first, raw handlers after, and the built-in's return value is the
+  * one that goes back to Feishu — a card action's callback response must not be
+  * rewritable by an observer that merely subscribed to the same event.
+  */
+  async dispatchToHandlers(eventType, raw) {
+    const builtin = this.builtinHandlers[eventType];
+    const result = builtin ? await builtin(raw) : void 0;
+    for (const handler of [...this.rawHandlers.get(eventType) ?? []]) try {
+      await handler(raw);
+    } catch (e) {
+      this.emitError(e);
+    }
+    return result;
+  }
+  /**
+  * Put the bot in a meeting as a visible participant (app identity).
+  * Requires {@link connect} — this path is driven by event pushes.
+  */
+  async joinMeeting(meetingNo, opts) {
+    return this.meetings.joinMeeting(meetingNo, opts);
+  }
+  /**
+  * Follow the meeting the given user access token's owner is currently in,
+  * without joining it (user identity). Does **not** require {@link connect}:
+  * this path is REST polling only.
+  */
+  async followMyMeeting(opts) {
+    return this.meetings.followMyMeeting(opts);
+  }
+  /**
+  * Diagnostics for the in-meeting event path, counted per link — `push` for event
+  * pushes, `poll` for REST reads. See {@link MeetingEventHealth}.
+  */
+  getMeetingEventHealth() {
+    return this.meetings.health();
+  }
+  /**
+  * Meetings the bot is still a participant of with nothing listening — what
+  * `disconnect()` leaves behind.
+  *
+  * `disconnect()` disposes sessions without leaving their meetings, so the bot stays in
+  * them; a later `connect()` re-registers the event handlers but does not rebuild the
+  * sessions, and their pushes are then dropped. Sessions signal this by ending with
+  * `reason: 'disposed'`.
+  *
+  * Re-attach with `joinMeeting(meetingNo)` — which does not consume a new concurrency
+  * slot for a meeting already held — or, once attached, `leave()` to give the slot back.
+  * Ignoring an entry here means the bot sits in a meeting deaf, holding a slot, until
+  * the meeting ends.
+  */
+  getRetainedMeetings() {
+    return this.meetings.retainedMeetings();
   }
   emitError(e) {
     const err = e instanceof LarkChannelError ? e : new LarkChannelError("unknown", String(e?.message ?? e), { cause: e });
@@ -47099,7 +49069,7 @@ function startSdkChannelRuntimeWithRetry(channel, options = {}) {
 }
 
 // src/codex-exec-progress.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import fs15 from "node:fs/promises";
 import path16 from "node:path";
 var IDENTITY_FIELDS = /* @__PURE__ */ new Set([
@@ -47131,7 +49101,7 @@ var CodexExecProgressSink = class {
     this.dir = dir;
     this.options = options;
     this.filePath = path16.join(dir, "progress.jsonl");
-    this.token = randomUUID3();
+    this.token = randomUUID4();
   }
   dir;
   options;
@@ -47400,7 +49370,7 @@ function isLowSignalProgress(text) {
 }
 
 // src/codex-exec-action-channel.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 import fs16 from "node:fs/promises";
 import path17 from "node:path";
 var IDENTITY_FIELDS2 = /* @__PURE__ */ new Set([
@@ -47437,7 +49407,7 @@ var CodexExecActionChannel = class {
     this.dir = dir;
     this.options = options;
     this.filePath = path17.join(dir, "actions.jsonl");
-    this.token = randomUUID4();
+    this.token = randomUUID5();
     this.maxActions = options.maxActions ?? DEFAULT_MAX_ACTIONS;
   }
   dir;
@@ -47945,8 +49915,8 @@ async function deliverMessageViaCodexExec(opts) {
   const runCodexExec = opts.runCodexExec ?? runCodexExecCommand;
   const useCodexSessions = opts.useCodexSessions ?? appConfig.codexExecUseSessions;
   const sessionStore = opts.sessionStore ?? defaultSessionStore;
-  const sessionKey = buildCodexExecSessionKey(message.chatId, message.threadId);
-  const storedSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
+  const sessionKey2 = buildCodexExecSessionKey(message.chatId, message.threadId);
+  const storedSession = useCodexSessions ? await sessionStore.get(sessionKey2) : null;
   const requiredProfileSession = profileSessionBinding(message);
   const existingSession = isProfileSessionCompatible(message, storedSession) ? storedSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
@@ -48024,7 +49994,7 @@ async function deliverMessageViaCodexExec(opts) {
   };
   let result;
   let usedResumeSessionId = request.resumeSessionId;
-  if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
+  if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey2);
   try {
     progressSink?.start();
     result = normalizeCodexExecResult(await runCodexExec(request));
@@ -48034,7 +50004,7 @@ async function deliverMessageViaCodexExec(opts) {
       throw err;
     }
     console.error(
-      `[codex-exec] Failed to resume session ${request.resumeSessionId} for ${sessionKey}; starting a new session: ${err.message}`
+      `[codex-exec] Failed to resume session ${request.resumeSessionId} for ${sessionKey2}; starting a new session: ${err.message}`
     );
     await actionChannel?.reset();
     try {
@@ -48048,11 +50018,11 @@ async function deliverMessageViaCodexExec(opts) {
     usedResumeSessionId = null;
   } finally {
     await progressSink?.stop();
-    if (useCodexSessions) activeCodexExecSessionKeys.delete(sessionKey);
+    if (useCodexSessions) activeCodexExecSessionKeys.delete(sessionKey2);
   }
   if (useCodexSessions && result.sessionId) {
     await sessionStore.set({
-      key: sessionKey,
+      key: sessionKey2,
       sessionId: result.sessionId,
       chatId: message.chatId,
       ...message.threadId ? { threadId: message.threadId } : {},
@@ -48133,7 +50103,7 @@ ${continuationFailure.message}`;
     }
   }
   opts.sessionHealth?.recordTurn({
-    sessionKey,
+    sessionKey: sessionKey2,
     chatId: message.chatId,
     ...message.threadId ? { threadId: message.threadId } : {},
     sessionId: result.sessionId ?? usedResumeSessionId ?? null,
@@ -48375,9 +50345,9 @@ var SessionHealthMonitor = class {
     }
     if (this.reasonFor(current)) this.scheduleQuietCheck(input.sessionKey, now);
   }
-  async checkNow(sessionKey, now = Date.now()) {
+  async checkNow(sessionKey2, now = Date.now()) {
     if (!this.enabled) return false;
-    const state = this.states.get(sessionKey);
+    const state = this.states.get(sessionKey2);
     if (!state) return false;
     const reason = this.reasonFor(state);
     if (!reason) return false;
@@ -48410,14 +50380,14 @@ var SessionHealthMonitor = class {
     state.nextNudgeAt = now + cooldownMs;
     return true;
   }
-  reset(sessionKey, reason = "manual") {
-    const timer = this.timers.get(sessionKey);
+  reset(sessionKey2, reason = "manual") {
+    const timer = this.timers.get(sessionKey2);
     if (timer) clearTimeout(timer);
-    this.timers.delete(sessionKey);
-    const existing = this.states.get(sessionKey);
+    this.timers.delete(sessionKey2);
+    const existing = this.states.get(sessionKey2);
     if (!existing) return;
-    this.states.set(sessionKey, {
-      sessionKey,
+    this.states.set(sessionKey2, {
+      sessionKey: sessionKey2,
       chatId: existing.chatId,
       ...existing.threadId ? { threadId: existing.threadId } : {},
       turnCount: 0,
@@ -48430,8 +50400,8 @@ var SessionHealthMonitor = class {
       lastResetReason: reason
     });
   }
-  getSnapshot(sessionKey) {
-    const state = this.states.get(sessionKey);
+  getSnapshot(sessionKey2) {
+    const state = this.states.get(sessionKey2);
     if (!state) return null;
     return { ...state };
   }
@@ -48468,22 +50438,22 @@ var SessionHealthMonitor = class {
     if (state.turnCount >= this.turnThreshold) return "turn_threshold";
     return null;
   }
-  scheduleQuietCheck(sessionKey, now) {
+  scheduleQuietCheck(sessionKey2, now) {
     if (this.quietDelayMs <= 0) {
-      void this.checkNow(sessionKey, now).catch((err) => {
-        console.error(`[session-health] Failed to send nudge for ${sessionKey}:`, err);
+      void this.checkNow(sessionKey2, now).catch((err) => {
+        console.error(`[session-health] Failed to send nudge for ${sessionKey2}:`, err);
       });
       return;
     }
-    if (this.timers.has(sessionKey)) return;
+    if (this.timers.has(sessionKey2)) return;
     const timer = setTimeout(() => {
-      this.timers.delete(sessionKey);
-      void this.checkNow(sessionKey, now + this.quietDelayMs).catch((err) => {
-        console.error(`[session-health] Failed to send nudge for ${sessionKey}:`, err);
+      this.timers.delete(sessionKey2);
+      void this.checkNow(sessionKey2, now + this.quietDelayMs).catch((err) => {
+        console.error(`[session-health] Failed to send nudge for ${sessionKey2}:`, err);
       });
     }, this.quietDelayMs);
     timer.unref?.();
-    this.timers.set(sessionKey, timer);
+    this.timers.set(sessionKey2, timer);
   }
 };
 function buildSessionHealthNudgeText(nudge) {
@@ -49138,8 +51108,8 @@ async function executeCodexModelCommand(command, opts) {
   if (command.action === "invalid") return command.error;
   const useSessions = opts.useCodexSessions ?? appConfig.codexExecUseSessions;
   const sessionStore = opts.sessionStore ?? defaultSessionStore2;
-  const sessionKey = buildCodexExecSessionKey(opts.message.chatId, opts.message.threadId);
-  const existing = useSessions ? await sessionStore.get(sessionKey) : null;
+  const sessionKey2 = buildCodexExecSessionKey(opts.message.chatId, opts.message.threadId);
+  const existing = useSessions ? await sessionStore.get(sessionKey2) : null;
   if (command.action === "show") {
     if (existing?.model) {
       return `Effective Codex model: ${existing.model}
@@ -49159,7 +51129,7 @@ Source: LARK_CODEX_EXEC_MODEL.`;
       return "No chat/thread model override is set.";
     }
     await sessionStore.set({
-      key: sessionKey,
+      key: sessionKey2,
       sessionId: existing.sessionId || "",
       chatId: opts.message.chatId,
       ...opts.message.threadId ? { threadId: opts.message.threadId } : {},
@@ -49171,7 +51141,7 @@ Source: LARK_CODEX_EXEC_MODEL.`;
     return appConfig.codexExecModel ? `Chat/thread model override cleared. Effective Codex model now falls back to LARK_CODEX_EXEC_MODEL: ${appConfig.codexExecModel}.` : "Chat/thread model override cleared. Effective Codex model now falls back to the Codex CLI default.";
   }
   await sessionStore.set({
-    key: sessionKey,
+    key: sessionKey2,
     sessionId: existing?.sessionId || "",
     chatId: opts.message.chatId,
     ...opts.message.threadId ? { threadId: opts.message.threadId } : {},
@@ -49220,8 +51190,8 @@ async function executeNewSessionCommand(opts) {
   if (flushResult.status === "busy") {
     return "A conversation flush is already running for this chat. New chat was not started.";
   }
-  const sessionKey = committedSessionKey ?? await clearCodexSessionPointer(opts, flushResult);
-  opts.resetSessionHealth?.(sessionKey);
+  const sessionKey2 = committedSessionKey ?? await clearCodexSessionPointer(opts, flushResult);
+  opts.resetSessionHealth?.(sessionKey2);
   if (flushResult.status === "empty") {
     return "No buffered context needed archiving. New Codex session will start on the next turn.";
   }
@@ -49229,14 +51199,14 @@ async function executeNewSessionCommand(opts) {
 }
 async function clearCodexSessionPointer(opts, flushResult) {
   const sessionStore = opts.sessionStore ?? defaultSessionStore2;
-  const sessionKey = buildCodexExecSessionKey(opts.message.chatId, opts.message.threadId);
-  const existing = await sessionStore.get(sessionKey);
+  const sessionKey2 = buildCodexExecSessionKey(opts.message.chatId, opts.message.threadId);
+  const existing = await sessionStore.get(sessionKey2);
   const profileBinding = profileSessionBinding({
     ...opts.message,
     currentUserText: commandTextCandidate(opts.message)
   });
   await sessionStore.set({
-    key: sessionKey,
+    key: sessionKey2,
     sessionId: "",
     chatId: opts.message.chatId,
     ...opts.message.threadId ? { threadId: opts.message.threadId } : {},
@@ -49250,7 +51220,7 @@ async function clearCodexSessionPointer(opts, flushResult) {
       handoffSummary: flushResult.summary
     })
   });
-  return sessionKey;
+  return sessionKey2;
 }
 function formatFlushSuccess(result, startedNewSession) {
   const headline = startedNewSession ? `Conversation context archived (${result.messageCount} messages). New Codex session will start on the next turn.` : `Conversation context flushed (${result.messageCount} messages). Current Codex session is unchanged.`;
@@ -49387,7 +51357,7 @@ function registerCodexDeliveryHandlers(options) {
       identitySession,
       useCodexSessions: appConfig.codexExecUseSessions,
       flushConversation: ({ chatId, threadId, reason, commitBeforeRemove }) => buffer.flushNow(chatId, { threadId, reason, commitBeforeRemove }),
-      resetSessionHealth: (sessionKey) => sessionHealth?.reset(sessionKey, "manual"),
+      resetSessionHealth: (sessionKey2) => sessionHealth?.reset(sessionKey2, "manual"),
       validateChatAccess: (chatId) => validateFeishuChatAccess(channel.getClient(), chatId),
       sendReply: sendReplyViaFeishu
     });
@@ -49503,7 +51473,7 @@ async function handleCodexExecDeliveryFailure(args) {
 }
 
 // src/scheduler.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
+import { randomUUID as randomUUID6 } from "node:crypto";
 var JobScheduler = class {
   constructor(options) {
     this.options = options;
@@ -49564,7 +51534,7 @@ var JobScheduler = class {
     if (this.stopping) return { started: false, reason: "stale_job", outcome: "failed" };
     const operation = this.options.admission.admitManual(
       job,
-      `manual:${randomUUID5()}`,
+      `manual:${randomUUID6()}`,
       this.clock()
     );
     this.manualAdmissions.add(operation);
@@ -49672,7 +51642,7 @@ import os3 from "node:os";
 import path22 from "node:path";
 
 // src/continuation/artifact-store.ts
-import { createHash as createHash7, randomBytes } from "node:crypto";
+import { createHash as createHash8, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import fs17 from "node:fs/promises";
 import path18 from "node:path";
@@ -49810,7 +51780,7 @@ var ContinuationArtifactStore = class {
           constants.COPYFILE_EXCL
         );
         await fs17.chmod(target, 384);
-        const sha2562 = createHash7("sha256").update(await fs17.readFile(target)).digest("hex");
+        const sha2562 = createHash8("sha256").update(await fs17.readFile(target)).digest("hex");
         if (sha2562 !== artifacts[index].sha256.toLowerCase()) {
           throw new Error(`Continuation retry artifact checksum mismatch: ${reference}`);
         }
@@ -49980,7 +51950,7 @@ async function pathExists(target) {
 }
 
 // src/continuation/input-store.ts
-import { createHash as createHash8, randomBytes as randomBytes2 } from "node:crypto";
+import { createHash as createHash9, randomBytes as randomBytes2 } from "node:crypto";
 import { constants as constants2, createWriteStream as createWriteStream3 } from "node:fs";
 import fs18 from "node:fs/promises";
 import path19 from "node:path";
@@ -50429,7 +52399,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
     if (before.size > maxFileBytes) {
       throw new Error(`Continuation input file byte limit exceeded: ${before.size} > ${maxFileBytes}.`);
     }
-    const digest = createHash8("sha256");
+    const digest = createHash9("sha256");
     let copiedBytes = 0;
     const hashing = new Transform({
       transform(chunk, _encoding, callback) {
@@ -50465,7 +52435,7 @@ async function lstatForVerification(filePath) {
   }
 }
 async function sha256File(filePath) {
-  const digest = createHash8("sha256");
+  const digest = createHash9("sha256");
   const file = await fs18.open(
     filePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
@@ -52092,7 +54062,7 @@ function nestedErrorMessage(error2) {
 }
 
 // src/continuation/local-cli-tool-invoker.ts
-import { createHash as createHash9 } from "node:crypto";
+import { createHash as createHash10 } from "node:crypto";
 var ContinuationLocalCliToolInvoker = class {
   constructor(options) {
     this.options = options;
@@ -52200,7 +54170,7 @@ function normalizeLocalCliFailure(result, context) {
     context.operationRisk
   );
   const capabilityAvailable = category !== "capability_unavailable";
-  const fingerprint = createHash9("sha256").update(JSON.stringify({
+  const fingerprint = createHash10("sha256").update(JSON.stringify({
     category,
     failedStep: context.failedStep,
     type,
@@ -52307,13 +54277,13 @@ function stringArray(value) {
 }
 
 // src/continuation/sqlite-repository.ts
-import { createHash as createHash14, randomBytes as randomBytes4 } from "node:crypto";
+import { createHash as createHash15, randomBytes as randomBytes4 } from "node:crypto";
 import fs21 from "node:fs/promises";
 import path21 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 
 // src/continuation/progress-policy.ts
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash11 } from "node:crypto";
 function evaluateContinuationProgress(input) {
   const candidateDelta = createAttemptDelta(input.previous, input.candidate);
   const delta = input.verification.status === "accepted" ? candidateDelta : rejectedAttemptDelta(candidateDelta);
@@ -52410,7 +54380,7 @@ function materialProjection(checkpoint2) {
   };
 }
 function hashCanonical(value) {
-  return createHash10("sha256").update(JSON.stringify(value)).digest("hex");
+  return createHash11("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sorted(values) {
   return [...values].sort();
@@ -52420,7 +54390,7 @@ function compareId(left, right) {
 }
 
 // src/continuation/verifier.ts
-import { createHash as createHash11 } from "node:crypto";
+import { createHash as createHash12 } from "node:crypto";
 import fs19 from "node:fs/promises";
 var MAX_FINDINGS = 20;
 var ContinuationVerifier = class {
@@ -52473,7 +54443,7 @@ var ContinuationVerifier = class {
           continue;
         }
         const content = await fs19.readFile(this.artifacts.resolve(jobId, artifact.path));
-        const actual = createHash11("sha256").update(content).digest("hex");
+        const actual = createHash12("sha256").update(content).digest("hex");
         if (actual !== artifact.sha256.toLowerCase()) {
           add(`Artifact ${artifact.id} checksum does not match persisted content.`);
         }
@@ -52627,7 +54597,7 @@ function requireEntitiesUnchanged(name, previous, candidate, add) {
 }
 
 // src/durable-run/sqlite-repository.ts
-import { createHash as createHash13, randomBytes as randomBytes3 } from "node:crypto";
+import { createHash as createHash14, randomBytes as randomBytes3 } from "node:crypto";
 import fs20 from "node:fs/promises";
 import path20 from "node:path";
 
@@ -52961,7 +54931,7 @@ function assertBoundedRequiredString(value, label, maxChars) {
 }
 
 // src/durable-run/sqlite-migrations.ts
-import { createHash as createHash12 } from "node:crypto";
+import { createHash as createHash13 } from "node:crypto";
 var DURABLE_RUN_SCHEMA_VERSION = 10;
 var ASYNC_TASK_INPUT_VERSION = 1;
 var ASYNC_TASK_STATE_VERSION = 1;
@@ -53597,7 +55567,7 @@ function legacyOperationStepId(stepIndex, description) {
   return `legacy-step-${stepIndex + 1}-${stableHash(description)}`;
 }
 function stableHash(value) {
-  return createHash12("sha256").update(value).digest("hex").slice(0, 12);
+  return createHash13("sha256").update(value).digest("hex").slice(0, 12);
 }
 function migrateInterrupts(database) {
   const rows = readRows(database, "continuation_interrupts");
@@ -53901,7 +55871,7 @@ function persistedTaskContract(row, projection) {
 }
 function legacyAcceptanceCriteria(descriptions) {
   return descriptions.map((description, index) => ({
-    id: `criterion_${index + 1}_${createHash12("sha256").update(description).digest("hex").slice(0, 12)}`,
+    id: `criterion_${index + 1}_${createHash13("sha256").update(description).digest("hex").slice(0, 12)}`,
     description,
     deliverableIds: []
   }));
@@ -54309,7 +56279,7 @@ function clampInteger(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 function legacyStepId(description, index) {
-  return `legacy-step-${index + 1}-${createHash12("sha256").update(description).digest("hex").slice(0, 12)}`;
+  return `legacy-step-${index + 1}-${createHash13("sha256").update(description).digest("hex").slice(0, 12)}`;
 }
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -55390,10 +57360,10 @@ function uniqueStrings(values) {
   return unique;
 }
 function deliveryEventKey(kind, idempotencyKey) {
-  return `${kind}:${createHash13("sha256").update(idempotencyKey).digest("hex")}`;
+  return `${kind}:${createHash14("sha256").update(idempotencyKey).digest("hex")}`;
 }
 function outboxId(idempotencyKey) {
-  return `outbox_${createHash13("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `outbox_${createHash14("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function newAttemptId() {
   return `att_${randomBytes3(12).toString("hex")}`;
@@ -58241,7 +60211,7 @@ function createRequestFingerprint(request) {
   const sourceInputDescriptors = request.sourceInputs.map((input) => ({
     kind: input.kind
   }));
-  return createHash14("sha256").update(JSON.stringify({
+  return createHash15("sha256").update(JSON.stringify({
     idempotencyKey: request.idempotencyKey,
     retryOfJobId: request.retryOfJobId ?? null,
     creatorOpenId: request.creatorOpenId,
@@ -58778,10 +60748,10 @@ function makeId(prefix) {
   return `${prefix}_${randomBytes4(12).toString("hex")}`;
 }
 function deliveryIdempotencyKey(jobId, eventKey) {
-  return `ct_${createHash14("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
+  return `ct_${createHash15("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
 }
 function toolCallId(jobId, stepId, requestHash) {
-  return `call_${createHash14("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
+  return `call_${createHash15("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
 }
 function continuationStepId(job) {
   return job.checkpoint?.nextAction?.id ?? job.checkpoint?.currentStepId ?? "initial-step";
@@ -58802,7 +60772,7 @@ function hasOpaqueExecutionEffects(job) {
   return job.permissions.filesystem.mode === "workspace-write" || job.permissions.network === "enabled" || job.permissions.externalSideEffects === "allowed";
 }
 function toolRequestHash(request) {
-  return createHash14("sha256").update(JSON.stringify(request)).digest("hex");
+  return createHash15("sha256").update(JSON.stringify(request)).digest("hex");
 }
 function addMilliseconds2(timestamp, milliseconds) {
   return new Date(Date.parse(timestamp) + milliseconds).toISOString();
@@ -59331,7 +61301,7 @@ ${outcome.finalMessage}`,
         hints: ["Confirm the effects of the failed step before resuming."],
         failedStep,
         diagnostic: outcome.errorSummary,
-        fingerprint: createHash14("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+        fingerprint: createHash15("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
       },
       prompt: "Confirm what the failed step changed, then resume with the observed result.",
       reason: "The model requested a retry after opaque execution, so automatic replay is unsafe."
@@ -59376,7 +61346,7 @@ function buildContinuationFailureTransition(claim, current, requestedFailure, no
             hints: ["Confirm the effects of the interrupted step before resuming."],
             failedStep,
             diagnostic: requestedFailure.errorSummary,
-            fingerprint: createHash14("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+            fingerprint: createHash15("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
           },
           prompt: "Confirm what the interrupted step changed, then resume with the observed result.",
           reason: "The execution ended after an opaque operation started, so automatic replay is unsafe."
@@ -59450,7 +61420,7 @@ function durableFailureForContinuationFailure(claim, failure) {
     hints: [],
     failedStep,
     diagnostic: bounded.errorSummary,
-    fingerprint: createHash14("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
+    fingerprint: createHash15("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
   };
 }
 function continuationDurableTransition(claim, current, status, patch, now, extras) {
@@ -59539,7 +61509,7 @@ function continuationProgressDelivery(job, claim, outcome, now) {
   };
 }
 function continuationInterruptId(jobId, attemptId, failure) {
-  return `int_${createHash14("sha256").update(`${jobId}\0${attemptId}\0${failure.fingerprint}`).digest("hex").slice(0, 24)}`;
+  return `int_${createHash15("sha256").update(`${jobId}\0${attemptId}\0${failure.fingerprint}`).digest("hex").slice(0, 24)}`;
 }
 function continuationInterruptDelivery(job, claim, interruptId, prompt, failure, recovery, checkpoint2, now) {
   const eventKey = `interrupt:${interruptId}`;
@@ -60810,7 +62780,7 @@ function persistedStateValidator(registrations) {
 }
 
 // src/cron/run-admission.ts
-import { createHash as createHash15 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 
 // src/cron/contracts.ts
 var CRON_RUN_INPUT_VERSION = 1;
@@ -61946,7 +63916,7 @@ function cronConcurrencyKey(job) {
   return `cron-job:${cronJobIdentity(job)}`;
 }
 function cronRunId(idempotencyKey) {
-  return `cron_${createHash15("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `cron_${createHash16("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function admitted(run, created, scheduledOccurrence) {
   return {
