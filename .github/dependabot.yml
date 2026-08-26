@@ -1,0 +1,46 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directories:
+      - "/"
+      - "/plugins/lark"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Singapore"
+    open-pull-requests-limit: 10
+    groups:
+      lark-sdk-stack:
+        patterns:
+          - "@larksuite/channel"
+          - "@larksuiteoapi/node-sdk"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
+      schema-runtime:
+        patterns:
+          - "zod"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
+      runtime-utilities:
+        patterns:
+          - "cron-parser"
+          - "dotenv"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
+      development-tooling:
+        dependency-type: "development"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"

@@ -270,6 +270,10 @@ The scoped `express-rate-limit > ip-address` override is retained because
 root and packaged-plugin override synchronized until upstream accepts a patched
 version.
 
+Direct dependency updates follow the [dependency upgrade policy](docs/dependency-upgrades.md).
+Dependabot proposes weekly cross-directory updates, but every PR still requires
+the documented compatibility review and verification before merge.
+
 For a fresh repository:
 
 ```bash
