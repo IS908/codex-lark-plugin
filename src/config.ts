@@ -7,7 +7,7 @@ import { readConfigValues } from './config-schema.js';
 assertSupportedNodeVersion();
 
 const envPath = path.join(os.homedir(), '.codex', 'channels', 'lark', '.env');
-config({ path: envPath });
+config({ path: envPath, quiet: true });
 
 const channelHome = path.join(os.homedir(), '.codex', 'channels', 'lark');
 const runtimeConfigDir = path.join(channelHome, 'runtime-config');
