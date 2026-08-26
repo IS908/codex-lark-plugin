@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.12.6] - 2026-08-26
+
+### Added
+- Added weekly multi-directory Dependabot updates with risk-aligned dependency groups, plus a documented aggressive-but-compatible upgrade policy and smoke coverage that keeps root and marketplace manifests synchronized.
+
+### Changed
+- Upgraded the Lark channel SDK stack, Feishu Node SDK, Zod, cron parser, dotenv, tsx, esbuild, TypeScript, and Node 24 type declarations to their latest compatible stable releases.
+- Migrated the architecture guard to TypeScript 7's project snapshot and structured AST APIs after the legacy package-root Compiler API was removed.
+
+### Fixed
+- Silenced dotenv 17's own environment banner so plugin startup and dry-run continue to keep MCP stdout free of non-JSON-RPC output.
+
 ## [2.12.5] - 2026-08-10
 
 ### Fixed
