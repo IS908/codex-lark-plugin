@@ -272,6 +272,14 @@ function findContainingBlock(
   return null;
 }
 
+function retreatFromSplitMention(text: string, splitAt: number, maxLen: number): number {
+  const open = text.lastIndexOf('<at ', splitAt);
+  if (open < maxLen * 0.3 || open >= splitAt) return splitAt;
+  const close = text.indexOf('</at>', open + 4);
+  if (close < 0 || splitAt >= close + 5 || close + 5 - open > 256) return splitAt;
+  return open;
+}
+
 /**
  * Split text into chunks of at most `maxLen` characters, preferring
  * paragraph/line boundaries and never truncating a fenced code block
@@ -289,6 +297,7 @@ function splitCodeBlockSafe(text: string, maxLen: number): string[] {
     let idx = remaining.lastIndexOf('\n\n', maxLen);
     if (idx < maxLen * 0.3) idx = remaining.lastIndexOf('\n', maxLen);
     if (idx < maxLen * 0.3) idx = maxLen;
+    idx = retreatFromSplitMention(remaining, idx, maxLen);
 
     const block = findContainingBlock(idx, ranges);
 

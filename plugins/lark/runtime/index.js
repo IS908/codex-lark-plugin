@@ -42307,6 +42307,39 @@ var DefaultLarkTransport = class {
     }
     return await sendMessageViaRaw(this.requireRawClient(), request);
   }
+  async getChatMembers(chatId) {
+    if (this.sdkChannel?.getChatMembers) {
+      return await this.sdkChannel.getChatMembers(chatId, {
+        idType: "open_id",
+        pageSize: 100,
+        maxPages: 1e3
+      });
+    }
+    const members = [];
+    let pageToken;
+    for (let page = 0; page < 1e3; page++) {
+      const response = await feishuApiCall("lark_transport.chat_members.get", () => this.requireRawClient().im.v1.chatMembers.get({
+        path: { chat_id: chatId },
+        params: {
+          member_id_type: "open_id",
+          page_size: 100,
+          ...pageToken ? { page_token: pageToken } : {}
+        }
+      }));
+      for (const item of response?.data?.items ?? []) {
+        if (!item.member_id) continue;
+        members.push({
+          id: item.member_id,
+          idType: "open_id",
+          ...item.name ? { name: item.name } : {},
+          ...item.tenant_key ? { tenantKey: item.tenant_key } : {}
+        });
+      }
+      if (!response?.data?.has_more || !response.data.page_token) return members;
+      pageToken = response.data.page_token;
+    }
+    throw new Error(`Chat ${chatId} roster exceeds the safe pagination limit`);
+  }
   async editMessage(request) {
     if (this.sdkChannel?.editMessage) {
       await this.sdkChannel.editMessage(request.messageId, request.text);
@@ -45231,6 +45264,7 @@ function registerLocalCliTools(options) {
 function createTransportProxy(resolve) {
   return {
     sendMessage: (request) => resolve().sendMessage(request),
+    getChatMembers: (chatId) => resolve().getChatMembers(chatId),
     editMessage: (request) => resolve().editMessage(request),
     updateCard: (request) => resolve().updateCard(request),
     recallMessage: (messageId) => resolve().recallMessage(messageId),
@@ -45704,6 +45738,13 @@ function findContainingBlock(pos, ranges) {
   }
   return null;
 }
+function retreatFromSplitMention(text, splitAt, maxLen) {
+  const open = text.lastIndexOf("<at ", splitAt);
+  if (open < maxLen * 0.3 || open >= splitAt) return splitAt;
+  const close = text.indexOf("</at>", open + 4);
+  if (close < 0 || splitAt >= close + 5 || close + 5 - open > 256) return splitAt;
+  return open;
+}
 function splitCodeBlockSafe(text, maxLen) {
   if (text.length <= maxLen) return [text];
   const chunks = [];
@@ -45713,6 +45754,7 @@ function splitCodeBlockSafe(text, maxLen) {
     let idx = remaining.lastIndexOf("\n\n", maxLen);
     if (idx < maxLen * 0.3) idx = remaining.lastIndexOf("\n", maxLen);
     if (idx < maxLen * 0.3) idx = maxLen;
+    idx = retreatFromSplitMention(remaining, idx, maxLen);
     const block = findContainingBlock(idx, ranges);
     if (block) {
       if (block.open > 0 && block.open > maxLen * 0.3) {
@@ -47054,6 +47096,166 @@ function resolveReplyRouting(input) {
   };
 }
 
+// src/outbound-mentions.ts
+var OPEN_ID_PATTERN = /^ou_[A-Za-z0-9_-]+$/;
+var MENTION_START_BOUNDARIES = "([{\"'`\u201C\u2018\uFF0C\u3002\uFF01\uFF1F\uFF1B\uFF1A\u3001";
+var MENTION_END_BOUNDARIES = ")]}\"'`\u201D\u2019,.!?;:\uFF0C\u3002\uFF01\uFF1F\uFF1B\uFF1A\u3001";
+async function resolveOutboundMentions(transport, chatId, source) {
+  const unchanged = unchangedResult(source);
+  if (!hasMentionCandidate(source)) return unchanged;
+  try {
+    const members = await transport.getChatMembers(chatId);
+    return renderOutboundMentions(source, members);
+  } catch (error51) {
+    logSafeError("[outbound-mentions] Chat roster lookup failed; preserving visible text:", error51);
+    return unchanged;
+  }
+}
+function renderOutboundMentions(source, members) {
+  if (!hasMentionCandidate(source)) return unchangedResult(source);
+  const candidates = uniqueMembersByName(members);
+  if (candidates.size === 0) return unchangedResult(source);
+  const protectedRanges = markdownCodeRanges(source);
+  let rangeIndex = 0;
+  let text = "";
+  let cardMarkdown = "";
+  let cursor = 0;
+  let resolvedCount = 0;
+  for (let at = source.indexOf("@"); at >= 0; at = source.indexOf("@", at + 1)) {
+    while (rangeIndex < protectedRanges.length && protectedRanges[rangeIndex].end <= at) {
+      rangeIndex++;
+    }
+    if (isProtected(at, protectedRanges[rangeIndex]) || !isMentionStart(source, at)) {
+      continue;
+    }
+    const match = findMemberMatch(source, at + 1, candidates);
+    if (!match) continue;
+    const prefix = source.slice(cursor, at);
+    text += prefix + textMention(match);
+    cardMarkdown += prefix + cardMention(match);
+    cursor = at + 1 + match.name.length;
+    at = cursor - 1;
+    resolvedCount++;
+  }
+  if (resolvedCount === 0) return unchangedResult(source);
+  const suffix = source.slice(cursor);
+  return {
+    text: text + suffix,
+    cardMarkdown: cardMarkdown + suffix,
+    resolvedCount
+  };
+}
+function unchangedResult(source) {
+  return { text: source, cardMarkdown: source, resolvedCount: 0 };
+}
+function hasMentionCandidate(source) {
+  const protectedRanges = markdownCodeRanges(source);
+  let rangeIndex = 0;
+  for (let at = source.indexOf("@"); at >= 0; at = source.indexOf("@", at + 1)) {
+    while (rangeIndex < protectedRanges.length && protectedRanges[rangeIndex].end <= at) {
+      rangeIndex++;
+    }
+    if (!isProtected(at, protectedRanges[rangeIndex]) && isMentionStart(source, at)) return true;
+  }
+  return false;
+}
+function isMentionStart(source, at) {
+  return at === 0 || /\s/u.test(source[at - 1]) || MENTION_START_BOUNDARIES.includes(source[at - 1]);
+}
+function isMentionEnd(source, end) {
+  return end >= source.length || /\s/u.test(source[end]) || MENTION_END_BOUNDARIES.includes(source[end]);
+}
+function uniqueMembersByName(members) {
+  const byName = /* @__PURE__ */ new Map();
+  for (const member of members) {
+    const name = member.name?.trim();
+    if (!name) continue;
+    const candidate = OPEN_ID_PATTERN.test(member.id) && (!member.idType || member.idType === "open_id") ? { id: member.id, name } : null;
+    const existing = byName.get(name);
+    if (!byName.has(name)) {
+      byName.set(name, candidate);
+    } else if (!existing || !candidate || existing.id !== candidate.id) {
+      byName.set(name, null);
+    }
+  }
+  return byName;
+}
+function findMemberMatch(source, start, candidates) {
+  let best;
+  for (const [name, member] of candidates) {
+    if (!member || best && name.length <= best.name.length) continue;
+    if (!source.startsWith(name, start)) continue;
+    if (!isMentionEnd(source, start + name.length)) continue;
+    best = member;
+  }
+  return best;
+}
+function textMention(member) {
+  return `<at user_id="${member.id}">${escapeAtName(member.name)}</at>`;
+}
+function cardMention(member) {
+  return `<at id=${member.id}></at>`;
+}
+function escapeAtName(name) {
+  return name.replace(/[<>\"]/g, "");
+}
+function isProtected(index, range) {
+  return range !== void 0 && range.start <= index && index < range.end;
+}
+function markdownCodeRanges(source) {
+  const ranges = [];
+  let offset = 0;
+  let fence;
+  for (const line of source.split(/(?<=\n)/)) {
+    const lineEnd = offset + line.length;
+    const withoutNewline = line.replace(/\r?\n$/, "");
+    const marker = withoutNewline.match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      const closing = withoutNewline.match(/^\s*(`{3,}|~{3,})\s*$/);
+      if (closing && closing[1][0] === fence.marker && closing[1].length >= fence.length) {
+        ranges.push({ start: fence.start, end: lineEnd });
+        fence = void 0;
+      }
+      offset = lineEnd;
+      continue;
+    }
+    if (marker) {
+      fence = {
+        marker: marker[1][0],
+        length: marker[1].length,
+        start: offset
+      };
+      offset = lineEnd;
+      continue;
+    }
+    if (/^(?: {4}|\t)/.test(withoutNewline)) {
+      ranges.push({ start: offset, end: lineEnd });
+    } else {
+      appendInlineCodeRanges(withoutNewline, offset, ranges);
+    }
+    offset = lineEnd;
+  }
+  if (fence) ranges.push({ start: fence.start, end: source.length });
+  return ranges;
+}
+function appendInlineCodeRanges(line, offset, ranges) {
+  let cursor = 0;
+  while (cursor < line.length) {
+    const start = line.indexOf("`", cursor);
+    if (start < 0) return;
+    let runLength = 1;
+    while (line[start + runLength] === "`") runLength++;
+    const marker = "`".repeat(runLength);
+    const end = line.indexOf(marker, start + runLength);
+    if (end < 0) {
+      ranges.push({ start: offset + start, end: offset + line.length });
+      return;
+    }
+    ranges.push({ start: offset + start, end: offset + end + runLength });
+    cursor = end + runLength;
+  }
+}
+
 // src/reply-sender.ts
 function wrapFeishuApiError(err) {
   const apiError = err?.response?.data ?? err?.data;
@@ -47387,9 +47589,12 @@ async function sendFeishuReply(deps, request) {
     };
   }
   const useCard = format === "card" || format !== "text" && shouldUseCard(text);
+  const renderedMentions = await resolveOutboundMentions(transport, chat_id, text);
+  const outboundText = renderedMentions.text;
+  const outboundCardMarkdown = renderedMentions.cardMarkdown;
   async function sendTextChunks() {
-    if (!text) return 0;
-    const chunks = chunkText(text, appConfig.textChunkLimit);
+    if (!outboundText) return 0;
+    const chunks = chunkText(outboundText, appConfig.textChunkLimit);
     for (let i = 0; i < chunks.length; i++) {
       try {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : void 0;
@@ -47417,7 +47622,7 @@ async function sendFeishuReply(deps, request) {
     const deliveredBeforeCard = deliveredCount;
     try {
       const mergedFooter = mergeCardFooterWithRuntimeMetrics(footer, runtimeFooter);
-      const cards = buildCards(text, { footer: mergedFooter });
+      const cards = buildCards(outboundCardMarkdown, { footer: mergedFooter });
       sentCount = cards.length;
       for (let i = 0; i < cards.length; i++) {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : void 0;
@@ -47534,7 +47739,9 @@ function chunkText(text, limit) {
 function createQuotedContextFromCardContent(content, fallbackText) {
   const extracted = fetchedMessageContentText(content, "interactive");
   const fallback = fallbackText?.trim();
-  const text = isPlaceholderCardText(extracted, "interactive") ? fallback || content : extracted;
+  const hasUnlabeledNativeMention = /<at\b[^>]*>\s*<\/at>/i.test(content);
+  const shouldUseFallback = Boolean(hasUnlabeledNativeMention && fallback) || isPlaceholderCardText(extracted, "interactive");
+  const text = shouldUseFallback ? fallback || content : extracted;
   return {
     text: capUtf8Text3(text, 12e3),
     msgType: "interactive"
@@ -56030,7 +56237,7 @@ var OPEN_ID = /^(ou_|on_)[A-Za-z0-9_-]+$/;
 function isValidOpenId(id) {
   return !!id && OPEN_ID.test(id);
 }
-function escapeAtName(name) {
+function escapeAtName2(name) {
   return name.replace(/[<>"]/g, "");
 }
 function composeMentionsTextPrefix(mentions) {
@@ -56038,7 +56245,7 @@ function composeMentionsTextPrefix(mentions) {
   const parts = [];
   for (const m of mentions) {
     if (!isValidOpenId(m.openId)) continue;
-    parts.push(`<at user_id="${m.openId}">${escapeAtName(m.name ?? "")}</at>`);
+    parts.push(`<at user_id="${m.openId}">${escapeAtName2(m.name ?? "")}</at>`);
   }
   return parts.length > 0 ? parts.join(" ") + " " : "";
 }
@@ -57276,7 +57483,7 @@ function resolveMentionsInText(text, lookup) {
     out += text.slice(i, at);
     const match = at === 0 || /\s/.test(text[at - 1]) ? matchNameAt(text, at + 1, lookup) : void 0;
     if (match) {
-      out += `<at user_id="${match.openId}">${escapeAtName(match.name)}</at>`;
+      out += `<at user_id="${match.openId}">${escapeAtName2(match.name)}</at>`;
       i = at + 1 + match.length;
     } else {
       out += "@";

@@ -25,6 +25,7 @@ const grantedScopes = [
   'im:resource',
   'im:message.reactions:write_only',
   'im:message.reactions:read',
+  'im:chat:readonly',
   'docs:document.comment:read',
   'docs:document.comment:create',
   'drive:drive.metadata:readonly',
@@ -52,6 +53,26 @@ assert.equal(
 assert.match(formatConfigureDoctorReport(success), /PASS\s+permissions/);
 assert.match(formatConfigureDoctorReport(success), /WARN\s+event_subscriptions/);
 assert.doesNotMatch(formatConfigureDoctorReport(success), new RegExp(validSecret));
+
+const missingMentionPermission = await runConfigureDoctor({
+  configPath,
+  env: {},
+  nodeVersion: '24.15.0',
+  remoteProbe: async () => ({
+    appName: 'Doctor Test Bot',
+    callbackType: 'websocket',
+    grantedScopes: grantedScopes.filter((scope) => scope !== 'im:chat:readonly'),
+  }),
+});
+assert.equal(missingMentionPermission.exitCode, 0);
+assert.equal(
+  missingMentionPermission.checks.find((check) => check.id === 'permissions')?.status,
+  'WARN',
+);
+assert.match(
+  missingMentionPermission.checks.find((check) => check.id === 'permissions')?.detail ?? '',
+  /outbound @mentions.*im:chat:readonly/i,
+);
 
 const missingPermission = await runConfigureDoctor({
   configPath,

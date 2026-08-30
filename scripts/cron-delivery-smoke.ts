@@ -57,6 +57,7 @@ function transportHarness(options: {
   error?: unknown;
   messageId?: string;
   projectionRepository?: any;
+  members?: Array<{ id: string; idType: 'open_id'; name: string }>;
 } = {}) {
   const sends: LarkTransportSendRequest[] = [];
   const tracked: Array<{ id: string; meta: unknown }> = [];
@@ -66,6 +67,9 @@ function transportHarness(options: {
   ackReactions.recordInbound('om_unrelated_inflight_turn');
   ackReactions.storeReaction('om_unrelated_inflight_turn', 'reaction_unrelated');
   const transport = {
+    async getChatMembers() {
+      return options.members ?? [];
+    },
     async sendMessage(request: LarkTransportSendRequest) {
       sends.push(request);
       if (options.error) throw options.error;
@@ -94,6 +98,34 @@ function transportHarness(options: {
     now: () => new Date(NOW),
   });
   return { delivery, sends, tracked, buffered, ackReactions, removedReactions };
+}
+
+// Prompt reports use the same native-mention resolution as foreground replies.
+{
+  const harness = transportHarness({
+    members: [{ id: 'ou_alice', idType: 'open_id', name: 'Alice' }],
+  });
+  const result = await harness.delivery.deliver(claim('mention', {
+    kind: 'report',
+    report: '# Daily report\n\n@Alice please review.',
+    reportType: 'job_result',
+    runStatus: 'success',
+    failureReason: null,
+    diagnostics: {
+      run_id: 'cron_run_mention',
+      job_id: 'daily-report',
+      job_name: 'Daily report',
+      schedule: '0 9 * * *',
+      timezone: 'Asia/Singapore',
+      timeout_ms: 60_000,
+      started_at: NOW,
+      status: 'success',
+      stages: [],
+    },
+  }));
+  assert.deepEqual(result, { status: 'sent', messageId: 'om_cron_delivered' });
+  assert.ok('card' in harness.sends[0].input);
+  assert.ok(JSON.stringify(harness.sends[0].input).includes('<at id=ou_alice></at>'));
 }
 
 // Markdown reports use the existing Schema 2.0 card renderer, preserve the

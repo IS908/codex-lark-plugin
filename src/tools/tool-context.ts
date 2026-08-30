@@ -78,6 +78,7 @@ export interface CreateToolContextArgs {
 export function createTransportProxy(resolve: () => LarkTransport): LarkTransport {
   return {
     sendMessage: (request) => resolve().sendMessage(request),
+    getChatMembers: (chatId) => resolve().getChatMembers(chatId),
     editMessage: (request) => resolve().editMessage(request),
     updateCard: (request) => resolve().updateCard(request),
     recallMessage: (messageId) => resolve().recallMessage(messageId),

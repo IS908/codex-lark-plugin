@@ -1,5 +1,6 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import {
+  feishuApiCall,
   getFeishuApiCode,
   isFeishuWithdrawnMessageError,
 } from './feishu-retry.js';
@@ -30,6 +31,7 @@ import type {
   LarkDocCommentRequest,
   LarkDocCommentReplyMarkerRequest,
   LarkDocCommentReplyRequest,
+  LarkChatMember,
   LarkFetchedMessageContext,
   LarkTransport,
   LarkTransportOptions,
@@ -86,6 +88,42 @@ class DefaultLarkTransport implements LarkTransport {
     }
 
     return await sendMessageViaRaw(this.requireRawClient(), request);
+  }
+
+  async getChatMembers(chatId: string): Promise<LarkChatMember[]> {
+    if (this.sdkChannel?.getChatMembers) {
+      return await this.sdkChannel.getChatMembers(chatId, {
+        idType: 'open_id',
+        pageSize: 100,
+        maxPages: 1000,
+      });
+    }
+
+    const members: LarkChatMember[] = [];
+    let pageToken: string | undefined;
+    for (let page = 0; page < 1000; page++) {
+      const response = await feishuApiCall('lark_transport.chat_members.get', () =>
+        this.requireRawClient().im.v1.chatMembers.get({
+          path: { chat_id: chatId },
+          params: {
+            member_id_type: 'open_id',
+            page_size: 100,
+            ...(pageToken ? { page_token: pageToken } : {}),
+          },
+        } as any));
+      for (const item of response?.data?.items ?? []) {
+        if (!item.member_id) continue;
+        members.push({
+          id: item.member_id,
+          idType: 'open_id',
+          ...(item.name ? { name: item.name } : {}),
+          ...(item.tenant_key ? { tenantKey: item.tenant_key } : {}),
+        });
+      }
+      if (!response?.data?.has_more || !response.data.page_token) return members;
+      pageToken = response.data.page_token;
+    }
+    throw new Error(`Chat ${chatId} roster exceeds the safe pagination limit`);
   }
 
   async editMessage(request: { messageId: string; text: string }): Promise<void> {
