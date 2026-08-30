@@ -193,6 +193,10 @@ echo "=== Card builder unit checks ==="
 node --import tsx scripts/card-smoke.ts
 
 echo ""
+echo "=== Outbound native mention checks ==="
+node --import tsx scripts/outbound-mention-smoke.ts
+
+echo ""
 echo "=== Quoted interactive card unit checks ==="
 node --import tsx scripts/quoted-card-smoke.ts
 

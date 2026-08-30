@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.12.6-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.13.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -37,6 +37,7 @@
 - 文字、图片（不超过 10 MB）、文件（不超过 30 MB）
 - 较长的 Lark/Feishu 回复会默认倾向使用轻量 Markdown 结构来提升可扫读性；短回复、代码、日志、JSON、diff、命令输出、action block 和用户显式指定的格式保持不变
 - **卡片渲染**：简单回复保持可复制文本；包含标题、代码块、Markdown 表格、多项列表或结构化段落的富 Markdown 会自动渲染为 body-only 飞书 Schema 2.0 交互式卡片，默认不生成 header/template。传 `format='text'` 可强制纯文本，`format='card'` 可强制生成卡片，也支持 raw `card` payload。生成卡片时可选 `footer` 底部小字脚注；Codex exec 生成的卡片回复可自动追加紧凑运行指标 footer
+- **原生出站 @mention**：普通文本回复、自动生成的 Schema 2.0 卡片和 Cron prompt 报告中的 `@显示名`，只有在 `im:chat:readonly` 将该名称唯一解析为当前会话成员时才会转成真正的飞书 @。未知/重名、邮箱、行内/围栏代码以及成员查询失败都会保留原文；raw 卡片和消息 payload 不做改写。
 - 编辑已发送的消息
 - 回复已有飞书文档评论线程，或在当前文档中新建顶级评论
 - 文档评论 @bot 事件会收到可配置的持久 emoji 确认回应（默认 `THUMBSUP`）
@@ -109,7 +110,7 @@
 
 1. 前往[飞书开放平台](https://open.feishu.cn/)创建自建应用
 2. 启用「机器人」能力
-3. 添加以下权限：`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`、`im:message:send_as_bot`、`im:resource`、`im:message.reactions:write_only`、`im:message.reactions:read`、`docs:document.comment:read`、`docs:document.comment:create`、`drive:drive.metadata:readonly`
+3. 添加以下权限：`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`、`im:message:send_as_bot`、`im:resource`、`im:message.reactions:write_only`、`im:message.reactions:read`、`docs:document.comment:read`、`docs:document.comment:create`、`drive:drive.metadata:readonly`；推荐增加 `im:chat:readonly`，用于将出站 `@显示名` 唯一解析为原生 mention
 4. 在「事件订阅」中启用 WebSocket 模式，并订阅 `im.message.receive_v1`、`im.message.reaction.created_v1`、`drive.notice.comment_add_v1`
 5. 获取 App ID 和 App Secret
 

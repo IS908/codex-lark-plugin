@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.12.6-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.13.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -38,6 +38,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - Text replies with automatic chunking for long messages (configurable limit)
 - Long Lark/Feishu replies are guided toward lightweight Markdown structure when it improves scanability, while short replies, code, logs, JSON, diffs, command output, action blocks, and explicit user-requested formats stay unchanged
 - **Card rendering**: simple replies stay as copyable text, while rich Markdown with headings, fenced code, tables, multi-item lists, or structured sections is automatically rendered as a body-only Feishu Schema 2.0 interactive card with no generated header/template. Pass `format='text'` to force plain text, `format='card'` to force a generated card, or a raw `card` payload for pre-built cards. Optional `footer` footnote supported for generated cards; Codex exec card replies can append a compact runtime metrics footer
+- **Native outbound @mentions**: `@display name` in generated text replies, Schema 2.0 cards, and Cron prompt reports becomes a real Feishu mention only when `im:chat:readonly` resolves that name to exactly one current chat member. Unknown or duplicate names, email addresses, inline/fenced code, and roster lookup failures preserve the original visible text. Raw pre-built card/message payloads are never rewritten.
 - **Ack reaction**: bot automatically reacts with an emoji (default: MeMeMe) on receive, removes it after replying
 - **Doc-comment ack reaction**: inbound doc-comment @mentions receive a persistent configurable emoji reaction (default: THUMBSUP)
 - Image and file uploads (images up to 10 MB, files up to 30 MB)
@@ -123,6 +124,7 @@ Create a custom app at [Feishu Open Platform](https://open.feishu.cn/app) and en
 | `im:resource` | Download attachments |
 | `im:message.reactions:write_only` | Add emoji reactions |
 | `im:message.reactions:read` | Receive user emoji reaction events |
+| `im:chat:readonly` | Resolve unique chat-member names for native outbound @mentions (recommended; replies degrade to plain text without it) |
 | `docs:document.comment:read` | Pre-fetch doc-comment bodies and selected text |
 | `docs:document.comment:create` | Post doc-comment replies and new top-level comments |
 | `drive:drive.metadata:readonly` | Fetch document titles for doc-comment context |

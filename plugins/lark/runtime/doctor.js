@@ -53,6 +53,10 @@ var REQUIRED_PERMISSIONS = [
 ];
 var RECOMMENDED_PERMISSIONS = [
   {
+    capability: "resolve outbound @mentions from chat members",
+    scopes: ["im:chat:readonly"]
+  },
+  {
     capability: "receive message reaction events",
     scopes: ["im:message.reactions:read"]
   }

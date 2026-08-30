@@ -107,6 +107,10 @@ const rawClient = {
 
 const sdkChannel = {
   rawClient,
+  getChatMembers: async (chatId: string) => {
+    calls.push({ method: 'sdk.getChatMembers', args: { chatId } });
+    return [{ id: 'ou_alice', idType: 'open_id', name: 'Alice' }];
+  },
   comments: {
     reply: async (...args: any[]) => {
       calls.push({ method: 'sdk.comments.reply', args });
@@ -151,6 +155,15 @@ const transport = createLarkTransport({
   sdkChannel: sdkChannel as any,
   rawClient: rawClient as any,
 });
+
+{
+  const members = await transport.getChatMembers('oc_chat');
+  assert.deepEqual(members, [{ id: 'ou_alice', idType: 'open_id', name: 'Alice' }]);
+  assert.deepEqual(calls.pop(), {
+    method: 'sdk.getChatMembers',
+    args: { chatId: 'oc_chat' },
+  });
+}
 
 {
   const result = await transport.sendMessage({

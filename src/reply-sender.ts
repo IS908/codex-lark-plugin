@@ -29,6 +29,7 @@ import {
   isFeishuTimeoutError,
   isFeishuWithdrawnMessageError,
 } from './feishu-retry.js';
+import { resolveOutboundMentions } from './outbound-mentions.js';
 
 function wrapFeishuApiError(err: any): Error | null {
   const apiError = err?.response?.data ?? err?.data;
@@ -462,10 +463,13 @@ export async function sendFeishuReply(
   // messages cannot render well is upgraded to Schema 2.0 cards unless the
   // caller explicitly forces format="text".
   const useCard = format === 'card' || (format !== 'text' && shouldUseCard(text));
+  const renderedMentions = await resolveOutboundMentions(transport, chat_id, text);
+  const outboundText = renderedMentions.text;
+  const outboundCardMarkdown = renderedMentions.cardMarkdown;
 
   async function sendTextChunks(): Promise<number | ReplySendResult> {
-    if (!text) return 0;
-    const chunks = chunkText(text, appConfig.textChunkLimit);
+    if (!outboundText) return 0;
+    const chunks = chunkText(outboundText, appConfig.textChunkLimit);
     for (let i = 0; i < chunks.length; i++) {
       try {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;
@@ -494,7 +498,7 @@ export async function sendFeishuReply(
     const deliveredBeforeCard = deliveredCount;
     try {
       const mergedFooter = mergeCardFooterWithRuntimeMetrics(footer, runtimeFooter);
-      const cards = buildCards(text, { footer: mergedFooter });
+      const cards = buildCards(outboundCardMarkdown, { footer: mergedFooter });
       sentCount = cards.length;
       for (let i = 0; i < cards.length; i++) {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;
@@ -636,7 +640,10 @@ function createQuotedContextFromCardContent(
 ): TrackedBotMessageQuotedContext {
   const extracted = fetchedMessageContentText(content, 'interactive');
   const fallback = fallbackText?.trim();
-  const text = isPlaceholderCardText(extracted, 'interactive')
+  const hasUnlabeledNativeMention = /<at\b[^>]*>\s*<\/at>/i.test(content);
+  const shouldUseFallback = Boolean(hasUnlabeledNativeMention && fallback)
+    || isPlaceholderCardText(extracted, 'interactive');
+  const text = shouldUseFallback
     ? (fallback || content)
     : extracted;
   return {

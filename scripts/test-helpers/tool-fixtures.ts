@@ -80,6 +80,7 @@ export function createMockLarkClient(overrides: Record<string, unknown> = {}): a
 export function createMockTransport(overrides: Partial<LarkTransport> = {}): LarkTransport {
   return {
     sendMessage: async () => ({ messageId: 'om_sent' }),
+    getChatMembers: async () => [],
     editMessage: async () => {},
     updateCard: async () => {},
     recallMessage: async () => {},

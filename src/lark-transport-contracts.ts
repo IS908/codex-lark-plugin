@@ -23,6 +23,14 @@ export interface LarkUserMessageFetcher {
   fetchMessage(messageId: string): Promise<LarkUserMessageFetchResult | null>;
 }
 
+export interface LarkChatMember {
+  id: string;
+  idType?: 'open_id' | 'user_id' | 'union_id';
+  name?: string;
+  tenantKey?: string;
+  isBot?: boolean;
+}
+
 export type LarkTransportInput =
   | { text: string }
   | { card: object }
@@ -67,6 +75,7 @@ export interface LarkDocCommentReplyMarkerRequest {
 
 export interface LarkTransport {
   sendMessage(request: LarkTransportSendRequest): Promise<LarkTransportSendResult>;
+  getChatMembers(chatId: string): Promise<LarkChatMember[]>;
   editMessage(request: { messageId: string; text: string }): Promise<void>;
   updateCard(request: { messageId: string; card: object | string }): Promise<void>;
   recallMessage(messageId: string): Promise<void>;
@@ -90,6 +99,10 @@ export interface SdkLarkTransportChannel {
     input: { text: string } | { card: object },
     opts?: { replyTo?: string; replyInThread?: boolean },
   ) => Promise<{ messageId?: string; chunkIds?: string[] }>;
+  getChatMembers?: (
+    chatId: string,
+    opts?: { idType?: 'open_id'; pageSize?: number; maxPages?: number; force?: boolean },
+  ) => Promise<LarkChatMember[]>;
   editMessage?: (messageId: string, text: string) => Promise<void>;
   updateCard?: (messageId: string, card: object) => Promise<void>;
   recallMessage?: (messageId: string) => Promise<void>;

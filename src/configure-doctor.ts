@@ -73,6 +73,10 @@ const REQUIRED_PERMISSIONS: readonly PermissionRequirement[] = [
 
 const RECOMMENDED_PERMISSIONS: readonly PermissionRequirement[] = [
   {
+    capability: 'resolve outbound @mentions from chat members',
+    scopes: ['im:chat:readonly'],
+  },
+  {
     capability: 'receive message reaction events',
     scopes: ['im:message.reactions:read'],
   },

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-08-30
+
+### Added
+- Added server-owned native Feishu @mention resolution for generated text replies, Schema 2.0 cards, and Cron prompt reports. Only unique current-chat display names resolve; unknown or ambiguous names, email addresses, Markdown code, and roster lookup failures preserve the original visible text.
+
+### Changed
+- Added `im:chat:readonly` as a recommended `$lark:configure doctor` capability so missing roster access is visible without blocking startup or message delivery.
+
+### Fixed
+- Keep generated CardKit mention tags intact across long-message chunk boundaries and preserve the original `@display name` text in cached quoted-card context.
+
 ## [2.12.6] - 2026-08-26
 
 ### Added
