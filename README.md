@@ -265,6 +265,7 @@ Release version checklist:
 - Update the README badges and `CHANGELOG.md` release heading.
 - Run `npm run build:plugin` and `npm run check:runtime-bundle-sync` so the self-contained `start`, `stop`, and `doctor` entrypoints match root `src/`.
 - Run `npm run audit:deps` and `npm --prefix plugins/lark run audit:deps`; both production dependency graphs must pass before tagging.
+- The `Dependency audit` GitHub Actions workflow runs the same registry-backed checks on pull requests, pushes to `main`, and a weekly schedule. Configure it as a required check when branch protection is enabled.
 - Run `npm run check:release-version` before tagging. The MCP server-info version is read from `package.json` at startup, so it follows the package version automatically once the package bump is correct.
 
 The scoped `express-rate-limit > ip-address` override is retained because
