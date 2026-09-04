@@ -43,6 +43,9 @@ assert.deepEqual(
 assert.equal(rootPackage.overrides?.['fast-uri'], undefined, 'fast-uri must use the SDK-compatible patched range');
 assert.equal(rootPackage.overrides?.hono, undefined, 'hono must use the SDK-compatible patched range');
 assert.equal(rootPackage.overrides?.['ip-address'], undefined, 'ip-address override must remain dependency-scoped');
+const overriddenQs = rootPackage.overrides?.qs;
+assert.equal(typeof overriddenQs, 'string');
+assert.ok(isAtLeast(overriddenQs as string, '6.16.0'));
 const rateLimitOverride = rootPackage.overrides?.['express-rate-limit'];
 assert.ok(rateLimitOverride && typeof rateLimitOverride === 'object');
 const overriddenIpAddress = (rateLimitOverride as Record<string, unknown>)['ip-address'];
@@ -50,9 +53,10 @@ assert.equal(typeof overriddenIpAddress, 'string');
 assert.ok(isAtLeast(overriddenIpAddress as string, '10.4.0'));
 
 for (const [name, minimumVersion] of [
-  ['fast-uri', '3.1.5'],
+  ['fast-uri', '3.1.6'],
   ['hono', '4.12.34'],
   ['ip-address', '10.4.0'],
+  ['qs', '6.16.0'],
 ] as const) {
   const key = `node_modules/${name}`;
   const rootVersion = rootLock.packages?.[key]?.version;
