@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.13.3] - 2026-09-04
+
+### Security
+- Refreshed `fast-uri` and `qs` to patched releases in both production dependency graphs, rebuilt the marketplace runtime, and added registry-backed pull-request and weekly dependency audits.
+
 ## [2.13.2] - 2026-09-04
 
 ### Changed
