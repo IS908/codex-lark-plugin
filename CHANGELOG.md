@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.13.1] - 2026-09-04
+
+### Added
+- Added a sanitized marketplace workflow screenshot plus dedicated privacy policy and terms of use documents.
+
+### Fixed
+- Reject empty or missing marketplace screenshots and placeholder legal links in the plugin adapter smoke test.
+
 ## [2.13.0] - 2026-08-30
 
 ### Added
