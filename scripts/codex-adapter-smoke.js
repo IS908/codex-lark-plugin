@@ -12,6 +12,27 @@ function read(file) {
   return fs.readFileSync(path.join(root, file), 'utf-8');
 }
 
+function assertMarketplaceMetadata(manifest, pluginRoot) {
+  const screenshots = manifest.interface.screenshots;
+  assert.ok(Array.isArray(screenshots) && screenshots.length > 0, 'marketplace screenshots must not be empty');
+  for (const screenshot of screenshots) {
+    assert.match(screenshot, /^\.\/assets\/.+\.png$/, 'marketplace screenshots must be PNG assets');
+    assert.ok(
+      fs.existsSync(path.join(root, pluginRoot, screenshot)),
+      `marketplace screenshot must exist: ${path.join(pluginRoot, screenshot)}`,
+    );
+  }
+  for (const [field, document] of [
+    ['privacyPolicyURL', 'PRIVACY.md'],
+    ['termsOfServiceURL', 'TERMS.md'],
+  ]) {
+    const url = manifest.interface[field];
+    assert.match(url, /^https:\/\/github\.com\/IS908\/codex-lark-plugin\/blob\/main\//);
+    assert.ok(url.endsWith(`/${document}`), `${field} must link directly to ${document}`);
+    assert.ok(fs.existsSync(path.join(root, document)), `${document} must exist`);
+  }
+}
+
 function readSkillFrontmatter(skillName, base = 'skills') {
   const text = read(path.join(base, skillName, 'SKILL.md'));
   const match = text.match(/^---\n([\s\S]*?)\n---/);
@@ -34,6 +55,7 @@ assert.equal(plugin.skills, './skills/');
 assert.equal(plugin.interface.displayName, 'Lark');
 assert.match(plugin.description, /Codex/);
 assert.equal(plugin.version, pkg.version, 'root plugin manifest version must match package.json');
+assertMarketplaceMetadata(plugin, '.');
 
 const marketplace = readJson('.agents/plugins/marketplace.json');
 assert.equal(marketplace.name, 'codex-lark-plugin');
@@ -53,6 +75,7 @@ assert.equal(wrappedPlugin.name, 'lark');
 assert.equal(wrappedPlugin.mcpServers, './.mcp.json');
 assert.equal(wrappedPlugin.skills, './skills/');
 assert.equal(wrappedPlugin.version, pkg.version, 'wrapped plugin manifest version must match package.json');
+assertMarketplaceMetadata(wrappedPlugin, 'plugins/lark');
 assert.equal(wrappedPackage.version, pkg.version, 'wrapped package version must match package.json');
 assert.deepEqual(
   wrappedPackage.dependencies,
