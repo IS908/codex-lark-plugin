@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.13.2] - 2026-09-04
+
+### Changed
+- Split continuation SQLite database initialization, persisted row codecs, and state/outbox transition projection out of the repository facade while preserving its public contract and durable behavior.
+
 ## [2.13.1] - 2026-09-04
 
 ### Added
