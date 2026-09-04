@@ -3227,8 +3227,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path23) {
-      let input = path23;
+    function removeDotSegments(path25) {
+      let input = path25;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3480,8 +3480,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path23, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path23 && path23 !== "/" ? path23 : void 0;
+        const [path25, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path25 && path25 !== "/" ? path25 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -16506,8 +16506,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path23, errorMaps, issueData } = params;
-  const fullPath = [...path23, ...issueData.path || []];
+  const { data, path: path25, errorMaps, issueData } = params;
+  const fullPath = [...path25, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -16622,11 +16622,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path23, key) {
+  constructor(parent, value, path25, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path23;
+    this._path = path25;
     this._key = key;
   }
   get path() {
@@ -20546,10 +20546,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path23) {
-  if (!path23)
+function getElementAtPath(obj, path25) {
+  if (!path25)
     return obj;
-  return path23.reduce((acc, key) => acc?.[key], obj);
+  return path25.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -20958,11 +20958,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path23, issues) {
+function prefixIssues(path25, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path23);
+    iss.path.unshift(path25);
     return iss;
   });
 }
@@ -21109,16 +21109,16 @@ function flattenError(error51, mapper = (issue2) => issue2.message) {
 }
 function formatError(error51, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error52, path23 = []) => {
+  const processError = (error52, path25 = []) => {
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path23, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path25, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path23, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path25, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path23, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path25, ...issue2.path]);
       } else {
-        const fullpath = [...path23, ...issue2.path];
+        const fullpath = [...path25, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -21145,17 +21145,17 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error51, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error52, path23 = []) => {
+  const processError = (error52, path25 = []) => {
     var _a3, _b;
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path23, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path25, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path23, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path25, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path23, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path25, ...issue2.path]);
       } else {
-        const fullpath = [...path23, ...issue2.path];
+        const fullpath = [...path25, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -21187,8 +21187,8 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path23 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path23) {
+  const path25 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path25) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -32300,11 +32300,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path23) {
-  if (path23.length === 0) {
+function getDotPath(path25) {
+  if (path25.length === 0) {
     return "object root";
   }
-  return path23.reduce((acc, seg, index) => {
+  return path25.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -34329,13 +34329,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path23 = ref.slice(1).split("/").filter(Boolean);
-  if (path23.length === 0) {
+  const path25 = ref.slice(1).split("/").filter(Boolean);
+  if (path25.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path23[0] === defsKey) {
-    const key = path23[1];
+  if (path25[0] === defsKey) {
+    const key = path25[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -61766,7 +61766,7 @@ async function startChannelServices(options) {
 // src/continuation/runtime.ts
 import fs22 from "node:fs/promises";
 import os3 from "node:os";
-import path22 from "node:path";
+import path24 from "node:path";
 
 // src/continuation/artifact-store.ts
 import { createHash as createHash8, randomBytes } from "node:crypto";
@@ -64404,10 +64404,8 @@ function stringArray(value) {
 }
 
 // src/continuation/sqlite-repository.ts
-import { createHash as createHash15, randomBytes as randomBytes4 } from "node:crypto";
-import fs21 from "node:fs/promises";
-import path21 from "node:path";
-import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
+import path23 from "node:path";
+import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
 
 // src/continuation/progress-policy.ts
 import { createHash as createHash11 } from "node:crypto";
@@ -64491,7 +64489,7 @@ function materialProjection(checkpoint2) {
     completedStepIds: sorted(checkpoint2.completedStepIds),
     completedCriterionIds: sorted(checkpoint2.completedCriterionIds),
     completedDeliverableIds: sorted(checkpoint2.completedDeliverableIds),
-    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path23, sha256: sha2562 }) => ({ id, deliverableId, path: path23, sha256: sha2562 })).sort(compareId),
+    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path25, sha256: sha2562 }) => ({ id, deliverableId, path: path25, sha256: sha2562 })).sort(compareId),
     evidence: [...checkpoint2.evidence].map((entry) => ({
       id: entry.id,
       requirementId: entry.requirementId,
@@ -68473,10 +68471,10 @@ function hasOnlyKeys(value, allowed) {
   return Object.keys(value).every((key) => allowedKeys.has(key));
 }
 
-// src/continuation/sqlite-repository.ts
-var OUTCOME_DRIVEN_SCHEMA_VERSION = 8;
-var SCHEMA_VERSION = DURABLE_RUN_SCHEMA_VERSION;
-var ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
+// src/continuation/sqlite-codec.ts
+import { createHash as createHash15, randomBytes as randomBytes4 } from "node:crypto";
+import path21 from "node:path";
+import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var PROGRESS_PAYLOAD_MAX_CHARS = 4e3;
 var MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT = 2;
 var MAX_TOTAL_RECOVERY_ATTEMPTS = 4;
@@ -68496,6 +68494,1712 @@ var EMPTY_PERMISSION_ENVELOPE = {
   externalSideEffects: "denied",
   approval: { mode: "never" }
 };
+function jobSelectSql(includeOutcomeState = true, includeInterruptState = includeOutcomeState) {
+  const outcomeState = includeOutcomeState ? `(SELECT a.delta_json FROM continuation_attempts a
+            WHERE a.job_id = j.job_id AND a.finished_at IS NOT NULL AND a.delta_json IS NOT NULL
+            ORDER BY a.ordinal DESC LIMIT 1) AS last_delta_json,
+           (SELECT a.verification_json FROM continuation_attempts a
+            WHERE a.job_id = j.job_id AND a.finished_at IS NOT NULL AND a.verification_json IS NOT NULL
+            ORDER BY a.ordinal DESC LIMIT 1) AS last_verification_json` : `0 AS no_progress_count, NULL AS last_delta_json, NULL AS last_verification_json`;
+  const interruptState = includeInterruptState ? `(SELECT i.interrupt_id FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_id,
+           (SELECT i.attempt_id FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_attempt_id,
+           (SELECT i.status FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_status,
+           (SELECT i.prompt FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_prompt,
+           (SELECT i.response_text FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_response,
+           (SELECT i.created_at FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_created_at,
+           (SELECT i.resolved_at FROM continuation_interrupts i
+            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_resolved_at,
+           (SELECT o.message_id FROM continuation_outbox o
+            WHERE o.job_id = j.job_id AND o.kind = 'interrupt'
+            ORDER BY o.created_at DESC LIMIT 1) AS current_interrupt_message_id,
+           (SELECT o.updated_at FROM continuation_outbox o
+            WHERE o.job_id = j.job_id AND o.kind = 'interrupt' AND o.status = 'delivered'
+            ORDER BY o.created_at DESC LIMIT 1) AS current_interrupt_delivered_at` : `NULL AS current_interrupt_id, NULL AS current_interrupt_attempt_id,
+       NULL AS current_interrupt_status, NULL AS current_interrupt_prompt,
+       NULL AS current_interrupt_response, NULL AS current_interrupt_created_at,
+       NULL AS current_interrupt_resolved_at, NULL AS current_interrupt_message_id,
+       NULL AS current_interrupt_delivered_at`;
+  return `
+    SELECT j.*,
+           (SELECT o.status FROM continuation_outbox o
+            WHERE o.job_id = j.job_id AND o.kind = 'terminal'
+            LIMIT 1) AS delivery_status,
+           (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) AS attempt_count,
+           ${interruptState},
+           ${outcomeState}
+    FROM continuation_jobs j
+  `;
+}
+function stringField(row, field) {
+  const value = row[field];
+  if (typeof value !== "string") throw new Error(`Invalid continuation database field: ${field}.`);
+  return value;
+}
+function optionalStringField(row, field) {
+  const value = row[field];
+  return typeof value === "string" ? value : void 0;
+}
+function numberField(row, field) {
+  const value = row[field];
+  if (typeof value !== "number" && typeof value !== "bigint") {
+    throw new Error(`Invalid continuation database number field: ${field}.`);
+  }
+  return Number(value);
+}
+function mapPendingInterruptRoute(row) {
+  const route = parseTrustedJson(row.route_json, "continuation interrupt route");
+  if (!isDeliveryRoute2(route)) throw new Error("Continuation interrupt route is invalid.");
+  return {
+    interruptId: stringField(row, "interrupt_id"),
+    jobId: stringField(row, "job_id"),
+    route,
+    deliveredMessageId: optionalStringField(row, "message_id")
+  };
+}
+function mapJob(row) {
+  const routeValue = parseTrustedJson(row.route_json, "route_json");
+  if (!isDeliveryRoute2(routeValue)) throw new Error("Continuation delivery route is invalid.");
+  const sourceFactsValue = parseTrustedJson(row.source_facts_json, "source_facts_json");
+  validateSourceFacts(sourceFactsValue);
+  const taskContractValue = parseTrustedJson(row.task_contract_json, "task_contract_json");
+  validateTaskContract(taskContractValue, sourceFactsValue.provenance === "captured");
+  const creatorOpenId = stringField(row, "creator_open_id");
+  const sourceMessageId = stringField(row, "source_message_id");
+  const sourceThreadId = optionalStringField(row, "source_thread_id");
+  const title = stringField(row, "title");
+  const objective = stringField(row, "objective");
+  const acceptanceCriteria = parseTrustedStringArray(
+    row.acceptance_criteria_json,
+    "acceptance_criteria_json"
+  );
+  const contextSnapshot = parseTrustedCheckpoint(
+    row.context_snapshot_json,
+    "context_snapshot_json"
+  );
+  const workingDirectory = stringField(row, "working_directory");
+  const permissions = parsePermissionEnvelope(row.permissions_json);
+  const requiredTools = parseTrustedStringArray(row.required_tools_json, "required_tools_json");
+  if (!sameStringSet(requiredTools, permissions.hostTools)) {
+    throw new Error("Continuation persisted host tools are inconsistent.");
+  }
+  const model = optionalStringField(row, "model");
+  const recovery = row.recovery_json ? parseTrustedRecoveryState(row.recovery_json, "recovery_json") : void 0;
+  const recoveryFingerprintCounts = row.recovery_fingerprint_counts_json === void 0 ? {} : parseTrustedCountRecord(
+    row.recovery_fingerprint_counts_json,
+    "recovery_fingerprint_counts_json"
+  );
+  const interruptId = optionalStringField(row, "current_interrupt_id");
+  validatePersistedFactProjection(row, {
+    route: routeValue,
+    sourceFacts: sourceFactsValue,
+    taskContract: taskContractValue,
+    creatorOpenId,
+    sourceMessageId,
+    sourceThreadId,
+    title,
+    objective,
+    acceptanceCriteria,
+    contextSnapshot,
+    workingDirectory,
+    permissions,
+    model
+  });
+  return {
+    jobId: stringField(row, "job_id"),
+    idempotencyKey: stringField(row, "idempotency_key"),
+    retryOfJobId: optionalStringField(row, "retry_of_job_id"),
+    creatorOpenId,
+    route: routeValue,
+    sourceMessageId,
+    sourceThreadId,
+    title,
+    objective,
+    acceptanceCriteria,
+    contextSnapshot,
+    sourceFacts: sourceFactsValue,
+    taskContract: taskContractValue,
+    requiredTools,
+    workingDirectory,
+    permissions,
+    model,
+    parentSessionId: optionalStringField(row, "parent_session_id"),
+    maxAttempts: numberField(row, "max_attempts"),
+    maxRetries: numberField(row, "max_retries"),
+    timeoutSeconds: numberField(row, "timeout_seconds"),
+    createdAt: stringField(row, "created_at"),
+    expiresAt: stringField(row, "expires_at"),
+    rowVersion: numberField(row, "row_version"),
+    status: stringField(row, "status"),
+    executionSessionId: optionalStringField(row, "execution_session_id"),
+    checkpoint: row.checkpoint_json ? parseTrustedCheckpointV2(row.checkpoint_json, "checkpoint_json") : void 0,
+    lastAttemptDelta: row.last_delta_json ? parseTrustedAttemptDelta(row.last_delta_json, "last_delta_json") : void 0,
+    lastVerification: row.last_verification_json ? parseTrustedVerification(row.last_verification_json, "last_verification_json") : void 0,
+    recovery,
+    recoveryTotalCount: row.recovery_total_count === void 0 ? 0 : numberField(row, "recovery_total_count"),
+    recoveryFingerprintCounts,
+    currentInterrupt: interruptId ? {
+      interruptId,
+      jobId: stringField(row, "job_id"),
+      attemptId: stringField(row, "current_interrupt_attempt_id"),
+      status: optionalStringField(row, "current_interrupt_status") === "resolved" ? "resolved" : optionalStringField(row, "current_interrupt_message_id") ? "delivered" : "pending",
+      prompt: stringField(row, "current_interrupt_prompt"),
+      deliveredMessageId: optionalStringField(row, "current_interrupt_message_id"),
+      responseText: optionalStringField(row, "current_interrupt_response"),
+      createdAt: stringField(row, "current_interrupt_created_at"),
+      deliveredAt: optionalStringField(row, "current_interrupt_delivered_at"),
+      resolvedAt: optionalStringField(row, "current_interrupt_resolved_at")
+    } : void 0,
+    noProgressCount: numberField(row, "no_progress_count"),
+    attemptCount: numberField(row, "attempt_count"),
+    stepCount: numberField(row, "step_count"),
+    failureCount: numberField(row, "failure_count"),
+    nextRunAt: stringField(row, "next_run_at"),
+    leaseOwner: optionalStringField(row, "lease_owner"),
+    leaseExpiresAt: optionalStringField(row, "lease_expires_at"),
+    heartbeatAt: optionalStringField(row, "heartbeat_at"),
+    resultSummary: optionalStringField(row, "result_summary"),
+    resultArtifacts: parseTrustedResultArtifacts(
+      row.result_artifacts_json,
+      "result_artifacts_json"
+    ),
+    errorCode: optionalStringField(row, "error_code"),
+    errorSummary: optionalStringField(row, "error_summary"),
+    startedAt: optionalStringField(row, "started_at"),
+    updatedAt: stringField(row, "updated_at"),
+    completedAt: optionalStringField(row, "completed_at"),
+    deletedAt: optionalStringField(row, "deleted_at"),
+    retained: numberField(row, "retain") === 1,
+    deliveryStatus: optionalStringField(row, "delivery_status")
+  };
+}
+function validatePersistedFactProjection(row, value) {
+  const {
+    route,
+    sourceFacts,
+    taskContract,
+    creatorOpenId,
+    sourceMessageId,
+    sourceThreadId,
+    title,
+    objective,
+    acceptanceCriteria,
+    contextSnapshot,
+    workingDirectory,
+    permissions,
+    model
+  } = value;
+  const expectedChatId = route.kind === "message_thread" ? route.conversationId : `doc:${route.documentToken}`;
+  if (stringField(row, "origin_kind") !== route.kind || !isDeepStrictEqual2(route, sourceFacts.route) || sourceFacts.sourceMessageId !== sourceMessageId || sourceFacts.sourceThreadId !== sourceThreadId || sourceFacts.chatId !== expectedChatId || sourceFacts.workingDirectory !== workingDirectory || sourceFacts.model !== (model ?? null) || !isDeepStrictEqual2(sourceFacts.permissions, permissions) || taskContract.title !== title || taskContract.objective !== objective || !isDeepStrictEqual2(
+    taskContract.acceptanceCriteria.map((criterion) => criterion.description),
+    acceptanceCriteria
+  ) || !isDeepStrictEqual2(taskContract.initialContext, contextSnapshot) || route.kind === "message_thread" && route.sourceMessageId !== sourceMessageId || !routeMatchesSourceThread(route, sourceThreadId) || sourceFacts.provenance === "captured" && sourceFacts.creatorOpenId !== creatorOpenId) {
+    throw new Error("Continuation persisted facts and execution projection are inconsistent.");
+  }
+}
+function projectCreateRequest(request, inputs) {
+  const taskContract = {
+    schemaVersion: 1,
+    title: redactContinuationText(request.taskContract.title),
+    objective: redactContinuationText(request.taskContract.objective),
+    deliverables: request.taskContract.deliverables.map((deliverable) => ({
+      id: deliverable.id,
+      description: redactContinuationText(deliverable.description),
+      required: deliverable.required
+    })),
+    acceptanceCriteria: request.taskContract.acceptanceCriteria.map((criterion) => ({
+      id: criterion.id,
+      description: redactContinuationText(criterion.description),
+      deliverableIds: [...criterion.deliverableIds]
+    })),
+    verificationRequirements: request.taskContract.verificationRequirements.map((requirement) => ({
+      id: requirement.id,
+      description: redactContinuationText(requirement.description),
+      kind: requirement.kind
+    })),
+    initialContext: redactCheckpoint(request.taskContract.initialContext)
+  };
+  const sourceFacts = {
+    schemaVersion: 1,
+    provenance: request.sourceFacts.provenance,
+    originalUserText: request.sourceFacts.originalUserText === null ? null : redactContinuationText(request.sourceFacts.originalUserText),
+    sourceContextText: request.sourceFacts.sourceContextText === null ? null : redactContinuationText(request.sourceFacts.sourceContextText),
+    quotedMessageText: request.sourceFacts.quotedMessageText === null ? null : redactContinuationText(request.sourceFacts.quotedMessageText),
+    route: request.route,
+    creatorOpenId: request.creatorOpenId,
+    chatId: request.sourceFacts.chatId,
+    chatType: request.sourceFacts.chatType,
+    sourceMessageId: request.sourceMessageId,
+    ...request.sourceThreadId ? { sourceThreadId: request.sourceThreadId } : {},
+    sourceMessageType: request.sourceFacts.sourceMessageType,
+    sourceTimestamp: request.sourceFacts.sourceTimestamp,
+    inputs: inputs.map((input) => ({ ...input })),
+    workingDirectory: request.workingDirectory,
+    model: request.model ?? null,
+    permissions: request.permissions
+  };
+  return {
+    ...request,
+    title: taskContract.title,
+    objective: taskContract.objective,
+    acceptanceCriteria: taskContract.acceptanceCriteria.map((criterion) => criterion.description),
+    contextSnapshot: taskContract.initialContext,
+    sourceFacts,
+    taskContract
+  };
+}
+function continuationJobForCreate(jobId, request) {
+  const {
+    sourceInputs: _sourceInputs,
+    resumeCheckpoint,
+    resumeArtifactSourceJobId: _resumeArtifactSourceJobId,
+    ...persisted
+  } = request;
+  return {
+    ...persisted,
+    jobId,
+    rowVersion: 1,
+    status: "queued",
+    ...resumeCheckpoint ? { checkpoint: resumeCheckpoint } : {},
+    recoveryTotalCount: 0,
+    recoveryFingerprintCounts: {},
+    noProgressCount: 0,
+    attemptCount: 0,
+    stepCount: 0,
+    failureCount: 0,
+    nextRunAt: request.createdAt,
+    resultArtifacts: [],
+    updatedAt: request.createdAt,
+    retained: false
+  };
+}
+function createRequestFingerprint(request) {
+  const sourceInputDescriptors = request.sourceInputs.map((input) => ({
+    kind: input.kind
+  }));
+  return createHash15("sha256").update(JSON.stringify({
+    idempotencyKey: request.idempotencyKey,
+    retryOfJobId: request.retryOfJobId ?? null,
+    creatorOpenId: request.creatorOpenId,
+    route: request.route,
+    sourceMessageId: request.sourceMessageId,
+    sourceThreadId: request.sourceThreadId ?? null,
+    sourceFacts: { ...request.sourceFacts, inputs: [] },
+    taskContract: request.taskContract,
+    sourceInputDescriptors,
+    resumeCheckpoint: request.resumeCheckpoint ?? null,
+    resumeArtifactSourceJobId: request.resumeArtifactSourceJobId ?? null
+  })).digest("hex");
+}
+function redactCheckpoint(checkpoint2) {
+  return {
+    summary: redactContinuationText(checkpoint2.summary),
+    completedSteps: checkpoint2.completedSteps.map(redactContinuationText),
+    remainingSteps: checkpoint2.remainingSteps.map(redactContinuationText),
+    constraints: checkpoint2.constraints.map(redactContinuationText),
+    decisions: checkpoint2.decisions.map(redactContinuationText),
+    references: checkpoint2.references.map(redactContinuationText)
+  };
+}
+function redactedLegacyFacts() {
+  return {
+    schemaVersion: 1,
+    provenance: "legacy_unavailable",
+    originalUserText: null,
+    sourceContextText: null,
+    quotedMessageText: null,
+    creatorOpenId: "",
+    chatId: "",
+    chatType: "",
+    route: emptyRoute(),
+    sourceMessageId: "",
+    sourceMessageType: null,
+    sourceTimestamp: null,
+    inputs: [],
+    workingDirectory: "",
+    model: null,
+    permissions: EMPTY_PERMISSION_ENVELOPE
+  };
+}
+function redactedLegacyContract() {
+  return {
+    schemaVersion: 1,
+    title: "",
+    objective: "",
+    deliverables: [],
+    acceptanceCriteria: [],
+    verificationRequirements: [],
+    initialContext: EMPTY_CHECKPOINT
+  };
+}
+function trustedRouteFromCorruptRow(row) {
+  try {
+    const route = parseTrustedJson(row.route_json, "route_json");
+    const rawFacts = parseTrustedJson(row.source_facts_json, "source_facts_json");
+    if (!isDeliveryRoute2(route) || !isRecord5(rawFacts) || !isDeliveryRoute2(rawFacts.route)) {
+      return null;
+    }
+    const sourceMessageId = stringField(row, "source_message_id");
+    const sourceThreadId = optionalStringField(row, "source_thread_id");
+    const expectedChatId = route.kind === "message_thread" ? route.conversationId : `doc:${route.documentToken}`;
+    if (stringField(row, "origin_kind") !== route.kind || !isDeepStrictEqual2(route, rawFacts.route) || rawFacts.sourceMessageId !== sourceMessageId || rawFacts.sourceThreadId !== sourceThreadId || rawFacts.chatId !== expectedChatId || route.kind === "message_thread" && route.sourceMessageId !== sourceMessageId || !routeMatchesSourceThread(route, sourceThreadId)) return null;
+    return route;
+  } catch {
+    return null;
+  }
+}
+function corruptTombstoneFacts(row, route, sourceMessageId, sourceThreadId) {
+  return {
+    schemaVersion: 1,
+    provenance: "legacy_unavailable",
+    originalUserText: null,
+    sourceContextText: null,
+    quotedMessageText: null,
+    creatorOpenId: stringField(row, "creator_open_id"),
+    chatId: route.kind === "message_thread" ? route.conversationId : `doc:${route.documentToken}`,
+    chatType: route.kind === "comment_thread" ? "doc_comment" : "",
+    route,
+    sourceMessageId,
+    ...sourceThreadId ? { sourceThreadId } : {},
+    sourceMessageType: null,
+    sourceTimestamp: null,
+    inputs: [],
+    workingDirectory: "",
+    model: null,
+    permissions: EMPTY_PERMISSION_ENVELOPE
+  };
+}
+function corruptTombstoneContract() {
+  return {
+    schemaVersion: 1,
+    title: "Unavailable task state",
+    objective: "Stored task state failed integrity validation.",
+    deliverables: [],
+    acceptanceCriteria: [],
+    verificationRequirements: [],
+    initialContext: EMPTY_CHECKPOINT
+  };
+}
+function validateCreateRequest2(request) {
+  if (!request.idempotencyKey) throw new Error("Continuation idempotency key is required.");
+  if (request.title.length > CONTINUATION_LIMITS.titleChars) {
+    throw new Error(`Continuation title exceeds ${CONTINUATION_LIMITS.titleChars} characters.`);
+  }
+  assertUtf8Bytes("objective", request.objective, CONTINUATION_LIMITS.objectiveBytes);
+  if (request.acceptanceCriteria.length > CONTINUATION_LIMITS.acceptanceCriteriaCount) {
+    throw new Error("Continuation acceptance criteria count exceeds the configured limit.");
+  }
+  assertJsonBytes(
+    "acceptance criteria",
+    request.acceptanceCriteria,
+    CONTINUATION_LIMITS.contextSnapshotBytes
+  );
+  assertJsonBytes(
+    "context snapshot",
+    request.contextSnapshot,
+    CONTINUATION_LIMITS.contextSnapshotBytes
+  );
+  assertJsonBytes("required tools", request.requiredTools, CONTINUATION_LIMITS.objectiveBytes);
+  validatePermissionEnvelope(request.permissions, true);
+  if (!sameStringSet(request.permissions.hostTools, request.requiredTools)) {
+    throw new Error("Continuation permission host tools must match required tools.");
+  }
+  assertJsonBytes("permission envelope", request.permissions, CONTINUATION_LIMITS.contextSnapshotBytes);
+  if (!isDeliveryRoute2(request.route)) throw new Error("Continuation delivery route is invalid.");
+  if (!routeMatchesSourceThread(request.route, request.sourceThreadId)) {
+    throw new Error("Continuation delivery route does not match the source thread.");
+  }
+  assertJsonBytes("delivery route", request.route, CONTINUATION_LIMITS.contextSnapshotBytes);
+  validateSourceFacts(request.sourceFacts);
+  validateTaskContract(request.taskContract, request.sourceFacts.provenance === "captured");
+  assertJsonBytes("source inputs", request.sourceInputs.map((input) => ({
+    kind: input.kind,
+    fileName: input.fileName
+  })), CONTINUATION_LIMITS.contextSnapshotBytes);
+  if (request.resumeCheckpoint && !isCheckpointV22(request.resumeCheckpoint)) {
+    throw new Error("Continuation resume checkpoint is invalid.");
+  }
+  if (request.resumeCheckpoint?.artifacts.length && !request.resumeArtifactSourceJobId) {
+    throw new Error("Continuation resume artifacts require a source Job ID.");
+  }
+  if (request.resumeArtifactSourceJobId && !request.resumeCheckpoint?.artifacts.length) {
+    throw new Error("Continuation resume artifact source is not needed without checkpoint artifacts.");
+  }
+  if (!Number.isInteger(request.maxAttempts) || request.maxAttempts < 1 || request.maxAttempts > 20) {
+    throw new Error("Continuation maxAttempts must be an integer between 1 and 20.");
+  }
+  if (!Number.isInteger(request.maxRetries) || request.maxRetries < 0) {
+    throw new Error("Continuation maxRetries must be a non-negative integer.");
+  }
+  if (!Number.isInteger(request.timeoutSeconds) || request.timeoutSeconds < 1) {
+    throw new Error("Continuation timeoutSeconds must be a positive integer.");
+  }
+  if (!Number.isFinite(Date.parse(request.createdAt)) || !Number.isFinite(Date.parse(request.expiresAt))) {
+    throw new Error("Continuation timestamps must be valid ISO timestamps.");
+  }
+}
+function validateTaskContract(value, requireRequirements = false) {
+  if (!isRecord5(value) || !hasExactKeys(value, [
+    "schemaVersion",
+    "title",
+    "objective",
+    "deliverables",
+    "acceptanceCriteria",
+    "verificationRequirements",
+    "initialContext"
+  ])) throw new Error("Continuation task contract is invalid.");
+  const contract = value;
+  if (typeof contract.title !== "string" || typeof contract.objective !== "string" || !Array.isArray(contract.deliverables) || !Array.isArray(contract.acceptanceCriteria) || !Array.isArray(contract.verificationRequirements) || !isCheckpoint2(contract.initialContext) || !contract.deliverables.every((entry) => isRecord5(entry) && hasExactKeys(entry, ["id", "description", "required"]) && typeof entry.id === "string" && typeof entry.description === "string" && typeof entry.required === "boolean") || !contract.acceptanceCriteria.every((entry) => isRecord5(entry) && hasExactKeys(entry, ["id", "description", "deliverableIds"]) && typeof entry.id === "string" && typeof entry.description === "string" && Array.isArray(entry.deliverableIds) && entry.deliverableIds.every((id) => typeof id === "string")) || !contract.verificationRequirements.every((entry) => isRecord5(entry) && hasExactKeys(entry, ["id", "description", "kind"]) && typeof entry.id === "string" && typeof entry.description === "string" && (entry.kind === "artifact_exists" || entry.kind === "artifact_sha256" || entry.kind === "evidence_reference"))) {
+    throw new Error("Continuation task contract is invalid.");
+  }
+  if (contract.schemaVersion !== 1) throw new Error("Continuation task contract schema version is invalid.");
+  if (requireRequirements && (contract.title.trim().length === 0 || contract.objective.trim().length === 0 || contract.deliverables.length === 0 || !contract.deliverables.some((deliverable) => deliverable.required) || contract.deliverables.some((deliverable) => deliverable.description.trim().length === 0) || contract.acceptanceCriteria.length === 0 || contract.acceptanceCriteria.some((criterion) => criterion.description.trim().length === 0 || criterion.deliverableIds.length === 0) || contract.verificationRequirements.length === 0 || contract.verificationRequirements.some((requirement) => requirement.description.trim().length === 0))) {
+    throw new Error("Captured continuation task contract requirements must not be empty.");
+  }
+  if (contract.deliverables.length > CONTINUATION_LIMITS.deliverableCount) {
+    throw new Error("Continuation deliverable count exceeds the configured limit.");
+  }
+  if (contract.acceptanceCriteria.length > CONTINUATION_LIMITS.acceptanceCriteriaCount) {
+    throw new Error("Continuation acceptance criteria count exceeds the configured limit.");
+  }
+  if (contract.verificationRequirements.length > CONTINUATION_LIMITS.verificationRequirementCount) {
+    throw new Error("Continuation verification requirement count exceeds the configured limit.");
+  }
+  const validateIds2 = (label, entries) => {
+    const ids = /* @__PURE__ */ new Set();
+    for (const entry of entries) {
+      if (!CONTINUATION_CONTRACT_ID_PATTERN.test(entry.id)) {
+        throw new Error(`Continuation ${label} id is invalid.`);
+      }
+      if (redactContinuationText(entry.id) !== entry.id) {
+        throw new Error(`Continuation ${label} id must not contain a credential-shaped value.`);
+      }
+      if (ids.has(entry.id)) throw new Error(`Continuation ${label} ids must be unique.`);
+      ids.add(entry.id);
+    }
+    return ids;
+  };
+  const deliverableIds = validateIds2("deliverable", contract.deliverables);
+  validateIds2("acceptance criterion", contract.acceptanceCriteria);
+  validateIds2("verification requirement", contract.verificationRequirements);
+  for (const criterion of contract.acceptanceCriteria) {
+    for (const deliverableId of criterion.deliverableIds) {
+      if (!deliverableIds.has(deliverableId)) {
+        throw new Error(`Continuation acceptance criterion references unknown deliverable ${deliverableId}.`);
+      }
+    }
+  }
+  assertJsonBytes("task contract", contract, CONTINUATION_LIMITS.contextSnapshotBytes);
+}
+function validateSourceFacts(value) {
+  if (!isRecord5(value) || !hasExactKeys(value, [
+    "schemaVersion",
+    "provenance",
+    "originalUserText",
+    "sourceContextText",
+    "quotedMessageText",
+    "creatorOpenId",
+    "chatId",
+    "chatType",
+    "route",
+    "sourceMessageId",
+    "sourceThreadId",
+    "sourceMessageType",
+    "sourceTimestamp",
+    "inputs",
+    "workingDirectory",
+    "model",
+    "permissions"
+  ])) throw new Error("Continuation source facts are invalid.");
+  const facts = value;
+  if (facts.schemaVersion !== 1 || facts.provenance !== "captured" && facts.provenance !== "legacy_unavailable" || !isNullableString2(facts.originalUserText) || !isNullableString2(facts.sourceContextText) || !isNullableString2(facts.quotedMessageText) || typeof facts.creatorOpenId !== "string" || typeof facts.chatId !== "string" || typeof facts.chatType !== "string" || !isDeliveryRoute2(facts.route) || typeof facts.sourceMessageId !== "string" || facts.sourceThreadId !== void 0 && typeof facts.sourceThreadId !== "string" || !isNullableString2(facts.sourceMessageType) || !isNullableString2(facts.sourceTimestamp) || !Array.isArray(facts.inputs) || !facts.inputs.every(isManagedInputArtifact) || typeof facts.workingDirectory !== "string" || !isNullableString2(facts.model)) {
+    throw new Error("Continuation source facts are invalid.");
+  }
+  validateManagedInputArtifacts(facts.inputs);
+  validatePermissionEnvelope(facts.permissions, false);
+  assertJsonBytes("source facts", facts, CONTINUATION_LIMITS.contextSnapshotBytes);
+}
+function validateManagedInputArtifacts(inputs) {
+  if (inputs.length > CONTINUATION_LIMITS.inputFileCount) {
+    throw new Error("Continuation persisted input file count is invalid.");
+  }
+  const ids = /* @__PURE__ */ new Set();
+  const paths = /* @__PURE__ */ new Set();
+  let totalBytes = 0;
+  for (const input of inputs) {
+    if (ids.has(input.id) || paths.has(input.relativePath)) {
+      throw new Error("Continuation persisted input identities must be unique.");
+    }
+    ids.add(input.id);
+    paths.add(input.relativePath);
+    if (input.sizeBytes > CONTINUATION_LIMITS.inputBytesPerFile) {
+      throw new Error("Continuation persisted input file size is invalid.");
+    }
+    totalBytes += input.sizeBytes;
+    if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
+      throw new Error("Continuation persisted input total size is invalid.");
+    }
+  }
+}
+function validateFinalResult(finalMessage, resultSummary, artifacts) {
+  assertJsonBytes("final message", finalMessage, CONTINUATION_LIMITS.finalMessageBytes);
+  if (resultSummary !== void 0) {
+    assertJsonBytes("result summary", resultSummary, CONTINUATION_LIMITS.objectiveBytes);
+  }
+  if (artifacts.length > CONTINUATION_LIMITS.artifactCount) {
+    throw new Error(`Continuation result exceeds ${CONTINUATION_LIMITS.artifactCount} artifacts.`);
+  }
+  assertJsonBytes("result artifacts", artifacts, CONTINUATION_LIMITS.contextSnapshotBytes);
+}
+function validatePartialResult(outcome) {
+  assertJsonBytes("partial result", outcome, CONTINUATION_LIMITS.finalMessageBytes);
+  if (outcome.artifacts.length > CONTINUATION_LIMITS.artifactCount) {
+    throw new Error(`Continuation result exceeds ${CONTINUATION_LIMITS.artifactCount} artifacts.`);
+  }
+}
+function partialResultSummary(outcome) {
+  return outcome.keyFindings[0] ?? outcome.completedWork[0] ?? "The task produced a partial result.";
+}
+function renderPartialPayload(jobId, outcome, reason = "The continuation completed with a partial result.") {
+  return [
+    `Task partially completed: ${jobId}`,
+    `Reason: ${reason}`,
+    renderResultSection("Completed work", outcome.completedWork),
+    renderResultSection("Key findings", outcome.keyFindings),
+    renderResultSection("Remaining work", outcome.unperformedWork),
+    renderResultSection("Risks", outcome.risks),
+    renderResultSection("Next steps", outcome.nextSteps)
+  ].filter(Boolean).join("\n");
+}
+function renderBlockedPayload(jobId, outcome, recovery) {
+  return [
+    `Task blocked: ${jobId}`,
+    `Reason: ${outcome.errorSummary}`,
+    `Required capability: ${outcome.requiredCapability}`,
+    recovery ? `Failed step: ${recovery.failure.failedStep}` : "",
+    recovery ? `Failure category: ${recovery.failure.category}` : "",
+    recovery ? `Recovery attempts: ${recovery.fingerprintAttempts} for this failure, ${recovery.totalAttempts} total` : "",
+    recovery ? `Diagnostic: ${recovery.failure.diagnostic}` : "",
+    renderResultSection("Completed work", outcome.completedWork),
+    renderResultSection("Remaining work", outcome.unperformedWork)
+  ].filter(Boolean).join("\n");
+}
+function renderFailedPayload(jobId, errorSummary2, recovery) {
+  return [
+    `Task failed: ${jobId}`,
+    `Reason: ${errorSummary2}`,
+    recovery ? `Failed step: ${recovery.failure.failedStep}` : "",
+    recovery ? `Failure category: ${recovery.failure.category}` : "",
+    recovery ? `Recovery attempts: ${recovery.fingerprintAttempts} for this failure, ${recovery.totalAttempts} total` : "",
+    recovery ? `Diagnostic: ${recovery.failure.diagnostic}` : ""
+  ].filter(Boolean).join("\n");
+}
+function renderProgressPayload(job, claim, outcome) {
+  const payload = [
+    `Task progress: ${job.jobId} (${claim.attempt.attemptId})`,
+    `Attempt: ${claim.attempt.ordinal} / ${job.maxAttempts}`,
+    renderResultSection("Completed work", boundedProgressValues(outcome.checkpoint.completedStepIds)),
+    renderResultSection("Key findings", boundedProgressValues(
+      outcome.checkpoint.summary ? [outcome.checkpoint.summary] : []
+    )),
+    renderResultSection(
+      "Remaining work",
+      boundedProgressValues(outcome.checkpoint.remainingSteps.map((step) => step.description))
+    ),
+    outcome.checkpoint.nextAction ? `Next attempt: ${truncateCharacters(outcome.checkpoint.nextAction.description.trim(), 500)}` : ""
+  ].filter(Boolean).join("\n");
+  return truncateCharacters(payload, PROGRESS_PAYLOAD_MAX_CHARS);
+}
+function attemptBudgetTerminalReason(job, checkpoint2) {
+  const artifactStatus = continuationArtifactStatus({ ...job, checkpoint: checkpoint2 });
+  if (artifactStatus === "not_started" || artifactStatus === "creating") {
+    return {
+      errorCode: "attempts_exhausted_artifact_not_started",
+      errorSummary: "The execution budget was exhausted before a required user-facing artifact was ready."
+    };
+  }
+  if (artifactStatus === "created") {
+    return {
+      errorCode: "attempts_exhausted_artifact_unverified",
+      errorSummary: "The execution budget was exhausted after artifact creation but before all required verification completed."
+    };
+  }
+  return {
+    errorCode: "attempts_exhausted_acceptance_incomplete",
+    errorSummary: "The execution budget was exhausted with one or more acceptance criteria still incomplete."
+  };
+}
+function renderInterruptPayload(job, claim, interruptId, prompt, failure, recovery, checkpoint2) {
+  return [
+    `Task waiting for input: ${job.jobId} (${interruptId})`,
+    `Attempt: ${claim.attempt.ordinal} / ${job.maxAttempts}`,
+    `Failed step: ${failure.failedStep}`,
+    `Failure category: ${failure.category}`,
+    `Recovery attempts: ${recovery.fingerprintAttempts} for this failure, ${recovery.totalAttempts} total`,
+    `Diagnostic: ${failure.diagnostic}`,
+    `Action needed: ${prompt}`,
+    renderResultSection("Completed work", boundedProgressValues(checkpoint2.completedStepIds)),
+    `Resume: /task resume ${job.jobId} <input>`
+  ].filter(Boolean).join("\n");
+}
+function boundedProgressValues(values) {
+  return uniqueNonEmpty(values).slice(0, 3).map((value) => truncateCharacters(value, 500));
+}
+function truncateCharacters(value, maxCharacters) {
+  const characters = Array.from(value);
+  if (characters.length <= maxCharacters) return value;
+  return `${characters.slice(0, Math.max(0, maxCharacters - 3)).join("").trimEnd()}...`;
+}
+function cleanupErrorSummary(error51) {
+  const summary = error51 instanceof Error ? `${error51.name}: ${error51.message}` : "Unknown continuation cleanup error.";
+  return truncateCharacters(summary.replace(/[\r\n\t]+/g, " "), 500);
+}
+function renderResultSection(title, values) {
+  const filtered = uniqueNonEmpty(values);
+  return filtered.length > 0 ? `${title}:
+${filtered.map((value) => `- ${value}`).join("\n")}` : "";
+}
+function uniqueNonEmpty(values) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+function validateToolRequest(request) {
+  if (!/^[A-Za-z0-9_.-]{1,80}$/.test(request.tool)) {
+    throw new Error("Continuation local CLI tool name is invalid.");
+  }
+  if (!Array.isArray(request.args) || !request.args.every((arg) => typeof arg === "string")) {
+    throw new Error("Continuation local CLI tool args must be strings.");
+  }
+  assertJsonBytes("tool request", request, CONTINUATION_LIMITS.contextSnapshotBytes);
+}
+function validateToolResult(result) {
+  if (typeof result.ok !== "boolean" || typeof result.message !== "string") {
+    throw new Error("Continuation local CLI tool result is invalid.");
+  }
+  if (result.failure !== void 0 && !isDurableRunFailure(result.failure)) {
+    throw new Error("Continuation local CLI tool failure is invalid.");
+  }
+  assertJsonBytes("tool result", result, CONTINUATION_LIMITS.toolResultBytes);
+}
+function parseToolResult(value) {
+  const parsed = parseJson(value, null);
+  if (!parsed || typeof parsed !== "object" || typeof parsed.ok !== "boolean" || typeof parsed.message !== "string") {
+    throw new Error("Invalid continuation tool result in database.");
+  }
+  if (parsed.failure !== void 0 && !isDurableRunFailure(parsed.failure)) throw new Error("Invalid continuation tool failure in database.");
+  return parsed;
+}
+function parsePermissionEnvelope(value) {
+  const parsed = parseJson(value, null);
+  const normalized = normalizePermissionEnvelope(parsed);
+  validatePermissionEnvelope(normalized, false);
+  return normalized;
+}
+function normalizePermissionEnvelope(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const envelope = value;
+  const rawFilesystem = envelope.filesystem;
+  if (!rawFilesystem || typeof rawFilesystem !== "object" || Array.isArray(rawFilesystem)) {
+    return value;
+  }
+  const filesystem = rawFilesystem;
+  return {
+    ...envelope,
+    profile: envelope.profile ?? "bounded",
+    filesystem: {
+      ...filesystem,
+      requestedPaths: filesystem.requestedPaths ?? []
+    },
+    externalSideEffects: envelope.externalSideEffects ?? "denied"
+  };
+}
+function validatePermissionEnvelope(value, requireAbsoluteRoot2) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Continuation permission envelope is invalid.");
+  }
+  if (!hasExactKeys(value, [
+    "profile",
+    "filesystem",
+    "hostTools",
+    "network",
+    "externalSideEffects",
+    "approval"
+  ])) throw new Error("Continuation permission envelope is invalid.");
+  const envelope = value;
+  const filesystem = envelope.filesystem;
+  const approval = envelope.approval;
+  const requestedPaths = filesystem?.requestedPaths;
+  if (envelope.profile !== "bounded" && envelope.profile !== "trusted_personal_workspace" || !filesystem || !hasExactKeys(filesystem, [
+    "root",
+    "mode",
+    "requestedPaths"
+  ]) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path21.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path21.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
+    throw new Error("Continuation permission envelope is invalid.");
+  }
+  if (envelope.profile === "bounded" && (envelope.network !== "none" || envelope.externalSideEffects !== "denied") || envelope.profile === "trusted_personal_workspace" && (requestedPaths.length === 0 || envelope.network !== "enabled" || envelope.externalSideEffects !== "allowed")) {
+    throw new Error("Continuation permission envelope profile is inconsistent.");
+  }
+}
+function sameStringSet(left, right) {
+  if (left.length !== right.length) return false;
+  const values = new Set(left);
+  return values.size === left.length && right.every((value) => values.has(value));
+}
+async function restoreRedactionQuarantines(jobId, quarantines, artifacts, inputs) {
+  const operations = [];
+  if (quarantines.artifact) {
+    operations.push(artifacts.restoreQuarantine(jobId, quarantines.artifact));
+  }
+  if (quarantines.input) {
+    operations.push(inputs.restoreQuarantine(jobId, quarantines.input));
+  }
+  const results = await Promise.allSettled(operations);
+  return results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+}
+async function discardRedactionQuarantines(jobId, quarantines, artifacts, inputs) {
+  const operations = [];
+  if (quarantines.artifact) {
+    operations.push(artifacts.discardQuarantine(jobId, quarantines.artifact));
+  }
+  if (quarantines.input) {
+    operations.push(inputs.discardQuarantine(jobId, quarantines.input));
+  }
+  const results = await Promise.allSettled(operations);
+  return results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+}
+function boundedFailure(failure) {
+  return {
+    errorCode: failure.errorCode.slice(0, 128) || "continuation_failed",
+    errorSummary: truncateUtf8(failure.errorSummary, CONTINUATION_LIMITS.objectiveBytes),
+    retryable: failure.retryable
+  };
+}
+function boundedDurableRunFailure(failure) {
+  const bounded = {
+    category: failure.category,
+    retrySafety: failure.retrySafety,
+    capabilityAvailable: failure.capabilityAvailable,
+    operationRisk: failure.operationRisk,
+    hints: failure.hints.slice(0, 8).map((hint) => truncateCharacters(
+      redactContinuationText(hint),
+      500
+    )),
+    failedStep: truncateCharacters(failure.failedStep, 80),
+    diagnostic: truncateCharacters(redactContinuationText(failure.diagnostic), 1e3),
+    fingerprint: failure.fingerprint.slice(0, 128)
+  };
+  if (!bounded.fingerprint || !bounded.failedStep) {
+    throw new Error("Continuation durable failure identity is invalid.");
+  }
+  assertJsonBytes("durable failure", bounded, CONTINUATION_LIMITS.contextSnapshotBytes);
+  return bounded;
+}
+function truncateUtf8(value, maxBytes) {
+  if (Buffer.byteLength(value, "utf-8") <= maxBytes) return value;
+  const suffix = "...";
+  const buffer = Buffer.from(value, "utf-8").subarray(0, maxBytes - suffix.length);
+  return `${buffer.toString("utf-8").replace(/\uFFFD+$/u, "")}${suffix}`;
+}
+function assertJsonBytes(name, value, limit) {
+  const serialized = typeof value === "string" ? value : JSON.stringify(value);
+  if (typeof serialized !== "string") throw new Error(`Continuation ${name} is not serializable.`);
+  const bytes = Buffer.byteLength(serialized, "utf-8");
+  if (bytes > limit) throw new Error(`Continuation ${name} exceeds ${limit} bytes.`);
+}
+function assertUtf8Bytes(name, value, limit) {
+  if (Buffer.byteLength(value, "utf-8") > limit) {
+    throw new Error(`Continuation ${name} exceeds ${limit} bytes.`);
+  }
+}
+function makeId(prefix) {
+  return `${prefix}_${randomBytes4(12).toString("hex")}`;
+}
+function deliveryIdempotencyKey(jobId, eventKey) {
+  return `ct_${createHash15("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
+}
+function toolCallId(jobId, stepId, requestHash) {
+  return `call_${createHash15("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
+}
+function continuationStepId(job) {
+  return job.checkpoint?.nextAction?.id ?? job.checkpoint?.currentStepId ?? "initial-step";
+}
+function canReexecuteSameToolRequest(job, failure) {
+  const userResolvedAccess = Boolean(
+    job.recovery?.userInput && ["authentication_required", "permission_required"].includes(failure.category)
+  );
+  const boundedAutomaticRetry = Boolean(
+    job.recovery?.lastDecision === "retry" && job.recovery.failure.fingerprint === failure.fingerprint && failure.retrySafety === "safe" && ["transient", "unknown"].includes(failure.category)
+  );
+  return userResolvedAccess || boundedAutomaticRetry;
+}
+function canReplaceCompletedToolFailure(job, failure) {
+  return failure.category === "invalid_invocation" && failure.retrySafety === "safe" || canReexecuteSameToolRequest(job, failure);
+}
+function hasOpaqueExecutionEffects(job) {
+  return job.permissions.filesystem.mode === "workspace-write" || job.permissions.network === "enabled" || job.permissions.externalSideEffects === "allowed";
+}
+function toolRequestHash(request) {
+  return createHash15("sha256").update(JSON.stringify(request)).digest("hex");
+}
+function addMilliseconds2(timestamp, milliseconds) {
+  return new Date(Date.parse(timestamp) + milliseconds).toISOString();
+}
+function emptyRoute() {
+  return {
+    kind: "message_thread",
+    conversationId: "",
+    sourceMessageId: ""
+  };
+}
+function parseJson(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+function parseTrustedJson(value, field) {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid continuation database field: ${field}.`);
+  }
+  try {
+    return JSON.parse(value);
+  } catch (error51) {
+    throw new Error(`Invalid trusted continuation JSON field: ${field}.`, { cause: error51 });
+  }
+}
+function parseTrustedStringArray(value, field) {
+  const parsed = parseTrustedJson(value, field);
+  if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === "string")) {
+    throw new Error(`Invalid continuation string-array field: ${field}.`);
+  }
+  return parsed;
+}
+function parseTrustedCheckpoint(value, field) {
+  const parsed = parseTrustedJson(value, field);
+  if (!isCheckpoint2(parsed)) throw new Error(`Invalid continuation checkpoint field: ${field}.`);
+  assertJsonBytes(field, parsed, CONTINUATION_LIMITS.checkpointBytes);
+  return parsed;
+}
+function parseTrustedCheckpointV2(value, field) {
+  const parsed = parseTrustedJson(value, field);
+  const checkpoint2 = isCheckpoint2(parsed) ? legacyCheckpointToV2(parsed) : parsed;
+  if (!isCheckpointV22(checkpoint2)) {
+    throw new Error(`Invalid continuation V2 checkpoint field: ${field}.`);
+  }
+  assertJsonBytes(field, checkpoint2, CONTINUATION_LIMITS.checkpointBytes);
+  return checkpoint2;
+}
+function parseTrustedAttemptDelta(value, field) {
+  const parsed = parseTrustedJson(value, field);
+  if (!isAttemptDelta(parsed)) throw new Error(`Invalid continuation attempt delta field: ${field}.`);
+  assertJsonBytes(field, parsed, CONTINUATION_LIMITS.checkpointBytes);
+  return parsed;
+}
+function parseTrustedVerification(value, field) {
+  const parsed = parseTrustedJson(value, field);
+  if (!isVerificationVerdict(parsed)) {
+    throw new Error(`Invalid continuation verification field: ${field}.`);
+  }
+  return parsed;
+}
+function parseTrustedRecoveryState(value, field) {
+  const parsed = parseTrustedJson(value, field);
+  if (!isRecord5(parsed) || !isDurableRunFailure(parsed.failure) || !Number.isInteger(parsed.fingerprintAttempts) || Number(parsed.fingerprintAttempts) < 1 || !Number.isInteger(parsed.totalAttempts) || Number(parsed.totalAttempts) < 1 || !["retry", "wait_user", "block", "fail"].includes(String(parsed.lastDecision)) || parsed.userInput !== void 0 && typeof parsed.userInput !== "string") throw new Error(`Invalid continuation recovery field: ${field}.`);
+  assertJsonBytes(field, parsed, CONTINUATION_LIMITS.contextSnapshotBytes);
+  return parsed;
+}
+function parseTrustedCountRecord(value, field) {
+  const parsed = parseTrustedJson(value, field);
+  if (!isRecord5(parsed) || Object.entries(parsed).some(([key, count]) => !key || !Number.isInteger(count) || Number(count) < 0)) throw new Error(`Invalid continuation count record: ${field}.`);
+  return parsed;
+}
+function isDurableRunFailure(value) {
+  return isRecord5(value) && [
+    "invalid_invocation",
+    "transient",
+    "authentication_required",
+    "permission_required",
+    "capability_unavailable",
+    "terminal",
+    "unknown"
+  ].includes(String(value.category)) && ["safe", "unsafe", "unknown"].includes(String(value.retrySafety)) && typeof value.capabilityAvailable === "boolean" && ["pure", "read_only", "idempotent_write", "external_side_effect", "unknown"].includes(String(value.operationRisk)) && Array.isArray(value.hints) && value.hints.every((hint) => typeof hint === "string") && typeof value.failedStep === "string" && typeof value.diagnostic === "string" && typeof value.fingerprint === "string";
+}
+function parseTrustedResultArtifacts(value, field) {
+  const artifacts = parseTrustedStringArray(value, field);
+  if (artifacts.length > CONTINUATION_LIMITS.artifactCount) {
+    throw new Error(`Invalid continuation artifact count in field: ${field}.`);
+  }
+  assertJsonBytes(field, artifacts, CONTINUATION_LIMITS.contextSnapshotBytes);
+  return artifacts;
+}
+function isRecord5(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function hasExactKeys(value, allowed) {
+  const accepted = new Set(allowed);
+  return Object.keys(value).every((key) => accepted.has(key));
+}
+function isNullableString2(value) {
+  return value === null || typeof value === "string";
+}
+function isCheckpoint2(value) {
+  if (!isRecord5(value) || !hasExactKeys(value, [
+    "summary",
+    "completedSteps",
+    "remainingSteps",
+    "constraints",
+    "decisions",
+    "references"
+  ]) || typeof value.summary !== "string") return false;
+  return ["completedSteps", "remainingSteps", "constraints", "decisions", "references"].every((field) => Array.isArray(value[field]) && value[field].every((entry) => typeof entry === "string"));
+}
+function legacyCheckpointToV2(value) {
+  const remainingSteps = value.remainingSteps.map((description, index) => ({
+    id: `legacy-step-${index + 1}`,
+    description
+  }));
+  return {
+    schemaVersion: 2,
+    summary: value.summary,
+    currentStepId: "legacy-handoff",
+    completedStepIds: [],
+    completedCriterionIds: [],
+    completedDeliverableIds: [],
+    remainingSteps,
+    artifacts: [],
+    evidence: [],
+    sideEffects: [],
+    constraints: value.constraints,
+    decisions: value.decisions,
+    nextAction: remainingSteps[0] ?? null,
+    stopReason: "Migrated from a legacy checkpoint without inventing completion evidence."
+  };
+}
+function checkpointFromInitialContext2(value) {
+  return legacyCheckpointToV2(value);
+}
+function isCheckpointV22(value) {
+  if (!isRecord5(value) || value.schemaVersion !== 2) return false;
+  if (typeof value.summary !== "string" || typeof value.currentStepId !== "string" || typeof value.stopReason !== "string" || !isCheckpointStepOrNull(value.nextAction)) return false;
+  if (!["completedStepIds", "completedCriterionIds", "completedDeliverableIds", "constraints", "decisions"].every((field) => isStringArray2(value[field]))) return false;
+  if (!Array.isArray(value.remainingSteps) || !value.remainingSteps.every(isCheckpointStep)) return false;
+  if (!Array.isArray(value.artifacts) || !value.artifacts.every((entry) => isRecord5(entry) && typeof entry.id === "string" && typeof entry.deliverableId === "string" && typeof entry.path === "string" && typeof entry.sha256 === "string")) return false;
+  if (!Array.isArray(value.evidence) || !value.evidence.every((entry) => isRecord5(entry) && typeof entry.id === "string" && typeof entry.requirementId === "string" && isStringArray2(entry.criterionIds) && (entry.artifactId === void 0 || typeof entry.artifactId === "string") && (entry.reference === void 0 || typeof entry.reference === "string"))) return false;
+  return Array.isArray(value.sideEffects) && value.sideEffects.every((entry) => isRecord5(entry) && typeof entry.id === "string" && typeof entry.description === "string" && typeof entry.idempotencyKey === "string");
+}
+function isCheckpointStep(value) {
+  return isRecord5(value) && typeof value.id === "string" && typeof value.description === "string";
+}
+function isCheckpointStepOrNull(value) {
+  return value === null || isCheckpointStep(value);
+}
+function isStringArray2(value) {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+function isAttemptDelta(value) {
+  return isRecord5(value) && value.schemaVersion === 1 && typeof value.stepId === "string" && typeof value.checkpointHash === "string" && typeof value.materialHash === "string" && typeof value.stateChanged === "boolean" && [
+    "newCompletedStepIds",
+    "newCompletedCriterionIds",
+    "newCompletedDeliverableIds",
+    "newArtifactIds",
+    "newEvidenceIds",
+    "newSideEffectIds"
+  ].every((field) => isStringArray2(value[field])) && (value.nextActionStepId === void 0 || typeof value.nextActionStepId === "string");
+}
+function isVerificationVerdict(value) {
+  return isRecord5(value) && (value.status === "accepted" || value.status === "revision_required") && isStringArray2(value.findings);
+}
+function isDeliveryRoute2(value) {
+  if (!isRecord5(value)) return false;
+  if (value.kind === "message_thread") {
+    return hasExactKeys(value, ["kind", "conversationId", "sourceMessageId", "threadId"]) && typeof value.conversationId === "string" && typeof value.sourceMessageId === "string" && (value.threadId === void 0 || typeof value.threadId === "string");
+  }
+  return hasExactKeys(value, ["kind", "documentToken", "commentId", "fileType"]) && value.kind === "comment_thread" && typeof value.documentToken === "string" && typeof value.commentId === "string" && typeof value.fileType === "string";
+}
+function routeMatchesSourceThread(route, sourceThreadId) {
+  return route.kind === "message_thread" ? route.threadId === sourceThreadId : route.commentId === sourceThreadId;
+}
+function isManagedInputArtifact(value) {
+  if (!isRecord5(value) || !hasExactKeys(value, [
+    "id",
+    "kind",
+    "fileName",
+    "relativePath",
+    "sha256",
+    "sizeBytes"
+  ])) return false;
+  return /^input_\d{3}$/.test(String(value.id ?? "")) && (value.kind === "message_image" || value.kind === "message_attachment") && typeof value.fileName === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.fileName) && typeof value.relativePath === "string" && value.relativePath === value.fileName && typeof value.sha256 === "string" && /^[a-f0-9]{64}$/.test(value.sha256) && typeof value.sizeBytes === "number" && Number.isSafeInteger(value.sizeBytes) && value.sizeBytes >= 0;
+}
+
+// src/continuation/sqlite-transitions.ts
+import { createHash as createHash16 } from "node:crypto";
+function buildContinuationStepTransition(input) {
+  const {
+    claim,
+    current,
+    result,
+    now,
+    progress,
+    delta,
+    verification,
+    rawVerification,
+    jitter
+  } = input;
+  const executionSessionId = result.executionSessionId === void 0 ? current.executionSessionId : result.executionSessionId ?? void 0;
+  const outcome = result.outcome;
+  const transition = (status, patch, extras) => continuationDurableTransition(
+    claim,
+    current,
+    status,
+    patch,
+    now,
+    extras
+  );
+  const terminalFailure = (errorCode, errorSummary2, options = {}) => {
+    const terminalRecovery = options.recoveryFailure ? continuationTerminalRecovery(current, options.recoveryFailure, "fail") : null;
+    return transition("failed", {
+      executionSessionId,
+      checkpoint: options.checkpoint ?? current.checkpoint,
+      failureCount: options.failureCount ?? current.failureCount,
+      noProgressCount: options.noProgressCount ?? current.noProgressCount,
+      errorCode,
+      errorSummary: errorSummary2,
+      ...terminalRecovery ? {
+        recovery: terminalRecovery.state,
+        recoveryTotalCount: terminalRecovery.totalAttempts,
+        recoveryFingerprintCounts: terminalRecovery.counts
+      } : {}
+    }, {
+      executionSessionId,
+      attemptOutcome: "failed",
+      attemptError: { errorCode, errorSummary: errorSummary2, retryable: false },
+      ...terminalRecovery ? { attemptRecovery: terminalRecovery.state } : {},
+      ...options.delta ? { delta: options.delta } : {},
+      ...options.verification ? { verification: options.verification } : {},
+      ...options.recoveryFailure ? { failure: terminalRecovery.state.failure } : {},
+      deliveries: [continuationTerminalDelivery(
+        current,
+        renderFailedPayload(current.jobId, errorSummary2, terminalRecovery?.state),
+        now
+      )],
+      supersedeDeliveryKinds: ["progress", "interrupt"]
+    });
+  };
+  const partial2 = (partialOutcome, errorCode = "partial_completion", checkpoint2 = partialOutcome.checkpoint, errorSummary2 = "The continuation completed with a partial result.") => {
+    validatePartialResult(partialOutcome);
+    return transition("partial", {
+      executionSessionId,
+      checkpoint: checkpoint2 ?? current.checkpoint,
+      stepCount: current.stepCount + 1,
+      resultSummary: partialResultSummary(partialOutcome),
+      resultArtifacts: partialOutcome.artifacts,
+      errorCode,
+      errorSummary: errorSummary2
+    }, {
+      executionSessionId,
+      attemptOutcome: "partial",
+      delta,
+      verification,
+      deliveries: [continuationTerminalDelivery(
+        current,
+        renderPartialPayload(current.jobId, partialOutcome, errorSummary2),
+        now
+      )],
+      supersedeDeliveryKinds: ["progress", "interrupt"]
+    });
+  };
+  const recovery = (recoveryOutcome2) => {
+    const failure = boundedDurableRunFailure(recoveryOutcome2.failure);
+    const counts = { ...current.recoveryFingerprintCounts };
+    const fingerprintAttempts = (counts[failure.fingerprint] ?? 0) + 1;
+    const totalAttempts = current.recoveryTotalCount + 1;
+    if (fingerprintAttempts > MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT || totalAttempts > MAX_TOTAL_RECOVERY_ATTEMPTS || claim.attempt.ordinal >= current.maxAttempts) {
+      return terminalFailure(
+        "continuation_recovery_budget_exhausted",
+        "The bounded recovery budget was exhausted.",
+        {
+          checkpoint: recoveryOutcome2.checkpoint,
+          recoveryFailure: failure,
+          delta,
+          verification
+        }
+      );
+    }
+    counts[failure.fingerprint] = fingerprintAttempts;
+    const recoveryState = {
+      failure,
+      fingerprintAttempts,
+      totalAttempts,
+      lastDecision: recoveryOutcome2.outcome === "recovering" ? "retry" : "wait_user"
+    };
+    const errorCode = `continuation_${failure.category}`;
+    const nextRunAt = recoveryOutcome2.outcome === "recovering" ? addMilliseconds2(now, Math.max(0, recoveryOutcome2.delaySeconds) * 1e3) : current.nextRunAt;
+    let deliveries;
+    let interrupts;
+    if (recoveryOutcome2.outcome === "waiting_user") {
+      const interruptId = continuationInterruptId(current.jobId, claim.attempt.attemptId, failure);
+      const prompt = truncateCharacters(redactContinuationText(recoveryOutcome2.prompt), 2e3);
+      interrupts = [{
+        interruptId,
+        attemptId: claim.attempt.attemptId,
+        prompt
+      }];
+      deliveries = [continuationInterruptDelivery(
+        current,
+        claim,
+        interruptId,
+        prompt,
+        failure,
+        recoveryState,
+        recoveryOutcome2.checkpoint,
+        now
+      )];
+    }
+    return transition(recoveryOutcome2.outcome, {
+      executionSessionId,
+      checkpoint: recoveryOutcome2.checkpoint,
+      recovery: recoveryState,
+      recoveryTotalCount: totalAttempts,
+      recoveryFingerprintCounts: counts,
+      nextRunAt,
+      errorCode,
+      errorSummary: recoveryOutcome2.reason
+    }, {
+      executionSessionId,
+      attemptOutcome: recoveryOutcome2.outcome,
+      attemptError: {
+        errorCode,
+        errorSummary: recoveryOutcome2.reason,
+        retryable: recoveryOutcome2.outcome === "recovering"
+      },
+      attemptRecovery: recoveryState,
+      delta,
+      verification,
+      failure,
+      ...deliveries ? { deliveries } : {},
+      ...interrupts ? { interrupts } : {}
+    });
+  };
+  const verificationRecovery = (checkpoint2, findings, noProgressCount) => {
+    if (noProgressCount >= 2) {
+      return terminalFailure(
+        "continuation_stalled",
+        "The continuation stopped after repeated attempts produced no verifiable progress.",
+        { checkpoint: checkpoint2, noProgressCount, delta, verification }
+      );
+    }
+    if (claim.attempt.ordinal >= current.maxAttempts) {
+      const reason = attemptBudgetTerminalReason(current, checkpoint2);
+      return partial2(
+        partialOutcomeFromCheckpoint(checkpoint2),
+        reason.errorCode,
+        checkpoint2,
+        reason.errorSummary
+      );
+    }
+    const summary = findings.slice(0, 20).map((finding) => truncateCharacters(finding, 500)).join(" ") || "The checkpoint requires revision.";
+    return transition("recovering", {
+      executionSessionId,
+      checkpoint: checkpoint2,
+      noProgressCount,
+      stepCount: current.stepCount + 1,
+      failureCount: 0,
+      nextRunAt: now,
+      errorCode: "continuation_verification_failed",
+      errorSummary: summary
+    }, {
+      executionSessionId,
+      attemptOutcome: "continue",
+      attemptError: {
+        errorCode: "continuation_verification_failed",
+        errorSummary: summary,
+        retryable: true
+      },
+      delta,
+      verification
+    });
+  };
+  if (rawVerification.status === "revision_required") {
+    return verificationRecovery(
+      current.checkpoint ?? checkpointFromInitialContext2(current.contextSnapshot),
+      rawVerification.findings,
+      delta.stateChanged ? 0 : current.noProgressCount + 1
+    );
+  }
+  if (outcome.outcome === "recovering" || outcome.outcome === "waiting_user") {
+    return recovery(outcome);
+  }
+  if (outcome.outcome === "continue") {
+    if (!progress) throw new Error("Continuation progress evaluation is missing.");
+    if (progress.decision === "recover") {
+      return verificationRecovery(
+        outcome.checkpoint,
+        ["A continue outcome requires one concrete next action."],
+        progress.noProgressCount
+      );
+    }
+    if (progress.decision === "fail_stalled") {
+      return terminalFailure(
+        "continuation_stalled",
+        "The continuation stopped after repeated attempts produced no verifiable progress.",
+        {
+          checkpoint: outcome.checkpoint,
+          noProgressCount: progress.noProgressCount,
+          delta,
+          verification
+        }
+      );
+    }
+    if (progress.decision === "finish_partial") {
+      const reason = attemptBudgetTerminalReason(current, outcome.checkpoint);
+      return partial2(
+        partialOutcomeFromCheckpoint(outcome.checkpoint),
+        reason.errorCode,
+        outcome.checkpoint,
+        reason.errorSummary
+      );
+    }
+    const nextRunAt = addMilliseconds2(now, Math.max(0, outcome.resumeAfterSeconds ?? 0) * 1e3);
+    return transition("waiting_retry", {
+      executionSessionId,
+      checkpoint: outcome.checkpoint,
+      noProgressCount: progress.noProgressCount,
+      stepCount: current.stepCount + 1,
+      failureCount: 0,
+      nextRunAt,
+      recovery: void 0,
+      errorCode: void 0,
+      errorSummary: void 0
+    }, {
+      executionSessionId,
+      attemptOutcome: "continue",
+      delta,
+      verification,
+      deliveries: [continuationProgressDelivery(current, claim, outcome, now)]
+    });
+  }
+  if (outcome.outcome === "completed") {
+    if (!progress || progress.decision !== "complete") {
+      throw new Error("Continuation completion evaluation is inconsistent.");
+    }
+    validateFinalResult(outcome.finalMessage, outcome.resultSummary, outcome.artifacts);
+    return transition("completed", {
+      executionSessionId,
+      checkpoint: outcome.checkpoint,
+      noProgressCount: progress.noProgressCount,
+      stepCount: current.stepCount + 1,
+      resultSummary: outcome.resultSummary,
+      resultArtifacts: outcome.artifacts,
+      recovery: void 0,
+      errorCode: void 0,
+      errorSummary: void 0
+    }, {
+      executionSessionId,
+      attemptOutcome: "completed",
+      delta,
+      verification,
+      deliveries: [continuationTerminalDelivery(
+        current,
+        `Task completed: ${current.jobId}
+${outcome.finalMessage}`,
+        now
+      )],
+      supersedeDeliveryKinds: ["progress", "interrupt"]
+    });
+  }
+  if (outcome.outcome === "partial") return partial2(outcome);
+  if (outcome.outcome === "blocked") {
+    assertJsonBytes("blocked result", outcome, CONTINUATION_LIMITS.finalMessageBytes);
+    const terminalRecovery = outcome.recoveryFailure ? continuationTerminalRecovery(current, outcome.recoveryFailure, "block") : null;
+    return transition("blocked", {
+      executionSessionId,
+      checkpoint: outcome.checkpoint,
+      stepCount: current.stepCount + 1,
+      resultSummary: outcome.errorSummary,
+      errorCode: outcome.errorCode,
+      errorSummary: outcome.errorSummary,
+      ...terminalRecovery ? {
+        recovery: terminalRecovery.state,
+        recoveryTotalCount: terminalRecovery.totalAttempts,
+        recoveryFingerprintCounts: terminalRecovery.counts
+      } : {}
+    }, {
+      executionSessionId,
+      attemptOutcome: "blocked",
+      attemptError: {
+        errorCode: outcome.errorCode,
+        errorSummary: outcome.errorSummary,
+        retryable: false
+      },
+      ...terminalRecovery ? { attemptRecovery: terminalRecovery.state } : {},
+      delta,
+      verification,
+      ...terminalRecovery ? { failure: terminalRecovery.state.failure } : {},
+      deliveries: [continuationTerminalDelivery(
+        current,
+        renderBlockedPayload(current.jobId, outcome, terminalRecovery?.state),
+        now
+      )],
+      supersedeDeliveryKinds: ["progress", "interrupt"]
+    });
+  }
+  if (outcome.retryable && hasOpaqueExecutionEffects(current)) {
+    const failedStep = outcome.checkpoint.currentStepId || continuationStepId(current);
+    return recovery({
+      outcome: "waiting_user",
+      checkpoint: outcome.checkpoint,
+      failure: {
+        category: "unknown",
+        retrySafety: "unknown",
+        capabilityAvailable: true,
+        operationRisk: "external_side_effect",
+        hints: ["Confirm the effects of the failed step before resuming."],
+        failedStep,
+        diagnostic: outcome.errorSummary,
+        fingerprint: createHash16("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+      },
+      prompt: "Confirm what the failed step changed, then resume with the observed result.",
+      reason: "The model requested a retry after opaque execution, so automatic replay is unsafe."
+    });
+  }
+  return buildContinuationFailureTransition(
+    claim,
+    current,
+    {
+      errorCode: outcome.errorCode,
+      errorSummary: outcome.errorSummary,
+      retryable: outcome.retryable
+    },
+    now,
+    jitter,
+    {
+      executionSessionId,
+      checkpoint: outcome.checkpoint,
+      recoveryFailure: outcome.recoveryFailure,
+      delta,
+      verification
+    }
+  );
+}
+function buildContinuationFailureTransition(claim, current, requestedFailure, now, jitter, options = {}) {
+  const executionSessionId = options.executionSessionId ?? current.executionSessionId;
+  if (requestedFailure.retryable && claim.durableClaim?.attempt.executionStartedAt && hasOpaqueExecutionEffects(current)) {
+    const failedStep = continuationStepId(current);
+    return buildContinuationStepTransition({
+      claim,
+      current,
+      result: {
+        executionSessionId,
+        outcome: {
+          outcome: "waiting_user",
+          checkpoint: options.checkpoint ?? current.checkpoint ?? checkpointFromInitialContext2(current.contextSnapshot),
+          failure: {
+            category: "unknown",
+            retrySafety: "unknown",
+            capabilityAvailable: true,
+            operationRisk: "external_side_effect",
+            hints: ["Confirm the effects of the interrupted step before resuming."],
+            failedStep,
+            diagnostic: requestedFailure.errorSummary,
+            fingerprint: createHash16("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+          },
+          prompt: "Confirm what the interrupted step changed, then resume with the observed result.",
+          reason: "The execution ended after an opaque operation started, so automatic replay is unsafe."
+        }
+      },
+      now,
+      progress: null,
+      delta: options.delta ?? createAttemptDelta(
+        current.checkpoint ?? null,
+        options.checkpoint ?? current.checkpoint ?? checkpointFromInitialContext2(current.contextSnapshot)
+      ),
+      verification: options.verification ?? { status: "accepted", findings: [] },
+      rawVerification: options.verification ?? { status: "accepted", findings: [] },
+      jitter
+    });
+  }
+  const failure = boundedFailure(requestedFailure);
+  const failureCount = current.failureCount + 1;
+  if (failure.retryable && failureCount <= current.maxRetries && claim.attempt.ordinal < current.maxAttempts && current.expiresAt > now) {
+    return continuationDurableTransition(claim, current, "waiting_retry", {
+      executionSessionId,
+      failureCount,
+      checkpoint: options.checkpoint ?? current.checkpoint,
+      nextRunAt: addMilliseconds2(now, retryDelayMs(failureCount, jitter())),
+      errorCode: failure.errorCode,
+      errorSummary: failure.errorSummary
+    }, now, {
+      executionSessionId,
+      attemptOutcome: "failed",
+      attemptError: failure,
+      ...options.delta ? { delta: options.delta } : {},
+      ...options.verification ? { verification: options.verification } : {}
+    });
+  }
+  const terminalRecovery = options.recoveryFailure ? continuationTerminalRecovery(current, options.recoveryFailure, "fail") : null;
+  return continuationDurableTransition(claim, current, "failed", {
+    executionSessionId,
+    failureCount,
+    checkpoint: options.checkpoint ?? current.checkpoint,
+    errorCode: failure.errorCode,
+    errorSummary: failure.errorSummary,
+    ...terminalRecovery ? {
+      recovery: terminalRecovery.state,
+      recoveryTotalCount: terminalRecovery.totalAttempts,
+      recoveryFingerprintCounts: terminalRecovery.counts
+    } : {}
+  }, now, {
+    executionSessionId,
+    attemptOutcome: "failed",
+    attemptError: { ...failure, retryable: false },
+    ...terminalRecovery ? { attemptRecovery: terminalRecovery.state } : {},
+    ...options.delta ? { delta: options.delta } : {},
+    ...options.verification ? { verification: options.verification } : {},
+    ...terminalRecovery ? { failure: terminalRecovery.state.failure } : {},
+    deliveries: [continuationTerminalDelivery(
+      current,
+      renderFailedPayload(current.jobId, failure.errorSummary, terminalRecovery?.state),
+      now
+    )],
+    supersedeDeliveryKinds: ["progress", "interrupt"]
+  });
+}
+function durableFailureForContinuationFailure(claim, failure) {
+  const bounded = boundedFailure(failure);
+  const failedStep = continuationStepId(claim.job);
+  return {
+    category: bounded.retryable ? "transient" : "terminal",
+    retrySafety: bounded.retryable ? "safe" : "unsafe",
+    capabilityAvailable: true,
+    operationRisk: "unknown",
+    hints: [],
+    failedStep,
+    diagnostic: bounded.errorSummary,
+    fingerprint: createHash16("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
+  };
+}
+function continuationDurableTransition(claim, current, status, patch, now, extras) {
+  const job = {
+    ...current,
+    ...patch,
+    status,
+    rowVersion: claim.claimedRowVersion + 1,
+    updatedAt: now,
+    ...isContinuationTerminal(status) ? { completedAt: now } : {}
+  };
+  delete job.leaseOwner;
+  delete job.leaseExpiresAt;
+  delete job.heartbeatAt;
+  delete job.deliveryStatus;
+  delete job.deliveryEvents;
+  delete job.currentInterrupt;
+  const attemptMetadata = {
+    ...extras.attemptRecovery ? { recovery: extras.attemptRecovery } : {},
+    ...extras.delta ? { stepId: extras.delta.stepId, delta: extras.delta } : {},
+    ...extras.verification ? { verification: extras.verification } : {}
+  };
+  return {
+    status,
+    stateVersion: 1,
+    state: asyncTaskStateEnvelopeFromJob(job),
+    ...status === "waiting_retry" || status === "recovering" ? { nextRunAt: job.nextRunAt } : {},
+    ...job.errorCode ? { errorCode: job.errorCode } : {},
+    ...job.errorSummary ? { errorSummary: job.errorSummary } : {},
+    ...extras.failure ? { failure: extras.failure } : {},
+    attempt: {
+      outcome: extras.attemptOutcome,
+      executionSessionId: extras.executionSessionId ?? null,
+      ...extras.attemptError ? {
+        errorCode: extras.attemptError.errorCode,
+        errorSummary: extras.attemptError.errorSummary
+      } : {},
+      metadata: attemptMetadata
+    },
+    ...extras.deliveries ? { deliveries: extras.deliveries } : {},
+    ...extras.interrupts ? { interrupts: extras.interrupts } : {},
+    ...extras.supersedeDeliveryKinds ? { supersedeDeliveryKinds: extras.supersedeDeliveryKinds } : {}
+  };
+}
+function continuationTerminalRecovery(current, requestedFailure, lastDecision) {
+  const failure = boundedDurableRunFailure(requestedFailure);
+  const counts = { ...current.recoveryFingerprintCounts };
+  const fingerprintAttempts = (counts[failure.fingerprint] ?? 0) + 1;
+  const totalAttempts = current.recoveryTotalCount + 1;
+  counts[failure.fingerprint] = fingerprintAttempts;
+  const state = {
+    failure,
+    fingerprintAttempts,
+    totalAttempts,
+    lastDecision
+  };
+  assertJsonBytes("recovery state", state, CONTINUATION_LIMITS.contextSnapshotBytes);
+  return { state, totalAttempts, counts };
+}
+function continuationTerminalDelivery(job, payload, now) {
+  return {
+    outboxId: makeId("out"),
+    eventKey: "terminal",
+    kind: "terminal",
+    attemptId: null,
+    route: job.route,
+    idempotencyKey: deliveryIdempotencyKey(job.jobId, "terminal"),
+    payload,
+    createdAt: now,
+    nextAttemptAt: now
+  };
+}
+function continuationProgressDelivery(job, claim, outcome, now) {
+  const eventKey = `progress:${claim.attempt.attemptId}`;
+  return {
+    outboxId: makeId("out"),
+    eventKey,
+    kind: "progress",
+    attemptId: claim.attempt.attemptId,
+    route: job.route,
+    idempotencyKey: deliveryIdempotencyKey(job.jobId, eventKey),
+    payload: renderProgressPayload(job, claim, outcome),
+    metadata: { blocksRun: true },
+    createdAt: now,
+    nextAttemptAt: now
+  };
+}
+function continuationInterruptId(jobId, attemptId, failure) {
+  return `int_${createHash16("sha256").update(`${jobId}\0${attemptId}\0${failure.fingerprint}`).digest("hex").slice(0, 24)}`;
+}
+function continuationInterruptDelivery(job, claim, interruptId, prompt, failure, recovery, checkpoint2, now) {
+  const eventKey = `interrupt:${interruptId}`;
+  return {
+    outboxId: makeId("out"),
+    eventKey,
+    kind: "interrupt",
+    attemptId: claim.attempt.attemptId,
+    route: job.route,
+    idempotencyKey: deliveryIdempotencyKey(job.jobId, eventKey),
+    payload: renderInterruptPayload(
+      job,
+      claim,
+      interruptId,
+      prompt,
+      failure,
+      recovery,
+      checkpoint2
+    ),
+    createdAt: now,
+    nextAttemptAt: now
+  };
+}
+function durableClaimKey(jobId, workerId) {
+  return `${jobId}\0${workerId}`;
+}
+function continuationJobForCommandState(current, status, rowVersion, now) {
+  const next = {
+    ...current,
+    status,
+    rowVersion,
+    updatedAt: now,
+    ...isContinuationTerminal(status) ? { completedAt: now } : {}
+  };
+  delete next.leaseOwner;
+  delete next.leaseExpiresAt;
+  delete next.heartbeatAt;
+  delete next.deliveryStatus;
+  delete next.deliveryEvents;
+  delete next.currentInterrupt;
+  return next;
+}
+function claimProjectionMatches(claim) {
+  return claim.job.jobId === claim.attempt.jobId && claim.workerId === claim.attempt.workerId && claim.job.leaseOwner === claim.workerId && claim.job.rowVersion === claim.claimedRowVersion;
+}
+function timestampAfterElapsed(timestamp, startedAt) {
+  const elapsedMilliseconds = Number((process.hrtime.bigint() - startedAt) / 1000000n);
+  return elapsedMilliseconds > 0 ? addMilliseconds2(timestamp, elapsedMilliseconds) : timestamp;
+}
+function assertOneChange(changes, jobId) {
+  if (Number(changes) !== 1) throw staleClaimError(jobId);
+}
+function staleClaimError(jobId) {
+  return new Error(`Stale continuation claim for ${jobId}.`);
+}
+
+// src/continuation/sqlite-database.ts
+import fs21 from "node:fs/promises";
+import path22 from "node:path";
+var ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
+async function openContinuationDatabase(databasePath) {
+  const resolvedPath = path22.resolve(databasePath);
+  await fs21.mkdir(path22.dirname(resolvedPath), { recursive: true, mode: 448 });
+  await fs21.chmod(path22.dirname(resolvedPath), 448);
+  const { DatabaseSync } = await import("node:sqlite");
+  const database = new DatabaseSync(resolvedPath, {
+    timeout: 5e3,
+    enableForeignKeyConstraints: true
+  });
+  try {
+    await fs21.chmod(resolvedPath, 384);
+    return database;
+  } catch (error51) {
+    database.close();
+    throw error51;
+  }
+}
+async function initializeContinuationDatabase(database) {
+  const existingVersion = Number(scalar(database, "PRAGMA user_version"));
+  if (existingVersion > DURABLE_RUN_SCHEMA_VERSION && existingVersion !== ASYNC_TASK_FACTS_MIGRATION_VERSION) {
+    throw new Error(
+      `Unsupported continuation database schema version ${existingVersion}; expected at most ${DURABLE_RUN_SCHEMA_VERSION}.`
+    );
+  }
+  database.exec(`
+    PRAGMA busy_timeout = 5000;
+    PRAGMA foreign_keys = ON;
+  `);
+  await retrySqliteBusy2(() => database.exec("PRAGMA journal_mode = WAL;"), 5e3);
+  database.exec("PRAGMA synchronous = NORMAL;");
+  await retrySqliteBusy2(() => {
+    migrateSqliteToDurableV10(database);
+    installContinuationCompatibilitySchema(database);
+  }, 5e3);
+  healthCheckContinuationDatabase(database);
+}
+function healthCheckContinuationDatabase(database) {
+  const version2 = Number(scalar(database, "PRAGMA user_version"));
+  if (version2 !== DURABLE_RUN_SCHEMA_VERSION) {
+    throw new Error(
+      `Unsupported continuation database schema version ${version2}; expected ${DURABLE_RUN_SCHEMA_VERSION}.`
+    );
+  }
+  const row = database.prepare("PRAGMA quick_check").get();
+  const value = row ? String(Object.values(row)[0]) : "";
+  if (value !== "ok") throw new Error(`Continuation database quick_check failed: ${value}`);
+}
+function scalar(database, sql) {
+  const row = database.prepare(sql).get();
+  if (!row) return null;
+  return Object.values(row)[0];
+}
+async function retrySqliteBusy2(operation, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      operation();
+      return;
+    } catch (error51) {
+      const sqliteError = error51;
+      if (Date.now() >= deadline || sqliteError.errcode !== 5 && !/database is (?:locked|busy)/i.test(sqliteError.message)) throw error51;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+}
+
+// src/continuation/sqlite-repository.ts
+var OUTCOME_DRIVEN_SCHEMA_VERSION = 8;
+var SCHEMA_VERSION = DURABLE_RUN_SCHEMA_VERSION;
 var SqliteContinuationRepository = class _SqliteContinuationRepository {
   constructor(database, artifacts, inputs, jitter) {
     this.database = database;
@@ -68514,20 +70218,13 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
   verifier;
   durableRuns;
   static async open(options) {
-    const databasePath = path21.resolve(options.databasePath);
-    await fs21.mkdir(path21.dirname(databasePath), { recursive: true, mode: 448 });
-    await fs21.chmod(path21.dirname(databasePath), 448);
-    const { DatabaseSync } = await import("node:sqlite");
-    const database = new DatabaseSync(databasePath, {
-      timeout: 5e3,
-      enableForeignKeyConstraints: true
-    });
+    const databasePath = path23.resolve(options.databasePath);
+    const database = await openContinuationDatabase(databasePath);
     try {
-      await fs21.chmod(databasePath, 384);
       const artifacts = options.artifactStore ?? new ContinuationArtifactStore(options.artifactsDir);
       await artifacts.ensureRoot();
       const inputs = options.inputStore ?? new ContinuationInputStore(
-        options.inputsDir ?? path21.join(path21.dirname(path21.resolve(options.artifactsDir)), "inputs")
+        options.inputsDir ?? path23.join(path23.dirname(path23.resolve(options.artifactsDir)), "inputs")
       );
       await inputs.ensureRoot();
       const repository = new _SqliteContinuationRepository(
@@ -68545,34 +70242,10 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
     }
   }
   async initialize() {
-    const existingVersion = Number(this.scalar("PRAGMA user_version"));
-    if (existingVersion > SCHEMA_VERSION && existingVersion !== ASYNC_TASK_FACTS_MIGRATION_VERSION) {
-      throw new Error(
-        `Unsupported continuation database schema version ${existingVersion}; expected at most ${SCHEMA_VERSION}.`
-      );
-    }
-    this.database.exec(`
-      PRAGMA busy_timeout = 5000;
-      PRAGMA foreign_keys = ON;
-    `);
-    await retrySqliteBusy2(() => this.database.exec("PRAGMA journal_mode = WAL;"), 5e3);
-    this.database.exec("PRAGMA synchronous = NORMAL;");
-    await retrySqliteBusy2(() => {
-      migrateSqliteToDurableV10(this.database);
-      installContinuationCompatibilitySchema(this.database);
-    }, 5e3);
-    await this.healthCheck();
+    await initializeContinuationDatabase(this.database);
   }
   async healthCheck() {
-    const version2 = Number(this.scalar("PRAGMA user_version"));
-    if (version2 !== SCHEMA_VERSION) {
-      throw new Error(
-        `Unsupported continuation database schema version ${version2}; expected ${SCHEMA_VERSION}.`
-      );
-    }
-    const row = this.database.prepare("PRAGMA quick_check").get();
-    const value = row ? String(Object.values(row)[0]) : "";
-    if (value !== "ok") throw new Error(`Continuation database quick_check failed: ${value}`);
+    healthCheckContinuationDatabase(this.database);
   }
   async create(request) {
     validateCreateRequest2(request);
@@ -69384,7 +71057,7 @@ The continuation reached its maximum age.`,
       );
       if (!claim) return null;
       const job = await this.get(claim.runId);
-      if (!job || !isDeepStrictEqual2(claim.route, job.route)) {
+      if (!job || !isDeepStrictEqual3(claim.route, job.route)) {
         await this.durableRuns.commitDelivery(claim, {
           status: "failed",
           errorCode: "continuation_delivery_route_invalid",
@@ -69763,7 +71436,7 @@ The continuation reached its maximum age.`,
         parseTrustedJson(row.input_json, "durable_runs.input_json"),
         numberField(row, "input_version")
       );
-      if (job.jobId !== jobId || job.idempotencyKey !== stringField(row, "idempotency_key") || job.creatorOpenId !== stringField(row, "actor_open_id") || !isDeepStrictEqual2(job.route, route)) return null;
+      if (job.jobId !== jobId || job.idempotencyKey !== stringField(row, "idempotency_key") || job.creatorOpenId !== stringField(row, "actor_open_id") || !isDeepStrictEqual3(job.route, route)) return null;
       return job;
     } catch {
       return null;
@@ -70066,1648 +71739,6 @@ Stored task state failed integrity validation.`;
     return Object.values(row)[0];
   }
 };
-function jobSelectSql(includeOutcomeState = true, includeInterruptState = includeOutcomeState) {
-  const outcomeState = includeOutcomeState ? `(SELECT a.delta_json FROM continuation_attempts a
-            WHERE a.job_id = j.job_id AND a.finished_at IS NOT NULL AND a.delta_json IS NOT NULL
-            ORDER BY a.ordinal DESC LIMIT 1) AS last_delta_json,
-           (SELECT a.verification_json FROM continuation_attempts a
-            WHERE a.job_id = j.job_id AND a.finished_at IS NOT NULL AND a.verification_json IS NOT NULL
-            ORDER BY a.ordinal DESC LIMIT 1) AS last_verification_json` : `0 AS no_progress_count, NULL AS last_delta_json, NULL AS last_verification_json`;
-  const interruptState = includeInterruptState ? `(SELECT i.interrupt_id FROM continuation_interrupts i
-            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_id,
-           (SELECT i.attempt_id FROM continuation_interrupts i
-            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_attempt_id,
-           (SELECT i.status FROM continuation_interrupts i
-            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_status,
-           (SELECT i.prompt FROM continuation_interrupts i
-            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_prompt,
-           (SELECT i.response_text FROM continuation_interrupts i
-            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_response,
-           (SELECT i.created_at FROM continuation_interrupts i
-            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_created_at,
-           (SELECT i.resolved_at FROM continuation_interrupts i
-            WHERE i.job_id = j.job_id ORDER BY i.created_at DESC LIMIT 1) AS current_interrupt_resolved_at,
-           (SELECT o.message_id FROM continuation_outbox o
-            WHERE o.job_id = j.job_id AND o.kind = 'interrupt'
-            ORDER BY o.created_at DESC LIMIT 1) AS current_interrupt_message_id,
-           (SELECT o.updated_at FROM continuation_outbox o
-            WHERE o.job_id = j.job_id AND o.kind = 'interrupt' AND o.status = 'delivered'
-            ORDER BY o.created_at DESC LIMIT 1) AS current_interrupt_delivered_at` : `NULL AS current_interrupt_id, NULL AS current_interrupt_attempt_id,
-       NULL AS current_interrupt_status, NULL AS current_interrupt_prompt,
-       NULL AS current_interrupt_response, NULL AS current_interrupt_created_at,
-       NULL AS current_interrupt_resolved_at, NULL AS current_interrupt_message_id,
-       NULL AS current_interrupt_delivered_at`;
-  return `
-    SELECT j.*,
-           (SELECT o.status FROM continuation_outbox o
-            WHERE o.job_id = j.job_id AND o.kind = 'terminal'
-            LIMIT 1) AS delivery_status,
-           (SELECT COUNT(*) FROM continuation_attempts a WHERE a.job_id = j.job_id) AS attempt_count,
-           ${interruptState},
-           ${outcomeState}
-    FROM continuation_jobs j
-  `;
-}
-function mapPendingInterruptRoute(row) {
-  const route = parseTrustedJson(row.route_json, "continuation interrupt route");
-  if (!isDeliveryRoute2(route)) throw new Error("Continuation interrupt route is invalid.");
-  return {
-    interruptId: stringField(row, "interrupt_id"),
-    jobId: stringField(row, "job_id"),
-    route,
-    deliveredMessageId: optionalStringField(row, "message_id")
-  };
-}
-function mapJob(row) {
-  const routeValue = parseTrustedJson(row.route_json, "route_json");
-  if (!isDeliveryRoute2(routeValue)) throw new Error("Continuation delivery route is invalid.");
-  const sourceFactsValue = parseTrustedJson(row.source_facts_json, "source_facts_json");
-  validateSourceFacts(sourceFactsValue);
-  const taskContractValue = parseTrustedJson(row.task_contract_json, "task_contract_json");
-  validateTaskContract(taskContractValue, sourceFactsValue.provenance === "captured");
-  const creatorOpenId = stringField(row, "creator_open_id");
-  const sourceMessageId = stringField(row, "source_message_id");
-  const sourceThreadId = optionalStringField(row, "source_thread_id");
-  const title = stringField(row, "title");
-  const objective = stringField(row, "objective");
-  const acceptanceCriteria = parseTrustedStringArray(
-    row.acceptance_criteria_json,
-    "acceptance_criteria_json"
-  );
-  const contextSnapshot = parseTrustedCheckpoint(
-    row.context_snapshot_json,
-    "context_snapshot_json"
-  );
-  const workingDirectory = stringField(row, "working_directory");
-  const permissions = parsePermissionEnvelope(row.permissions_json);
-  const requiredTools = parseTrustedStringArray(row.required_tools_json, "required_tools_json");
-  if (!sameStringSet(requiredTools, permissions.hostTools)) {
-    throw new Error("Continuation persisted host tools are inconsistent.");
-  }
-  const model = optionalStringField(row, "model");
-  const recovery = row.recovery_json ? parseTrustedRecoveryState(row.recovery_json, "recovery_json") : void 0;
-  const recoveryFingerprintCounts = row.recovery_fingerprint_counts_json === void 0 ? {} : parseTrustedCountRecord(
-    row.recovery_fingerprint_counts_json,
-    "recovery_fingerprint_counts_json"
-  );
-  const interruptId = optionalStringField(row, "current_interrupt_id");
-  validatePersistedFactProjection(row, {
-    route: routeValue,
-    sourceFacts: sourceFactsValue,
-    taskContract: taskContractValue,
-    creatorOpenId,
-    sourceMessageId,
-    sourceThreadId,
-    title,
-    objective,
-    acceptanceCriteria,
-    contextSnapshot,
-    workingDirectory,
-    permissions,
-    model
-  });
-  return {
-    jobId: stringField(row, "job_id"),
-    idempotencyKey: stringField(row, "idempotency_key"),
-    retryOfJobId: optionalStringField(row, "retry_of_job_id"),
-    creatorOpenId,
-    route: routeValue,
-    sourceMessageId,
-    sourceThreadId,
-    title,
-    objective,
-    acceptanceCriteria,
-    contextSnapshot,
-    sourceFacts: sourceFactsValue,
-    taskContract: taskContractValue,
-    requiredTools,
-    workingDirectory,
-    permissions,
-    model,
-    parentSessionId: optionalStringField(row, "parent_session_id"),
-    maxAttempts: numberField(row, "max_attempts"),
-    maxRetries: numberField(row, "max_retries"),
-    timeoutSeconds: numberField(row, "timeout_seconds"),
-    createdAt: stringField(row, "created_at"),
-    expiresAt: stringField(row, "expires_at"),
-    rowVersion: numberField(row, "row_version"),
-    status: stringField(row, "status"),
-    executionSessionId: optionalStringField(row, "execution_session_id"),
-    checkpoint: row.checkpoint_json ? parseTrustedCheckpointV2(row.checkpoint_json, "checkpoint_json") : void 0,
-    lastAttemptDelta: row.last_delta_json ? parseTrustedAttemptDelta(row.last_delta_json, "last_delta_json") : void 0,
-    lastVerification: row.last_verification_json ? parseTrustedVerification(row.last_verification_json, "last_verification_json") : void 0,
-    recovery,
-    recoveryTotalCount: row.recovery_total_count === void 0 ? 0 : numberField(row, "recovery_total_count"),
-    recoveryFingerprintCounts,
-    currentInterrupt: interruptId ? {
-      interruptId,
-      jobId: stringField(row, "job_id"),
-      attemptId: stringField(row, "current_interrupt_attempt_id"),
-      status: optionalStringField(row, "current_interrupt_status") === "resolved" ? "resolved" : optionalStringField(row, "current_interrupt_message_id") ? "delivered" : "pending",
-      prompt: stringField(row, "current_interrupt_prompt"),
-      deliveredMessageId: optionalStringField(row, "current_interrupt_message_id"),
-      responseText: optionalStringField(row, "current_interrupt_response"),
-      createdAt: stringField(row, "current_interrupt_created_at"),
-      deliveredAt: optionalStringField(row, "current_interrupt_delivered_at"),
-      resolvedAt: optionalStringField(row, "current_interrupt_resolved_at")
-    } : void 0,
-    noProgressCount: numberField(row, "no_progress_count"),
-    attemptCount: numberField(row, "attempt_count"),
-    stepCount: numberField(row, "step_count"),
-    failureCount: numberField(row, "failure_count"),
-    nextRunAt: stringField(row, "next_run_at"),
-    leaseOwner: optionalStringField(row, "lease_owner"),
-    leaseExpiresAt: optionalStringField(row, "lease_expires_at"),
-    heartbeatAt: optionalStringField(row, "heartbeat_at"),
-    resultSummary: optionalStringField(row, "result_summary"),
-    resultArtifacts: parseTrustedResultArtifacts(
-      row.result_artifacts_json,
-      "result_artifacts_json"
-    ),
-    errorCode: optionalStringField(row, "error_code"),
-    errorSummary: optionalStringField(row, "error_summary"),
-    startedAt: optionalStringField(row, "started_at"),
-    updatedAt: stringField(row, "updated_at"),
-    completedAt: optionalStringField(row, "completed_at"),
-    deletedAt: optionalStringField(row, "deleted_at"),
-    retained: numberField(row, "retain") === 1,
-    deliveryStatus: optionalStringField(row, "delivery_status")
-  };
-}
-function validatePersistedFactProjection(row, value) {
-  const {
-    route,
-    sourceFacts,
-    taskContract,
-    creatorOpenId,
-    sourceMessageId,
-    sourceThreadId,
-    title,
-    objective,
-    acceptanceCriteria,
-    contextSnapshot,
-    workingDirectory,
-    permissions,
-    model
-  } = value;
-  const expectedChatId = route.kind === "message_thread" ? route.conversationId : `doc:${route.documentToken}`;
-  if (stringField(row, "origin_kind") !== route.kind || !isDeepStrictEqual2(route, sourceFacts.route) || sourceFacts.sourceMessageId !== sourceMessageId || sourceFacts.sourceThreadId !== sourceThreadId || sourceFacts.chatId !== expectedChatId || sourceFacts.workingDirectory !== workingDirectory || sourceFacts.model !== (model ?? null) || !isDeepStrictEqual2(sourceFacts.permissions, permissions) || taskContract.title !== title || taskContract.objective !== objective || !isDeepStrictEqual2(
-    taskContract.acceptanceCriteria.map((criterion) => criterion.description),
-    acceptanceCriteria
-  ) || !isDeepStrictEqual2(taskContract.initialContext, contextSnapshot) || route.kind === "message_thread" && route.sourceMessageId !== sourceMessageId || !routeMatchesSourceThread(route, sourceThreadId) || sourceFacts.provenance === "captured" && sourceFacts.creatorOpenId !== creatorOpenId) {
-    throw new Error("Continuation persisted facts and execution projection are inconsistent.");
-  }
-}
-function projectCreateRequest(request, inputs) {
-  const taskContract = {
-    schemaVersion: 1,
-    title: redactContinuationText(request.taskContract.title),
-    objective: redactContinuationText(request.taskContract.objective),
-    deliverables: request.taskContract.deliverables.map((deliverable) => ({
-      id: deliverable.id,
-      description: redactContinuationText(deliverable.description),
-      required: deliverable.required
-    })),
-    acceptanceCriteria: request.taskContract.acceptanceCriteria.map((criterion) => ({
-      id: criterion.id,
-      description: redactContinuationText(criterion.description),
-      deliverableIds: [...criterion.deliverableIds]
-    })),
-    verificationRequirements: request.taskContract.verificationRequirements.map((requirement) => ({
-      id: requirement.id,
-      description: redactContinuationText(requirement.description),
-      kind: requirement.kind
-    })),
-    initialContext: redactCheckpoint(request.taskContract.initialContext)
-  };
-  const sourceFacts = {
-    schemaVersion: 1,
-    provenance: request.sourceFacts.provenance,
-    originalUserText: request.sourceFacts.originalUserText === null ? null : redactContinuationText(request.sourceFacts.originalUserText),
-    sourceContextText: request.sourceFacts.sourceContextText === null ? null : redactContinuationText(request.sourceFacts.sourceContextText),
-    quotedMessageText: request.sourceFacts.quotedMessageText === null ? null : redactContinuationText(request.sourceFacts.quotedMessageText),
-    route: request.route,
-    creatorOpenId: request.creatorOpenId,
-    chatId: request.sourceFacts.chatId,
-    chatType: request.sourceFacts.chatType,
-    sourceMessageId: request.sourceMessageId,
-    ...request.sourceThreadId ? { sourceThreadId: request.sourceThreadId } : {},
-    sourceMessageType: request.sourceFacts.sourceMessageType,
-    sourceTimestamp: request.sourceFacts.sourceTimestamp,
-    inputs: inputs.map((input) => ({ ...input })),
-    workingDirectory: request.workingDirectory,
-    model: request.model ?? null,
-    permissions: request.permissions
-  };
-  return {
-    ...request,
-    title: taskContract.title,
-    objective: taskContract.objective,
-    acceptanceCriteria: taskContract.acceptanceCriteria.map((criterion) => criterion.description),
-    contextSnapshot: taskContract.initialContext,
-    sourceFacts,
-    taskContract
-  };
-}
-function continuationJobForCreate(jobId, request) {
-  const {
-    sourceInputs: _sourceInputs,
-    resumeCheckpoint,
-    resumeArtifactSourceJobId: _resumeArtifactSourceJobId,
-    ...persisted
-  } = request;
-  return {
-    ...persisted,
-    jobId,
-    rowVersion: 1,
-    status: "queued",
-    ...resumeCheckpoint ? { checkpoint: resumeCheckpoint } : {},
-    recoveryTotalCount: 0,
-    recoveryFingerprintCounts: {},
-    noProgressCount: 0,
-    attemptCount: 0,
-    stepCount: 0,
-    failureCount: 0,
-    nextRunAt: request.createdAt,
-    resultArtifacts: [],
-    updatedAt: request.createdAt,
-    retained: false
-  };
-}
-function createRequestFingerprint(request) {
-  const sourceInputDescriptors = request.sourceInputs.map((input) => ({
-    kind: input.kind
-  }));
-  return createHash15("sha256").update(JSON.stringify({
-    idempotencyKey: request.idempotencyKey,
-    retryOfJobId: request.retryOfJobId ?? null,
-    creatorOpenId: request.creatorOpenId,
-    route: request.route,
-    sourceMessageId: request.sourceMessageId,
-    sourceThreadId: request.sourceThreadId ?? null,
-    sourceFacts: { ...request.sourceFacts, inputs: [] },
-    taskContract: request.taskContract,
-    sourceInputDescriptors,
-    resumeCheckpoint: request.resumeCheckpoint ?? null,
-    resumeArtifactSourceJobId: request.resumeArtifactSourceJobId ?? null
-  })).digest("hex");
-}
-function redactCheckpoint(checkpoint2) {
-  return {
-    summary: redactContinuationText(checkpoint2.summary),
-    completedSteps: checkpoint2.completedSteps.map(redactContinuationText),
-    remainingSteps: checkpoint2.remainingSteps.map(redactContinuationText),
-    constraints: checkpoint2.constraints.map(redactContinuationText),
-    decisions: checkpoint2.decisions.map(redactContinuationText),
-    references: checkpoint2.references.map(redactContinuationText)
-  };
-}
-function redactedLegacyFacts() {
-  return {
-    schemaVersion: 1,
-    provenance: "legacy_unavailable",
-    originalUserText: null,
-    sourceContextText: null,
-    quotedMessageText: null,
-    creatorOpenId: "",
-    chatId: "",
-    chatType: "",
-    route: emptyRoute(),
-    sourceMessageId: "",
-    sourceMessageType: null,
-    sourceTimestamp: null,
-    inputs: [],
-    workingDirectory: "",
-    model: null,
-    permissions: EMPTY_PERMISSION_ENVELOPE
-  };
-}
-function redactedLegacyContract() {
-  return {
-    schemaVersion: 1,
-    title: "",
-    objective: "",
-    deliverables: [],
-    acceptanceCriteria: [],
-    verificationRequirements: [],
-    initialContext: EMPTY_CHECKPOINT
-  };
-}
-function trustedRouteFromCorruptRow(row) {
-  try {
-    const route = parseTrustedJson(row.route_json, "route_json");
-    const rawFacts = parseTrustedJson(row.source_facts_json, "source_facts_json");
-    if (!isDeliveryRoute2(route) || !isRecord5(rawFacts) || !isDeliveryRoute2(rawFacts.route)) {
-      return null;
-    }
-    const sourceMessageId = stringField(row, "source_message_id");
-    const sourceThreadId = optionalStringField(row, "source_thread_id");
-    const expectedChatId = route.kind === "message_thread" ? route.conversationId : `doc:${route.documentToken}`;
-    if (stringField(row, "origin_kind") !== route.kind || !isDeepStrictEqual2(route, rawFacts.route) || rawFacts.sourceMessageId !== sourceMessageId || rawFacts.sourceThreadId !== sourceThreadId || rawFacts.chatId !== expectedChatId || route.kind === "message_thread" && route.sourceMessageId !== sourceMessageId || !routeMatchesSourceThread(route, sourceThreadId)) return null;
-    return route;
-  } catch {
-    return null;
-  }
-}
-function corruptTombstoneFacts(row, route, sourceMessageId, sourceThreadId) {
-  return {
-    schemaVersion: 1,
-    provenance: "legacy_unavailable",
-    originalUserText: null,
-    sourceContextText: null,
-    quotedMessageText: null,
-    creatorOpenId: stringField(row, "creator_open_id"),
-    chatId: route.kind === "message_thread" ? route.conversationId : `doc:${route.documentToken}`,
-    chatType: route.kind === "comment_thread" ? "doc_comment" : "",
-    route,
-    sourceMessageId,
-    ...sourceThreadId ? { sourceThreadId } : {},
-    sourceMessageType: null,
-    sourceTimestamp: null,
-    inputs: [],
-    workingDirectory: "",
-    model: null,
-    permissions: EMPTY_PERMISSION_ENVELOPE
-  };
-}
-function corruptTombstoneContract() {
-  return {
-    schemaVersion: 1,
-    title: "Unavailable task state",
-    objective: "Stored task state failed integrity validation.",
-    deliverables: [],
-    acceptanceCriteria: [],
-    verificationRequirements: [],
-    initialContext: EMPTY_CHECKPOINT
-  };
-}
-function validateCreateRequest2(request) {
-  if (!request.idempotencyKey) throw new Error("Continuation idempotency key is required.");
-  if (request.title.length > CONTINUATION_LIMITS.titleChars) {
-    throw new Error(`Continuation title exceeds ${CONTINUATION_LIMITS.titleChars} characters.`);
-  }
-  assertUtf8Bytes("objective", request.objective, CONTINUATION_LIMITS.objectiveBytes);
-  if (request.acceptanceCriteria.length > CONTINUATION_LIMITS.acceptanceCriteriaCount) {
-    throw new Error("Continuation acceptance criteria count exceeds the configured limit.");
-  }
-  assertJsonBytes(
-    "acceptance criteria",
-    request.acceptanceCriteria,
-    CONTINUATION_LIMITS.contextSnapshotBytes
-  );
-  assertJsonBytes(
-    "context snapshot",
-    request.contextSnapshot,
-    CONTINUATION_LIMITS.contextSnapshotBytes
-  );
-  assertJsonBytes("required tools", request.requiredTools, CONTINUATION_LIMITS.objectiveBytes);
-  validatePermissionEnvelope(request.permissions, true);
-  if (!sameStringSet(request.permissions.hostTools, request.requiredTools)) {
-    throw new Error("Continuation permission host tools must match required tools.");
-  }
-  assertJsonBytes("permission envelope", request.permissions, CONTINUATION_LIMITS.contextSnapshotBytes);
-  if (!isDeliveryRoute2(request.route)) throw new Error("Continuation delivery route is invalid.");
-  if (!routeMatchesSourceThread(request.route, request.sourceThreadId)) {
-    throw new Error("Continuation delivery route does not match the source thread.");
-  }
-  assertJsonBytes("delivery route", request.route, CONTINUATION_LIMITS.contextSnapshotBytes);
-  validateSourceFacts(request.sourceFacts);
-  validateTaskContract(request.taskContract, request.sourceFacts.provenance === "captured");
-  assertJsonBytes("source inputs", request.sourceInputs.map((input) => ({
-    kind: input.kind,
-    fileName: input.fileName
-  })), CONTINUATION_LIMITS.contextSnapshotBytes);
-  if (request.resumeCheckpoint && !isCheckpointV22(request.resumeCheckpoint)) {
-    throw new Error("Continuation resume checkpoint is invalid.");
-  }
-  if (request.resumeCheckpoint?.artifacts.length && !request.resumeArtifactSourceJobId) {
-    throw new Error("Continuation resume artifacts require a source Job ID.");
-  }
-  if (request.resumeArtifactSourceJobId && !request.resumeCheckpoint?.artifacts.length) {
-    throw new Error("Continuation resume artifact source is not needed without checkpoint artifacts.");
-  }
-  if (!Number.isInteger(request.maxAttempts) || request.maxAttempts < 1 || request.maxAttempts > 20) {
-    throw new Error("Continuation maxAttempts must be an integer between 1 and 20.");
-  }
-  if (!Number.isInteger(request.maxRetries) || request.maxRetries < 0) {
-    throw new Error("Continuation maxRetries must be a non-negative integer.");
-  }
-  if (!Number.isInteger(request.timeoutSeconds) || request.timeoutSeconds < 1) {
-    throw new Error("Continuation timeoutSeconds must be a positive integer.");
-  }
-  if (!Number.isFinite(Date.parse(request.createdAt)) || !Number.isFinite(Date.parse(request.expiresAt))) {
-    throw new Error("Continuation timestamps must be valid ISO timestamps.");
-  }
-}
-function validateTaskContract(value, requireRequirements = false) {
-  if (!isRecord5(value) || !hasExactKeys(value, [
-    "schemaVersion",
-    "title",
-    "objective",
-    "deliverables",
-    "acceptanceCriteria",
-    "verificationRequirements",
-    "initialContext"
-  ])) throw new Error("Continuation task contract is invalid.");
-  const contract = value;
-  if (typeof contract.title !== "string" || typeof contract.objective !== "string" || !Array.isArray(contract.deliverables) || !Array.isArray(contract.acceptanceCriteria) || !Array.isArray(contract.verificationRequirements) || !isCheckpoint2(contract.initialContext) || !contract.deliverables.every((entry) => isRecord5(entry) && hasExactKeys(entry, ["id", "description", "required"]) && typeof entry.id === "string" && typeof entry.description === "string" && typeof entry.required === "boolean") || !contract.acceptanceCriteria.every((entry) => isRecord5(entry) && hasExactKeys(entry, ["id", "description", "deliverableIds"]) && typeof entry.id === "string" && typeof entry.description === "string" && Array.isArray(entry.deliverableIds) && entry.deliverableIds.every((id) => typeof id === "string")) || !contract.verificationRequirements.every((entry) => isRecord5(entry) && hasExactKeys(entry, ["id", "description", "kind"]) && typeof entry.id === "string" && typeof entry.description === "string" && (entry.kind === "artifact_exists" || entry.kind === "artifact_sha256" || entry.kind === "evidence_reference"))) {
-    throw new Error("Continuation task contract is invalid.");
-  }
-  if (contract.schemaVersion !== 1) throw new Error("Continuation task contract schema version is invalid.");
-  if (requireRequirements && (contract.title.trim().length === 0 || contract.objective.trim().length === 0 || contract.deliverables.length === 0 || !contract.deliverables.some((deliverable) => deliverable.required) || contract.deliverables.some((deliverable) => deliverable.description.trim().length === 0) || contract.acceptanceCriteria.length === 0 || contract.acceptanceCriteria.some((criterion) => criterion.description.trim().length === 0 || criterion.deliverableIds.length === 0) || contract.verificationRequirements.length === 0 || contract.verificationRequirements.some((requirement) => requirement.description.trim().length === 0))) {
-    throw new Error("Captured continuation task contract requirements must not be empty.");
-  }
-  if (contract.deliverables.length > CONTINUATION_LIMITS.deliverableCount) {
-    throw new Error("Continuation deliverable count exceeds the configured limit.");
-  }
-  if (contract.acceptanceCriteria.length > CONTINUATION_LIMITS.acceptanceCriteriaCount) {
-    throw new Error("Continuation acceptance criteria count exceeds the configured limit.");
-  }
-  if (contract.verificationRequirements.length > CONTINUATION_LIMITS.verificationRequirementCount) {
-    throw new Error("Continuation verification requirement count exceeds the configured limit.");
-  }
-  const validateIds2 = (label, entries) => {
-    const ids = /* @__PURE__ */ new Set();
-    for (const entry of entries) {
-      if (!CONTINUATION_CONTRACT_ID_PATTERN.test(entry.id)) {
-        throw new Error(`Continuation ${label} id is invalid.`);
-      }
-      if (redactContinuationText(entry.id) !== entry.id) {
-        throw new Error(`Continuation ${label} id must not contain a credential-shaped value.`);
-      }
-      if (ids.has(entry.id)) throw new Error(`Continuation ${label} ids must be unique.`);
-      ids.add(entry.id);
-    }
-    return ids;
-  };
-  const deliverableIds = validateIds2("deliverable", contract.deliverables);
-  validateIds2("acceptance criterion", contract.acceptanceCriteria);
-  validateIds2("verification requirement", contract.verificationRequirements);
-  for (const criterion of contract.acceptanceCriteria) {
-    for (const deliverableId of criterion.deliverableIds) {
-      if (!deliverableIds.has(deliverableId)) {
-        throw new Error(`Continuation acceptance criterion references unknown deliverable ${deliverableId}.`);
-      }
-    }
-  }
-  assertJsonBytes("task contract", contract, CONTINUATION_LIMITS.contextSnapshotBytes);
-}
-function validateSourceFacts(value) {
-  if (!isRecord5(value) || !hasExactKeys(value, [
-    "schemaVersion",
-    "provenance",
-    "originalUserText",
-    "sourceContextText",
-    "quotedMessageText",
-    "creatorOpenId",
-    "chatId",
-    "chatType",
-    "route",
-    "sourceMessageId",
-    "sourceThreadId",
-    "sourceMessageType",
-    "sourceTimestamp",
-    "inputs",
-    "workingDirectory",
-    "model",
-    "permissions"
-  ])) throw new Error("Continuation source facts are invalid.");
-  const facts = value;
-  if (facts.schemaVersion !== 1 || facts.provenance !== "captured" && facts.provenance !== "legacy_unavailable" || !isNullableString2(facts.originalUserText) || !isNullableString2(facts.sourceContextText) || !isNullableString2(facts.quotedMessageText) || typeof facts.creatorOpenId !== "string" || typeof facts.chatId !== "string" || typeof facts.chatType !== "string" || !isDeliveryRoute2(facts.route) || typeof facts.sourceMessageId !== "string" || facts.sourceThreadId !== void 0 && typeof facts.sourceThreadId !== "string" || !isNullableString2(facts.sourceMessageType) || !isNullableString2(facts.sourceTimestamp) || !Array.isArray(facts.inputs) || !facts.inputs.every(isManagedInputArtifact) || typeof facts.workingDirectory !== "string" || !isNullableString2(facts.model)) {
-    throw new Error("Continuation source facts are invalid.");
-  }
-  validateManagedInputArtifacts(facts.inputs);
-  validatePermissionEnvelope(facts.permissions, false);
-  assertJsonBytes("source facts", facts, CONTINUATION_LIMITS.contextSnapshotBytes);
-}
-function validateManagedInputArtifacts(inputs) {
-  if (inputs.length > CONTINUATION_LIMITS.inputFileCount) {
-    throw new Error("Continuation persisted input file count is invalid.");
-  }
-  const ids = /* @__PURE__ */ new Set();
-  const paths = /* @__PURE__ */ new Set();
-  let totalBytes = 0;
-  for (const input of inputs) {
-    if (ids.has(input.id) || paths.has(input.relativePath)) {
-      throw new Error("Continuation persisted input identities must be unique.");
-    }
-    ids.add(input.id);
-    paths.add(input.relativePath);
-    if (input.sizeBytes > CONTINUATION_LIMITS.inputBytesPerFile) {
-      throw new Error("Continuation persisted input file size is invalid.");
-    }
-    totalBytes += input.sizeBytes;
-    if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
-      throw new Error("Continuation persisted input total size is invalid.");
-    }
-  }
-}
-function validateFinalResult(finalMessage, resultSummary, artifacts) {
-  assertJsonBytes("final message", finalMessage, CONTINUATION_LIMITS.finalMessageBytes);
-  if (resultSummary !== void 0) {
-    assertJsonBytes("result summary", resultSummary, CONTINUATION_LIMITS.objectiveBytes);
-  }
-  if (artifacts.length > CONTINUATION_LIMITS.artifactCount) {
-    throw new Error(`Continuation result exceeds ${CONTINUATION_LIMITS.artifactCount} artifacts.`);
-  }
-  assertJsonBytes("result artifacts", artifacts, CONTINUATION_LIMITS.contextSnapshotBytes);
-}
-function validatePartialResult(outcome) {
-  assertJsonBytes("partial result", outcome, CONTINUATION_LIMITS.finalMessageBytes);
-  if (outcome.artifacts.length > CONTINUATION_LIMITS.artifactCount) {
-    throw new Error(`Continuation result exceeds ${CONTINUATION_LIMITS.artifactCount} artifacts.`);
-  }
-}
-function partialResultSummary(outcome) {
-  return outcome.keyFindings[0] ?? outcome.completedWork[0] ?? "The task produced a partial result.";
-}
-function renderPartialPayload(jobId, outcome, reason = "The continuation completed with a partial result.") {
-  return [
-    `Task partially completed: ${jobId}`,
-    `Reason: ${reason}`,
-    renderResultSection("Completed work", outcome.completedWork),
-    renderResultSection("Key findings", outcome.keyFindings),
-    renderResultSection("Remaining work", outcome.unperformedWork),
-    renderResultSection("Risks", outcome.risks),
-    renderResultSection("Next steps", outcome.nextSteps)
-  ].filter(Boolean).join("\n");
-}
-function renderBlockedPayload(jobId, outcome, recovery) {
-  return [
-    `Task blocked: ${jobId}`,
-    `Reason: ${outcome.errorSummary}`,
-    `Required capability: ${outcome.requiredCapability}`,
-    recovery ? `Failed step: ${recovery.failure.failedStep}` : "",
-    recovery ? `Failure category: ${recovery.failure.category}` : "",
-    recovery ? `Recovery attempts: ${recovery.fingerprintAttempts} for this failure, ${recovery.totalAttempts} total` : "",
-    recovery ? `Diagnostic: ${recovery.failure.diagnostic}` : "",
-    renderResultSection("Completed work", outcome.completedWork),
-    renderResultSection("Remaining work", outcome.unperformedWork)
-  ].filter(Boolean).join("\n");
-}
-function renderFailedPayload(jobId, errorSummary2, recovery) {
-  return [
-    `Task failed: ${jobId}`,
-    `Reason: ${errorSummary2}`,
-    recovery ? `Failed step: ${recovery.failure.failedStep}` : "",
-    recovery ? `Failure category: ${recovery.failure.category}` : "",
-    recovery ? `Recovery attempts: ${recovery.fingerprintAttempts} for this failure, ${recovery.totalAttempts} total` : "",
-    recovery ? `Diagnostic: ${recovery.failure.diagnostic}` : ""
-  ].filter(Boolean).join("\n");
-}
-function renderProgressPayload(job, claim, outcome) {
-  const payload = [
-    `Task progress: ${job.jobId} (${claim.attempt.attemptId})`,
-    `Attempt: ${claim.attempt.ordinal} / ${job.maxAttempts}`,
-    renderResultSection("Completed work", boundedProgressValues(outcome.checkpoint.completedStepIds)),
-    renderResultSection("Key findings", boundedProgressValues(
-      outcome.checkpoint.summary ? [outcome.checkpoint.summary] : []
-    )),
-    renderResultSection(
-      "Remaining work",
-      boundedProgressValues(outcome.checkpoint.remainingSteps.map((step) => step.description))
-    ),
-    outcome.checkpoint.nextAction ? `Next attempt: ${truncateCharacters(outcome.checkpoint.nextAction.description.trim(), 500)}` : ""
-  ].filter(Boolean).join("\n");
-  return truncateCharacters(payload, PROGRESS_PAYLOAD_MAX_CHARS);
-}
-function attemptBudgetTerminalReason(job, checkpoint2) {
-  const artifactStatus = continuationArtifactStatus({ ...job, checkpoint: checkpoint2 });
-  if (artifactStatus === "not_started" || artifactStatus === "creating") {
-    return {
-      errorCode: "attempts_exhausted_artifact_not_started",
-      errorSummary: "The execution budget was exhausted before a required user-facing artifact was ready."
-    };
-  }
-  if (artifactStatus === "created") {
-    return {
-      errorCode: "attempts_exhausted_artifact_unverified",
-      errorSummary: "The execution budget was exhausted after artifact creation but before all required verification completed."
-    };
-  }
-  return {
-    errorCode: "attempts_exhausted_acceptance_incomplete",
-    errorSummary: "The execution budget was exhausted with one or more acceptance criteria still incomplete."
-  };
-}
-function renderInterruptPayload(job, claim, interruptId, prompt, failure, recovery, checkpoint2) {
-  return [
-    `Task waiting for input: ${job.jobId} (${interruptId})`,
-    `Attempt: ${claim.attempt.ordinal} / ${job.maxAttempts}`,
-    `Failed step: ${failure.failedStep}`,
-    `Failure category: ${failure.category}`,
-    `Recovery attempts: ${recovery.fingerprintAttempts} for this failure, ${recovery.totalAttempts} total`,
-    `Diagnostic: ${failure.diagnostic}`,
-    `Action needed: ${prompt}`,
-    renderResultSection("Completed work", boundedProgressValues(checkpoint2.completedStepIds)),
-    `Resume: /task resume ${job.jobId} <input>`
-  ].filter(Boolean).join("\n");
-}
-function boundedProgressValues(values) {
-  return uniqueNonEmpty(values).slice(0, 3).map((value) => truncateCharacters(value, 500));
-}
-function truncateCharacters(value, maxCharacters) {
-  const characters = Array.from(value);
-  if (characters.length <= maxCharacters) return value;
-  return `${characters.slice(0, Math.max(0, maxCharacters - 3)).join("").trimEnd()}...`;
-}
-function cleanupErrorSummary(error51) {
-  const summary = error51 instanceof Error ? `${error51.name}: ${error51.message}` : "Unknown continuation cleanup error.";
-  return truncateCharacters(summary.replace(/[\r\n\t]+/g, " "), 500);
-}
-function renderResultSection(title, values) {
-  const filtered = uniqueNonEmpty(values);
-  return filtered.length > 0 ? `${title}:
-${filtered.map((value) => `- ${value}`).join("\n")}` : "";
-}
-function uniqueNonEmpty(values) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-function validateToolRequest(request) {
-  if (!/^[A-Za-z0-9_.-]{1,80}$/.test(request.tool)) {
-    throw new Error("Continuation local CLI tool name is invalid.");
-  }
-  if (!Array.isArray(request.args) || !request.args.every((arg) => typeof arg === "string")) {
-    throw new Error("Continuation local CLI tool args must be strings.");
-  }
-  assertJsonBytes("tool request", request, CONTINUATION_LIMITS.contextSnapshotBytes);
-}
-function validateToolResult(result) {
-  if (typeof result.ok !== "boolean" || typeof result.message !== "string") {
-    throw new Error("Continuation local CLI tool result is invalid.");
-  }
-  if (result.failure !== void 0 && !isDurableRunFailure(result.failure)) {
-    throw new Error("Continuation local CLI tool failure is invalid.");
-  }
-  assertJsonBytes("tool result", result, CONTINUATION_LIMITS.toolResultBytes);
-}
-function parseToolResult(value) {
-  const parsed = parseJson(value, null);
-  if (!parsed || typeof parsed !== "object" || typeof parsed.ok !== "boolean" || typeof parsed.message !== "string") {
-    throw new Error("Invalid continuation tool result in database.");
-  }
-  if (parsed.failure !== void 0 && !isDurableRunFailure(parsed.failure)) throw new Error("Invalid continuation tool failure in database.");
-  return parsed;
-}
-function parsePermissionEnvelope(value) {
-  const parsed = parseJson(value, null);
-  const normalized = normalizePermissionEnvelope(parsed);
-  validatePermissionEnvelope(normalized, false);
-  return normalized;
-}
-function normalizePermissionEnvelope(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const envelope = value;
-  const rawFilesystem = envelope.filesystem;
-  if (!rawFilesystem || typeof rawFilesystem !== "object" || Array.isArray(rawFilesystem)) {
-    return value;
-  }
-  const filesystem = rawFilesystem;
-  return {
-    ...envelope,
-    profile: envelope.profile ?? "bounded",
-    filesystem: {
-      ...filesystem,
-      requestedPaths: filesystem.requestedPaths ?? []
-    },
-    externalSideEffects: envelope.externalSideEffects ?? "denied"
-  };
-}
-function validatePermissionEnvelope(value, requireAbsoluteRoot2) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Continuation permission envelope is invalid.");
-  }
-  if (!hasExactKeys(value, [
-    "profile",
-    "filesystem",
-    "hostTools",
-    "network",
-    "externalSideEffects",
-    "approval"
-  ])) throw new Error("Continuation permission envelope is invalid.");
-  const envelope = value;
-  const filesystem = envelope.filesystem;
-  const approval = envelope.approval;
-  const requestedPaths = filesystem?.requestedPaths;
-  if (envelope.profile !== "bounded" && envelope.profile !== "trusted_personal_workspace" || !filesystem || !hasExactKeys(filesystem, [
-    "root",
-    "mode",
-    "requestedPaths"
-  ]) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path21.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path21.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
-    throw new Error("Continuation permission envelope is invalid.");
-  }
-  if (envelope.profile === "bounded" && (envelope.network !== "none" || envelope.externalSideEffects !== "denied") || envelope.profile === "trusted_personal_workspace" && (requestedPaths.length === 0 || envelope.network !== "enabled" || envelope.externalSideEffects !== "allowed")) {
-    throw new Error("Continuation permission envelope profile is inconsistent.");
-  }
-}
-function sameStringSet(left, right) {
-  if (left.length !== right.length) return false;
-  const values = new Set(left);
-  return values.size === left.length && right.every((value) => values.has(value));
-}
-async function restoreRedactionQuarantines(jobId, quarantines, artifacts, inputs) {
-  const operations = [];
-  if (quarantines.artifact) {
-    operations.push(artifacts.restoreQuarantine(jobId, quarantines.artifact));
-  }
-  if (quarantines.input) {
-    operations.push(inputs.restoreQuarantine(jobId, quarantines.input));
-  }
-  const results = await Promise.allSettled(operations);
-  return results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
-}
-async function discardRedactionQuarantines(jobId, quarantines, artifacts, inputs) {
-  const operations = [];
-  if (quarantines.artifact) {
-    operations.push(artifacts.discardQuarantine(jobId, quarantines.artifact));
-  }
-  if (quarantines.input) {
-    operations.push(inputs.discardQuarantine(jobId, quarantines.input));
-  }
-  const results = await Promise.allSettled(operations);
-  return results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
-}
-function boundedFailure(failure) {
-  return {
-    errorCode: failure.errorCode.slice(0, 128) || "continuation_failed",
-    errorSummary: truncateUtf8(failure.errorSummary, CONTINUATION_LIMITS.objectiveBytes),
-    retryable: failure.retryable
-  };
-}
-function boundedDurableRunFailure(failure) {
-  const bounded = {
-    category: failure.category,
-    retrySafety: failure.retrySafety,
-    capabilityAvailable: failure.capabilityAvailable,
-    operationRisk: failure.operationRisk,
-    hints: failure.hints.slice(0, 8).map((hint) => truncateCharacters(
-      redactContinuationText(hint),
-      500
-    )),
-    failedStep: truncateCharacters(failure.failedStep, 80),
-    diagnostic: truncateCharacters(redactContinuationText(failure.diagnostic), 1e3),
-    fingerprint: failure.fingerprint.slice(0, 128)
-  };
-  if (!bounded.fingerprint || !bounded.failedStep) {
-    throw new Error("Continuation durable failure identity is invalid.");
-  }
-  assertJsonBytes("durable failure", bounded, CONTINUATION_LIMITS.contextSnapshotBytes);
-  return bounded;
-}
-function truncateUtf8(value, maxBytes) {
-  if (Buffer.byteLength(value, "utf-8") <= maxBytes) return value;
-  const suffix = "...";
-  const buffer = Buffer.from(value, "utf-8").subarray(0, maxBytes - suffix.length);
-  return `${buffer.toString("utf-8").replace(/\uFFFD+$/u, "")}${suffix}`;
-}
-function assertJsonBytes(name, value, limit) {
-  const serialized = typeof value === "string" ? value : JSON.stringify(value);
-  if (typeof serialized !== "string") throw new Error(`Continuation ${name} is not serializable.`);
-  const bytes = Buffer.byteLength(serialized, "utf-8");
-  if (bytes > limit) throw new Error(`Continuation ${name} exceeds ${limit} bytes.`);
-}
-function assertUtf8Bytes(name, value, limit) {
-  if (Buffer.byteLength(value, "utf-8") > limit) {
-    throw new Error(`Continuation ${name} exceeds ${limit} bytes.`);
-  }
-}
-function makeId(prefix) {
-  return `${prefix}_${randomBytes4(12).toString("hex")}`;
-}
-function deliveryIdempotencyKey(jobId, eventKey) {
-  return `ct_${createHash15("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
-}
-function toolCallId(jobId, stepId, requestHash) {
-  return `call_${createHash15("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
-}
-function continuationStepId(job) {
-  return job.checkpoint?.nextAction?.id ?? job.checkpoint?.currentStepId ?? "initial-step";
-}
-function canReexecuteSameToolRequest(job, failure) {
-  const userResolvedAccess = Boolean(
-    job.recovery?.userInput && ["authentication_required", "permission_required"].includes(failure.category)
-  );
-  const boundedAutomaticRetry = Boolean(
-    job.recovery?.lastDecision === "retry" && job.recovery.failure.fingerprint === failure.fingerprint && failure.retrySafety === "safe" && ["transient", "unknown"].includes(failure.category)
-  );
-  return userResolvedAccess || boundedAutomaticRetry;
-}
-function canReplaceCompletedToolFailure(job, failure) {
-  return failure.category === "invalid_invocation" && failure.retrySafety === "safe" || canReexecuteSameToolRequest(job, failure);
-}
-function hasOpaqueExecutionEffects(job) {
-  return job.permissions.filesystem.mode === "workspace-write" || job.permissions.network === "enabled" || job.permissions.externalSideEffects === "allowed";
-}
-function toolRequestHash(request) {
-  return createHash15("sha256").update(JSON.stringify(request)).digest("hex");
-}
-function addMilliseconds2(timestamp, milliseconds) {
-  return new Date(Date.parse(timestamp) + milliseconds).toISOString();
-}
-async function retrySqliteBusy2(operation, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (true) {
-    try {
-      operation();
-      return;
-    } catch (error51) {
-      const sqliteError = error51;
-      if (Date.now() >= deadline || sqliteError.errcode !== 5 && !/database is (?:locked|busy)/i.test(sqliteError.message)) throw error51;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-  }
-}
-function emptyRoute() {
-  return {
-    kind: "message_thread",
-    conversationId: "",
-    sourceMessageId: ""
-  };
-}
-function parseJson(value, fallback) {
-  if (typeof value !== "string") return fallback;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
-}
-function parseTrustedJson(value, field) {
-  if (typeof value !== "string") {
-    throw new Error(`Invalid continuation database field: ${field}.`);
-  }
-  try {
-    return JSON.parse(value);
-  } catch (error51) {
-    throw new Error(`Invalid trusted continuation JSON field: ${field}.`, { cause: error51 });
-  }
-}
-function parseTrustedStringArray(value, field) {
-  const parsed = parseTrustedJson(value, field);
-  if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === "string")) {
-    throw new Error(`Invalid continuation string-array field: ${field}.`);
-  }
-  return parsed;
-}
-function parseTrustedCheckpoint(value, field) {
-  const parsed = parseTrustedJson(value, field);
-  if (!isCheckpoint2(parsed)) throw new Error(`Invalid continuation checkpoint field: ${field}.`);
-  assertJsonBytes(field, parsed, CONTINUATION_LIMITS.checkpointBytes);
-  return parsed;
-}
-function parseTrustedCheckpointV2(value, field) {
-  const parsed = parseTrustedJson(value, field);
-  const checkpoint2 = isCheckpoint2(parsed) ? legacyCheckpointToV2(parsed) : parsed;
-  if (!isCheckpointV22(checkpoint2)) {
-    throw new Error(`Invalid continuation V2 checkpoint field: ${field}.`);
-  }
-  assertJsonBytes(field, checkpoint2, CONTINUATION_LIMITS.checkpointBytes);
-  return checkpoint2;
-}
-function parseTrustedAttemptDelta(value, field) {
-  const parsed = parseTrustedJson(value, field);
-  if (!isAttemptDelta(parsed)) throw new Error(`Invalid continuation attempt delta field: ${field}.`);
-  assertJsonBytes(field, parsed, CONTINUATION_LIMITS.checkpointBytes);
-  return parsed;
-}
-function parseTrustedVerification(value, field) {
-  const parsed = parseTrustedJson(value, field);
-  if (!isVerificationVerdict(parsed)) {
-    throw new Error(`Invalid continuation verification field: ${field}.`);
-  }
-  return parsed;
-}
-function parseTrustedRecoveryState(value, field) {
-  const parsed = parseTrustedJson(value, field);
-  if (!isRecord5(parsed) || !isDurableRunFailure(parsed.failure) || !Number.isInteger(parsed.fingerprintAttempts) || Number(parsed.fingerprintAttempts) < 1 || !Number.isInteger(parsed.totalAttempts) || Number(parsed.totalAttempts) < 1 || !["retry", "wait_user", "block", "fail"].includes(String(parsed.lastDecision)) || parsed.userInput !== void 0 && typeof parsed.userInput !== "string") throw new Error(`Invalid continuation recovery field: ${field}.`);
-  assertJsonBytes(field, parsed, CONTINUATION_LIMITS.contextSnapshotBytes);
-  return parsed;
-}
-function parseTrustedCountRecord(value, field) {
-  const parsed = parseTrustedJson(value, field);
-  if (!isRecord5(parsed) || Object.entries(parsed).some(([key, count]) => !key || !Number.isInteger(count) || Number(count) < 0)) throw new Error(`Invalid continuation count record: ${field}.`);
-  return parsed;
-}
-function isDurableRunFailure(value) {
-  return isRecord5(value) && [
-    "invalid_invocation",
-    "transient",
-    "authentication_required",
-    "permission_required",
-    "capability_unavailable",
-    "terminal",
-    "unknown"
-  ].includes(String(value.category)) && ["safe", "unsafe", "unknown"].includes(String(value.retrySafety)) && typeof value.capabilityAvailable === "boolean" && ["pure", "read_only", "idempotent_write", "external_side_effect", "unknown"].includes(String(value.operationRisk)) && Array.isArray(value.hints) && value.hints.every((hint) => typeof hint === "string") && typeof value.failedStep === "string" && typeof value.diagnostic === "string" && typeof value.fingerprint === "string";
-}
-function parseTrustedResultArtifacts(value, field) {
-  const artifacts = parseTrustedStringArray(value, field);
-  if (artifacts.length > CONTINUATION_LIMITS.artifactCount) {
-    throw new Error(`Invalid continuation artifact count in field: ${field}.`);
-  }
-  assertJsonBytes(field, artifacts, CONTINUATION_LIMITS.contextSnapshotBytes);
-  return artifacts;
-}
-function isRecord5(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function hasExactKeys(value, allowed) {
-  const accepted = new Set(allowed);
-  return Object.keys(value).every((key) => accepted.has(key));
-}
-function isNullableString2(value) {
-  return value === null || typeof value === "string";
-}
-function isCheckpoint2(value) {
-  if (!isRecord5(value) || !hasExactKeys(value, [
-    "summary",
-    "completedSteps",
-    "remainingSteps",
-    "constraints",
-    "decisions",
-    "references"
-  ]) || typeof value.summary !== "string") return false;
-  return ["completedSteps", "remainingSteps", "constraints", "decisions", "references"].every((field) => Array.isArray(value[field]) && value[field].every((entry) => typeof entry === "string"));
-}
-function legacyCheckpointToV2(value) {
-  const remainingSteps = value.remainingSteps.map((description, index) => ({
-    id: `legacy-step-${index + 1}`,
-    description
-  }));
-  return {
-    schemaVersion: 2,
-    summary: value.summary,
-    currentStepId: "legacy-handoff",
-    completedStepIds: [],
-    completedCriterionIds: [],
-    completedDeliverableIds: [],
-    remainingSteps,
-    artifacts: [],
-    evidence: [],
-    sideEffects: [],
-    constraints: value.constraints,
-    decisions: value.decisions,
-    nextAction: remainingSteps[0] ?? null,
-    stopReason: "Migrated from a legacy checkpoint without inventing completion evidence."
-  };
-}
-function checkpointFromInitialContext2(value) {
-  return legacyCheckpointToV2(value);
-}
-function isCheckpointV22(value) {
-  if (!isRecord5(value) || value.schemaVersion !== 2) return false;
-  if (typeof value.summary !== "string" || typeof value.currentStepId !== "string" || typeof value.stopReason !== "string" || !isCheckpointStepOrNull(value.nextAction)) return false;
-  if (!["completedStepIds", "completedCriterionIds", "completedDeliverableIds", "constraints", "decisions"].every((field) => isStringArray2(value[field]))) return false;
-  if (!Array.isArray(value.remainingSteps) || !value.remainingSteps.every(isCheckpointStep)) return false;
-  if (!Array.isArray(value.artifacts) || !value.artifacts.every((entry) => isRecord5(entry) && typeof entry.id === "string" && typeof entry.deliverableId === "string" && typeof entry.path === "string" && typeof entry.sha256 === "string")) return false;
-  if (!Array.isArray(value.evidence) || !value.evidence.every((entry) => isRecord5(entry) && typeof entry.id === "string" && typeof entry.requirementId === "string" && isStringArray2(entry.criterionIds) && (entry.artifactId === void 0 || typeof entry.artifactId === "string") && (entry.reference === void 0 || typeof entry.reference === "string"))) return false;
-  return Array.isArray(value.sideEffects) && value.sideEffects.every((entry) => isRecord5(entry) && typeof entry.id === "string" && typeof entry.description === "string" && typeof entry.idempotencyKey === "string");
-}
-function isCheckpointStep(value) {
-  return isRecord5(value) && typeof value.id === "string" && typeof value.description === "string";
-}
-function isCheckpointStepOrNull(value) {
-  return value === null || isCheckpointStep(value);
-}
-function isStringArray2(value) {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
-}
-function isAttemptDelta(value) {
-  return isRecord5(value) && value.schemaVersion === 1 && typeof value.stepId === "string" && typeof value.checkpointHash === "string" && typeof value.materialHash === "string" && typeof value.stateChanged === "boolean" && [
-    "newCompletedStepIds",
-    "newCompletedCriterionIds",
-    "newCompletedDeliverableIds",
-    "newArtifactIds",
-    "newEvidenceIds",
-    "newSideEffectIds"
-  ].every((field) => isStringArray2(value[field])) && (value.nextActionStepId === void 0 || typeof value.nextActionStepId === "string");
-}
-function isVerificationVerdict(value) {
-  return isRecord5(value) && (value.status === "accepted" || value.status === "revision_required") && isStringArray2(value.findings);
-}
-function isDeliveryRoute2(value) {
-  if (!isRecord5(value)) return false;
-  if (value.kind === "message_thread") {
-    return hasExactKeys(value, ["kind", "conversationId", "sourceMessageId", "threadId"]) && typeof value.conversationId === "string" && typeof value.sourceMessageId === "string" && (value.threadId === void 0 || typeof value.threadId === "string");
-  }
-  return hasExactKeys(value, ["kind", "documentToken", "commentId", "fileType"]) && value.kind === "comment_thread" && typeof value.documentToken === "string" && typeof value.commentId === "string" && typeof value.fileType === "string";
-}
-function routeMatchesSourceThread(route, sourceThreadId) {
-  return route.kind === "message_thread" ? route.threadId === sourceThreadId : route.commentId === sourceThreadId;
-}
-function isManagedInputArtifact(value) {
-  if (!isRecord5(value) || !hasExactKeys(value, [
-    "id",
-    "kind",
-    "fileName",
-    "relativePath",
-    "sha256",
-    "sizeBytes"
-  ])) return false;
-  return /^input_\d{3}$/.test(String(value.id ?? "")) && (value.kind === "message_image" || value.kind === "message_attachment") && typeof value.fileName === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.fileName) && typeof value.relativePath === "string" && value.relativePath === value.fileName && typeof value.sha256 === "string" && /^[a-f0-9]{64}$/.test(value.sha256) && typeof value.sizeBytes === "number" && Number.isSafeInteger(value.sizeBytes) && value.sizeBytes >= 0;
-}
-function buildContinuationStepTransition(input) {
-  const {
-    claim,
-    current,
-    result,
-    now,
-    progress,
-    delta,
-    verification,
-    rawVerification,
-    jitter
-  } = input;
-  const executionSessionId = result.executionSessionId === void 0 ? current.executionSessionId : result.executionSessionId ?? void 0;
-  const outcome = result.outcome;
-  const transition = (status, patch, extras) => continuationDurableTransition(
-    claim,
-    current,
-    status,
-    patch,
-    now,
-    extras
-  );
-  const terminalFailure = (errorCode, errorSummary2, options = {}) => {
-    const terminalRecovery = options.recoveryFailure ? continuationTerminalRecovery(current, options.recoveryFailure, "fail") : null;
-    return transition("failed", {
-      executionSessionId,
-      checkpoint: options.checkpoint ?? current.checkpoint,
-      failureCount: options.failureCount ?? current.failureCount,
-      noProgressCount: options.noProgressCount ?? current.noProgressCount,
-      errorCode,
-      errorSummary: errorSummary2,
-      ...terminalRecovery ? {
-        recovery: terminalRecovery.state,
-        recoveryTotalCount: terminalRecovery.totalAttempts,
-        recoveryFingerprintCounts: terminalRecovery.counts
-      } : {}
-    }, {
-      executionSessionId,
-      attemptOutcome: "failed",
-      attemptError: { errorCode, errorSummary: errorSummary2, retryable: false },
-      ...terminalRecovery ? { attemptRecovery: terminalRecovery.state } : {},
-      ...options.delta ? { delta: options.delta } : {},
-      ...options.verification ? { verification: options.verification } : {},
-      ...options.recoveryFailure ? { failure: terminalRecovery.state.failure } : {},
-      deliveries: [continuationTerminalDelivery(
-        current,
-        renderFailedPayload(current.jobId, errorSummary2, terminalRecovery?.state),
-        now
-      )],
-      supersedeDeliveryKinds: ["progress", "interrupt"]
-    });
-  };
-  const partial2 = (partialOutcome, errorCode = "partial_completion", checkpoint2 = partialOutcome.checkpoint, errorSummary2 = "The continuation completed with a partial result.") => {
-    validatePartialResult(partialOutcome);
-    return transition("partial", {
-      executionSessionId,
-      checkpoint: checkpoint2 ?? current.checkpoint,
-      stepCount: current.stepCount + 1,
-      resultSummary: partialResultSummary(partialOutcome),
-      resultArtifacts: partialOutcome.artifacts,
-      errorCode,
-      errorSummary: errorSummary2
-    }, {
-      executionSessionId,
-      attemptOutcome: "partial",
-      delta,
-      verification,
-      deliveries: [continuationTerminalDelivery(
-        current,
-        renderPartialPayload(current.jobId, partialOutcome, errorSummary2),
-        now
-      )],
-      supersedeDeliveryKinds: ["progress", "interrupt"]
-    });
-  };
-  const recovery = (recoveryOutcome2) => {
-    const failure = boundedDurableRunFailure(recoveryOutcome2.failure);
-    const counts = { ...current.recoveryFingerprintCounts };
-    const fingerprintAttempts = (counts[failure.fingerprint] ?? 0) + 1;
-    const totalAttempts = current.recoveryTotalCount + 1;
-    if (fingerprintAttempts > MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT || totalAttempts > MAX_TOTAL_RECOVERY_ATTEMPTS || claim.attempt.ordinal >= current.maxAttempts) {
-      return terminalFailure(
-        "continuation_recovery_budget_exhausted",
-        "The bounded recovery budget was exhausted.",
-        {
-          checkpoint: recoveryOutcome2.checkpoint,
-          recoveryFailure: failure,
-          delta,
-          verification
-        }
-      );
-    }
-    counts[failure.fingerprint] = fingerprintAttempts;
-    const recoveryState = {
-      failure,
-      fingerprintAttempts,
-      totalAttempts,
-      lastDecision: recoveryOutcome2.outcome === "recovering" ? "retry" : "wait_user"
-    };
-    const errorCode = `continuation_${failure.category}`;
-    const nextRunAt = recoveryOutcome2.outcome === "recovering" ? addMilliseconds2(now, Math.max(0, recoveryOutcome2.delaySeconds) * 1e3) : current.nextRunAt;
-    let deliveries;
-    let interrupts;
-    if (recoveryOutcome2.outcome === "waiting_user") {
-      const interruptId = continuationInterruptId(current.jobId, claim.attempt.attemptId, failure);
-      const prompt = truncateCharacters(redactContinuationText(recoveryOutcome2.prompt), 2e3);
-      interrupts = [{
-        interruptId,
-        attemptId: claim.attempt.attemptId,
-        prompt
-      }];
-      deliveries = [continuationInterruptDelivery(
-        current,
-        claim,
-        interruptId,
-        prompt,
-        failure,
-        recoveryState,
-        recoveryOutcome2.checkpoint,
-        now
-      )];
-    }
-    return transition(recoveryOutcome2.outcome, {
-      executionSessionId,
-      checkpoint: recoveryOutcome2.checkpoint,
-      recovery: recoveryState,
-      recoveryTotalCount: totalAttempts,
-      recoveryFingerprintCounts: counts,
-      nextRunAt,
-      errorCode,
-      errorSummary: recoveryOutcome2.reason
-    }, {
-      executionSessionId,
-      attemptOutcome: recoveryOutcome2.outcome,
-      attemptError: {
-        errorCode,
-        errorSummary: recoveryOutcome2.reason,
-        retryable: recoveryOutcome2.outcome === "recovering"
-      },
-      attemptRecovery: recoveryState,
-      delta,
-      verification,
-      failure,
-      ...deliveries ? { deliveries } : {},
-      ...interrupts ? { interrupts } : {}
-    });
-  };
-  const verificationRecovery = (checkpoint2, findings, noProgressCount) => {
-    if (noProgressCount >= 2) {
-      return terminalFailure(
-        "continuation_stalled",
-        "The continuation stopped after repeated attempts produced no verifiable progress.",
-        { checkpoint: checkpoint2, noProgressCount, delta, verification }
-      );
-    }
-    if (claim.attempt.ordinal >= current.maxAttempts) {
-      const reason = attemptBudgetTerminalReason(current, checkpoint2);
-      return partial2(
-        partialOutcomeFromCheckpoint(checkpoint2),
-        reason.errorCode,
-        checkpoint2,
-        reason.errorSummary
-      );
-    }
-    const summary = findings.slice(0, 20).map((finding) => truncateCharacters(finding, 500)).join(" ") || "The checkpoint requires revision.";
-    return transition("recovering", {
-      executionSessionId,
-      checkpoint: checkpoint2,
-      noProgressCount,
-      stepCount: current.stepCount + 1,
-      failureCount: 0,
-      nextRunAt: now,
-      errorCode: "continuation_verification_failed",
-      errorSummary: summary
-    }, {
-      executionSessionId,
-      attemptOutcome: "continue",
-      attemptError: {
-        errorCode: "continuation_verification_failed",
-        errorSummary: summary,
-        retryable: true
-      },
-      delta,
-      verification
-    });
-  };
-  if (rawVerification.status === "revision_required") {
-    return verificationRecovery(
-      current.checkpoint ?? checkpointFromInitialContext2(current.contextSnapshot),
-      rawVerification.findings,
-      delta.stateChanged ? 0 : current.noProgressCount + 1
-    );
-  }
-  if (outcome.outcome === "recovering" || outcome.outcome === "waiting_user") {
-    return recovery(outcome);
-  }
-  if (outcome.outcome === "continue") {
-    if (!progress) throw new Error("Continuation progress evaluation is missing.");
-    if (progress.decision === "recover") {
-      return verificationRecovery(
-        outcome.checkpoint,
-        ["A continue outcome requires one concrete next action."],
-        progress.noProgressCount
-      );
-    }
-    if (progress.decision === "fail_stalled") {
-      return terminalFailure(
-        "continuation_stalled",
-        "The continuation stopped after repeated attempts produced no verifiable progress.",
-        {
-          checkpoint: outcome.checkpoint,
-          noProgressCount: progress.noProgressCount,
-          delta,
-          verification
-        }
-      );
-    }
-    if (progress.decision === "finish_partial") {
-      const reason = attemptBudgetTerminalReason(current, outcome.checkpoint);
-      return partial2(
-        partialOutcomeFromCheckpoint(outcome.checkpoint),
-        reason.errorCode,
-        outcome.checkpoint,
-        reason.errorSummary
-      );
-    }
-    const nextRunAt = addMilliseconds2(now, Math.max(0, outcome.resumeAfterSeconds ?? 0) * 1e3);
-    return transition("waiting_retry", {
-      executionSessionId,
-      checkpoint: outcome.checkpoint,
-      noProgressCount: progress.noProgressCount,
-      stepCount: current.stepCount + 1,
-      failureCount: 0,
-      nextRunAt,
-      recovery: void 0,
-      errorCode: void 0,
-      errorSummary: void 0
-    }, {
-      executionSessionId,
-      attemptOutcome: "continue",
-      delta,
-      verification,
-      deliveries: [continuationProgressDelivery(current, claim, outcome, now)]
-    });
-  }
-  if (outcome.outcome === "completed") {
-    if (!progress || progress.decision !== "complete") {
-      throw new Error("Continuation completion evaluation is inconsistent.");
-    }
-    validateFinalResult(outcome.finalMessage, outcome.resultSummary, outcome.artifacts);
-    return transition("completed", {
-      executionSessionId,
-      checkpoint: outcome.checkpoint,
-      noProgressCount: progress.noProgressCount,
-      stepCount: current.stepCount + 1,
-      resultSummary: outcome.resultSummary,
-      resultArtifacts: outcome.artifacts,
-      recovery: void 0,
-      errorCode: void 0,
-      errorSummary: void 0
-    }, {
-      executionSessionId,
-      attemptOutcome: "completed",
-      delta,
-      verification,
-      deliveries: [continuationTerminalDelivery(
-        current,
-        `Task completed: ${current.jobId}
-${outcome.finalMessage}`,
-        now
-      )],
-      supersedeDeliveryKinds: ["progress", "interrupt"]
-    });
-  }
-  if (outcome.outcome === "partial") return partial2(outcome);
-  if (outcome.outcome === "blocked") {
-    assertJsonBytes("blocked result", outcome, CONTINUATION_LIMITS.finalMessageBytes);
-    const terminalRecovery = outcome.recoveryFailure ? continuationTerminalRecovery(current, outcome.recoveryFailure, "block") : null;
-    return transition("blocked", {
-      executionSessionId,
-      checkpoint: outcome.checkpoint,
-      stepCount: current.stepCount + 1,
-      resultSummary: outcome.errorSummary,
-      errorCode: outcome.errorCode,
-      errorSummary: outcome.errorSummary,
-      ...terminalRecovery ? {
-        recovery: terminalRecovery.state,
-        recoveryTotalCount: terminalRecovery.totalAttempts,
-        recoveryFingerprintCounts: terminalRecovery.counts
-      } : {}
-    }, {
-      executionSessionId,
-      attemptOutcome: "blocked",
-      attemptError: {
-        errorCode: outcome.errorCode,
-        errorSummary: outcome.errorSummary,
-        retryable: false
-      },
-      ...terminalRecovery ? { attemptRecovery: terminalRecovery.state } : {},
-      delta,
-      verification,
-      ...terminalRecovery ? { failure: terminalRecovery.state.failure } : {},
-      deliveries: [continuationTerminalDelivery(
-        current,
-        renderBlockedPayload(current.jobId, outcome, terminalRecovery?.state),
-        now
-      )],
-      supersedeDeliveryKinds: ["progress", "interrupt"]
-    });
-  }
-  if (outcome.retryable && hasOpaqueExecutionEffects(current)) {
-    const failedStep = outcome.checkpoint.currentStepId || continuationStepId(current);
-    return recovery({
-      outcome: "waiting_user",
-      checkpoint: outcome.checkpoint,
-      failure: {
-        category: "unknown",
-        retrySafety: "unknown",
-        capabilityAvailable: true,
-        operationRisk: "external_side_effect",
-        hints: ["Confirm the effects of the failed step before resuming."],
-        failedStep,
-        diagnostic: outcome.errorSummary,
-        fingerprint: createHash15("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
-      },
-      prompt: "Confirm what the failed step changed, then resume with the observed result.",
-      reason: "The model requested a retry after opaque execution, so automatic replay is unsafe."
-    });
-  }
-  return buildContinuationFailureTransition(
-    claim,
-    current,
-    {
-      errorCode: outcome.errorCode,
-      errorSummary: outcome.errorSummary,
-      retryable: outcome.retryable
-    },
-    now,
-    jitter,
-    {
-      executionSessionId,
-      checkpoint: outcome.checkpoint,
-      recoveryFailure: outcome.recoveryFailure,
-      delta,
-      verification
-    }
-  );
-}
-function buildContinuationFailureTransition(claim, current, requestedFailure, now, jitter, options = {}) {
-  const executionSessionId = options.executionSessionId ?? current.executionSessionId;
-  if (requestedFailure.retryable && claim.durableClaim?.attempt.executionStartedAt && hasOpaqueExecutionEffects(current)) {
-    const failedStep = continuationStepId(current);
-    return buildContinuationStepTransition({
-      claim,
-      current,
-      result: {
-        executionSessionId,
-        outcome: {
-          outcome: "waiting_user",
-          checkpoint: options.checkpoint ?? current.checkpoint ?? checkpointFromInitialContext2(current.contextSnapshot),
-          failure: {
-            category: "unknown",
-            retrySafety: "unknown",
-            capabilityAvailable: true,
-            operationRisk: "external_side_effect",
-            hints: ["Confirm the effects of the interrupted step before resuming."],
-            failedStep,
-            diagnostic: requestedFailure.errorSummary,
-            fingerprint: createHash15("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
-          },
-          prompt: "Confirm what the interrupted step changed, then resume with the observed result.",
-          reason: "The execution ended after an opaque operation started, so automatic replay is unsafe."
-        }
-      },
-      now,
-      progress: null,
-      delta: options.delta ?? createAttemptDelta(
-        current.checkpoint ?? null,
-        options.checkpoint ?? current.checkpoint ?? checkpointFromInitialContext2(current.contextSnapshot)
-      ),
-      verification: options.verification ?? { status: "accepted", findings: [] },
-      rawVerification: options.verification ?? { status: "accepted", findings: [] },
-      jitter
-    });
-  }
-  const failure = boundedFailure(requestedFailure);
-  const failureCount = current.failureCount + 1;
-  if (failure.retryable && failureCount <= current.maxRetries && claim.attempt.ordinal < current.maxAttempts && current.expiresAt > now) {
-    return continuationDurableTransition(claim, current, "waiting_retry", {
-      executionSessionId,
-      failureCount,
-      checkpoint: options.checkpoint ?? current.checkpoint,
-      nextRunAt: addMilliseconds2(now, retryDelayMs(failureCount, jitter())),
-      errorCode: failure.errorCode,
-      errorSummary: failure.errorSummary
-    }, now, {
-      executionSessionId,
-      attemptOutcome: "failed",
-      attemptError: failure,
-      ...options.delta ? { delta: options.delta } : {},
-      ...options.verification ? { verification: options.verification } : {}
-    });
-  }
-  const terminalRecovery = options.recoveryFailure ? continuationTerminalRecovery(current, options.recoveryFailure, "fail") : null;
-  return continuationDurableTransition(claim, current, "failed", {
-    executionSessionId,
-    failureCount,
-    checkpoint: options.checkpoint ?? current.checkpoint,
-    errorCode: failure.errorCode,
-    errorSummary: failure.errorSummary,
-    ...terminalRecovery ? {
-      recovery: terminalRecovery.state,
-      recoveryTotalCount: terminalRecovery.totalAttempts,
-      recoveryFingerprintCounts: terminalRecovery.counts
-    } : {}
-  }, now, {
-    executionSessionId,
-    attemptOutcome: "failed",
-    attemptError: { ...failure, retryable: false },
-    ...terminalRecovery ? { attemptRecovery: terminalRecovery.state } : {},
-    ...options.delta ? { delta: options.delta } : {},
-    ...options.verification ? { verification: options.verification } : {},
-    ...terminalRecovery ? { failure: terminalRecovery.state.failure } : {},
-    deliveries: [continuationTerminalDelivery(
-      current,
-      renderFailedPayload(current.jobId, failure.errorSummary, terminalRecovery?.state),
-      now
-    )],
-    supersedeDeliveryKinds: ["progress", "interrupt"]
-  });
-}
-function durableFailureForContinuationFailure(claim, failure) {
-  const bounded = boundedFailure(failure);
-  const failedStep = continuationStepId(claim.job);
-  return {
-    category: bounded.retryable ? "transient" : "terminal",
-    retrySafety: bounded.retryable ? "safe" : "unsafe",
-    capabilityAvailable: true,
-    operationRisk: "unknown",
-    hints: [],
-    failedStep,
-    diagnostic: bounded.errorSummary,
-    fingerprint: createHash15("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
-  };
-}
-function continuationDurableTransition(claim, current, status, patch, now, extras) {
-  const job = {
-    ...current,
-    ...patch,
-    status,
-    rowVersion: claim.claimedRowVersion + 1,
-    updatedAt: now,
-    ...isContinuationTerminal(status) ? { completedAt: now } : {}
-  };
-  delete job.leaseOwner;
-  delete job.leaseExpiresAt;
-  delete job.heartbeatAt;
-  delete job.deliveryStatus;
-  delete job.deliveryEvents;
-  delete job.currentInterrupt;
-  const attemptMetadata = {
-    ...extras.attemptRecovery ? { recovery: extras.attemptRecovery } : {},
-    ...extras.delta ? { stepId: extras.delta.stepId, delta: extras.delta } : {},
-    ...extras.verification ? { verification: extras.verification } : {}
-  };
-  return {
-    status,
-    stateVersion: 1,
-    state: asyncTaskStateEnvelopeFromJob(job),
-    ...status === "waiting_retry" || status === "recovering" ? { nextRunAt: job.nextRunAt } : {},
-    ...job.errorCode ? { errorCode: job.errorCode } : {},
-    ...job.errorSummary ? { errorSummary: job.errorSummary } : {},
-    ...extras.failure ? { failure: extras.failure } : {},
-    attempt: {
-      outcome: extras.attemptOutcome,
-      executionSessionId: extras.executionSessionId ?? null,
-      ...extras.attemptError ? {
-        errorCode: extras.attemptError.errorCode,
-        errorSummary: extras.attemptError.errorSummary
-      } : {},
-      metadata: attemptMetadata
-    },
-    ...extras.deliveries ? { deliveries: extras.deliveries } : {},
-    ...extras.interrupts ? { interrupts: extras.interrupts } : {},
-    ...extras.supersedeDeliveryKinds ? { supersedeDeliveryKinds: extras.supersedeDeliveryKinds } : {}
-  };
-}
-function continuationTerminalRecovery(current, requestedFailure, lastDecision) {
-  const failure = boundedDurableRunFailure(requestedFailure);
-  const counts = { ...current.recoveryFingerprintCounts };
-  const fingerprintAttempts = (counts[failure.fingerprint] ?? 0) + 1;
-  const totalAttempts = current.recoveryTotalCount + 1;
-  counts[failure.fingerprint] = fingerprintAttempts;
-  const state = {
-    failure,
-    fingerprintAttempts,
-    totalAttempts,
-    lastDecision
-  };
-  assertJsonBytes("recovery state", state, CONTINUATION_LIMITS.contextSnapshotBytes);
-  return { state, totalAttempts, counts };
-}
-function continuationTerminalDelivery(job, payload, now) {
-  return {
-    outboxId: makeId("out"),
-    eventKey: "terminal",
-    kind: "terminal",
-    attemptId: null,
-    route: job.route,
-    idempotencyKey: deliveryIdempotencyKey(job.jobId, "terminal"),
-    payload,
-    createdAt: now,
-    nextAttemptAt: now
-  };
-}
-function continuationProgressDelivery(job, claim, outcome, now) {
-  const eventKey = `progress:${claim.attempt.attemptId}`;
-  return {
-    outboxId: makeId("out"),
-    eventKey,
-    kind: "progress",
-    attemptId: claim.attempt.attemptId,
-    route: job.route,
-    idempotencyKey: deliveryIdempotencyKey(job.jobId, eventKey),
-    payload: renderProgressPayload(job, claim, outcome),
-    metadata: { blocksRun: true },
-    createdAt: now,
-    nextAttemptAt: now
-  };
-}
-function continuationInterruptId(jobId, attemptId, failure) {
-  return `int_${createHash15("sha256").update(`${jobId}\0${attemptId}\0${failure.fingerprint}`).digest("hex").slice(0, 24)}`;
-}
-function continuationInterruptDelivery(job, claim, interruptId, prompt, failure, recovery, checkpoint2, now) {
-  const eventKey = `interrupt:${interruptId}`;
-  return {
-    outboxId: makeId("out"),
-    eventKey,
-    kind: "interrupt",
-    attemptId: claim.attempt.attemptId,
-    route: job.route,
-    idempotencyKey: deliveryIdempotencyKey(job.jobId, eventKey),
-    payload: renderInterruptPayload(
-      job,
-      claim,
-      interruptId,
-      prompt,
-      failure,
-      recovery,
-      checkpoint2
-    ),
-    createdAt: now,
-    nextAttemptAt: now
-  };
-}
-function durableClaimKey(jobId, workerId) {
-  return `${jobId}\0${workerId}`;
-}
-function continuationJobForCommandState(current, status, rowVersion, now) {
-  const next = {
-    ...current,
-    status,
-    rowVersion,
-    updatedAt: now,
-    ...isContinuationTerminal(status) ? { completedAt: now } : {}
-  };
-  delete next.leaseOwner;
-  delete next.leaseExpiresAt;
-  delete next.heartbeatAt;
-  delete next.deliveryStatus;
-  delete next.deliveryEvents;
-  delete next.currentInterrupt;
-  return next;
-}
-function stringField(row, field) {
-  const value = row[field];
-  if (typeof value !== "string") throw new Error(`Invalid continuation database field: ${field}.`);
-  return value;
-}
-function optionalStringField(row, field) {
-  const value = row[field];
-  return typeof value === "string" ? value : void 0;
-}
-function numberField(row, field) {
-  const value = row[field];
-  if (typeof value !== "number" && typeof value !== "bigint") {
-    throw new Error(`Invalid continuation database number field: ${field}.`);
-  }
-  return Number(value);
-}
-function claimProjectionMatches(claim) {
-  return claim.job.jobId === claim.attempt.jobId && claim.workerId === claim.attempt.workerId && claim.job.leaseOwner === claim.workerId && claim.job.rowVersion === claim.claimedRowVersion;
-}
-function timestampAfterElapsed(timestamp, startedAt) {
-  const elapsedMilliseconds = Number((process.hrtime.bigint() - startedAt) / 1000000n);
-  return elapsedMilliseconds > 0 ? addMilliseconds2(timestamp, elapsedMilliseconds) : timestamp;
-}
-function assertOneChange(changes, jobId) {
-  if (Number(changes) !== 1) throw staleClaimError(jobId);
-}
-function staleClaimError(jobId) {
-  return new Error(`Stale continuation claim for ${jobId}.`);
-}
 
 // src/ports/durable-run.ts
 function materializeDurableRunWorkloadContext(workload, run) {
@@ -72502,7 +72533,7 @@ async function createContinuationRuntime(options) {
     const storage = options.dryRun ? await createDryRunStorage() : {
       databasePath: options.databasePath,
       artifactsDir: options.artifactsDir,
-      inputsDir: path22.join(path22.dirname(options.artifactsDir), "inputs")
+      inputsDir: path24.join(path24.dirname(options.artifactsDir), "inputs")
     };
     temporaryRoot = "root" in storage ? storage.root : void 0;
     repository = await (options.openRepository ?? defaultOpenRepository)({
@@ -72657,12 +72688,12 @@ async function defaultOpenRepository(options) {
   return SqliteContinuationRepository.open(options);
 }
 async function createDryRunStorage() {
-  const root = await fs22.mkdtemp(path22.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
+  const root = await fs22.mkdtemp(path24.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
   return {
     root,
-    databasePath: path22.join(root, "jobs.sqlite"),
-    artifactsDir: path22.join(root, "artifacts"),
-    inputsDir: path22.join(root, "inputs")
+    databasePath: path24.join(root, "jobs.sqlite"),
+    artifactsDir: path24.join(root, "artifacts"),
+    inputsDir: path24.join(root, "inputs")
   };
 }
 function retentionCutoff(now, retentionDays) {
@@ -72907,7 +72938,7 @@ function persistedStateValidator(registrations) {
 }
 
 // src/cron/run-admission.ts
-import { createHash as createHash16 } from "node:crypto";
+import { createHash as createHash17 } from "node:crypto";
 
 // src/cron/contracts.ts
 var CRON_RUN_INPUT_VERSION = 1;
@@ -74043,7 +74074,7 @@ function cronConcurrencyKey(job) {
   return `cron-job:${cronJobIdentity(job)}`;
 }
 function cronRunId(idempotencyKey) {
-  return `cron_${createHash16("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `cron_${createHash17("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function admitted(run, created, scheduledOccurrence) {
   return {

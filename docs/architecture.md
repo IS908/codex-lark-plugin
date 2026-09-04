@@ -114,6 +114,11 @@ The current baseline is empty:
   detects mutation but is not an OS-adversary-proof isolation boundary.
   SQLite/artifact persistence, the structured Codex runner, leases, commands,
   Lark progress/terminal delivery, and composition live under `src/continuation/`.
+  Within the SQLite adapter, `sqlite-repository.ts` owns transactional repository
+  orchestration, `sqlite-database.ts` owns opening, migration, and health checks,
+  `sqlite-codec.ts` owns persisted row validation and serialization, and
+  `sqlite-transitions.ts` owns pure state/outbox transition projection. The
+  public `ContinuationRepository` contract remains the boundary for callers.
   Attempt handoff uses a schema-versioned checkpoint with stable step,
   deliverable, criterion, artifact, evidence, and side-effect IDs. The parent
   verifies monotonic continuity and artifact checksums, derives a material-only
