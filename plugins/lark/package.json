@@ -35,7 +35,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "cron-parser": "^5.10.0",
     "dotenv": "^17.4.2",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.13",
     "zod": "^4.4.3"
   },
   "devDependencies": {
