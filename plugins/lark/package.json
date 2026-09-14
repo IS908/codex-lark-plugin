@@ -36,7 +36,7 @@
     "cron-parser": "^5.10.0",
     "dotenv": "^17.4.2",
     "tsx": "^4.23.12",
-    "zod": "^4.4.3"
+    "zod": "^4.6.2"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
