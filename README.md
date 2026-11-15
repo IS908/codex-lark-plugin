@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.13.3-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.14.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -268,11 +268,6 @@ Release version checklist:
 - Run `npm run audit:deps` and `npm --prefix plugins/lark run audit:deps`; both production dependency graphs must pass before tagging.
 - The `Dependency audit` GitHub Actions workflow runs the same registry-backed checks on pull requests, pushes to `main`, and a weekly schedule. Configure it as a required check when branch protection is enabled.
 - Run `npm run check:release-version` before tagging. The MCP server-info version is read from `package.json` at startup, so it follows the package version automatically once the package bump is correct.
-
-The scoped `express-rate-limit > ip-address` override is retained because
-`express-rate-limit@8.3.2` pins vulnerable `ip-address@10.1.0` exactly. Keep the
-root and packaged-plugin override synchronized until upstream accepts a patched
-version.
 
 Direct dependency updates follow the [dependency upgrade policy](docs/dependency-upgrades.md).
 Dependabot proposes weekly cross-directory updates, but every PR still requires
