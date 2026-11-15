@@ -397,6 +397,7 @@ function cronRunCreateRequest(
       targetChatId: job.meta.target_chat_id,
       originChatId: job.meta.origin_chat_id,
       jobId: job.meta.id,
+      jobName: job.meta.name,
       createdAt: job.meta.created_at,
       revision: job.meta.revision,
     },

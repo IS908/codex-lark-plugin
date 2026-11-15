@@ -193,6 +193,7 @@ await withHarness('exact-boundary', [makeJob('exact-boundary', {
     targetChatId: 'oc_target',
     originChatId: 'oc_origin',
     jobId: 'exact-boundary',
+    jobName: 'exact-boundary',
     createdAt: '2026-07-19T00:00:00.000Z',
     revision: 1,
   });

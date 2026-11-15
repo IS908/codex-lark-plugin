@@ -380,6 +380,10 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     ...actionLines('list_jobs', [
       '  - {"type":"list_jobs","status":"active|paused|all"}',
     ]),
+    ...actionLines('get_job', [
+      '  - {"type":"get_job","job_id":"stable-id"}',
+      '  - Use get_job only when explicit task details or prompt/content are needed; list_jobs is concise.',
+    ]),
     ...actionLines('run_job', [
       '  - {"type":"run_job","job_id":"..."} or {"type":"run_job","name":"unique existing job name"}',
       '    Use run_job to execute an existing cronjob immediately from its persisted definition. Do not reconstruct a cronjob rerun as a continuation.',

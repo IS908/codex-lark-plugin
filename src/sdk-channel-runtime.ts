@@ -1,4 +1,6 @@
 import type {
+  CardActionEvent,
+  CardActionResponse,
   CommentEvent,
   LarkChannel as SdkLarkChannel,
   NormalizedMessage,
@@ -68,6 +70,20 @@ export async function startSdkChannelRuntime(
       await channel.handleSdkCommentEvent(comment, sdkChannel);
     } catch (err) {
       logSafeError('[sdk-channel] Error handling doc comment event:', err);
+    }
+  });
+
+  sdkChannel.on('cardAction', async (event: CardActionEvent) => {
+    try {
+      return await channel.handleSdkCardActionEvent(event);
+    } catch (err) {
+      logSafeError('[sdk-channel] Error handling card action event:', err);
+      return {
+        toast: {
+          type: 'error',
+          content: '任务操作失败，请稍后重试。',
+        },
+      } satisfies CardActionResponse;
     }
   });
 

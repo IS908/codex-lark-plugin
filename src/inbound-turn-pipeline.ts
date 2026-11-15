@@ -12,6 +12,7 @@ import { addSdkImageDownloads } from './inbound-attachment-downloader.js';
 import type { LarkTransport } from './lark-transport-contracts.js';
 import { parseJobThreadId } from './job-thread.js';
 import { addQuotedContext, selectQuotedMessageId } from './quoted-context-loader.js';
+import type { CronMessageOriginLookup } from './cron/message-origin-store.js';
 
 export interface LatestInboundMessageTracker {
   record(chatId: string, msg: { messageId: string; threadId?: string; timestamp: number }): void;
@@ -29,6 +30,7 @@ export interface PrepareInboundTurnDeps {
   botMessageTracker?: {
     get(messageId: string): { chatId?: string; threadId?: string } | undefined;
   };
+  cronMessageOrigins?: CronMessageOriginLookup;
 }
 
 export interface InboundTurnSource {
@@ -52,13 +54,21 @@ export async function prepareInboundTurn(
   addAckReaction(message, deps);
 
   const quotedMessageId = selectQuotedMessageId(message);
-  const trackedQuotedMessage = quotedMessageId
+  const persistedOrigin = quotedMessageId
+    ? await deps.cronMessageOrigins?.get(quotedMessageId).catch(() => null)
+    : null;
+  const trackedQuotedMessage = quotedMessageId && !deps.cronMessageOrigins
     ? deps.botMessageTracker?.get(quotedMessageId)
     : undefined;
   const quotedCronjob = trackedQuotedMessage?.chatId === message.chatId
     ? parseJobThreadId(trackedQuotedMessage.threadId)
     : null;
-  if (quotedCronjob) message.quotedCronJobId = quotedCronjob.jobId;
+  if (persistedOrigin?.chatId === message.chatId) {
+    message.quotedCronJobId = persistedOrigin.jobId;
+    message.quotedCronJobOrigin = persistedOrigin;
+  } else if (!deps.cronMessageOrigins && quotedCronjob) {
+    message.quotedCronJobId = quotedCronjob.jobId;
+  }
 
   await addSdkImageDownloads(message, source.resources ?? [], source.sdkChannel);
 

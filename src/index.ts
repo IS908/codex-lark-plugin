@@ -41,7 +41,7 @@ import { assertSupportedNodeVersion } from './runtime-version.js';
 import { createContinuationRuntime } from './continuation/runtime.js';
 import { debugLog } from './debug-log.js';
 import type { JobFile } from './job-store.js';
-import type { RunJobNowResult } from './scheduler.js';
+import type { RunJobNowResult, StartJobNowResult } from './scheduler.js';
 import { acquireLarkInstanceLock } from './instance-lock.js';
 import {
   createDurableRunRuntime,
@@ -53,6 +53,8 @@ import { CronPromptWorkload } from './cron/direct-exec-workload.js';
 import { CronMessageWorkload } from './cron/message-workload.js';
 import { createCronPromptExecutor } from './cron/prompt-executor.js';
 import { createCronDelivery } from './cron/delivery.js';
+import { createCronControlService } from './cron/control-service.js';
+import { createCronCardActionHandler } from './cron/card-actions.js';
 
 let closeContinuationRuntime: (() => Promise<void>) | null = null;
 let stopChannelServices: (() => Promise<void>) | null = null;
@@ -146,6 +148,9 @@ async function main() {
     standaloneWorker: false,
   });
   closeContinuationRuntime = () => continuationRuntime.close();
+  if (continuationRuntime.cronMessageOrigins) {
+    channel.setCronMessageOriginLookup(continuationRuntime.cronMessageOrigins);
+  }
   console.error(
     continuationRuntime.health.available
       ? '[continuation] runtime available'
@@ -156,6 +161,17 @@ async function main() {
   const buffer = new ConversationBuffer();
   let codexExecActionDispatcher: CodexExecActionDispatcher | null = null;
   let runJobNow: ((job: JobFile) => Promise<RunJobNowResult>) | null = null;
+  let startJobNow: ((job: JobFile) => Promise<StartJobNowResult>) | null = null;
+  const cronControls = createCronControlService({
+    startJobNow: async (job) => {
+      if (!startJobNow) return { started: false, reason: 'runner_unavailable' };
+      return startJobNow(job);
+    },
+  });
+  channel.setCardActionHandler(createCronCardActionHandler({
+    service: cronControls,
+    isPrivateChat: (chatId) => channel.isPrivateChat(chatId),
+  }));
   registerConversationFlushHandler({
     buffer,
     identitySession,
@@ -192,7 +208,10 @@ async function main() {
   let durableRunRuntime: DurableRunRuntime | null = null;
   let cronAdmission: CronRunAdmission | null = null;
   if (continuationRuntime.durableRepository) {
-    const cronDelivery = createCronDelivery({ sendReply: sendReplyViaFeishu });
+    const cronDelivery = createCronDelivery({
+      sendReply: sendReplyViaFeishu,
+      originRecorder: continuationRuntime.cronMessageOrigins ?? undefined,
+    });
     const promptExecutor = createCronPromptExecutor({
       identitySession,
       sessionStore: codexSessionStore,
@@ -268,6 +287,7 @@ async function main() {
     actionDispatcher: codexExecActionDispatcher,
     continuationService: continuationRuntime.service,
     continuationAvailable: continuationRuntime.health.available,
+    cronControlService: cronControls,
   });
 
   if (isDryRun) {
@@ -298,6 +318,7 @@ async function main() {
     cronAdmission,
     onSchedulerReady: (scheduler) => {
       runJobNow = scheduler.runJobNow.bind(scheduler);
+      startJobNow = scheduler.startJobNow.bind(scheduler);
     },
   });
   stopChannelServices = startChannelServices.stop;

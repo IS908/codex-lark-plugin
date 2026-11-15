@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { AsyncTaskKernelAdapter } from '../src/continuation/async-task-kernel-adapter.js';
 import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
+import { DURABLE_RUN_SCHEMA_VERSION } from '../src/durable-run/sqlite-migrations.js';
 import { seedHistoricalContinuationDatabase } from './fixtures/continuation-historical-schema.js';
 
 const root = await mkdtemp(join(tmpdir(), 'continuation-durable-cutover-'));
@@ -92,7 +93,10 @@ try {
 
   const database = new DatabaseSync(databasePath, { enableForeignKeyConstraints: true });
   try {
-    assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 10);
+    assert.equal(
+      Number(database.prepare('PRAGMA user_version').get()?.user_version),
+      DURABLE_RUN_SCHEMA_VERSION,
+    );
     const durableTables = database.prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name LIKE 'durable_%'

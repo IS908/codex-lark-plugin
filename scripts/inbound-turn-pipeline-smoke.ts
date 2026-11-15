@@ -100,4 +100,61 @@ await prepareInboundTurn(quotedCronMessage, {
 });
 assert.equal(quotedCronMessage.quotedCronJobId, 'covered-call');
 
+const persistedOrigin = {
+  messageId: 'om_persisted_cron_report',
+  chatId: 'oc_group_pipeline',
+  jobId: 'daily-report',
+  runId: 'cron_run_daily_001',
+  jobName: 'Daily report',
+  jobCreatedAt: '2026-11-01T00:00:00.000Z',
+  recordedAt: '2026-11-15T01:00:00.000Z',
+};
+const persistedQuotedMessage: LarkMessage = {
+  ...quotedCronMessage,
+  messageId: 'om_quote_persisted_report',
+  parentId: persistedOrigin.messageId,
+};
+await prepareInboundTurn(persistedQuotedMessage, {
+  latestMessageTracker: { record: (chatId, msg) => latestRecords.push({ chatId, ...msg }) },
+  ackReactions: new AckReactionTracker(),
+  larkTransport: transport,
+  chatTypeCache: { set: (chatId, chatType) => chatTypes.set(chatId, chatType) },
+  cronMessageOrigins: { get: async () => persistedOrigin },
+}, { resources: [] });
+assert.equal(persistedQuotedMessage.quotedCronJobId, 'daily-report');
+assert.deepEqual(persistedQuotedMessage.quotedCronJobOrigin, persistedOrigin);
+
+for (const [lookupIndex, lookup] of [
+  { get: async () => null },
+  { get: async () => { throw new Error('origin store unavailable'); } },
+  { get: async () => ({ ...persistedOrigin, chatId: 'oc_other_chat' }) },
+].entries()) {
+  const unmappedMessage: LarkMessage = {
+    ...quotedCronMessage,
+    messageId: `om_unmapped_${lookupIndex}`,
+    quotedCronJobId: undefined,
+    quotedCronJobOrigin: undefined,
+  };
+  await prepareInboundTurn(unmappedMessage, {
+    latestMessageTracker: { record: (chatId, msg) => latestRecords.push({ chatId, ...msg }) },
+    ackReactions: new AckReactionTracker(),
+    larkTransport: transport,
+    chatTypeCache: { set: (chatId, chatType) => chatTypes.set(chatId, chatType) },
+    cronMessageOrigins: lookup,
+    botMessageTracker: {
+      get: () => ({
+        messageId: 'om_cron_report',
+        chatId: 'oc_group_pipeline',
+        threadId: 'job-covered-call-abc123def456-1760000000000',
+        timestamp: Date.now(),
+      }),
+    },
+  }, { resources: [] });
+  assert.equal(
+    unmappedMessage.quotedCronJobId,
+    undefined,
+    'configured persistent lookup must fail closed instead of falling back to thread metadata',
+  );
+}
+
 console.log('inbound-turn-pipeline smoke: PASS');

@@ -4,7 +4,7 @@ import { serializeDurableRunJson } from '../domain/durable-run.js';
 
 type SqlRow = Record<string, null | number | bigint | string | Uint8Array>;
 
-export const DURABLE_RUN_SCHEMA_VERSION = 10;
+export const DURABLE_RUN_SCHEMA_VERSION = 11;
 export const ASYNC_TASK_INPUT_VERSION = 1;
 export const ASYNC_TASK_STATE_VERSION = 1;
 
@@ -19,7 +19,7 @@ const LEGACY_CONTINUATION_COMPATIBILITY_TRIGGERS = CONTINUATION_COMPATIBILITY_VI
   (view) => ['insert', 'update', 'delete'].map((operation) => `${view}_${operation}`),
 );
 
-export function migrateSqliteToDurableV10(database: DatabaseSync): void {
+export function migrateSqliteToDurableV11(database: DatabaseSync): void {
   const version = scalarNumber(database, 'PRAGMA user_version');
   if (version > DURABLE_RUN_SCHEMA_VERSION && version !== 70) {
     throw new Error(
@@ -32,7 +32,7 @@ export function migrateSqliteToDurableV10(database: DatabaseSync): void {
     assertDurableSchema(database);
     return;
   }
-  if (version !== 0 && version !== 70 && (version < 1 || version > 9)) {
+  if (version !== 0 && version !== 70 && (version < 1 || version > 10)) {
     throw new Error(`Unsupported continuation database schema version ${version}.`);
   }
 
@@ -44,7 +44,11 @@ export function migrateSqliteToDurableV10(database: DatabaseSync): void {
       database.exec(`PRAGMA user_version = ${DURABLE_RUN_SCHEMA_VERSION};`);
       return;
     }
-    migrateContinuationRows(database, currentVersion);
+    if (currentVersion === 10) {
+      createCronMessageOriginSchema(database);
+    } else {
+      migrateContinuationRows(database, currentVersion);
+    }
     database.exec(`PRAGMA user_version = ${DURABLE_RUN_SCHEMA_VERSION};`);
   });
   assertDurableSchema(database);
@@ -375,6 +379,24 @@ export function createDurableSchema(database: DatabaseSync): void {
 
     CREATE UNIQUE INDEX IF NOT EXISTS durable_interrupts_active_run_idx
       ON durable_interrupts(run_id) WHERE status = 'pending';
+  `);
+  createCronMessageOriginSchema(database);
+}
+
+function createCronMessageOriginSchema(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS cron_message_origins (
+      message_id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      run_id TEXT NOT NULL REFERENCES durable_runs(run_id) ON DELETE CASCADE,
+      job_name TEXT NOT NULL,
+      job_created_at TEXT NOT NULL,
+      recorded_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS cron_message_origins_job_idx
+      ON cron_message_origins(job_id, recorded_at DESC);
   `);
 }
 
@@ -1409,6 +1431,7 @@ function assertDurableSchema(database: DatabaseSync): void {
     'durable_outbox',
     'durable_operation_receipts',
     'durable_interrupts',
+    'cron_message_origins',
   ]) {
     if (!tableExists(database, table)) {
       throw new Error(`Durable Run schema is missing ${table}.`);
@@ -1432,6 +1455,11 @@ function assertDurableSchema(database: DatabaseSync): void {
     WHERE type = 'index' AND name = 'durable_runs_active_concurrency_idx'
   `).get();
   if (!concurrencyIndex) throw new Error('Durable Run schema is missing active concurrency fencing.');
+  const cronOriginIndex = database.prepare(`
+    SELECT 1 AS present FROM sqlite_master
+    WHERE type = 'index' AND name = 'cron_message_origins_job_idx'
+  `).get();
+  if (!cronOriginIndex) throw new Error('Durable Run schema is missing Cron message origin indexing.');
   const violations = database.prepare('PRAGMA foreign_key_check').all();
   if (violations.length > 0) throw new Error('Durable Run schema has foreign-key violations.');
 }

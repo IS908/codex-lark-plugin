@@ -8,7 +8,8 @@ description: Manage scheduled jobs (cronjobs) — create, list, pause, resume, a
 Use the cronjob tools to manage scheduled tasks:
 
 - `create_job` — create a new scheduled job
-- `list_jobs` — show all jobs and their status
+- `list_jobs` — show concise metadata for visible jobs
+- `get_job` — show one visible job in detail, including authorized prompt/content
 - `update_job` — modify a job (change schedule, pause/resume, update content)
 - `delete_job` — remove a job
 
@@ -41,7 +42,8 @@ content unless the user explicitly asks.
 ## Verbose mode
 
 When the user explicitly says "verbose", "show full", "dump prompt",
-"include prompt bodies", or similar: include the hidden fields. Prefix
+"include prompt bodies", or similar: call `get_job` for the specific stable
+job ID and include the authorized hidden fields. Prefix
 the output with one line:
 
 ```
@@ -58,7 +60,7 @@ user first:
 > `<target_chat_id>`)? Reply `yes` to proceed."
 
 Do not proceed without an affirmative response. For read-only calls
-(`list_jobs`) and for `update_job` that only changes `name`, no
+(`list_jobs`, `get_job`) and for `update_job` that only changes `name`, no
 confirmation is needed.
 
 ## Audit

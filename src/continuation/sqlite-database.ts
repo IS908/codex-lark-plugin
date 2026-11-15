@@ -4,7 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import {
   DURABLE_RUN_SCHEMA_VERSION,
   installContinuationCompatibilitySchema,
-  migrateSqliteToDurableV10,
+  migrateSqliteToDurableV11,
 } from '../durable-run/sqlite-migrations.js';
 
 const ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
@@ -46,7 +46,7 @@ export async function initializeContinuationDatabase(database: DatabaseSync): Pr
   await retrySqliteBusy(() => database.exec('PRAGMA journal_mode = WAL;'), 5_000);
   database.exec('PRAGMA synchronous = NORMAL;');
   await retrySqliteBusy(() => {
-    migrateSqliteToDurableV10(database);
+    migrateSqliteToDurableV11(database);
     installContinuationCompatibilitySchema(database);
   }, 5_000);
   healthCheckContinuationDatabase(database);

@@ -58,7 +58,7 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 
 ### Privacy & Security (v0.9.0+)
 
-- **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `run_local_cli_tool`, `manage_access_control`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
+- **Server-derived caller identity**: sensitive tools (`save_memory`, `save_skill`, `create_job`, `list_jobs`, `get_job`, `update_job`, `delete_job`, `what_do_you_know`, `forget_memory`, `run_local_cli_tool`, `manage_access_control`) resolve the calling user from the authenticated Feishu event stream, not from tool arguments — socially-engineered prompts cannot act on behalf of another user
 - **Doc-comment binding**: doc-comment tools only run from `doc:<file_token>` turns, require the current `thread_id`, and reject prompt-injected `doc_token` mismatches so comments cannot be posted into a different document
 - **Memory transparency (v0.11.0+)**: `what_do_you_know` lists what the bot has stored about the caller (filtered by current-chat visibility); `forget_memory` removes a specific line by hash. Optional `promote_to_rule` feeds corrections into `privacy-rules.md` — a self-learning loop that makes future misclassifications less likely
 - **Append-only audit log (v0.11.0+)**: `~/.codex/channels/lark/logs/audit.log` records every sensitive-tool invocation as compact text lines (time / log id / `audit` / tool / outcome / caller / redacted args) so the operator can retrospectively inspect what was accessed on their machine
@@ -67,7 +67,8 @@ The plugin connects to Feishu via the Lark SDK WebSocket client, receives messag
 - **L1/L2/L3 classification** (v0.10.0+): hardcoded regex + keyword rules catch phones / credentials / sensitive Chinese keywords. Email is intentionally NOT in L1 — the plugin targets **work-chat use cases** where emails are commonly shared via signatures/directories; personal deployments can add their own "Always private" email rule to `privacy-rules.md`. User-editable `privacy-rules.md` covers personal/org-specific cases; LLM handles the nuance. `parseTieredProfile` applies an L1 safety net over LLM output so misclassified credentials get forced to private
 - **Legacy-profile migration respects L2 rules (v0.11.1+)**: if the operator authors `privacy-rules.md` before (or during) the upgrade, `## Always private` phrases are applied as case-insensitive substring matches during migration — org-specific codenames, client names, and people mentions get routed to `private.md` even though L1 alone wouldn't flag them
 - **Memory hardening**: public profile writes are server-side checked with L1 and deterministic L2 always-private rules, with sensitive spillover routed to `private.md`; credential/token/account-identifier material is rejected from new profile, episode, and skill writes and filtered from legacy memory reads; profile access decisions are audited without copying memory text; same-user profile operations are serialized; stored memory, quotes, flush buffers, cron prompts, Codex exec prompts, and L2 rules are wrapped as untrusted data in prompts; episode files are capped by `LARK_MAX_EPISODE_BYTES`
-- **`list_jobs` visibility filter**: in a group chat, members only see jobs whose `target_chat_id` matches that group (with prompt bodies redacted for non-owners); in a private chat, the caller sees their own jobs. Group members can no longer inspect each other's private jobs
+- **Traceable Cron controls**: generated Cron reports carry a restart-safe source mapping, a concise source footer, and pause/view/run buttons. Directly quoted commands resolve only the mapped Job instance; missing historical mappings show concise candidates without guessing
+- **`list_jobs` visibility filter**: in a group chat, members only see concise metadata for jobs whose `target_chat_id` matches that group; in a private chat, the caller sees their own jobs. Prompt/content bodies are available only through the explicit, visibility-checked `get_job` detail operation
 - **Owner-only mutations**: `update_job` / `delete_job` require `caller == created_by`
 - **CronJob isolation**: each cronjob execution runs under a unique `thread_id` so scheduled actions don't collide with concurrent human messages in the same chat
 - **Terminal fallback**: terminal skill invocations (e.g. `$lark:jobs`) resolve via the reserved `__terminal__` chat id -> `LARK_OWNER_OPEN_ID` only outside active Lark channel turns
@@ -537,7 +538,7 @@ type also downgrades tool-call collection from `complete` to `partial`.
 
 Exec delivery also supports a parent-process action bridge for built-in actions
 that cannot safely call this MCP server from the child `codex exec` process:
-`save_memory`, `create_job`, `list_jobs`, `update_job`, `disable_job`,
+`save_memory`, `create_job`, `list_jobs`, `get_job`, `update_job`, `disable_job`,
 `delete_job`, `upsert_job`, `run_local_cli_tool`, `manage_access_control`,
 `send_message`, and `recall_message`. The parent creates
 an owner-only action JSONL side channel for each `codex exec` turn and passes
@@ -546,12 +547,12 @@ action requests there while stdout remains user-visible reply text only. The
 parent validates token/schema, rejects child-supplied identity fields, derives
 caller identity from the current Feishu event, executes accepted actions
 locally, and fails malformed action requests instead of recursively loading the
-Lark MCP server. `create_job` and `list_jobs` expose
+Lark MCP server. `create_job`, `list_jobs`, and `get_job` expose
 stable `job_id` values so later turns can update, pause, replace, or delete the
 exact reminder instead of recreating a duplicate name.
 Exec turns also expose `run_job` for an immediate creator-authorized execution
-of an existing cronjob. Quoted reports produced in the current runtime carry a
-trusted `quoted_cronjob_id`, so “rerun this task” reuses the stored prompt,
+of an existing cronjob. Quoted reports with a persisted same-chat origin carry
+a trusted `quoted_cronjob_id`, so “rerun this task” reuses the stored prompt,
 model, caller, target, and scheduler/report path instead of summarizing the task
 into a continuation. Manual reruns preserve future `next_run_at` values and do
 not change paused/active state.
@@ -977,7 +978,8 @@ The plugin registers the following MCP tools for Codex to use:
 | `save_memory` | Save a memory entry (profile / chat episode / thread episode) for cross-session recall. Profile writes target the resolved caller (server-derived, v0.9.0+) and go into the chosen `tier` (`public` or `private`, default `private`, v0.10.0+). Credential/token/account-identifier material is rejected. Requires `chat_id`. |
 | `save_skill` | Save a reusable procedure as a globally searchable skill. Owner-only because skills are visible across users/chats; credential/token/account-identifier material is rejected. Requires `chat_id` and optional `thread_id` for server-derived caller identity. |
 | `create_job` | Create a scheduled cronjob (message or prompt type). Creator derived from session; requires `chat_id` (used to populate `origin_chat_id`). Optional `timezone` stores an explicit IANA timezone in the job file. |
-| `list_jobs` | List cronjobs visible in the current chat. Filter follows rendering-visibility: private → caller's own jobs, group → jobs with `target_chat_id == currentChat` (prompts redacted for non-owners). Requires `chat_id`; renders each job's own timezone plus UTC. |
+| `list_jobs` | List concise cronjob metadata visible in the current chat. Filter follows rendering-visibility: private → caller's own jobs, group → jobs with `target_chat_id == currentChat`. Requires `chat_id`; renders names, stable IDs, status, schedule, timezone, and execution times without prompt/content bodies. |
+| `get_job` | Show one visible cronjob in detail. Requires a stable job ID and `chat_id`; prompt/content is returned only when the caller is authorized to read it. |
 | `update_job` | Update a cronjob (schedule, timezone, content, pause/resume). Owner-only. Requires `chat_id`. |
 | `delete_job` | Delete a cronjob. Owner-only. Requires `chat_id`. |
 | `what_do_you_know` | List what the bot has stored in the caller's profile. Filtered by rendering visibility (both tiers in p2p, public only in groups). Each line carries an 8-char hash for use with `forget_memory`. (v0.11.0+) |

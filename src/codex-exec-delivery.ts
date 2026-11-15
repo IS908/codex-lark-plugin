@@ -10,7 +10,10 @@ import {
 import { preserveConversationBoundaryFields } from './conversation-boundary.js';
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { larkReplyPresentationGuideline, untrustedDataBlock } from './prompts.js';
-import type { TurnObligationTracker } from './turn-obligation.js';
+import {
+  findLarkDeferSentinel,
+  type TurnObligationTracker,
+} from './turn-obligation.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import { isFeishuOpenMessageId, shouldSendFeishuReplyForMessage } from './codex-exec-error.js';
 import {
@@ -117,6 +120,7 @@ const VISIBLE_SUCCESS_ACTIONS = new Set<CodexExecActionExecutionResult['action']
   'create_job',
   'run_job',
   'list_jobs',
+  'get_job',
   'update_job',
   'disable_job',
   'delete_job',
@@ -632,9 +636,10 @@ export async function deliverMessageViaCodexExec(
   if (!text) {
     text = 'Codex exec returned an empty response.';
   }
-  const lifecycleGuard = guardCodexExecLifecycleReply(text, {
-    continuationCreated,
-  });
+  const deferSentinel = findLarkDeferSentinel(text);
+  const lifecycleGuard = deferSentinel
+    ? { blocked: false, text }
+    : guardCodexExecLifecycleReply(text, { continuationCreated });
   if (lifecycleGuard.blocked) {
     console.error(
       `[codex-exec] Blocked follow-up promise for message ${message.messageId}: ${lifecycleGuard.reason}`,
@@ -659,7 +664,13 @@ export async function deliverMessageViaCodexExec(
   if (suppressVisibleReply) {
     return;
   }
-  if (turnObligations?.markDeferredFromText(message.messageId, 'exec_assistant_text', text)) {
+  if (deferSentinel) {
+    turnObligations?.markDeferred(
+      message.messageId,
+      'exec_assistant_text',
+      deferSentinel.marker,
+      deferSentinel.reason,
+    );
     return;
   }
 

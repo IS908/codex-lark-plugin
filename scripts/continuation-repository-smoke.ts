@@ -37,7 +37,10 @@ import {
 } from '../src/continuation/input-store.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
 import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
-import { installContinuationCompatibilitySchema } from '../src/durable-run/sqlite-migrations.js';
+import {
+  DURABLE_RUN_SCHEMA_VERSION,
+  installContinuationCompatibilitySchema,
+} from '../src/durable-run/sqlite-migrations.js';
 import { currentProcessStartedAt } from '../src/process-identity.js';
 
 if (process.argv[2] === '--hold-managed-input-create') {
@@ -192,7 +195,10 @@ async function verifyConcurrentFreshInitialization(): Promise<void> {
   const { DatabaseSync: InitializationDatabaseSync } = await import('node:sqlite');
   const database = new InitializationDatabaseSync(initializationDatabasePath);
   try {
-    assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 10);
+    assert.equal(
+      Number(database.prepare('PRAGMA user_version').get()?.user_version),
+      DURABLE_RUN_SCHEMA_VERSION,
+    );
     const schema = database.prepare(`
       SELECT type, name
       FROM sqlite_master
@@ -2158,7 +2164,10 @@ const migratedVersionThreeColumns = migratedVersionThreeDatabase
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'max_attempts'));
 assert.equal(migratedVersionThreeColumns.some((column) => column.name === 'max_steps'), false);
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'retain'));
-assert.equal(Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version), 10);
+assert.equal(
+  Number(migratedVersionThreeDatabase.prepare('PRAGMA user_version').get()?.user_version),
+  DURABLE_RUN_SCHEMA_VERSION,
+);
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'no_progress_count'));
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'source_facts_json'));
 assert.ok(migratedVersionThreeColumns.some((column) => column.name === 'task_contract_json'));
@@ -2210,7 +2219,10 @@ async function verifyIntermediateMigration(version: 4 | 5): Promise<void> {
     migrated.close();
   }
   const migratedDatabase = new DatabaseSync(migrationOptions.databasePath);
-  assert.equal(Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version), 10);
+  assert.equal(
+    Number(migratedDatabase.prepare('PRAGMA user_version').get()?.user_version),
+    DURABLE_RUN_SCHEMA_VERSION,
+  );
   assert.equal(Number(migratedDatabase.prepare(
     'SELECT COUNT(*) AS count FROM continuation_attempts WHERE job_id = ?',
   ).get(fixture.terminalJobId)?.count), fixture.expectedAttemptCount);
@@ -2261,7 +2273,10 @@ async function verifyConcurrentHistoricalMigration(version: 1 | 4 | 5): Promise<
     repository.close();
   }
   const database = new DatabaseSync(databasePath);
-  assert.equal(Number(database.prepare('PRAGMA user_version').get()?.user_version), 10);
+  assert.equal(
+    Number(database.prepare('PRAGMA user_version').get()?.user_version),
+    DURABLE_RUN_SCHEMA_VERSION,
+  );
   assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
   database.close();
 }
@@ -2364,7 +2379,10 @@ try {
   migratedVersionOneRepository.close();
 }
 const migratedVersionOneDatabase = new DatabaseSync(versionOneDatabasePath);
-assert.equal(Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version), 10);
+assert.equal(
+  Number(migratedVersionOneDatabase.prepare('PRAGMA user_version').get()?.user_version),
+  DURABLE_RUN_SCHEMA_VERSION,
+);
 assert.equal(Number(migratedVersionOneDatabase.prepare(
   'SELECT COUNT(*) AS count FROM continuation_attempts',
 ).get()?.count), 3);
@@ -2531,7 +2549,7 @@ try {
   const resumedFactsMigrationDatabase = new DatabaseSync(interruptedFactsMigrationDatabasePath);
   assert.equal(
     Number(resumedFactsMigrationDatabase.prepare('PRAGMA user_version').get()?.user_version),
-    10,
+    DURABLE_RUN_SCHEMA_VERSION,
   );
   resumedFactsMigrationDatabase.close();
 } finally {

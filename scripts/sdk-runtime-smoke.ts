@@ -39,8 +39,13 @@ const identitySession = new IdentitySession(() => 'ou_owner');
 channel.setIdentitySession(identitySession);
 
 const handled: any[] = [];
+const cardActions: any[] = [];
 channel.setMessageHandler(async (message) => {
   handled.push(message);
+});
+channel.setCardActionHandler(async (event) => {
+  cardActions.push(event);
+  return { toast: { type: 'success', content: '已暂停任务' } };
 });
 
 await startSdkChannelRuntime(channel, {
@@ -48,9 +53,30 @@ await startSdkChannelRuntime(channel, {
 });
 
 assert.equal(connected, true);
-for (const eventName of ['message', 'comment', 'reaction', 'reject', 'error']) {
+for (const eventName of ['message', 'comment', 'cardAction', 'reaction', 'reject', 'error']) {
   assert.equal(handlers.has(eventName), true, `missing SDK ${eventName} handler`);
 }
+
+const cardActionResponse = await handlers.get('cardAction')!({
+  messageId: 'om_cron_report',
+  chatId: 'oc_sdk_p2p',
+  operator: { openId: 'ou_sdk_sender' },
+  action: {
+    tag: 'button',
+    value: {
+      version: 1,
+      kind: 'cron_job_control',
+      action: 'pause',
+      jobId: 'daily-report',
+      jobCreatedAt: '2026-11-01T00:00:00.000Z',
+    },
+  },
+});
+assert.equal(cardActions.length, 1);
+assert.equal(cardActions[0].operator.openId, 'ou_sdk_sender');
+assert.deepEqual(cardActionResponse, {
+  toast: { type: 'success', content: '已暂停任务' },
+});
 
 await handlers.get('message')!({
   messageId: 'om_sdk_live',

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { appConfig } from './config.js';
 import type { ConversationBuffer } from './memory/buffer.js';
 import type { BotMessageTracker, LatestMessageTracker, TrackedBotMessageQuotedContext } from './message-trackers.js';
-import { buildCards, shouldUseCard } from './feishu-card.js';
+import { buildCards, shouldUseCard, type CardActionButton } from './feishu-card.js';
 import { mergeCardFooterWithRuntimeMetrics } from './codex-exec-metrics.js';
 import {
   revokeAckReactionWithTransport,
@@ -52,6 +52,7 @@ export interface ReplyRequest {
   thread_id?: string;
   format?: 'text' | 'card';
   footer?: string;
+  cardActions?: CardActionButton[];
   runtimeFooter?: string;
   files?: Array<{ path: string; type: 'image' | 'file' }>;
   richParts?: ReplyRichPart[];
@@ -152,6 +153,7 @@ export async function sendFeishuReply(
     thread_id,
     format,
     footer,
+    cardActions,
     runtimeFooter,
     files,
     richParts,
@@ -467,9 +469,9 @@ export async function sendFeishuReply(
   const outboundText = renderedMentions.text;
   const outboundCardMarkdown = renderedMentions.cardMarkdown;
 
-  async function sendTextChunks(): Promise<number | ReplySendResult> {
-    if (!outboundText) return 0;
-    const chunks = chunkText(outboundText, appConfig.textChunkLimit);
+  async function sendTextChunks(content = outboundText): Promise<number | ReplySendResult> {
+    if (!content) return 0;
+    const chunks = chunkText(content, appConfig.textChunkLimit);
     for (let i = 0; i < chunks.length; i++) {
       try {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;
@@ -496,9 +498,12 @@ export async function sendFeishuReply(
 
   if (useCard) {
     const deliveredBeforeCard = deliveredCount;
+    const mergedFooter = mergeCardFooterWithRuntimeMetrics(footer, runtimeFooter);
     try {
-      const mergedFooter = mergeCardFooterWithRuntimeMetrics(footer, runtimeFooter);
-      const cards = buildCards(outboundCardMarkdown, { footer: mergedFooter });
+      const cards = buildCards(outboundCardMarkdown, {
+        footer: mergedFooter,
+        actions: cardActions,
+      });
       sentCount = cards.length;
       for (let i = 0; i < cards.length; i++) {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : undefined;
@@ -523,7 +528,8 @@ export async function sendFeishuReply(
           `[reply-sender] generated card build/delivery failed; falling back to text:`,
           failure.error?.message ?? String(failure.error),
         );
-        const textResult = await sendTextChunks();
+        const fallbackText = [outboundText, mergedFooter].filter(Boolean).join('\n\n');
+        const textResult = await sendTextChunks(fallbackText);
         if (typeof textResult !== 'number') return textResult;
         sentCount = textResult;
       } else {
@@ -531,7 +537,15 @@ export async function sendFeishuReply(
           `[reply-sender] send card failed after partial delivery:`,
           failure.error?.message ?? String(failure.error),
         );
-        throw failure.error;
+        return {
+          sentCount: deliveredCount,
+          statusText: `Partially sent ${deliveredCount} card message(s)`,
+          isError: true,
+          errorText: failure.error?.message ?? String(failure.error),
+          ...(deliveredMessageIds.length > 0
+            ? { messageIds: [...deliveredMessageIds] }
+            : {}),
+        };
       }
     }
   } else {

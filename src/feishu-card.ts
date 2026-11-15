@@ -58,18 +58,15 @@ export function shouldUseCard(text: string): boolean {
  */
 export function buildCards(
   text: string,
-  opts?: { footer?: string }
+  opts?: { footer?: string; actions?: CardActionButton[] }
 ): object[] {
   const { elements } = buildCardContent(text);
-
-  // Append footer element if provided
-  if (opts?.footer) {
-    elements.push({
-      tag: 'markdown',
-      content: opts.footer,
-      text_size: 'notation',
-    });
-  }
+  const metadataElements: Element[] = [
+    ...(opts?.actions ?? []).map(cardActionButton),
+    ...(opts?.footer
+      ? [{ tag: 'markdown', content: opts.footer, text_size: 'notation' }]
+      : []),
+  ];
 
   // Pack elements into one or more cards, bounded by count and total size
   const cards: object[] = [];
@@ -110,6 +107,23 @@ export function buildCards(
       batchSize += elJson.length;
     }
   }
+  if (metadataElements.length > 0) {
+    const metadataSize = metadataElements.reduce(
+      (total, element) => total + JSON.stringify(element).length,
+      0,
+    );
+    if (
+      batch.length > 0
+      && (
+        batch.length + metadataElements.length > CARD_ELEMENT_LIMIT
+        || batchSize + metadataSize > CARD_SIZE_LIMIT
+      )
+    ) {
+      flush();
+    }
+    batch.push(...metadataElements);
+    batchSize += metadataSize;
+  }
   flush();
 
   if (cards.length === 0) {
@@ -117,6 +131,21 @@ export function buildCards(
   }
 
   return cards;
+}
+
+export interface CardActionButton {
+  text: string;
+  value: Record<string, unknown>;
+  type?: 'default' | 'primary' | 'danger';
+}
+
+function cardActionButton(action: CardActionButton): Element {
+  return {
+    tag: 'button',
+    text: { tag: 'plain_text', content: action.text },
+    type: action.type ?? 'default',
+    behaviors: [{ type: 'callback', value: action.value }],
+  };
 }
 
 // ─── Markdown Style Optimizer ─────────────────────────────────

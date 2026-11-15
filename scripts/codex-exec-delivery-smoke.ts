@@ -550,10 +550,7 @@ await deliverMessageViaCodexExec({
     return { sentCount: 1 };
   },
 });
-assert.equal(
-  deferredPromiseReplies[0].text,
-  'This run could not establish a follow-up task, so no background work will continue. Please retry or use a supported scheduled task.',
-);
+assert.equal(deferredPromiseReplies.length, 0);
 
 const lifecycleSafeReplies: ReplyRequest[] = [];
 await deliverMessageViaCodexExec({
@@ -1828,5 +1825,27 @@ await deliverMessageViaCodexExec({
 });
 assert.equal(generationSendCalled, false);
 assert.deepEqual(generatedOutputs.map((output) => output.text), ['captured report']);
+
+const suppressedGenerationOutputs: Array<{ text: string; runtimeFooter?: string }> = [];
+await deliverMessageViaCodexExec({
+  message: {
+    ...message,
+    messageId: 'job-1-run-suppressed',
+    chatType: 'cronjob',
+    messageType: 'cronjob',
+  },
+  displayLabel: 'CronJob · suppressed report',
+  useCodexSessions: false,
+  progressVisible: false,
+  runCodexExec: async () => '[LARK_NO_REPLY]\nno report is needed',
+  deliverySink: async (output) => {
+    suppressedGenerationOutputs.push(output);
+  },
+});
+assert.deepEqual(
+  suppressedGenerationOutputs,
+  [],
+  'cron generation sentinels must be suppressed without a foreground turn tracker',
+);
 
 console.log('PASS');

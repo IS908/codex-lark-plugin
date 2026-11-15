@@ -10,6 +10,8 @@ import type { CodexExecSessionHealthRecorder } from './codex-exec-delivery.js';
 import type { CodexExecSessionStore } from './codex-session-store.js';
 import { handleContinuationCommand } from './continuation/command-handler.js';
 import type { ContinuationTaskService } from './continuation/service.js';
+import { handleCronInboundCommand } from './cron/inbound-command.js';
+import type { CronControlService } from './cron/control-service.js';
 import { debugLog } from './debug-log.js';
 import { splitDocCommentText } from './doc-comment-api.js';
 import type { IdentitySession } from './identity-session.js';
@@ -25,6 +27,7 @@ import { sendFeishuReply } from './reply-sender.js';
 import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
+import { listVisibleJobs } from './job-service.js';
 
 export interface CodexDeliveryChannelPorts {
   getClient(): Lark.Client;
@@ -32,6 +35,7 @@ export interface CodexDeliveryChannelPorts {
   getAckReactions(): AckReactionTracker;
   getBotMessageTracker(): BotMessageTracker;
   getLatestMessageTracker(): LatestMessageTracker;
+  isPrivateChat(chatId: string): boolean;
   invalidateMemoryDedupScope(chatId: string, threadId?: string, reason?: string): void;
   setControlMessageHandler(handler: ControlMessageHandler): void;
   setMessageHandler(handler: MessageHandler): void;
@@ -76,6 +80,7 @@ export interface RegisterCodexDeliveryHandlersOptions {
   actionDispatcher: CodexExecActionDispatcher | null;
   continuationService?: ContinuationTaskService | null;
   continuationAvailable?: boolean;
+  cronControlService?: CronControlService;
 }
 
 export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHandlersOptions): void {
@@ -89,6 +94,7 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
     actionDispatcher,
     continuationService,
     continuationAvailable,
+    cronControlService,
   } = options;
 
   const sendReplyViaFeishu = createReplySender({
@@ -102,6 +108,23 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
   });
 
   channel.setControlMessageHandler(async (message) => {
+    if (cronControlService) {
+      const handledCron = await handleCronInboundCommand({
+        message,
+        service: cronControlService,
+        listVisibleJobs: (scope) => listVisibleJobs({
+          ...scope,
+          status: 'all',
+          auditArgs: {
+            source: 'quoted_cron_control',
+            chat_id: scope.chatId,
+          },
+        }),
+        isPrivateChat: (chatId) => channel.isPrivateChat(chatId),
+        sendReply: sendReplyViaFeishu,
+      });
+      if (handledCron) return true;
+    }
     const handledTask = await handleContinuationCommand({
       message,
       service: continuationService ?? null,

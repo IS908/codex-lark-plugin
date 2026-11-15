@@ -109,6 +109,7 @@ try {
   const updateJob = getTool('update_job');
   const createJob = getTool('create_job');
   const listJobs = getTool('list_jobs');
+  const getJob = getTool('get_job');
   if (handlers.has('create_default_review_jobs')) {
     fail('create_default_review_jobs should not be registered; provider-specific review presets are not part of the core plugin');
   }
@@ -196,6 +197,16 @@ try {
     const listText = list.content[0].text;
     if (!listText.includes('**pause-display**')) fail(`5: list should include pause-display, got ${listText}`);
     if (!listText.includes('Next: - (paused)')) fail(`5: list should hide paused next run, got ${listText}`);
+    if (listText.includes('old')) fail(`5: default list must not include Job content, got ${listText}`);
+    const details = await getJob({
+      id: 'pause-display',
+      chat_id: 'chat_owner',
+      thread_id: 'thread_owner',
+    });
+    if (details.isError) fail(`5: get_job should succeed, got ${JSON.stringify(details)}`);
+    if (!details.content[0].text.includes('content: old')) {
+      fail(`5: get_job should include authorized content, got ${details.content[0].text}`);
+    }
     passed++;
   }
 

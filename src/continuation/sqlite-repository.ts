@@ -51,6 +51,7 @@ import type {
   DurableRunTransition,
 } from '../domain/durable-run.js';
 import { SqliteDurableRunRepository } from '../durable-run/sqlite-repository.js';
+import { SqliteCronMessageOriginStore } from '../cron/message-origin-store.js';
 import {
   asyncTaskDurableCreateRequestFromJob,
   asyncTaskStateEnvelopeFromJob,
@@ -138,6 +139,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   private readonly activeDurableClaims = new Map<string, import('../domain/durable-run.js').DurableRunClaim>();
   private readonly verifier: ContinuationVerifier;
   readonly durableRuns: SqliteDurableRunRepository;
+  readonly cronMessageOrigins: SqliteCronMessageOriginStore;
 
   private constructor(
     private readonly database: DatabaseSync,
@@ -147,6 +149,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   ) {
     this.verifier = new ContinuationVerifier(artifacts);
     this.durableRuns = SqliteDurableRunRepository.attach(database);
+    this.cronMessageOrigins = SqliteCronMessageOriginStore.attach(database);
   }
 
   static async open(
