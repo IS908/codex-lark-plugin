@@ -170,7 +170,6 @@ function replyRequest(
       ? {
           format: 'card' as const,
           footer: `来源任务：${route.jobName} · ${route.jobId}`,
-          cardActions: cronReportActions(route),
         }
       : {}),
     ...(payload.kind === 'message'
@@ -189,21 +188,6 @@ function replyRequest(
     retry: { attempts: 1, retryTimeout: false },
     routing: 'standalone',
   };
-}
-
-function cronReportActions(route: CronDeliveryRoute): NonNullable<ReplyRequest['cardActions']> {
-  const action = (kind: 'pause' | 'view' | 'run_now') => ({
-    version: 1,
-    kind: 'cron_job_control',
-    action: kind,
-    jobId: route.jobId,
-    jobCreatedAt: route.createdAt,
-  });
-  return [
-    { text: '暂停任务', type: 'danger', value: action('pause') },
-    { text: '查看任务', value: action('view') },
-    { text: '立即运行', type: 'primary', value: action('run_now') },
-  ];
 }
 
 async function recordMessageOriginsSafely(

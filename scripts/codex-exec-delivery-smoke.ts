@@ -612,9 +612,22 @@ const quotedCronPrompt = buildCodexExecPrompt({
   messageId: 'om_quoted_cron_rerun',
   text: '重跑一下这个任务',
   quotedCronJobId: 'covered-call',
+  quotedCronJobOrigin: {
+    messageId: 'om_quoted_cron_report',
+    chatId: message.chatId,
+    jobId: 'covered-call',
+    runId: 'cron_run_covered_call',
+    jobName: 'Covered call',
+    jobCreatedAt: '2026-11-01T00:00:00.000Z',
+    recordedAt: '2026-11-15T00:00:00.000Z',
+  },
 }, 'Kevin · Codex Test Group');
 assert.match(quotedCronPrompt, /quoted_cronjob_id: covered-call/);
 assert.match(quotedCronPrompt, /"type":"run_job","job_id":"covered-call"/);
+assert.match(quotedCronPrompt, /"type":"get_job","job_id":"covered-call"/);
+assert.match(quotedCronPrompt, /"type":"disable_job","job_id":"covered-call"/);
+assert.match(quotedCronPrompt, /"type":"update_job","job_id":"covered-call"/);
+assert.match(quotedCronPrompt, /trusted source/i);
 assert.match(quotedCronPrompt, /do not create a continuation/i);
 
 const continuationReplies: ReplyRequest[] = [];

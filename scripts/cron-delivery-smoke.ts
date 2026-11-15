@@ -114,8 +114,8 @@ function transportHarness(options: {
   return { delivery, sends, tracked, buffered, ackReactions, removedReactions };
 }
 
-// Confirmed report delivery renders trusted source controls and records every
-// split Feishu message ID against the exact Job/Run instance.
+// Confirmed report delivery keeps the source marker without rendering controls
+// and records every split Feishu message ID against the exact Job/Run instance.
 {
   const origins: Array<Record<string, unknown>> = [];
   const harness = transportHarness({
@@ -146,9 +146,9 @@ function transportHarness(options: {
   assert.ok(harness.sends.length > 1, 'long report should split into multiple cards');
   const rendered = JSON.stringify(harness.sends.map((send) => send.input));
   assert.match(rendered, /来源任务：Daily report · daily-report/);
-  assert.match(rendered, /暂停任务/);
-  assert.match(rendered, /查看任务/);
-  assert.match(rendered, /立即运行/);
+  assert.doesNotMatch(rendered, /暂停任务/);
+  assert.doesNotMatch(rendered, /查看任务/);
+  assert.doesNotMatch(rendered, /立即运行/);
   assert.equal(origins.length, 1);
   assert.deepEqual(origins[0], {
     messageIds: harness.tracked.map((entry) => entry.id),

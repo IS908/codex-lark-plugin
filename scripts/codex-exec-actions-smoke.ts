@@ -966,10 +966,55 @@ try {
     actions: [{ type: 'run_job', job_id: 'exec-action-job' }],
   });
   assert.equal(runJobResults[0].ok, true, JSON.stringify(runJobResults));
-  assert.match(runJobResults[0].message, /Reran job "exec-action-job"/);
+  assert.match(runJobResults[0].message, /Reran job "Exec Action Job" \(job_id: exec-action-job\)/);
   assert.equal(runJobNowRequests.length, 1);
   assert.equal(runJobNowRequests[0].meta.prompt, undefined);
   assert.equal(runJobNowRequests[0].meta.content, 'standup reminder');
+
+  const execActionJobPath = join(jobsDir, 'exec-action-job.json');
+  const originalExecActionJob = JSON.parse(readFileSync(execActionJobPath, 'utf-8'));
+  writeFileSync(execActionJobPath, JSON.stringify({
+    ...originalExecActionJob,
+    meta: {
+      ...originalExecActionJob.meta,
+      created_at: '2026-11-15T12:00:00.000Z',
+    },
+  }), 'utf-8');
+  const staleQuotedMessage = {
+    messageId: 'om_stale_quoted_job',
+    chatId: 'oc_exec',
+    threadId: 'thread_exec',
+    chatType: 'group',
+    senderId: 'ou_user',
+    text: 'change this task and run it again',
+    messageType: 'text',
+    rawContent: '{}',
+    quotedCronJobId: 'exec-action-job',
+    quotedCronJobOrigin: {
+      messageId: 'om_old_exec_action_report',
+      chatId: 'oc_exec',
+      jobId: 'exec-action-job',
+      runId: 'cron_run_old_exec_action',
+      jobName: 'Exec Action Job',
+      jobCreatedAt: originalExecActionJob.meta.created_at,
+      recordedAt: '2026-11-15T11:00:00.000Z',
+    },
+  } as const;
+  const staleQuotedResults = await dispatcher.execute({
+    message: staleQuotedMessage,
+    actions: [
+      { type: 'update_job', job_id: 'exec-action-job', schedule: 'daily at 12:00' },
+      { type: 'run_job', job_id: 'exec-action-job' },
+    ],
+  });
+  assert.equal(staleQuotedResults[0].ok, false);
+  assert.match(staleQuotedResults[0].message, /replaced after this report was delivered/i);
+  assert.equal(staleQuotedResults[1].ok, false);
+  assert.match(staleQuotedResults[1].message, /replaced after this report was delivered/i);
+  assert.equal(runJobNowRequests.length, 1, 'stale quoted rerun must not start a replacement job');
+  const replacementAfterRejectedActions = JSON.parse(readFileSync(execActionJobPath, 'utf-8'));
+  assert.equal(replacementAfterRejectedActions.meta.schedule_human, 'daily at 09:00');
+  writeFileSync(execActionJobPath, JSON.stringify(originalExecActionJob), 'utf-8');
 
   const deniedRunJobResults = await dispatcher.execute({
     message: {
@@ -1240,7 +1285,7 @@ try {
   assert.doesNotMatch(jobManagementResults[0].message, /standup reminder/);
   assert.match(jobManagementResults[1].message, /standup reminder/);
   assert.match(jobManagementResults[1].message, /job_id: exec-action-job/);
-  assert.match(jobManagementResults[2].message, /Updated job "exec-action-job"/);
+  assert.match(jobManagementResults[2].message, /Updated job "Exec Action Job" \(job_id: exec-action-job\)/);
   assert.match(jobManagementResults[2].message, /weekdays at 10:00/);
   assert.match(jobManagementResults[2].message, /Next run: .*Asia\/Shanghai; UTC /);
   assert.match(jobManagementResults[3].message, /Status: paused/i);

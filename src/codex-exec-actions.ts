@@ -693,6 +693,8 @@ async function executeGetJob(
     void audit('get_job', caller, auditArgs, 'error');
     return { ok: false, action: 'get_job', message: resolved.message };
   }
+  const staleSource = staleQuotedJobResult('get_job', message, resolved.job);
+  if (staleSource) return staleSource;
   if (!jobVisibleToCaller(resolved.job, {
     caller,
     chatId: message.chatId,
@@ -731,6 +733,11 @@ async function executeRunJob(
     void audit('run_job', caller, auditArgs, 'error');
     return { ok: false, action: 'run_job', message: resolved.message };
   }
+  const staleSource = staleQuotedJobResult('run_job', message, resolved.job);
+  if (staleSource) {
+    void audit('run_job', caller, auditArgs, 'denied');
+    return staleSource;
+  }
   if (resolved.job.meta.created_by !== caller) {
     void audit('run_job', caller, auditArgs, 'denied');
     return {
@@ -768,7 +775,7 @@ async function executeRunJob(
     return {
       ok: true,
       action: 'run_job',
-      message: `Reran job "${resolved.job.meta.id}" using its persisted definition.`,
+      message: `Reran job "${resolved.job.meta.name}" (job_id: ${resolved.job.meta.id}) using its persisted definition.`,
     };
   } catch (error) {
     void audit('run_job', caller, { ...auditArgs, job_id: resolved.job.meta.id }, 'error');
@@ -799,11 +806,13 @@ async function executeUpdateJob(
   };
   if ('error' in auth) return auth.error;
   const { caller } = auth;
+  const expectedCreatedAt = quotedJobCreatedAt(message, action.job_id);
 
   const updated = await updateJob({
     action: 'update_job',
     caller,
     reference: { jobId: action.job_id, name: action.name },
+    expectedCreatedAt,
     updates: {
       name: action.new_name,
       status: action.status,
@@ -815,12 +824,20 @@ async function executeUpdateJob(
     },
     auditArgs,
   });
-  if (!updated.ok) return { ok: false, action: 'update_job', message: updated.message };
+  if (!updated.ok) {
+    return {
+      ok: false,
+      action: 'update_job',
+      message: expectedCreatedAt && updated.code === 'stale_job'
+        ? staleQuotedJobMessage(updated.jobId ?? action.job_id ?? action.name ?? 'unknown')
+        : updated.message,
+    };
+  }
 
   return {
     ok: true,
     action: 'update_job',
-    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Schedule: ${updated.job.meta.schedule_human}, TZ: ${jobTimezone(updated.job.meta)}, Next run: ${formatJobNextRun(updated.job)}`,
+    message: `Updated job "${updated.job.meta.name}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Schedule: ${updated.job.meta.schedule_human}, TZ: ${jobTimezone(updated.job.meta)}, Next run: ${formatJobNextRun(updated.job)}`,
   };
 }
 
@@ -833,21 +850,61 @@ async function executeDisableJob(
   const auditArgs = { job_id: action.job_id, name: action.name, chat_id: message.chatId, thread_id: message.threadId };
   if ('error' in auth) return auth.error;
   const { caller } = auth;
+  const expectedCreatedAt = quotedJobCreatedAt(message, action.job_id);
 
   const updated = await updateJob({
     action: 'disable_job',
     caller,
     reference: { jobId: action.job_id, name: action.name },
+    expectedCreatedAt,
     updates: { status: 'paused' },
     auditArgs,
   });
-  if (!updated.ok) return { ok: false, action: 'disable_job', message: updated.message };
+  if (!updated.ok) {
+    return {
+      ok: false,
+      action: 'disable_job',
+      message: expectedCreatedAt && updated.code === 'stale_job'
+        ? staleQuotedJobMessage(updated.jobId ?? action.job_id ?? action.name ?? 'unknown')
+        : updated.message,
+    };
+  }
 
   return {
     ok: true,
     action: 'disable_job',
-    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Next run: ${formatJobNextRun(updated.job)}`,
+    message: `Updated job "${updated.job.meta.name}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Next run: ${formatJobNextRun(updated.job)}`,
   };
+}
+
+function quotedJobCreatedAt(message: LarkMessage, jobId: string | undefined): string | undefined {
+  const origin = message.quotedCronJobOrigin;
+  if (
+    !jobId
+    || !origin
+    || message.quotedCronJobId !== jobId
+    || origin.jobId !== jobId
+    || origin.chatId !== message.chatId
+  ) return undefined;
+  return origin.jobCreatedAt;
+}
+
+function staleQuotedJobResult(
+  action: 'get_job' | 'run_job',
+  message: LarkMessage,
+  job: JobFile,
+): CodexExecActionExecutionResult | null {
+  const expectedCreatedAt = quotedJobCreatedAt(message, job.meta.id);
+  if (!expectedCreatedAt || expectedCreatedAt === job.meta.created_at) return null;
+  return {
+    ok: false,
+    action,
+    message: staleQuotedJobMessage(job.meta.id),
+  };
+}
+
+function staleQuotedJobMessage(jobId: string): string {
+  return `Job "${jobId}" was replaced after this report was delivered. Use a report from the current job instance.`;
 }
 
 async function executeDeleteJob(
