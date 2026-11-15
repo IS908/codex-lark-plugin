@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-11-15
+
+### Added
+- Persist confirmed Cron delivery message IDs against their exact Job and Run in SQLite, including split, fallback, partial, failure, and expiry-report delivery paths, so direct quoted-message controls remain accurate after restart.
+- Add source footers and creator-authorized pause, view, and run-now controls to generated Cron report cards, with exact Job-instance fencing and cross-chat rejection.
+- Add deterministic quoted and explicit-name Cron commands, concise bounded candidates for unmapped historical messages, and an explicit `get_job` detail operation while keeping default Job lists free of prompt/content bodies.
+
+### Changed
+- Route card buttons and natural-language controls through one authorization and state-transition service. Pausing stops future scheduled admissions without cancelling an in-flight Run, and immediate runs use the existing durable admission path.
+
+### Fixed
+- Suppress `[LARK_DEFER]` and `[LARK_NO_REPLY]` control sentinels before every user-visible delivery path.
+- Refresh vulnerable production dependencies in the root and packaged-plugin graphs and remove the obsolete scoped `ip-address` override after `express-rate-limit` adopted a patched compatible range.
+
 ## [2.13.3] - 2026-09-04
 
 ### Security
