@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.14.1] - 2026-11-15
+
 ### Changed
 - Remove pause, view, and run-now buttons from new Cron result cards while retaining the source footer and restart-safe message-to-Job mapping for conversational controls.
 - Resolve Cron controls from direct quotes and topic roots, guide quoted view/pause/update/rerun actions to the trusted Job ID, and include the Job display name in mutation results.
