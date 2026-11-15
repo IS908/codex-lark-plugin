@@ -30,7 +30,7 @@ import type {
 } from '../ports/durable-run.js';
 import {
   DURABLE_RUN_SCHEMA_VERSION,
-  migrateSqliteToDurableV10,
+  migrateSqliteToDurableV11,
 } from './sqlite-migrations.js';
 
 type SqlRow = Record<string, null | number | bigint | string | Uint8Array>;
@@ -86,7 +86,7 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
   }
 
   async initialize(): Promise<void> {
-    await retrySqliteBusy(() => migrateSqliteToDurableV10(this.database));
+    await retrySqliteBusy(() => migrateSqliteToDurableV11(this.database));
   }
 
   async create(request: DurableRunCreateRequest): Promise<DurableRunCreateResult> {

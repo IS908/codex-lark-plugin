@@ -6625,8 +6625,8 @@ var require_discriminator = __commonJS({
           if (!tagRequired)
             throw new Error(`discriminator: "${tagName}" must be required`);
           return oneOfMapping;
-          function hasRequired({ required: required2 }) {
-            return Array.isArray(required2) && required2.includes(tagName);
+          function hasRequired({ required: required3 }) {
+            return Array.isArray(required3) && required3.includes(tagName);
           }
           function addMappings(sch, i) {
             if (sch.const) {
@@ -37480,7 +37480,7 @@ function parseObjectDef(def, refs) {
     type: "object",
     properties: {}
   };
-  const required2 = [];
+  const required3 = [];
   const shape = def.shape();
   for (const propName in shape) {
     let propDef = shape[propName];
@@ -37507,11 +37507,11 @@ function parseObjectDef(def, refs) {
     }
     result.properties[propName] = parsedDef;
     if (!propOptional) {
-      required2.push(propName);
+      required3.push(propName);
     }
   }
-  if (required2.length) {
-    result.required = required2;
+  if (required3.length) {
+    result.required = required3;
   }
   const additionalProperties = decideAdditionalProperties(def, refs);
   if (additionalProperties !== void 0) {
@@ -43195,7 +43195,7 @@ var mcpServerInstructions = [
   "Meta image_path \u2192 Read that file. Meta attachment_file_id \u2192 call download_attachment(message_id, file_key, file_name=meta.attachment_name) then Read the returned path. Always pass file_name so the saved file keeps its extension (.pdf, .txt, etc.) \u2014 Read infers MIME from the extension.",
   "CronJob notifications carry source='cronjob'. Dispatch to a subagent so the main thread stays responsive to Feishu messages.",
   "For heavy multi-step tasks, use subagents where available so the main Codex session stays small and responsive.",
-  `Sensitive tools (save_memory, save_skill, what_do_you_know, forget_memory, create_job, list_jobs, update_job, delete_job, run_local_cli_tool, manage_access_control) authorize the caller server-side from chat_id + thread_id. Always pass BOTH verbatim from the current notification's metadata \u2014 never substitute sentinels like "__terminal__" for a real chat_id.`
+  `Sensitive tools (save_memory, save_skill, what_do_you_know, forget_memory, create_job, list_jobs, get_job, update_job, delete_job, run_local_cli_tool, manage_access_control) authorize the caller server-side from chat_id + thread_id. Always pass BOTH verbatim from the current notification's metadata \u2014 never substitute sentinels like "__terminal__" for a real chat_id.`
 ].join("\n");
 function cronJobPrompt(jobName, sendChatId, prompt) {
   const safeChatId = assertSafeChatId(sendChatId);
@@ -43806,9 +43806,9 @@ function profileSessionBinding(message) {
   };
 }
 function isProfileSessionCompatible(message, context) {
-  const required2 = profileSessionBinding(message);
-  if (!required2) return true;
-  return context?.memoryVisibilityPolicy === required2.memoryVisibilityPolicy && context?.memoryContextSenderId === required2.memoryContextSenderId;
+  const required3 = profileSessionBinding(message);
+  if (!required3) return true;
+  return context?.memoryVisibilityPolicy === required3.memoryVisibilityPolicy && context?.memoryContextSenderId === required3.memoryContextSenderId;
 }
 function profileContextPromptPolicy(message, policy) {
   if (message.chatType !== "group") return void 0;
@@ -44151,7 +44151,7 @@ async function handleCommentEvent(data, deps) {
   const replies = repliesResult.status === "fulfilled" ? repliesResult.value?.data?.items ?? [] : [];
   const comments = commentsResult.status === "fulfilled" ? commentsResult.value?.data?.items ?? [] : [];
   if (!replyId) {
-    const originalReplyId = replies.find((reply) => typeof reply?.reply_id === "string" && reply.reply_id)?.reply_id;
+    const originalReplyId = replies.find((reply2) => typeof reply2?.reply_id === "string" && reply2.reply_id)?.reply_id;
     if (originalReplyId) {
       addDocCommentAckReaction(deps, { fileToken, fileType, replyId: originalReplyId, eventId });
     } else {
@@ -44176,7 +44176,7 @@ async function handleCommentEvent(data, deps) {
   quote = typeof targetComment?.quote === "string" && targetComment.quote ? targetComment.quote : void 0;
   if (replyId) {
     parentBody = extractCommentText(replies[0]?.content);
-    const targetReply = replies.find((reply) => reply?.reply_id === replyId);
+    const targetReply = replies.find((reply2) => reply2?.reply_id === replyId);
     body = targetReply ? extractCommentText(targetReply.content) : void 0;
   } else {
     body = extractCommentText(replies[0]?.content);
@@ -44619,9 +44619,15 @@ async function prepareInboundTurn(message, deps, source) {
   deps.ackReactions.recordInbound(message.messageId);
   addAckReaction(message, deps);
   const quotedMessageId = selectQuotedMessageId(message);
-  const trackedQuotedMessage = quotedMessageId ? deps.botMessageTracker?.get(quotedMessageId) : void 0;
+  const persistedOrigin = quotedMessageId ? await deps.cronMessageOrigins?.get(quotedMessageId).catch(() => null) : null;
+  const trackedQuotedMessage = quotedMessageId && !deps.cronMessageOrigins ? deps.botMessageTracker?.get(quotedMessageId) : void 0;
   const quotedCronjob = trackedQuotedMessage?.chatId === message.chatId ? parseJobThreadId(trackedQuotedMessage.threadId) : null;
-  if (quotedCronjob) message.quotedCronJobId = quotedCronjob.jobId;
+  if (persistedOrigin?.chatId === message.chatId) {
+    message.quotedCronJobId = persistedOrigin.jobId;
+    message.quotedCronJobOrigin = persistedOrigin;
+  } else if (!deps.cronMessageOrigins && quotedCronjob) {
+    message.quotedCronJobId = quotedCronjob.jobId;
+  }
   await addSdkImageDownloads(message, source.resources ?? [], source.sdkChannel);
   await addQuotedContext(message, deps.larkTransport, {
     maxDepth: appConfig.quotedContextMaxDepth,
@@ -44742,6 +44748,7 @@ var LarkChannel = class {
   queue = new MessageQueue({ handlerTimeoutMs: appConfig.queueHandlerTimeoutMs });
   messageHandler = null;
   controlMessageHandler = null;
+  cardActionHandler = null;
   memoryStore = null;
   conversationBuffer = null;
   identitySession = null;
@@ -44754,6 +44761,7 @@ var LarkChannel = class {
   larkTransportRawClient;
   larkTransportRuntime = "openapi";
   conversationBoundaryProvider = null;
+  cronMessageOrigins = null;
   constructor() {
     this.client = new Lark.Client({
       appId: appConfig.appId,
@@ -44776,6 +44784,9 @@ var LarkChannel = class {
   }
   setControlMessageHandler(handler) {
     this.controlMessageHandler = handler;
+  }
+  setCardActionHandler(handler) {
+    this.cardActionHandler = handler;
   }
   setMemoryStore(store) {
     this.memoryStore = store;
@@ -44801,6 +44812,9 @@ var LarkChannel = class {
   }
   setConversationBoundaryProvider(provider) {
     this.conversationBoundaryProvider = provider;
+  }
+  setCronMessageOriginLookup(store) {
+    this.cronMessageOrigins = store;
   }
   getClient() {
     return this.client;
@@ -44839,7 +44853,8 @@ var LarkChannel = class {
       ackReactions: this.ackReactions,
       larkTransport: this.larkTransport,
       chatTypeCache: this.chatTypeCache,
-      botMessageTracker: this.botMessageTracker
+      botMessageTracker: this.botMessageTracker,
+      cronMessageOrigins: this.cronMessageOrigins ?? void 0
     };
   }
   invalidateMemoryDedupScope(chatId, threadId, reason = "manual") {
@@ -44903,6 +44918,9 @@ var LarkChannel = class {
       await this.enqueueReactionMessage(decision);
     }
   }
+  async handleSdkCardActionEvent(event) {
+    return this.cardActionHandler?.(event);
+  }
   setBotOpenId(openId) {
     if (openId) {
       this.botOpenId = openId;
@@ -44930,7 +44948,7 @@ var LarkChannel = class {
       if (!target) return;
       const fetched = await sdkChannel.comments.fetch(target, comment.commentId);
       if (!fetched) return;
-      const currentReply = comment.replyId ? fetched.replies.find((reply) => reply.reply_id === comment.replyId) : fetched.replies[0];
+      const currentReply = comment.replyId ? fetched.replies.find((reply2) => reply2.reply_id === comment.replyId) : fetched.replies[0];
       const currentBody = sdkCommentReplyText(currentReply);
       const parentBody = comment.replyId && fetched.replies[0]?.reply_id !== comment.replyId ? sdkCommentReplyText(fetched.replies[0]) : "";
       if (currentBody) message.currentUserText = currentBody;
@@ -45100,8 +45118,8 @@ emoji_type: ${emojiType}`,
     }
   }
 };
-function sdkCommentReplyText(reply) {
-  return (reply?.content?.elements ?? []).map((element) => {
+function sdkCommentReplyText(reply2) {
+  return (reply2?.content?.elements ?? []).map((element) => {
     if (element.type === "text_run") return element.text_run?.text ?? "";
     if (element.type === "docs_link") return element.docs_link?.url ?? "";
     if (element.type === "person") return element.person?.user_id ?? "";
@@ -45870,13 +45888,10 @@ function shouldUseCard(text) {
 }
 function buildCards(text, opts) {
   const { elements } = buildCardContent(text);
-  if (opts?.footer) {
-    elements.push({
-      tag: "markdown",
-      content: opts.footer,
-      text_size: "notation"
-    });
-  }
+  const metadataElements = [
+    ...(opts?.actions ?? []).map(cardActionButton),
+    ...opts?.footer ? [{ tag: "markdown", content: opts.footer, text_size: "notation" }] : []
+  ];
   const cards = [];
   let batch = [];
   let batchSize = 0;
@@ -45908,11 +45923,30 @@ function buildCards(text, opts) {
       batchSize += elJson.length;
     }
   }
+  if (metadataElements.length > 0) {
+    const metadataSize = metadataElements.reduce(
+      (total, element) => total + JSON.stringify(element).length,
+      0
+    );
+    if (batch.length > 0 && (batch.length + metadataElements.length > CARD_ELEMENT_LIMIT || batchSize + metadataSize > CARD_SIZE_LIMIT)) {
+      flush();
+    }
+    batch.push(...metadataElements);
+    batchSize += metadataSize;
+  }
   flush();
   if (cards.length === 0) {
     cards.push(buildSchema2Card([{ tag: "markdown", content: "..." }]));
   }
   return cards;
+}
+function cardActionButton(action) {
+  return {
+    tag: "button",
+    text: { tag: "plain_text", content: action.text },
+    type: action.type ?? "default",
+    behaviors: [{ type: "callback", value: action.value }]
+  };
 }
 var IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
 function stripInvalidImageKeys(text) {
@@ -47599,6 +47633,7 @@ async function sendFeishuReply(deps, request) {
     thread_id,
     format,
     footer,
+    cardActions,
     runtimeFooter,
     files,
     richParts,
@@ -47875,9 +47910,9 @@ async function sendFeishuReply(deps, request) {
   const renderedMentions = await resolveOutboundMentions(transport, chat_id, text);
   const outboundText = renderedMentions.text;
   const outboundCardMarkdown = renderedMentions.cardMarkdown;
-  async function sendTextChunks() {
-    if (!outboundText) return 0;
-    const chunks = chunkText(outboundText, appConfig.textChunkLimit);
+  async function sendTextChunks(content = outboundText) {
+    if (!content) return 0;
+    const chunks = chunkText(content, appConfig.textChunkLimit);
     for (let i = 0; i < chunks.length; i++) {
       try {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : void 0;
@@ -47903,9 +47938,12 @@ async function sendFeishuReply(deps, request) {
   }
   if (useCard) {
     const deliveredBeforeCard = deliveredCount;
+    const mergedFooter = mergeCardFooterWithRuntimeMetrics(footer, runtimeFooter);
     try {
-      const mergedFooter = mergeCardFooterWithRuntimeMetrics(footer, runtimeFooter);
-      const cards = buildCards(outboundCardMarkdown, { footer: mergedFooter });
+      const cards = buildCards(outboundCardMarkdown, {
+        footer: mergedFooter,
+        actions: cardActions
+      });
       sentCount = cards.length;
       for (let i = 0; i < cards.length; i++) {
         const replyTo = effectiveReplyTo && (i === 0 || shouldStayInThread) ? effectiveReplyTo : void 0;
@@ -47930,7 +47968,8 @@ async function sendFeishuReply(deps, request) {
           `[reply-sender] generated card build/delivery failed; falling back to text:`,
           failure.error?.message ?? String(failure.error)
         );
-        const textResult2 = await sendTextChunks();
+        const fallbackText = [outboundText, mergedFooter].filter(Boolean).join("\n\n");
+        const textResult2 = await sendTextChunks(fallbackText);
         if (typeof textResult2 !== "number") return textResult2;
         sentCount = textResult2;
       } else {
@@ -47938,7 +47977,13 @@ async function sendFeishuReply(deps, request) {
           `[reply-sender] send card failed after partial delivery:`,
           failure.error?.message ?? String(failure.error)
         );
-        throw failure.error;
+        return {
+          sentCount: deliveredCount,
+          statusText: `Partially sent ${deliveredCount} card message(s)`,
+          isError: true,
+          errorText: failure.error?.message ?? String(failure.error),
+          ...deliveredMessageIds.length > 0 ? { messageIds: [...deliveredMessageIds] } : {}
+        };
       }
     }
   } else {
@@ -49665,13 +49710,25 @@ function normalizeUpdateSchedule(job, updates) {
 async function updateJob(input) {
   const resolved = await resolveJobReference(input.reference);
   if (!resolved.ok) return resolved;
+  if (input.expectedCreatedAt !== void 0 && resolved.job.meta.created_at !== input.expectedCreatedAt) {
+    return serviceError(
+      "stale_job",
+      `Job "${resolved.job.meta.id}" was replaced after this action was created.`,
+      { jobId: resolved.job.meta.id }
+    );
+  }
   const ownerError = ownerMismatchError(input.action, resolved.job, input.caller, input.auditArgs);
   if (ownerError) return ownerError;
   const scheduleUpdate = normalizeUpdateSchedule(resolved.job, input.updates);
   if (!scheduleUpdate.ok) return scheduleUpdate;
   const { requestedTimezone, expandedSchedule } = scheduleUpdate;
   let ownerMismatch = null;
+  let staleInstance = false;
   const updated = await mutateJob(resolved.job.meta.id, (latest) => {
+    if (input.expectedCreatedAt !== void 0 && latest.meta.created_at !== input.expectedCreatedAt) {
+      staleInstance = true;
+      return false;
+    }
     if (latest.meta.created_by !== input.caller) {
       ownerMismatch = latest.meta.created_by;
       return false;
@@ -49696,6 +49753,13 @@ async function updateJob(input) {
       }
     }
   });
+  if (staleInstance) {
+    return serviceError(
+      "stale_job",
+      `Job "${resolved.job.meta.id}" was replaced after this action was created.`,
+      { jobId: resolved.job.meta.id }
+    );
+  }
   if (ownerMismatch) {
     void audit(input.action, input.caller, input.auditArgs ?? {}, "denied");
     return serviceError(
@@ -49865,7 +49929,7 @@ function registerJobTools(ctx) {
   server.registerTool(
     "list_jobs",
     {
-      description: "List cronjobs visible in the current chat. Filter follows the rendering-visibility principle: in a private chat the caller sees all jobs they created; in a group chat everyone sees jobs that deliver output to that group (with prompt bodies redacted for non-owners).",
+      description: "List concise cronjob metadata visible in the current chat. In a private chat the caller sees jobs they created; in a group chat everyone sees jobs that deliver output to that group. Prompt/content bodies require get_job.",
       inputSchema: external_exports.object({
         status: external_exports.enum(["active", "paused", "all"]).optional().default("all").describe("Filter by status"),
         chat_id: external_exports.string().describe("Chat ID where this list call is acting from"),
@@ -49903,17 +49967,9 @@ function registerJobTools(ctx) {
         const statusIcon = j.meta.status === "active" ? "\u2705" : "\u23F8\uFE0F";
         const tz = jobTimezone(j.meta);
         const lastRun = formatCronDateTime(j.runtime.last_run_at, tz);
-        const error51 = j.runtime.last_error ? ` \u26A0\uFE0F ${j.runtime.last_error}` : "";
-        const isOwner2 = j.meta.created_by === caller;
-        const runState = j.runtime.run_status || j.runtime.output_status || j.runtime.delivery_status ? ` | Run: ${j.runtime.run_status ?? "-"} / Output: ${j.runtime.output_status ?? "-"} / Delivery: ${j.runtime.delivery_status ?? "-"}` : "";
         const nextRun = formatJobNextRun(j, tz);
-        if (!isPrivate && !isOwner2) {
-          return `${statusIcon} **${j.meta.id}** (${j.meta.type}) \u2014 ${j.meta.schedule_human}
-   By: ${j.meta.created_by} | TZ: ${tz} | Next: ${nextRun}`;
-        }
-        const modelNote = j.meta.model ? ` | Model: ${j.meta.model}` : "";
-        return `${statusIcon} **${j.meta.id}** (${j.meta.type}) \u2014 ${j.meta.schedule_human}
-   TZ: ${tz} | Next: ${nextRun} | Last: ${lastRun} | Runs: ${j.runtime.run_count}${modelNote}${runState}${error51}`;
+        return `${statusIcon} **${j.meta.id}** \xB7 ${j.meta.name} \u2014 ${j.meta.schedule_human}
+   Status: ${j.meta.status} | TZ: ${tz} | Next: ${nextRun} | Last: ${lastRun}`;
       });
       return {
         content: [
@@ -49924,6 +49980,64 @@ function registerJobTools(ctx) {
 ${lines.join("\n\n")}`
           }
         ]
+      };
+    }
+  );
+  server.registerTool(
+    "get_job",
+    {
+      description: "Show one visible cronjob in detail. Unlike list_jobs, this explicit detail operation may include the prompt or content when the caller is authorized to read it.",
+      inputSchema: external_exports.object({
+        id: external_exports.string().describe("Stable Job ID"),
+        chat_id: external_exports.string().describe("Chat ID where this detail request is acting from"),
+        thread_id: external_exports.string().optional().describe("Thread ID from the current notification metadata, when present")
+      })
+    },
+    async ({ id, chat_id, thread_id }) => {
+      const auditArgs = { id, chat_id, thread_id };
+      const auth = resolveCaller("get_job", chat_id, thread_id, auditArgs);
+      if ("error" in auth) return auth.error;
+      const { caller } = auth;
+      const resolved = await resolveJobReference({ jobId: id });
+      if (!resolved.ok) {
+        void audit("get_job", caller, auditArgs, "error");
+        return {
+          content: [{ type: "text", text: resolved.message }],
+          isError: true
+        };
+      }
+      if (!jobVisibleToCaller(resolved.job, {
+        caller,
+        chatId: chat_id,
+        isPrivateChat: channel.isPrivateChat(chat_id)
+      })) {
+        void audit("get_job", caller, auditArgs, "denied");
+        return {
+          content: [{ type: "text", text: "The job is not visible in this chat." }],
+          isError: true
+        };
+      }
+      const job = resolved.job;
+      const timezone = jobTimezone(job.meta);
+      const bodyLabel = job.meta.type === "prompt" ? "prompt" : "content";
+      const bodyValue = job.meta.type === "prompt" ? job.meta.prompt : job.meta.content;
+      const body = canReadJobBody(job, caller) ? bodyValue ?? "<empty>" : "<redacted>";
+      void audit("get_job", caller, auditArgs, "ok");
+      return {
+        content: [{
+          type: "text",
+          text: [
+            `job_id: ${job.meta.id}`,
+            `name: ${job.meta.name}`,
+            `type: ${job.meta.type}`,
+            `status: ${job.meta.status}`,
+            `schedule: ${job.meta.schedule_human} (${job.meta.schedule})`,
+            `timezone: ${timezone}`,
+            `next_run_at: ${formatJobNextRun(job, timezone)}`,
+            `last_run_at: ${formatCronDateTime(job.runtime.last_run_at, timezone)}`,
+            `${bodyLabel}: ${body}`
+          ].join("\n")
+        }]
       };
     }
   );
@@ -51693,6 +51807,10 @@ var ListJobsActionSchema = external_exports.object({
   type: external_exports.literal("list_jobs"),
   status: external_exports.enum(["active", "paused", "all"]).optional()
 });
+var GetJobActionSchema = external_exports.object({
+  type: external_exports.literal("get_job"),
+  ...JobReferenceShape
+});
 var RunJobActionSchema = external_exports.object({
   type: external_exports.literal("run_job"),
   ...JobReferenceShape
@@ -51959,6 +52077,7 @@ var CodexExecActionSchema = external_exports.discriminatedUnion("type", [
   SaveMemoryActionSchema,
   CreateJobActionSchema,
   ListJobsActionSchema,
+  GetJobActionSchema,
   RunJobActionSchema,
   UpdateJobActionSchema,
   DisableJobActionSchema,
@@ -51974,7 +52093,7 @@ var CodexExecActionSchema = external_exports.discriminatedUnion("type", [
   if (action.type === "create_continuation_job") {
     validateContinuationActionContract(action, ctx);
   }
-  if ((action.type === "run_job" || action.type === "update_job" || action.type === "disable_job" || action.type === "delete_job") && !action.job_id && !action.name) {
+  if ((action.type === "get_job" || action.type === "run_job" || action.type === "update_job" || action.type === "disable_job" || action.type === "delete_job") && !action.job_id && !action.name) {
     ctx.addIssue({
       code: external_exports.ZodIssueCode.custom,
       path: ["job_id"],
@@ -52060,7 +52179,7 @@ var CodexExecActionSchema = external_exports.discriminatedUnion("type", [
 var CodexExecActionEnvelopeSchema = external_exports.object({
   version: external_exports.literal(1),
   reply: external_exports.string().optional(),
-  actions: external_exports.array(CodexExecActionSchema).min(1).max(5)
+  actions: external_exports.array(CodexExecActionSchema).min(1).max(6)
 }).superRefine((envelope, ctx) => {
   const continuationCount = envelope.actions.filter(
     (action) => action.type === "create_continuation_job"
@@ -52108,25 +52227,30 @@ function currentCaller(identitySession, message, action) {
 function isPrivateJobListing(message) {
   return message.chatType === "p2p";
 }
-function formatJobForActionList(job, caller) {
-  const modelNote = job.meta.model ? ` | model: ${job.meta.model}` : "";
+function formatJobForActionList(job) {
   const tz = jobTimezone(job.meta);
   const lastRun = formatCronDateTime(job.runtime.last_run_at, tz);
-  const lastError = job.runtime.last_error ? ` | last_error: ${job.runtime.last_error}` : "";
+  return [
+    `job_id: ${job.meta.id}`,
+    `name: ${job.meta.name}`,
+    `status: ${job.meta.status}`,
+    `schedule: ${job.meta.schedule_human} (${job.meta.schedule})`,
+    `timezone: ${tz}`,
+    `next_run_at: ${formatJobNextRun(job, tz)}`,
+    `last_run_at: ${lastRun}`
+  ].join("\n");
+}
+function formatJobForActionDetails(job, caller) {
   const bodyValue = job.meta.type === "prompt" ? job.meta.prompt : job.meta.content;
   const bodyLabel = job.meta.type === "prompt" ? "prompt" : "content";
   const body = bodyValue ? `${bodyLabel}: ${canReadJobBody(job, caller) ? bodyValue : "<redacted>"}` : `${bodyLabel}: <empty>`;
   return [
-    `job_id: ${job.meta.id}`,
-    `name: ${job.meta.name}`,
+    formatJobForActionList(job),
     `type: ${job.meta.type}`,
-    `status: ${job.meta.status}`,
-    `schedule: ${job.meta.schedule_human} (${job.meta.schedule})`,
-    `timezone: ${tz}`,
     `target_chat_id: ${job.meta.target_chat_id}`,
-    `next_run_at: ${formatJobNextRun(job, tz)}`,
-    `last_run_at: ${lastRun}`,
-    `run_count: ${job.runtime.run_count}${modelNote}${lastError}`,
+    `run_count: ${job.runtime.run_count}`,
+    ...job.meta.model ? [`model: ${job.meta.model}`] : [],
+    ...job.runtime.last_error ? [`last_error: ${job.runtime.last_error}`] : [],
     body
   ].join("\n");
 }
@@ -52530,7 +52654,37 @@ async function executeListJobs(action, message, deps) {
   return {
     ok: true,
     action: "list_jobs",
-    message: visible.map((job) => formatJobForActionList(job, caller)).join("\n\n---\n\n")
+    message: visible.map((job) => formatJobForActionList(job)).join("\n\n---\n\n")
+  };
+}
+async function executeGetJob(action, message, deps) {
+  const auth = currentCaller(deps.identitySession, message, "get_job");
+  const auditArgs = {
+    job_id: action.job_id,
+    name: action.name,
+    chat_id: message.chatId,
+    thread_id: message.threadId
+  };
+  if ("error" in auth) return auth.error;
+  const { caller } = auth;
+  const resolved = await resolveJobReference({ jobId: action.job_id, name: action.name });
+  if (!resolved.ok) {
+    void audit("get_job", caller, auditArgs, "error");
+    return { ok: false, action: "get_job", message: resolved.message };
+  }
+  if (!jobVisibleToCaller(resolved.job, {
+    caller,
+    chatId: message.chatId,
+    isPrivateChat: isPrivateJobListing(message)
+  })) {
+    void audit("get_job", caller, auditArgs, "denied");
+    return { ok: false, action: "get_job", message: "The job is not visible in this chat." };
+  }
+  void audit("get_job", caller, auditArgs, "ok");
+  return {
+    ok: true,
+    action: "get_job",
+    message: formatJobForActionDetails(resolved.job, caller)
   };
 }
 async function executeRunJob(action, message, deps) {
@@ -53238,6 +53392,7 @@ function createCodexExecActionHandlerRegistry(deps) {
     save_memory: (action, context) => executeSaveMemory(action, context.message, deps),
     create_job: (action, context) => executeCreateJob(action, context.message, deps),
     list_jobs: (action, context) => executeListJobs(action, context.message, deps),
+    get_job: (action, context) => executeGetJob(action, context.message, deps),
     run_job: (action, context) => executeRunJob(action, context.message, deps),
     update_job: (action, context) => executeUpdateJob(action, context.message, deps),
     disable_job: (action, context) => executeDisableJob(action, context.message, deps),
@@ -59393,6 +59548,19 @@ async function startSdkChannelRuntime(channel, options = {}) {
       logSafeError("[sdk-channel] Error handling doc comment event:", err);
     }
   });
+  sdkChannel.on("cardAction", async (event) => {
+    try {
+      return await channel.handleSdkCardActionEvent(event);
+    } catch (err) {
+      logSafeError("[sdk-channel] Error handling card action event:", err);
+      return {
+        toast: {
+          type: "error",
+          content: "\u4EFB\u52A1\u64CD\u4F5C\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002"
+        }
+      };
+    }
+  });
   sdkChannel.on("reaction", async (reaction) => {
     try {
       await channel.handleSdkReactionEvent(reaction);
@@ -60049,6 +60217,10 @@ function buildCodexExecActionChannelPrompt(info) {
     ...actionLines("list_jobs", [
       '  - {"type":"list_jobs","status":"active|paused|all"}'
     ]),
+    ...actionLines("get_job", [
+      '  - {"type":"get_job","job_id":"stable-id"}',
+      "  - Use get_job only when explicit task details or prompt/content are needed; list_jobs is concise."
+    ]),
     ...actionLines("run_job", [
       '  - {"type":"run_job","job_id":"..."} or {"type":"run_job","name":"unique existing job name"}',
       "    Use run_job to execute an existing cronjob immediately from its persisted definition. Do not reconstruct a cronjob rerun as a continuation."
@@ -60082,6 +60254,7 @@ var VISIBLE_SUCCESS_ACTIONS = /* @__PURE__ */ new Set([
   "create_job",
   "run_job",
   "list_jobs",
+  "get_job",
   "update_job",
   "disable_job",
   "delete_job",
@@ -60497,9 +60670,8 @@ ${actionSummary}`;
   if (!text) {
     text = "Codex exec returned an empty response.";
   }
-  const lifecycleGuard = guardCodexExecLifecycleReply(text, {
-    continuationCreated
-  });
+  const deferSentinel = findLarkDeferSentinel(text);
+  const lifecycleGuard = deferSentinel ? { blocked: false, text } : guardCodexExecLifecycleReply(text, { continuationCreated });
   if (lifecycleGuard.blocked) {
     console.error(
       `[codex-exec] Blocked follow-up promise for message ${message.messageId}: ${lifecycleGuard.reason}`
@@ -60526,7 +60698,13 @@ ${continuationFailure.message}`;
   if (suppressVisibleReply) {
     return;
   }
-  if (turnObligations?.markDeferredFromText(message.messageId, "exec_assistant_text", text)) {
+  if (deferSentinel) {
+    turnObligations?.markDeferred(
+      message.messageId,
+      "exec_assistant_text",
+      deferSentinel.marker,
+      deferSentinel.reason
+    );
     return;
   }
   const runtimeFooter = appConfig.cardFooterMetricsEnabled ? formatCodexExecRuntimeMetricsFooter(
@@ -61708,6 +61886,106 @@ function formatAccessAdminList(list, snapshot) {
 ${values.map((value) => `- ${value}`).join("\n")}`;
 }
 
+// src/cron/inbound-command.ts
+async function handleCronInboundCommand(options) {
+  const { message } = options;
+  const parsed = parseCronInboundCommand(message.currentUserText ?? message.text);
+  if (!parsed) return false;
+  const quotedMessageId = selectQuotedMessageId(message);
+  if (!quotedMessageId && !parsed.explicitReference) return false;
+  const { action } = parsed;
+  if (action === "skip_once") {
+    if (!quotedMessageId) return false;
+    await reply(
+      options,
+      "\u201C\u8DF3\u8FC7\u672C\u6B21\u201D\u4E0D\u4F1A\u6682\u505C\u6574\u4E2A\u5468\u671F\u4EFB\u52A1\uFF0C\u4E5F\u4E0D\u4F1A\u53D6\u6D88\u5DF2\u5F00\u59CB\u7684\u6267\u884C\u3002\u5F53\u524D\u7248\u672C\u5C1A\u4E0D\u652F\u6301\u53D6\u6D88\u5355\u6B21\u672A\u5F00\u59CB\u8FD0\u884C\uFF1B\u5982\u9700\u505C\u6B62\u540E\u7EED\u8C03\u5EA6\uFF0C\u8BF7\u4F7F\u7528\u201C\u6682\u505C\u4EFB\u52A1\u201D\u3002"
+    );
+    return true;
+  }
+  let jobId = message.quotedCronJobId;
+  let expectedCreatedAt = message.quotedCronJobOrigin?.jobCreatedAt;
+  if (!jobId) {
+    const listed = await options.listVisibleJobs({
+      caller: message.senderId,
+      chatId: message.chatId,
+      isPrivateChat: options.isPrivateChat(message.chatId)
+    });
+    const visibleJobs = listed.ok ? listed.jobs : [];
+    const matches = parsed.explicitReference ? visibleJobs.filter((job) => matchesReference(job, parsed.explicitReference)) : [];
+    if (matches.length === 1) {
+      jobId = matches[0].meta.id;
+      expectedCreatedAt = matches[0].meta.created_at;
+    }
+    if (!jobId) {
+      const candidates = (matches.length > 1 ? matches : visibleJobs).slice(0, 5);
+      const candidateText = candidates.length === 0 ? "\u5F53\u524D\u4F1A\u8BDD\u6CA1\u6709\u53EF\u89C1\u7684\u5B9A\u65F6\u4EFB\u52A1\u3002" : [
+        "\u53EF\u89C1\u4EFB\u52A1\uFF1A",
+        ...candidates.map((job) => {
+          const timezone = jobTimezone(job.meta);
+          return `- ${job.meta.name} \xB7 ${job.meta.id} \xB7 ${job.meta.status} \xB7 ${formatJobNextRun(job, timezone)} \xB7 ${timezone}`;
+        }),
+        ...visibleJobs.length > candidates.length ? [`- \u53E6\u6709 ${visibleJobs.length - candidates.length} \u4E2A\u4EFB\u52A1\uFF0C\u8BF7\u4F7F\u7528\u7A33\u5B9A ID \u6307\u5B9A\u3002`] : []
+      ].join("\n");
+      await reply(
+        options,
+        `${parsed.explicitReference ? "\u65E0\u6CD5\u552F\u4E00\u786E\u8BA4\u6307\u5B9A\u540D\u79F0\u5BF9\u5E94\u7684\u4EFB\u52A1" : "\u65E0\u6CD5\u786E\u8BA4\u5F15\u7528\u6D88\u606F\u5BF9\u5E94\u7684\u4EFB\u52A1"}\uFF0C\u56E0\u6B64\u672A\u6267\u884C\u4EFB\u4F55\u64CD\u4F5C\u3002\u8BF7\u5F15\u7528\u5E26\u6765\u6E90\u6807\u8BB0\u7684\u65B0\u6D88\u606F\uFF0C\u6216\u4F7F\u7528\u7A33\u5B9A\u4EFB\u52A1 ID\u3002
+
+${candidateText}`
+      );
+      return true;
+    }
+  }
+  const target = {
+    caller: message.senderId,
+    chatId: message.chatId,
+    jobId,
+    ...expectedCreatedAt ? { expectedCreatedAt } : {}
+  };
+  const result = action === "pause" ? await options.service.pause(target) : action === "run_now" ? await options.service.runNow(target) : await options.service.view({
+    ...target,
+    isPrivateChat: options.isPrivateChat(message.chatId)
+  });
+  await reply(options, result.message);
+  return true;
+}
+function parseCronInboundCommand(value) {
+  const text = value.normalize("NFKC").trim();
+  if (!text || text.length > 200) return null;
+  if (/^(?:跳过|略过)(?:这|本)?(?:一)?次(?:执行|运行|任务)?[。.!！]?$/i.test(text) || /^(?:skip)(?: this)? run[.!]?$/i.test(text)) return { action: "skip_once" };
+  if (/^(?:暂停|停止|停用)(?:(?:这个|该|此|它)(?:定时|周期)?(?:任务)?|(?:定时|周期)?任务)[。.!！]?$/i.test(text) || /^(?:pause|stop|disable)(?: this| the)?(?:(?: cron)? job)?[.!]?$/i.test(text)) return { action: "pause" };
+  if (/^(?:查看|显示)(?:(?:这个|该|此|它)(?:任务)?|任务)(?:详情|信息)?[。.!！]?$/i.test(text) || /^(?:view|show)(?: this| the)?(?: job)?(?: details)?[.!]?$/i.test(text)) return { action: "view" };
+  if (/^(?:立即|马上|现在)?(?:运行|执行|重跑)(?:(?:这个|该|此|它)(?:任务)?|任务)(?:一次)?[。.!！]?$/i.test(text) || /^(?:run|rerun)(?: this| the)?(?: job)?(?: now)?[.!]?$/i.test(text)) return { action: "run_now" };
+  const namedPatterns = [
+    ["pause", /^(?:暂停|停止|停用)(?:任务)?[\s:：]+(.+?)[。.!！]?$/i],
+    ["pause", /^(?:pause|stop|disable)(?: job)?[\s:]+(.+?)[.!]?$/i],
+    ["view", /^(?:查看|显示)(?:任务)?[\s:：]+(.+?)(?:详情|信息)?[。.!！]?$/i],
+    ["view", /^(?:view|show)(?: job)?[\s:]+(.+?)(?: details)?[.!]?$/i],
+    ["run_now", /^(?:立即|马上|现在)?(?:运行|执行|重跑)(?:任务)?[\s:：]+(.+?)[。.!！]?$/i],
+    ["run_now", /^(?:run|rerun)(?: job)?[\s:]+(.+?)(?: now)?[.!]?$/i]
+  ];
+  for (const [action, pattern] of namedPatterns) {
+    const match = text.match(pattern);
+    const reference = match?.[1] ? normalizeReference(match[1]) : "";
+    if (reference) return { action, explicitReference: reference };
+  }
+  return null;
+}
+function normalizeReference(value) {
+  return value.trim().replace(/^[「『"']+|[」』"']+$/g, "").trim();
+}
+function matchesReference(job, reference) {
+  const normalized = reference.normalize("NFKC").toLowerCase();
+  return job.meta.id.normalize("NFKC").toLowerCase() === normalized || job.meta.name.normalize("NFKC").toLowerCase() === normalized;
+}
+async function reply(options, text) {
+  await options.sendReply({
+    chat_id: options.message.chatId,
+    text,
+    reply_to: options.message.messageId,
+    thread_id: options.message.threadId
+  });
+}
+
 // src/codex-delivery-wiring.ts
 function createReplySender(ports) {
   return (request) => sendFeishuReply(
@@ -61733,7 +62011,8 @@ function registerCodexDeliveryHandlers(options) {
     turnObligations,
     actionDispatcher,
     continuationService,
-    continuationAvailable
+    continuationAvailable,
+    cronControlService
   } = options;
   const sendReplyViaFeishu = createReplySender({
     client: () => channel.getClient(),
@@ -61745,6 +62024,23 @@ function registerCodexDeliveryHandlers(options) {
     turnObligations
   });
   channel.setControlMessageHandler(async (message) => {
+    if (cronControlService) {
+      const handledCron = await handleCronInboundCommand({
+        message,
+        service: cronControlService,
+        listVisibleJobs: (scope) => listVisibleJobs({
+          ...scope,
+          status: "all",
+          auditArgs: {
+            source: "quoted_cron_control",
+            chat_id: scope.chatId
+          }
+        }),
+        isPrivateChat: (chatId) => channel.isPrivateChat(chatId),
+        sendReply: sendReplyViaFeishu
+      });
+      if (handledCron) return true;
+    }
     const handledTask = await handleContinuationCommand({
       message,
       service: continuationService ?? null,
@@ -61941,7 +62237,15 @@ var JobScheduler = class {
     return operation;
   }
   async runJobNow(job) {
-    if (this.stopping) return { started: false, reason: "stale_job", outcome: "failed" };
+    const started = await this.startJobNow(job);
+    if (!started.started) {
+      return started.reason === "already_running" ? { started: false, reason: "already_running" } : { started: false, reason: "stale_job", outcome: "failed" };
+    }
+    const outcome = await this.options.admission.waitForExecution(started.runId);
+    return { started: true, outcome };
+  }
+  async startJobNow(job) {
+    if (this.stopping) return { started: false, reason: "stale_job" };
     const operation = this.options.admission.admitManual(
       job,
       `manual:${randomUUID6()}`,
@@ -61954,9 +62258,8 @@ var JobScheduler = class {
     } finally {
       this.manualAdmissions.delete(operation);
     }
-    if (!admission.admitted) return rejectedManual(admission);
-    const outcome = await this.options.admission.waitForExecution(admission.runId);
-    return { started: true, outcome };
+    if (!admission.admitted) return rejectedStart(admission);
+    return { started: true, runId: admission.runId };
   }
   async scan(now) {
     const jobs = await this.repository.listAllJobs();
@@ -61982,9 +62285,9 @@ var JobScheduler = class {
     }
   }
 };
-function rejectedManual(result) {
+function rejectedStart(result) {
   if (result.reason === "already_running") return { started: false, reason: "already_running" };
-  return { started: false, reason: "stale_job", outcome: "failed" };
+  return { started: false, reason: "stale_job" };
 }
 function errorMessage4(error51) {
   return error51 instanceof Error ? error51.message : String(error51);
@@ -65340,7 +65643,7 @@ function assertBoundedRequiredString(value, label, maxChars) {
 
 // src/durable-run/sqlite-migrations.ts
 import { createHash as createHash13 } from "node:crypto";
-var DURABLE_RUN_SCHEMA_VERSION = 10;
+var DURABLE_RUN_SCHEMA_VERSION = 11;
 var ASYNC_TASK_INPUT_VERSION = 1;
 var ASYNC_TASK_STATE_VERSION = 1;
 var CONTINUATION_COMPATIBILITY_VIEWS = [
@@ -65353,7 +65656,7 @@ var CONTINUATION_COMPATIBILITY_VIEWS = [
 var LEGACY_CONTINUATION_COMPATIBILITY_TRIGGERS = CONTINUATION_COMPATIBILITY_VIEWS.flatMap(
   (view) => ["insert", "update", "delete"].map((operation) => `${view}_${operation}`)
 );
-function migrateSqliteToDurableV10(database) {
+function migrateSqliteToDurableV11(database) {
   const version2 = scalarNumber(database, "PRAGMA user_version");
   if (version2 > DURABLE_RUN_SCHEMA_VERSION && version2 !== 70) {
     throw new Error(
@@ -65366,7 +65669,7 @@ function migrateSqliteToDurableV10(database) {
     assertDurableSchema(database);
     return;
   }
-  if (version2 !== 0 && version2 !== 70 && (version2 < 1 || version2 > 9)) {
+  if (version2 !== 0 && version2 !== 70 && (version2 < 1 || version2 > 10)) {
     throw new Error(`Unsupported continuation database schema version ${version2}.`);
   }
   immediateTransaction(database, () => {
@@ -65377,7 +65680,11 @@ function migrateSqliteToDurableV10(database) {
       database.exec(`PRAGMA user_version = ${DURABLE_RUN_SCHEMA_VERSION};`);
       return;
     }
-    migrateContinuationRows(database, currentVersion);
+    if (currentVersion === 10) {
+      createCronMessageOriginSchema(database);
+    } else {
+      migrateContinuationRows(database, currentVersion);
+    }
     database.exec(`PRAGMA user_version = ${DURABLE_RUN_SCHEMA_VERSION};`);
   });
   assertDurableSchema(database);
@@ -65701,6 +66008,23 @@ function createDurableSchema(database) {
 
     CREATE UNIQUE INDEX IF NOT EXISTS durable_interrupts_active_run_idx
       ON durable_interrupts(run_id) WHERE status = 'pending';
+  `);
+  createCronMessageOriginSchema(database);
+}
+function createCronMessageOriginSchema(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS cron_message_origins (
+      message_id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      run_id TEXT NOT NULL REFERENCES durable_runs(run_id) ON DELETE CASCADE,
+      job_name TEXT NOT NULL,
+      job_created_at TEXT NOT NULL,
+      recorded_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS cron_message_origins_job_idx
+      ON cron_message_origins(job_id, recorded_at DESC);
   `);
 }
 function migrateContinuationRows(database, version2) {
@@ -66559,7 +66883,8 @@ function assertDurableSchema(database) {
     "durable_attempts",
     "durable_outbox",
     "durable_operation_receipts",
-    "durable_interrupts"
+    "durable_interrupts",
+    "cron_message_origins"
   ]) {
     if (!tableExists(database, table)) {
       throw new Error(`Durable Run schema is missing ${table}.`);
@@ -66583,6 +66908,11 @@ function assertDurableSchema(database) {
     WHERE type = 'index' AND name = 'durable_runs_active_concurrency_idx'
   `).get();
   if (!concurrencyIndex) throw new Error("Durable Run schema is missing active concurrency fencing.");
+  const cronOriginIndex = database.prepare(`
+    SELECT 1 AS present FROM sqlite_master
+    WHERE type = 'index' AND name = 'cron_message_origins_job_idx'
+  `).get();
+  if (!cronOriginIndex) throw new Error("Durable Run schema is missing Cron message origin indexing.");
   const violations = database.prepare("PRAGMA foreign_key_check").all();
   if (violations.length > 0) throw new Error("Durable Run schema has foreign-key violations.");
 }
@@ -66737,7 +67067,7 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
     }
   }
   async initialize() {
-    await retrySqliteBusy(() => migrateSqliteToDurableV10(this.database));
+    await retrySqliteBusy(() => migrateSqliteToDurableV11(this.database));
   }
   async create(request) {
     validateCreateRequest(request);
@@ -67804,6 +68134,107 @@ function isSqliteBusy(error51) {
   return error51 instanceof Error && /SQLITE_BUSY|database is locked/iu.test(error51.message);
 }
 
+// src/cron/message-origin-store.ts
+var DEFAULT_MAX_ENTRIES = 5e3;
+var SqliteCronMessageOriginStore = class _SqliteCronMessageOriginStore {
+  constructor(database, maxEntries) {
+    this.database = database;
+    this.maxEntries = maxEntries;
+  }
+  database;
+  maxEntries;
+  static attach(database, options = {}) {
+    const requested = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    const maxEntries = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : DEFAULT_MAX_ENTRIES;
+    return new _SqliteCronMessageOriginStore(database, maxEntries);
+  }
+  async get(messageId) {
+    if (!messageId) return null;
+    const row = this.database.prepare(`
+      SELECT message_id, chat_id, job_id, run_id, job_name, job_created_at, recorded_at
+      FROM cron_message_origins
+      WHERE message_id = ?
+    `).get(messageId);
+    return row ? mapOrigin(row) : null;
+  }
+  async recordDelivery(input) {
+    const messageIds = [...new Set(input.messageIds.map((value) => value.trim()).filter(Boolean))];
+    if (messageIds.length === 0) return;
+    const recordedAt = validIso(input.recordedAt ?? (/* @__PURE__ */ new Date()).toISOString(), "recordedAt");
+    const values = {
+      chatId: required2(input.chatId, "chatId"),
+      jobId: required2(input.jobId, "jobId"),
+      runId: required2(input.runId, "runId"),
+      jobName: required2(input.jobName, "jobName"),
+      jobCreatedAt: validIso(input.jobCreatedAt, "jobCreatedAt")
+    };
+    const insert = this.database.prepare(`
+      INSERT INTO cron_message_origins (
+        message_id, chat_id, job_id, run_id, job_name, job_created_at, recorded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(message_id) DO UPDATE SET
+        chat_id = excluded.chat_id,
+        job_id = excluded.job_id,
+        run_id = excluded.run_id,
+        job_name = excluded.job_name,
+        job_created_at = excluded.job_created_at,
+        recorded_at = excluded.recorded_at
+    `);
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      for (const messageId of messageIds) {
+        insert.run(
+          required2(messageId, "messageId"),
+          values.chatId,
+          values.jobId,
+          values.runId,
+          values.jobName,
+          values.jobCreatedAt,
+          recordedAt
+        );
+      }
+      this.database.prepare(`
+        DELETE FROM cron_message_origins
+        WHERE message_id IN (
+          SELECT message_id
+          FROM cron_message_origins
+          ORDER BY recorded_at DESC, rowid DESC
+          LIMIT -1 OFFSET ?
+        )
+      `).run(this.maxEntries);
+      this.database.exec("COMMIT;");
+    } catch (error51) {
+      this.database.exec("ROLLBACK;");
+      throw error51;
+    }
+  }
+};
+function mapOrigin(row) {
+  return {
+    messageId: stringField(row, "message_id"),
+    chatId: stringField(row, "chat_id"),
+    jobId: stringField(row, "job_id"),
+    runId: stringField(row, "run_id"),
+    jobName: stringField(row, "job_name"),
+    jobCreatedAt: validIso(stringField(row, "job_created_at"), "jobCreatedAt"),
+    recordedAt: validIso(stringField(row, "recorded_at"), "recordedAt")
+  };
+}
+function stringField(row, key) {
+  return required2(row[key], key);
+}
+function required2(value, label) {
+  if (typeof value !== "string" || !value.trim() || value.length > 500) {
+    throw new Error(`Cron message origin ${label} is invalid.`);
+  }
+  return value;
+}
+function validIso(value, label) {
+  const text = required2(value, label);
+  if (!Number.isFinite(Date.parse(text))) throw new Error(`Cron message origin ${label} is invalid.`);
+  return new Date(text).toISOString();
+}
+
 // src/continuation/async-task-kernel-adapter.ts
 import { isDeepStrictEqual } from "node:util";
 var ASYNC_TASK_INPUT_VERSION2 = 1;
@@ -68819,7 +69250,7 @@ function jobSelectSql(includeOutcomeState = true, includeInterruptState = includ
     FROM continuation_jobs j
   `;
 }
-function stringField(row, field) {
+function stringField2(row, field) {
   const value = row[field];
   if (typeof value !== "string") throw new Error(`Invalid continuation database field: ${field}.`);
   return value;
@@ -68839,8 +69270,8 @@ function mapPendingInterruptRoute(row) {
   const route = parseTrustedJson(row.route_json, "continuation interrupt route");
   if (!isDeliveryRoute2(route)) throw new Error("Continuation interrupt route is invalid.");
   return {
-    interruptId: stringField(row, "interrupt_id"),
-    jobId: stringField(row, "job_id"),
+    interruptId: stringField2(row, "interrupt_id"),
+    jobId: stringField2(row, "job_id"),
     route,
     deliveredMessageId: optionalStringField(row, "message_id")
   };
@@ -68852,11 +69283,11 @@ function mapJob(row) {
   validateSourceFacts(sourceFactsValue);
   const taskContractValue = parseTrustedJson(row.task_contract_json, "task_contract_json");
   validateTaskContract(taskContractValue, sourceFactsValue.provenance === "captured");
-  const creatorOpenId = stringField(row, "creator_open_id");
-  const sourceMessageId = stringField(row, "source_message_id");
+  const creatorOpenId = stringField2(row, "creator_open_id");
+  const sourceMessageId = stringField2(row, "source_message_id");
   const sourceThreadId = optionalStringField(row, "source_thread_id");
-  const title = stringField(row, "title");
-  const objective = stringField(row, "objective");
+  const title = stringField2(row, "title");
+  const objective = stringField2(row, "objective");
   const acceptanceCriteria = parseTrustedStringArray(
     row.acceptance_criteria_json,
     "acceptance_criteria_json"
@@ -68865,7 +69296,7 @@ function mapJob(row) {
     row.context_snapshot_json,
     "context_snapshot_json"
   );
-  const workingDirectory = stringField(row, "working_directory");
+  const workingDirectory = stringField2(row, "working_directory");
   const permissions = parsePermissionEnvelope(row.permissions_json);
   const requiredTools = parseTrustedStringArray(row.required_tools_json, "required_tools_json");
   if (!sameStringSet(requiredTools, permissions.hostTools)) {
@@ -68894,8 +69325,8 @@ function mapJob(row) {
     model
   });
   return {
-    jobId: stringField(row, "job_id"),
-    idempotencyKey: stringField(row, "idempotency_key"),
+    jobId: stringField2(row, "job_id"),
+    idempotencyKey: stringField2(row, "idempotency_key"),
     retryOfJobId: optionalStringField(row, "retry_of_job_id"),
     creatorOpenId,
     route: routeValue,
@@ -68915,10 +69346,10 @@ function mapJob(row) {
     maxAttempts: numberField(row, "max_attempts"),
     maxRetries: numberField(row, "max_retries"),
     timeoutSeconds: numberField(row, "timeout_seconds"),
-    createdAt: stringField(row, "created_at"),
-    expiresAt: stringField(row, "expires_at"),
+    createdAt: stringField2(row, "created_at"),
+    expiresAt: stringField2(row, "expires_at"),
     rowVersion: numberField(row, "row_version"),
-    status: stringField(row, "status"),
+    status: stringField2(row, "status"),
     executionSessionId: optionalStringField(row, "execution_session_id"),
     checkpoint: row.checkpoint_json ? parseTrustedCheckpointV2(row.checkpoint_json, "checkpoint_json") : void 0,
     lastAttemptDelta: row.last_delta_json ? parseTrustedAttemptDelta(row.last_delta_json, "last_delta_json") : void 0,
@@ -68928,13 +69359,13 @@ function mapJob(row) {
     recoveryFingerprintCounts,
     currentInterrupt: interruptId ? {
       interruptId,
-      jobId: stringField(row, "job_id"),
-      attemptId: stringField(row, "current_interrupt_attempt_id"),
+      jobId: stringField2(row, "job_id"),
+      attemptId: stringField2(row, "current_interrupt_attempt_id"),
       status: optionalStringField(row, "current_interrupt_status") === "resolved" ? "resolved" : optionalStringField(row, "current_interrupt_message_id") ? "delivered" : "pending",
-      prompt: stringField(row, "current_interrupt_prompt"),
+      prompt: stringField2(row, "current_interrupt_prompt"),
       deliveredMessageId: optionalStringField(row, "current_interrupt_message_id"),
       responseText: optionalStringField(row, "current_interrupt_response"),
-      createdAt: stringField(row, "current_interrupt_created_at"),
+      createdAt: stringField2(row, "current_interrupt_created_at"),
       deliveredAt: optionalStringField(row, "current_interrupt_delivered_at"),
       resolvedAt: optionalStringField(row, "current_interrupt_resolved_at")
     } : void 0,
@@ -68942,7 +69373,7 @@ function mapJob(row) {
     attemptCount: numberField(row, "attempt_count"),
     stepCount: numberField(row, "step_count"),
     failureCount: numberField(row, "failure_count"),
-    nextRunAt: stringField(row, "next_run_at"),
+    nextRunAt: stringField2(row, "next_run_at"),
     leaseOwner: optionalStringField(row, "lease_owner"),
     leaseExpiresAt: optionalStringField(row, "lease_expires_at"),
     heartbeatAt: optionalStringField(row, "heartbeat_at"),
@@ -68954,7 +69385,7 @@ function mapJob(row) {
     errorCode: optionalStringField(row, "error_code"),
     errorSummary: optionalStringField(row, "error_summary"),
     startedAt: optionalStringField(row, "started_at"),
-    updatedAt: stringField(row, "updated_at"),
+    updatedAt: stringField2(row, "updated_at"),
     completedAt: optionalStringField(row, "completed_at"),
     deletedAt: optionalStringField(row, "deleted_at"),
     retained: numberField(row, "retain") === 1,
@@ -68978,7 +69409,7 @@ function validatePersistedFactProjection(row, value) {
     model
   } = value;
   const expectedChatId = route.kind === "message_thread" ? route.conversationId : `doc:${route.documentToken}`;
-  if (stringField(row, "origin_kind") !== route.kind || !isDeepStrictEqual2(route, sourceFacts.route) || sourceFacts.sourceMessageId !== sourceMessageId || sourceFacts.sourceThreadId !== sourceThreadId || sourceFacts.chatId !== expectedChatId || sourceFacts.workingDirectory !== workingDirectory || sourceFacts.model !== (model ?? null) || !isDeepStrictEqual2(sourceFacts.permissions, permissions) || taskContract.title !== title || taskContract.objective !== objective || !isDeepStrictEqual2(
+  if (stringField2(row, "origin_kind") !== route.kind || !isDeepStrictEqual2(route, sourceFacts.route) || sourceFacts.sourceMessageId !== sourceMessageId || sourceFacts.sourceThreadId !== sourceThreadId || sourceFacts.chatId !== expectedChatId || sourceFacts.workingDirectory !== workingDirectory || sourceFacts.model !== (model ?? null) || !isDeepStrictEqual2(sourceFacts.permissions, permissions) || taskContract.title !== title || taskContract.objective !== objective || !isDeepStrictEqual2(
     taskContract.acceptanceCriteria.map((criterion) => criterion.description),
     acceptanceCriteria
   ) || !isDeepStrictEqual2(taskContract.initialContext, contextSnapshot) || route.kind === "message_thread" && route.sourceMessageId !== sourceMessageId || !routeMatchesSourceThread(route, sourceThreadId) || sourceFacts.provenance === "captured" && sourceFacts.creatorOpenId !== creatorOpenId) {
@@ -69127,10 +69558,10 @@ function trustedRouteFromCorruptRow(row) {
     if (!isDeliveryRoute2(route) || !isRecord5(rawFacts) || !isDeliveryRoute2(rawFacts.route)) {
       return null;
     }
-    const sourceMessageId = stringField(row, "source_message_id");
+    const sourceMessageId = stringField2(row, "source_message_id");
     const sourceThreadId = optionalStringField(row, "source_thread_id");
     const expectedChatId = route.kind === "message_thread" ? route.conversationId : `doc:${route.documentToken}`;
-    if (stringField(row, "origin_kind") !== route.kind || !isDeepStrictEqual2(route, rawFacts.route) || rawFacts.sourceMessageId !== sourceMessageId || rawFacts.sourceThreadId !== sourceThreadId || rawFacts.chatId !== expectedChatId || route.kind === "message_thread" && route.sourceMessageId !== sourceMessageId || !routeMatchesSourceThread(route, sourceThreadId)) return null;
+    if (stringField2(row, "origin_kind") !== route.kind || !isDeepStrictEqual2(route, rawFacts.route) || rawFacts.sourceMessageId !== sourceMessageId || rawFacts.sourceThreadId !== sourceThreadId || rawFacts.chatId !== expectedChatId || route.kind === "message_thread" && route.sourceMessageId !== sourceMessageId || !routeMatchesSourceThread(route, sourceThreadId)) return null;
     return route;
   } catch {
     return null;
@@ -69143,7 +69574,7 @@ function corruptTombstoneFacts(row, route, sourceMessageId, sourceThreadId) {
     originalUserText: null,
     sourceContextText: null,
     quotedMessageText: null,
-    creatorOpenId: stringField(row, "creator_open_id"),
+    creatorOpenId: stringField2(row, "creator_open_id"),
     chatId: route.kind === "message_thread" ? route.conversationId : `doc:${route.documentToken}`,
     chatType: route.kind === "comment_thread" ? "doc_comment" : "",
     route,
@@ -70445,7 +70876,7 @@ async function initializeContinuationDatabase(database) {
   await retrySqliteBusy2(() => database.exec("PRAGMA journal_mode = WAL;"), 5e3);
   database.exec("PRAGMA synchronous = NORMAL;");
   await retrySqliteBusy2(() => {
-    migrateSqliteToDurableV10(database);
+    migrateSqliteToDurableV11(database);
     installContinuationCompatibilitySchema(database);
   }, 5e3);
   healthCheckContinuationDatabase(database);
@@ -70491,6 +70922,7 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
     this.jitter = jitter;
     this.verifier = new ContinuationVerifier(artifacts);
     this.durableRuns = SqliteDurableRunRepository.attach(database);
+    this.cronMessageOrigins = SqliteCronMessageOriginStore.attach(database);
   }
   database;
   artifacts;
@@ -70500,6 +70932,7 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
   activeDurableClaims = /* @__PURE__ */ new Map();
   verifier;
   durableRuns;
+  cronMessageOrigins;
   static async open(options) {
     const databasePath = path23.resolve(options.databasePath);
     const database = await openContinuationDatabase(databasePath);
@@ -70691,7 +71124,7 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
         WHERE job_id = ? AND step_id = ? AND status = 'running'
       `).get(current.jobId, stepId);
       if (running) {
-        return { status: "unknown", callId: stringField(running, "call_id") };
+        return { status: "unknown", callId: stringField2(running, "call_id") };
       }
       const existing = this.database.prepare(`
         SELECT call_id, tool_name, request_hash, status, result_json
@@ -70699,8 +71132,8 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
         WHERE job_id = ? AND step_id = ? AND request_hash = ?
       `).get(current.jobId, stepId, requestHash);
       if (existing) {
-        const callId2 = stringField(existing, "call_id");
-        if (stringField(existing, "status") === "completed") {
+        const callId2 = stringField2(existing, "call_id");
+        if (stringField2(existing, "status") === "completed") {
           const result = parseToolResult(existing.result_json);
           if (!result.ok && result.failure && canReexecuteSameToolRequest(current, result.failure)) {
             const reopened = this.database.prepare(`
@@ -70728,7 +71161,7 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
       `).get(current.jobId, stepId);
       if (completedForStep) {
         const prior = parseToolResult(completedForStep.result_json);
-        if (prior.ok || !prior.failure || !canReplaceCompletedToolFailure(current, prior.failure)) return { status: "conflict", callId: stringField(completedForStep, "call_id") };
+        if (prior.ok || !prior.failure || !canReplaceCompletedToolFailure(current, prior.failure)) return { status: "conflict", callId: stringField2(completedForStep, "call_id") };
       }
       const callId = toolCallId(current.jobId, stepId, requestHash);
       this.database.prepare(`
@@ -70762,8 +71195,8 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
         LIMIT 1
       `).get(current.jobId, stepId);
       if (!row) return null;
-      const tool = stringField(row, "tool_name");
-      if (stringField(row, "status") === "completed") {
+      const tool = stringField2(row, "tool_name");
+      if (stringField2(row, "status") === "completed") {
         return { status: "completed", tool, result: parseToolResult(row.result_json) };
       }
       return { status: "unknown", tool };
@@ -71017,7 +71450,7 @@ The background task was cancelled.`,
       `).all(now);
       let expired = 0;
       for (const row of rows) {
-        const jobId = stringField(row, "job_id");
+        const jobId = stringField2(row, "job_id");
         let current;
         try {
           current = mapJob(row);
@@ -71536,12 +71969,12 @@ The continuation reached its maximum age.`,
     `).all(retainAfter);
     const results = [];
     for (const row of rows) {
-      const jobId = stringField(row, "job_id");
+      const jobId = stringField2(row, "job_id");
       const base = {
         jobId,
-        creatorOpenId: stringField(row, "creator_open_id"),
-        status: stringField(row, "status"),
-        completedAt: stringField(row, "completed_at")
+        creatorOpenId: stringField2(row, "creator_open_id"),
+        status: stringField2(row, "status"),
+        completedAt: stringField2(row, "completed_at")
       };
       try {
         if (await this.serializeJobMutation(
@@ -71613,8 +72046,8 @@ The continuation reached its maximum age.`,
       FROM continuation_jobs
       WHERE deleted_at IS NULL
     `).all();
-    const corruptJobIds = rows.filter((row) => optionalStringField(row, "error_code") === "continuation_persisted_state_invalid").map((row) => stringField(row, "job_id"));
-    const knownJobs = new Set(rows.map((row) => stringField(row, "job_id")));
+    const corruptJobIds = rows.filter((row) => optionalStringField(row, "error_code") === "continuation_persisted_state_invalid").map((row) => stringField2(row, "job_id"));
+    const knownJobs = new Set(rows.map((row) => stringField2(row, "job_id")));
     const isJobKnown = (jobId) => Boolean(this.database.prepare(`
       SELECT 1 FROM continuation_jobs
       WHERE job_id = ? AND deleted_at IS NULL
@@ -71719,19 +72152,19 @@ The continuation reached its maximum age.`,
         parseTrustedJson(row.input_json, "durable_runs.input_json"),
         numberField(row, "input_version")
       );
-      if (job.jobId !== jobId || job.idempotencyKey !== stringField(row, "idempotency_key") || job.creatorOpenId !== stringField(row, "actor_open_id") || !isDeepStrictEqual3(job.route, route)) return null;
+      if (job.jobId !== jobId || job.idempotencyKey !== stringField2(row, "idempotency_key") || job.creatorOpenId !== stringField2(row, "actor_open_id") || !isDeepStrictEqual3(job.route, route)) return null;
       return job;
     } catch {
       return null;
     }
   }
   sanitizeCorruptJob(row, now, dueOnly) {
-    const jobId = stringField(row, "job_id");
+    const jobId = stringField2(row, "job_id");
     const rowVersion = numberField(row, "row_version");
     const trustedInput = this.trustedInputJobForCorruptRun(jobId);
     const trustedRoute = optionalStringField(row, "deleted_at") ? null : trustedInput?.route ?? trustedRouteFromCorruptRow(row);
     const tombstoneRoute = trustedRoute ?? emptyRoute();
-    const tombstoneSourceMessageId = trustedRoute ? trustedInput?.sourceMessageId ?? stringField(row, "source_message_id") : "";
+    const tombstoneSourceMessageId = trustedRoute ? trustedInput?.sourceMessageId ?? stringField2(row, "source_message_id") : "";
     const tombstoneSourceThreadId = trustedRoute ? trustedInput?.sourceThreadId ?? optionalStringField(row, "source_thread_id") : void 0;
     const tombstoneFacts = corruptTombstoneFacts(
       row,
@@ -71742,9 +72175,9 @@ The continuation reached its maximum age.`,
     const tombstoneContract = corruptTombstoneContract();
     const tombstoneJob = {
       jobId,
-      idempotencyKey: stringField(row, "idempotency_key"),
+      idempotencyKey: stringField2(row, "idempotency_key"),
       ...optionalStringField(row, "retry_of_job_id") ? { retryOfJobId: optionalStringField(row, "retry_of_job_id") } : {},
-      creatorOpenId: stringField(row, "creator_open_id"),
+      creatorOpenId: stringField2(row, "creator_open_id"),
       route: tombstoneRoute,
       sourceMessageId: tombstoneSourceMessageId,
       ...tombstoneSourceThreadId ? { sourceThreadId: tombstoneSourceThreadId } : {},
@@ -71760,8 +72193,8 @@ The continuation reached its maximum age.`,
       maxAttempts: numberField(row, "max_attempts"),
       maxRetries: 0,
       timeoutSeconds: 1,
-      createdAt: stringField(row, "created_at"),
-      expiresAt: stringField(row, "expires_at"),
+      createdAt: stringField2(row, "created_at"),
+      expiresAt: stringField2(row, "expires_at"),
       rowVersion: rowVersion + 1,
       status: "failed",
       recoveryTotalCount: 0,
@@ -71770,7 +72203,7 @@ The continuation reached its maximum age.`,
       attemptCount: numberField(row, "attempt_count"),
       stepCount: 0,
       failureCount: 0,
-      nextRunAt: stringField(row, "next_run_at"),
+      nextRunAt: stringField2(row, "next_run_at"),
       resultArtifacts: [],
       errorCode: "continuation_persisted_state_invalid",
       errorSummary: "Stored task state failed integrity validation.",
@@ -71882,7 +72315,7 @@ Stored task state failed integrity validation.`;
       } catch (error51) {
         lastError = error51;
         await this.recoverCorruptJobStorage(
-          stringField(row, "job_id"),
+          stringField2(row, "job_id"),
           (/* @__PURE__ */ new Date()).toISOString(),
           false,
           storageLockHeld
@@ -71948,7 +72381,7 @@ Stored task state failed integrity validation.`;
     const rows = statement.all(...bindings);
     const jobs = [];
     for (const row of rows) {
-      const job = await this.readRecoveringJobBy("j.job_id = ?", stringField(row, "job_id"));
+      const job = await this.readRecoveringJobBy("j.job_id = ?", stringField2(row, "job_id"));
       if (job && !job.deletedAt && (uniqueStatuses.length === 0 || uniqueStatuses.includes(job.status))) jobs.push(job);
     }
     return jobs;
@@ -71966,16 +72399,16 @@ Stored task state failed integrity validation.`;
     const route = parseTrustedJson(row.route_json, "continuation_outbox.route_json");
     if (!isDeliveryRoute2(route)) throw new Error("Continuation outbox delivery route is invalid.");
     return {
-      outboxId: stringField(row, "outbox_id"),
-      jobId: stringField(row, "job_id"),
-      eventKey: stringField(row, "event_key"),
-      kind: stringField(row, "kind"),
+      outboxId: stringField2(row, "outbox_id"),
+      jobId: stringField2(row, "job_id"),
+      eventKey: stringField2(row, "event_key"),
+      kind: stringField2(row, "kind"),
       attemptId: optionalStringField(row, "attempt_id"),
-      ...stringField(row, "kind") === "interrupt" ? { interruptId: stringField(row, "event_key").slice("interrupt:".length) } : {},
-      workerId: stringField(row, "worker_id"),
+      ...stringField2(row, "kind") === "interrupt" ? { interruptId: stringField2(row, "event_key").slice("interrupt:".length) } : {},
+      workerId: stringField2(row, "worker_id"),
       route,
-      idempotencyKey: stringField(row, "idempotency_key"),
-      payload: stringField(row, "payload"),
+      idempotencyKey: stringField2(row, "idempotency_key"),
+      payload: stringField2(row, "payload"),
       status: "sending",
       attemptCount: numberField(row, "attempt_count"),
       firstAttemptAt: optionalStringField(row, "first_attempt_at"),
@@ -71993,17 +72426,17 @@ Stored task state failed integrity validation.`;
       WHERE job_id = ?
       ORDER BY CASE kind WHEN 'terminal' THEN 0 ELSE 1 END, created_at ASC
     `).all(jobId).map((row) => ({
-      eventKey: stringField(row, "event_key"),
-      kind: stringField(row, "kind"),
+      eventKey: stringField2(row, "event_key"),
+      kind: stringField2(row, "kind"),
       attemptId: optionalStringField(row, "attempt_id"),
-      status: stringField(row, "status"),
+      status: stringField2(row, "status"),
       attemptCount: numberField(row, "attempt_count"),
       firstAttemptAt: optionalStringField(row, "first_attempt_at"),
       lastAttemptAt: optionalStringField(row, "last_attempt_at"),
       lastErrorCode: optionalStringField(row, "error_code"),
       lastErrorSummary: optionalStringField(row, "error_summary"),
-      createdAt: stringField(row, "created_at"),
-      updatedAt: stringField(row, "updated_at")
+      createdAt: stringField2(row, "created_at"),
+      updatedAt: stringField2(row, "updated_at")
     }));
   }
   activeAttemptId(jobId, workerId) {
@@ -72014,7 +72447,7 @@ Stored task state failed integrity validation.`;
       WHERE job_id = ? AND worker_id = ? AND finished_at IS NULL
       ORDER BY ordinal DESC LIMIT 1
     `).get(jobId, workerId);
-    return row ? stringField(row, "attempt_id") : void 0;
+    return row ? stringField2(row, "attempt_id") : void 0;
   }
   scalar(sql) {
     const row = this.database.prepare(sql).get();
@@ -72832,6 +73265,7 @@ async function createContinuationRuntime(options) {
         worker: null,
         repository,
         durableRepository: repository.durableRuns,
+        cronMessageOrigins: repository.cronMessageOrigins ?? null,
         asyncTaskAdapter: null,
         health: { enabled: false, available: false, reason: "disabled" },
         close() {
@@ -72924,6 +73358,7 @@ async function createContinuationRuntime(options) {
       worker,
       repository,
       durableRepository: repository.durableRuns,
+      cronMessageOrigins: repository.cronMessageOrigins ?? null,
       asyncTaskAdapter: adapter,
       health: { enabled: true, available: true },
       close() {
@@ -72961,6 +73396,7 @@ function unavailableRuntime(health) {
     worker: null,
     repository: null,
     durableRepository: null,
+    cronMessageOrigins: null,
     asyncTaskAdapter: null,
     health,
     async close() {
@@ -73799,6 +74235,7 @@ function createCronDelivery(options) {
           return { status: "superseded" };
         }
         const response = await options.sendReply(replyRequest(claim, route, payload));
+        await recordMessageOriginsSafely(options.originRecorder, response, claim, route, now);
         result = classifyReplyResult(response);
       } catch (error51) {
         result = classifyDeliveryError2(error51, claim, now);
@@ -73840,6 +74277,11 @@ function replyRequest(claim, route, payload) {
   return {
     chat_id: route.targetChatId,
     text: payload.kind === "report" ? payload.report : payload.content,
+    ...payload.kind === "report" ? {
+      format: "card",
+      footer: `\u6765\u6E90\u4EFB\u52A1\uFF1A${route.jobName} \xB7 ${route.jobId}`,
+      cardActions: cronReportActions(route)
+    } : {},
     ...payload.kind === "message" ? {
       rawMessage: {
         msgType: payload.messageType,
@@ -73852,6 +74294,37 @@ function replyRequest(claim, route, payload) {
     retry: { attempts: 1, retryTimeout: false },
     routing: "standalone"
   };
+}
+function cronReportActions(route) {
+  const action = (kind) => ({
+    version: 1,
+    kind: "cron_job_control",
+    action: kind,
+    jobId: route.jobId,
+    jobCreatedAt: route.createdAt
+  });
+  return [
+    { text: "\u6682\u505C\u4EFB\u52A1", type: "danger", value: action("pause") },
+    { text: "\u67E5\u770B\u4EFB\u52A1", value: action("view") },
+    { text: "\u7ACB\u5373\u8FD0\u884C", type: "primary", value: action("run_now") }
+  ];
+}
+async function recordMessageOriginsSafely(recorder, response, claim, route, recordedAt) {
+  if (!recorder || !response.messageIds?.length) return;
+  try {
+    await recorder.recordDelivery({
+      messageIds: response.messageIds,
+      chatId: route.targetChatId,
+      jobId: route.jobId,
+      runId: claim.runId,
+      jobName: route.jobName,
+      jobCreatedAt: route.createdAt,
+      recordedAt
+    });
+  } catch (error51) {
+    const detail = deliveryErrorSummary(error51, "Cron message origin recording failed.");
+    console.error(`[cron] Message origin recording failed for run ${claim.runId}: ${detail}`);
+  }
 }
 function classifyReplyResult(response) {
   const messageId = response.messageIds?.find((candidate) => candidate.trim());
@@ -73972,11 +74445,13 @@ function retryDelayMs2(attemptCount2) {
 function parseCronDeliveryRoute(value) {
   const raw = object3(value, "Cron delivery route");
   if (raw.kind !== "cron_job") throw new Error("Cron delivery route kind must be cron_job.");
+  const jobId = requiredString4(raw.jobId, "route.jobId");
   return {
     kind: "cron_job",
     targetChatId: requiredString4(raw.targetChatId, "route.targetChatId"),
     originChatId: requiredString4(raw.originChatId, "route.originChatId"),
-    jobId: requiredString4(raw.jobId, "route.jobId"),
+    jobId,
+    jobName: raw.jobName === void 0 ? jobId : requiredString4(raw.jobName, "route.jobName"),
     createdAt: iso2(raw.createdAt, "route.createdAt"),
     revision: positiveInteger4(raw.revision, "route.revision")
   };
@@ -74340,6 +74815,7 @@ function cronRunCreateRequest(job, idempotencyKey, runId, now, scheduledOccurren
       targetChatId: job.meta.target_chat_id,
       originChatId: job.meta.origin_chat_id,
       jobId: job.meta.id,
+      jobName: job.meta.name,
       createdAt: job.meta.created_at,
       revision: job.meta.revision
     },
@@ -75017,6 +75493,231 @@ function snapshotAsJobFile2(input) {
   };
 }
 
+// src/cron/control-service.ts
+function createCronControlService(options = {}) {
+  const resolve = options.resolveJob ?? resolveJobReference;
+  const update = options.updateJob ?? updateJob;
+  async function resolveTarget(input) {
+    const resolved = await resolve({ jobId: input.jobId });
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          code: resolved.code === "job_not_found" ? "job_not_found" : "start_failed",
+          message: resolved.message
+        }
+      };
+    }
+    if (input.expectedCreatedAt !== void 0 && resolved.job.meta.created_at !== input.expectedCreatedAt) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          code: "stale_job",
+          message: "\u8FD9\u6761\u6D88\u606F\u5BF9\u5E94\u7684\u4EFB\u52A1\u5DF2\u88AB\u5220\u9664\u6216\u91CD\u5EFA\uFF0C\u8BF7\u67E5\u770B\u6700\u65B0\u4EFB\u52A1\u540E\u518D\u64CD\u4F5C\u3002"
+        }
+      };
+    }
+    if (resolved.job.meta.target_chat_id !== input.chatId) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          code: "wrong_chat",
+          message: "\u8FD9\u6761\u4EFB\u52A1\u64CD\u4F5C\u4E0D\u5C5E\u4E8E\u5F53\u524D\u4F1A\u8BDD\u3002"
+        }
+      };
+    }
+    return { ok: true, job: resolved.job };
+  }
+  return {
+    async pause(input) {
+      const target = await resolveTarget(input);
+      if (!target.ok) return target.result;
+      if (target.job.meta.created_by !== input.caller) {
+        void audit("disable_job", input.caller, cardAuditArgs(input), "denied");
+        return {
+          ok: false,
+          code: "owner_mismatch",
+          message: "\u53EA\u6709\u4EFB\u52A1\u521B\u5EFA\u8005\u53EF\u4EE5\u6682\u505C\u8BE5\u4EFB\u52A1\u3002"
+        };
+      }
+      if (target.job.meta.status === "paused") {
+        return {
+          ok: true,
+          code: "already_paused",
+          job: target.job,
+          message: `\u300C${target.job.meta.name}\u300D\u5DF2\u7ECF\u5904\u4E8E\u6682\u505C\u72B6\u6001\u3002`
+        };
+      }
+      const updated = await update({
+        action: "disable_job",
+        caller: input.caller,
+        reference: { jobId: input.jobId },
+        expectedCreatedAt: input.expectedCreatedAt,
+        updates: { status: "paused" },
+        auditArgs: cardAuditArgs(input)
+      });
+      if (!updated.ok) return updateFailure(updated.code, updated.message);
+      return {
+        ok: true,
+        code: "paused",
+        job: updated.job,
+        message: `\u5DF2\u6682\u505C\u300C${updated.job.meta.name}\u300D\u3002\u540E\u7EED\u5B9A\u65F6\u6267\u884C\u4E0D\u4F1A\u518D\u89E6\u53D1\uFF1B\u5DF2\u5F00\u59CB\u7684\u672C\u6B21\u6267\u884C\u4E0D\u4F1A\u88AB\u53D6\u6D88\u3002`
+      };
+    },
+    async view(input) {
+      const target = await resolveTarget(input);
+      if (!target.ok) return target.result;
+      if (!jobVisibleToCaller(target.job, {
+        caller: input.caller,
+        chatId: input.chatId,
+        isPrivateChat: input.isPrivateChat
+      })) {
+        void audit("list_jobs", input.caller, cardAuditArgs(input), "denied");
+        return {
+          ok: false,
+          code: "not_visible",
+          message: "\u5F53\u524D\u4F1A\u8BDD\u65E0\u6743\u67E5\u770B\u8BE5\u4EFB\u52A1\u3002"
+        };
+      }
+      void audit("list_jobs", input.caller, cardAuditArgs(input), "ok");
+      return {
+        ok: true,
+        code: "details",
+        job: target.job,
+        message: formatControlDetails(target.job, input.caller)
+      };
+    },
+    async runNow(input) {
+      const target = await resolveTarget(input);
+      if (!target.ok) return target.result;
+      if (target.job.meta.created_by !== input.caller) {
+        void audit("run_job", input.caller, cardAuditArgs(input), "denied");
+        return {
+          ok: false,
+          code: "owner_mismatch",
+          message: "\u53EA\u6709\u4EFB\u52A1\u521B\u5EFA\u8005\u53EF\u4EE5\u7ACB\u5373\u8FD0\u884C\u8BE5\u4EFB\u52A1\u3002"
+        };
+      }
+      if (!options.startJobNow) {
+        return {
+          ok: false,
+          code: "runner_unavailable",
+          message: "\u5B9A\u65F6\u4EFB\u52A1\u8FD0\u884C\u5668\u5C1A\u672A\u5C31\u7EEA\u3002"
+        };
+      }
+      try {
+        const started = await options.startJobNow(target.job);
+        if (!started.started) {
+          const code = started.reason === "already_running" ? "already_running" : started.reason === "runner_unavailable" ? "runner_unavailable" : "stale_job";
+          void audit("run_job", input.caller, {
+            ...cardAuditArgs(input),
+            reason: started.reason
+          }, "denied");
+          return {
+            ok: false,
+            code,
+            message: code === "already_running" ? `\u300C${target.job.meta.name}\u300D\u6B63\u5728\u8FD0\u884C\uFF0C\u672C\u6B21\u6CA1\u6709\u91CD\u590D\u542F\u52A8\u3002` : code === "runner_unavailable" ? "\u5B9A\u65F6\u4EFB\u52A1\u8FD0\u884C\u5668\u5C1A\u672A\u5C31\u7EEA\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" : "\u4EFB\u52A1\u5728\u542F\u52A8\u524D\u5DF2\u53D1\u751F\u53D8\u5316\uFF0C\u8BF7\u67E5\u770B\u6700\u65B0\u72B6\u6001\u540E\u91CD\u8BD5\u3002"
+          };
+        }
+        void audit("run_job", input.caller, {
+          ...cardAuditArgs(input),
+          run_id: started.runId
+        }, "ok");
+        return {
+          ok: true,
+          code: "started",
+          job: target.job,
+          runId: started.runId,
+          message: `\u5DF2\u5F00\u59CB\u8FD0\u884C\u300C${target.job.meta.name}\u300D\uFF0C\u7ED3\u679C\u4F1A\u901A\u8FC7\u8BE5\u4EFB\u52A1\u7684\u6B63\u5E38\u6295\u9012\u8DEF\u5F84\u53D1\u9001\u3002`
+        };
+      } catch (error51) {
+        const detail = error51 instanceof Error ? error51.message : String(error51);
+        void audit("run_job", input.caller, cardAuditArgs(input), "error");
+        return {
+          ok: false,
+          code: "start_failed",
+          message: `\u4EFB\u52A1\u542F\u52A8\u5931\u8D25\uFF1A${detail}`
+        };
+      }
+    }
+  };
+}
+function updateFailure(code, message) {
+  return {
+    ok: false,
+    code: code === "owner_mismatch" ? "owner_mismatch" : code === "stale_job" ? "stale_job" : code === "job_not_found" ? "job_not_found" : "start_failed",
+    message
+  };
+}
+function formatControlDetails(job, caller) {
+  const timezone = jobTimezone(job.meta);
+  const bodyLabel = job.meta.type === "prompt" ? "\u63D0\u793A\u8BCD" : "\u5185\u5BB9";
+  const bodyValue = job.meta.type === "prompt" ? job.meta.prompt : job.meta.content;
+  return [
+    `\u4EFB\u52A1\uFF1A${job.meta.name}`,
+    `ID\uFF1A${job.meta.id}`,
+    `\u72B6\u6001\uFF1A${job.meta.status === "active" ? "\u8FD0\u884C\u4E2D" : "\u5DF2\u6682\u505C"}`,
+    `\u8BA1\u5212\uFF1A${job.meta.schedule_human}`,
+    `\u65F6\u533A\uFF1A${timezone}`,
+    `\u4E0B\u6B21\u6267\u884C\uFF1A${formatJobNextRun(job, timezone)}`,
+    `\u4E0A\u6B21\u6267\u884C\uFF1A${formatCronDateTime(job.runtime.last_run_at, timezone)}`,
+    ...canReadJobBody(job, caller) ? [`${bodyLabel}\uFF1A${bodyValue ?? "\uFF08\u7A7A\uFF09"}`] : []
+  ].join("\n");
+}
+function cardAuditArgs(input) {
+  return {
+    source: "cron_control",
+    chat_id: input.chatId,
+    job_id: input.jobId,
+    expected_created_at: input.expectedCreatedAt
+  };
+}
+
+// src/cron/card-actions.ts
+function createCronCardActionHandler(options) {
+  return async (event) => {
+    const parsed = parseCronJobCardAction(event.action.value);
+    if (!parsed) return toast(false, "\u65E0\u6548\u6216\u5DF2\u8FC7\u671F\u7684\u4EFB\u52A1\u64CD\u4F5C\u3002");
+    const target = {
+      caller: event.operator.openId,
+      chatId: event.chatId,
+      jobId: parsed.jobId,
+      expectedCreatedAt: parsed.jobCreatedAt
+    };
+    const result = parsed.action === "pause" ? await options.service.pause(target) : parsed.action === "run_now" ? await options.service.runNow(target) : await options.service.view({
+      ...target,
+      isPrivateChat: options.isPrivateChat(event.chatId)
+    });
+    return toast(result.ok, result.message);
+  };
+}
+function parseCronJobCardAction(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value;
+  if (raw.version !== 1 || raw.kind !== "cron_job_control") return null;
+  if (raw.action !== "pause" && raw.action !== "view" && raw.action !== "run_now") return null;
+  if (typeof raw.jobId !== "string" || !raw.jobId || raw.jobId.length > 200) return null;
+  if (typeof raw.jobCreatedAt !== "string" || raw.jobCreatedAt.length > 100 || !Number.isFinite(Date.parse(raw.jobCreatedAt))) return null;
+  return {
+    version: 1,
+    kind: "cron_job_control",
+    action: raw.action,
+    jobId: raw.jobId,
+    jobCreatedAt: new Date(raw.jobCreatedAt).toISOString()
+  };
+}
+function toast(ok, content) {
+  return {
+    toast: {
+      type: ok ? "success" : "error",
+      content: content.slice(0, 1e3)
+    }
+  };
+}
+
 // src/index.ts
 var closeContinuationRuntime = null;
 var stopChannelServices = null;
@@ -75097,12 +75798,26 @@ async function main() {
     standaloneWorker: false
   });
   closeContinuationRuntime = () => continuationRuntime.close();
+  if (continuationRuntime.cronMessageOrigins) {
+    channel.setCronMessageOriginLookup(continuationRuntime.cronMessageOrigins);
+  }
   console.error(
     continuationRuntime.health.available ? "[continuation] runtime available" : `[continuation] runtime unavailable: ${continuationRuntime.health.reason ?? "unknown"}`
   );
   const buffer = new ConversationBuffer();
   let codexExecActionDispatcher = null;
   let runJobNow = null;
+  let startJobNow = null;
+  const cronControls = createCronControlService({
+    startJobNow: async (job) => {
+      if (!startJobNow) return { started: false, reason: "runner_unavailable" };
+      return startJobNow(job);
+    }
+  });
+  channel.setCardActionHandler(createCronCardActionHandler({
+    service: cronControls,
+    isPrivateChat: (chatId) => channel.isPrivateChat(chatId)
+  }));
   registerConversationFlushHandler({
     buffer,
     identitySession,
@@ -75138,7 +75853,10 @@ async function main() {
   let durableRunRuntime = null;
   let cronAdmission = null;
   if (continuationRuntime.durableRepository) {
-    const cronDelivery = createCronDelivery({ sendReply: sendReplyViaFeishu });
+    const cronDelivery = createCronDelivery({
+      sendReply: sendReplyViaFeishu,
+      originRecorder: continuationRuntime.cronMessageOrigins ?? void 0
+    });
     const promptExecutor = createCronPromptExecutor({
       identitySession,
       sessionStore: codexSessionStore,
@@ -75209,7 +75927,8 @@ async function main() {
     turnObligations,
     actionDispatcher: codexExecActionDispatcher,
     continuationService: continuationRuntime.service,
-    continuationAvailable: continuationRuntime.health.available
+    continuationAvailable: continuationRuntime.health.available,
+    cronControlService: cronControls
   });
   if (isDryRun) {
     console.error("[dry-run] Channel runtime: sdk");
@@ -75234,6 +75953,7 @@ async function main() {
     cronAdmission,
     onSchedulerReady: (scheduler) => {
       runJobNow = scheduler.runJobNow.bind(scheduler);
+      startJobNow = scheduler.startJobNow.bind(scheduler);
     }
   });
   stopChannelServices = startChannelServices2.stop;

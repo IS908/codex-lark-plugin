@@ -7,6 +7,7 @@ export interface CronDeliveryRoute {
   targetChatId: string;
   originChatId: string;
   jobId: string;
+  jobName: string;
   createdAt: string;
   revision: number;
 }

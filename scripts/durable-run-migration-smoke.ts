@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
+import { DURABLE_RUN_SCHEMA_VERSION } from '../src/durable-run/sqlite-migrations.js';
 import {
   seedHistoricalContinuationDatabase,
   type HistoricalContinuationSchemaVersion,
@@ -93,8 +94,15 @@ try {
     try {
       assert.equal(
         Number(database.prepare('PRAGMA user_version').get()?.user_version),
-        10,
+        DURABLE_RUN_SCHEMA_VERSION,
         `v${version} schema version`,
+      );
+      assert.ok(
+        database.prepare(`
+          SELECT 1 AS present FROM sqlite_master
+          WHERE type = 'table' AND name = 'cron_message_origins'
+        `).get(),
+        `v${version} Cron message origin table`,
       );
       const baseTables = database.prepare(`
         SELECT name FROM sqlite_master
@@ -345,6 +353,33 @@ try {
       `).all(), []);
     } finally {
       rolledBack.close();
+    }
+  });
+
+  await reviewRegression('v10 adds the Cron message origin table in place', async () => {
+    const databasePath = join(root, 'v10', 'runtime.sqlite');
+    const initial = await SqliteDurableRunRepository.open({ databasePath });
+    initial.close();
+    const v10 = new DatabaseSync(databasePath, { enableForeignKeyConstraints: true });
+    v10.exec('DROP TABLE cron_message_origins;');
+    v10.exec('PRAGMA user_version = 10;');
+    v10.close();
+
+    const migrated = await SqliteDurableRunRepository.open({ databasePath });
+    migrated.close();
+    const current = new DatabaseSync(databasePath, { enableForeignKeyConstraints: true });
+    try {
+      assert.equal(
+        Number(current.prepare('PRAGMA user_version').get()?.user_version),
+        DURABLE_RUN_SCHEMA_VERSION,
+      );
+      assert.ok(current.prepare(`
+        SELECT 1 AS present FROM sqlite_master
+        WHERE type = 'table' AND name = 'cron_message_origins'
+      `).get());
+      assert.deepEqual(current.prepare('PRAGMA foreign_key_check').all(), []);
+    } finally {
+      current.close();
     }
   });
 

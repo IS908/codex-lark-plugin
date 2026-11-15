@@ -41,7 +41,8 @@ export type JobServiceErrorCode =
   | 'job_exists'
   | 'job_not_found'
   | 'ambiguous_reference'
-  | 'owner_mismatch';
+  | 'owner_mismatch'
+  | 'stale_job';
 
 export type JobServiceError = {
   ok: false;
@@ -98,6 +99,7 @@ export type UpdateJobInput = {
   action: Extract<JobLifecycleAction, 'update_job' | 'disable_job' | 'upsert_job'>;
   caller: string;
   reference: JobReference;
+  expectedCreatedAt?: string;
   updates: {
     name?: string;
     status?: JobMeta['status'];
@@ -336,6 +338,17 @@ export async function updateJob(input: UpdateJobInput): Promise<JobServiceResult
   const resolved = await resolveJobReference(input.reference);
   if (!resolved.ok) return resolved;
 
+  if (
+    input.expectedCreatedAt !== undefined
+    && resolved.job.meta.created_at !== input.expectedCreatedAt
+  ) {
+    return serviceError(
+      'stale_job',
+      `Job "${resolved.job.meta.id}" was replaced after this action was created.`,
+      { jobId: resolved.job.meta.id },
+    );
+  }
+
   const ownerError = ownerMismatchError(input.action, resolved.job, input.caller, input.auditArgs);
   if (ownerError) return ownerError;
 
@@ -344,7 +357,15 @@ export async function updateJob(input: UpdateJobInput): Promise<JobServiceResult
   const { requestedTimezone, expandedSchedule } = scheduleUpdate;
 
   let ownerMismatch: string | null = null;
+  let staleInstance = false;
   const updated = await mutateJob(resolved.job.meta.id, (latest) => {
+    if (
+      input.expectedCreatedAt !== undefined
+      && latest.meta.created_at !== input.expectedCreatedAt
+    ) {
+      staleInstance = true;
+      return false;
+    }
     if (latest.meta.created_by !== input.caller) {
       ownerMismatch = latest.meta.created_by;
       return false;
@@ -370,6 +391,14 @@ export async function updateJob(input: UpdateJobInput): Promise<JobServiceResult
       }
     }
   });
+
+  if (staleInstance) {
+    return serviceError(
+      'stale_job',
+      `Job "${resolved.job.meta.id}" was replaced after this action was created.`,
+      { jobId: resolved.job.meta.id },
+    );
+  }
 
   if (ownerMismatch) {
     void audit(input.action, input.caller, input.auditArgs ?? {}, 'denied');

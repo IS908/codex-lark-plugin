@@ -16,6 +16,7 @@ import type {
   ContinuationToolRequest,
   ContinuationToolResult,
 } from '../domain/continuation.js';
+import type { CronMessageOriginStore } from '../cron/message-origin-store.js';
 import type {
   DurableRunDeliveryResult,
   DurableRunInterruptedAttempt,
@@ -68,6 +69,7 @@ export interface ContinuationInputStorePort {
 
 export interface ContinuationRepository {
   readonly durableRuns: DurableRunRepository;
+  readonly cronMessageOrigins?: CronMessageOriginStore;
   initialize(): Promise<void>;
   healthCheck(): Promise<void>;
   create(request: ContinuationCreateRequest): Promise<{ job: ContinuationJob; created: boolean }>;

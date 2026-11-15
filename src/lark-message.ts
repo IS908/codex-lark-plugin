@@ -1,4 +1,6 @@
 import type {
+  CardActionEvent,
+  CardActionResponse,
   CommentEvent,
   LarkChannel as SdkLarkChannel,
   NormalizedMessage,
@@ -6,6 +8,7 @@ import type {
 } from '@larksuite/channel';
 import type { ConversationBoundary } from './conversation-boundary.js';
 import type { SdkLarkTransportChannel } from './lark-transport-contracts.js';
+import type { CronMessageOrigin } from './cron/message-origin-store.js';
 
 export interface LarkMessage {
   messageId: string;
@@ -24,6 +27,8 @@ export interface LarkMessage {
   parentContent?: string;
   /** Trusted cronjob origin derived from locally tracked bot-message routing metadata. */
   quotedCronJobId?: string;
+  /** Trusted persisted cronjob origin for the directly quoted bot message. */
+  quotedCronJobOrigin?: CronMessageOrigin;
   threadId?: string;
   rootMessageId?: string;
   timestampMs?: number;
@@ -57,6 +62,10 @@ export interface LarkMessage {
 
 export type MessageHandler = (message: LarkMessage) => Promise<void>;
 export type ControlMessageHandler = (message: LarkMessage) => Promise<boolean>;
+export type LarkCardActionResponse = CardActionResponse;
+export type CardActionHandler = (
+  event: CardActionEvent,
+) => Promise<LarkCardActionResponse | undefined>;
 
 export interface ConversationBoundaryProvider {
   get(chatId: string, threadId?: string): Promise<ConversationBoundary | null>;
@@ -78,5 +87,8 @@ export interface SdkChannelRuntimeTarget {
     sdkChannel?: Pick<SdkLarkChannel, 'comments'>,
   ): Promise<void>;
   handleSdkReactionEvent(reaction: ReactionEvent): Promise<void>;
+  handleSdkCardActionEvent(
+    event: CardActionEvent,
+  ): Promise<LarkCardActionResponse | undefined>;
   setBotOpenId(openId: string | undefined): void;
 }

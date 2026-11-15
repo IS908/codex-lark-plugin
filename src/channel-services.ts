@@ -18,7 +18,7 @@ export interface ChannelServicesOptions {
   buffer: ConversationBuffer;
   durableRunRuntime: Pick<DurableRunRuntime, 'start' | 'stop'> | null;
   cronAdmission: CronRunAdmission | null;
-  onSchedulerReady?: (scheduler: Pick<JobScheduler, 'runJobNow'>) => void;
+  onSchedulerReady?: (scheduler: Pick<JobScheduler, 'runJobNow' | 'startJobNow'>) => void;
   schedulerFactory?: (admission: CronRunAdmission) => SchedulerHandle;
 }
 
@@ -27,7 +27,7 @@ export interface ChannelServicesStarter {
   stop(): Promise<void>;
 }
 
-interface SchedulerHandle extends Pick<JobScheduler, 'start' | 'runJobNow'> {
+interface SchedulerHandle extends Pick<JobScheduler, 'start' | 'runJobNow' | 'startJobNow'> {
   stop(): void | Promise<void>;
 }
 

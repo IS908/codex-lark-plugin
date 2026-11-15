@@ -39,6 +39,12 @@ export const ListJobsActionSchema = z.object({
 });
 export type ListJobsAction = z.infer<typeof ListJobsActionSchema>;
 
+export const GetJobActionSchema = z.object({
+  type: z.literal('get_job'),
+  ...JobReferenceShape,
+});
+export type GetJobAction = z.infer<typeof GetJobActionSchema>;
+
 export const RunJobActionSchema = z.object({
   type: z.literal('run_job'),
   ...JobReferenceShape,
@@ -367,6 +373,7 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
   SaveMemoryActionSchema,
   CreateJobActionSchema,
   ListJobsActionSchema,
+  GetJobActionSchema,
   RunJobActionSchema,
   UpdateJobActionSchema,
   DisableJobActionSchema,
@@ -383,7 +390,7 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
     validateContinuationActionContract(action, ctx);
   }
   if (
-    (action.type === 'run_job' || action.type === 'update_job' || action.type === 'disable_job' || action.type === 'delete_job') &&
+    (action.type === 'get_job' || action.type === 'run_job' || action.type === 'update_job' || action.type === 'disable_job' || action.type === 'delete_job') &&
     !action.job_id &&
     !action.name
   ) {
@@ -485,7 +492,7 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
 export const CodexExecActionEnvelopeSchema = z.object({
   version: z.literal(1),
   reply: z.string().optional(),
-  actions: z.array(CodexExecActionSchema).min(1).max(5),
+  actions: z.array(CodexExecActionSchema).min(1).max(6),
 }).superRefine((envelope, ctx) => {
   const continuationCount = envelope.actions.filter(
     (action) => action.type === 'create_continuation_job',

@@ -27,6 +27,12 @@ export interface RunJobNowResult {
   outcome?: 'success' | 'failed';
 }
 
+export interface StartJobNowResult {
+  started: boolean;
+  reason?: 'already_running' | 'stale_job';
+  runId?: string;
+}
+
 export class JobScheduler {
   private readonly clock: () => Date;
   private readonly scanIntervalMs: number;
@@ -88,7 +94,18 @@ export class JobScheduler {
   }
 
   async runJobNow(job: JobFile): Promise<RunJobNowResult> {
-    if (this.stopping) return { started: false, reason: 'stale_job', outcome: 'failed' };
+    const started = await this.startJobNow(job);
+    if (!started.started) {
+      return started.reason === 'already_running'
+        ? { started: false, reason: 'already_running' }
+        : { started: false, reason: 'stale_job', outcome: 'failed' };
+    }
+    const outcome = await this.options.admission.waitForExecution(started.runId!);
+    return { started: true, outcome };
+  }
+
+  async startJobNow(job: JobFile): Promise<StartJobNowResult> {
+    if (this.stopping) return { started: false, reason: 'stale_job' };
     const operation = this.options.admission.admitManual(
       job,
       `manual:${randomUUID()}`,
@@ -101,9 +118,8 @@ export class JobScheduler {
     } finally {
       this.manualAdmissions.delete(operation);
     }
-    if (!admission.admitted) return rejectedManual(admission);
-    const outcome = await this.options.admission.waitForExecution(admission.runId);
-    return { started: true, outcome };
+    if (!admission.admitted) return rejectedStart(admission);
+    return { started: true, runId: admission.runId };
   }
 
   private async scan(now: Date): Promise<void> {
@@ -132,9 +148,9 @@ export class JobScheduler {
   }
 }
 
-function rejectedManual(result: Exclude<CronAdmissionResult, { admitted: true }>): RunJobNowResult {
+function rejectedStart(result: Exclude<CronAdmissionResult, { admitted: true }>): StartJobNowResult {
   if (result.reason === 'already_running') return { started: false, reason: 'already_running' };
-  return { started: false, reason: 'stale_job', outcome: 'failed' };
+  return { started: false, reason: 'stale_job' };
 }
 
 function errorMessage(error: unknown): string {

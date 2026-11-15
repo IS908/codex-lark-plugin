@@ -25,6 +25,7 @@ import {
   deleteJob,
   formatJobNextRun,
   listVisibleJobs,
+  jobVisibleToCaller,
   resolveJobReference,
   updateJob,
   upsertJob,
@@ -67,6 +68,7 @@ import type {
   DeleteJobAction,
   DisableJobAction,
   GetRunTraceAction,
+  GetJobAction,
   ListJobsAction,
   ManageAccessControlAction,
   RecallMessageAction,
@@ -166,28 +168,34 @@ function isPrivateJobListing(message: LarkMessage): boolean {
   return message.chatType === 'p2p';
 }
 
-function formatJobForActionList(job: JobFile, caller: string): string {
-  const modelNote = job.meta.model ? ` | model: ${job.meta.model}` : '';
+function formatJobForActionList(job: JobFile): string {
   const tz = jobTimezone(job.meta);
   const lastRun = formatCronDateTime(job.runtime.last_run_at, tz);
-  const lastError = job.runtime.last_error ? ` | last_error: ${job.runtime.last_error}` : '';
+
+  return [
+    `job_id: ${job.meta.id}`,
+    `name: ${job.meta.name}`,
+    `status: ${job.meta.status}`,
+    `schedule: ${job.meta.schedule_human} (${job.meta.schedule})`,
+    `timezone: ${tz}`,
+    `next_run_at: ${formatJobNextRun(job, tz)}`,
+    `last_run_at: ${lastRun}`,
+  ].join('\n');
+}
+
+function formatJobForActionDetails(job: JobFile, caller: string): string {
   const bodyValue = job.meta.type === 'prompt' ? job.meta.prompt : job.meta.content;
   const bodyLabel = job.meta.type === 'prompt' ? 'prompt' : 'content';
   const body = bodyValue
     ? `${bodyLabel}: ${canReadJobBody(job, caller) ? bodyValue : '<redacted>'}`
     : `${bodyLabel}: <empty>`;
-
   return [
-    `job_id: ${job.meta.id}`,
-    `name: ${job.meta.name}`,
+    formatJobForActionList(job),
     `type: ${job.meta.type}`,
-    `status: ${job.meta.status}`,
-    `schedule: ${job.meta.schedule_human} (${job.meta.schedule})`,
-    `timezone: ${tz}`,
     `target_chat_id: ${job.meta.target_chat_id}`,
-    `next_run_at: ${formatJobNextRun(job, tz)}`,
-    `last_run_at: ${lastRun}`,
-    `run_count: ${job.runtime.run_count}${modelNote}${lastError}`,
+    `run_count: ${job.runtime.run_count}`,
+    ...(job.meta.model ? [`model: ${job.meta.model}`] : []),
+    ...(job.runtime.last_error ? [`last_error: ${job.runtime.last_error}`] : []),
     body,
   ].join('\n');
 }
@@ -662,7 +670,42 @@ async function executeListJobs(
   return {
     ok: true,
     action: 'list_jobs',
-    message: visible.map((job) => formatJobForActionList(job, caller)).join('\n\n---\n\n'),
+    message: visible.map((job) => formatJobForActionList(job)).join('\n\n---\n\n'),
+  };
+}
+
+async function executeGetJob(
+  action: GetJobAction,
+  message: LarkMessage,
+  deps: CreateCodexExecActionDispatcherOptions,
+): Promise<CodexExecActionExecutionResult> {
+  const auth = currentCaller(deps.identitySession, message, 'get_job');
+  const auditArgs = {
+    job_id: action.job_id,
+    name: action.name,
+    chat_id: message.chatId,
+    thread_id: message.threadId,
+  };
+  if ('error' in auth) return auth.error;
+  const { caller } = auth;
+  const resolved = await resolveJobReference({ jobId: action.job_id, name: action.name });
+  if (!resolved.ok) {
+    void audit('get_job', caller, auditArgs, 'error');
+    return { ok: false, action: 'get_job', message: resolved.message };
+  }
+  if (!jobVisibleToCaller(resolved.job, {
+    caller,
+    chatId: message.chatId,
+    isPrivateChat: isPrivateJobListing(message),
+  })) {
+    void audit('get_job', caller, auditArgs, 'denied');
+    return { ok: false, action: 'get_job', message: 'The job is not visible in this chat.' };
+  }
+  void audit('get_job', caller, auditArgs, 'ok');
+  return {
+    ok: true,
+    action: 'get_job',
+    message: formatJobForActionDetails(resolved.job, caller),
   };
 }
 
@@ -1523,6 +1566,7 @@ function createCodexExecActionHandlerRegistry(
     save_memory: (action, context) => executeSaveMemory(action, context.message, deps),
     create_job: (action, context) => executeCreateJob(action, context.message, deps),
     list_jobs: (action, context) => executeListJobs(action, context.message, deps),
+    get_job: (action, context) => executeGetJob(action, context.message, deps),
     run_job: (action, context) => executeRunJob(action, context.message, deps),
     update_job: (action, context) => executeUpdateJob(action, context.message, deps),
     disable_job: (action, context) => executeDisableJob(action, context.message, deps),

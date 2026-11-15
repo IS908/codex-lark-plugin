@@ -27,6 +27,7 @@ import { SqliteContinuationRepository } from './sqlite-repository.js';
 import { ContinuationWorker } from './worker.js';
 import { AsyncTaskKernelAdapter } from './async-task-kernel-adapter.js';
 import type { DurableRunRepository } from '../ports/durable-run.js';
+import type { CronMessageOriginStore } from '../cron/message-origin-store.js';
 
 const DEFAULT_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 
@@ -76,6 +77,7 @@ export interface ContinuationRuntime {
   worker: ContinuationWorker | null;
   repository: ContinuationRepository | null;
   durableRepository: DurableRunRepository | null;
+  cronMessageOrigins: CronMessageOriginStore | null;
   asyncTaskAdapter: AsyncTaskKernelAdapter | null;
   health: ContinuationRuntimeHealth;
   close(): Promise<void>;
@@ -109,6 +111,7 @@ export async function createContinuationRuntime(
         worker: null,
         repository,
         durableRepository: repository.durableRuns,
+        cronMessageOrigins: repository.cronMessageOrigins ?? null,
         asyncTaskAdapter: null,
         health: { enabled: false, available: false, reason: 'disabled' },
         close() {
@@ -205,6 +208,7 @@ export async function createContinuationRuntime(
       worker,
       repository,
       durableRepository: repository.durableRuns,
+      cronMessageOrigins: repository.cronMessageOrigins ?? null,
       asyncTaskAdapter: adapter,
       health: { enabled: true, available: true },
       close() {
@@ -242,6 +246,7 @@ function unavailableRuntime(health: ContinuationRuntimeHealth): ContinuationRunt
     worker: null,
     repository: null,
     durableRepository: null,
+    cronMessageOrigins: null,
     asyncTaskAdapter: null,
     health,
     async close() {},

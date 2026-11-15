@@ -19,10 +19,12 @@ import {
   type CronDeliveryRoute,
   type CronRuntimeProjectionRepository,
 } from './runtime-projection.js';
+import type { CronMessageOriginRecorder } from './message-origin-store.js';
 
 export interface CronDeliveryOptions {
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
   projectionRepository?: CronRuntimeProjectionRepository;
+  originRecorder?: CronMessageOriginRecorder;
   now?: () => Date;
 }
 
@@ -102,6 +104,7 @@ export function createCronDelivery(options: CronDeliveryOptions): DurableRunDeli
           return { status: 'superseded' };
         }
         const response = await options.sendReply(replyRequest(claim, route, payload));
+        await recordMessageOriginsSafely(options.originRecorder, response, claim, route, now);
         result = classifyReplyResult(response);
       } catch (error) {
         result = classifyDeliveryError(error, claim, now);
@@ -163,6 +166,13 @@ function replyRequest(
   return {
     chat_id: route.targetChatId,
     text: payload.kind === 'report' ? payload.report : payload.content,
+    ...(payload.kind === 'report'
+      ? {
+          format: 'card' as const,
+          footer: `来源任务：${route.jobName} · ${route.jobId}`,
+          cardActions: cronReportActions(route),
+        }
+      : {}),
     ...(payload.kind === 'message'
       ? {
           rawMessage: {
@@ -179,6 +189,45 @@ function replyRequest(
     retry: { attempts: 1, retryTimeout: false },
     routing: 'standalone',
   };
+}
+
+function cronReportActions(route: CronDeliveryRoute): NonNullable<ReplyRequest['cardActions']> {
+  const action = (kind: 'pause' | 'view' | 'run_now') => ({
+    version: 1,
+    kind: 'cron_job_control',
+    action: kind,
+    jobId: route.jobId,
+    jobCreatedAt: route.createdAt,
+  });
+  return [
+    { text: '暂停任务', type: 'danger', value: action('pause') },
+    { text: '查看任务', value: action('view') },
+    { text: '立即运行', type: 'primary', value: action('run_now') },
+  ];
+}
+
+async function recordMessageOriginsSafely(
+  recorder: CronMessageOriginRecorder | undefined,
+  response: ReplySendResult,
+  claim: DurableRunDeliveryClaim,
+  route: CronDeliveryRoute,
+  recordedAt: string,
+): Promise<void> {
+  if (!recorder || !response.messageIds?.length) return;
+  try {
+    await recorder.recordDelivery({
+      messageIds: response.messageIds,
+      chatId: route.targetChatId,
+      jobId: route.jobId,
+      runId: claim.runId,
+      jobName: route.jobName,
+      jobCreatedAt: route.createdAt,
+      recordedAt,
+    });
+  } catch (error) {
+    const detail = deliveryErrorSummary(error, 'Cron message origin recording failed.');
+    console.error(`[cron] Message origin recording failed for run ${claim.runId}: ${detail}`);
+  }
 }
 
 function classifyReplyResult(response: ReplySendResult): DurableRunDeliveryResult {
@@ -329,11 +378,15 @@ function retryDelayMs(attemptCount: number): number {
 export function parseCronDeliveryRoute(value: unknown): CronDeliveryRoute {
   const raw = object(value, 'Cron delivery route');
   if (raw.kind !== 'cron_job') throw new Error('Cron delivery route kind must be cron_job.');
+  const jobId = requiredString(raw.jobId, 'route.jobId');
   return {
     kind: 'cron_job',
     targetChatId: requiredString(raw.targetChatId, 'route.targetChatId'),
     originChatId: requiredString(raw.originChatId, 'route.originChatId'),
-    jobId: requiredString(raw.jobId, 'route.jobId'),
+    jobId,
+    jobName: raw.jobName === undefined
+      ? jobId
+      : requiredString(raw.jobName, 'route.jobName'),
     createdAt: iso(raw.createdAt, 'route.createdAt'),
     revision: positiveInteger(raw.revision, 'route.revision'),
   };

@@ -17,7 +17,7 @@ parent-process bridge for actions that must run safely even when the child
 | Plain Feishu reply | `reply` | ordinary exec text output | no; exec replies flow through `deliverMessageViaCodexExec` |
 | Defer/no visible reply | `defer_reply` | `[LARK_DEFER]` / `[LARK_NO_REPLY]` sentinel | no; exec uses output parsing |
 | Save memory | `save_memory` | `save_memory` | partial; both use server-derived caller identity and `MemoryStore` |
-| Job lifecycle | `create_job`, `list_jobs`, `update_job`, `delete_job` | `create_job`, `list_jobs`, `run_job`, `update_job`, `disable_job`, `delete_job`, `upsert_job` | shared create/list/update/delete behavior delegates to `job-service`; exec-only `run_job` resolves the same stable reference and creator ownership, then invokes the live scheduler's persisted-definition execution path |
+| Job lifecycle | `create_job`, `list_jobs`, `get_job`, `update_job`, `delete_job` | `create_job`, `list_jobs`, `get_job`, `run_job`, `update_job`, `disable_job`, `delete_job`, `upsert_job` | shared create/list/detail/update/delete behavior delegates to `job-service`; lists are concise and explicit details enforce chat visibility; exec-only `run_job` resolves the same stable reference and creator ownership, then invokes the live scheduler's persisted-definition execution path |
 | Run local CLI tool | `run_local_cli_tool` | `run_local_cli_tool` | yes; both call `runConfiguredLocalCliTool` |
 | Image/file/rich media reply | `reply(files=[...])`; internal `richParts` | `send_message` (`image`/`file`/`rich`) | partial; both flow through `sendFeishuReply`; exec supports `local_path`, `current_message:first_image`, `quoted_message:first_image`, and ordered text+image rich parts |
 | Recall bot message | `recall_message` | `recall_message` | yes; both use the tracked bot-message scope guard |
@@ -50,11 +50,12 @@ parent-process bridge for actions that must run safely even when the child
   `create_continuation_job` action establishes a durable follow-up; unrelated
   actions and defer/no-reply markers do not. Unsupported future-work prose is
   rewritten into a safe notice.
-- A quoted bot report may carry `quoted_cronjob_id` only when the parent derives
-  it from local `BotMessageTracker` routing metadata for the same chat. The model
-  uses that stable id with `run_job`; quoted visible text cannot declare or
-  override the id. `run_job` is creator-only, audited, synchronous, and rejects
-  overlapping runs of the same persisted job.
+- A quoted Cron report may carry `quoted_cronjob_id` only when the parent resolves
+  the directly quoted message through the persistent same-chat origin mapping.
+  Missing, failed, or cross-chat lookups fail closed and never fall back to
+  thread inference when the origin store is configured. Deterministic quoted
+  pause/view/run commands and native card actions share authorization and exact
+  Job-instance fencing. Model-driven `run_job` remains creator-only and audited.
 - `create_continuation_job` is foreground-only and is not an MCP tool. The
   background runner cannot invoke the foreground action bridge, send Lark
   messages, or create nested jobs. The default `bounded` profile also disables

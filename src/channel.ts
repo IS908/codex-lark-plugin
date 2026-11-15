@@ -1,5 +1,6 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import type {
+  CardActionEvent,
   CommentEvent,
   LarkChannel as SdkLarkChannel,
   NormalizedMessage,
@@ -40,12 +41,14 @@ import { prepareInboundTurn } from './inbound-turn-pipeline.js';
 import { filterParentContentAfterBoundary } from './conversation-boundary.js';
 import { isProfileSessionCompatible } from './memory/profile-context-policy.js';
 import type {
+  CardActionHandler,
   ControlMessageHandler,
   ConversationBoundaryProvider,
   LarkMessage,
   MessageHandler,
 } from './lark-message.js';
 import { BotMessageTracker, LatestMessageTracker } from './message-trackers.js';
+import type { CronMessageOriginLookup } from './cron/message-origin-store.js';
 
 export { resolveMentionPlaceholders } from './message-content.js';
 export { handleCommentEvent, passesDocCommentWhitelist } from './doc-comment-inbound.js';
@@ -103,6 +106,7 @@ export class LarkChannel {
   private queue = new MessageQueue({ handlerTimeoutMs: appConfig.queueHandlerTimeoutMs });
   private messageHandler: MessageHandler | null = null;
   private controlMessageHandler: ControlMessageHandler | null = null;
+  private cardActionHandler: CardActionHandler | null = null;
   private memoryStore: MemoryStore | null = null;
   private conversationBuffer: ConversationBuffer | null = null;
   private identitySession: IdentitySession | null = null;
@@ -115,6 +119,7 @@ export class LarkChannel {
   private larkTransportRawClient: Lark.Client;
   private larkTransportRuntime: 'openapi' | 'sdk' = 'openapi';
   private conversationBoundaryProvider: ConversationBoundaryProvider | null = null;
+  private cronMessageOrigins: CronMessageOriginLookup | null = null;
 
   constructor() {
     this.client = new Lark.Client({
@@ -140,6 +145,10 @@ export class LarkChannel {
 
   setControlMessageHandler(handler: ControlMessageHandler): void {
     this.controlMessageHandler = handler;
+  }
+
+  setCardActionHandler(handler: CardActionHandler): void {
+    this.cardActionHandler = handler;
   }
 
   setMemoryStore(store: MemoryStore): void {
@@ -170,6 +179,10 @@ export class LarkChannel {
 
   setConversationBoundaryProvider(provider: ConversationBoundaryProvider): void {
     this.conversationBoundaryProvider = provider;
+  }
+
+  setCronMessageOriginLookup(store: CronMessageOriginLookup): void {
+    this.cronMessageOrigins = store;
   }
 
   getClient(): Lark.Client {
@@ -217,6 +230,7 @@ export class LarkChannel {
       larkTransport: this.larkTransport,
       chatTypeCache: this.chatTypeCache,
       botMessageTracker: this.botMessageTracker,
+      cronMessageOrigins: this.cronMessageOrigins ?? undefined,
     };
   }
 
@@ -299,6 +313,10 @@ export class LarkChannel {
     if (decision.action === 'deliver') {
       await this.enqueueReactionMessage(decision);
     }
+  }
+
+  async handleSdkCardActionEvent(event: CardActionEvent) {
+    return this.cardActionHandler?.(event);
   }
 
   setBotOpenId(openId: string | undefined): void {

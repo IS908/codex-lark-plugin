@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { audit } from '../audit-log.js';
 import { appConfig } from '../config.js';
 import {
   formatCronDateTime,
@@ -6,9 +7,12 @@ import {
 } from '../job-store.js';
 import {
   createJob,
+  canReadJobBody,
   deleteJob,
   formatJobNextRun,
+  jobVisibleToCaller,
   listVisibleJobs,
+  resolveJobReference,
   updateJob,
 } from '../job-service.js';
 import type { ToolContext } from './tool-context.js';
@@ -108,7 +112,7 @@ export function registerJobTools(ctx: ToolContext): void {
     'list_jobs',
     {
       description:
-        'List cronjobs visible in the current chat. Filter follows the rendering-visibility principle: in a private chat the caller sees all jobs they created; in a group chat everyone sees jobs that deliver output to that group (with prompt bodies redacted for non-owners).',
+        'List concise cronjob metadata visible in the current chat. In a private chat the caller sees jobs they created; in a group chat everyone sees jobs that deliver output to that group. Prompt/content bodies require get_job.',
       inputSchema: z.object({
         status: z
           .enum(['active', 'paused', 'all'])
@@ -156,19 +160,8 @@ export function registerJobTools(ctx: ToolContext): void {
         const statusIcon = j.meta.status === 'active' ? '✅' : '⏸️';
         const tz = jobTimezone(j.meta);
         const lastRun = formatCronDateTime(j.runtime.last_run_at, tz);
-        const error = j.runtime.last_error ? ` ⚠️ ${j.runtime.last_error}` : '';
-        const isOwner = j.meta.created_by === caller;
-        const runState =
-          j.runtime.run_status || j.runtime.output_status || j.runtime.delivery_status
-            ? ` | Run: ${j.runtime.run_status ?? '-'} / Output: ${j.runtime.output_status ?? '-'} / Delivery: ${j.runtime.delivery_status ?? '-'}`
-            : '';
         const nextRun = formatJobNextRun(j, tz);
-
-        if (!isPrivate && !isOwner) {
-          return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   By: ${j.meta.created_by} | TZ: ${tz} | Next: ${nextRun}`;
-        }
-        const modelNote = j.meta.model ? ` | Model: ${j.meta.model}` : '';
-        return `${statusIcon} **${j.meta.id}** (${j.meta.type}) — ${j.meta.schedule_human}\n   TZ: ${tz} | Next: ${nextRun} | Last: ${lastRun} | Runs: ${j.runtime.run_count}${modelNote}${runState}${error}`;
+        return `${statusIcon} **${j.meta.id}** · ${j.meta.name} — ${j.meta.schedule_human}\n   Status: ${j.meta.status} | TZ: ${tz} | Next: ${nextRun} | Last: ${lastRun}`;
       });
 
       return {
@@ -180,6 +173,65 @@ export function registerJobTools(ctx: ToolContext): void {
         ],
       };
     }
+  );
+
+  server.registerTool(
+    'get_job',
+    {
+      description: 'Show one visible cronjob in detail. Unlike list_jobs, this explicit detail operation may include the prompt or content when the caller is authorized to read it.',
+      inputSchema: z.object({
+        id: z.string().describe('Stable Job ID'),
+        chat_id: z.string().describe('Chat ID where this detail request is acting from'),
+        thread_id: z.string().optional().describe('Thread ID from the current notification metadata, when present'),
+      }),
+    },
+    async ({ id, chat_id, thread_id }) => {
+      const auditArgs = { id, chat_id, thread_id };
+      const auth = resolveCaller('get_job', chat_id, thread_id, auditArgs);
+      if ('error' in auth) return auth.error;
+      const { caller } = auth;
+      const resolved = await resolveJobReference({ jobId: id });
+      if (!resolved.ok) {
+        void audit('get_job', caller, auditArgs, 'error');
+        return {
+          content: [{ type: 'text' as const, text: resolved.message }],
+          isError: true,
+        };
+      }
+      if (!jobVisibleToCaller(resolved.job, {
+        caller,
+        chatId: chat_id,
+        isPrivateChat: channel.isPrivateChat(chat_id),
+      })) {
+        void audit('get_job', caller, auditArgs, 'denied');
+        return {
+          content: [{ type: 'text' as const, text: 'The job is not visible in this chat.' }],
+          isError: true,
+        };
+      }
+      const job = resolved.job;
+      const timezone = jobTimezone(job.meta);
+      const bodyLabel = job.meta.type === 'prompt' ? 'prompt' : 'content';
+      const bodyValue = job.meta.type === 'prompt' ? job.meta.prompt : job.meta.content;
+      const body = canReadJobBody(job, caller) ? (bodyValue ?? '<empty>') : '<redacted>';
+      void audit('get_job', caller, auditArgs, 'ok');
+      return {
+        content: [{
+          type: 'text' as const,
+          text: [
+            `job_id: ${job.meta.id}`,
+            `name: ${job.meta.name}`,
+            `type: ${job.meta.type}`,
+            `status: ${job.meta.status}`,
+            `schedule: ${job.meta.schedule_human} (${job.meta.schedule})`,
+            `timezone: ${timezone}`,
+            `next_run_at: ${formatJobNextRun(job, timezone)}`,
+            `last_run_at: ${formatCronDateTime(job.runtime.last_run_at, timezone)}`,
+            `${bodyLabel}: ${body}`,
+          ].join('\n'),
+        }],
+      };
+    },
   );
 
   server.registerTool(

@@ -143,4 +143,38 @@ if (table.rows[0].c0 !== 'MNTN' || table.rows[1].c0 !== 'ZS') {
   fail(`table rows should use aitask stable column keys: ${JSON.stringify(table.rows)}`);
 }
 
+// 14. Callback controls are appended only to the final card and preserve
+// machine values without rendering them as visible text.
+const c10: any = buildCards('# Controlled report\n' + 'x'.repeat(30 * 1024), {
+  footer: '来源任务：Daily report · daily-report',
+  actions: [{
+    text: '暂停任务',
+    type: 'danger',
+    value: {
+      version: 1,
+      kind: 'cron_job_control',
+      action: 'pause',
+      jobId: 'daily-report',
+      jobCreatedAt: '2026-11-01T00:00:00.000Z',
+    },
+  }],
+});
+const c10Elements = c10.flatMap((card: any) => card.body.elements);
+const c10Buttons = c10Elements.filter((element: any) => element.tag === 'button');
+if (c10Buttons.length !== 1) fail(`expected one callback button: ${JSON.stringify(c10Buttons)}`);
+if (c10Buttons[0].text?.content !== '暂停任务' || c10Buttons[0].type !== 'danger') {
+  fail(`callback button presentation is wrong: ${JSON.stringify(c10Buttons[0])}`);
+}
+if (c10Buttons[0].behaviors?.[0]?.type !== 'callback') {
+  fail(`callback behavior missing: ${JSON.stringify(c10Buttons[0])}`);
+}
+if (c10Buttons[0].behaviors?.[0]?.value?.jobId !== 'daily-report') {
+  fail(`callback value missing stable Job ID: ${JSON.stringify(c10Buttons[0])}`);
+}
+for (const card of c10.slice(0, -1)) {
+  if (card.body.elements.some((element: any) => element.tag === 'button')) {
+    fail('callback controls must appear only on the final split card');
+  }
+}
+
 console.log('PASS');

@@ -54,7 +54,7 @@
 
 ### 隐私与安全（v0.9.0+）
 
-- **服务端派生的调用者身份**：敏感工具（`save_memory` / `save_skill` / `create_job` / `list_jobs` / `update_job` / `delete_job` / `what_do_you_know` / `forget_memory` / `run_local_cli_tool` / `manage_access_control`）从飞书事件流派生调用者身份，不信任工具参数——社工提示无法假冒他人操作
+- **服务端派生的调用者身份**：敏感工具（`save_memory` / `save_skill` / `create_job` / `list_jobs` / `get_job` / `update_job` / `delete_job` / `what_do_you_know` / `forget_memory` / `run_local_cli_tool` / `manage_access_control`）从飞书事件流派生调用者身份，不信任工具参数——社工提示无法假冒他人操作
 - **文档评论绑定**：文档评论工具只能在 `doc:<file_token>` 触发的 turn 中调用，必须携带当前 `thread_id`，并会拒绝 prompt 注入造成的 `doc_token` 不匹配，避免把评论发到其他文档
 - **记忆透明度（v0.11.0+）**：`what_do_you_know` 列出 bot 记住了调用者的哪些信息（按当前 chat 可见性过滤）；`forget_memory` 按 hash 删除特定条目，可选 `promote_to_rule` 把删除动作沉淀为 `privacy-rules.md` 中的规则——**自学习闭环**让误判随使用递减
 - **追加式审计日志（v0.11.0+）**：`~/.codex/channels/lark/logs/audit.log` 以紧凑文本行记录每次敏感工具调用（时间 / log id / `audit` / 工具名 / 结果 / 调用者 / 脱敏参数），运营者可事后回溯查看本机上发生了什么
@@ -63,7 +63,8 @@
 - **L1/L2/L3 分类体系**（v0.10.0+）：硬编码的 regex + 关键词规则拦截手机/凭据/敏感中文词。邮箱**不在** L1——本插件定位为**工作 IM 场景**，工作邮箱常通过签名和通讯录公开；个人使用的部署可以在自己的 `privacy-rules.md` 里加一条 "Always private" 规则专门归类邮箱。用户可编辑的 `privacy-rules.md` 处理个人和组织特有场景；LLM 处理灰色地带。`parseTieredProfile` 在 LLM 分类之上加 L1 兜底——误判为 public 的凭据被强制归 private
 - **老版本 profile 迁移尊重 L2 规则（v0.11.1+）**：操作者在升级前（或同步）编辑 `privacy-rules.md`，`## Always private` 段的短语会以 case-insensitive 子串方式在迁移时生效——组织内项目代号、客户名、人名提及等 L1 无法覆盖的内容会被直接分到 `private.md`
 - **记忆硬化**：public profile 写入会在服务端经过 L1 和 deterministic L2 always-private 规则检查，敏感 spillover 会转写到 `private.md`；同一用户的 profile 操作串行化；已存记忆、引用、flush buffer、cron prompt、Codex exec prompt、L2 规则在 prompt 中都以 untrusted data 包裹；episode 文件受 `LARK_MAX_EPISODE_BYTES` 限制
-- **`list_jobs` 可见性过滤**：群聊里只能看到 `target_chat_id` 匹配本群的 job（非 owner 看不到 prompt 正文）；私聊里只能看到自己建的 job。群成员不再能互相窥探定时任务
+- **可追溯的定时任务控制**：生成的 Cron 报告持久记录来源消息与精确 Job/Run 实例，卡片展示来源并提供暂停、查看和立即运行按钮；直接引用命令只操作可信映射，历史消息缺少映射时展示精简候选而不猜测
+- **`list_jobs` 可见性过滤**：群聊里只能看到 `target_chat_id` 匹配本群的精简 job 元数据；私聊里只能看到自己建的 job。prompt/content 仅通过显式且经过可见性校验的 `get_job` 详情操作返回
 - **仅 owner 可改**：`update_job` / `delete_job` 要求 `caller == created_by`
 - **CronJob 身份隔离**：每次 cronjob 触发使用独立 `thread_id`，不会和同一 chat 的真人消息串线
 - **终端回退**：`$lark:jobs` 等终端技能仅在没有活跃 Lark channel turn 时，通过保留的 `__terminal__` chat id 回退到 `LARK_OWNER_OPEN_ID`
@@ -484,7 +485,7 @@ progress 目录会限制为当前本地用户可访问（`0700`），JSONL 文�
 超过 12 小时的 `.lark-progress/turn-*` 残留会在启动时清理，并由每小时一次的 best-effort
 清理继续回收。
 
-exec delivery 也内置父进程 action bridge，用于处理子 `codex exec` 进程不能安全调用当前 MCP server 的内置动作：`save_memory`、`create_job`、`list_jobs`、`run_job`、`update_job`、`disable_job`、`delete_job`、`upsert_job`、`run_local_cli_tool`、`manage_access_control`、`send_message` 和 `recall_message`。父进程会为每个 `codex exec` turn 创建 owner-only 的 action JSONL 侧通道，只把文件路径和 per-turn token 交给子进程；子进程把结构化 action request 写入该侧通道，stdout 始终只作为用户可见回复文本。父进程校验 token/schema，拒绝子进程提供的身份字段，使用当前飞书事件派生调用者身份，在本地执行通过校验的动作；格式错误的 action request 会被标记为失败，而不是递归加载 Lark MCP server。`run_job` 仅允许任务创建者调用，并同步复用原 prompt、model、目标 chat 和 scheduler/report 路径。`send_message` 可用插件运行时身份发送本地 image/file、当前入站消息已下载的第一张图片，或 quoted/replied message 的第一张图片；也支持有序 `kind=rich` 文本+图片 parts，优先发送一条飞书富文本 post，失败时按顺序拆分消息并保持 thread context。音视频和交互卡片仍是后续独立设计切片。
+exec delivery 也内置父进程 action bridge，用于处理子 `codex exec` 进程不能安全调用当前 MCP server 的内置动作：`save_memory`、`create_job`、`list_jobs`、`get_job`、`run_job`、`update_job`、`disable_job`、`delete_job`、`upsert_job`、`run_local_cli_tool`、`manage_access_control`、`send_message` 和 `recall_message`。父进程会为每个 `codex exec` turn 创建 owner-only 的 action JSONL 侧通道，只把文件路径和 per-turn token 交给子进程；子进程把结构化 action request 写入该侧通道，stdout 始终只作为用户可见回复文本。父进程校验 token/schema，拒绝子进程提供的身份字段，使用当前飞书事件派生调用者身份，在本地执行通过校验的动作；格式错误的 action request 会被标记为失败，而不是递归加载 Lark MCP server。`run_job` 仅允许任务创建者调用，并同步复用原 prompt、model、目标 chat 和 scheduler/report 路径。`send_message` 可用插件运行时身份发送本地 image/file、当前入站消息已下载的第一张图片，或 quoted/replied message 的第一张图片；也支持有序 `kind=rich` 文本+图片 parts，优先发送一条飞书富文本 post，失败时按顺序拆分消息并保持 thread context。音视频和交互卡片仍是后续独立设计切片。
 
 外部项目管理系统写操作不再内置在 Lark plugin 核心里。创建 GitHub/GitLab issue、Jira ticket、Linear issue、PR，或周期复盘 proposal，应由用户自定义 skill、custom MCP、Codex runtime 已有工具，或 allowlisted `run_local_cli_tool` 承载。插件只提供 Lark channel、身份、cronjob、审计和通用本地工具边界；具体 provider 的策略应放在插件之外。
 
@@ -852,7 +853,8 @@ bash scripts/stop.sh
 | `save_memory` | `(type, content, reason, chat_id, thread_id?, tier?)` | 保存用户画像、会话情景或话题情景。画像写入总是针对调用者本人（v0.9.0 起）；v0.10.0 起可选 `tier` 参数（`public` / `private`，默认 `private`）决定归属哪一档 |
 | `save_skill` | `(name, description, content, chat_id, thread_id?)` | 保存可复用的操作流程为全局技能。仅 owner 可用，因为技能跨用户/聊天全局可见 |
 | `create_job` | `(name, type, schedule, timezone?, prompt?, content?, target_chat_id, chat_id, thread_id?)` | 创建定时任务。创建者由 session 派生，不再接受 `created_by`；`chat_id` 用于派生调用者身份并填充 `origin_chat_id`；可选 `timezone` 会写入 job 文件 |
-| `list_jobs` | `(status?, chat_id, thread_id?)` | 列出当前 chat 可见的 job。私聊返回 caller 自己建的；群里返回 `target_chat_id` 为本群的（非 owner 视图脱敏 prompt）；展示每个 job 自己的时区和 UTC 时间 |
+| `list_jobs` | `(status?, chat_id, thread_id?)` | 列出当前 chat 可见的精简 job 元数据。私聊返回 caller 自己建的；群里返回 `target_chat_id` 为本群的；展示名称、稳定 ID、状态、计划、时区和执行时间，不展示 prompt/content |
+| `get_job` | `(id, chat_id, thread_id?)` | 显式查看一个可见 job 的详情；仅在 caller 有权读取时返回 prompt/content |
 | `update_job` | `(id, status?, schedule?, timezone?, prompt?, content?, name?, chat_id, thread_id?)` | 修改 job。仅 owner 可操作 |
 | `delete_job` | `(id, chat_id, thread_id?)` | 删除 job。仅 owner 可操作 |
 | `what_do_you_know` | `(chat_id, thread_id?)` | 列出 bot 存储的当前调用者 profile 条目。按可见性过滤（私聊展示 public+private，群里只展示 public）。每行附带 8 位 hash，供 `forget_memory` 使用（v0.11.0+）|

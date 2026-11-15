@@ -36,6 +36,7 @@ function claim(
       targetChatId: 'oc_target',
       originChatId: 'oc_origin',
       jobId: 'daily-report',
+      jobName: 'Daily report',
       createdAt: '2026-07-19T00:00:00.000Z',
       revision: 3,
     },
@@ -55,8 +56,14 @@ function claim(
 
 function transportHarness(options: {
   error?: unknown;
+  firstSendError?: unknown;
+  failSendNumber?: number;
   messageId?: string;
+  messageIds?: string[];
   projectionRepository?: any;
+  originRecorder?: {
+    recordDelivery(input: Record<string, unknown>): Promise<void>;
+  };
   members?: Array<{ id: string; idType: 'open_id'; name: string }>;
 } = {}) {
   const sends: LarkTransportSendRequest[] = [];
@@ -72,8 +79,14 @@ function transportHarness(options: {
     },
     async sendMessage(request: LarkTransportSendRequest) {
       sends.push(request);
+      if (options.firstSendError && sends.length === 1) throw options.firstSendError;
+      if (options.failSendNumber === sends.length) throw new Error('split delivery failed');
       if (options.error) throw options.error;
-      return { messageId: options.messageId ?? 'om_cron_delivered' };
+      return {
+        messageId: options.messageIds?.[sends.length - 1]
+          ?? options.messageId
+          ?? 'om_cron_delivered',
+      };
     },
     async removeReaction(messageId: string, reactionId: string) {
       removedReactions.push({ messageId, reactionId });
@@ -95,9 +108,197 @@ function transportHarness(options: {
       } as any,
     }, request),
     projectionRepository: options.projectionRepository,
+    originRecorder: options.originRecorder,
     now: () => new Date(NOW),
   });
   return { delivery, sends, tracked, buffered, ackReactions, removedReactions };
+}
+
+// Confirmed report delivery renders trusted source controls and records every
+// split Feishu message ID against the exact Job/Run instance.
+{
+  const origins: Array<Record<string, unknown>> = [];
+  const harness = transportHarness({
+    messageIds: Array.from({ length: 20 }, (_, index) => `om_split_${index + 1}`),
+    originRecorder: {
+      async recordDelivery(input) { origins.push(input); },
+    },
+  });
+  const result = await harness.delivery.deliver(claim('source-controls', {
+    kind: 'report',
+    report: `# Daily report\n\n${'result row\n'.repeat(8_000)}`,
+    reportType: 'job_result',
+    runStatus: 'success',
+    failureReason: null,
+    diagnostics: {
+      run_id: 'cron_run_source-controls',
+      job_id: 'daily-report',
+      job_name: 'Daily report',
+      schedule: '0 9 * * *',
+      timezone: 'Asia/Singapore',
+      timeout_ms: 60_000,
+      started_at: NOW,
+      status: 'success',
+      stages: [],
+    },
+  }));
+  assert.equal(result.status, 'sent');
+  assert.ok(harness.sends.length > 1, 'long report should split into multiple cards');
+  const rendered = JSON.stringify(harness.sends.map((send) => send.input));
+  assert.match(rendered, /来源任务：Daily report · daily-report/);
+  assert.match(rendered, /暂停任务/);
+  assert.match(rendered, /查看任务/);
+  assert.match(rendered, /立即运行/);
+  assert.equal(origins.length, 1);
+  assert.deepEqual(origins[0], {
+    messageIds: harness.tracked.map((entry) => entry.id),
+    chatId: 'oc_target',
+    jobId: 'daily-report',
+    runId: 'cron_run_source-controls',
+    jobName: 'Daily report',
+    jobCreatedAt: '2026-07-19T00:00:00.000Z',
+    recordedAt: NOW,
+  });
+}
+
+// If interactive-card delivery is rejected before any message is confirmed,
+// the text fallback still carries source metadata and its confirmed ID is
+// persisted for quoted commands.
+{
+  const origins: Array<Record<string, unknown>> = [];
+  const harness = transportHarness({
+    firstSendError: new Error('interactive cards unavailable'),
+    messageIds: ['unused_failed_card', 'om_text_fallback'],
+    originRecorder: {
+      async recordDelivery(input) { origins.push(input); },
+    },
+  });
+  const result = await harness.delivery.deliver(claim('source-fallback', {
+    kind: 'report',
+    report: '# Daily report\n\nFallback content.',
+    reportType: 'job_result',
+    runStatus: 'success',
+    failureReason: null,
+    diagnostics: {
+      run_id: 'cron_run_source-fallback',
+      job_id: 'daily-report',
+      job_name: 'Daily report',
+      schedule: '0 9 * * *',
+      timezone: 'Asia/Singapore',
+      timeout_ms: 60_000,
+      started_at: NOW,
+      status: 'success',
+      stages: [],
+    },
+  }));
+  assert.equal(result.status, 'sent');
+  assert.equal(harness.sends.length, 2);
+  const fallback = harness.sends[1].input;
+  assert.equal('text' in fallback, true);
+  assert.match('text' in fallback ? fallback.text : '', /来源任务：Daily report · daily-report/);
+  assert.deepEqual((origins[0] as any)?.messageIds, ['om_text_fallback']);
+}
+
+// If a later card chunk fails, earlier confirmed chunks are returned as a
+// partial result and mapped instead of being lost behind the thrown error.
+{
+  const origins: Array<Record<string, unknown>> = [];
+  const harness = transportHarness({
+    failSendNumber: 2,
+    messageIds: ['om_partial_card_1'],
+    originRecorder: {
+      async recordDelivery(input) { origins.push(input); },
+    },
+  });
+  const result = await harness.delivery.deliver(claim('partial-card-origin', {
+    kind: 'report',
+    report: `# Partial card report\n\n${'result row\n'.repeat(8_000)}`,
+    reportType: 'job_result',
+    runStatus: 'success',
+    failureReason: null,
+    diagnostics: {
+      run_id: 'cron_run_partial-card-origin',
+      job_id: 'daily-report',
+      job_name: 'Daily report',
+      schedule: '0 9 * * *',
+      timezone: 'Asia/Singapore',
+      timeout_ms: 60_000,
+      started_at: NOW,
+      status: 'success',
+      stages: [],
+    },
+  }));
+  assert.equal(result.status, 'unknown');
+  assert.deepEqual((origins[0] as any)?.messageIds, ['om_partial_card_1']);
+}
+
+// Mapping persistence is post-send bookkeeping. Its failure must not convert a
+// confirmed Feishu send into a retry that could duplicate the report.
+{
+  const harness = transportHarness({
+    originRecorder: {
+      async recordDelivery() { throw new Error('origin database unavailable'); },
+    },
+  });
+  const result = await harness.delivery.deliver(claim('origin-write-failure', {
+    kind: 'report',
+    report: '# Report\n\nDelivered once.',
+    reportType: 'job_result',
+    runStatus: 'success',
+    failureReason: null,
+    diagnostics: {
+      run_id: 'cron_run_origin-write-failure',
+      job_id: 'daily-report',
+      job_name: 'Daily report',
+      schedule: '0 9 * * *',
+      timezone: 'Asia/Singapore',
+      timeout_ms: 60_000,
+      started_at: NOW,
+      status: 'success',
+      stages: [],
+    },
+  }));
+  assert.deepEqual(result, { status: 'sent', messageId: 'om_cron_delivered' });
+  assert.equal(harness.sends.length, 1);
+}
+
+// A partial/unknown aggregate result can still contain confirmed split IDs.
+// Those IDs remain actionable and must be mapped even though the outbox is not
+// projected as fully sent.
+{
+  const origins: Array<Record<string, unknown>> = [];
+  const delivery = createCronDelivery({
+    sendReply: async () => ({
+      sentCount: 1,
+      isError: true,
+      statusText: 'one split message sent before the aggregate failed',
+      messageIds: ['om_partial_confirmed'],
+    }),
+    originRecorder: {
+      async recordDelivery(input) { origins.push(input); },
+    },
+    now: () => new Date(NOW),
+  });
+  const result = await delivery.deliver(claim('partial-confirmed-origin', {
+    kind: 'report',
+    report: '# Partial report',
+    reportType: 'error_report',
+    runStatus: 'failed',
+    failureReason: 'aggregate delivery failed',
+    diagnostics: {
+      run_id: 'cron_run_partial-confirmed-origin',
+      job_id: 'daily-report',
+      job_name: 'Daily report',
+      schedule: '0 9 * * *',
+      timezone: 'Asia/Singapore',
+      timeout_ms: 60_000,
+      started_at: NOW,
+      status: 'failed',
+      stages: [],
+    },
+  }));
+  assert.equal(result.status, 'unknown', JSON.stringify(result));
+  assert.deepEqual((origins[0] as any)?.messageIds, ['om_partial_confirmed']);
 }
 
 // Prompt reports use the same native-mention resolution as foreground replies.

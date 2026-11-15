@@ -260,6 +260,9 @@ node --import tsx scripts/job-smoke.ts
 echo ""
 echo "=== Cron durable-run admission checks ==="
 node --import tsx scripts/cron-run-admission-smoke.ts
+node --import tsx scripts/cron-message-origin-store-smoke.ts
+node --import tsx scripts/cron-control-service-smoke.ts
+node --import tsx scripts/cron-inbound-command-smoke.ts
 
 echo ""
 echo "=== Job tool unit checks ==="
