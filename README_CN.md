@@ -63,7 +63,7 @@
 - **L1/L2/L3 分类体系**（v0.10.0+）：硬编码的 regex + 关键词规则拦截手机/凭据/敏感中文词。邮箱**不在** L1——本插件定位为**工作 IM 场景**，工作邮箱常通过签名和通讯录公开；个人使用的部署可以在自己的 `privacy-rules.md` 里加一条 "Always private" 规则专门归类邮箱。用户可编辑的 `privacy-rules.md` 处理个人和组织特有场景；LLM 处理灰色地带。`parseTieredProfile` 在 LLM 分类之上加 L1 兜底——误判为 public 的凭据被强制归 private
 - **老版本 profile 迁移尊重 L2 规则（v0.11.1+）**：操作者在升级前（或同步）编辑 `privacy-rules.md`，`## Always private` 段的短语会以 case-insensitive 子串方式在迁移时生效——组织内项目代号、客户名、人名提及等 L1 无法覆盖的内容会被直接分到 `private.md`
 - **记忆硬化**：public profile 写入会在服务端经过 L1 和 deterministic L2 always-private 规则检查，敏感 spillover 会转写到 `private.md`；同一用户的 profile 操作串行化；已存记忆、引用、flush buffer、cron prompt、Codex exec prompt、L2 规则在 prompt 中都以 untrusted data 包裹；episode 文件受 `LARK_MAX_EPISODE_BYTES` 限制
-- **可追溯的定时任务控制**：生成的 Cron 报告持久记录来源消息与精确 Job/Run 实例，卡片展示来源并提供暂停、查看和立即运行按钮；直接引用命令只操作可信映射，历史消息缺少映射时展示精简候选而不猜测
+- **对话式定时任务控制**：生成的 Cron 报告持久记录来源消息与精确 Job/Run 实例，卡片只展示精简来源标记，不再显示管理按钮；引用结果或在对应话题中回复，即可查看、暂停、修改或重跑精确映射的任务。过期映射会被拒绝，无法唯一定位时只展示精简候选而不猜测
 - **`list_jobs` 可见性过滤**：群聊里只能看到 `target_chat_id` 匹配本群的精简 job 元数据；私聊里只能看到自己建的 job。prompt/content 仅通过显式且经过可见性校验的 `get_job` 详情操作返回
 - **仅 owner 可改**：`update_job` / `delete_job` 要求 `caller == created_by`
 - **CronJob 身份隔离**：每次 cronjob 触发使用独立 `thread_id`，不会和同一 chat 的真人消息串线
@@ -75,7 +75,7 @@
 - Prompt job 失败时会包含结构化 run 诊断：run 元数据、可观测阶段耗时、仅用于诊断的 progress，以及可用时脱敏后的 `codex exec` stdout/stderr tail
 - 标准 cron 表达式 + 简化别名（`every 30m`、`daily at 09:00`、`weekdays at 17:00`）
 - 通过飞书聊天或 `$lark:jobs` skill 创建和管理任务
-- 引用机器人生成的 cronjob 报告并要求“重跑”时，exec bridge 会派生可信的原 job id，通过 `run_job` 立即复用持久化任务定义；仅任务创建者可触发，手动重跑不会改变未来调度时间或暂停状态
+- 引用机器人生成的 cronjob 报告，或在其话题中回复，即可通过对话查看、暂停、修改或重跑；exec bridge 会派生可信的原 job id 并复用持久化任务定义。仅任务创建者可修改或触发重跑，手动重跑不会改变未来调度时间或暂停状态
 - 崩溃恢复只补入最近一次错过的 occurrence。执行开始前的中断可安全恢复；Codex 已启动后的 prompt 中断会标记为 outcome-unknown 并阻塞，不会盲目重跑。
 - 任务定义和 schedule cursor 仍以 JSON 文件存储在 `~/.codex/channels/lark/jobs/`；Run、Attempt、lease 和 delivery outbox 状态存储在 `~/.codex/channels/lark/runtime/continuations/jobs.sqlite`，JSON runtime 字段仅作为兼容投影。
 - 执行重试与投递重试相互独立。飞书投递失败不会重新生成报告，发送结果不明确时不会盲目重发，永久目标错误只会自动暂停匹配同一 Job 定义 revision 的任务。

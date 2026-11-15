@@ -367,9 +367,21 @@ export function buildCodexExecPrompt(
         'This group message entered through an explicit trusted-group no-mention allowlist. Reply only when the message is clearly a question, command, or relevant thread continuation for Codex; otherwise return [LARK_NO_REPLY]. Ask for confirmation before sensitive or high-risk operations when intent is ambiguous.',
       ]
     : [];
-  const quotedCronjobPrompt = message.quotedCronJobId && !blockedActions.has('run_job')
+  const quotedCronjobPrompt = message.quotedCronJobId
     ? [
-        `The quoted bot report was produced by persisted cronjob job_id=${message.quotedCronJobId}. If the user asks to rerun that task, request {"type":"run_job","job_id":"${message.quotedCronJobId}"}. Reuse the persisted definition; do not create a continuation or reconstruct its prompt.`,
+        `The quoted bot report is a trusted source mapping to persisted cronjob job_id=${message.quotedCronJobId}. For requests about this task, use this exact job_id rather than a name or another job.`,
+        ...(!blockedActions.has('get_job')
+          ? [`To view it, request {"type":"get_job","job_id":"${message.quotedCronJobId}"}.`]
+          : []),
+        ...(!blockedActions.has('disable_job')
+          ? [`To pause it, request {"type":"disable_job","job_id":"${message.quotedCronJobId}"}.`]
+          : []),
+        ...(!blockedActions.has('update_job')
+          ? [`To modify its schedule or definition, request {"type":"update_job","job_id":"${message.quotedCronJobId}",...}.`]
+          : []),
+        ...(!blockedActions.has('run_job')
+          ? [`To rerun it, request {"type":"run_job","job_id":"${message.quotedCronJobId}"}. Reuse the persisted definition; do not create a continuation or reconstruct its prompt.`]
+          : []),
       ]
     : [];
 

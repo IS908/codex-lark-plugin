@@ -124,6 +124,29 @@ await prepareInboundTurn(persistedQuotedMessage, {
 assert.equal(persistedQuotedMessage.quotedCronJobId, 'daily-report');
 assert.deepEqual(persistedQuotedMessage.quotedCronJobOrigin, persistedOrigin);
 
+const topicReplyMessage: LarkMessage = {
+  ...quotedCronMessage,
+  messageId: 'om_topic_reply',
+  parentId: 'om_unmapped_topic_reply',
+  rootMessageId: persistedOrigin.messageId,
+};
+const topicLookups: string[] = [];
+await prepareInboundTurn(topicReplyMessage, {
+  latestMessageTracker: { record: (chatId, msg) => latestRecords.push({ chatId, ...msg }) },
+  ackReactions: new AckReactionTracker(),
+  larkTransport: transport,
+  chatTypeCache: { set: (chatId, chatType) => chatTypes.set(chatId, chatType) },
+  cronMessageOrigins: {
+    get: async (messageId) => {
+      topicLookups.push(messageId);
+      return messageId === persistedOrigin.messageId ? persistedOrigin : null;
+    },
+  },
+}, { resources: [] });
+assert.deepEqual(topicLookups, ['om_unmapped_topic_reply', persistedOrigin.messageId]);
+assert.equal(topicReplyMessage.quotedCronJobId, 'daily-report');
+assert.deepEqual(topicReplyMessage.quotedCronJobOrigin, persistedOrigin);
+
 for (const [lookupIndex, lookup] of [
   { get: async () => null },
   { get: async () => { throw new Error('origin store unavailable'); } },

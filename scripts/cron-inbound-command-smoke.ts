@@ -115,6 +115,14 @@ assert.equal(await handle(message({
 })), true);
 assert.equal(calls.at(-1)?.action, 'run_now');
 
+assert.equal(await handle(message({
+  messageId: 'om_run_again',
+  text: '再运行一次',
+  currentUserText: '再运行一次',
+  quotedCronJobId: 'daily-report',
+})), true);
+assert.equal(calls.at(-1)?.action, 'run_now');
+
 const callsBeforeMissing = calls.length;
 const privatePrompt = 'secret holdings and account numbers';
 assert.equal(await handle(message({

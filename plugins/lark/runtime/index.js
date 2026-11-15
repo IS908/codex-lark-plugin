@@ -44507,7 +44507,15 @@ function isOpenMessageId(value) {
   return typeof value === "string" && value.startsWith("om_");
 }
 function selectQuotedMessageId(message) {
-  return message.parentId || (isOpenMessageId(message.rootMessageId) && message.rootMessageId !== message.messageId ? message.rootMessageId : void 0) || (isOpenMessageId(message.threadId) && message.threadId !== message.messageId ? message.threadId : void 0);
+  return selectQuotedMessageIds(message)[0];
+}
+function selectQuotedMessageIds(message) {
+  const candidates = [
+    message.parentId,
+    isOpenMessageId(message.rootMessageId) && message.rootMessageId !== message.messageId ? message.rootMessageId : void 0,
+    isOpenMessageId(message.threadId) && message.threadId !== message.messageId ? message.threadId : void 0
+  ];
+  return [...new Set(candidates.filter((candidate) => !!candidate))];
 }
 async function addQuotedContext(message, transport, options = {}) {
   const quotedMessageId = selectQuotedMessageId(message);
@@ -44619,10 +44627,19 @@ async function prepareInboundTurn(message, deps, source) {
   deps.ackReactions.recordInbound(message.messageId);
   addAckReaction(message, deps);
   const quotedMessageId = selectQuotedMessageId(message);
-  const persistedOrigin = quotedMessageId ? await deps.cronMessageOrigins?.get(quotedMessageId).catch(() => null) : null;
+  let persistedOrigin = null;
+  if (deps.cronMessageOrigins) {
+    for (const candidateId of selectQuotedMessageIds(message)) {
+      const candidate = await deps.cronMessageOrigins.get(candidateId).catch(() => null);
+      if (candidate?.chatId === message.chatId) {
+        persistedOrigin = candidate;
+        break;
+      }
+    }
+  }
   const trackedQuotedMessage = quotedMessageId && !deps.cronMessageOrigins ? deps.botMessageTracker?.get(quotedMessageId) : void 0;
   const quotedCronjob = trackedQuotedMessage?.chatId === message.chatId ? parseJobThreadId(trackedQuotedMessage.threadId) : null;
-  if (persistedOrigin?.chatId === message.chatId) {
+  if (persistedOrigin) {
     message.quotedCronJobId = persistedOrigin.jobId;
     message.quotedCronJobOrigin = persistedOrigin;
   } else if (!deps.cronMessageOrigins && quotedCronjob) {
@@ -52672,6 +52689,8 @@ async function executeGetJob(action, message, deps) {
     void audit("get_job", caller, auditArgs, "error");
     return { ok: false, action: "get_job", message: resolved.message };
   }
+  const staleSource = staleQuotedJobResult("get_job", message, resolved.job);
+  if (staleSource) return staleSource;
   if (!jobVisibleToCaller(resolved.job, {
     caller,
     chatId: message.chatId,
@@ -52703,6 +52722,11 @@ async function executeRunJob(action, message, deps) {
   if (!resolved.ok) {
     void audit("run_job", caller, auditArgs, "error");
     return { ok: false, action: "run_job", message: resolved.message };
+  }
+  const staleSource = staleQuotedJobResult("run_job", message, resolved.job);
+  if (staleSource) {
+    void audit("run_job", caller, auditArgs, "denied");
+    return staleSource;
   }
   if (resolved.job.meta.created_by !== caller) {
     void audit("run_job", caller, auditArgs, "denied");
@@ -52738,7 +52762,7 @@ async function executeRunJob(action, message, deps) {
     return {
       ok: true,
       action: "run_job",
-      message: `Reran job "${resolved.job.meta.id}" using its persisted definition.`
+      message: `Reran job "${resolved.job.meta.name}" (job_id: ${resolved.job.meta.id}) using its persisted definition.`
     };
   } catch (error51) {
     void audit("run_job", caller, { ...auditArgs, job_id: resolved.job.meta.id }, "error");
@@ -52764,10 +52788,12 @@ async function executeUpdateJob(action, message, deps) {
   };
   if ("error" in auth) return auth.error;
   const { caller } = auth;
+  const expectedCreatedAt = quotedJobCreatedAt(message, action.job_id);
   const updated = await updateJob({
     action: "update_job",
     caller,
     reference: { jobId: action.job_id, name: action.name },
+    expectedCreatedAt,
     updates: {
       name: action.new_name,
       status: action.status,
@@ -52779,11 +52805,17 @@ async function executeUpdateJob(action, message, deps) {
     },
     auditArgs
   });
-  if (!updated.ok) return { ok: false, action: "update_job", message: updated.message };
+  if (!updated.ok) {
+    return {
+      ok: false,
+      action: "update_job",
+      message: expectedCreatedAt && updated.code === "stale_job" ? staleQuotedJobMessage(updated.jobId ?? action.job_id ?? action.name ?? "unknown") : updated.message
+    };
+  }
   return {
     ok: true,
     action: "update_job",
-    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Schedule: ${updated.job.meta.schedule_human}, TZ: ${jobTimezone(updated.job.meta)}, Next run: ${formatJobNextRun(updated.job)}`
+    message: `Updated job "${updated.job.meta.name}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Schedule: ${updated.job.meta.schedule_human}, TZ: ${jobTimezone(updated.job.meta)}, Next run: ${formatJobNextRun(updated.job)}`
   };
 }
 async function executeDisableJob(action, message, deps) {
@@ -52791,19 +52823,44 @@ async function executeDisableJob(action, message, deps) {
   const auditArgs = { job_id: action.job_id, name: action.name, chat_id: message.chatId, thread_id: message.threadId };
   if ("error" in auth) return auth.error;
   const { caller } = auth;
+  const expectedCreatedAt = quotedJobCreatedAt(message, action.job_id);
   const updated = await updateJob({
     action: "disable_job",
     caller,
     reference: { jobId: action.job_id, name: action.name },
+    expectedCreatedAt,
     updates: { status: "paused" },
     auditArgs
   });
-  if (!updated.ok) return { ok: false, action: "disable_job", message: updated.message };
+  if (!updated.ok) {
+    return {
+      ok: false,
+      action: "disable_job",
+      message: expectedCreatedAt && updated.code === "stale_job" ? staleQuotedJobMessage(updated.jobId ?? action.job_id ?? action.name ?? "unknown") : updated.message
+    };
+  }
   return {
     ok: true,
     action: "disable_job",
-    message: `Updated job "${updated.job.meta.id}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Next run: ${formatJobNextRun(updated.job)}`
+    message: `Updated job "${updated.job.meta.name}" (job_id: ${updated.job.meta.id}). Status: ${updated.job.meta.status}, Next run: ${formatJobNextRun(updated.job)}`
   };
+}
+function quotedJobCreatedAt(message, jobId) {
+  const origin = message.quotedCronJobOrigin;
+  if (!jobId || !origin || message.quotedCronJobId !== jobId || origin.jobId !== jobId || origin.chatId !== message.chatId) return void 0;
+  return origin.jobCreatedAt;
+}
+function staleQuotedJobResult(action, message, job) {
+  const expectedCreatedAt = quotedJobCreatedAt(message, job.meta.id);
+  if (!expectedCreatedAt || expectedCreatedAt === job.meta.created_at) return null;
+  return {
+    ok: false,
+    action,
+    message: staleQuotedJobMessage(job.meta.id)
+  };
+}
+function staleQuotedJobMessage(jobId) {
+  return `Job "${jobId}" was replaced after this report was delivered. Use a report from the current job instance.`;
 }
 async function executeDeleteJob(action, message, deps) {
   const auth = currentCaller(deps.identitySession, message, "delete_job");
@@ -60445,8 +60502,12 @@ function buildCodexExecPrompt(message, displayLabel, progressInfo = null, action
   const unmentionedGroupPrompt = message.unmentionedGroupTrigger ? [
     "This group message entered through an explicit trusted-group no-mention allowlist. Reply only when the message is clearly a question, command, or relevant thread continuation for Codex; otherwise return [LARK_NO_REPLY]. Ask for confirmation before sensitive or high-risk operations when intent is ambiguous."
   ] : [];
-  const quotedCronjobPrompt = message.quotedCronJobId && !blockedActions.has("run_job") ? [
-    `The quoted bot report was produced by persisted cronjob job_id=${message.quotedCronJobId}. If the user asks to rerun that task, request {"type":"run_job","job_id":"${message.quotedCronJobId}"}. Reuse the persisted definition; do not create a continuation or reconstruct its prompt.`
+  const quotedCronjobPrompt = message.quotedCronJobId ? [
+    `The quoted bot report is a trusted source mapping to persisted cronjob job_id=${message.quotedCronJobId}. For requests about this task, use this exact job_id rather than a name or another job.`,
+    ...!blockedActions.has("get_job") ? [`To view it, request {"type":"get_job","job_id":"${message.quotedCronJobId}"}.`] : [],
+    ...!blockedActions.has("disable_job") ? [`To pause it, request {"type":"disable_job","job_id":"${message.quotedCronJobId}"}.`] : [],
+    ...!blockedActions.has("update_job") ? [`To modify its schedule or definition, request {"type":"update_job","job_id":"${message.quotedCronJobId}",...}.`] : [],
+    ...!blockedActions.has("run_job") ? [`To rerun it, request {"type":"run_job","job_id":"${message.quotedCronJobId}"}. Reuse the persisted definition; do not create a continuation or reconstruct its prompt.`] : []
   ] : [];
   return [
     isDocComment ? "Reply to this Feishu/Lark document comment." : isReaction ? "Handle this Feishu/Lark emoji reaction on a previous bot reply." : "Reply to this Feishu/Lark message.",
@@ -61954,7 +62015,7 @@ function parseCronInboundCommand(value) {
   if (/^(?:跳过|略过)(?:这|本)?(?:一)?次(?:执行|运行|任务)?[。.!！]?$/i.test(text) || /^(?:skip)(?: this)? run[.!]?$/i.test(text)) return { action: "skip_once" };
   if (/^(?:暂停|停止|停用)(?:(?:这个|该|此|它)(?:定时|周期)?(?:任务)?|(?:定时|周期)?任务)[。.!！]?$/i.test(text) || /^(?:pause|stop|disable)(?: this| the)?(?:(?: cron)? job)?[.!]?$/i.test(text)) return { action: "pause" };
   if (/^(?:查看|显示)(?:(?:这个|该|此|它)(?:任务)?|任务)(?:详情|信息)?[。.!！]?$/i.test(text) || /^(?:view|show)(?: this| the)?(?: job)?(?: details)?[.!]?$/i.test(text)) return { action: "view" };
-  if (/^(?:立即|马上|现在)?(?:运行|执行|重跑)(?:(?:这个|该|此|它)(?:任务)?|任务)(?:一次)?[。.!！]?$/i.test(text) || /^(?:run|rerun)(?: this| the)?(?: job)?(?: now)?[.!]?$/i.test(text)) return { action: "run_now" };
+  if (/^(?:立即|马上|现在)?(?:运行|执行|重跑)(?:(?:这个|该|此|它)(?:任务)?|任务)(?:一次)?[。.!！]?$/i.test(text) || /^(?:再|重新)(?:运行|执行|跑)(?:(?:这个|该|此|它)(?:任务)?|任务)?(?:一次)?[。.!！]?$/i.test(text) || /^(?:run|rerun)(?: this| the)?(?: job)?(?: now)?[.!]?$/i.test(text)) return { action: "run_now" };
   const namedPatterns = [
     ["pause", /^(?:暂停|停止|停用)(?:任务)?[\s:：]+(.+?)[。.!！]?$/i],
     ["pause", /^(?:pause|stop|disable)(?: job)?[\s:]+(.+?)[.!]?$/i],
@@ -74279,8 +74340,7 @@ function replyRequest(claim, route, payload) {
     text: payload.kind === "report" ? payload.report : payload.content,
     ...payload.kind === "report" ? {
       format: "card",
-      footer: `\u6765\u6E90\u4EFB\u52A1\uFF1A${route.jobName} \xB7 ${route.jobId}`,
-      cardActions: cronReportActions(route)
+      footer: `\u6765\u6E90\u4EFB\u52A1\uFF1A${route.jobName} \xB7 ${route.jobId}`
     } : {},
     ...payload.kind === "message" ? {
       rawMessage: {
@@ -74294,20 +74354,6 @@ function replyRequest(claim, route, payload) {
     retry: { attempts: 1, retryTimeout: false },
     routing: "standalone"
   };
-}
-function cronReportActions(route) {
-  const action = (kind) => ({
-    version: 1,
-    kind: "cron_job_control",
-    action: kind,
-    jobId: route.jobId,
-    jobCreatedAt: route.createdAt
-  });
-  return [
-    { text: "\u6682\u505C\u4EFB\u52A1", type: "danger", value: action("pause") },
-    { text: "\u67E5\u770B\u4EFB\u52A1", value: action("view") },
-    { text: "\u7ACB\u5373\u8FD0\u884C", type: "primary", value: action("run_now") }
-  ];
 }
 async function recordMessageOriginsSafely(recorder, response, claim, route, recordedAt) {
   if (!recorder || !response.messageIds?.length) return;

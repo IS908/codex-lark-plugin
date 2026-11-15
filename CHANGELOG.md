@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- Remove pause, view, and run-now buttons from new Cron result cards while retaining the source footer and restart-safe message-to-Job mapping for conversational controls.
+- Resolve Cron controls from direct quotes and topic roots, guide quoted view/pause/update/rerun actions to the trusted Job ID, and include the Job display name in mutation results.
+
+### Fixed
+- Reject quoted updates and reruns when the source report belongs to a deleted and recreated Job instance, and recognize “再运行一次” as an exact rerun command.
+
 ## [2.14.0] - 2026-11-15
 
 ### Added

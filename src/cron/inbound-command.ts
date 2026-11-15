@@ -118,6 +118,7 @@ function parseCronInboundCommand(value: string): ParsedCronInboundCommand | null
   ) return { action: 'view' };
   if (
     /^(?:立即|马上|现在)?(?:运行|执行|重跑)(?:(?:这个|该|此|它)(?:任务)?|任务)(?:一次)?[。.!！]?$/i.test(text)
+    || /^(?:再|重新)(?:运行|执行|跑)(?:(?:这个|该|此|它)(?:任务)?|任务)?(?:一次)?[。.!！]?$/i.test(text)
     || /^(?:run|rerun)(?: this| the)?(?: job)?(?: now)?[.!]?$/i.test(text)
   ) return { action: 'run_now' };
   const namedPatterns: Array<[CronInboundAction, RegExp]> = [

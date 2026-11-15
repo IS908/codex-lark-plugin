@@ -37,13 +37,20 @@ export function isOpenMessageId(value: string | undefined): value is string {
 }
 
 export function selectQuotedMessageId(message: QuotedContextMessage): string | undefined {
-  return (
-    message.parentId ||
-    (isOpenMessageId(message.rootMessageId) && message.rootMessageId !== message.messageId
+  return selectQuotedMessageIds(message)[0];
+}
+
+export function selectQuotedMessageIds(message: QuotedContextMessage): string[] {
+  const candidates = [
+    message.parentId,
+    isOpenMessageId(message.rootMessageId) && message.rootMessageId !== message.messageId
       ? message.rootMessageId
-      : undefined) ||
-    (isOpenMessageId(message.threadId) && message.threadId !== message.messageId ? message.threadId : undefined)
-  );
+      : undefined,
+    isOpenMessageId(message.threadId) && message.threadId !== message.messageId
+      ? message.threadId
+      : undefined,
+  ];
+  return [...new Set(candidates.filter((candidate): candidate is string => !!candidate))];
 }
 
 export async function addQuotedContext(
