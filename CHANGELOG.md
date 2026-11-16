@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- Use the English `Source task:` label in generated Cron report footers while preserving the original task name, stable Job ID, and persisted source mapping.
+
 ## [2.14.1] - 2026-11-15
 
 ### Changed

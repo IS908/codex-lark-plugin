@@ -74340,7 +74340,7 @@ function replyRequest(claim, route, payload) {
     text: payload.kind === "report" ? payload.report : payload.content,
     ...payload.kind === "report" ? {
       format: "card",
-      footer: `\u6765\u6E90\u4EFB\u52A1\uFF1A${route.jobName} \xB7 ${route.jobId}`
+      footer: `Source task: ${route.jobName} \xB7 ${route.jobId}`
     } : {},
     ...payload.kind === "message" ? {
       rawMessage: {

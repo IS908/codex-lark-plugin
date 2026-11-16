@@ -145,7 +145,8 @@ function transportHarness(options: {
   assert.equal(result.status, 'sent');
   assert.ok(harness.sends.length > 1, 'long report should split into multiple cards');
   const rendered = JSON.stringify(harness.sends.map((send) => send.input));
-  assert.match(rendered, /来源任务：Daily report · daily-report/);
+  assert.match(rendered, /Source task: Daily report · daily-report/);
+  assert.doesNotMatch(rendered, /来源任务：/);
   assert.doesNotMatch(rendered, /暂停任务/);
   assert.doesNotMatch(rendered, /查看任务/);
   assert.doesNotMatch(rendered, /立即运行/);
@@ -195,7 +196,8 @@ function transportHarness(options: {
   assert.equal(harness.sends.length, 2);
   const fallback = harness.sends[1].input;
   assert.equal('text' in fallback, true);
-  assert.match('text' in fallback ? fallback.text : '', /来源任务：Daily report · daily-report/);
+  assert.match('text' in fallback ? fallback.text : '', /Source task: Daily report · daily-report/);
+  assert.doesNotMatch('text' in fallback ? fallback.text : '', /来源任务：/);
   assert.deepEqual((origins[0] as any)?.messageIds, ['om_text_fallback']);
 }
 
