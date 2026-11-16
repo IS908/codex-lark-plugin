@@ -169,7 +169,7 @@ function replyRequest(
     ...(payload.kind === 'report'
       ? {
           format: 'card' as const,
-          footer: `来源任务：${route.jobName} · ${route.jobId}`,
+          footer: `Source task: ${route.jobName} · ${route.jobId}`,
         }
       : {}),
     ...(payload.kind === 'message'
