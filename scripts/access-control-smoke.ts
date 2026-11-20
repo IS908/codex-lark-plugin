@@ -10,6 +10,7 @@ const { appConfig } = await import('../src/config.js');
 const { IdentitySession } = await import('../src/identity-session.js');
 const { AccessControlStore, accessControlStore } = await import('../src/runtime-access-control.js');
 const { registerAccessControlTools } = await import('../src/tools/access-control.js');
+const { validateAccessControlMutation } = await import('../src/access-control-validation.js');
 
 const root = mkdtempSync(join(tmpdir(), 'access-control-'));
 const configPath = join(root, 'runtime-config', 'access-control.json');
@@ -20,6 +21,24 @@ const originalAuditLog = appConfig.auditLogPath;
 const originalStoreSnapshot = accessControlStore.snapshot();
 
 try {
+  for (const list of ['allowed_chat_ids', 'group_no_mention_chat_ids'] as const) {
+    for (const failure of ['forbidden', 'not found', 'temporary upstream failure']) {
+      let calls = 0;
+      const input = {
+        list,
+        value: 'oc_missing',
+        currentChatId: 'oc_current_group',
+        currentChatType: 'group',
+        validateChatAccess: async () => { calls++; throw new Error(failure); },
+      };
+      assert.equal((await validateAccessControlMutation({ ...input, action: 'remove' })).value, 'oc_missing');
+      assert.equal(calls, 0, 'removal must not query the remote API');
+      await assert.rejects(validateAccessControlMutation({ ...input, action: 'add' }), { message: failure });
+      assert.equal(calls, 1);
+      await assert.rejects(validateAccessControlMutation({ ...input, action: 'remove', value: 'invalid' }), /oc_\.\.\. format/);
+    }
+  }
+
   const store = new AccessControlStore(configPath);
 
   const missing = await store.load();
@@ -179,6 +198,22 @@ try {
   });
   assert.equal(missingChat.isError, true);
   assert.match(missingChat.content[0].text, /does not exist|not accessible/);
+
+  for (const list of ['allowed_chat_ids', 'group_no_mention_chat_ids'] as const) {
+    await accessControlStore.mutate({ action: 'add', list, value: 'oc_missing', updatedBy: 'ou_owner' });
+    const callsBefore = validatedChats.length;
+    const deniedRemoval = await manage!({
+      action: 'remove', list, value: 'oc_missing', chat_id: 'chat_other', thread_id: 'thread_other',
+    });
+    assert.equal(deniedRemoval.isError, true);
+    assert.equal(accessControlStore.snapshot()[list].includes('oc_missing'), true);
+    const removal = await manage!({
+      action: 'remove', list, value: 'oc_missing', chat_id: 'chat_owner', thread_id: 'thread_owner',
+    });
+    assert.equal(removal.isError, undefined);
+    assert.equal(accessControlStore.snapshot()[list].includes('oc_missing'), false);
+    assert.equal(validatedChats.length, callsBefore);
+  }
 
   const listed = await manage!({ action: 'list', chat_id: 'chat_owner', thread_id: 'thread_owner' });
   assert.equal(listed.isError, undefined);

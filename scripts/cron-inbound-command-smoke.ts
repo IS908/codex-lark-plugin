@@ -50,6 +50,9 @@ const replies: ReplyRequest[] = [];
 const service = {
   async pause(input: Record<string, unknown>) {
     calls.push({ action: 'pause', input });
+    if (input.jobId === 'other-owner') {
+      return { ok: false, code: 'owner_mismatch', message: '只有任务创建者可以暂停该任务。' } as const;
+    }
     return { ok: true, code: 'paused', message: '已暂停「Daily report」。' } as const;
   },
   async view(input: Record<string, unknown>) {
@@ -172,6 +175,50 @@ assert.equal(await handle(message({
 assert.equal(calls.length, callsBeforeAmbiguous);
 assert.match(replies.at(-1)?.text ?? '', /无法唯一确认/);
 assert.doesNotMatch(replies.at(-1)?.text ?? '', new RegExp(privatePrompt));
+
+const quotedReport = {
+  quotedCronJobId: 'daily-report',
+  quotedCronJobOrigin: {
+    messageId: 'om_cron_report',
+    chatId: 'oc_target',
+    jobId: 'daily-report',
+    runId: 'cron_run_001',
+    jobName: 'Daily report',
+    jobCreatedAt: '2026-11-01T00:00:00.000Z',
+    recordedAt: '2026-11-15T01:00:00.000Z',
+  },
+};
+const quotedJob = job('daily-report', 'Daily report', privatePrompt);
+const explicitJob = job('weekly-report', 'Weekly report', privatePrompt);
+explicitJob.meta.created_at = '2026-11-02T00:00:00.000Z';
+for (const [verb, action] of [['暂停', 'pause'], ['查看', 'view'], ['运行', 'run_now']]) {
+  for (const reference of ['weekly-report', 'Weekly report']) {
+    const command = `${verb} ${reference}`;
+    const start = calls.length;
+    assert.equal(await handle(message({ ...quotedReport, text: command, currentUserText: command }),
+      [quotedJob, explicitJob, job('same-as-id', 'weekly-report', privatePrompt)]), true);
+    assert.equal(calls.length, start + 1);
+    assert.equal(calls.at(-1)?.action, action);
+    assert.equal(calls.at(-1)?.input.jobId, explicitJob.meta.id);
+    assert.equal(calls.at(-1)?.input.expectedCreatedAt, explicitJob.meta.created_at);
+  }
+}
+
+for (const reference of ['missing-task', 'Weekly report']) {
+  const start = calls.length;
+  const command = `暂停 ${reference}`;
+  assert.equal(await handle(message({ ...quotedReport, text: command, currentUserText: command }),
+    [quotedJob, explicitJob, job('duplicate', 'Weekly report', privatePrompt)]), true);
+  assert.equal(calls.length, start, 'missing or ambiguous explicit reference must not fall back');
+  assert.match(replies.at(-1)?.text ?? '', /未执行任何操作/);
+}
+
+const deniedCommand = '暂停 other-owner';
+const deniedStart = calls.length;
+assert.equal(await handle(message({ ...quotedReport, text: deniedCommand, currentUserText: deniedCommand }),
+  [quotedJob, job('other-owner', 'Other owner', privatePrompt)]), true);
+assert.deepEqual(calls.slice(deniedStart).map((call) => call.input.jobId), ['other-owner']);
+assert.match(replies.at(-1)?.text ?? '', /只有任务创建者/);
 
 assert.equal(await handle(message({
   messageId: 'om_not_quoted',

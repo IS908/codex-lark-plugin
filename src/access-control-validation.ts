@@ -86,7 +86,7 @@ export async function validateAccessControlMutation(
     if (!isChatId(value)) {
       throw new Error('chat ID must use oc_... format.');
     }
-    await input.validateChatAccess?.(value);
+    if (input.action === 'add') await input.validateChatAccess?.(value);
   } else if (!isUserId(value)) {
     throw new Error('user open_id must use ou_... format.');
   }
