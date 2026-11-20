@@ -46,3 +46,7 @@ For runtime dependency changes, also verify the corresponding integration
 smokes and confirm that `npm run --silent start -- --dry-run` writes nothing to
 stdout. Rebuild and commit `plugins/lark/runtime` whenever the bundle sync check
 reports a dependency-driven change.
+
+The `Runtime bundle` workflow verifies the committed bundle after `npm ci` on
+pull requests and pushes to `main`. Require its
+`Verify marketplace bundle from lockfile` check when configuring branch protection.
