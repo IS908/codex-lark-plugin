@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.14.2-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.14.3-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -264,7 +264,7 @@ Release version checklist:
 - Bump `package.json`, `package-lock.json`, `plugins/lark/package.json`, and `plugins/lark/package-lock.json`.
 - Bump `.codex-plugin/plugin.json` and `plugins/lark/.codex-plugin/plugin.json`; Codex uses manifest versions when selecting plugin cache directories, so stale manifest versions can leave a new package running from an old runtime cache.
 - Update the README badges and `CHANGELOG.md` release heading.
-- Run `npm run build:plugin` and `npm run check:runtime-bundle-sync` so the self-contained `start`, `stop`, and `doctor` entrypoints match root `src/`.
+- Run `npm ci` before `npm run build:plugin` so the marketplace bundle uses locked dependencies. Run `npm run check:runtime-bundle-sync` and verify that the `Runtime bundle` CI check passes on the release commit before tagging.
 - Run `npm run audit:deps` and `npm --prefix plugins/lark run audit:deps`; both production dependency graphs must pass before tagging.
 - The `Dependency audit` GitHub Actions workflow runs the same registry-backed checks on pull requests, pushes to `main`, and a weekly schedule. Configure it as a required check when branch protection is enabled.
 - Run `npm run check:release-version` before tagging. The MCP server-info version is read from `package.json` at startup, so it follows the package version automatically once the package bump is correct.

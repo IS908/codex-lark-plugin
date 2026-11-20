@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.14.3] - 2026-11-20
+
+### Fixed
+- Rebuild the marketplace runtime with locked dependencies and verify bundle parity in CI after a clean install.
+
 ## [2.14.2] - 2026-11-16
 
 ### Fixed
