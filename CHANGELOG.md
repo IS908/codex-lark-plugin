@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.14.4] - 2026-11-20
+
+### Fixed
+- Respect explicit Cron Job IDs or names in commands that quote a different Job's report.
+- Allow owners to remove stale chat allowlist and no-mention entries without requiring Feishu access to the chat.
+- Use the official Lark CLI repository consistently in the README.
+
 ## [2.14.3] - 2026-11-20
 
 ### Fixed

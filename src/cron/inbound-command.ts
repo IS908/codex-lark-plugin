@@ -43,8 +43,9 @@ export async function handleCronInboundCommand(
     return true;
   }
 
-  let jobId = message.quotedCronJobId;
-  let expectedCreatedAt = message.quotedCronJobOrigin?.jobCreatedAt;
+  const { explicitReference } = parsed;
+  let jobId = explicitReference ? undefined : message.quotedCronJobId;
+  let expectedCreatedAt = explicitReference ? undefined : message.quotedCronJobOrigin?.jobCreatedAt;
   if (!jobId) {
     const listed = await options.listVisibleJobs({
       caller: message.senderId,
@@ -52,15 +53,16 @@ export async function handleCronInboundCommand(
       isPrivateChat: options.isPrivateChat(message.chatId),
     });
     const visibleJobs = listed.ok ? listed.jobs : [];
-    const matches = parsed.explicitReference
-      ? visibleJobs.filter((job) => matchesReference(job, parsed.explicitReference!))
+    const matches = explicitReference
+      ? matchVisibleJobs(visibleJobs, explicitReference)
       : [];
     if (matches.length === 1) {
       jobId = matches[0].meta.id;
       expectedCreatedAt = matches[0].meta.created_at;
     }
     if (!jobId) {
-      const candidates = (matches.length > 1 ? matches : visibleJobs).slice(0, 5);
+      const pool = matches.length > 1 ? matches : visibleJobs;
+      const candidates = pool.slice(0, 5);
       const candidateText = candidates.length === 0
         ? '当前会话没有可见的定时任务。'
         : [
@@ -69,13 +71,13 @@ export async function handleCronInboundCommand(
               const timezone = jobTimezone(job.meta);
               return `- ${job.meta.name} · ${job.meta.id} · ${job.meta.status} · ${formatJobNextRun(job, timezone)} · ${timezone}`;
             }),
-            ...(visibleJobs.length > candidates.length
-              ? [`- 另有 ${visibleJobs.length - candidates.length} 个任务，请使用稳定 ID 指定。`]
+            ...(pool.length > candidates.length
+              ? [`- 另有 ${pool.length - candidates.length} 个任务，请使用稳定 ID 指定。`]
               : []),
           ].join('\n');
       await reply(
         options,
-        `${parsed.explicitReference ? '无法唯一确认指定名称对应的任务' : '无法确认引用消息对应的任务'}，因此未执行任何操作。请引用带来源标记的新消息，或使用稳定任务 ID。\n\n${candidateText}`,
+        `${explicitReference ? '无法唯一确认指定的任务' : '无法确认引用消息对应的任务'}，因此未执行任何操作。请引用带来源标记的新消息，或使用稳定任务 ID。\n\n${candidateText}`,
       );
       return true;
     }
@@ -141,10 +143,12 @@ function normalizeReference(value: string): string {
   return value.trim().replace(/^[「『"']+|[」』"']+$/g, '').trim();
 }
 
-function matchesReference(job: JobFile, reference: string): boolean {
+function matchVisibleJobs(jobs: JobFile[], reference: string): JobFile[] {
   const normalized = reference.normalize('NFKC').toLowerCase();
-  return job.meta.id.normalize('NFKC').toLowerCase() === normalized
-    || job.meta.name.normalize('NFKC').toLowerCase() === normalized;
+  const byId = jobs.filter((job) => job.meta.id.toLowerCase() === normalized);
+  return byId.length > 0
+    ? byId
+    : jobs.filter((job) => job.meta.name.normalize('NFKC').toLowerCase() === normalized);
 }
 
 async function reply(options: CronInboundCommandOptions, text: string): Promise<void> {

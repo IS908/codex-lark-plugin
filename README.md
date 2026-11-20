@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.14.3-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.14.4-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -933,7 +933,7 @@ All values are written to `~/.codex/channels/lark/.env`. Changes require a new C
 
 ## lark-cli Integration
 
-Install [lark-cli](https://github.com/nicepkg/lark-cli) for full Feishu API access beyond messaging -- calendar, docs, sheets, tasks, contacts, and more. Once installed, lark-cli skills are loaded by Codex alongside this plugin.
+Install the [official Lark CLI](https://github.com/larksuite/cli) for Feishu API access beyond messaging, including calendar, docs, sheets, tasks, and contacts. Use the same `@larksuite/cli` package and `larksuite/cli` skills as in the installation instructions above.
 
 ---
 

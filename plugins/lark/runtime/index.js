@@ -46097,7 +46097,7 @@ async function validateAccessControlMutation(input2) {
     if (!isChatId(value)) {
       throw new Error("chat ID must use oc_... format.");
     }
-    await input2.validateChatAccess?.(value);
+    if (input2.action === "add") await input2.validateChatAccess?.(value);
   } else if (!isUserId(value)) {
     throw new Error("user open_id must use ou_... format.");
   }
@@ -67334,8 +67334,9 @@ async function handleCronInboundCommand(options) {
     );
     return true;
   }
-  let jobId = message.quotedCronJobId;
-  let expectedCreatedAt = message.quotedCronJobOrigin?.jobCreatedAt;
+  const { explicitReference } = parsed;
+  let jobId = explicitReference ? void 0 : message.quotedCronJobId;
+  let expectedCreatedAt = explicitReference ? void 0 : message.quotedCronJobOrigin?.jobCreatedAt;
   if (!jobId) {
     const listed = await options.listVisibleJobs({
       caller: message.senderId,
@@ -67343,24 +67344,25 @@ async function handleCronInboundCommand(options) {
       isPrivateChat: options.isPrivateChat(message.chatId)
     });
     const visibleJobs = listed.ok ? listed.jobs : [];
-    const matches = parsed.explicitReference ? visibleJobs.filter((job) => matchesReference(job, parsed.explicitReference)) : [];
+    const matches = explicitReference ? matchVisibleJobs(visibleJobs, explicitReference) : [];
     if (matches.length === 1) {
       jobId = matches[0].meta.id;
       expectedCreatedAt = matches[0].meta.created_at;
     }
     if (!jobId) {
-      const candidates = (matches.length > 1 ? matches : visibleJobs).slice(0, 5);
+      const pool = matches.length > 1 ? matches : visibleJobs;
+      const candidates = pool.slice(0, 5);
       const candidateText = candidates.length === 0 ? "\u5F53\u524D\u4F1A\u8BDD\u6CA1\u6709\u53EF\u89C1\u7684\u5B9A\u65F6\u4EFB\u52A1\u3002" : [
         "\u53EF\u89C1\u4EFB\u52A1\uFF1A",
         ...candidates.map((job) => {
           const timezone = jobTimezone(job.meta);
           return `- ${job.meta.name} \xB7 ${job.meta.id} \xB7 ${job.meta.status} \xB7 ${formatJobNextRun(job, timezone)} \xB7 ${timezone}`;
         }),
-        ...visibleJobs.length > candidates.length ? [`- \u53E6\u6709 ${visibleJobs.length - candidates.length} \u4E2A\u4EFB\u52A1\uFF0C\u8BF7\u4F7F\u7528\u7A33\u5B9A ID \u6307\u5B9A\u3002`] : []
+        ...pool.length > candidates.length ? [`- \u53E6\u6709 ${pool.length - candidates.length} \u4E2A\u4EFB\u52A1\uFF0C\u8BF7\u4F7F\u7528\u7A33\u5B9A ID \u6307\u5B9A\u3002`] : []
       ].join("\n");
       await reply(
         options,
-        `${parsed.explicitReference ? "\u65E0\u6CD5\u552F\u4E00\u786E\u8BA4\u6307\u5B9A\u540D\u79F0\u5BF9\u5E94\u7684\u4EFB\u52A1" : "\u65E0\u6CD5\u786E\u8BA4\u5F15\u7528\u6D88\u606F\u5BF9\u5E94\u7684\u4EFB\u52A1"}\uFF0C\u56E0\u6B64\u672A\u6267\u884C\u4EFB\u4F55\u64CD\u4F5C\u3002\u8BF7\u5F15\u7528\u5E26\u6765\u6E90\u6807\u8BB0\u7684\u65B0\u6D88\u606F\uFF0C\u6216\u4F7F\u7528\u7A33\u5B9A\u4EFB\u52A1 ID\u3002
+        `${explicitReference ? "\u65E0\u6CD5\u552F\u4E00\u786E\u8BA4\u6307\u5B9A\u7684\u4EFB\u52A1" : "\u65E0\u6CD5\u786E\u8BA4\u5F15\u7528\u6D88\u606F\u5BF9\u5E94\u7684\u4EFB\u52A1"}\uFF0C\u56E0\u6B64\u672A\u6267\u884C\u4EFB\u4F55\u64CD\u4F5C\u3002\u8BF7\u5F15\u7528\u5E26\u6765\u6E90\u6807\u8BB0\u7684\u65B0\u6D88\u606F\uFF0C\u6216\u4F7F\u7528\u7A33\u5B9A\u4EFB\u52A1 ID\u3002
 
 ${candidateText}`
       );
@@ -67405,9 +67407,10 @@ function parseCronInboundCommand(value) {
 function normalizeReference(value) {
   return value.trim().replace(/^[「『"']+|[」』"']+$/g, "").trim();
 }
-function matchesReference(job, reference) {
+function matchVisibleJobs(jobs, reference) {
   const normalized = reference.normalize("NFKC").toLowerCase();
-  return job.meta.id.normalize("NFKC").toLowerCase() === normalized || job.meta.name.normalize("NFKC").toLowerCase() === normalized;
+  const byId = jobs.filter((job) => job.meta.id.toLowerCase() === normalized);
+  return byId.length > 0 ? byId : jobs.filter((job) => job.meta.name.normalize("NFKC").toLowerCase() === normalized);
 }
 async function reply(options, text) {
   await options.sendReply({
