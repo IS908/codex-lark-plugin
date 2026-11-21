@@ -13,6 +13,10 @@ echo "=== Runtime version checks ==="
 node --import tsx scripts/runtime-version-smoke.ts
 
 echo ""
+echo "=== Workspace storage inventory checks ==="
+node --import tsx scripts/workspace-storage-smoke.ts
+
+echo ""
 echo "=== Continuation domain checks ==="
 node --import tsx scripts/continuation-domain-smoke.ts
 

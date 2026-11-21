@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.14.4-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.15.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -187,6 +187,19 @@ $lark:configure doctor
 doctor 会只读核验凭据、应用身份、权限和 WebSocket 配置。飞书当前的只读应用
 API 不返回消息事件订阅清单，因此这些事件会明确显示为需要人工核对的 `WARN`，
 不会误报为 `PASS`。
+
+在源码 checkout 或已安装插件目录中运行以下命令，可以只读盘点本地工作目录，
+无需飞书凭据，也不会连接飞书：
+
+```bash
+npm run --silent doctor -- --workspace-storage
+npm run --silent doctor -- --workspace-storage --json
+```
+
+盘点使用已配置的 exec 和 continuation 根目录，相同真实路径只扫描一次，每个根目录
+列出占用最大的 20 个顶层条目。分配大小来自文件系统块计数，逻辑大小来自文件和链接长度；
+嵌套根目录的结果不可相加。依赖和 Git 分类仅描述内容，不表明归属或可删性。不会扫描符号链接
+目标或不同文件系统；扫描不完整或根目录不可用时会报告并返回非零退出码。不会删除或迁移任何文件。
 
 ### 第 4 步：启动
 

@@ -1,11 +1,16 @@
 import os from 'node:os';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import * as Lark from '@larksuiteoapi/node-sdk';
+import { parse } from 'dotenv';
+import { readConfigValues } from './config-schema.js';
+import { assertSupportedNodeVersion } from './runtime-version.js';
 import {
   formatConfigureDoctorReport,
   runConfigureDoctor,
   type ConfigureDoctorRemoteProbe,
 } from './configure-doctor.js';
+import { formatWorkspaceStorage, inventoryWorkspaceStorage } from './workspace-storage.js';
 
 const silentLogger: Lark.Logger = {
   error: () => undefined,
@@ -52,9 +57,49 @@ function assertApiSuccess(response: { code?: number; msg?: string }): void {
   throw Object.assign(new Error('Lark API request failed.'), { code: response.code });
 }
 
-const report = await runConfigureDoctor({
-  configPath: path.join(os.homedir(), '.codex', 'channels', 'lark', '.env'),
-  remoteProbe,
-});
-process.stderr.write(`${formatConfigureDoctorReport(report)}\n`);
-process.exitCode = report.exitCode;
+async function main(args: string[]): Promise<void> {
+  const configPath = path.join(os.homedir(), '.codex', 'channels', 'lark', '.env');
+  if (args.length === 0) {
+    const report = await runConfigureDoctor({ configPath, remoteProbe });
+    process.stderr.write(`${formatConfigureDoctorReport(report)}\n`);
+    process.exitCode = report.exitCode;
+    return;
+  }
+  if (!args.includes('--workspace-storage') || args.some((arg) =>
+    arg !== '--workspace-storage' && arg !== '--json')) {
+    process.stderr.write('Usage: npm run doctor -- [--workspace-storage [--json]]\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    assertSupportedNodeVersion();
+    const file = await readFile(configPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return '';
+      throw error;
+    });
+    const fileEnv = parse(file);
+    const config = readConfigValues({
+      env: {
+        LARK_CODEX_EXEC_CWD: process.env.LARK_CODEX_EXEC_CWD ?? fileEnv.LARK_CODEX_EXEC_CWD,
+        LARK_CONTINUATION_WORKING_ROOT: process.env.LARK_CONTINUATION_WORKING_ROOT
+          ?? fileEnv.LARK_CONTINUATION_WORKING_ROOT,
+      },
+      dryRun: true,
+    });
+    const roots = await inventoryWorkspaceStorage([
+      { role: 'exec', directory: config.LARK_CODEX_EXEC_CWD },
+      { role: 'continuation', directory: config.LARK_CONTINUATION_WORKING_ROOT },
+    ]);
+    process.stdout.write(`${args.includes('--json')
+      ? JSON.stringify({ readOnly: true, roots }, null, 2)
+      : formatWorkspaceStorage(roots)}\n`);
+    process.exitCode = roots.every(({ status }) => status === 'complete') ? 0 : 1;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'Unknown error';
+    process.stderr.write(`Workspace storage inventory failed: ${detail}\n`);
+    process.exitCode = 1;
+  }
+}
+
+await main(process.argv.slice(2));
