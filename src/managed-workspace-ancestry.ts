@@ -11,7 +11,7 @@ const exec = promisify(execFile);
 
 export interface WorkspaceMount {
   device: string;
-  root: string;
+  root: string | null;
   directory: string;
 }
 
@@ -24,9 +24,16 @@ export function parseWorkspaceMountTable(value: string): WorkspaceMount[] {
   if (!value.endsWith('\n') || value.length > 1_048_576) throw new Error('Unsupported mount table.');
   const decode = (field: string) => field.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
   return value.trimEnd().split('\n').map((entry) => {
-    const [, , device, root, mount] = entry.split(' ');
-    if (!/^\d+:\d+$/.test(device ?? '') || !root?.startsWith('/') || !mount?.startsWith('/')) throw new Error('Unsupported mount table.');
-    return { device, root: decode(root), directory: decode(mount) };
+    const fields = entry.split(' ');
+    const [, , device, root, mount] = fields;
+    const separator = fields.indexOf('-', 6);
+    const fsType = separator === -1 ? undefined : fields[separator + 1];
+    // Namespace mounts expose opaque kernel objects, not paths in a filesystem tree.
+    const namespace = fsType === 'nsfs' && /^[a-z][a-z0-9_]*:\[\d+\]$/.test(root ?? '');
+    if (!/^\d+:\d+$/.test(device ?? '') || !fsType || !mount?.startsWith('/') || (!root?.startsWith('/') && !namespace)) {
+      throw new Error('Unsupported mount table.');
+    }
+    return { device, root: namespace ? null : decode(root), directory: decode(mount) };
   });
 }
 
@@ -44,9 +51,10 @@ export function workspaceBackingAliases(directory: string, mounts: WorkspaceMoun
     const covering = mounts.filter((mount) => workspacePathContains(mount.directory, visible));
     const longest = Math.max(0, ...covering.map((mount) => mount.directory.length));
     for (const origin of covering.filter((mount) => mount.directory.length === longest)) {
+      if (origin.root === null) continue;
       const backing = path.join(origin.root, path.relative(origin.directory, visible));
       for (const target of mounts) {
-        if (target.device !== origin.device) continue;
+        if (target.device !== origin.device || target.root === null) continue;
         if (workspacePathContains(target.root, backing)) {
           aliases.add(path.join(target.directory, path.relative(target.root, backing)));
         } else if (workspacePathContains(backing, target.root)) {

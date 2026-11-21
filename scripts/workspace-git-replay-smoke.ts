@@ -9,7 +9,7 @@ import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-w
 import { buildCodexExecArgs, CodexExecAbortedError, runCodexExecCommand } from '../src/codex-exec.js';
 import { resolveManagedGitLauncher } from '../src/managed-git-launcher.js';
 import { protectLegacyGitWorkspace, withManagedWorkspace } from '../src/managed-workspace-exec.js';
-import { parseWorkspaceMountTable, workspaceBackingAliases } from '../src/managed-workspace-ancestry.js';
+import { parseWorkspaceMountTable, workspaceBackingAliases, workspaceMountLayoutSupported } from '../src/managed-workspace-ancestry.js';
 import { gitSnapshotKey, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
 import { pinWorkspacePath, workspacePathContains } from '../src/workspace-projects.js';
 import { checkManagedGitEntrypoints } from './fixtures/managed-git-entrypoints.js';
@@ -17,7 +17,9 @@ import { probeCodexExecWithLoopback } from './fixtures/codex-loopback-exec.js';
 
 const mounts = parseWorkspaceMountTable('1 0 8:1 / / rw - ext4 /dev/fixture rw\n'
   + '2 1 8:1 /workspace/cache/objects /prior-run/bind\\040objects rw - ext4 /dev/fixture rw\n'
-  + '3 1 8:1 / /second-root rw - ext4 /dev/fixture rw\n');
+  + '3 1 8:1 / /second-root rw - ext4 /dev/fixture rw\n'
+  + '4 1 0:4 mnt:[4026532835] /run/fixture/mnt rw shared:3 - nsfs nsfs rw\n'
+  + '5 1 0:4 net:[4026532836] /mounted/namespace rw - nsfs nsfs rw\n');
 assert.ok(workspaceBackingAliases('/prior-run/bind objects/pack', mounts).includes('/workspace/cache/objects/pack'));
 assert.ok(workspaceBackingAliases('/second-root/workspace', mounts).includes('/workspace'));
 const overlaps = (stored: string, candidate: string) => workspaceBackingAliases(candidate, mounts).some((alias) =>
@@ -25,6 +27,12 @@ const overlaps = (stored: string, candidate: string) => workspaceBackingAliases(
 assert.ok(overlaps('/prior-run', '/workspace/cache'));
 assert.ok(overlaps('/workspace/cache', '/prior-run'));
 assert.ok(!overlaps('/unrelated', '/workspace/cache'));
+assert.ok(workspaceMountLayoutSupported(['/workspace'], mounts));
+assert.ok(!workspaceMountLayoutSupported(['/mounted'], mounts));
+assert.ok(!workspaceMountLayoutSupported(['/mounted/namespace'], mounts));
+assert.deepEqual(workspaceBackingAliases('/mounted/namespace', mounts), ['/mounted/namespace']);
+assert.throws(() => parseWorkspaceMountTable('6 1 8:1 relative /mount rw - ext4 /dev/fixture rw\n'), /Unsupported mount table/);
+assert.throws(() => parseWorkspaceMountTable('6 1 0:4 mnt:[bad] /mount rw - nsfs nsfs rw\n'), /Unsupported mount table/);
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-managed-git-replay-'));
 try {

@@ -50,13 +50,22 @@ jobs:
           trap 'rm -rf -- "$bundle_dir"' EXIT
           export TMPDIR="$bundle_dir"
           node --import tsx --input-type=module -e '
+            import { readFileSync } from "node:fs";
             import { readWorkspaceMountTable, workspaceMountLayoutSupported } from "./src/managed-workspace-ancestry.ts";
             import { workspacePathContains } from "./src/workspace-projects.ts";
             const directory = process.env.TMPDIR;
+            const rootKinds = new Set();
+            for (const line of readFileSync("/proc/self/mountinfo", "utf8").trimEnd().split("\n")) {
+              const root = line.split(" ")[3] ?? "";
+              if (root.startsWith("/")) continue;
+              const fsType = line.split(" - ")[1]?.split(" ")[0];
+              rootKinds.add(`${fsType === "nsfs" ? "nsfs" : "other"}:${/^[a-z][a-z0-9_]*:\[\d+\]$/.test(root) ? "namespace-id" : "unknown"}`);
+            }
+            console.log("Non-path mount roots:", [...rootKinds]);
             const mounts = readWorkspaceMountTable();
             const relevant = mounts.filter((mount) => workspacePathContains(mount.directory, directory)
               || workspacePathContains(directory, mount.directory));
-            console.log("Fixture mount coverage:", relevant.map(({ directory, root }) => ({ directory, filesystemRoot: root === "/" })));
+            console.log("Fixture mount coverage:", relevant.map(({ root }) => ({ filesystemRoot: root === "/" })));
             if (!workspaceMountLayoutSupported([directory], mounts)) process.exitCode = 1;
           '
           archive="$bundle_dir/$(npm pack "$CODEX_NPM_PACKAGE" --ignore-scripts --pack-destination "$bundle_dir" --registry=https://registry.npmjs.org)"

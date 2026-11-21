@@ -52324,9 +52324,15 @@ function parseWorkspaceMountTable(value) {
   if (!value.endsWith("\n") || value.length > 1048576) throw new Error("Unsupported mount table.");
   const decode3 = (field) => field.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
   return value.trimEnd().split("\n").map((entry) => {
-    const [, , device, root, mount] = entry.split(" ");
-    if (!/^\d+:\d+$/.test(device ?? "") || !root?.startsWith("/") || !mount?.startsWith("/")) throw new Error("Unsupported mount table.");
-    return { device, root: decode3(root), directory: decode3(mount) };
+    const fields = entry.split(" ");
+    const [, , device, root, mount] = fields;
+    const separator = fields.indexOf("-", 6);
+    const fsType = separator === -1 ? void 0 : fields[separator + 1];
+    const namespace = fsType === "nsfs" && /^[a-z][a-z0-9_]*:\[\d+\]$/.test(root ?? "");
+    if (!/^\d+:\d+$/.test(device ?? "") || !fsType || !mount?.startsWith("/") || !root?.startsWith("/") && !namespace) {
+      throw new Error("Unsupported mount table.");
+    }
+    return { device, root: namespace ? null : decode3(root), directory: decode3(mount) };
   });
 }
 function workspaceMountLayoutSupported(workspaces, mounts) {
@@ -52339,9 +52345,10 @@ function workspaceBackingAliases(directory, mounts) {
     const covering = mounts.filter((mount) => workspacePathContains(mount.directory, visible));
     const longest = Math.max(0, ...covering.map((mount) => mount.directory.length));
     for (const origin of covering.filter((mount) => mount.directory.length === longest)) {
+      if (origin.root === null) continue;
       const backing = path7.join(origin.root, path7.relative(origin.directory, visible));
       for (const target of mounts) {
-        if (target.device !== origin.device) continue;
+        if (target.device !== origin.device || target.root === null) continue;
         if (workspacePathContains(target.root, backing)) {
           aliases.add(path7.join(target.directory, path7.relative(target.root, backing)));
         } else if (workspacePathContains(backing, target.root)) {
