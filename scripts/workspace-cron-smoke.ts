@@ -14,6 +14,7 @@ import { IdentitySession } from '../src/identity-session.js';
 import { createJob } from '../src/job-service.js';
 import { readJob } from '../src/job-store.js';
 import { MemoryStore } from '../src/memory/file.js';
+import { readManagedWorkspaceRoots } from '../src/managed-workspace-storage.js';
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-workspace-cron-'));
 try {
@@ -22,12 +23,20 @@ try {
   const docs = path.join(base, 'docs');
   await fs.mkdir(app);
   await fs.mkdir(docs);
+  const storagePath = path.join(base, 'managed-workspace.json');
+  const scratch = path.join(base, 'scratch');
+  const artifacts = path.join(base, 'artifacts');
+  await fs.mkdir(scratch);
+  await fs.mkdir(artifacts);
+  const configureStorage = (scratchRoot: string, artifactRoot: string) => fs.writeFile(storagePath,
+    JSON.stringify({ version: 1, scratchRoot, artifactRoot }));
   const configPath = path.join(base, 'workspace-projects.json');
   const configure = (selector: string) => fs.writeFile(configPath, JSON.stringify({
     version: 1, roots: [], projects: [], default: selector,
   }));
   Object.assign(appConfig, {
     codexExecCwd: base,
+    codexExecSandbox: 'workspace-write',
     workspaceProjectsConfigPath: configPath,
     jobsDir: path.join(base, 'jobs'),
     auditLogPath: path.join(base, 'audit.log'),
@@ -51,19 +60,26 @@ try {
   let legacyRun: string;
   const first = await SqliteDurableRunRepository.open({ databasePath });
   try {
-    const admission = new CronRunAdmission({ runRepository: first });
+    const admission = new CronRunAdmission({
+      runRepository: first,
+      resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
+        configPath: storagePath, authorizedRoots: [base], project,
+      }),
+    });
     const now = new Date();
-    const results = await Promise.all([
-      admission.admitManual(pinned, 'pinned', now), admission.admitManual(legacy, 'legacy', now),
-    ]);
-    assert.ok(results[0].admitted && results[1].admitted);
-    pinnedRun = results[0].runId;
-    legacyRun = results[1].runId;
+    const previous = await admission.admitManual(legacy, 'legacy', now);
+    await configureStorage(scratch, artifacts);
+    const selected = await admission.admitManual(pinned, 'pinned', now);
+    assert.ok(selected.admitted && previous.admitted);
+    pinnedRun = selected.runId;
+    legacyRun = previous.runId;
+    assert.deepEqual(await fs.readdir(scratch), [], 'only the claimed run allocates directories');
   } finally {
     first.close();
   }
 
   await configure('path:docs');
+  await configureStorage(artifacts, scratch);
   const identity = new IdentitySession();
   const dispatcher = createCodexExecActionDispatcher({
     identitySession: identity, memoryStore: new MemoryStore(path.join(base, 'memory')),
@@ -116,33 +132,55 @@ try {
   const second = await SqliteDurableRunRepository.open({ databasePath });
   try {
     const results: string[] = [];
+    const managedLaunches: Array<{ scratch?: string; artifact?: string; mounts?: string[] }> = [];
     const execute = createCronPromptExecutor({
       identitySession: new IdentitySession(),
       sessionStore: new FileCodexExecSessionStore(path.join(base, 'sessions')),
       useCodexSessions: false,
-      runCodexExec: async ({ cwd }) => { results.push(cwd); return { text: 'Report' }; },
+      managedWorkspaceStore: () => second.getManagedWorkspaceStore(),
+      runCodexExec: async ({ cwd, extraEnv, additionalWritableDirs }) => {
+        results.push(cwd);
+        managedLaunches.push({ scratch: extraEnv?.LARK_MANAGED_SCRATCH_DIR, artifact: extraEnv?.LARK_MANAGED_ARTIFACTS_DIR,
+          mounts: additionalWritableDirs });
+        return { text: 'Report' };
+      },
     });
     const read = async (runId: string) => {
       const run = await second.get(runId);
       assert.ok(run);
-      const { job } = parseCronRunInput(run.input, run.inputVersion, 'prompt');
+      const { job, managedWorkspace } = parseCronRunInput(run.input, run.inputVersion, 'prompt');
       assert.ok(job.type === 'prompt' && job.prompt !== undefined);
-      return { runId, job: { ...job, type: job.type, prompt: job.prompt } };
+      return { runId, job: { ...job, type: job.type, prompt: job.prompt },
+        ...(managedWorkspace ? { managedWorkspace } : {}) };
     };
     const signal = new AbortController().signal;
     const bound = await read(pinnedRun);
     const actionRun = await read(originalActionRunId);
     assert.equal(bound.job.workspaceProject?.directory, app);
     assert.equal(actionRun.job.workspaceProject?.directory, app, 'rebinding a definition does not retarget its queued Run');
-    assert.equal((await execute(bound, signal)).runStatus, 'success');
+    const rejected = await execute({ ...bound, runId: 'no-project', job: { ...bound.job, workspaceProject: undefined } }, signal);
+    assert.equal(rejected.runStatus, 'failed');
+    assert.match(rejected.failureReason ?? '', /separate source project/);
+    assert.deepEqual(await fs.readdir(scratch), []);
+    const firstExecution = await execute(bound, signal);
+    assert.equal(firstExecution.runStatus, 'success', firstExecution.failureReason ?? undefined);
     assert.equal((await execute(actionRun, signal)).runStatus, 'success');
     assert.equal((await execute(await read(legacyRun), signal)).runStatus, 'success');
     assert.deepEqual(results, [app, app, base]);
+    const [managed, oldAction, classic] = managedLaunches;
+    assert.equal(path.dirname(managed.scratch!), scratch);
+    assert.equal(path.dirname(managed.artifact!), artifacts);
+    assert.ok(managed.mounts?.includes(managed.scratch!) && managed.mounts.includes(managed.artifact!));
+    assert.ok(!managed.mounts?.includes(scratch) && !managed.mounts?.includes(artifacts));
+    assert.equal(oldAction.scratch, undefined);
+    assert.equal(classic.scratch, undefined);
+    assert.equal((await execute(bound, signal)).runStatus, 'success');
+    assert.equal(managedLaunches.at(-1)?.scratch, managed.scratch, 'retry must reuse the exact scratch directory');
 
     await fs.rename(app, path.join(base, 'old-app'));
     await fs.symlink(docs, app, 'dir');
     assert.equal((await execute(bound, signal)).runStatus, 'failed');
-    assert.deepEqual(results, [app, app, base], 'a saved run never opens a swapped project');
+    assert.deepEqual(results, [app, app, base, app], 'a saved run never opens a swapped project');
   } finally {
     second.close();
   }

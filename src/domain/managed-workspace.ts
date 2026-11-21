@@ -11,11 +11,17 @@ export const managedWorkspaceRootsSchema = z.strictObject({
   artifacts: workspaceProjectBindingSchema,
 });
 
+export const managedWorkspaceAdmissionSchema = z.strictObject({
+  roots: managedWorkspaceRootsSchema,
+  createdAt: z.iso.datetime(),
+});
+
 export const managedRunIntentSchema = z.strictObject({
   version: z.literal(1),
   owner: managedRunOwnerSchema,
   roots: managedWorkspaceRootsSchema,
   project: workspaceProjectBindingSchema.optional(),
+  foregroundSessionKey: z.string().min(1).max(1024).optional(),
   createdAt: z.iso.datetime(),
 });
 
@@ -26,6 +32,7 @@ export const managedRunAllocationSchema = managedRunIntentSchema.extend({
 
 export type ManagedRunOwner = z.infer<typeof managedRunOwnerSchema>;
 export type ManagedWorkspaceRoots = z.infer<typeof managedWorkspaceRootsSchema>;
+export type ManagedWorkspaceAdmission = z.infer<typeof managedWorkspaceAdmissionSchema>;
 export type ManagedRunIntent = z.infer<typeof managedRunIntentSchema>;
 export type ManagedRunAllocation = z.infer<typeof managedRunAllocationSchema>;
 export type ManagedWorkspacePurpose = 'scratch' | 'artifacts';

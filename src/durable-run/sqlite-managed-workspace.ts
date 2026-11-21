@@ -10,25 +10,19 @@ import {
   type ManagedWorkspacePurpose,
 } from '../domain/managed-workspace.js';
 import { sameWorkspaceProject } from '../domain/workspace.js';
+import type { ManagedWorkspaceAuthorizedRoots, ManagedWorkspaceRecord, ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import {
   allocateManagedRunDirectories,
+  directoryIdentity,
   managedRunDirectoryPath,
   ManagedWorkspaceStorageError,
   validateManagedRunDirectory,
   validateManagedWorkspaceRoots,
 } from '../managed-workspace-storage.js';
 
-interface AllocationRecord {
-  allocation: ManagedRunAllocation;
-  lastUsedAt: string;
-}
-
-type AuthorizedRoots = readonly [string, ...string[]];
-type EnsureRequest = Omit<ManagedRunIntent, 'version'> & { authorizedRoots: AuthorizedRoots; usedAt?: string };
-
 const timestamp = z.iso.datetime();
 
-export class SqliteManagedWorkspaceStore {
+export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
   constructor(private readonly database: DatabaseSync) {
     database.exec(`
       CREATE TABLE IF NOT EXISTS workspace_run_allocations (
@@ -36,6 +30,8 @@ export class SqliteManagedWorkspaceStore {
         run_id TEXT NOT NULL,
         scratch_path TEXT NOT NULL,
         artifact_path TEXT NOT NULL,
+        scratch_identity TEXT,
+        artifact_identity TEXT,
         intent_json TEXT NOT NULL CHECK (json_valid(intent_json)),
         allocation_json TEXT CHECK (allocation_json IS NULL OR json_valid(allocation_json)),
         last_used_at TEXT NOT NULL,
@@ -43,12 +39,14 @@ export class SqliteManagedWorkspaceStore {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS workspace_run_scratch_path ON workspace_run_allocations(scratch_path);
       CREATE INDEX IF NOT EXISTS workspace_run_artifact_path ON workspace_run_allocations(artifact_path);
+      CREATE INDEX IF NOT EXISTS workspace_run_scratch_identity ON workspace_run_allocations(scratch_identity);
+      CREATE INDEX IF NOT EXISTS workspace_run_artifact_identity ON workspace_run_allocations(artifact_identity);
     `);
   }
 
-  get(owner: ManagedRunOwner): AllocationRecord | null {
+  get(owner: ManagedRunOwner): ManagedWorkspaceRecord | null {
     const row = this.database.prepare(`
-      SELECT intent_json, allocation_json, last_used_at, scratch_path, artifact_path
+      SELECT intent_json, allocation_json, last_used_at, scratch_path, artifact_path, scratch_identity, artifact_identity
       FROM workspace_run_allocations WHERE workload_kind = ? AND run_id = ?
     `).get(owner.kind, owner.runId);
     if (!row) return null;
@@ -59,7 +57,9 @@ export class SqliteManagedWorkspaceStore {
     if (!lastUsedAt.success || intent.owner.kind !== owner.kind || intent.owner.runId !== owner.runId
       || allocation.owner.kind !== owner.kind || allocation.owner.runId !== owner.runId
       || row.scratch_path !== allocation.scratch.directory || row.artifact_path !== allocation.artifacts.directory
+      || row.scratch_identity !== directoryIdentity(allocation.scratch) || row.artifact_identity !== directoryIdentity(allocation.artifacts)
       || intent.createdAt !== allocation.createdAt
+      || intent.foregroundSessionKey !== allocation.foregroundSessionKey
       || !sameWorkspaceProject(intent.project, allocation.project)
       || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch)
       || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
@@ -68,7 +68,7 @@ export class SqliteManagedWorkspaceStore {
     return { allocation, lastUsedAt: lastUsedAt.data };
   }
 
-  async ensure({ authorizedRoots, usedAt, ...input }: EnsureRequest): Promise<ManagedRunAllocation> {
+  async ensure({ authorizedRoots, usedAt, ...input }: Parameters<ManagedWorkspaceStore['ensure']>[0]): Promise<ManagedRunAllocation> {
     const parsed = managedRunIntentSchema.safeParse({ version: 1, ...input });
     const lastUse = timestamp.safeParse(usedAt ?? input.createdAt);
     if (!parsed.success || !lastUse.success) throw new ManagedWorkspaceStorageError('invalid_binding');
@@ -77,32 +77,36 @@ export class SqliteManagedWorkspaceStore {
     const lastUsedAt = new Date(lastUse.data).toISOString();
     const existing = this.get(owner);
     if (existing) return this.reuse(existing, snapshot, authorizedRoots, lastUsedAt);
-    await validateManagedWorkspaceRoots(snapshot.roots, { authorizedRoots, project: snapshot.project });
-    const concurrent = this.reserve(parsed.data, lastUsedAt);
+    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { authorizedRoots, project: snapshot.project });
+    const concurrent = this.reserve(parsed.data, lastUsedAt, ancestry);
     if (concurrent) return this.reuse(concurrent, snapshot, authorizedRoots, lastUsedAt);
 
     // A reservation is not permission to adopt an existing folder after a crash.
     const allocation = await allocateManagedRunDirectories({ ...snapshot, owner, authorizedRoots });
     this.requireAutocommit();
     const committed = this.database.prepare(`
-      UPDATE workspace_run_allocations SET allocation_json = ?
+      UPDATE workspace_run_allocations SET allocation_json = ?, scratch_identity = ?, artifact_identity = ?
       WHERE workload_kind = ? AND run_id = ? AND intent_json = ? AND allocation_json IS NULL
-    `).run(JSON.stringify(allocation), owner.kind, owner.runId, JSON.stringify(parsed.data));
+    `).run(JSON.stringify(allocation), directoryIdentity(allocation.scratch), directoryIdentity(allocation.artifacts),
+      owner.kind, owner.runId, JSON.stringify(parsed.data));
     if (committed.changes !== 1) throw new ManagedWorkspaceStorageError('invalid_binding');
     return allocation;
   }
 
-  async openDirectory(owner: ManagedRunOwner, purpose: ManagedWorkspacePurpose, authorizedRoots: AuthorizedRoots): Promise<string> {
+  async openDirectory(owner: ManagedRunOwner, purpose: ManagedWorkspacePurpose, authorizedRoots: ManagedWorkspaceAuthorizedRoots): Promise<string> {
     const stored = this.get(owner);
     if (!stored) throw new ManagedWorkspaceStorageError('invalid_binding');
     return validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
   }
 
   private async reuse(
-    { allocation }: AllocationRecord, snapshot: Omit<ManagedRunIntent, 'owner'>,
-    authorizedRoots: AuthorizedRoots, lastUsedAt: string,
+    { allocation }: ManagedWorkspaceRecord, snapshot: Omit<ManagedRunIntent, 'owner'>,
+    authorizedRoots: ManagedWorkspaceAuthorizedRoots, lastUsedAt: string,
   ): Promise<ManagedRunAllocation> {
-    if (!sameWorkspaceProject(allocation.project, snapshot.project)) throw new ManagedWorkspaceStorageError('invalid_binding');
+    if (!sameWorkspaceProject(allocation.project, snapshot.project)
+      || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey) {
+      throw new ManagedWorkspaceStorageError('invalid_binding');
+    }
     await Promise.all([
       validateManagedRunDirectory(allocation, 'scratch', authorizedRoots),
       validateManagedRunDirectory(allocation, 'artifacts', authorizedRoots),
@@ -112,7 +116,7 @@ export class SqliteManagedWorkspaceStore {
     return allocation;
   }
 
-  private reserve(intent: ManagedRunIntent, lastUsedAt: string): AllocationRecord | null {
+  private reserve(intent: ManagedRunIntent, lastUsedAt: string, ancestry: Set<string>): ManagedWorkspaceRecord | null {
     this.requireAutocommit();
     this.database.exec('BEGIN IMMEDIATE');
     try {
@@ -120,8 +124,15 @@ export class SqliteManagedWorkspaceStore {
       if (!existing) {
         const scratchPath = managedRunDirectoryPath(intent.roots.scratch, intent.owner);
         const artifactPath = managedRunDirectoryPath(intent.roots.artifacts, intent.owner);
+        if (intent.project) this.requireUnoccupied(intent.project.directory);
         this.requireUnoccupied(scratchPath);
         this.requireUnoccupied(artifactPath);
+        const byIdentity = this.database.prepare(`
+          SELECT 1 FROM workspace_run_allocations WHERE scratch_identity = ? OR artifact_identity = ? LIMIT 1
+        `);
+        for (const identity of ancestry) {
+          if (byIdentity.get(identity, identity)) throw new ManagedWorkspaceStorageError('overlapping_runs');
+        }
         this.database.prepare(`
           INSERT INTO workspace_run_allocations (
             workload_kind, run_id, scratch_path, artifact_path, intent_json, last_used_at

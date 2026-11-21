@@ -80,6 +80,7 @@ export interface RegisterCodexDeliveryHandlersOptions {
   actionDispatcher: CodexExecActionDispatcher | null;
   continuationService?: ContinuationTaskService | null;
   continuationAvailable?: boolean;
+  managedWorkspaceStore?: import('./codex-exec-delivery.js').CodexExecDeliveryOptions['managedWorkspaceStore'];
   cronControlService?: CronControlService;
 }
 
@@ -94,6 +95,7 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
     actionDispatcher,
     continuationService,
     continuationAvailable,
+    managedWorkspaceStore,
     cronControlService,
   } = options;
 
@@ -194,6 +196,7 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
         turnObligations,
         actionDispatcher: actionDispatcher ?? undefined,
         continuationAvailable,
+        managedWorkspaceStore,
       });
       if (hasReplyObligation) {
         turnObligations.requireSatisfiedOrDeferred(message.messageId);

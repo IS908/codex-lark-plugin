@@ -40,6 +40,11 @@ import { listConfiguredLocalCliToolNames } from './local-cli-tools.js';
 import { logSafeError } from './safe-log.js';
 import { accessControlStore } from './runtime-access-control.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
+import type { ManagedRunAllocation } from './domain/managed-workspace.js';
+import { withManagedWorkspace } from './managed-workspace-exec.js';
+import { admitManagedForegroundRun, managedForegroundRunOwner } from './managed-workspace-admission.js';
+import { ManagedWorkspaceStorageError, validateManagedRunDirectory } from './managed-workspace-storage.js';
+import type { ManagedWorkspaceStore } from './ports/managed-workspace.js';
 import {
   pinWorkspacePath,
   readWorkspaceProjectDirective,
@@ -78,6 +83,8 @@ export interface CodexExecDeliveryBaseOptions {
   abortSignal?: AbortSignal;
   actionPolicy?: CodexExecActionPolicy;
   cronWorkspaceProject?: WorkspaceProjectBinding;
+  managedWorkspace?: ManagedRunAllocation;
+  managedWorkspaceStore?: () => ManagedWorkspaceStore | undefined;
 }
 
 export interface CodexExecDeliveryOutput {
@@ -476,6 +483,9 @@ export async function deliverMessageViaCodexExec(
     registryPath: appConfig.workspaceProjectsConfigPath,
   };
   const foreground = message.chatType === 'p2p' || message.chatType === 'group' || message.chatType === 'doc_comment';
+  const workspaceOwner = foreground && opts.managedWorkspaceStore ? managedForegroundRunOwner(message, sessionKey) : undefined;
+  const managedStore = workspaceOwner ? opts.managedWorkspaceStore?.() : undefined;
+  const priorManaged = workspaceOwner ? managedStore?.get(workspaceOwner) : undefined;
   const directive = foreground && message.messageType !== 'reaction'
     ? readWorkspaceProjectDirective(message.chatType === 'doc_comment' ? message.currentUserText : message.workspaceDirectiveText)
     : undefined;
@@ -485,11 +495,25 @@ export async function deliverMessageViaCodexExec(
     : undefined;
   const legacySession = compatibleSession?.sessionId && compatibleSession.workspaceProject === undefined;
   let workspace: WorkspaceProjectBinding | undefined;
-  if (foreground && (selector !== undefined || savedWorkspace !== undefined || !legacySession)) {
+  if (priorManaged) {
+    const previousProject = priorManaged.allocation.project;
+    if (previousProject) workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, previousProject);
+  } else if (foreground && (selector !== undefined || savedWorkspace !== undefined || !legacySession)) {
     workspace = await resolveWorkspaceProject({ ...workspaceOptions, selector, persisted: savedWorkspace });
   } else if (message.chatType === 'cronjob' && opts.cronWorkspaceProject !== undefined) {
     workspace = await resolveWorkspaceProject({ ...workspaceOptions, persisted: opts.cronWorkspaceProject });
   }
+  const managed = workspaceOwner ? await admitManagedForegroundRun({
+    owner: workspaceOwner, sessionKey, store: managedStore, recorded: priorManaged,
+    configPath: appConfig.managedWorkspaceConfigPath, authorizedRoot: workspaceOptions.authorizedRoot, project: workspace,
+    sandbox: appConfig.codexExecSandbox,
+  }) : opts.managedWorkspace;
+  if (managed && !sameWorkspaceProject(managed.project, workspace)) {
+    throw new ManagedWorkspaceStorageError('invalid_binding');
+  }
+  const launchWorkspace = workspace ?? (managed ? await pinWorkspacePath(
+    workspaceOptions.authorizedRoot, path.resolve(workspaceOptions.authorizedRoot),
+  ) : undefined);
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace)
     && (workspace === undefined || compatibleSession?.workspaceProjectSenderId === message.senderId)
     ? compatibleSession
@@ -545,7 +569,7 @@ export async function deliverMessageViaCodexExec(
     ),
     imagePaths: collectImagePaths(message),
     command: appConfig.codexExecCommand,
-    cwd: workspace?.directory ?? appConfig.codexExecCwd,
+    cwd: launchWorkspace?.directory ?? appConfig.codexExecCwd,
     timeoutMs: appConfig.codexExecTimeoutMs,
     sandbox: appConfig.codexExecSandbox,
     model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
@@ -585,26 +609,39 @@ export async function deliverMessageViaCodexExec(
   let result;
   let usedResumeSessionId = request.resumeSessionId;
   const runInWorkspace: CodexExecRunner = async (runRequest) => {
-    if (!workspace) return runCodexExec(runRequest);
+    if (!launchWorkspace) return runCodexExec(runRequest);
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...(progressSink ? [progressSink.filePath] : [])];
     // A narrower CWD still needs its one-turn IPC directories, not the entire old working root.
     const sideChannelBindings = runRequest.sandbox === 'workspace-write'
       ? await Promise.all(sideChannelFiles.map((file) => pinWorkspacePath(authorizedRoot, path.dirname(file))))
       : [];
-    await validateWorkspaceProject(authorizedRoot, workspace);
-    return runCodexExec({
+    if (managed) {
+      await Promise.all([
+        validateManagedRunDirectory(managed, 'scratch', [authorizedRoot]),
+        validateManagedRunDirectory(managed, 'artifacts', [authorizedRoot]),
+      ]);
+    }
+    await validateWorkspaceProject(authorizedRoot, launchWorkspace);
+    const guardedRequest: CodexExecRequest = {
       ...runRequest,
-      workspaceDirectory: { binding: workspace, authorizedRoots: [authorizedRoot], sideChannelBindings },
+      workspaceDirectory: {
+        binding: launchWorkspace, authorizedRoots: [authorizedRoot], auxiliaryBindings: [
+          ...sideChannelBindings,
+          ...(managed ? [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts] : []),
+        ],
+      },
       ...(sideChannelBindings.length ? { additionalWritableDirs: sideChannelBindings.map((binding) => binding.directory) } : {}),
-    });
+    };
+    return runCodexExec(managed ? withManagedWorkspace(guardedRequest, managed) : guardedRequest);
   };
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
   try {
     progressSink?.start();
     result = normalizeCodexExecResult(await runInWorkspace(request));
   } catch (err) {
-    if (!request.resumeSessionId || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError) {
+    if (!request.resumeSessionId || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError
+      || err instanceof ManagedWorkspaceStorageError) {
       await actionChannel.cleanup();
       throw err;
     }

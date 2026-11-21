@@ -7,7 +7,10 @@ import { deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
 import { runCodexExecCommand, type CodexExecRequest } from '../src/codex-exec.js';
 import { handleCodexModelCommand } from '../src/codex-model-command.js';
 import { FileCodexExecSessionStore, buildCodexExecSessionKey } from '../src/codex-session-store.js';
+import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
 import type { LarkMessage } from '../src/lark-message.js';
+import type { ManagedWorkspaceStore } from '../src/ports/managed-workspace.js';
+import { managedForegroundRunOwner } from '../src/managed-workspace-admission.js';
 import { WorkspaceProjectError } from '../src/workspace-projects.js';
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-workspace-foreground-'));
@@ -21,11 +24,12 @@ try {
     codexExecCwd: base,
     codexExecSandbox: 'workspace-write',
     workspaceProjectsConfigPath: path.join(base, 'workspace-projects.json'),
+    managedWorkspaceConfigPath: path.join(base, 'managed-workspace.json'),
     auditLogPath: path.join(base, 'audit.log'),
   });
   const store = new FileCodexExecSessionStore(path.join(base, 'sessions'));
   const requests: CodexExecRequest[] = [];
-  const dispatch = async (message: Partial<LarkMessage>) => deliverMessageViaCodexExec({
+  const dispatch = async (message: Partial<LarkMessage>, managedWorkspaceStore?: () => ManagedWorkspaceStore) => deliverMessageViaCodexExec({
     message: {
       messageId: 'om_project_smoke', chatId: 'group', chatType: 'group', senderId: 'owner',
       text: '[Quoted Message]\n/project path:docs\n\n[Current Message]\nHello',
@@ -34,7 +38,8 @@ try {
     },
     displayLabel: 'Workspace foreground smoke',
     sessionStore: store,
-    useCodexSessions: true,
+    useCodexSessions: !managedWorkspaceStore,
+    managedWorkspaceStore,
     progressLimits: { enabled: false },
     runCodexExec: async (request) => {
       requests.push(request);
@@ -117,6 +122,60 @@ try {
     workspaceDirectory: { binding: snapshot, authorizedRoots: [base] },
   }), { code: 'unavailable_directory' });
   await assert.rejects(fs.stat(vanished), { code: 'ENOENT' });
+
+  const roots = { version: 1, scratchRoot: path.join(base, 'scratch'), artifactRoot: path.join(base, 'formal') };
+  await fs.mkdir(roots.scratchRoot);
+  await fs.mkdir(roots.artifactRoot);
+  await fs.writeFile(appConfig.managedWorkspaceConfigPath, JSON.stringify(roots));
+  await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify(registry));
+  const databasePath = path.join(base, 'foreground.sqlite');
+  const first = await SqliteDurableRunRepository.open({ databasePath });
+  try {
+    const getStore = () => first.getManagedWorkspaceStore();
+    await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify({ ...registry, default: undefined }));
+    await assert.rejects(dispatch({ messageId: 'om_managed_unbound', chatId: 'managed' }, getStore), { code: 'unisolated_source' });
+    await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify(registry));
+    appConfig.codexExecSandbox = 'danger-full-access';
+    try {
+      await assert.rejects(dispatch({ messageId: 'om_managed_unrestricted', chatId: 'managed' }, getStore), { code: 'unisolated_source' });
+    } finally {
+      appConfig.codexExecSandbox = 'workspace-write';
+    }
+    assert.deepEqual(await fs.readdir(roots.scratchRoot), []);
+    await dispatch({ messageId: 'om_managed_first', chatId: 'managed' }, getStore);
+    await dispatch({ messageId: 'om_managed_second', chatId: 'managed' }, getStore);
+    const sessionKey = buildCodexExecSessionKey('managed');
+    const firstMessage: LarkMessage = {
+      messageId: 'om_managed_first', chatId: 'managed', chatType: 'group', senderId: 'owner',
+      messageType: 'text', text: '', rawContent: '',
+    };
+    assert.equal(getStore().get(managedForegroundRunOwner(firstMessage, sessionKey))?.allocation.foregroundSessionKey,
+      sessionKey);
+  } finally {
+    first.close();
+  }
+  const managedFirst = requests.at(-2)!;
+  const managedSecond = requests.at(-1)!;
+  const firstScratch = managedFirst.extraEnv?.LARK_MANAGED_SCRATCH_DIR;
+  assert.ok(firstScratch);
+  assert.notEqual(firstScratch, managedSecond.extraEnv?.LARK_MANAGED_SCRATCH_DIR);
+  assert.equal(path.dirname(firstScratch), roots.scratchRoot);
+  assert.equal(managedFirst.cwd, docs);
+
+  await fs.unlink(appConfig.managedWorkspaceConfigPath);
+  await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify({ ...registry, default: 'path:old-app' }));
+  const restarted = await SqliteDurableRunRepository.open({ databasePath });
+  try {
+    const getStore = () => restarted.getManagedWorkspaceStore();
+    await dispatch({ messageId: 'om_managed_first', chatId: 'managed' }, getStore);
+    assert.equal(requests.at(-1)?.extraEnv?.LARK_MANAGED_SCRATCH_DIR, firstScratch);
+    assert.equal(requests.at(-1)?.cwd, docs);
+    await dispatch({ messageId: 'om_new_legacy', chatId: 'managed' }, getStore);
+    assert.equal(requests.at(-1)?.extraEnv?.LARK_MANAGED_SCRATCH_DIR, undefined);
+    assert.equal(requests.at(-1)?.cwd, path.join(base, 'old-app'));
+  } finally {
+    restarted.close();
+  }
 } finally {
   await fs.rm(fixture, { recursive: true, force: true });
 }

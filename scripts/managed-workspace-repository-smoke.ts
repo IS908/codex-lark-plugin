@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { mock } from 'node:test';
 import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
 import { allocateManagedRunDirectories, readManagedWorkspaceRoots } from '../src/managed-workspace-storage.js';
 
@@ -72,6 +73,24 @@ try {
     await assert.rejects(store2.ensure(nested), { code: 'overlapping_runs' });
     assert.equal(store1.get(nested.owner), null);
     assert.deepEqual(await fs.readdir(nestedArtifactRoot), []);
+
+    const alias = path.join(allowed, 'alias-of-owned-run');
+    await fs.mkdir(alias, { mode: 0o700 });
+    const stat = fs.stat.bind(fs);
+    const originalScratch = await stat(allocation.scratch.directory, { bigint: true });
+    const simulatedMount = mock.method(fs, 'stat', (...args: Parameters<typeof stat>) =>
+      args[0] === alias ? Promise.resolve(originalScratch) : stat(...args));
+    try {
+      await configure(newScratchRoot, alias);
+      const aliasedRoots = await readManagedWorkspaceRoots({ configPath, authorizedRoots });
+      assert.ok(aliasedRoots);
+      const aliased = { ...request, roots: aliasedRoots, owner: { ...owner, runId: 'aliased' } };
+      await assert.rejects(store2.ensure(aliased), { code: 'overlapping_runs' });
+      assert.equal(store1.get(aliased.owner), null);
+      assert.deepEqual(await fs.readdir(newScratchRoot), []);
+    } finally {
+      simulatedMount.mock.restore();
+    }
   } finally {
     db1.close();
     db2.close();

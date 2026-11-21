@@ -10,6 +10,7 @@ import {
 } from '../domain/durable-run.js';
 import { computeLatestDueRun, computeNextRun, jobTimezone, mutateJob, readJob } from '../job-store.js';
 import type { JobFile } from '../job-contracts.js';
+import type { ManagedWorkspaceRoots } from '../domain/managed-workspace.js';
 import type { DurableRunRepository } from '../ports/durable-run.js';
 import {
   parseCronRunInput,
@@ -51,6 +52,7 @@ export interface CronRunAdmissionOptions {
   runRepository: DurableRunRepository;
   jobRepository?: CronAdmissionJobRepository;
   waitPollMs?: number;
+  resolveManagedWorkspaceRoots?: (project?: JobFile['meta']['workspace_project']) => Promise<ManagedWorkspaceRoots | undefined>;
 }
 
 const DEFAULT_WAIT_POLL_MS = 100;
@@ -121,7 +123,7 @@ export class CronRunAdmission {
       return admitted(existing, false, occurrence);
     }
     const created = await this.options.runRepository.create(
-      cronRunCreateRequest(fresh, idempotencyKey, runId, now, occurrence),
+      await this.createRequest(fresh, idempotencyKey, runId, now, occurrence),
     );
     if (created.run.runId !== runId) {
       return { admitted: false, reason: 'already_running' };
@@ -250,13 +252,20 @@ export class CronRunAdmission {
       return { admitted: false, reason: 'already_running' };
     }
     const created = await this.options.runRepository.create(
-      cronRunCreateRequest(fresh, idempotencyKey, runId, now),
+      await this.createRequest(fresh, idempotencyKey, runId, now),
     );
     if (created.run.runId !== runId) {
       return { admitted: false, reason: 'already_running' };
     }
     await this.projectAdmission(fresh, created.run.runId);
     return admitted(created.run, created.created);
+  }
+
+  private async createRequest(job: JobFile, idempotencyKey: string, runId: string, now: Date, occurrence?: string) {
+    const managedWorkspaceRoots = job.meta.type === 'prompt'
+      ? await this.options.resolveManagedWorkspaceRoots?.(job.meta.workspace_project)
+      : undefined;
+    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots);
   }
 
   async waitForExecution(
@@ -360,9 +369,11 @@ function cronRunCreateRequest(
   runId: string,
   now: Date,
   scheduledOccurrence?: string,
+  managedWorkspaceRoots?: ManagedWorkspaceRoots,
 ): DurableRunCreateRequest {
   const input: CronRunInput = {
     schemaVersion: 1,
+    ...(managedWorkspaceRoots ? { managedWorkspace: { roots: managedWorkspaceRoots, createdAt: now.toISOString() } } : {}),
     job: {
       id: job.meta.id,
       createdAt: job.meta.created_at,

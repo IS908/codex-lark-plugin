@@ -62,7 +62,10 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
   ): Promise<CronPromptExecution> {
     const job = promptJob(claim.run.input);
     try {
-      return await this.options.executor({ runId: claim.run.runId, job }, signal);
+      const managedWorkspace = claim.run.input.managedWorkspace;
+      return await this.options.executor({ runId: claim.run.runId, job,
+        ...(managedWorkspace ? { managedWorkspace } : {}),
+      }, signal);
     } catch (error) {
       if (signal.aborted) throw error;
       return {

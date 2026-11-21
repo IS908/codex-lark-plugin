@@ -15,6 +15,9 @@ import type { IdentitySession } from '../identity-session.js';
 import type { JobFile } from '../job-contracts.js';
 import { JOB_THREAD_PREFIX, jobCreatedAtHash } from '../job-thread.js';
 import type { LarkMessage } from '../lark-message.js';
+import { ManagedWorkspaceStorageError } from '../managed-workspace-errors.js';
+import { assertManagedWorkspaceSandbox } from '../managed-workspace-exec.js';
+import type { ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import { cronJobPrompt } from '../prompts.js';
 import type {
   CronPromptExecution,
@@ -45,6 +48,7 @@ export interface CronPromptExecutorOptions {
   useCodexSessions?: boolean;
   progressBaseDir?: string;
   actionBaseDir?: string;
+  managedWorkspaceStore?: () => ManagedWorkspaceStore | undefined;
 }
 
 export function createCronPromptExecutor(options: CronPromptExecutorOptions): CronPromptExecutor {
@@ -67,6 +71,10 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
 
     try {
       diagnostics.startStage('prepare_prompt');
+      const managedWorkspace = input.managedWorkspace
+        ? await allocateWorkspace(input, options.managedWorkspaceStore?.())
+        : undefined;
+      signal.throwIfAborted();
       const promptContent = cronJobPrompt(
         input.job.name,
         input.job.targetChatId,
@@ -93,6 +101,7 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
         displayLabel: `CronJob · ${input.job.name}`,
         modelOverride: input.job.model,
         cronWorkspaceProject: input.job.workspaceProject,
+        ...(managedWorkspace ? { managedWorkspace } : {}),
         sessionStore: options.sessionStore,
         sessionHealth: options.sessionHealth,
         actionDispatcher: options.actionDispatcher,
@@ -162,6 +171,18 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
       options.identitySession.endChannelTurn(input.job.targetChatId, threadId);
     }
   };
+}
+
+async function allocateWorkspace(input: CronPromptExecutionInput, store: ManagedWorkspaceStore | undefined) {
+  if (!input.managedWorkspace || !store) throw new ManagedWorkspaceStorageError('allocation_failed');
+  assertManagedWorkspaceSandbox(appConfig.codexExecSandbox, input.job.workspaceProject);
+  return store.ensure({
+    ...input.managedWorkspace,
+    authorizedRoots: [appConfig.codexExecCwd],
+    owner: { kind: 'cron_prompt', runId: input.runId },
+    ...(input.job.workspaceProject ? { project: input.job.workspaceProject } : {}),
+    usedAt: new Date().toISOString(),
+  });
 }
 
 

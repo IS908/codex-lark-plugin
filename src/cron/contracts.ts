@@ -1,4 +1,5 @@
 import type { CronJobDiagnosticSnapshot } from '../cronjob-diagnostic-contracts.js';
+import { managedWorkspaceAdmissionSchema, type ManagedWorkspaceAdmission } from '../domain/managed-workspace.js';
 import { workspaceProjectBindingSchema, type WorkspaceProjectBinding } from '../domain/workspace.js';
 
 export const CRON_RUN_INPUT_VERSION = 1;
@@ -27,11 +28,13 @@ export interface CronRunJobSnapshot {
 export interface CronRunInput {
   schemaVersion: 1;
   job: CronRunJobSnapshot;
+  managedWorkspace?: ManagedWorkspaceAdmission;
 }
 
 export interface CronPromptExecutionInput {
   runId: string;
   job: CronRunJobSnapshot & { type: 'prompt'; prompt: string };
+  managedWorkspace?: ManagedWorkspaceAdmission;
 }
 
 export interface CronPromptExecution {
@@ -151,7 +154,12 @@ export function parseCronRunInput(
   };
   if (type === 'prompt' && !job.prompt?.trim()) throw new Error('Cron prompt must not be empty.');
   if (type === 'message' && !job.content?.trim()) throw new Error('Cron message content must not be empty.');
-  return { schemaVersion: 1, job };
+  if (type === 'message' && root.managedWorkspace !== undefined) {
+    throw new Error('Only prompt Cron runs can use managed workspace roots.');
+  }
+  return { schemaVersion: 1, job, ...(root.managedWorkspace === undefined ? {} : {
+    managedWorkspace: managedWorkspaceAdmissionSchema.parse(root.managedWorkspace),
+  }) };
 }
 
 export function parseCronRunState(value: unknown, version: number): CronRunState {

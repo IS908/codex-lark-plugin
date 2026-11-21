@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { mock } from 'node:test';
 import {
   allocateManagedRunDirectories,
   readManagedWorkspaceRoots,
   validateManagedRunDirectory,
 } from '../src/managed-workspace-storage.js';
+import { mkdirInsidePinnedRoot } from '../src/managed-workspace-mkdir.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-managed-workspace-'));
@@ -38,6 +40,34 @@ try {
   await configure(scratch, artifacts);
   const roots = await readManagedWorkspaceRoots(opts);
   assert.ok(roots);
+
+  await fs.chmod(scratch, 0o777);
+  await assert.rejects(readManagedWorkspaceRoots(opts), { code: 'unprotected_root' });
+  await fs.chmod(scratch, 0o700);
+
+  const aliasedSource = path.join(allowed, 'source-mount');
+  const aliasedChild = path.join(aliasedSource, 'nested');
+  await fs.mkdir(aliasedChild, { recursive: true });
+  const stat = fs.stat.bind(fs);
+  const sourceStat = await stat(source, { bigint: true });
+  const alias = mock.method(fs, 'stat', (...args: Parameters<typeof stat>) =>
+    args[0] === aliasedSource ? Promise.resolve(sourceStat) : stat(...args));
+  try {
+    await configure(aliasedChild, artifacts);
+    await assert.rejects(readManagedWorkspaceRoots(opts), { code: 'overlapping_roots' });
+    await configure(aliasedSource, artifacts);
+    await assert.rejects(readManagedWorkspaceRoots(opts), { code: 'overlapping_roots' });
+  } finally {
+    alias.mock.restore();
+  }
+
+  const heldParent = path.join(allowed, 'protected');
+  await fs.mkdir(heldParent, { mode: 0o700 });
+  const held = await pinWorkspacePath(allowed, heldParent);
+  await fs.rename(heldParent, path.join(allowed, 'displaced'));
+  await fs.mkdir(heldParent, { mode: 0o700 });
+  await assert.rejects(mkdirInsidePinnedRoot(held, `cron_prompt-${'a'.repeat(64)}`), { code: 'directory_changed' });
+  assert.deepEqual(await fs.readdir(heldParent), []);
 
   const allocate = (id: string) => allocateManagedRunDirectories({
     roots, authorizedRoots: opts.authorizedRoots,

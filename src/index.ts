@@ -52,6 +52,7 @@ import { CronRunAdmission } from './cron/run-admission.js';
 import { CronPromptWorkload } from './cron/direct-exec-workload.js';
 import { CronMessageWorkload } from './cron/message-workload.js';
 import { createCronPromptExecutor } from './cron/prompt-executor.js';
+import { readManagedWorkspaceRoots } from './managed-workspace-storage.js';
 import { createCronDelivery } from './cron/delivery.js';
 import { createCronControlService } from './cron/control-service.js';
 import { createCronCardActionHandler } from './cron/card-actions.js';
@@ -218,6 +219,7 @@ async function main() {
       sessionStore: codexSessionStore,
       sessionHealth: sessionHealthMonitor ?? undefined,
       actionDispatcher: codexExecActionDispatcher,
+      managedWorkspaceStore: () => continuationRuntime.durableRepository?.getManagedWorkspaceStore?.(),
     });
     const registrations: DurableRunRegistration[] = [
       {
@@ -253,6 +255,11 @@ async function main() {
     });
     cronAdmission = new CronRunAdmission({
       runRepository: continuationRuntime.durableRepository,
+      resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
+        configPath: appConfig.managedWorkspaceConfigPath,
+        authorizedRoots: [appConfig.codexExecCwd],
+        ...(project ? { project } : {}),
+      }),
     });
     closeContinuationRuntime = async () => {
       await stopChannelServices?.();
@@ -288,6 +295,7 @@ async function main() {
     actionDispatcher: codexExecActionDispatcher,
     continuationService: continuationRuntime.service,
     continuationAvailable: continuationRuntime.health.available,
+    managedWorkspaceStore: () => continuationRuntime.durableRepository?.getManagedWorkspaceStore?.(),
     cronControlService: cronControls,
   });
 
