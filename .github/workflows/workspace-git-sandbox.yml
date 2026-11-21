@@ -7,6 +7,7 @@ on:
       - 'src/**'
       - 'scripts/workspace-git-*-smoke.ts'
       - 'scripts/workspace-dependency-sandbox-smoke.mjs'
+      - 'scripts/workspace-dependency-input-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
       - 'package-lock.json'
@@ -17,6 +18,7 @@ on:
       - 'src/**'
       - 'scripts/workspace-git-*-smoke.ts'
       - 'scripts/workspace-dependency-sandbox-smoke.mjs'
+      - 'scripts/workspace-dependency-input-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
       - 'package-lock.json'
@@ -42,6 +44,7 @@ jobs:
         with:
           python-version: '3.13'
       - run: npm ci
+      - run: node --import tsx scripts/workspace-dependency-input-smoke.ts
       - name: Run production launcher with an offline model fixture
         shell: bash
         env:
