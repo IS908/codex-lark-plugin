@@ -7,8 +7,16 @@ import path from 'node:path';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { createWorkspaceGitCheckout, gitSnapshotKey, inspectWorkspaceGitSnapshot, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
+import { createManagedGitSandboxOptions } from '../src/managed-git-sandbox.js';
+import { workspaceMountLayoutSupported } from '../src/managed-workspace-ancestry.js';
+import { probeCodexExecWithLoopback } from './fixtures/codex-loopback-exec.js';
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-workspace-git-snapshot-'));
+const fixtureMounts = [{ device: '1:1', root: '/', directory: '/' }, { device: '1:2', root: '/', directory: '/ipc/unrelated' },
+  { device: '1:1', root: '/other/cache', directory: '/bind' }];
+assert.ok(!workspaceMountLayoutSupported(['/ipc'], fixtureMounts));
+assert.ok(!workspaceMountLayoutSupported(['/bind/child'], fixtureMounts));
+assert.ok(workspaceMountLayoutSupported(['/workspace'], fixtureMounts));
 try {
   const base = await fs.realpath(fixture);
   const source = path.join(base, 'source');
@@ -130,6 +138,18 @@ try {
   assert.equal(await fs.readFile(path.join(b, 'tracked.txt'), 'utf8'), 'committed');
   assert.equal(git('-C', source, 'status', '--porcelain'), originalStatus);
   assert.equal(await fs.readFile(path.join(source, 'tracked.txt'), 'utf8'), 'uncommitted');
+  const sandboxArtifacts = await isolatedScratch('run-sandbox-artifacts');
+  const sandboxPolicy = { mode: 'workspace-write' as const, source: sourceBinding, cache: cache.gitDirectory, scratch: firstScratch,
+    artifacts: sandboxArtifacts, checkout: first, authorizedRoots: cache.authorizedRoots };
+  const compiled = await createManagedGitSandboxOptions(sandboxPolicy);
+  assert.ok(compiled.overrides.includes('approval_policy="never"'));
+  await assert.rejects(createManagedGitSandboxOptions({ ...sandboxPolicy, additionalWritable: [sourceBinding] }), { code: 'git_sandbox_invalid' });
+  await assert.rejects(createManagedGitSandboxOptions({ ...sandboxPolicy, additionalWritable: [cache.gitDirectory] }), { code: 'git_sandbox_invalid' });
+  const globLike = await isolatedScratch('run-literal-[ipc]');
+  await assert.rejects(createManagedGitSandboxOptions({ ...sandboxPolicy, additionalWritable: [globLike] }), { code: 'git_sandbox_invalid' });
+  const readOnly = await createManagedGitSandboxOptions({ ...sandboxPolicy, mode: 'read-only', networkEnabled: true });
+  assert.ok(readOnly.overrides.every((entry) => !entry.includes('="write"')));
+  assert.ok(readOnly.overrides.some((entry) => entry.includes('network={enabled=false}')));
   if (process.platform === 'darwin' && process.env.LARK_TEST_GIT_CHECKOUT_SEATBELT === '1') {
     const profile = `(version 1) (allow default) (deny network*)\n`
       + `(deny file-write* (require-not (require-any (subpath ${JSON.stringify(a)}) (literal "/dev/null"))))`;
@@ -146,6 +166,75 @@ try {
     constrained('/usr/bin/touch', [path.join(a, 'seatbelt-can-write-here')]);
     assert.deepEqual(await verifyWorkspaceGitCache(cache), verified);
     console.log('workspace Git cache read-only Seatbelt probe: PASS');
+  }
+  if (process.env.LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX === '1') {
+    const nativeScratch = await isolatedScratch('native-sandbox-run');
+    const nativeCheckout = await createWorkspaceGitCheckout({ ...selection, scratch: nativeScratch });
+    const nativeCwd = nativeCheckout.checkout.directory;
+    const codexHome = path.join(base, 'codex-sandbox-home');
+    const artifactsDir = path.join(base, 'codex-sandbox-artifacts');
+    const ipcDir = path.join(base, 'codex-sandbox-ipc');
+    const ambientTmp = path.join(base, 'codex-sandbox-ambient-tmp');
+    await Promise.all([codexHome, artifactsDir, ipcDir, ambientTmp, ...['.agents', '.codex', '.aws'].map((dir) => path.join(nativeCwd, dir))]
+      .map((dir) => fs.mkdir(dir, { mode: 0o700 })));
+    const env = { CODEX_HOME: codexHome, HOME: base, TMPDIR: ambientTmp, PATH: process.env.PATH,
+      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+    const runSandbox = (profile: string, overrides: string[], argv: string[], input?: string) => execFileSync('codex', [
+      'sandbox', '-P', profile, '-C', nativeCwd, ...overrides.flatMap((entry) => ['--config', entry]), '--', ...argv,
+    ], {
+      cwd: nativeCwd, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15_000,
+      env,
+    }).trim();
+    const legacy = ['sandbox_mode="workspace-write"', 'sandbox_workspace_write.exclude_tmpdir_env_var=true',
+      'sandbox_workspace_write.exclude_slash_tmp=true'];
+    await fs.writeFile(path.join(nativeCwd, 'native.txt'), 'native checkout');
+    assert.throws(() => runSandbox(':workspace', legacy, ['/usr/bin/git', 'add', 'native.txt']), /index\.lock|Operation not permitted|Permission denied/);
+
+    const named = await createManagedGitSandboxOptions({ ...sandboxPolicy, scratch: nativeScratch, checkout: nativeCheckout,
+      artifacts: await pinWorkspacePath(base, artifactsDir), additionalWritable: [await pinWorkspacePath(base, ipcDir)] });
+    const permissions = named.overrides;
+    const native = (argv: string[], input?: string) => runSandbox(named.profile, permissions, argv, input);
+    native(['/usr/bin/git', 'add', 'native.txt']);
+    native(['/usr/bin/git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+      'commit', '-qm', 'native sandbox write']);
+    assert.equal(git('-C', nativeCwd, 'show', 'HEAD:native.txt'), 'native checkout');
+    for (const directory of [nativeScratch.directory, artifactsDir, ipcDir]) {
+      const target = path.join(directory, 'local-write');
+      native(['/usr/bin/touch', target]);
+      assert.ok((await fs.stat(target)).isFile());
+    }
+    const packDir = path.join(cache.gitDirectory.directory, 'objects', 'pack');
+    const pack = (await fs.readdir(packDir)).find((file) => file.endsWith('.pack'))!;
+    assert.equal(native(['/usr/bin/git', 'hash-object', '-w', '--stdin'], 'committed'),
+      git('-C', nativeCwd, 'rev-parse', `${commit}:tracked.txt`));
+    assert.throws(() => native(['/usr/bin/touch', '-m', path.join(packDir, pack)]), /Operation not permitted|Permission denied/);
+    assert.throws(() => native(['/usr/bin/git', 'config', '--local', 'user.name', 'must remain unchanged']),
+      /Operation not permitted|Permission denied/);
+    for (const directory of [base, source, a, b, ambientTmp, ...['.agents', '.codex', '.aws'].map((dir) => path.join(nativeCwd, dir))]) {
+      assert.throws(() => native(['/usr/bin/touch', path.join(directory, 'denied-write')]), /Operation not permitted|Permission denied/);
+    }
+    assert.deepEqual(await verifyWorkspaceGitCache(cache), verified);
+    console.log('workspace Git native Codex sandbox probe: PASS');
+
+    const marker = 'MANAGED_GIT_FIXTURE_SUCCESS';
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    await fs.writeFile(path.join(codexHome, 'config.toml'), 'sandbox_mode = "workspace-write"\n[sandbox_workspace_write]\n'
+      + `writable_roots = [${JSON.stringify(source)}]\n`);
+    await fs.writeFile(path.join(nativeCwd, 'exec-probe.txt'), 'actual exec tool');
+    await probeCodexExecWithLoopback({ cwd: nativeCwd, env, overrides: permissions, marker, command: [
+      'set -eu',
+      '/usr/bin/git add exec-probe.txt',
+      "/usr/bin/git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm 'exec sandbox write'",
+      `if /usr/bin/touch ${quote(path.join(source, 'exec-denied'))} 2>/dev/null; then exit 1; fi`,
+      `if /usr/bin/touch -m ${quote(path.join(packDir, pack))} 2>/dev/null; then exit 2; fi`,
+      `if /usr/bin/touch ${quote(path.join(ambientTmp, 'exec-denied'))} 2>/dev/null; then exit 3; fi`,
+      `/usr/bin/touch ${quote(path.join(artifactsDir, 'exec-allowed'))}`,
+      `printf '%s\\n' ${quote(marker)}`,
+    ].join('\n') });
+    assert.equal(git('-C', nativeCwd, 'show', 'HEAD:exec-probe.txt'), 'actual exec tool');
+    assert.ok((await fs.stat(path.join(artifactsDir, 'exec-allowed'))).isFile());
+    assert.deepEqual(await verifyWorkspaceGitCache(cache), verified);
+    console.log('workspace Git Codex exec loopback probe: PASS');
   }
   await assert.rejects(createWorkspaceGitCheckout({ ...selection, scratch: firstScratch }),
     { code: 'allocation_conflict' });

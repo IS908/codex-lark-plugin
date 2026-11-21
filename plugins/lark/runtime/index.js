@@ -52292,6 +52292,7 @@ var diagnostic = {
   overlapping_source: "The managed storage location overlaps a registered source project.",
   overlapping_git_cache: "The managed storage location overlaps a recorded Git object cache.",
   git_cache_conflict: "The Git cache key or physical directory already belongs to a different cache identity.",
+  git_sandbox_invalid: "The isolated Git checkout cannot be assigned disjoint sandbox paths.",
   allocation_conflict: "The managed run directory already exists without a matching stored allocation.",
   allocation_failed: "The managed run directories could not be allocated.",
   allocation_incomplete: "The stored managed workspace allocation is incomplete.",
@@ -52322,6 +52323,9 @@ function parseWorkspaceMountTable(value) {
     if (!/^\d+:\d+$/.test(device ?? "") || !root?.startsWith("/") || !mount?.startsWith("/")) throw new Error("Unsupported mount table.");
     return { device, root: decode3(root), directory: decode3(mount) };
   });
+}
+function workspaceMountLayoutSupported(workspaces, mounts) {
+  return !mounts.some(({ directory: mount, root }) => workspaces.some((workspace) => root !== "/" && workspacePathContains(mount, workspace) || mount !== workspace && workspacePathContains(workspace, mount)));
 }
 function workspaceBackingAliases(directory, mounts) {
   const aliases = /* @__PURE__ */ new Set([directory]);
@@ -72507,14 +72511,10 @@ async function reserveCheckoutNames(root, names) {
   }
 }
 async function linuxCheckoutMountAliases(workspaces) {
-  const aliases = [];
   try {
-    for (const { directory: mount, root } of readWorkspaceMountTable()) {
-      const isSubtree = root !== "/";
-      if (workspaces.some((workspace) => isSubtree && workspacePathContains(mount, workspace) || mount !== workspace && workspacePathContains(workspace, mount))) throw new Error("Unsupported workspace mount.");
-      if (isSubtree) aliases.push(mount);
-    }
-    return aliases;
+    const mounts = readWorkspaceMountTable();
+    if (!workspaceMountLayoutSupported(workspaces, mounts)) throw new Error("Unsupported workspace mount.");
+    return mounts.filter(({ root }) => root !== "/").map(({ directory }) => directory);
   } catch {
     throw new WorkspaceGitSnapshotError("git_checkout_mount_unsupported");
   }

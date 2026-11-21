@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities,
-  readWorkspaceMountTable } from './managed-workspace-ancestry.js';
+  readWorkspaceMountTable, workspaceMountLayoutSupported } from './managed-workspace-ancestry.js';
 import { MANAGED_GIT_CHECKOUT_LEAF, mkdirGitCheckoutInsidePinnedRun } from './managed-workspace-mkdir.js';
 import { pinWorkspacePath, validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
 
@@ -341,15 +341,10 @@ async function reserveCheckoutNames(root: string, names: CheckoutTree['names']):
 }
 
 async function linuxCheckoutMountAliases(workspaces: string[]): Promise<string[]> {
-  const aliases: string[] = [];
   try {
-    for (const { directory: mount, root } of readWorkspaceMountTable()) {
-      const isSubtree = root !== '/';
-      if (workspaces.some((workspace) => (isSubtree && workspacePathContains(mount, workspace))
-        || (mount !== workspace && workspacePathContains(workspace, mount)))) throw new Error('Unsupported workspace mount.');
-      if (isSubtree) aliases.push(mount);
-    }
-    return aliases;
+    const mounts = readWorkspaceMountTable();
+    if (!workspaceMountLayoutSupported(workspaces, mounts)) throw new Error('Unsupported workspace mount.');
+    return mounts.filter(({ root }) => root !== '/').map(({ directory }) => directory);
   } catch {
     throw new WorkspaceGitSnapshotError('git_checkout_mount_unsupported');
   }

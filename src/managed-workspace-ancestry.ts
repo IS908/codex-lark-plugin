@@ -30,6 +30,12 @@ export function parseWorkspaceMountTable(value: string): WorkspaceMount[] {
   });
 }
 
+export function workspaceMountLayoutSupported(workspaces: readonly string[], mounts: readonly WorkspaceMount[]): boolean {
+  return !mounts.some(({ directory: mount, root }) => workspaces.some((workspace) =>
+    (root !== '/' && workspacePathContains(mount, workspace))
+    || (mount !== workspace && workspacePathContains(workspace, mount))));
+}
+
 // Include mounts of strict subtrees: their visible ancestors also grant access through the mountpoint.
 export function workspaceBackingAliases(directory: string, mounts: WorkspaceMount[]): string[] {
   const aliases = new Set([directory]);

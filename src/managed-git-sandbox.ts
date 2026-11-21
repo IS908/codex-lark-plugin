@@ -1,0 +1,70 @@
+import path from 'node:path';
+import type { WorkspaceProjectBinding } from './domain/workspace.js';
+import { assertProtectedWorkspacePath, readWorkspaceAncestorIdentities, readWorkspaceMountTable,
+  workspaceBackingAliases, workspaceMountLayoutSupported } from './managed-workspace-ancestry.js';
+import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
+import { MANAGED_GIT_CHECKOUT_LEAF } from './managed-workspace-mkdir.js';
+import { validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
+
+const profile = 'lark-managed-git';
+const protectedWorkspaceNames = ['.git', '.agents', '.codex', '.aws'];
+const protectedGitNames = ['config', 'config.worktree', 'commondir', 'hooks', 'objects/info'];
+
+interface ManagedGitSandboxInput {
+  mode: 'read-only' | 'workspace-write';
+  authorizedRoots: readonly [string, ...string[]];
+  source: WorkspaceProjectBinding;
+  cache: WorkspaceProjectBinding;
+  scratch: WorkspaceProjectBinding;
+  artifacts: WorkspaceProjectBinding;
+  checkout: { checkout: WorkspaceProjectBinding; gitDirectory: WorkspaceProjectBinding };
+  additionalWritable?: readonly WorkspaceProjectBinding[];
+  networkEnabled?: boolean;
+}
+
+// The launcher must omit legacy --sandbox/profile flags and ignore user config and exec rules.
+export async function createManagedGitSandboxOptions(input: ManagedGitSandboxInput): Promise<{ profile: string; overrides: string[] }> {
+  const { source, cache, scratch, artifacts, checkout: { checkout, gitDirectory }, authorizedRoots } = input;
+  if (checkout.directory !== path.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF)
+    || gitDirectory.directory !== path.join(checkout.directory, '.git')) throw new ManagedWorkspaceStorageError('git_sandbox_invalid');
+  const separate = [source, cache, scratch, artifacts, ...(input.additionalWritable ?? [])];
+  const all = [...separate, checkout, gitDirectory];
+  for (const binding of all) {
+    // Codex interprets glob syntax in permission keys, so accept only literal filesystem paths here.
+    if (/[\u0000-\u001f\u007f*?\[\]]/.test(binding.directory)) throw new ManagedWorkspaceStorageError('git_sandbox_invalid');
+    await validateWorkspaceProject(authorizedRoots, binding);
+    await assertProtectedWorkspacePath(binding, binding !== source && binding !== cache);
+  }
+  const mounts = readWorkspaceMountTable();
+  const writable = input.mode === 'workspace-write' ? [scratch, artifacts, checkout, ...(input.additionalWritable ?? [])] : [];
+  if (!workspaceMountLayoutSupported(writable.map(({ directory }) => directory), mounts)) {
+    throw new ManagedWorkspaceStorageError('git_sandbox_invalid');
+  }
+  const locations = await Promise.all(separate.map(async (binding) => ({
+    identity: `${binding.device}:${binding.inode}`,
+    ancestors: await readWorkspaceAncestorIdentities(binding.directory),
+    aliases: workspaceBackingAliases(binding.directory, mounts),
+  })));
+  for (const [index, first] of locations.entries()) {
+    if (locations.slice(index + 1).some((second) => first.ancestors.has(second.identity) || second.ancestors.has(first.identity)
+      || first.aliases.some((a) => second.aliases.some((b) => workspacePathContains(a, b) || workspacePathContains(b, a))))) {
+      throw new ManagedWorkspaceStorageError('git_sandbox_invalid');
+    }
+  }
+  const rules = new Map<string, 'read' | 'write'>([[':root', 'read'], [source.directory, 'read'], [cache.directory, 'read']]);
+  if (input.mode === 'workspace-write') {
+    for (const { directory } of writable) {
+      rules.set(directory, 'write');
+      for (const name of protectedWorkspaceNames) rules.set(path.join(directory, name), 'read');
+    }
+    rules.set(gitDirectory.directory, 'write');
+    for (const name of protectedGitNames) rules.set(path.join(gitDirectory.directory, name), 'read');
+  }
+  const filesystem = Array.from(rules, ([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(',');
+  const networkEnabled = input.mode === 'workspace-write' && input.networkEnabled === true;
+  return { profile, overrides: [
+    `default_permissions=${JSON.stringify(profile)}`,
+    `permissions={${profile}={filesystem={${filesystem}},network={enabled=${networkEnabled}}}}`,
+    'approval_policy="never"',
+  ] };
+}
