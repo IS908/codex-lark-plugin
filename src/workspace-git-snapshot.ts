@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import type { BigIntStats } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -10,6 +11,10 @@ import { validateWorkspaceProject, workspacePathContains } from './workspace-pro
 
 const exec = promisify(execFile);
 const bareGit = ['--bare', '--git-dir=.', '-c', 'core.warnAmbiguousRefs=false', '-c', 'core.multiPackIndex=false'];
+const cacheGit = [...bareGit, '-c', 'core.deltaBaseCacheLimit=16m', '-c', 'core.packedGitLimit=64m'];
+const maxCachePackBytes = 256n * 1024n * 1024n;
+const maxCacheIndexBytes = 32n * 1024n * 1024n;
+const maxCacheObjects = 250_000;
 const repositoryIdentity = z.strictObject({
   // Digest of a trusted repository identity, not a credential-bearing remote URL.
   repositoryId: z.string().regex(/^[a-f0-9]{64}$/),
@@ -19,14 +24,19 @@ const repositoryIdentity = z.strictObject({
 type RepositoryIdentity = z.infer<typeof repositoryIdentity>;
 type ObjectFormat = 'sha1' | 'sha256';
 type SnapshotIdentity = RepositoryIdentity & { objectFormat: ObjectFormat };
+type SnapshotRequest = RepositoryIdentity & {
+  gitDirectory: WorkspaceProjectBinding;
+  authorizedRoots: readonly [string, ...string[]];
+};
 
 export class WorkspaceGitSnapshotError extends Error {
-  constructor(readonly code: 'invalid_snapshot' | 'git_directory_not_self_contained' | 'git_commit_unavailable' | 'git_unavailable') {
+  constructor(readonly code: 'invalid_snapshot' | 'git_directory_not_self_contained' | 'git_commit_unavailable' | 'git_unavailable' | 'git_cache_invalid') {
     const messages = {
       invalid_snapshot: 'A Git snapshot requires a full commit ID and a valid repository scope.',
       git_directory_not_self_contained: 'The pinned Git directory is not a supported self-contained object store.',
       git_commit_unavailable: 'The exact commit is unavailable in the pinned local Git directory.',
       git_unavailable: 'A trusted local Git executable is unavailable.',
+      git_cache_invalid: 'The pinned Git cache is incomplete, contains unexpected objects or metadata, or changed during validation.',
     };
     super(messages[code]);
     this.name = 'WorkspaceGitSnapshotError';
@@ -44,10 +54,7 @@ export function gitSnapshotKey(identity: SnapshotIdentity): string {
 }
 
 // Read-only preflight. Cache provenance and full reachable-object verification belong to the provider.
-export async function inspectWorkspaceGitSnapshot(input: RepositoryIdentity & {
-  gitDirectory: WorkspaceProjectBinding;
-  authorizedRoots: readonly [string, ...string[]];
-}): Promise<SnapshotIdentity & { key: string }> {
+export async function inspectWorkspaceGitSnapshot(input: SnapshotRequest): Promise<SnapshotIdentity & { key: string }> {
   const { repositoryId, scope, commit } = input;
   if (!repositoryIdentity.safeParse({ repositoryId, scope, commit }).success) {
     throw new WorkspaceGitSnapshotError('invalid_snapshot');
@@ -87,6 +94,110 @@ export async function inspectWorkspaceGitSnapshot(input: RepositoryIdentity & {
   await validateWorkspaceProject(input.authorizedRoots, binding);
   await assertProtectedWorkspacePath(binding);
   return { ...identity, key };
+}
+
+// The producer must authorize the cache separately and normalize it to one exact commit closure.
+export async function verifyWorkspaceGitCache(input: SnapshotRequest): Promise<SnapshotIdentity & {
+  key: string;
+  storeFingerprint: string;
+}> {
+  if (!repositoryIdentity.safeParse({ repositoryId: input.repositoryId, scope: input.scope, commit: input.commit }).success) {
+    throw new WorkspaceGitSnapshotError('invalid_snapshot');
+  }
+  const binding = await validateWorkspaceProject(input.authorizedRoots, input.gitDirectory);
+  const executable = await trustedGitExecutable(binding.directory);
+  const objectFormat = input.commit.length === 40 ? 'sha1' : 'sha256';
+  try {
+    const { storeFingerprint, packPath } = await fingerprintCache(binding, input.commit, objectFormat);
+    await verifyCacheGit(executable, binding.directory, ['index-pack', '--verify', '--threads=1', packPath]);
+    const type = await verifyCacheGit(executable, binding.directory, ['cat-file', '-t', input.commit]);
+    if (type.toString('ascii') !== 'commit\n') throw new WorkspaceGitSnapshotError('git_cache_invalid');
+    const unreachable = await verifyCacheGit(executable, binding.directory, ['fsck', '--full', '--strict',
+      '--no-reflogs', '--no-progress', '--unreachable', input.commit]);
+    if (unreachable.length || storeFingerprint !== (await fingerprintCache(binding, input.commit, objectFormat)).storeFingerprint) {
+      throw new WorkspaceGitSnapshotError('git_cache_invalid');
+    }
+    await validateWorkspaceProject(input.authorizedRoots, binding);
+    const identity = { repositoryId: input.repositoryId, scope: input.scope, commit: input.commit, objectFormat } satisfies SnapshotIdentity;
+    return { ...identity, key: gitSnapshotKey(identity), storeFingerprint };
+  } catch {
+    throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  }
+}
+
+async function fingerprintCache(binding: WorkspaceProjectBinding, commit: string, format: ObjectFormat): Promise<{
+  storeFingerprint: string;
+  packPath: string;
+}> {
+  const { directory, device, inode } = binding;
+  await assertProtectedWorkspacePath(binding);
+  const stamp: string[][] = [];
+  const uid = process.geteuid?.();
+  if (uid === undefined) throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  const record = async (relative: string, isDirectory: boolean) => {
+    const file = path.join(directory, relative);
+    const info = await fs.lstat(file, { bigint: true });
+    if ((isDirectory ? !info.isDirectory() : !info.isFile() || info.nlink !== 1n)
+      || String(info.dev) !== device || (info.uid !== 0n && info.uid !== BigInt(uid)) || (info.mode & 0o022n) !== 0n) {
+      throw new WorkspaceGitSnapshotError('git_cache_invalid');
+    }
+    await assertDenyOnlyWorkspaceAcls([file]);
+    stamp.push([relative, ...[info.dev, info.ino, info.mode, info.uid, info.gid, info.size, info.mtimeNs, info.ctimeNs].map(String)]);
+    return info;
+  };
+  const names = async (relative: string, max: number) => {
+    const entries: string[] = [];
+    for await (const entry of await fs.opendir(path.join(directory, relative))) {
+      if (entries.length >= max) throw new WorkspaceGitSnapshotError('git_cache_invalid');
+      entries.push(entry.name);
+    }
+    return entries.sort().join('\n');
+  };
+  if (String((await record('.', true)).ino) !== inode || await names('.', 4) !== 'HEAD\nconfig\nobjects\nrefs') {
+    throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  }
+  await record('refs', true);
+  await record('objects', true);
+  await record('objects/pack', true);
+  if (await names('refs', 0) !== '' || await names('objects', 1) !== 'pack') {
+    throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  }
+  const pack = new RegExp(`^pack-([a-f0-9]{${commit.length}})\\.idx\\npack-\\1\\.pack$`)
+    .exec(await names('objects/pack', 2));
+  if (!pack) throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  const packPath = `objects/pack/pack-${pack[1]}.pack`;
+  const idx = await record(`objects/pack/pack-${pack[1]}.idx`, false);
+  const packInfo = await record(packPath, false);
+  if (idx.size > maxCacheIndexBytes || packInfo.size > maxCachePackBytes) throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  const header = await readPinnedCachePrefix(path.join(directory, packPath), packInfo, 12);
+  if (header.subarray(0, 4).toString('ascii') !== 'PACK' || header.readUInt32BE(8) > maxCacheObjects) {
+    throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  }
+  const config = format === 'sha1' ? '[core]\n\trepositoryformatversion = 0\n\tbare = true\n'
+    : '[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\tobjectformat = sha256\n';
+  for (const [file, expected] of [['HEAD', `${commit}\n`], ['config', config]]) {
+    const info = await record(file, false);
+    if (info.size !== BigInt(expected.length)
+      || (await readPinnedCachePrefix(path.join(directory, file), info, expected.length)).toString('utf8') !== expected) {
+      throw new WorkspaceGitSnapshotError('git_cache_invalid');
+    }
+  }
+  return { storeFingerprint: createHash('sha256').update(JSON.stringify(['git-cache-footprint-v1', stamp])).digest('hex'), packPath };
+}
+
+async function readPinnedCachePrefix(file: string, expected: BigIntStats, length: number): Promise<Buffer> {
+  const fd = await fs.open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const info = await fd.stat({ bigint: true });
+    if (!info.isFile() || info.dev !== expected.dev || info.ino !== expected.ino || info.size !== expected.size
+      || info.mtimeNs !== expected.mtimeNs || info.ctimeNs !== expected.ctimeNs) throw new WorkspaceGitSnapshotError('git_cache_invalid');
+    const bytes = Buffer.alloc(length);
+    const { bytesRead } = await fd.read(bytes, 0, length, 0);
+    if (bytesRead !== length) throw new WorkspaceGitSnapshotError('git_cache_invalid');
+    return bytes;
+  } finally {
+    await fd.close();
+  }
 }
 
 async function requireSelfContainedObjectStore(directory: string, commit: string): Promise<void> {
@@ -169,13 +280,24 @@ async function trustedGitExecutable(gitDirectory: string): Promise<string> {
   throw new WorkspaceGitSnapshotError('git_unavailable');
 }
 
-async function git(executable: string, cwd: string, args: string[], input?: string): Promise<Buffer> {
+function verifyCacheGit(executable: string, cwd: string, args: string[]): Promise<Buffer> {
+  // Darwin does not support this address-space limit; still bound input, allocations, and time there.
+  const argv = [...cacheGit, ...args];
+  if (process.platform === 'linux') {
+    return git('/bin/sh', cwd, ['-c', 'ulimit -v 786432 || exit 125; exec "$@"', 'lark-git-verifier',
+      executable, ...argv], undefined, 60_000);
+  }
+  return git(executable, cwd, argv, undefined, 60_000);
+}
+
+async function git(executable: string, cwd: string, args: string[], input?: string, timeout = 10_000): Promise<Buffer> {
   const running = exec(executable, args, {
-    cwd, timeout: 10_000, maxBuffer: 256 * 1024, encoding: 'buffer',
+    cwd, timeout, killSignal: 'SIGKILL', maxBuffer: 256 * 1024, encoding: 'buffer',
     env: {
       PATH: '/usr/bin:/bin', LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_OPTIONAL_LOCKS: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1',
       GIT_ALLOW_PROTOCOL: '', GIT_TERMINAL_PROMPT: '0',
+      GIT_ALLOC_LIMIT: '67108864',
     },
   });
   running.child.stdin?.on('error', () => {});

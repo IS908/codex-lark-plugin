@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { deflateSync, inflateSync } from 'node:zlib';
-import { gitSnapshotKey, inspectWorkspaceGitSnapshot } from '../src/workspace-git-snapshot.js';
+import { gitSnapshotKey, inspectWorkspaceGitSnapshot, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-workspace-git-snapshot-'));
@@ -77,6 +77,58 @@ try {
   git('--git-dir', bare, 'config', 'include.path', path.join(base, 'not-needed'));
   await assert.rejects(inspectWorkspaceGitSnapshot(bareRequest), { code: 'git_directory_not_self_contained' });
 
+  async function makeCache(name: string, revisions: string[], selected = commit, origin = source) {
+    const directory = path.join(base, name);
+    await fs.mkdir(path.join(directory, 'objects', 'pack'), { recursive: true });
+    await fs.mkdir(path.join(directory, 'refs'));
+    await fs.writeFile(path.join(directory, 'HEAD'), selected + '\n');
+    const cacheConfig = selected.length === 40 ? '[core]\n\trepositoryformatversion = 0\n\tbare = true\n'
+      : '[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\tobjectformat = sha256\n';
+    await fs.writeFile(path.join(directory, 'config'), cacheConfig);
+    execFileSync('git', ['-C', origin, 'pack-objects', '--revs', path.join(directory, 'objects', 'pack', 'pack')], {
+      env: { PATH: process.env.PATH, HOME: base, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+      input: revisions.join('\n') + '\n', stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return { ...request, commit: selected, gitDirectory: await pinWorkspacePath(base, directory) };
+  }
+  const cache = await makeCache('normalized-cache', [commit]);
+  const verified = await verifyWorkspaceGitCache(cache);
+  assert.equal(verified.key, snapshot.key);
+  assert.match(verified.storeFingerprint, /^[0-9a-f]{64}$/);
+  assert.deepEqual(await verifyWorkspaceGitCache(cache), verified);
+  const config = path.join(cache.gitDirectory.directory, 'config');
+  const configContents = await fs.readFile(config);
+  await fs.appendFile(config, '[fsck]\n\tmissingTree = ignore\n');
+  await assert.rejects(verifyWorkspaceGitCache(cache), { code: 'git_cache_invalid' });
+  const replacementConfig = path.join(base, 'replacement-config');
+  await fs.writeFile(replacementConfig, configContents);
+  await fs.rename(replacementConfig, config);
+  assert.notEqual((await verifyWorkspaceGitCache(cache)).storeFingerprint, verified.storeFingerprint);
+  const cachePacks = path.join(cache.gitDirectory.directory, 'objects', 'pack');
+  const packFile = path.join(cachePacks, (await fs.readdir(cachePacks)).find((file) => file.endsWith('.pack'))!);
+  const idxFile = packFile.replace(/\.pack$/, '.idx');
+  const idxData = await fs.readFile(idxFile);
+  await fs.chmod(idxFile, 0o600);
+  await fs.truncate(idxFile, 16);
+  await assert.rejects(verifyWorkspaceGitCache(cache), { code: 'git_cache_invalid' });
+  await fs.writeFile(idxFile, idxData);
+  const secondLink = path.join(base, 'shared-pack');
+  await fs.link(packFile, secondLink);
+  await assert.rejects(verifyWorkspaceGitCache(cache), { code: 'git_cache_invalid' });
+  await fs.unlink(secondLink);
+  await fs.chmod(packFile, 0o600);
+  await fs.truncate(packFile, 24);
+  await assert.rejects(verifyWorkspaceGitCache(cache), { code: 'git_cache_invalid' });
+
+  git('-C', source, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qam', 'second fixture');
+  const extra = git('-C', source, 'rev-parse', 'HEAD');
+  const overbroad = await makeCache('cache-with-extra-objects', [extra]);
+  assert.deepEqual(await inspectWorkspaceGitSnapshot(overbroad), snapshot);
+  await assert.rejects(verifyWorkspaceGitCache(overbroad), { code: 'git_cache_invalid' });
+  const incomplete = await makeCache('cache-with-missing-objects', [extra, `^${commit}`], extra);
+  assert.equal((await inspectWorkspaceGitSnapshot(incomplete)).commit, extra);
+  await assert.rejects(verifyWorkspaceGitCache(incomplete), { code: 'git_cache_invalid' });
+
   const sha256Repo = path.join(base, 'sha256-source');
   git('init', '-q', '--object-format=sha256', sha256Repo);
   git('-C', sha256Repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'fixture');
@@ -86,6 +138,8 @@ try {
   assert.equal(sha256.objectFormat, 'sha256');
   assert.equal(sha256.commit.length, 64);
   assert.notEqual(sha256.key, snapshot.key);
+  const sha256Cache = await makeCache('sha256-cache', [sha256Commit], sha256Commit, sha256Repo);
+  assert.equal((await verifyWorkspaceGitCache(sha256Cache)).key, sha256.key);
 
   const alternate = path.join(gitDirectory.directory, 'objects', 'info', 'alternates');
   await fs.writeFile(alternate, '', { flag: 'wx' });
