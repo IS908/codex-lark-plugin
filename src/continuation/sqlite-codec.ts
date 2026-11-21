@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { workspaceProjectBindingSchema } from '../domain/workspace.js';
-import { managedGitSelectionSchema, managedWorkspaceRootsSchema } from '../domain/managed-workspace.js';
+import { dependenciesMatchManagedGit, managedGitSelectionSchema, managedWorkspaceRootsSchema } from '../domain/managed-workspace.js';
+import { workspaceDependencySelectionsSchema } from '../domain/workspace-dependency.js';
 import { isDeepStrictEqual } from 'node:util';
 import {
   CONTINUATION_CONTRACT_ID_PATTERN,
@@ -1162,7 +1163,7 @@ function validatePermissionEnvelope(
     (envelope.profile !== 'bounded' && envelope.profile !== 'trusted_personal_workspace')
     || !filesystem
     || !hasExactKeys(filesystem as unknown as Record<string, unknown>, [
-      'root', 'mode', 'requestedPaths', 'workspaceProject', 'managedWorkspaceRoots', 'managedWorkspaceGit',
+      'root', 'mode', 'requestedPaths', 'workspaceProject', 'managedWorkspaceRoots', 'managedWorkspaceGit', 'dependencySelections',
     ])
     || (filesystem.workspaceProject !== undefined
       && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success)
@@ -1170,6 +1171,9 @@ function validatePermissionEnvelope(
       && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success))
     || (filesystem.managedWorkspaceGit !== undefined
       && (!filesystem.managedWorkspaceRoots || !managedGitSelectionSchema.safeParse(filesystem.managedWorkspaceGit).success))
+    || (filesystem.dependencySelections !== undefined && (!filesystem.managedWorkspaceRoots
+      || !workspaceDependencySelectionsSchema.safeParse(filesystem.dependencySelections).success
+      || !dependenciesMatchManagedGit(filesystem.dependencySelections, filesystem.managedWorkspaceGit)))
     || typeof filesystem.root !== 'string'
     || (requireAbsoluteRoot && !path.isAbsolute(filesystem.root))
     || (filesystem.mode !== 'read-only' && filesystem.mode !== 'workspace-write')

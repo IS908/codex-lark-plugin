@@ -12,20 +12,24 @@ export const MANAGED_GIT_CHECKOUT_LEAF = 'git-checkout';
 // Node has no mkdirat API. The child uses its kernel-held cwd as the directory handle.
 const mkdirProgram = String.raw`
   const fs = require('node:fs');
-  const [leaf, parentPath, device, inode] = process.argv.slice(1);
+  const [leaf, parentPath, device, inode, temporary] = process.argv.slice(1);
   const respond = (value) => process.stdout.write(JSON.stringify(value));
   try {
     const parent = fs.statSync('.', { bigint: true });
+    const uid = process.geteuid && BigInt(process.geteuid());
+    const owned = parent.uid === uid;
+    const sticky = temporary === 'temporary' && (parent.mode & 0o1000n) !== 0n;
+    const trusted = owned || (temporary === 'temporary' && parent.uid === 0n);
     if (String(parent.dev) !== device || String(parent.ino) !== inode || process.cwd() !== parentPath) {
       respond({ error: 'directory_changed' });
-    } else if (!process.geteuid || parent.uid !== BigInt(process.geteuid()) || (parent.mode & 0o022n) !== 0n) {
+    } else if (uid === undefined || !trusted || ((parent.mode & 0o022n) !== 0n && !sticky)) {
       respond({ error: 'unprotected_root' });
     } else {
       fs.mkdirSync(leaf, { mode: 0o700 });
       const fd = fs.openSync(leaf, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
       try {
         const info = fs.fstatSync(fd, { bigint: true });
-        if (!info.isDirectory() || info.uid !== parent.uid || (info.mode & 0o077n) !== 0n) {
+        if (!info.isDirectory() || info.uid !== uid || (info.mode & 0o077n) !== 0n) {
           respond({ error: 'directory_changed' });
         } else {
           respond({ device: String(info.dev), inode: String(info.ino) });
@@ -48,12 +52,19 @@ export function mkdirGitCheckoutInsidePinnedRun(runRoot: WorkspaceProjectBinding
   return mkdirInsideRoot(runRoot, MANAGED_GIT_CHECKOUT_LEAF);
 }
 
-async function mkdirInsideRoot(root: WorkspaceProjectBinding, leaf: string): Promise<WorkspaceProjectBinding> {
+export async function mkdirTemporaryInsidePinnedRoot(root: WorkspaceProjectBinding, leaf: string): Promise<WorkspaceProjectBinding> {
+  if (!/^(?:lark-codex-exec|lark-dependency-(?:probe|install|snapshot)|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) {
+    throw new ManagedWorkspaceStorageError('invalid_binding');
+  }
+  return mkdirInsideRoot(root, leaf, true);
+}
+
+async function mkdirInsideRoot(root: WorkspaceProjectBinding, leaf: string, temporary = false): Promise<WorkspaceProjectBinding> {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError('unprotected_root');
   let response;
   try {
     const { stdout } = await exec(process.execPath,
-      ['--input-type=commonjs', '-e', mkdirProgram, '--', leaf, root.directory, root.device, root.inode], {
+      ['--input-type=commonjs', '-e', mkdirProgram, '--', leaf, root.directory, root.device, root.inode, temporary ? 'temporary' : 'managed'], {
         cwd: root.directory, env: {}, maxBuffer: 1024, timeout: 10_000,
       });
     response = JSON.parse(stdout);

@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
@@ -123,6 +124,8 @@ import {
   openContinuationDatabase,
 } from './sqlite-database.js';
 import { allocateContinuationWorkspace, continuationArtifactView, type ContinuationWorkspacePolicy } from './managed-workspace.js';
+import { managedWorkspaceConfigPath } from '../runtime-paths.js';
+import { loadWorkspaceDependencyWriteGuard, WorkspaceDependencyPolicyError } from '../workspace-dependency-registry.js';
 
 interface SqliteContinuationRepositoryOptions {
   databasePath: string;
@@ -163,13 +166,26 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     options: SqliteContinuationRepositoryOptions,
   ): Promise<SqliteContinuationRepository> {
     const databasePath = path.resolve(options.databasePath);
+    const artifacts = options.artifactStore ?? new ContinuationArtifactStore(options.artifactsDir);
+    const inputs = options.inputStore ?? new ContinuationInputStore(
+      options.inputsDir ?? path.join(path.dirname(path.resolve(options.artifactsDir)), 'inputs'),
+    );
+    const guard = await loadWorkspaceDependencyWriteGuard(options.managedWorkspacePolicy?.managedWorkspaceConfigPath ?? managedWorkspaceConfigPath,
+      { allowMissingCachesForStorage: true });
+    if (guard) {
+      if (!(inputs instanceof ContinuationInputStore)) throw new WorkspaceDependencyPolicyError('dependency_storage_unverifiable');
+      await guard.assertStorageDirectories([path.dirname(databasePath), artifacts.rootDir, inputs.rootDir]);
+      for (const suffix of ['', '-wal', '-shm', '-journal']) {
+        const info = await fs.lstat(`${databasePath}${suffix}`, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return undefined;
+          throw error;
+        });
+        if (info && (!info.isFile() || info.nlink !== 1n)) throw new WorkspaceDependencyPolicyError('dependency_storage_unverifiable');
+      }
+    }
     const database = await openContinuationDatabase(databasePath);
     try {
-      const artifacts = options.artifactStore ?? new ContinuationArtifactStore(options.artifactsDir);
       await artifacts.ensureRoot();
-      const inputs = options.inputStore ?? new ContinuationInputStore(
-        options.inputsDir ?? path.join(path.dirname(path.resolve(options.artifactsDir)), 'inputs'),
-      );
       await inputs.ensureRoot();
       const repository = new SqliteContinuationRepository(
         database,

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.19.0] - 2026-11-22
+
+### Added
+- Let operators register verified offline npm and pip artifacts for pinned projects. Foreground turns, prompt Cron runs, and Async Tasks install into their own managed directories without sharing writable dependencies (#397).
+- Validate saved cache approvals and installation receipts on restart. Revoked or incompatible inputs and interrupted installs fail explicitly, without modifying existing output paths or re-running committed delivery work.
+
 ## [2.18.1] - 2026-11-22
 
 ### Fixed

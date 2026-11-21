@@ -238,6 +238,7 @@ export interface ContinuationPermissionEnvelope {
     workspaceProject?: import('./workspace.js').WorkspaceProjectBinding;
     managedWorkspaceRoots?: import('./managed-workspace.js').ManagedWorkspaceRoots;
     managedWorkspaceGit?: import('./managed-workspace.js').ManagedGitSelection;
+    dependencySelections?: import('./workspace-dependency.js').WorkspaceDependencySelection[];
   };
   hostTools: string[];
   network: 'none' | 'enabled';

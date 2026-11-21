@@ -43,6 +43,7 @@ import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/wor
 import { MANAGED_DELIVERY_MAX_BYTES, MANAGED_DELIVERY_MAX_FILES, type ManagedArtifactReference, type ManagedRunAllocation } from './domain/managed-workspace.js';
 import { managedGitCheckoutSessionScope, protectLegacyGitWorkspace, withManagedWorkspace } from './managed-workspace-exec.js';
 import { admitManagedForegroundRun, managedForegroundRunOwner } from './managed-workspace-admission.js';
+import { isManagedWorkspaceDependencyError } from './managed-workspace-dependencies.js';
 import { resolveManagedGitSelection } from './managed-git-registry.js';
 import { ManagedWorkspaceStorageError, validateManagedRunDirectory } from './managed-workspace-storage.js';
 import { readManagedArtifact } from './managed-workspace-artifact.js';
@@ -494,7 +495,7 @@ export async function deliverMessageViaCodexExec(
   };
   const foreground = message.chatType === 'p2p' || message.chatType === 'group' || message.chatType === 'doc_comment';
   const workspaceOwner = foreground && opts.managedWorkspaceStore ? managedForegroundRunOwner(message, sessionKey) : undefined;
-  const managedStore = workspaceOwner ? opts.managedWorkspaceStore?.() : undefined;
+  const managedStore = workspaceOwner || opts.managedWorkspace ? opts.managedWorkspaceStore?.() : undefined;
   const priorManaged = workspaceOwner ? managedStore?.get(workspaceOwner) : undefined;
   const priorUnmanaged = workspaceOwner ? managedStore?.getUnmanagedForeground(workspaceOwner.runId) : undefined;
   if (priorUnmanaged && (priorManaged || priorUnmanaged.sessionKey !== sessionKey)) {
@@ -544,6 +545,7 @@ export async function deliverMessageViaCodexExec(
     configPath: appConfig.managedWorkspaceConfigPath, authorizedRoot: workspaceOptions.authorizedRoot, project: workspace,
     sourceRegistryPath: workspaceOptions.registryPath,
     sandbox: appConfig.codexExecSandbox,
+    codexCommand: appConfig.codexExecCommand,
   }) : opts.managedWorkspace;
   if (managed && !sameWorkspaceProject(managed.project, workspace)) {
     throw new ManagedWorkspaceStorageError('invalid_binding');
@@ -684,7 +686,7 @@ export async function deliverMessageViaCodexExec(
     };
     return runCodexExec(managed ? await withManagedWorkspace(guardedRequest, managed, {
       configPath: appConfig.managedWorkspaceConfigPath, sourceRegistryPath: workspaceOptions.registryPath,
-    }) : await protectLegacyGitWorkspace(guardedRequest, appConfig.managedWorkspaceConfigPath));
+    }, managedStore) : await protectLegacyGitWorkspace(guardedRequest, appConfig.managedWorkspaceConfigPath));
   };
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
   try {
@@ -693,7 +695,7 @@ export async function deliverMessageViaCodexExec(
   } catch (err) {
     if (!request.resumeSessionId || opts.abortSignal?.aborted || err instanceof CodexExecAbortedError
       || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError
-      || err instanceof ManagedWorkspaceStorageError) {
+      || err instanceof ManagedWorkspaceStorageError || isManagedWorkspaceDependencyError(err)) {
       await actionChannel.cleanup();
       throw err;
     }

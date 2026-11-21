@@ -23,7 +23,8 @@ import type {
 } from '../domain/durable-run.js';
 import { serializeDurableRunJson } from '../domain/durable-run.js';
 import { workspaceProjectBindingSchema } from '../domain/workspace.js';
-import { managedGitSelectionSchema, managedWorkspaceRootsSchema } from '../domain/managed-workspace.js';
+import { dependenciesMatchManagedGit, managedGitSelectionSchema, managedWorkspaceRootsSchema } from '../domain/managed-workspace.js';
+import { workspaceDependencySelectionsSchema } from '../domain/workspace-dependency.js';
 import { formatContinuationDiagnosticMessage } from '../diagnostic-log-format.js';
 import type {
   ContinuationClaimMutationResult,
@@ -1064,10 +1065,18 @@ function isPermissionEnvelope(value: unknown): boolean {
         && managedWorkspaceRootsSchema.safeParse(value.filesystem.managedWorkspaceRoots).success))
     && (value.filesystem.managedWorkspaceGit === undefined
       || (value.filesystem.managedWorkspaceRoots !== undefined && managedGitSelectionSchema.safeParse(value.filesystem.managedWorkspaceGit).success))
+    && (value.filesystem.dependencySelections === undefined || (value.filesystem.managedWorkspaceRoots !== undefined
+      && validDependencySelections(value.filesystem.dependencySelections, value.filesystem.managedWorkspaceGit)))
     && isStringArray(value.hostTools)
     && ['none', 'enabled'].includes(String(value.network))
     && ['denied', 'allowed'].includes(String(value.externalSideEffects))
     && ['never', 'interactive'].includes(String(value.approval.mode));
+}
+
+function validDependencySelections(value: unknown, git: unknown): boolean {
+  const selections = workspaceDependencySelectionsSchema.safeParse(value);
+  const managedGit = managedGitSelectionSchema.safeParse(git);
+  return selections.success && dependenciesMatchManagedGit(selections.data, managedGit.data);
 }
 
 function isCheckpoint(value: unknown): boolean {

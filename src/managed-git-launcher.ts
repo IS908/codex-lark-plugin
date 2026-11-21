@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities,
@@ -7,6 +8,42 @@ import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
 import { workspacePathContains } from './workspace-projects.js';
 
 const systemPath = '/usr/bin:/bin';
+
+export function nativeCodexHome(env: NodeJS.ProcessEnv): string {
+  return env.CODEX_HOME?.trim() || path.join(env.HOME || os.homedir(), '.codex');
+}
+
+export async function assertCompatibleCodexLayers(env: NodeJS.ProcessEnv, workspaces: string[]): Promise<void> {
+  const unsupported = () => new ManagedWorkspaceStorageError('git_sandbox_layers_unsupported');
+  const exists = async (target: string) => fs.lstat(target).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return false;
+    throw unsupported();
+  });
+  const rejectRules = async (root: string) => {
+    const folder = path.join(root, 'rules');
+    if (!await exists(folder)) return;
+    try {
+      for await (const entry of await fs.opendir(folder)) if (entry.name.endsWith('.rules')) throw unsupported();
+    } catch { throw unsupported(); }
+  };
+  const home = nativeCodexHome(env);
+  if (!path.isAbsolute(home)) throw unsupported();
+  await rejectRules(home);
+  if (await exists(path.join(home, 'hooks.json'))) throw unsupported();
+  for (const name of ['config.toml', 'managed_config.toml', 'requirements.toml', 'hooks.json']) {
+    if (await exists(path.join('/etc/codex', name))) throw unsupported();
+  }
+  await rejectRules('/etc/codex');
+  const inspected = new Set<string>();
+  for (const workspace of workspaces) {
+    for (let directory = workspace; !inspected.has(directory); directory = path.dirname(directory)) {
+      inspected.add(directory);
+      const local = path.join(directory, '.codex');
+      if (await exists(path.join(local, 'config.toml')) || await exists(path.join(local, 'hooks.json'))) throw unsupported();
+      await rejectRules(local);
+    }
+  }
+}
 
 async function assertSystemDirectory(directory: string): Promise<void> {
   const parent = await fs.lstat(directory, { bigint: true });

@@ -1,6 +1,6 @@
 {
   "name": "codex-lark-plugin",
-  "version": "2.18.1",
+  "version": "2.19.0",
   "description": "Codex channel plugin for Feishu/Lark — chat with Codex through Feishu with local-file memory and scheduled jobs",
   "keywords": [
     "codex",
@@ -35,12 +35,15 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "cron-parser": "^5.10.0",
     "dotenv": "^17.4.2",
+    "tar": "7.5.23",
     "tsx": "^4.23.12",
+    "yauzl": "3.4.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2",
     "@types/node": "^24.13.3",
+    "@types/yauzl": "3.4.0",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
   },
   "overrides": {

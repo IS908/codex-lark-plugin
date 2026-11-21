@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.18.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.19.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -289,6 +289,8 @@ Linux 使用官方 `0.171.0` 软件包，保留 `bin/codex`、`codex-package.jso
 组可写的启动路径、不兼容的配置或命令规则、以及不支持的挂载布局均会被拒绝。
 运行只写自己的 checkout 和索引；源码与共享缓存保持只读，宿主 CLI 工具不可用。删除或修改登记会
 阻止不再匹配的已接纳运行，包括重启后的重试。不会拉取远端、迁移或清理文件，也不会回退到源码。
+
+npm 和 pip 可另行登记离线缓存；每次运行仍使用自己的安装目录。参见[离线依赖缓存配置](docs/workspace-dependencies.md)。
 
 ### 第 4 步：启动
 

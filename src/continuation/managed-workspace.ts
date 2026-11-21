@@ -21,7 +21,7 @@ export function continuationWorkspaceRoots(job: ContinuationJob, policy: Continu
 export async function allocateContinuationWorkspace(
   job: ContinuationJob, store: ManagedWorkspaceStore | undefined, policy: ContinuationWorkspacePolicy | undefined,
 ): Promise<ManagedRunAllocation | undefined> {
-  const { managedWorkspaceRoots, workspaceProject, managedWorkspaceGit } = job.permissions.filesystem;
+  const { managedWorkspaceRoots, workspaceProject, managedWorkspaceGit, dependencySelections } = job.permissions.filesystem;
   if (!managedWorkspaceRoots) {
     if (policy) await resolveManagedGitSelection({ configPath: policy.managedWorkspaceConfigPath,
       authorizedRoots: workspaceProject ? continuationWorkspaceRoots(job, policy)
@@ -43,6 +43,8 @@ export async function allocateContinuationWorkspace(
     authorizedRoots,
     sourceRegistryPath: policy.sourceRegistryPath,
     sourceRegistryRoot,
+    dependencySelections,
+    dependencyRegistryConfigPath: policy.managedWorkspaceConfigPath,
     ...(managedWorkspaceGit ? { git: managedWorkspaceGit } : {}),
   });
 }

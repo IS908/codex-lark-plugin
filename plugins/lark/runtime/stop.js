@@ -4,7 +4,7 @@ import {
 } from "./chunks/chunk-HC52HRFT.js";
 import {
   appConfig
-} from "./chunks/chunk-WRZ2HO6K.js";
+} from "./chunks/chunk-SZVMSHRI.js";
 import "./chunks/chunk-WOBAO6HM.js";
 
 // src/stop.ts

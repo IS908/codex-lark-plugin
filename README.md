@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.18.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.19.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -361,6 +361,8 @@ the source and shared object store remain read-only, and unsandboxed host CLI
 tools are unavailable for that run. Removing or changing a registry entry
 blocks previously admitted runs that no longer match, including after restart.
 Nothing fetches, deletes, migrates, or silently falls back to the source.
+
+For separately approved npm and pip caches, see [offline dependency reuse](docs/workspace-dependencies.md).
 
 ### 4. Start
 
