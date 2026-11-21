@@ -10,6 +10,7 @@ import { resolveManagedGitSelection } from './managed-git-registry.js';
 import { loadWorkspaceDependencyWriteGuard } from './workspace-dependency-registry.js';
 import { readWorkspaceDependencyMountPolicy, type WorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
 import { inventoryWorkspaceStorage } from './workspace-storage.js';
+import { assertDenyOnlyWorkspaceAcls } from './managed-workspace-ancestry.js';
 
 const day = 24 * 60 * 60 * 1000;
 const terminalStatuses = new Set(['completed', 'partial', 'blocked', 'failed', 'cancelled']);
@@ -56,15 +57,17 @@ export async function previewWorkspaceCleanup(request: PreviewRequest) {
   try {
     const layout = await observeRoots();
     if (!layout) return { ...report, status: 'unavailable' as const, observations: ['managed_storage_disabled'] };
-    const { roots, mounts, guard } = layout;
+    const { roots, mounts } = layout;
     report.scratchRoot = roots.scratch.directory;
     const snapshot = await readWorkspaceCleanupLedger(request.databasePath, (db) => readWorkspaceCleanupReferences(db, roots.scratch), async (temp) => {
       const authorized = await Promise.all(request.authorizedRoots.map((directory) => fs.realpath(directory)));
       const protectedPaths = [roots.scratch.directory, roots.artifacts.directory, path.dirname(request.databasePath), path.dirname(request.configPath), ...authorized];
-      if (!mounts.supports(temp) || protectedPaths.some((protectedPath) => pathsOverlap(temp, protectedPath, mounts))) {
+      const current = await observeRoots();
+      if (!current || !sameWorkspaceProject(roots.scratch, current.roots.scratch) || !sameWorkspaceProject(roots.artifacts, current.roots.artifacts)
+        || !current.mounts.supports(temp) || protectedPaths.some((protectedPath) => pathsOverlap(temp, protectedPath, current.mounts))) {
         throw new WorkspaceCleanupLedgerError('ledger_unavailable');
       }
-      await guard?.assertNewDirectory(temp);
+      await current.guard?.assertNewDirectory(temp);
     });
     const { references, invalidRows, truncated, paths } = snapshot.value;
     const registered = new Set(references.map(({ leaf }) => leaf));
@@ -168,16 +171,24 @@ function supportsScratch(directory: string, root: WorkspaceProjectBinding, mount
 }
 
 async function directoryStamp(binding: WorkspaceProjectBinding) {
-  const stat = await fs.lstat(binding.directory, { bigint: true });
-  if (!stat.isDirectory() || `${stat.dev}` !== binding.device || `${stat.ino}` !== binding.inode) throw new Error('Displaced directory.');
-  return [stat.dev, stat.ino, stat.mode, stat.uid, stat.mtimeNs, stat.ctimeNs].join(':');
+  const observe = async () => {
+    const stat = await fs.lstat(binding.directory, { bigint: true });
+    if (!stat.isDirectory() || `${stat.dev}` !== binding.device || `${stat.ino}` !== binding.inode
+      || !process.geteuid || stat.uid !== BigInt(process.geteuid()) || (stat.mode & 0o022n) !== 0n) throw new Error('Displaced or unprotected directory.');
+    return [stat.dev, stat.ino, stat.mode, stat.uid, stat.mtimeNs, stat.ctimeNs].join(':');
+  };
+  const stamp = await observe();
+  await assertDenyOnlyWorkspaceAcls([binding.directory]);
+  if (await observe() !== stamp) throw new Error('Directory permissions changed while reading.');
+  return stamp;
 }
 
 async function isPinnedScratchEmpty(binding: WorkspaceProjectBinding): Promise<boolean> {
   // The helper holds cwd as a kernel directory reference while checking identity and emptiness.
   const program = `const fs = require('node:fs');
     const stat = fs.statSync('.', { bigint: true });
-    if (String(stat.dev) !== process.argv[1] || String(stat.ino) !== process.argv[2]) process.exit(2);
+    if (String(stat.dev) !== process.argv[1] || String(stat.ino) !== process.argv[2] || !process.geteuid
+      || stat.uid !== BigInt(process.geteuid()) || (stat.mode & 0o022n) !== 0n) process.exit(2);
     const directory = fs.opendirSync('.');
     try { process.stdout.write(directory.readSync() === null ? 'empty' : 'occupied'); } finally { directory.closeSync(); }`;
   const { stdout } = await exec(process.execPath, ['--input-type=commonjs', '-e', program, '--', binding.device, binding.inode],

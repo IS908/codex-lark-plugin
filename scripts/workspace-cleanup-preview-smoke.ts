@@ -129,6 +129,17 @@ try {
     if (swapped) { await fs.rmdir(unused.scratch.directory); await fs.rename(moved, unused.scratch.directory); }
   }
 
+  observedScratch = 0;
+  const permissions = mock.method(fs, 'lstat', async (...args: Parameters<typeof lstat>) => {
+    if (args[0] === unused.scratch.directory && ++observedScratch === 2) await fs.chmod(unused.scratch.directory, 0o777);
+    return lstat(...args);
+  });
+  try {
+    const unprotected = await previewWorkspaceCleanup(options);
+    assert.ok(observedScratch >= 2);
+    assert.equal(unprotected.entries.find(({ leaf }) => leaf === path.basename(unused.scratch.directory))?.disposition, 'retain');
+  } finally { permissions.mock.restore(); await fs.chmod(unused.scratch.directory, 0o700); }
+
   let changed = false;
   const interposer = mock.method(fs, 'opendir', async (...args: Parameters<typeof opendir>) => {
     if (args[0] === scratchRoot && !changed) {
