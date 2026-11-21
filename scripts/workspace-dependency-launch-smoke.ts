@@ -23,6 +23,7 @@ try {
   const marker = path.join(root, 'started');
   const command = path.join(root, 'fixture-codex');
   await fs.writeFile(command, `#!/bin/sh
+/bin/cat >/dev/null
 printf launched > "$LAUNCH_FIXTURE_MARKER"
 while [ "$#" -gt 1 ]; do
   if [ "$1" = --output-last-message ]; then printf fixture > "$2"; exit 0; fi
