@@ -6,8 +6,11 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { mock } from 'node:test';
 import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
+import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
+import type { ManagedGitSelection } from '../src/domain/managed-workspace.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
 import { previewWorkspaceCleanup } from '../src/workspace-cleanup-preview.js';
+import { readWorkspaceGitCacheIdentity } from '../src/workspace-git-snapshot.js';
 
 const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'workspace-cleanup-preview-fixture-')));
 const work = path.join(home, 'work');
@@ -26,15 +29,20 @@ await fs.writeFile(configPath, JSON.stringify({ version: 1, scratchRoot, artifac
 const repository = await SqliteDurableRunRepository.open({ databasePath });
 const database = new DatabaseSync(databasePath);
 try {
-  const store = repository.getManagedWorkspaceStore();
+  const firstBoot = { host: 'a'.repeat(64), boot: 'b'.repeat(64) };
+  const secondBoot = { ...firstBoot, boot: 'c'.repeat(64) };
+  let workerEpoch = firstBoot;
+  const exclusive = async () => true;
+  const store = new SqliteManagedWorkspaceStore(database, async () => workerEpoch, exclusive);
   const roots = { scratch: await pinWorkspacePath(work, scratchRoot), artifacts: await pinWorkspacePath(work, artifactRoot) };
   const authorizedRoots = [work] as const;
   const sourceBinding = await pinWorkspacePath(work, project);
-  const options = { configPath, databasePath, authorizedRoots, minimumAgeDays: 30, now };
+  const options = { configPath, databasePath, authorizedRoots, minimumAgeDays: 30, now, readEpoch: async () => firstBoot, checkExclusiveStorage: exclusive };
   const register = async (runId: string, kind: 'foreground' | 'cron_prompt' | 'async_task', status: 'queued' | 'cancelled',
-    delivery: 'pending' | 'sent' = 'sent') => {
+    delivery: 'pending' | 'sent' = 'sent', git?: ManagedGitSelection) => {
     const allocation = await store.ensure({ roots, owner: { runId, kind }, createdAt: old, authorizedRoots,
-      ...(kind === 'foreground' ? { foregroundSessionKey: 'oc_fixture' } : {}), dependencyRegistryConfigPath: configPath });
+      ...(kind === 'foreground' ? { foregroundSessionKey: 'oc_fixture' } : {}), ...(git ? { git, project: sourceBinding } : {}),
+      dependencyRegistryConfigPath: configPath });
     if (kind !== 'foreground') {
       await repository.create({ runId, workloadKind: kind, idempotencyKey: `fixture:${runId}`,
         inputVersion: 1, input: { job: { objective: 'do-not-print-task-data',
@@ -51,6 +59,13 @@ try {
     }
     return allocation;
   };
+  const recordAttempt = (runId: string, pending = false) => {
+    database.prepare('UPDATE durable_runs SET attempt_count = 1 WHERE run_id = ?').run(runId);
+    database.prepare(`INSERT INTO durable_attempts (attempt_id, run_id, ordinal, worker_id, claimed_at, heartbeat_at,
+      lease_expires_at, execution_started_at, finished_at, execution_phase, outcome, recovery_pending)
+      VALUES (?, ?, 1, 'worker', ?, ?, ?, ?, ?, 'execution_started', ?, ?)`).run(`attempt:${runId}`, runId,
+      old, old, old, old, pending ? null : old, pending ? null : 'cancelled', pending ? 1 : 0);
+  };
   const unused = await register('unused', 'cron_prompt', 'cancelled');
   const foreground = await register('foreground', 'foreground', 'queued');
   store.rememberForegroundArtifacts(foreground.owner.runId, { version: 2, sessionKey: 'oc_fixture', actorId: 'ou_fixture',
@@ -59,7 +74,42 @@ try {
   const queued = await register('queued', 'cron_prompt', 'queued');
   const pending = await register('pending', 'async_task', 'cancelled', 'pending');
   const attempted = await register('attempted', 'async_task', 'cancelled');
-  database.prepare('UPDATE durable_runs SET attempt_count = 1 WHERE run_id = ?').run(attempted.owner.runId);
+  recordAttempt(attempted.owner.runId);
+  const interrupted = await register('interrupted', 'async_task', 'cancelled');
+  recordAttempt(interrupted.owner.runId, true);
+  const oldWriter = await register('old-writer', 'cron_prompt', 'cancelled');
+  recordAttempt(oldWriter.owner.runId);
+  const previousRuntime = new DatabaseSync(databasePath);
+  try { previousRuntime.prepare('UPDATE workspace_run_allocations SET last_used_at = last_used_at WHERE run_id = ?').run(oldWriter.owner.runId); }
+  finally { previousRuntime.close(); }
+  workerEpoch = { ...firstBoot, host: 'd'.repeat(64) };
+  const foreign = await register('foreign', 'cron_prompt', 'cancelled');
+  recordAttempt(foreign.owner.runId);
+  workerEpoch = firstBoot;
+
+  const bare = path.join(work, 'git-cache');
+  const pack = path.join(bare, 'objects', 'pack');
+  await fs.mkdir(pack, { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.join(bare, 'refs'), { mode: 0o700 });
+  const gitCommand = (args: string[], stdin?: string) => execFileSync('git', args, { input: stdin, encoding: 'utf8',
+    env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } }).trim();
+  gitCommand(['init', '-q', '--object-format=sha1', project]);
+  await fs.writeFile(path.join(project, 'tracked.txt'), 'original');
+  await fs.writeFile(path.join(project, '.gitignore'), 'ignored.txt\n');
+  gitCommand(['-C', project, 'add', 'tracked.txt', '.gitignore']);
+  gitCommand(['-C', project, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture']);
+  const commit = gitCommand(['-C', project, 'rev-parse', 'HEAD']);
+  await fs.writeFile(path.join(bare, 'HEAD'), `${commit}\n`);
+  await fs.writeFile(path.join(bare, 'config'), '[core]\n\trepositoryformatversion = 0\n\tbare = true\n');
+  gitCommand(['-C', project, '-c', 'pack.writeReverseIndex=false', 'pack-objects', '--no-write-bitmap-index', '--revs', path.join(pack, 'pack')], `${commit}\n`);
+  const gitDirectory = await pinWorkspacePath(work, bare);
+  const git = { cache: gitDirectory, ...await readWorkspaceGitCacheIdentity({ authorizedRoots, gitDirectory, commit,
+    repositoryId: 'e'.repeat(64), scope: 'cleanup-fixture' }) };
+  const cleanGit = await register('clean-git', 'cron_prompt', 'cancelled', 'sent', git);
+  recordAttempt(cleanGit.owner.runId);
+  const dirtyGit = await register('dirty-git', 'cron_prompt', 'cancelled', 'sent', git);
+  recordAttempt(dirtyGit.owner.runId);
+  await fs.writeFile(path.join(dirtyGit.gitCheckout!.checkout.directory, 'ignored.txt'), 'operator content');
   const retrySource = await register('retry-source', 'async_task', 'cancelled');
   const retry = await register('retry', 'async_task', 'queued');
   database.prepare("UPDATE durable_runs SET input_json = json_set(input_json, '$.job.retryOfJobId', ?) WHERE run_id = ?")
@@ -84,11 +134,50 @@ try {
   assert.ok(row(queued)?.reasons.includes('live_or_recoverable_run'));
   assert.ok(row(pending)?.reasons.includes('delivery_not_confirmed'));
   assert.ok(row(attempted)?.reasons.includes('process_quiescence_unverified'));
+  assert.ok(row(cleanGit)?.reasons.includes('process_quiescence_unverified'));
   assert.ok(row(retrySource)?.reasons.includes('retry_or_staging_reference'));
   assert.ok(row(alias)?.reasons.includes('directory_unverified'));
   assert.ok(row(withFile)?.reasons.includes('scratch_contains_files'));
   assert.deepEqual((await fs.readdir(scratchRoot)).sort(), before);
   assert.equal(await fs.readFile(path.join(unused.artifacts.directory, 'protected.txt'), 'utf8'), 'never touched');
+
+  const bootOptions = { ...options, readEpoch: async () => secondBoot };
+  const bootReport = await previewWorkspaceCleanup(bootOptions);
+  const finding = (allocation: typeof unused, input = bootReport) => input.entries.find(({ leaf }) => leaf === path.basename(allocation.scratch.directory));
+  assert.equal(finding(attempted)?.disposition, 'candidate');
+  assert.ok(finding(attempted)?.reasons.includes('last_use_on_prior_host_boot'));
+  assert.ok(finding(interrupted)?.reasons.includes('open_execution_reference'));
+  assert.ok(finding(pending)?.reasons.includes('delivery_not_confirmed'));
+  assert.ok(finding(oldWriter)?.reasons.includes('process_quiescence_unverified'));
+  assert.ok(finding(foreign)?.reasons.includes('process_quiescence_unverified'));
+  assert.ok(finding(cleanGit)?.reasons.includes('expired_original_checkout'));
+  assert.ok(finding(dirtyGit)?.reasons.includes('git_baseline_unverified_or_changed'));
+  const sharedStorage = await previewWorkspaceCleanup({ ...bootOptions, checkExclusiveStorage: async () => false });
+  assert.ok(finding(attempted, sharedStorage)?.reasons.includes('process_quiescence_unverified'));
+  const clean = cleanGit.gitCheckout!.checkout.directory;
+  await fs.writeFile(path.join(clean, '.git', 'refs', 'private'), `${commit}\n`);
+  assert.ok(finding(cleanGit, await previewWorkspaceCleanup(bootOptions))?.reasons.includes('git_baseline_unverified_or_changed'));
+  await fs.unlink(path.join(clean, '.git', 'refs', 'private'));
+  const tracked = path.join(clean, 'tracked.txt');
+  await fs.writeFile(tracked, 'changed by the run');
+  assert.ok(finding(cleanGit, await previewWorkspaceCleanup(bootOptions))?.reasons.includes('git_baseline_unverified_or_changed'));
+  await fs.writeFile(tracked, 'original');
+  const missingCache = `${bare}-unavailable`;
+  await fs.rename(bare, missingCache);
+  try { assert.ok(finding(cleanGit, await previewWorkspaceCleanup(bootOptions))?.reasons.includes('git_backing_unverified')); }
+  finally { await fs.rename(missingCache, bare); }
+  database.exec('DROP TRIGGER workspace_cleanup_forget_legacy_use');
+  assert.ok(finding(attempted, await previewWorkspaceCleanup(bootOptions))?.reasons.includes('process_quiescence_unverified'));
+  new SqliteManagedWorkspaceStore(database, async () => workerEpoch, exclusive);
+  assert.equal(database.prepare('SELECT host FROM workspace_cleanup_evidence WHERE run_id = ?').get(attempted.owner.runId)?.host, null);
+  const currentUse = await register('current-use', 'async_task', 'cancelled');
+  recordAttempt(currentUse.owner.runId);
+  workerEpoch = secondBoot;
+  for (const allocation of [currentUse, oldWriter]) {
+    await store.ensure({ roots, owner: allocation.owner, createdAt: old, authorizedRoots, dependencyRegistryConfigPath: configPath });
+  }
+  assert.ok(finding(currentUse, await previewWorkspaceCleanup(bootOptions))?.reasons.includes('process_quiescence_unverified'));
+  assert.equal(database.prepare('SELECT host FROM workspace_cleanup_evidence WHERE run_id = ?').get(oldWriter.owner.runId)?.host, null);
 
   const newArtifacts = path.join(work, 'new-artifacts');
   await fs.mkdir(newArtifacts, { mode: 0o700 });
@@ -163,7 +252,7 @@ try {
   assert.equal(JSON.parse(cli(['--json'])).readOnly, true);
   assert.match(cli([]), /read-only, advisory/);
   assert.doesNotMatch(cli(['--json']), /do-not-print/);
-  assert.deepEqual((await fs.readdir(scratchRoot)).sort(), before);
+  assert.deepEqual((await fs.readdir(scratchRoot)).sort(), [...before, path.basename(currentUse.scratch.directory)].sort());
 } finally {
   database.close();
   repository.close();

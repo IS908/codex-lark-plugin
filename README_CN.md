@@ -212,6 +212,12 @@ npm run --silent doctor -- --workspace-cleanup-preview --json
 `LARK_CONTINUATION_RETENTION_DAYS`；未知、活动、仍被引用或已变化的路径均保留。
 未登记和历史目录不会成为候选。命令不会启动插件、连接飞书或修改托管目录；结果只反映扫描时刻。
 
+任务结束不等于后台进程已退出。执行过的运行需要证明最后使用发生在同一可信本地主机的上一次系统启动，
+且没有未完成的执行或投递引用；重启插件本身不满足此条件。目前此证据仅支持已核验的 Apple silicon Mac
+和内置物理 Data 卷；其他主机的已执行目录仍保留。Git 工作区还必须能从固定缓存恢复，且和首次交付时的基线
+一致，包括跟踪文件、未跟踪文件和本地 Git 元数据。基线有改动、缺失或无法核实，
+包括安装器或运行留下额外内容时，都会保留目录。
+
 #### 选择工作项目
 
 管理员可选建 `~/.codex/channels/lark/runtime-config/workspace-projects.json`，

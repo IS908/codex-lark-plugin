@@ -3,19 +3,28 @@ import {
   ManagedWorkspaceStorageError,
   assertDenyOnlyWorkspaceAcls,
   assertProtectedWorkspacePath,
+  assertWorkspaceGitCacheIdentity,
+  hasExclusiveWorkspaceCleanupStorage,
+  hasLocalWorkspaceCleanupStorage,
+  hasWorkspaceCleanupWitnessTrigger,
   loadWorkspaceDependencyWriteGuard,
   managedRunDirectoryPath,
   managedRunOwnerSchema,
+  measureWorkspaceCleanupBaseline,
   mkdirTemporaryInsidePinnedRoot,
   parseManagedWorkspaceRecord,
+  parseWorkspaceCleanupEpoch,
   pinWorkspacePath,
   readManagedWorkspaceRoots,
+  readWorkspaceCleanupEpoch,
   readWorkspaceDependencyMountPolicy,
   require_lib,
   resolveManagedGitSelection,
   sameWorkspaceProject,
-  validateManagedRunDirectory
-} from "./chunks/chunk-6ZXOA5GM.js";
+  validateManagedRunDirectory,
+  verifyWorkspaceGitCache,
+  wasUsedOnPriorHostBoot
+} from "./chunks/chunk-7F6TUUVZ.js";
 import {
   __toESM,
   assertSupportedNodeVersion,
@@ -602,9 +611,16 @@ function readWorkspaceCleanupReferences(database, root) {
   const retrySource = new Set(retries.map(({ source }) => source));
   const prefix = root.directory + path3.sep;
   const upper = root.directory + String.fromCharCode(path3.sep.charCodeAt(0) + 1);
-  const selected = database.prepare(`SELECT w.*, r.status AS run_status, r.completed_at AS terminal_at,
+  const hasEvidence = !!database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_cleanup_evidence'").get();
+  const trustedEpoch = hasEvidence && hasWorkspaceCleanupWitnessTrigger(database);
+  const evidenceFields = hasEvidence ? "e.host, e.boot, e.scratch_baseline" : "NULL AS host, NULL AS boot, NULL AS scratch_baseline";
+  const evidenceJoin = hasEvidence ? "LEFT JOIN workspace_cleanup_evidence e ON e.workload_kind = w.workload_kind AND e.run_id = w.run_id" : "";
+  const selected = database.prepare(`SELECT w.*, ${evidenceFields}, r.status AS run_status, r.completed_at AS terminal_at,
     r.retained AS run_retained, (r.lease_owner IS NOT NULL OR r.lease_expires_at IS NOT NULL) AS has_lease,
-    r.attempt_count, EXISTS(SELECT 1 FROM durable_attempts a WHERE a.run_id = r.run_id) AS has_attempt,
+    r.attempt_count, (SELECT count(*) FROM durable_attempts a WHERE a.run_id = r.run_id) AS observed_attempt_count,
+    (EXISTS(SELECT 1 FROM durable_attempts a WHERE a.run_id = r.run_id AND (a.finished_at IS NULL OR a.recovery_pending <> 0))
+      OR EXISTS(SELECT 1 FROM durable_operation_receipts o WHERE o.run_id = r.run_id AND o.status = 'running')
+      OR EXISTS(SELECT 1 FROM durable_interrupts i WHERE i.run_id = r.run_id AND i.status = 'pending')) AS open_execution_reference,
     EXISTS(SELECT 1 FROM durable_outbox o WHERE o.run_id = r.run_id AND (o.status NOT IN ('sent', 'superseded')
       OR o.lease_expires_at IS NOT NULL OR o.worker_id IS NOT NULL)) AS unsettled_delivery,
     EXISTS(SELECT 1 FROM durable_outbox o WHERE o.run_id = r.run_id AND o.status = 'sent'
@@ -617,7 +633,7 @@ function readWorkspaceCleanupReferences(database, root) {
     (EXISTS(SELECT 1 FROM workspace_retry_artifact_stages s WHERE w.workload_kind = 'async_task' AND s.run_id = w.run_id)
       OR EXISTS(SELECT 1 FROM workspace_dependency_installs i WHERE i.workload_kind = w.workload_kind
       AND i.run_id = w.run_id AND i.receipt_json IS NULL)) AS pending_stage
-    FROM workspace_run_allocations w LEFT JOIN durable_runs r ON r.run_id = w.run_id AND r.workload_kind = w.workload_kind
+    FROM workspace_run_allocations w LEFT JOIN durable_runs r ON r.run_id = w.run_id AND r.workload_kind = w.workload_kind ${evidenceJoin}
     WHERE w.scratch_path >= ? AND w.scratch_path < ? ORDER BY w.scratch_path LIMIT ?`).all(prefix, upper, maxCleanupPreviewRows + 1);
   const references = [];
   let invalidRows = 0;
@@ -643,13 +659,16 @@ function readWorkspaceCleanupReferences(database, root) {
       terminalAt: typeof row.terminal_at === "string" ? row.terminal_at : null,
       retained: row.run_retained !== 0,
       lease: row.has_lease === 1,
-      attemptExists: row.has_attempt === 1,
+      observedAttemptCount: typeof row.observed_attempt_count === "number" ? row.observed_attempt_count : -1,
       attemptCount: typeof row.attempt_count === "number" || typeof row.attempt_count === "bigint" ? row.attempt_count : null,
+      openExecutionReference: row.open_execution_reference === 1,
       unsettledDelivery: row.unsettled_delivery === 1,
       terminalDeliverySent: row.terminal_delivery_sent === 1,
       foregroundDeliveryPending: row.foreground_delivery_pending === 1,
       retryReference: incomplete || retrySource.has(owner.data.runId),
-      pendingStage: row.pending_stage === 1
+      pendingStage: row.pending_stage === 1,
+      epoch: trustedEpoch ? parseWorkspaceCleanupEpoch(row.host, row.boot) : void 0,
+      scratchBaseline: typeof row.scratch_baseline === "string" && /^[a-f0-9]{64}$/.test(row.scratch_baseline) ? row.scratch_baseline : void 0
     });
   }
   return {
@@ -781,21 +800,32 @@ async function previewWorkspaceCleanup(request) {
     if (truncated) report.observations.push("ledger_limit");
     if (invalidRows) report.observations.push("invalid_ledger_rows");
     if (report.unregisteredObserved) report.observations.push("unregistered_entries_retained");
+    const storagePaths = [roots.scratch.directory, request.databasePath];
+    const local = await hasLocalWorkspaceCleanupStorage(storagePaths);
+    const exclusive = local && await (request.checkExclusiveStorage ?? hasExclusiveWorkspaceCleanupStorage)(storagePaths);
+    const epoch = exclusive ? await (request.readEpoch ?? readWorkspaceCleanupEpoch)() : void 0;
+    if (!local) report.observations.push("local_storage_unverified");
+    const baselineBudget = AbortSignal.timeout(2e4);
     const candidates = /* @__PURE__ */ new Map();
     for (const reference of references) {
-      const result = await inspect(reference, request, roots, mounts, truncated || invalidRows > 0);
+      const result = await inspect(reference, request, roots, mounts, truncated || invalidRows > 0, epoch, baselineBudget);
       report.entries.push(result.entry);
       if (result.candidate) candidates.set(result.entry, result.candidate);
     }
     if (candidates.size > 0) {
       const current = await observeRoots().catch(() => void 0);
-      if (!current || !sameWorkspaceProject(roots.scratch, current.roots.scratch) || !sameWorkspaceProject(roots.artifacts, current.roots.artifacts)) report.observations.push("policy_changed");
+      if (!current || !sameWorkspaceProject(roots.scratch, current.roots.scratch) || !sameWorkspaceProject(roots.artifacts, current.roots.artifacts) || !await hasLocalWorkspaceCleanupStorage(storagePaths) || epoch && !await (request.checkExclusiveStorage ?? hasExclusiveWorkspaceCleanupStorage)(storagePaths)) report.observations.push("policy_changed");
       const referenced = current && await resolveProtectedPaths(paths, request.authorizedRoots[0]);
       if (!referenced || !referenced.complete) report.observations.push("saved_references_unverified");
-      for (const [entry, { binding, stamp }] of candidates) {
+      const verifiedCaches = /* @__PURE__ */ new Map();
+      for (const [entry, { binding, stamp, baseline, git }] of candidates) {
         if (!current || !supportsScratch(binding.directory, roots.scratch, current.mounts) || await directoryStamp(binding).catch(() => void 0) !== stamp) demote(entry, "directory_changed");
         if (current && referenced?.directories.some((directory) => pathsOverlap(binding.directory, directory, current.mounts))) {
           demote(entry, "saved_workspace_reference");
+        }
+        if (entry.disposition === "candidate" && git && !await verifyGitBacking(git, request.authorizedRoots, verifiedCaches, baselineBudget)) demote(entry, "git_backing_unverified");
+        if (entry.disposition === "candidate" && baseline && await measureWorkspaceCleanupBaseline(binding, baselineBudget) !== baseline) {
+          demote(entry, "git_baseline_unverified_or_changed");
         }
       }
     }
@@ -811,7 +841,7 @@ async function previewWorkspaceCleanup(request) {
     ] };
   }
 }
-async function inspect(reference, request, roots, mounts, incomplete) {
+async function inspect(reference, request, roots, mounts, incomplete, epoch, baselineBudget) {
   const entry = {
     leaf: reference.leaf,
     workload: reference.owner.kind,
@@ -844,7 +874,8 @@ async function inspect(reference, request, roots, mounts, incomplete) {
       allocatedBytes: inventory.total.allocatedBytes,
       complete: inventory.status === "complete"
     };
-    if (inventory.status !== "complete") entry.reasons.push("usage_incomplete");
+    if (inventory.status !== "complete" && !allocation.gitCheckout) entry.reasons.push("usage_incomplete");
+    const priorBoot = wasUsedOnPriorHostBoot(reference.epoch, epoch);
     if (reference.owner.kind === "foreground") {
       entry.reasons.push("foreground_quiescence_untracked");
       if (reference.foregroundDeliveryPending) entry.reasons.push("delivery_not_confirmed");
@@ -853,25 +884,58 @@ async function inspect(reference, request, roots, mounts, incomplete) {
     else {
       if (reference.retained) entry.reasons.push("explicitly_retained");
       if (reference.unsettledDelivery || !reference.terminalDeliverySent) entry.reasons.push("delivery_not_confirmed");
-      if (reference.attemptExists || reference.attemptCount !== 0 && reference.attemptCount !== 0n) entry.reasons.push("process_quiescence_unverified");
+      const attemptCount = reference.attemptCount === null ? NaN : Number(reference.attemptCount);
+      if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attemptCount !== reference.observedAttemptCount || attemptCount > 0 && !priorBoot) {
+        entry.reasons.push("process_quiescence_unverified");
+      }
+      if (reference.openExecutionReference) entry.reasons.push("open_execution_reference");
       const terminalAt = Date.parse(reference.terminalAt ?? "");
       const cutoff = request.now.getTime() - request.minimumAgeDays * day;
       if (!Number.isFinite(terminalAt) || terminalAt > cutoff || Date.parse(lastUsedAt) > cutoff) entry.reasons.push("retention_window");
     }
     if (reference.retryReference || reference.pendingStage) entry.reasons.push("retry_or_staging_reference");
-    if (allocation.git || allocation.gitCheckout) entry.reasons.push("git_preservation_unverified");
-    if (!entry.reasons.length && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push("scratch_contains_files");
+    let baseline;
+    if (allocation.gitCheckout) {
+      baseline = reference.scratchBaseline;
+      if (!baseline || !entry.reasons.length && await measureWorkspaceCleanupBaseline(allocation.scratch, baselineBudget) !== baseline) {
+        entry.reasons.push("git_baseline_unverified_or_changed");
+      }
+    } else if (!entry.reasons.length && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push("scratch_contains_files");
     if (await directoryStamp(allocation.scratch) !== stamp) entry.reasons.push("directory_changed");
     if (incomplete) entry.reasons.push("incomplete_observation");
     if (!entry.reasons.length) {
       entry.disposition = "candidate";
-      entry.reasons.push("expired_unused_scratch");
-      return { entry, candidate: { binding: allocation.scratch, stamp } };
+      entry.reasons.push(baseline ? "expired_original_checkout" : "expired_empty_scratch");
+      if (priorBoot) entry.reasons.push("last_use_on_prior_host_boot");
+      return { entry, candidate: { binding: allocation.scratch, stamp, baseline, git: allocation.git } };
     }
   } catch {
     entry.reasons.push("directory_unverified");
   }
   return { entry };
+}
+async function verifyGitBacking(git, authorizedRoots, checked, signal) {
+  const key = JSON.stringify([git.key, git.storeFingerprint, git.cache.directory, git.cache.device, git.cache.inode]);
+  if (signal.aborted) return false;
+  try {
+    if (!checked.has(key)) {
+      if (checked.size >= 8) return false;
+      const actual = await verifyWorkspaceGitCache({
+        gitDirectory: git.cache,
+        authorizedRoots,
+        repositoryId: git.repositoryId,
+        scope: git.scope,
+        commit: git.commit
+      });
+      checked.set(key, actual.key === git.key && actual.storeFingerprint === git.storeFingerprint);
+    }
+    if (!checked.get(key) || signal.aborted) return false;
+    await assertWorkspaceGitCacheIdentity(git, authorizedRoots);
+    return true;
+  } catch {
+    checked.set(key, false);
+    return false;
+  }
 }
 function supportsScratch(directory, root, mounts) {
   if (!mounts.supports(directory) || path4.dirname(directory) !== root.directory) return false;

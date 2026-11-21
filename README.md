@@ -241,6 +241,18 @@ directories are never candidates. It does not start the plugin, connect to
 Feishu, or change any managed directory. Treat the result as an advisory snapshot;
 eligibility can change after observation.
 
+Completed work is not proof that background processes have exited. For a run
+with an execution attempt, the preview requires recorded use on a previous
+system boot of the same verified local host, with no outstanding execution or
+delivery references. Restarting the plugin does not qualify. It protects
+historical records without such evidence. The reboot witness currently requires
+a verified Apple silicon Mac and its internal physical Data volume. Other hosts
+still report executed runs as retained. For Git-backed work it also requires a
+recoverable pinned backing cache and an exact match to the original, bounded
+scratch snapshot, including tracked and untracked files and local Git metadata.
+A modified, missing, or unverifiable
+baseline is retained, including additional contents left by an installer or run.
+
 #### Select a workspace project
 
 Optionally create `~/.codex/channels/lark/runtime-config/workspace-projects.json`

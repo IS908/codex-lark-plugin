@@ -51,6 +51,7 @@ jobs:
           python-version: '3.13'
       - run: npm ci
       - run: node --import tsx scripts/workspace-cleanup-ledger-smoke.ts
+      - run: node --import tsx scripts/workspace-cleanup-evidence-smoke.ts
       - run: node --import tsx scripts/workspace-cleanup-preview-smoke.ts
       - run: node --import tsx scripts/workspace-dependency-input-smoke.ts
       - run: node --import tsx scripts/workspace-dependency-cache-smoke.ts

@@ -11,6 +11,10 @@ import { loadWorkspaceDependencyWriteGuard } from './workspace-dependency-regist
 import { readWorkspaceDependencyMountPolicy, type WorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
 import { inventoryWorkspaceStorage } from './workspace-storage.js';
 import { assertDenyOnlyWorkspaceAcls } from './managed-workspace-ancestry.js';
+import { hasExclusiveWorkspaceCleanupStorage, hasLocalWorkspaceCleanupStorage, measureWorkspaceCleanupBaseline, readWorkspaceCleanupEpoch,
+  wasUsedOnPriorHostBoot, type WorkspaceCleanupEpoch } from './workspace-cleanup-evidence.js';
+import type { ManagedGitSelection } from './domain/managed-workspace.js';
+import { assertWorkspaceGitCacheIdentity, verifyWorkspaceGitCache } from './workspace-git-snapshot.js';
 
 const day = 24 * 60 * 60 * 1000;
 const terminalStatuses = new Set(['completed', 'partial', 'blocked', 'failed', 'cancelled']);
@@ -35,6 +39,8 @@ interface PreviewRequest {
   authorizedRoots: readonly [string, ...string[]];
   minimumAgeDays: number;
   now: Date;
+  readEpoch?: () => Promise<WorkspaceCleanupEpoch | undefined>;
+  checkExclusiveStorage?: (directories: readonly string[]) => Promise<boolean>;
 }
 
 export async function previewWorkspaceCleanup(request: PreviewRequest) {
@@ -79,23 +85,37 @@ export async function previewWorkspaceCleanup(request: PreviewRequest) {
     if (truncated) report.observations.push('ledger_limit');
     if (invalidRows) report.observations.push('invalid_ledger_rows');
     if (report.unregisteredObserved) report.observations.push('unregistered_entries_retained');
-    const candidates = new Map<PreviewEntry, { binding: WorkspaceProjectBinding; stamp: string }>();
+    const storagePaths = [roots.scratch.directory, request.databasePath];
+    const local = await hasLocalWorkspaceCleanupStorage(storagePaths);
+    const exclusive = local && await (request.checkExclusiveStorage ?? hasExclusiveWorkspaceCleanupStorage)(storagePaths);
+    const epoch = exclusive ? await (request.readEpoch ?? readWorkspaceCleanupEpoch)() : undefined;
+    if (!local) report.observations.push('local_storage_unverified');
+    const baselineBudget = AbortSignal.timeout(20_000);
+    const candidates = new Map<PreviewEntry, { binding: WorkspaceProjectBinding; stamp: string; baseline?: string; git?: ManagedGitSelection }>();
     for (const reference of references) {
-      const result = await inspect(reference, request, roots, mounts, truncated || invalidRows > 0);
+      const result = await inspect(reference, request, roots, mounts, truncated || invalidRows > 0, epoch, baselineBudget);
       report.entries.push(result.entry);
       if (result.candidate) candidates.set(result.entry, result.candidate);
     }
     if (candidates.size > 0) {
       const current = await observeRoots().catch(() => undefined);
       if (!current || !sameWorkspaceProject(roots.scratch, current.roots.scratch)
-        || !sameWorkspaceProject(roots.artifacts, current.roots.artifacts)) report.observations.push('policy_changed');
+        || !sameWorkspaceProject(roots.artifacts, current.roots.artifacts)
+        || !await hasLocalWorkspaceCleanupStorage(storagePaths)
+        || (epoch && !await (request.checkExclusiveStorage ?? hasExclusiveWorkspaceCleanupStorage)(storagePaths))) report.observations.push('policy_changed');
       const referenced = current && await resolveProtectedPaths(paths, request.authorizedRoots[0]);
       if (!referenced || !referenced.complete) report.observations.push('saved_references_unverified');
-      for (const [entry, { binding, stamp }] of candidates) {
+      const verifiedCaches = new Map<string, boolean>();
+      for (const [entry, { binding, stamp, baseline, git }] of candidates) {
         if (!current || !supportsScratch(binding.directory, roots.scratch, current.mounts)
           || await directoryStamp(binding).catch(() => undefined) !== stamp) demote(entry, 'directory_changed');
         if (current && referenced?.directories.some((directory) => pathsOverlap(binding.directory, directory, current.mounts))) {
           demote(entry, 'saved_workspace_reference');
+        }
+        if (entry.disposition === 'candidate' && git
+          && !await verifyGitBacking(git, request.authorizedRoots, verifiedCaches, baselineBudget)) demote(entry, 'git_backing_unverified');
+        if (entry.disposition === 'candidate' && baseline && await measureWorkspaceCleanupBaseline(binding, baselineBudget) !== baseline) {
+          demote(entry, 'git_baseline_unverified_or_changed');
         }
       }
     }
@@ -113,7 +133,8 @@ export async function previewWorkspaceCleanup(request: PreviewRequest) {
 }
 
 async function inspect(reference: WorkspaceCleanupReference, request: PreviewRequest,
-  roots: { scratch: WorkspaceProjectBinding; artifacts: WorkspaceProjectBinding }, mounts: WorkspaceDependencyMountPolicy, incomplete: boolean) {
+  roots: { scratch: WorkspaceProjectBinding; artifacts: WorkspaceProjectBinding }, mounts: WorkspaceDependencyMountPolicy, incomplete: boolean,
+  epoch: WorkspaceCleanupEpoch | undefined, baselineBudget: AbortSignal) {
   const entry: PreviewEntry = { leaf: reference.leaf, workload: reference.owner.kind, disposition: 'retain', reasons: [],
     runStatus: reference.runStatus && runStatuses.has(reference.runStatus) ? reference.runStatus : 'untracked' };
   const record = reference.record;
@@ -135,7 +156,8 @@ async function inspect(reference: WorkspaceCleanupReference, request: PreviewReq
     const [inventory] = await inventoryWorkspaceStorage([{ role: 'continuation', directory }], { maxEntries: 128, maxDepth: 4 });
     if (inventory.total) entry.usage = { apparentBytes: inventory.total.apparentBytes, allocatedBytes: inventory.total.allocatedBytes,
       complete: inventory.status === 'complete' };
-    if (inventory.status !== 'complete') entry.reasons.push('usage_incomplete');
+    if (inventory.status !== 'complete' && !allocation.gitCheckout) entry.reasons.push('usage_incomplete');
+    const priorBoot = wasUsedOnPriorHostBoot(reference.epoch, epoch);
     if (reference.owner.kind === 'foreground') {
       entry.reasons.push('foreground_quiescence_untracked');
       if (reference.foregroundDeliveryPending) entry.reasons.push('delivery_not_confirmed');
@@ -145,23 +167,51 @@ async function inspect(reference: WorkspaceCleanupReference, request: PreviewReq
     else {
       if (reference.retained) entry.reasons.push('explicitly_retained');
       if (reference.unsettledDelivery || !reference.terminalDeliverySent) entry.reasons.push('delivery_not_confirmed');
-      if (reference.attemptExists || (reference.attemptCount !== 0 && reference.attemptCount !== 0n)) entry.reasons.push('process_quiescence_unverified');
+      const attemptCount = reference.attemptCount === null ? NaN : Number(reference.attemptCount);
+      if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attemptCount !== reference.observedAttemptCount
+        || (attemptCount > 0 && !priorBoot)) {
+        entry.reasons.push('process_quiescence_unverified');
+      }
+      if (reference.openExecutionReference) entry.reasons.push('open_execution_reference');
       const terminalAt = Date.parse(reference.terminalAt ?? '');
       const cutoff = request.now.getTime() - request.minimumAgeDays * day;
       if (!Number.isFinite(terminalAt) || terminalAt > cutoff || Date.parse(lastUsedAt) > cutoff) entry.reasons.push('retention_window');
     }
     if (reference.retryReference || reference.pendingStage) entry.reasons.push('retry_or_staging_reference');
-    if (allocation.git || allocation.gitCheckout) entry.reasons.push('git_preservation_unverified');
-    if (!entry.reasons.length && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push('scratch_contains_files');
+    let baseline: string | undefined;
+    if (allocation.gitCheckout) {
+      baseline = reference.scratchBaseline;
+      if (!baseline || (!entry.reasons.length && await measureWorkspaceCleanupBaseline(allocation.scratch, baselineBudget) !== baseline)) {
+        entry.reasons.push('git_baseline_unverified_or_changed');
+      }
+    } else if (!entry.reasons.length && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push('scratch_contains_files');
     if (await directoryStamp(allocation.scratch) !== stamp) entry.reasons.push('directory_changed');
     if (incomplete) entry.reasons.push('incomplete_observation');
     if (!entry.reasons.length) {
       entry.disposition = 'candidate';
-      entry.reasons.push('expired_unused_scratch');
-      return { entry, candidate: { binding: allocation.scratch, stamp } };
+      entry.reasons.push(baseline ? 'expired_original_checkout' : 'expired_empty_scratch');
+      if (priorBoot) entry.reasons.push('last_use_on_prior_host_boot');
+      return { entry, candidate: { binding: allocation.scratch, stamp, baseline, git: allocation.git } };
     }
   } catch { entry.reasons.push('directory_unverified'); }
   return { entry };
+}
+
+async function verifyGitBacking(git: ManagedGitSelection, authorizedRoots: PreviewRequest['authorizedRoots'],
+  checked: Map<string, boolean>, signal: AbortSignal): Promise<boolean> {
+  const key = JSON.stringify([git.key, git.storeFingerprint, git.cache.directory, git.cache.device, git.cache.inode]);
+  if (signal.aborted) return false;
+  try {
+    if (!checked.has(key)) {
+      if (checked.size >= 8) return false;
+      const actual = await verifyWorkspaceGitCache({ gitDirectory: git.cache, authorizedRoots,
+        repositoryId: git.repositoryId, scope: git.scope, commit: git.commit });
+      checked.set(key, actual.key === git.key && actual.storeFingerprint === git.storeFingerprint);
+    }
+    if (!checked.get(key) || signal.aborted) return false;
+    await assertWorkspaceGitCacheIdentity(git, authorizedRoots);
+    return true;
+  } catch { checked.set(key, false); return false; }
 }
 
 function supportsScratch(directory: string, root: WorkspaceProjectBinding, mounts: WorkspaceDependencyMountPolicy): boolean {

@@ -37,6 +37,8 @@ import { readWorkspaceMountTable, workspaceBackingAliases } from '../managed-wor
 import { managedWorkspaceConfigPath } from '../runtime-paths.js';
 import { assertWorkspaceDependencySelectionAuthorized, assertWorkspaceDependencyWriteIsolation } from '../workspace-dependency-registry.js';
 import { validateWorkspaceProject } from '../workspace-projects.js';
+import { hasExclusiveWorkspaceCleanupStorage, measureWorkspaceCleanupBaseline, parseWorkspaceCleanupEpoch, readWorkspaceCleanupEpoch, type WorkspaceCleanupEpoch } from '../workspace-cleanup-evidence.js';
+import { hasWorkspaceCleanupWitnessTrigger, initializeWorkspaceCleanupWitnessTrigger } from './workspace-cleanup-witness.js';
 import { assertWorkspaceGitCacheIdentity, assertWorkspaceGitCheckoutMounts, createWorkspaceGitCheckout, gitSnapshotKey,
   validateWorkspaceGitCheckout } from '../workspace-git-snapshot.js';
 
@@ -52,7 +54,8 @@ const bindingIdentityExpr = (column: string, field = 'project') =>
 type RootAncestry = Awaited<ReturnType<typeof validateManagedWorkspaceRoots>>;
 
 export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
-  constructor(private readonly database: DatabaseSync) {
+  constructor(private readonly database: DatabaseSync, private readonly readCleanupEpoch = readWorkspaceCleanupEpoch,
+    private readonly checkCleanupStorage = hasExclusiveWorkspaceCleanupStorage) {
     database.exec(`
       CREATE TABLE IF NOT EXISTS workspace_run_allocations (
         workload_kind TEXT NOT NULL CHECK (workload_kind IN ('foreground', 'cron_prompt', 'async_task')),
@@ -102,6 +105,16 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
         PRIMARY KEY (workload_kind, run_id, ecosystem),
         FOREIGN KEY (workload_kind, run_id) REFERENCES workspace_run_allocations(workload_kind, run_id)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS workspace_cleanup_evidence (
+        workload_kind TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        host TEXT,
+        boot TEXT,
+        scratch_baseline TEXT,
+        PRIMARY KEY (workload_kind, run_id),
+        FOREIGN KEY (workload_kind, run_id) REFERENCES workspace_run_allocations(workload_kind, run_id),
+        CHECK ((host IS NULL) = (boot IS NULL))
+      ) STRICT;
       ${sourceRegistries.map(([table, json]) => `
         CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${bindingPathExpr(json)});
         CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${bindingIdentityExpr(json)});
@@ -113,6 +126,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
           ON workspace_run_allocations(${bindingIdentityExpr('intent_json', field)});
       `).join('')}
     `);
+    initializeWorkspaceCleanupWitnessTrigger(database);
   }
 
   getDependencyInstall(owner: ManagedRunOwner, ecosystem: WorkspaceDependencyEcosystem): WorkspaceDependencyInstallRecord | null {
@@ -320,7 +334,10 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     const allocation = selection ? await createWorkspaceGitCheckout(selection).then(({ checkout, gitDirectory }) => ({
       ...basic, git: snapshot.git, gitCheckout: { checkout, gitDirectory },
     })) : basic;
-    this.completeAllocation(parsed.data, allocation);
+    const [epoch, scratchBaseline] = await Promise.all([
+      this.localCleanupEpoch(allocation), allocation.gitCheckout ? measureWorkspaceCleanupBaseline(allocation.scratch) : undefined,
+    ]);
+    this.completeAllocation(parsed.data, allocation, epoch, scratchBaseline);
     return allocation;
   }
 
@@ -330,7 +347,8 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     return validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
   }
 
-  private completeAllocation(intent: ManagedRunIntent, allocation: ManagedRunAllocation): void {
+  private completeAllocation(intent: ManagedRunIntent, allocation: ManagedRunAllocation,
+    epoch?: WorkspaceCleanupEpoch, scratchBaseline?: string): void {
     this.requireAutocommit();
     this.database.exec('BEGIN IMMEDIATE');
     try {
@@ -342,6 +360,8 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       `).run(JSON.stringify(allocation), directoryIdentity(allocation.scratch), directoryIdentity(allocation.artifacts),
         intent.owner.kind, intent.owner.runId, JSON.stringify(intent));
       if (committed.changes !== 1) throw new ManagedWorkspaceStorageError('invalid_binding');
+      this.database.prepare(`INSERT INTO workspace_cleanup_evidence (workload_kind, run_id, host, boot, scratch_baseline)
+        VALUES (?, ?, ?, ?, ?)`).run(intent.owner.kind, intent.owner.runId, epoch?.host ?? null, epoch?.boot ?? null, scratchBaseline ?? null);
       this.database.exec('COMMIT');
     } catch (error) {
       this.database.exec('ROLLBACK');
@@ -371,11 +391,12 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     ]);
     const selection = checkoutSelection(allocation, policy.authorizedRoots);
     if (selection && allocation.gitCheckout) await validateWorkspaceGitCheckout(selection, allocation.gitCheckout);
+    const epoch = await this.localCleanupEpoch(allocation);
     this.requireAutocommit();
     this.requireProtectedPathsDisjoint([allocation.roots.scratch, allocation.roots.artifacts], ancestry.storage);
     if (allocation.git && ancestry.cache) this.requireProtectedPathsDisjoint([allocation.git.cache], ancestry.cache, 'cache-placement');
     if (allocation.project && ancestry.project) this.requireProtectedPathsDisjoint([allocation.project], ancestry.project, 'caches');
-    this.touch(allocation.owner, lastUsedAt);
+    this.touch(allocation.owner, lastUsedAt, epoch);
     return allocation;
   }
 
@@ -494,11 +515,29 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     if (this.database.isTransaction) throw new ManagedWorkspaceStorageError('allocation_transaction');
   }
 
-  private touch(owner: ManagedRunOwner, usedAt: string): void {
-    this.database.prepare(`
-      UPDATE workspace_run_allocations SET last_used_at = max(last_used_at, ?)
-      WHERE workload_kind = ? AND run_id = ?
-    `).run(usedAt, owner.kind, owner.runId);
+  private async localCleanupEpoch({ scratch }: ManagedRunAllocation) {
+    const ledgerPath = this.database.location();
+    if (ledgerPath && await this.checkCleanupStorage([scratch.directory, ledgerPath])) return this.readCleanupEpoch();
+    return undefined;
+  }
+
+  private touch(owner: ManagedRunOwner, usedAt: string, current?: WorkspaceCleanupEpoch): void {
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.database.prepare('SELECT host, boot FROM workspace_cleanup_evidence WHERE workload_kind = ? AND run_id = ?')
+        .get(owner.kind, owner.runId);
+      const previous = hasWorkspaceCleanupWitnessTrigger(this.database) ? parseWorkspaceCleanupEpoch(row?.host, row?.boot) : undefined;
+      this.database.prepare(`UPDATE workspace_run_allocations SET last_used_at = max(last_used_at, ?)
+        WHERE workload_kind = ? AND run_id = ?`).run(usedAt, owner.kind, owner.runId);
+      // The trigger also covers older runtimes. Restore proof only when this use has the original known host.
+      const next = current && previous?.host === current.host ? current : undefined;
+      this.database.prepare('UPDATE workspace_cleanup_evidence SET host = ?, boot = ? WHERE workload_kind = ? AND run_id = ?')
+        .run(next?.host ?? null, next?.boot ?? null, owner.kind, owner.runId);
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
   }
 }
 
