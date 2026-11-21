@@ -152945,7 +152945,7 @@ async function measureEpoch() {
 function stamp(info) {
   return [info.dev, info.ino, info.mode, info.uid, info.gid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(":");
 }
-async function measureExtendedData(entries, signal) {
+async function measureExtendedData(entries, represent, signal) {
   try {
     if (!entries.length || entries.some((entry) => !path13.isAbsolute(entry) || /[\u0000-\u001f\u007f]/.test(entry))) return;
     const options2 = { ...nativeOptions, signal };
@@ -152964,8 +152964,9 @@ async function measureExtendedData(entries, signal) {
       if (data.stderr || lines.pop() !== "" || lines.length !== paths.length * 2) return;
       for (const [index, entry] of paths.entries()) {
         if (lines[index * 2] !== `${entry}: ` || !/^(?:[0-9A-F]{2} ){11}$/.test(lines[index * 2 + 1])) return;
+        lines[index * 2] = `${represent(entry)}: `;
       }
-      return data.stdout;
+      return lines.join("\n") + "\n";
     }
     if (process.platform !== "linux") return;
     const tool = "/usr/bin/getfattr";
@@ -152984,35 +152985,39 @@ async function measureExtendedData(entries, signal) {
 async function measureWorkspaceCleanupBaseline(root, signal, emptyOnly = false) {
   return (await observeWorkspaceCleanupTree(root, signal, emptyOnly))?.digest;
 }
-async function observeWorkspaceCleanupTree(root, signal, emptyOnly = false) {
+async function observeWorkspaceCleanupTree(root, signal, emptyOnly = false, originalDirectory = root.directory) {
   const hash2 = createHash6("sha256").update("lark-cleanup-scratch-baseline-v2\0");
   const visited = [];
   let bytes = 0n;
   const buffer = Buffer.allocUnsafe(128 * 1024);
   try {
     signal?.throwIfAborted();
-    if (!process.geteuid || !(await readWorkspaceDependencyMountPolicy()).supports(root.directory)) return;
+    if (!process.geteuid || path13.dirname(originalDirectory) !== path13.dirname(root.directory) || !(await readWorkspaceDependencyMountPolicy()).supports(root.directory)) return;
     const uid = BigInt(process.geteuid());
     await assertProtectedWorkspacePath(root, true);
     await visit2("", 0);
     for (let i = 0; i < visited.length; i += 32) {
       signal?.throwIfAborted();
       const group = visited.slice(i, i + 32);
-      const entries = group.map(({ absolute: absolute2 }) => absolute2);
+      const entries = group.map(([relative]) => path13.join(root.directory, relative));
       await assertDenyOnlyWorkspaceAcls(entries);
-      const attributes = await measureExtendedData(entries, signal);
+      const attributes = await measureExtendedData(
+        entries,
+        (entry) => path13.join(originalDirectory, path13.relative(root.directory, entry)),
+        signal
+      );
       if (attributes === void 0) return;
       hash2.update(JSON.stringify(attributes));
     }
     await assertProtectedWorkspacePath(root, true);
     signal?.throwIfAborted();
     if (!(await readWorkspaceDependencyMountPolicy()).supports(root.directory) || !await unchanged()) return;
-    return { digest: hash2.digest("hex"), unchanged };
+    return { digest: hash2.digest("hex"), binding: root, entries: visited, unchanged };
     async function unchanged() {
       try {
-        for (const { absolute: absolute2, stamp: previous } of visited) {
+        for (const [relative, , previous] of visited) {
           signal?.throwIfAborted();
-          if (stamp(await fs11.lstat(absolute2, { bigint: true })) !== previous) return false;
+          if (stamp(await fs11.lstat(path13.join(root.directory, relative), { bigint: true })) !== previous) return false;
         }
         return true;
       } catch {
@@ -153028,7 +153033,7 @@ async function observeWorkspaceCleanupTree(root, signal, emptyOnly = false) {
         throw new Error("Unverified entry.");
       }
       const entryStamp = stamp(info);
-      visited.push({ absolute: absolute2, stamp: entryStamp });
+      visited.push([relative, info.isDirectory(), entryStamp]);
       hash2.update(JSON.stringify([relative, info.isDirectory() ? "dir" : "file", String(info.ino), String(info.mode)]));
       if (info.isDirectory()) {
         if (await fs11.realpath(absolute2) !== absolute2) throw new Error("Aliased entry.");
@@ -153111,7 +153116,7 @@ var tableSql = `CREATE TABLE ${workspaceCleanupClaimsTable} (
   last_used_at TEXT NOT NULL,
   reserved_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('reserved', 'isolated', 'removed', 'held')),
+  state TEXT NOT NULL CHECK (state IN ('reserved', 'isolated', 'purging', 'removed', 'held')),
   reason TEXT,
   CHECK ((state = 'held') = (reason IS NOT NULL)),
   PRIMARY KEY (workload_kind, run_id),

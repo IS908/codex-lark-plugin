@@ -193,7 +193,7 @@ async function inspect(reference: WorkspaceCleanupReference, request: PreviewReq
   return { entry };
 }
 
-async function verifyGitBacking(git: ManagedGitSelection, authorizedRoots: PreviewRequest['authorizedRoots'],
+export async function verifyGitBacking(git: ManagedGitSelection, authorizedRoots: PreviewRequest['authorizedRoots'],
   checked: Map<string, boolean>, signal: AbortSignal): Promise<boolean> {
   const key = JSON.stringify([git.key, git.storeFingerprint, git.cache.directory, git.cache.device, git.cache.inode]);
   if (signal.aborted) return false;
@@ -249,7 +249,7 @@ async function isPinnedScratchEmpty(binding: WorkspaceProjectBinding): Promise<b
   return stdout === 'empty';
 }
 
-async function resolveProtectedPaths(input: { paths: string[]; incomplete: boolean; unresolvedActiveCron: boolean }, execRoot: string) {
+export async function resolveProtectedPaths(input: { paths: string[]; incomplete: boolean; unresolvedActiveCron: boolean }, execRoot: string) {
   let complete = !input.incomplete;
   const directories = new Set(input.paths);
   if (input.unresolvedActiveCron) directories.add(execRoot);
@@ -260,7 +260,7 @@ async function resolveProtectedPaths(input: { paths: string[]; incomplete: boole
   return { directories: [...directories], complete };
 }
 
-function pathsOverlap(left: string, right: string, mounts: WorkspaceDependencyMountPolicy) {
+export function pathsOverlap(left: string, right: string, mounts: WorkspaceDependencyMountPolicy) {
   return mounts.aliases(left).some((a) => mounts.aliases(right).some((b) => mounts.contains(a, b) || mounts.contains(b, a)));
 }
 

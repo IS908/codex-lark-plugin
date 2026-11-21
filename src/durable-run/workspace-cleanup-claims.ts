@@ -12,7 +12,7 @@ import { readWorkspaceCleanupReferences, workspaceCleanupLedgerEligibility, type
 
 const timestamp = z.iso.datetime();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
-const claimState = z.enum(['reserved', 'isolated', 'removed', 'held']);
+const claimState = z.enum(['reserved', 'isolated', 'purging', 'removed', 'held']);
 const holdReason = z.enum(['identity_unverified', 'references_changed', 'quarantine_unverified', 'purge_incomplete']);
 const claimSchema = z.strictObject({
   owner: managedRunOwnerSchema.refine(({ kind }) => kind !== 'foreground'),
@@ -34,7 +34,7 @@ interface WorkspaceCleanupObservation {
   revision: string;
 }
 
-interface ReserveRequest {
+export interface WorkspaceCleanupAuthorization {
   roots: { scratch: WorkspaceProjectBinding; artifacts: WorkspaceProjectBinding };
   observation: WorkspaceCleanupObservation;
   minimumAgeDays: number;
@@ -48,6 +48,8 @@ export class SqliteWorkspaceCleanupClaims {
   constructor(private readonly database: DatabaseSync) {
     initializeWorkspaceCleanupClaims(database);
   }
+
+  get databasePath() { return this.database.location(); }
 
   get(owner: ManagedRunOwner): WorkspaceCleanupClaim | undefined {
     const row = this.database.prepare(`SELECT * FROM main.${workspaceCleanupClaimsTable} WHERE workload_kind = ? AND run_id = ?`)
@@ -74,31 +76,15 @@ export class SqliteWorkspaceCleanupClaims {
   }
 
   // Caller owns the runtime instance lock and has already verified the filesystem. This transaction fences ledger changes.
-  reserve(request: ReserveRequest): WorkspaceCleanupClaim | undefined {
-    const { roots, observation, minimumAgeDays, now, epoch } = request;
-    const { reference: expected, paths: expectedPaths } = observation;
-    if (!timestamp.safeParse(now).success || !Number.isSafeInteger(minimumAgeDays) || minimumAgeDays < 1 || minimumAgeDays > 3650) return;
+  reserve(request: WorkspaceCleanupAuthorization): WorkspaceCleanupClaim | undefined {
     return this.transaction(() => {
-      if (observation.scope !== this.scope || observation.revision !== this.revision()) return;
-      const current = readWorkspaceCleanupReferences(this.database, roots.scratch, expected.owner);
-      const reference = current.references[0];
-      const record = reference?.record;
-      if (!reference || !record || current.invalidRows || current.truncated || current.references.length !== 1
-        || current.paths.incomplete || current.paths.unresolvedActiveCron || JSON.stringify(current.paths) !== JSON.stringify(expectedPaths)
-        || JSON.stringify(reference) !== JSON.stringify(expected)
-        || !reference.scratchBaseline || workspaceCleanupLedgerEligibility(reference, new Date(now), minimumAgeDays, epoch).reasons.length) return;
-      const { allocation } = record;
-      const fold = (directory: string) => process.platform === 'darwin' ? directory.normalize('NFD').toLowerCase() : directory;
-      const scratch = fold(allocation.scratch.directory);
-      if (
-        !sameWorkspaceProject(roots.scratch, allocation.roots.scratch)
-        || !sameWorkspaceProject(roots.artifacts, allocation.roots.artifacts)
-        || path.dirname(allocation.scratch.directory) !== roots.scratch.directory || allocation.scratch.device !== roots.scratch.device
-        || current.paths.paths.map(fold).some((saved) => workspacePathContains(saved, scratch) || workspacePathContains(scratch, saved))) return;
-
+      const eligible = this.eligible(request);
+      if (!eligible) return;
+      const { record, reference, baseline } = eligible;
+      const now = request.now;
       const claim: WorkspaceCleanupClaim = {
-        owner: reference.owner, nonce: randomBytes(16).toString('hex'), scratch: allocation.scratch,
-        baseline: reference.scratchBaseline, lastUsedAt: record.lastUsedAt, reservedAt: now, updatedAt: now,
+        owner: reference.owner, nonce: randomBytes(16).toString('hex'), scratch: record.allocation.scratch,
+        baseline, lastUsedAt: record.lastUsedAt, reservedAt: now, updatedAt: now,
         state: 'reserved', reason: null,
       };
       this.database.prepare(`INSERT INTO main.${workspaceCleanupClaimsTable}
@@ -110,19 +96,90 @@ export class SqliteWorkspaceCleanupClaims {
     });
   }
 
-  advance(expected: WorkspaceCleanupClaim, next: 'isolated' | 'removed' | 'held', now: string,
-    reason?: z.infer<typeof holdReason>): WorkspaceCleanupClaim | undefined {
-    if (!timestamp.safeParse(now).success || Date.parse(now) < Date.parse(expected.updatedAt)) return;
-    if (!(next === 'isolated' && expected.state === 'reserved' || next === 'removed' && expected.state === 'isolated'
-      || next === 'held' && ['reserved', 'isolated'].includes(expected.state))) return;
-    if (next === 'held' ? !holdReason.safeParse(reason).success : reason !== undefined) return;
+  pending(root: WorkspaceProjectBinding, limit: number): WorkspaceCleanupClaim[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid workspace cleanup claim limit.');
+    const rows = this.database.prepare(`SELECT workload_kind, run_id FROM main.${workspaceCleanupClaimsTable}
+      WHERE scratch_path >= ? AND scratch_path < ? AND state IN ('reserved', 'isolated', 'purging')
+      ORDER BY updated_at, reserved_at, workload_kind, run_id LIMIT ?`).all(root.directory + '/', root.directory + '0', limit);
+    return rows.map((row) => this.get(managedRunOwnerSchema.parse({ kind: row.workload_kind, runId: row.run_id }))!);
+  }
+
+  postpone(expected: WorkspaceCleanupClaim, now: string): boolean {
     return this.transaction(() => {
-      if (JSON.stringify(this.get(expected.owner)) !== JSON.stringify(expected)) return;
-      this.database.prepare(`UPDATE main.${workspaceCleanupClaimsTable} SET state = ?, updated_at = ?, reason = ?
-        WHERE workload_kind = ? AND run_id = ? AND nonce = ? AND state = ?`)
-        .run(next, now, reason ?? null, expected.owner.kind, expected.owner.runId, expected.nonce, expected.state);
-      return { ...expected, state: next, updatedAt: now, reason: reason ?? null };
+      if (!timestamp.safeParse(now).success || Date.parse(now) <= Date.parse(expected.updatedAt)
+        || !['reserved', 'isolated', 'purging'].includes(expected.state) || !this.sameClaim(expected)) return false;
+      this.writeState(expected, expected.state, now, null);
+      return true;
     });
+  }
+
+  // Called only during the native helper's BEGIN IMMEDIATE handshake, over this same ledger.
+  confirm(expected: WorkspaceCleanupClaim, request: WorkspaceCleanupAuthorization): boolean {
+    if (this.database.isTransaction) return false;
+    assertWorkspaceCleanupConnection(this.database);
+    return hasWorkspaceCleanupFences(this.database) && this.sameClaim(expected) && !!this.eligible(request, expected);
+  }
+
+  perform(expected: WorkspaceCleanupClaim, request: WorkspaceCleanupAuthorization, next: 'isolated' | 'purging' | 'removed',
+    effect?: () => boolean): WorkspaceCleanupClaim | undefined {
+    const previous = { isolated: 'reserved', purging: 'isolated', removed: 'purging' } as const;
+    if (expected.state !== previous[next] || (next === 'purging') !== (effect === undefined)) return;
+    return this.transaction(() => {
+      if (Date.parse(request.now) < Date.parse(expected.updatedAt) || !this.sameClaim(expected)) return;
+      if (!this.eligible(request, expected)) return;
+      // Effects here must be synchronous. Native subprocesses keep their own writer reservation.
+      if (effect && effect() !== true) return;
+      return this.writeState(expected, next, request.now, null);
+    });
+  }
+
+  hold(expected: WorkspaceCleanupClaim, now: string, reason: z.infer<typeof holdReason>): WorkspaceCleanupClaim | undefined {
+    if (!timestamp.safeParse(now).success || Date.parse(now) < Date.parse(expected.updatedAt)) return;
+    if (!['reserved', 'isolated', 'purging'].includes(expected.state) || !holdReason.safeParse(reason).success) return;
+    return this.transaction(() => {
+      if (!this.sameClaim(expected)) return;
+      return this.writeState(expected, 'held', now, reason);
+    });
+  }
+
+  private eligible(request: WorkspaceCleanupAuthorization, claim?: WorkspaceCleanupClaim) {
+    const { roots, observation, minimumAgeDays, now, epoch } = request;
+    const { reference: expected, paths: expectedPaths } = observation;
+    if (!timestamp.safeParse(now).success || !Number.isSafeInteger(minimumAgeDays) || minimumAgeDays < 1 || minimumAgeDays > 3650
+      || observation.scope !== this.scope || observation.revision !== this.revision()) return;
+    if (claim && (expected.owner.kind !== claim.owner.kind || expected.owner.runId !== claim.owner.runId)) return;
+    const current = readWorkspaceCleanupReferences(this.database, roots.scratch, expected.owner);
+    const reference = current.references[0];
+    const record = reference?.record;
+    const baseline = reference?.scratchBaseline;
+    if (!reference || !record || !baseline || current.invalidRows || current.truncated || current.references.length !== 1
+      || current.paths.incomplete || current.paths.unresolvedActiveCron || JSON.stringify(current.paths) !== JSON.stringify(expectedPaths)
+      || JSON.stringify(reference) !== JSON.stringify(expected)
+      || workspaceCleanupLedgerEligibility({ ...reference, cleanupClaimed: !claim && reference.cleanupClaimed },
+        new Date(now), minimumAgeDays, epoch).reasons.length) return;
+    const { allocation } = record;
+    const fold = (directory: string) => process.platform === 'darwin' ? directory.normalize('NFD').toLowerCase() : directory;
+    const scratch = fold(allocation.scratch.directory);
+    if (!sameWorkspaceProject(roots.scratch, allocation.roots.scratch)
+      || !sameWorkspaceProject(roots.artifacts, allocation.roots.artifacts)
+      || path.dirname(allocation.scratch.directory) !== roots.scratch.directory || allocation.scratch.device !== roots.scratch.device
+      || current.paths.paths.map(fold).some((saved) => workspacePathContains(saved, scratch) || workspacePathContains(scratch, saved))) return;
+    if (claim && (!reference.cleanupClaimed || !sameWorkspaceProject(allocation.scratch, claim.scratch)
+      || baseline !== claim.baseline || record.lastUsedAt !== claim.lastUsedAt)) return;
+    return { record, reference, baseline };
+  }
+
+  private sameClaim(expected: WorkspaceCleanupClaim): boolean {
+    return JSON.stringify(this.get(expected.owner)) === JSON.stringify(expected);
+  }
+
+  private writeState(expected: WorkspaceCleanupClaim, state: WorkspaceCleanupClaim['state'], now: string,
+    reason: WorkspaceCleanupClaim['reason']): WorkspaceCleanupClaim {
+    const result = this.database.prepare(`UPDATE main.${workspaceCleanupClaimsTable} SET state = ?, updated_at = ?, reason = ?
+      WHERE workload_kind = ? AND run_id = ? AND nonce = ? AND state = ?`)
+      .run(state, now, reason, expected.owner.kind, expected.owner.runId, expected.nonce, expected.state);
+    if (result.changes !== 1) throw new Error('Workspace cleanup claim changed during transition.');
+    return { ...expected, state, updatedAt: now, reason };
   }
 
   private revision() {

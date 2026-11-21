@@ -15,7 +15,7 @@ const tableSql = `CREATE TABLE ${workspaceCleanupClaimsTable} (
   last_used_at TEXT NOT NULL,
   reserved_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('reserved', 'isolated', 'removed', 'held')),
+  state TEXT NOT NULL CHECK (state IN ('reserved', 'isolated', 'purging', 'removed', 'held')),
   reason TEXT,
   CHECK ((state = 'held') = (reason IS NOT NULL)),
   PRIMARY KEY (workload_kind, run_id),

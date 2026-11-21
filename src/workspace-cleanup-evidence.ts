@@ -98,7 +98,7 @@ function stamp(info: BigIntStats): string {
   return [info.dev, info.ino, info.mode, info.uid, info.gid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(':');
 }
 
-async function measureExtendedData(entries: readonly string[], signal?: AbortSignal): Promise<string | undefined> {
+async function measureExtendedData(entries: readonly string[], represent: (entry: string) => string, signal?: AbortSignal): Promise<string | undefined> {
   try {
     if (!entries.length || entries.some((entry) => !path.isAbsolute(entry) || /[\u0000-\u001f\u007f]/.test(entry))) return;
     const options = { ...nativeOptions, signal };
@@ -118,8 +118,9 @@ async function measureExtendedData(entries: readonly string[], signal?: AbortSig
       if (data.stderr || lines.pop() !== '' || lines.length !== paths.length * 2) return;
       for (const [index, entry] of paths.entries()) {
         if (lines[index * 2] !== `${entry}: ` || !/^(?:[0-9A-F]{2} ){11}$/.test(lines[index * 2 + 1])) return;
+        lines[index * 2] = `${represent(entry)}: `;
       }
-      return data.stdout;
+      return lines.join('\n') + '\n';
     }
     if (process.platform !== 'linux') return;
     const tool = '/usr/bin/getfattr';
@@ -134,8 +135,10 @@ async function measureExtendedData(entries: readonly string[], signal?: AbortSig
   } catch { return undefined; }
 }
 
-interface WorkspaceCleanupTree {
+export interface WorkspaceCleanupTree {
   digest: string;
+  binding: WorkspaceProjectBinding;
+  entries: ReadonlyArray<readonly [relative: string, directory: boolean, stamp: string]>;
   unchanged(): Promise<boolean>;
 }
 
@@ -145,36 +148,39 @@ export async function measureWorkspaceCleanupBaseline(root: WorkspaceProjectBind
 }
 
 export async function observeWorkspaceCleanupTree(root: WorkspaceProjectBinding,
-  signal?: AbortSignal, emptyOnly = false): Promise<WorkspaceCleanupTree | undefined> {
+  signal?: AbortSignal, emptyOnly = false, originalDirectory = root.directory): Promise<WorkspaceCleanupTree | undefined> {
   const hash = createHash('sha256').update('lark-cleanup-scratch-baseline-v2\0');
-  const visited: Array<{ absolute: string; stamp: string }> = [];
+  const visited: Array<readonly [relative: string, directory: boolean, stamp: string]> = [];
   let bytes = 0n;
   const buffer = Buffer.allocUnsafe(128 * 1024);
   try {
     signal?.throwIfAborted();
-    if (!process.geteuid || !(await readWorkspaceDependencyMountPolicy()).supports(root.directory)) return;
+    if (!process.geteuid || path.dirname(originalDirectory) !== path.dirname(root.directory)
+      || !(await readWorkspaceDependencyMountPolicy()).supports(root.directory)) return;
     const uid = BigInt(process.geteuid());
     await assertProtectedWorkspacePath(root, true);
     await visit('', 0);
     for (let i = 0; i < visited.length; i += 32) {
       signal?.throwIfAborted();
       const group = visited.slice(i, i + 32);
-      const entries = group.map(({ absolute }) => absolute);
+      const entries = group.map(([relative]) => path.join(root.directory, relative));
       await assertDenyOnlyWorkspaceAcls(entries);
-      const attributes = await measureExtendedData(entries, signal);
+      // v2 includes the allocation path in macOS attribute headers. Preserve its byte representation after quarantine.
+      const attributes = await measureExtendedData(entries,
+        (entry) => path.join(originalDirectory, path.relative(root.directory, entry)), signal);
       if (attributes === undefined) return;
       hash.update(JSON.stringify(attributes));
     }
     await assertProtectedWorkspacePath(root, true);
     signal?.throwIfAborted();
     if (!(await readWorkspaceDependencyMountPolicy()).supports(root.directory) || !await unchanged()) return;
-    return { digest: hash.digest('hex'), unchanged };
+    return { digest: hash.digest('hex'), binding: root, entries: visited, unchanged };
 
     async function unchanged() {
       try {
-        for (const { absolute, stamp: previous } of visited) {
+        for (const [relative, , previous] of visited) {
           signal?.throwIfAborted();
-          if (stamp(await fs.lstat(absolute, { bigint: true })) !== previous) return false;
+          if (stamp(await fs.lstat(path.join(root.directory, relative), { bigint: true })) !== previous) return false;
         }
         return true;
       } catch { return false; }
@@ -190,7 +196,7 @@ export async function observeWorkspaceCleanupTree(root: WorkspaceProjectBinding,
         throw new Error('Unverified entry.');
       }
       const entryStamp = stamp(info);
-      visited.push({ absolute, stamp: entryStamp });
+      visited.push([relative, info.isDirectory(), entryStamp]);
       hash.update(JSON.stringify([relative, info.isDirectory() ? 'dir' : 'file', String(info.ino), String(info.mode)]));
       if (info.isDirectory()) {
         if (await fs.realpath(absolute) !== absolute) throw new Error('Aliased entry.');

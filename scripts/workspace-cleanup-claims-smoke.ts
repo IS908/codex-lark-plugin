@@ -122,19 +122,38 @@ try {
   assert.throws(reserveInstall, /workspace_cleanup_claimed/);
   await assert.rejects(store.ensure(input), { code: 'cleanup_claimed' });
   await assert.rejects(store.openDirectory(owner, 'scratch', [work]), { code: 'cleanup_claimed' });
-  assert.equal(claims.advance(claim, 'removed', now), undefined, 'no direct purge transition');
-  assert.equal(claims.advance({ ...claim, nonce: '0'.repeat(32) }, 'isolated', now), undefined);
+  assert.equal(claims.perform(claim, observe(), 'removed', () => true), undefined, 'no direct purge transition');
+  assert.equal(claims.perform({ ...claim, nonce: '0'.repeat(32) }, observe(), 'isolated', () => true), undefined);
 
   const reopened = new DatabaseSync(databasePath, { timeout: 0 });
   try {
     reopened.exec('PRAGMA synchronous = FULL; PRAGMA fullfsync = ON;');
     const recovery = new SqliteWorkspaceCleanupClaims(reopened);
     assert.deepEqual(recovery.get(owner), claim);
-    const isolated = recovery.advance(claim, 'isolated', now);
+    const next = () => {
+      const observation = recovery.observe(roots.scratch, owner);
+      assert.ok(observation);
+      return { roots, observation, minimumAgeDays: 30, now };
+    };
+    let effect = 0;
+    const mutate = () => { effect++; return true; };
+    const stale = next();
+    legacy.prepare("UPDATE durable_outbox SET status = 'pending' WHERE run_id = ?").run(owner.runId);
+    assert.equal(recovery.perform(claim, stale, 'isolated', mutate), undefined);
+    assert.equal(recovery.perform(claim, next(), 'isolated', mutate), undefined);
+    assert.equal(effect, 0, 'changed delivery suppresses the physical operation');
+    legacy.prepare("UPDATE durable_outbox SET status = 'sent' WHERE run_id = ?").run(owner.runId);
+    const isolated = recovery.perform(claim, next(), 'isolated', mutate);
     assert.ok(isolated);
-    assert.equal(recovery.advance(claim, 'isolated', now), undefined, 'stale transition');
-    const removed = recovery.advance(isolated, 'removed', now);
+    assert.equal(recovery.perform(claim, next(), 'isolated', mutate), undefined, 'stale transition');
+    assert.equal(recovery.perform(isolated, next(), 'removed', mutate), undefined, 'no purge without a durable intent');
+    const purging = recovery.perform(isolated, next(), 'purging');
+    assert.ok(purging);
+    assert.equal(recovery.perform(purging, next(), 'removed', () => false), undefined);
+    assert.deepEqual(recovery.get(owner), purging);
+    const removed = recovery.perform(purging, next(), 'removed', mutate);
     assert.ok(removed);
+    assert.equal(effect, 2);
     assert.equal(removed.state, 'removed');
     assert.deepEqual(recovery.get(owner), removed);
     assert.throws(touch, /workspace_cleanup_claimed/, 'the tombstone also fences old writers');
