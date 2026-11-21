@@ -147682,6 +147682,7 @@ var diagnostic = {
   allocation_failed: "The managed run directories could not be allocated.",
   allocation_incomplete: "The stored managed workspace allocation is incomplete.",
   allocation_transaction: "Managed workspace provisioning requires a committed database context.",
+  cleanup_claimed: "Managed run scratch is reserved for or has already undergone cleanup.",
   invalid_binding: "The managed workspace allocation is invalid.",
   dependency_install_incomplete: "A dependency install was already started for this run but cannot be adopted or repeated.",
   dependency_selection_failed: "The operator-approved dependency selection could not be verified for this run.",
@@ -153095,6 +153096,46 @@ function initializeWorkspaceCleanupWitnessTrigger(database) {
   }
 }
 
+// src/durable-run/workspace-cleanup-claim-schema.ts
+var workspaceCleanupClaimsTable = "workspace_cleanup_claims";
+var triggerName2 = "workspace_cleanup_fence_claimed";
+var installTriggerName = "workspace_cleanup_fence_dependency_install";
+var tableSql = `CREATE TABLE ${workspaceCleanupClaimsTable} (
+  workload_kind TEXT NOT NULL CHECK (workload_kind IN ('cron_prompt', 'async_task')),
+  run_id TEXT NOT NULL,
+  nonce TEXT NOT NULL UNIQUE,
+  scratch_path TEXT NOT NULL,
+  scratch_device TEXT NOT NULL,
+  scratch_inode TEXT NOT NULL,
+  scratch_baseline TEXT NOT NULL,
+  last_used_at TEXT NOT NULL,
+  reserved_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('reserved', 'isolated', 'removed', 'held')),
+  reason TEXT,
+  CHECK ((state = 'held') = (reason IS NOT NULL)),
+  PRIMARY KEY (workload_kind, run_id),
+  FOREIGN KEY (workload_kind, run_id) REFERENCES workspace_run_allocations(workload_kind, run_id)
+) STRICT`;
+var triggerSql2 = `CREATE TRIGGER ${triggerName2}
+  BEFORE UPDATE OF last_used_at, allocation_json, scratch_path, scratch_identity, intent_json ON workspace_run_allocations
+  WHEN EXISTS (SELECT 1 FROM ${workspaceCleanupClaimsTable} c WHERE c.workload_kind = OLD.workload_kind AND c.run_id = OLD.run_id)
+  BEGIN
+    SELECT RAISE(ABORT, 'workspace_cleanup_claimed');
+  END`;
+var installTriggerSql = `CREATE TRIGGER ${installTriggerName}
+  BEFORE INSERT ON workspace_dependency_installs
+  WHEN EXISTS (SELECT 1 FROM ${workspaceCleanupClaimsTable} c WHERE c.workload_kind = NEW.workload_kind AND c.run_id = NEW.run_id)
+  BEGIN
+    SELECT RAISE(ABORT, 'workspace_cleanup_claimed');
+  END`;
+function sqlFor(database, type, name) {
+  return database.prepare("SELECT sql FROM main.sqlite_schema WHERE type = ? AND name = ?").get(type, name)?.sql;
+}
+function isWorkspaceCleanupClaimed(database, owner) {
+  return !!sqlFor(database, "table", workspaceCleanupClaimsTable) && !!database.prepare(`SELECT 1 FROM main.${workspaceCleanupClaimsTable} WHERE workload_kind = ? AND run_id = ?`).get(owner.kind, owner.runId);
+}
+
 // src/durable-run/sqlite-managed-workspace.ts
 import path14 from "node:path";
 var timestamp = external_exports.iso.datetime();
@@ -153348,6 +153389,7 @@ var SqliteManagedWorkspaceStore = class {
     if (!parsed.success || !lastUse.success) throw new ManagedWorkspaceStorageError("invalid_binding");
     this.requireAutocommit();
     const { owner, ...snapshot } = parsed.data;
+    this.requireScratchAvailable(owner);
     if (snapshot.git && (!snapshot.project || snapshot.git.key !== gitSnapshotKey(snapshot.git))) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
@@ -153381,9 +153423,17 @@ var SqliteManagedWorkspaceStore = class {
     return allocation;
   }
   async openDirectory(owner, purpose, authorizedRoots) {
+    const checkScratchOpen = () => {
+      if (purpose !== "scratch") return;
+      this.requireAutocommit();
+      this.requireScratchAvailable(owner);
+    };
+    checkScratchOpen();
     const stored = this.get(owner);
     if (!stored) throw new ManagedWorkspaceStorageError("invalid_binding");
-    return validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
+    const directory = await validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
+    checkScratchOpen();
+    return directory;
   }
   completeAllocation(intent, allocation, epoch2, scratchBaseline) {
     this.requireAutocommit();
@@ -153539,6 +153589,9 @@ var SqliteManagedWorkspaceStore = class {
   requireAutocommit() {
     if (this.database.isTransaction) throw new ManagedWorkspaceStorageError("allocation_transaction");
   }
+  requireScratchAvailable(owner) {
+    if (isWorkspaceCleanupClaimed(this.database, owner)) throw new ManagedWorkspaceStorageError("cleanup_claimed");
+  }
   async localCleanupEpoch({ scratch }) {
     const ledgerPath = this.database.location();
     if (ledgerPath && await this.checkCleanupStorage([scratch.directory, ledgerPath])) return this.readCleanupEpoch();
@@ -153547,6 +153600,7 @@ var SqliteManagedWorkspaceStore = class {
   touch(owner, usedAt, current) {
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      this.requireScratchAvailable(owner);
       const row = this.database.prepare("SELECT host, boot FROM workspace_cleanup_evidence WHERE workload_kind = ? AND run_id = ?").get(owner.kind, owner.runId);
       const previous = hasWorkspaceCleanupWitnessTrigger(this.database) ? parseWorkspaceCleanupEpoch(row?.host, row?.boot) : void 0;
       this.database.prepare(`UPDATE workspace_run_allocations SET last_used_at = max(last_used_at, ?)
@@ -153703,6 +153757,7 @@ export {
   hasExclusiveWorkspaceCleanupStorage,
   observeWorkspaceCleanupTree,
   hasWorkspaceCleanupWitnessTrigger,
+  workspaceCleanupClaimsTable,
   SqliteManagedWorkspaceStore,
   parseManagedWorkspaceRecord
 };

@@ -39,6 +39,7 @@ import { assertWorkspaceDependencySelectionAuthorized, assertWorkspaceDependency
 import { validateWorkspaceProject } from '../workspace-projects.js';
 import { hasExclusiveWorkspaceCleanupStorage, measureWorkspaceCleanupBaseline, parseWorkspaceCleanupEpoch, readWorkspaceCleanupEpoch, type WorkspaceCleanupEpoch } from '../workspace-cleanup-evidence.js';
 import { hasWorkspaceCleanupWitnessTrigger, initializeWorkspaceCleanupWitnessTrigger } from './workspace-cleanup-witness.js';
+import { isWorkspaceCleanupClaimed } from './workspace-cleanup-claim-schema.js';
 import { assertWorkspaceGitCacheIdentity, assertWorkspaceGitCheckoutMounts, createWorkspaceGitCheckout, gitSnapshotKey,
   validateWorkspaceGitCheckout } from '../workspace-git-snapshot.js';
 
@@ -309,6 +310,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     if (!parsed.success || !lastUse.success) throw new ManagedWorkspaceStorageError('invalid_binding');
     this.requireAutocommit();
     const { owner, ...snapshot } = parsed.data;
+    this.requireScratchAvailable(owner);
     if (snapshot.git && (!snapshot.project || snapshot.git.key !== gitSnapshotKey(snapshot.git))) {
       throw new ManagedWorkspaceStorageError('invalid_binding');
     }
@@ -343,9 +345,17 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
   }
 
   async openDirectory(owner: ManagedRunOwner, purpose: ManagedWorkspacePurpose, authorizedRoots: ManagedWorkspaceAuthorizedRoots): Promise<string> {
+    const checkScratchOpen = () => {
+      if (purpose !== 'scratch') return;
+      this.requireAutocommit();
+      this.requireScratchAvailable(owner);
+    };
+    checkScratchOpen();
     const stored = this.get(owner);
     if (!stored) throw new ManagedWorkspaceStorageError('invalid_binding');
-    return validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
+    const directory = await validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
+    checkScratchOpen();
+    return directory;
   }
 
   private completeAllocation(intent: ManagedRunIntent, allocation: ManagedRunAllocation,
@@ -516,6 +526,10 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     if (this.database.isTransaction) throw new ManagedWorkspaceStorageError('allocation_transaction');
   }
 
+  private requireScratchAvailable(owner: ManagedRunOwner): void {
+    if (isWorkspaceCleanupClaimed(this.database, owner)) throw new ManagedWorkspaceStorageError('cleanup_claimed');
+  }
+
   private async localCleanupEpoch({ scratch }: ManagedRunAllocation) {
     const ledgerPath = this.database.location();
     if (ledgerPath && await this.checkCleanupStorage([scratch.directory, ledgerPath])) return this.readCleanupEpoch();
@@ -525,6 +539,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
   private touch(owner: ManagedRunOwner, usedAt: string, current?: WorkspaceCleanupEpoch): void {
     this.database.exec('BEGIN IMMEDIATE');
     try {
+      this.requireScratchAvailable(owner);
       const row = this.database.prepare('SELECT host, boot FROM workspace_cleanup_evidence WHERE workload_kind = ? AND run_id = ?')
         .get(owner.kind, owner.runId);
       const previous = hasWorkspaceCleanupWitnessTrigger(this.database) ? parseWorkspaceCleanupEpoch(row?.host, row?.boot) : undefined;

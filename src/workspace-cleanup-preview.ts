@@ -4,7 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { readWorkspaceCleanupLedger, verifyWorkspaceCleanupLedger, WorkspaceCleanupLedgerError } from './durable-run/workspace-cleanup-ledger.js';
-import { readWorkspaceCleanupReferences, type WorkspaceCleanupReference } from './durable-run/workspace-cleanup-references.js';
+import { readWorkspaceCleanupReferences, workspaceCleanupLedgerEligibility, workspaceCleanupRunStatuses,
+  type WorkspaceCleanupReference } from './durable-run/workspace-cleanup-references.js';
 import { readManagedWorkspaceRoots, validateManagedRunDirectory } from './managed-workspace-storage.js';
 import { resolveManagedGitSelection } from './managed-git-registry.js';
 import { loadWorkspaceDependencyWriteGuard } from './workspace-dependency-registry.js';
@@ -12,13 +13,10 @@ import { readWorkspaceDependencyMountPolicy, type WorkspaceDependencyMountPolicy
 import { inventoryWorkspaceStorage } from './workspace-storage.js';
 import { assertDenyOnlyWorkspaceAcls } from './managed-workspace-ancestry.js';
 import { hasExclusiveWorkspaceCleanupStorage, hasLocalWorkspaceCleanupStorage, observeWorkspaceCleanupTree, readWorkspaceCleanupEpoch,
-  wasUsedOnPriorHostBoot, type WorkspaceCleanupEpoch } from './workspace-cleanup-evidence.js';
+  type WorkspaceCleanupEpoch } from './workspace-cleanup-evidence.js';
 import type { ManagedGitSelection } from './domain/managed-workspace.js';
 import { assertWorkspaceGitCacheIdentity, verifyWorkspaceGitCache } from './workspace-git-snapshot.js';
 
-const day = 24 * 60 * 60 * 1000;
-const terminalStatuses = new Set(['completed', 'partial', 'blocked', 'failed', 'cancelled']);
-const runStatuses = new Set([...terminalStatuses, 'queued', 'running', 'waiting_retry', 'waiting_user', 'recovering', 'cancel_requested']);
 const maxRootNames = 256;
 const exec = promisify(execFile);
 
@@ -153,7 +151,7 @@ async function inspect(reference: WorkspaceCleanupReference, request: PreviewReq
   roots: { scratch: WorkspaceProjectBinding; artifacts: WorkspaceProjectBinding }, mounts: WorkspaceDependencyMountPolicy, incomplete: boolean,
   epoch: WorkspaceCleanupEpoch | undefined, baselineBudget: AbortSignal) {
   const entry: PreviewEntry = { leaf: reference.leaf, workload: reference.owner.kind, disposition: 'retain', reasons: [],
-    runStatus: reference.runStatus && runStatuses.has(reference.runStatus) ? reference.runStatus : 'untracked' };
+    runStatus: reference.runStatus && workspaceCleanupRunStatuses.has(reference.runStatus) ? reference.runStatus : 'untracked' };
   const record = reference.record;
   if (!record) { entry.reasons.push(reference.allocationError ?? 'allocation_invalid'); return { entry }; }
   const { allocation, lastUsedAt } = record;
@@ -174,27 +172,8 @@ async function inspect(reference: WorkspaceCleanupReference, request: PreviewReq
     if (inventory.total) entry.usage = { apparentBytes: inventory.total.apparentBytes, allocatedBytes: inventory.total.allocatedBytes,
       complete: inventory.status === 'complete' };
     if (inventory.status !== 'complete' && !allocation.gitCheckout) entry.reasons.push('usage_incomplete');
-    const priorBoot = wasUsedOnPriorHostBoot(reference.epoch, epoch);
-    if (reference.owner.kind === 'foreground') {
-      entry.reasons.push('foreground_quiescence_untracked');
-      if (reference.foregroundDeliveryPending) entry.reasons.push('delivery_not_confirmed');
-    }
-    else if (!reference.runStatus) entry.reasons.push('run_missing');
-    else if (!terminalStatuses.has(reference.runStatus) || reference.lease) entry.reasons.push('live_or_recoverable_run');
-    else {
-      if (reference.retained) entry.reasons.push('explicitly_retained');
-      if (reference.unsettledDelivery || !reference.terminalDeliverySent) entry.reasons.push('delivery_not_confirmed');
-      const attemptCount = reference.attemptCount === null ? NaN : Number(reference.attemptCount);
-      if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attemptCount !== reference.observedAttemptCount
-        || (attemptCount > 0 && !priorBoot)) {
-        entry.reasons.push('process_quiescence_unverified');
-      }
-      if (reference.openExecutionReference) entry.reasons.push('open_execution_reference');
-      const terminalAt = Date.parse(reference.terminalAt ?? '');
-      const cutoff = request.now.getTime() - request.minimumAgeDays * day;
-      if (!Number.isFinite(terminalAt) || terminalAt > cutoff || Date.parse(lastUsedAt) > cutoff) entry.reasons.push('retention_window');
-    }
-    if (reference.retryReference || reference.pendingStage) entry.reasons.push('retry_or_staging_reference');
+    const { reasons, priorBoot } = workspaceCleanupLedgerEligibility(reference, request.now, request.minimumAgeDays, epoch);
+    entry.reasons.push(...reasons);
     const baseline = reference.scratchBaseline;
     if (!entry.reasons.length) {
       if (!allocation.gitCheckout && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push('scratch_contains_files');

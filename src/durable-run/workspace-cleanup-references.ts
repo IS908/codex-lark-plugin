@@ -5,12 +5,17 @@ import type { ManagedWorkspaceRecord } from '../ports/managed-workspace.js';
 import { managedRunDirectoryPath, ManagedWorkspaceStorageError } from '../managed-workspace-storage.js';
 import type { WorkspaceProjectBinding } from '../domain/workspace.js';
 import { parseManagedWorkspaceRecord } from './sqlite-managed-workspace.js';
-import { parseWorkspaceCleanupEpoch, type WorkspaceCleanupEpoch } from '../workspace-cleanup-evidence.js';
+import { parseWorkspaceCleanupEpoch, wasUsedOnPriorHostBoot, type WorkspaceCleanupEpoch } from '../workspace-cleanup-evidence.js';
 import { hasWorkspaceCleanupWitnessTrigger } from './workspace-cleanup-witness.js';
+import { workspaceCleanupClaimsTable } from './workspace-cleanup-claim-schema.js';
 
 export const maxCleanupPreviewRows = 100;
 const maxRetryReferences = 4096;
 const maxPathReferences = 1024;
+const day = 24 * 60 * 60 * 1000;
+const terminalStatuses = new Set(['completed', 'partial', 'blocked', 'failed', 'cancelled']);
+export const workspaceCleanupRunStatuses = new Set([...terminalStatuses,
+  'queued', 'running', 'waiting_retry', 'waiting_user', 'recovering', 'cancel_requested']);
 
 export interface WorkspaceCleanupReference {
   leaf: string;
@@ -29,11 +34,12 @@ export interface WorkspaceCleanupReference {
   foregroundDeliveryPending: boolean;
   retryReference: boolean;
   pendingStage: boolean;
+  cleanupClaimed: boolean;
   epoch?: WorkspaceCleanupEpoch;
   scratchBaseline?: string;
 }
 
-export function readWorkspaceCleanupReferences(database: DatabaseSync, root: WorkspaceProjectBinding) {
+export function readWorkspaceCleanupReferences(database: DatabaseSync, root: WorkspaceProjectBinding, target?: ManagedRunOwner) {
   const retries = database.prepare(`SELECT json_extract(input_json, '$.job.retryOfJobId') AS source
     FROM durable_runs WHERE workload_kind = 'async_task' AND deleted_at IS NULL
       AND json_type(input_json, '$.job.retryOfJobId') = 'text' LIMIT ?`).all(maxRetryReferences + 1);
@@ -42,10 +48,13 @@ export function readWorkspaceCleanupReferences(database: DatabaseSync, root: Wor
   const prefix = root.directory + path.sep;
   const upper = root.directory + String.fromCharCode(path.sep.charCodeAt(0) + 1);
   const hasEvidence = !!database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_cleanup_evidence'").get();
+  const hasClaims = !!database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(workspaceCleanupClaimsTable);
   const trustedEpoch = hasEvidence && hasWorkspaceCleanupWitnessTrigger(database);
   const evidenceFields = hasEvidence ? 'e.host, e.boot, e.scratch_baseline' : 'NULL AS host, NULL AS boot, NULL AS scratch_baseline';
   const evidenceJoin = hasEvidence ? 'LEFT JOIN workspace_cleanup_evidence e ON e.workload_kind = w.workload_kind AND e.run_id = w.run_id' : '';
-  const selected = database.prepare(`SELECT w.*, ${evidenceFields}, r.status AS run_status, r.completed_at AS terminal_at,
+  const cleanupClaimed = hasClaims
+    ? `EXISTS(SELECT 1 FROM ${workspaceCleanupClaimsTable} c WHERE c.workload_kind = w.workload_kind AND c.run_id = w.run_id)` : '0';
+  const selected = database.prepare(`SELECT w.*, ${evidenceFields}, r.status AS run_status, r.completed_at AS terminal_at, ${cleanupClaimed} AS cleanup_claimed,
     r.retained AS run_retained, (r.lease_owner IS NOT NULL OR r.lease_expires_at IS NOT NULL) AS has_lease,
     r.attempt_count, (SELECT count(*) FROM durable_attempts a WHERE a.run_id = r.run_id) AS observed_attempt_count,
     (EXISTS(SELECT 1 FROM durable_attempts a WHERE a.run_id = r.run_id AND (a.finished_at IS NULL OR a.recovery_pending <> 0))
@@ -64,7 +73,9 @@ export function readWorkspaceCleanupReferences(database: DatabaseSync, root: Wor
       OR EXISTS(SELECT 1 FROM workspace_dependency_installs i WHERE i.workload_kind = w.workload_kind
       AND i.run_id = w.run_id AND i.receipt_json IS NULL)) AS pending_stage
     FROM workspace_run_allocations w LEFT JOIN durable_runs r ON r.run_id = w.run_id AND r.workload_kind = w.workload_kind ${evidenceJoin}
-    WHERE w.scratch_path >= ? AND w.scratch_path < ? ORDER BY w.scratch_path LIMIT ?`).all(prefix, upper, maxCleanupPreviewRows + 1);
+    WHERE w.scratch_path >= ? AND w.scratch_path < ?
+      ${target ? 'AND w.workload_kind = ? AND w.run_id = ?' : ''}
+    ORDER BY w.scratch_path LIMIT ?`).all(prefix, upper, ...(target ? [target.kind, target.runId, 2] : [maxCleanupPreviewRows + 1]));
   const references: WorkspaceCleanupReference[] = [];
   let invalidRows = 0;
   for (const row of selected.slice(0, maxCleanupPreviewRows)) {
@@ -87,11 +98,39 @@ export function readWorkspaceCleanupReferences(database: DatabaseSync, root: Wor
       unsettledDelivery: row.unsettled_delivery === 1, terminalDeliverySent: row.terminal_delivery_sent === 1,
       foregroundDeliveryPending: row.foreground_delivery_pending === 1,
       retryReference: incomplete || retrySource.has(owner.data.runId), pendingStage: row.pending_stage === 1,
+      cleanupClaimed: row.cleanup_claimed !== 0,
       epoch: trustedEpoch ? parseWorkspaceCleanupEpoch(row.host, row.boot) : undefined,
       scratchBaseline: typeof row.scratch_baseline === 'string' && /^[a-f0-9]{64}$/.test(row.scratch_baseline) ? row.scratch_baseline : undefined });
   }
   return { references, invalidRows, truncated: selected.length > maxCleanupPreviewRows || incomplete,
     paths: readProtectedPathReferences(database) };
+}
+
+export function workspaceCleanupLedgerEligibility(reference: WorkspaceCleanupReference, now: Date,
+  minimumAgeDays: number, epoch?: WorkspaceCleanupEpoch) {
+  const reasons: string[] = [];
+  const priorBoot = wasUsedOnPriorHostBoot(reference.epoch, epoch);
+  if (reference.cleanupClaimed) reasons.push('cleanup_claimed');
+  if (reference.owner.kind === 'foreground') {
+    reasons.push('foreground_quiescence_untracked');
+    if (reference.foregroundDeliveryPending) reasons.push('delivery_not_confirmed');
+  } else if (!reference.runStatus || !reference.record) reasons.push('run_missing');
+  else if (!terminalStatuses.has(reference.runStatus) || reference.lease) reasons.push('live_or_recoverable_run');
+  else {
+    if (reference.retained) reasons.push('explicitly_retained');
+    if (reference.unsettledDelivery || !reference.terminalDeliverySent) reasons.push('delivery_not_confirmed');
+    const attemptCount = reference.attemptCount === null ? NaN : Number(reference.attemptCount);
+    if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attemptCount !== reference.observedAttemptCount
+      || (attemptCount > 0 && !priorBoot)) reasons.push('process_quiescence_unverified');
+    if (reference.openExecutionReference) reasons.push('open_execution_reference');
+    const terminalAt = Date.parse(reference.terminalAt ?? '');
+    const lastUsedAt = Date.parse(reference.record.lastUsedAt);
+    const cutoff = now.getTime() - minimumAgeDays * day;
+    if (!Number.isFinite(cutoff) || !Number.isFinite(terminalAt) || !Number.isFinite(lastUsedAt)
+      || terminalAt > cutoff || lastUsedAt > cutoff) reasons.push('retention_window');
+  }
+  if (reference.retryReference || reference.pendingStage) reasons.push('retry_or_staging_reference');
+  return { reasons, priorBoot };
 }
 
 function readProtectedPathReferences(database: DatabaseSync) {
@@ -143,5 +182,5 @@ function readProtectedPathReferences(database: DatabaseSync) {
       }
     }
   }
-  return { paths: [...paths], incomplete, unresolvedActiveCron };
+  return { paths: [...paths].sort(), incomplete, unresolvedActiveCron };
 }

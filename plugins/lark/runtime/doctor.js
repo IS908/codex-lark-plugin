@@ -23,8 +23,9 @@ import {
   sameWorkspaceProject,
   validateManagedRunDirectory,
   verifyWorkspaceGitCache,
-  wasUsedOnPriorHostBoot
-} from "./chunks/chunk-ZV32EYUV.js";
+  wasUsedOnPriorHostBoot,
+  workspaceCleanupClaimsTable
+} from "./chunks/chunk-PFYINSKQ.js";
 import {
   __toESM,
   assertSupportedNodeVersion,
@@ -603,7 +604,18 @@ import path3 from "node:path";
 var maxCleanupPreviewRows = 100;
 var maxRetryReferences = 4096;
 var maxPathReferences = 1024;
-function readWorkspaceCleanupReferences(database, root) {
+var day = 24 * 60 * 60 * 1e3;
+var terminalStatuses = /* @__PURE__ */ new Set(["completed", "partial", "blocked", "failed", "cancelled"]);
+var workspaceCleanupRunStatuses = /* @__PURE__ */ new Set([
+  ...terminalStatuses,
+  "queued",
+  "running",
+  "waiting_retry",
+  "waiting_user",
+  "recovering",
+  "cancel_requested"
+]);
+function readWorkspaceCleanupReferences(database, root, target) {
   const retries = database.prepare(`SELECT json_extract(input_json, '$.job.retryOfJobId') AS source
     FROM durable_runs WHERE workload_kind = 'async_task' AND deleted_at IS NULL
       AND json_type(input_json, '$.job.retryOfJobId') = 'text' LIMIT ?`).all(maxRetryReferences + 1);
@@ -612,10 +624,12 @@ function readWorkspaceCleanupReferences(database, root) {
   const prefix = root.directory + path3.sep;
   const upper = root.directory + String.fromCharCode(path3.sep.charCodeAt(0) + 1);
   const hasEvidence = !!database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_cleanup_evidence'").get();
+  const hasClaims = !!database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(workspaceCleanupClaimsTable);
   const trustedEpoch = hasEvidence && hasWorkspaceCleanupWitnessTrigger(database);
   const evidenceFields = hasEvidence ? "e.host, e.boot, e.scratch_baseline" : "NULL AS host, NULL AS boot, NULL AS scratch_baseline";
   const evidenceJoin = hasEvidence ? "LEFT JOIN workspace_cleanup_evidence e ON e.workload_kind = w.workload_kind AND e.run_id = w.run_id" : "";
-  const selected = database.prepare(`SELECT w.*, ${evidenceFields}, r.status AS run_status, r.completed_at AS terminal_at,
+  const cleanupClaimed = hasClaims ? `EXISTS(SELECT 1 FROM ${workspaceCleanupClaimsTable} c WHERE c.workload_kind = w.workload_kind AND c.run_id = w.run_id)` : "0";
+  const selected = database.prepare(`SELECT w.*, ${evidenceFields}, r.status AS run_status, r.completed_at AS terminal_at, ${cleanupClaimed} AS cleanup_claimed,
     r.retained AS run_retained, (r.lease_owner IS NOT NULL OR r.lease_expires_at IS NOT NULL) AS has_lease,
     r.attempt_count, (SELECT count(*) FROM durable_attempts a WHERE a.run_id = r.run_id) AS observed_attempt_count,
     (EXISTS(SELECT 1 FROM durable_attempts a WHERE a.run_id = r.run_id AND (a.finished_at IS NULL OR a.recovery_pending <> 0))
@@ -634,7 +648,9 @@ function readWorkspaceCleanupReferences(database, root) {
       OR EXISTS(SELECT 1 FROM workspace_dependency_installs i WHERE i.workload_kind = w.workload_kind
       AND i.run_id = w.run_id AND i.receipt_json IS NULL)) AS pending_stage
     FROM workspace_run_allocations w LEFT JOIN durable_runs r ON r.run_id = w.run_id AND r.workload_kind = w.workload_kind ${evidenceJoin}
-    WHERE w.scratch_path >= ? AND w.scratch_path < ? ORDER BY w.scratch_path LIMIT ?`).all(prefix, upper, maxCleanupPreviewRows + 1);
+    WHERE w.scratch_path >= ? AND w.scratch_path < ?
+      ${target ? "AND w.workload_kind = ? AND w.run_id = ?" : ""}
+    ORDER BY w.scratch_path LIMIT ?`).all(prefix, upper, ...target ? [target.kind, target.runId, 2] : [maxCleanupPreviewRows + 1]);
   const references = [];
   let invalidRows = 0;
   for (const row of selected.slice(0, maxCleanupPreviewRows)) {
@@ -667,6 +683,7 @@ function readWorkspaceCleanupReferences(database, root) {
       foregroundDeliveryPending: row.foreground_delivery_pending === 1,
       retryReference: incomplete || retrySource.has(owner.data.runId),
       pendingStage: row.pending_stage === 1,
+      cleanupClaimed: row.cleanup_claimed !== 0,
       epoch: trustedEpoch ? parseWorkspaceCleanupEpoch(row.host, row.boot) : void 0,
       scratchBaseline: typeof row.scratch_baseline === "string" && /^[a-f0-9]{64}$/.test(row.scratch_baseline) ? row.scratch_baseline : void 0
     });
@@ -677,6 +694,29 @@ function readWorkspaceCleanupReferences(database, root) {
     truncated: selected.length > maxCleanupPreviewRows || incomplete,
     paths: readProtectedPathReferences(database)
   };
+}
+function workspaceCleanupLedgerEligibility(reference, now, minimumAgeDays, epoch) {
+  const reasons = [];
+  const priorBoot = wasUsedOnPriorHostBoot(reference.epoch, epoch);
+  if (reference.cleanupClaimed) reasons.push("cleanup_claimed");
+  if (reference.owner.kind === "foreground") {
+    reasons.push("foreground_quiescence_untracked");
+    if (reference.foregroundDeliveryPending) reasons.push("delivery_not_confirmed");
+  } else if (!reference.runStatus || !reference.record) reasons.push("run_missing");
+  else if (!terminalStatuses.has(reference.runStatus) || reference.lease) reasons.push("live_or_recoverable_run");
+  else {
+    if (reference.retained) reasons.push("explicitly_retained");
+    if (reference.unsettledDelivery || !reference.terminalDeliverySent) reasons.push("delivery_not_confirmed");
+    const attemptCount = reference.attemptCount === null ? NaN : Number(reference.attemptCount);
+    if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attemptCount !== reference.observedAttemptCount || attemptCount > 0 && !priorBoot) reasons.push("process_quiescence_unverified");
+    if (reference.openExecutionReference) reasons.push("open_execution_reference");
+    const terminalAt = Date.parse(reference.terminalAt ?? "");
+    const lastUsedAt = Date.parse(reference.record.lastUsedAt);
+    const cutoff = now.getTime() - minimumAgeDays * day;
+    if (!Number.isFinite(cutoff) || !Number.isFinite(terminalAt) || !Number.isFinite(lastUsedAt) || terminalAt > cutoff || lastUsedAt > cutoff) reasons.push("retention_window");
+  }
+  if (reference.retryReference || reference.pendingStage) reasons.push("retry_or_staging_reference");
+  return { reasons, priorBoot };
 }
 function readProtectedPathReferences(database) {
   const paths = /* @__PURE__ */ new Set();
@@ -739,13 +779,10 @@ function readProtectedPathReferences(database) {
       }
     }
   }
-  return { paths: [...paths], incomplete, unresolvedActiveCron };
+  return { paths: [...paths].sort(), incomplete, unresolvedActiveCron };
 }
 
 // src/workspace-cleanup-preview.ts
-var day = 24 * 60 * 60 * 1e3;
-var terminalStatuses = /* @__PURE__ */ new Set(["completed", "partial", "blocked", "failed", "cancelled"]);
-var runStatuses = /* @__PURE__ */ new Set([...terminalStatuses, "queued", "running", "waiting_retry", "waiting_user", "recovering", "cancel_requested"]);
 var maxRootNames = 256;
 var exec = promisify(execFile);
 async function previewWorkspaceCleanup(request) {
@@ -866,7 +903,7 @@ async function inspect(reference, request, roots, mounts, incomplete, epoch, bas
     workload: reference.owner.kind,
     disposition: "retain",
     reasons: [],
-    runStatus: reference.runStatus && runStatuses.has(reference.runStatus) ? reference.runStatus : "untracked"
+    runStatus: reference.runStatus && workspaceCleanupRunStatuses.has(reference.runStatus) ? reference.runStatus : "untracked"
   };
   const record = reference.record;
   if (!record) {
@@ -894,25 +931,8 @@ async function inspect(reference, request, roots, mounts, incomplete, epoch, bas
       complete: inventory.status === "complete"
     };
     if (inventory.status !== "complete" && !allocation.gitCheckout) entry.reasons.push("usage_incomplete");
-    const priorBoot = wasUsedOnPriorHostBoot(reference.epoch, epoch);
-    if (reference.owner.kind === "foreground") {
-      entry.reasons.push("foreground_quiescence_untracked");
-      if (reference.foregroundDeliveryPending) entry.reasons.push("delivery_not_confirmed");
-    } else if (!reference.runStatus) entry.reasons.push("run_missing");
-    else if (!terminalStatuses.has(reference.runStatus) || reference.lease) entry.reasons.push("live_or_recoverable_run");
-    else {
-      if (reference.retained) entry.reasons.push("explicitly_retained");
-      if (reference.unsettledDelivery || !reference.terminalDeliverySent) entry.reasons.push("delivery_not_confirmed");
-      const attemptCount = reference.attemptCount === null ? NaN : Number(reference.attemptCount);
-      if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attemptCount !== reference.observedAttemptCount || attemptCount > 0 && !priorBoot) {
-        entry.reasons.push("process_quiescence_unverified");
-      }
-      if (reference.openExecutionReference) entry.reasons.push("open_execution_reference");
-      const terminalAt = Date.parse(reference.terminalAt ?? "");
-      const cutoff = request.now.getTime() - request.minimumAgeDays * day;
-      if (!Number.isFinite(terminalAt) || terminalAt > cutoff || Date.parse(lastUsedAt) > cutoff) entry.reasons.push("retention_window");
-    }
-    if (reference.retryReference || reference.pendingStage) entry.reasons.push("retry_or_staging_reference");
+    const { reasons, priorBoot } = workspaceCleanupLedgerEligibility(reference, request.now, request.minimumAgeDays, epoch);
+    entry.reasons.push(...reasons);
     const baseline = reference.scratchBaseline;
     if (!entry.reasons.length) {
       if (!allocation.gitCheckout && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push("scratch_contains_files");

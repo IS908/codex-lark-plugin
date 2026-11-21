@@ -17,6 +17,7 @@ const diagnostic = {
   allocation_failed: 'The managed run directories could not be allocated.',
   allocation_incomplete: 'The stored managed workspace allocation is incomplete.',
   allocation_transaction: 'Managed workspace provisioning requires a committed database context.',
+  cleanup_claimed: 'Managed run scratch is reserved for or has already undergone cleanup.',
   invalid_binding: 'The managed workspace allocation is invalid.',
   dependency_install_incomplete: 'A dependency install was already started for this run but cannot be adopted or repeated.',
   dependency_selection_failed: 'The operator-approved dependency selection could not be verified for this run.',

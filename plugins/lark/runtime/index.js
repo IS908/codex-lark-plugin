@@ -103,7 +103,7 @@ import {
   workspaceMountLayoutSupported,
   workspacePathContains,
   workspaceProjectBindingSchema
-} from "./chunks/chunk-ZV32EYUV.js";
+} from "./chunks/chunk-PFYINSKQ.js";
 import {
   applyL1,
   detectCredentialMaterial,
