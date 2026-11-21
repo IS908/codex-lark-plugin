@@ -202,6 +202,11 @@ try {
   assert.equal((await resolveManagedGitLauncher(candidate, { PATH: '/usr/bin:/bin' }, [first.scratch])).command, candidate);
   await fs.writeFile(path.join(packageDir, 'codex-path', 'unexpected'), 'fixture');
   await assert.rejects(resolveManagedGitLauncher(candidate, { PATH: '/usr/bin:/bin' }, [first.scratch]), { code: 'git_launcher_untrusted' });
+  await fs.unlink(path.join(packageDir, 'codex-path', 'unexpected'));
+  const splitPackage = `${packageDir}${path.delimiter}segment`;
+  await fs.rename(packageDir, splitPackage);
+  await assert.rejects(resolveManagedGitLauncher(path.join(splitPackage, 'bin', 'codex'), { PATH: '/usr/bin:/bin' }, [first.scratch]),
+    { code: 'git_launcher_untrusted' });
   await assert.rejects(resolveManagedGitLauncher('codex', { PATH: '.' }, [request.project, first.scratch]), { code: 'git_launcher_untrusted' });
   await assert.rejects(resolveManagedGitLauncher('./codex', { PATH: '/usr/bin' }, [first.scratch]), { code: 'git_launcher_untrusted' });
   await assert.rejects(resolveManagedGitLauncher('codex', { PATH: '' }, [first.scratch]), { code: 'git_launcher_untrusted' });

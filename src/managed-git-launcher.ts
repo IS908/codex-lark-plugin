@@ -96,7 +96,8 @@ export async function resolveManagedGitLauncher(command: string, env: NodeJS.Pro
     });
     if (!present && process.platform === 'linux') throw invalid();
     if (present) {
-      if (!present.isDirectory() || await fs.realpath(bundledPath) !== bundledPath || !await trustedDirectory(bundledPath)) throw invalid();
+      if (bundledPath.includes(path.delimiter) || !present.isDirectory()
+        || await fs.realpath(bundledPath) !== bundledPath || !await trustedDirectory(bundledPath)) throw invalid();
       const rg = path.join(bundledPath, 'rg');
       const files = await fs.readdir(bundledPath);
       // Codex prepends its package's PATH directory. Only the shipped ripgrep is expected there.

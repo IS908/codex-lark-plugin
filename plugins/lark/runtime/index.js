@@ -57055,7 +57055,7 @@ async function resolveManagedGitLauncher(command, env, excluded, executionRoots 
     });
     if (!present && process.platform === "linux") throw invalid();
     if (present) {
-      if (!present.isDirectory() || await fs14.realpath(bundledPath) !== bundledPath || !await trustedDirectory(bundledPath)) throw invalid();
+      if (bundledPath.includes(path18.delimiter) || !present.isDirectory() || await fs14.realpath(bundledPath) !== bundledPath || !await trustedDirectory(bundledPath)) throw invalid();
       const rg = path18.join(bundledPath, "rg");
       const files = await fs14.readdir(bundledPath);
       if (files.length !== 1 || files[0] !== "rg" || await executable(rg) !== rg) throw invalid();
