@@ -3,12 +3,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import type { ManagedGitSelection, ManagedWorkspaceRoots } from './domain/managed-workspace.js';
-import { sameWorkspaceProject, workspaceProjectBindingSchema, type WorkspaceProjectBinding } from './domain/workspace.js';
+import { workspaceDependencyBindingSchema as binding, workspaceDependencyNpmRegistrySchema,
+  type WorkspaceDependencySelection } from './domain/workspace-dependency.js';
+import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { resolveManagedGitSelection } from './managed-git-registry.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
 import { verifyWorkspaceDependencyCache } from './workspace-dependency-cache.js';
-import { describeWorkspaceDependencies, workspaceDependencyNpmRegistrySchema, type WorkspaceDependencyIdentity,
-  type WorkspaceDependencyInput } from './workspace-dependency-input.js';
+import { describeWorkspaceDependencies, type WorkspaceDependencyInput } from './workspace-dependency-input.js';
 import { readWorkspaceGitDependencyInputs } from './workspace-git-snapshot.js';
 import { readWorkspaceDependencyMountPolicy, type WorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
 import { pinWorkspacePath, validateWorkspaceProject } from './workspace-projects.js';
@@ -20,8 +21,6 @@ const MANIFEST_BYTES = 8 * 1024 * 1024;
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const scope = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/);
 const ecosystem = z.enum(['npm', 'pip']);
-const binding = workspaceProjectBindingSchema.refine(({ directory }) => path.resolve(directory) === directory
-  && directory.length <= 4096 && !/[\u0000-\u001f\u007f*?\[\]]/.test(directory));
 const policy = z.discriminatedUnion('ecosystem', [
   z.strictObject({ ecosystem: z.literal('npm'), registry: workspaceDependencyNpmRegistrySchema }),
   z.strictObject({ ecosystem: z.literal('pip') }),
@@ -38,6 +37,7 @@ const messages = {
   dependency_write_layout_unsupported: 'The effective writable directory has an unsupported mount layout.',
   dependency_launch_unsupported: 'This Codex launch configuration cannot enforce the dependency cache write boundary.',
   dependency_runtime_home_required: 'Dependency cache protection requires a pre-existing, dedicated absolute CODEX_HOME outside the policy and cache locations.',
+  dependency_storage_unverifiable: 'A host storage path cannot be verified against the dependency cache boundary.',
   dependency_project_unavailable: 'Dependency reuse requires the registered project and its authorized isolated Git commit.',
   dependency_toolchain_unavailable: 'A selected dependency installer toolchain is unavailable.',
   dependency_cache_unavailable: 'No operator-approved cache matches the dependency compatibility key.',
@@ -54,12 +54,6 @@ export class WorkspaceDependencyPolicyError extends Error {
   }
 }
 
-export type WorkspaceDependencySelection = {
-  identity: WorkspaceDependencyIdentity;
-  cache: WorkspaceProjectBinding;
-  artifactManifestSha256: string;
-  cacheFingerprint: string;
-};
 type PreparedDependency = { selection: WorkspaceDependencySelection; stagedLock: string; npmManifest?: Buffer };
 
 export async function resolveWorkspaceDependencySelections(request: {
@@ -136,8 +130,27 @@ export async function assertWorkspaceDependencyWriteIsolation(configPath: string
   await (await loadWorkspaceDependencyWriteGuard(configPath))?.assertWrites(writableRoots);
 }
 
-export async function loadWorkspaceDependencyWriteGuard(configPath?: string) {
+// Verify current operator approval independently of the stored intent. Installer preflight verifies artifact bytes and the actual toolchain.
+export async function assertWorkspaceDependencySelectionAuthorized(configPath: string, project: WorkspaceProjectBinding | undefined,
+  git: ManagedGitSelection | undefined, dependencies: readonly WorkspaceDependencySelection[] | undefined): Promise<void> {
+  if (!dependencies?.length) return;
   const registry = await readRegistry(configPath);
+  const entry = registry?.projects.find(({ source }) => sameWorkspaceProject(source, project));
+  if (!registry || !entry || !git || git.repositoryId !== entry.repositoryId || dependencies.length !== entry.policies.length) {
+    fail('dependency_selection_revoked');
+  }
+  for (const dependency of dependencies) {
+    const { identity, cache, artifactManifestSha256 } = dependency;
+    const policy = entry.policies.find(({ ecosystem }) => ecosystem === identity.ecosystem);
+    if (!policy || (policy.ecosystem === 'npm' && (identity.ecosystem !== 'npm' || policy.registry !== identity.registry))
+      || identity.scope !== git.scope || !registry.caches.some((candidate) => candidate.ecosystem === identity.ecosystem
+        && candidate.key === identity.key && candidate.scope === identity.scope && candidate.artifactManifestSha256 === artifactManifestSha256
+        && sameWorkspaceProject(candidate.cache, cache))) fail('dependency_selection_revoked');
+  }
+}
+
+export async function loadWorkspaceDependencyWriteGuard(configPath?: string, options?: { allowMissingCachesForStorage?: boolean }) {
+  const registry = await readRegistry(configPath, options?.allowMissingCachesForStorage);
   if (!registry) return undefined;
   const check = (directory: string, writable: Location, protectedLocations: Location[]) => {
     if (protectedLocations.some((protectedLocation) => overlap(writable, protectedLocation, registry.mounts.contains))) fail('dependency_write_overlap');
@@ -163,6 +176,14 @@ export async function loadWorkspaceDependencyWriteGuard(configPath?: string) {
       await assertProtectedWorkspacePath(parent, false, true);
       return parent;
     },
+    async assertStorageDirectories(directories: readonly string[]) {
+      for (const directory of new Set(directories)) {
+        const { parent, target, missing } = await projectStorageDirectory(directory);
+        check(target, { id: missing ? '' : `${parent.device}:${parent.inode}`,
+          ancestors: await readWorkspaceAncestorIdentities(parent.directory), aliases: registry.mounts.aliases(target) }, registry.protected);
+        await assertProtectedWorkspacePath(parent, false, missing);
+      }
+    },
   };
 }
 
@@ -176,7 +197,7 @@ export async function hasWorkspaceDependencyRegistry(configPath: string): Promis
   }
 }
 
-async function readRegistry(configPath?: string) {
+async function readRegistry(configPath?: string, allowMissingCachesForStorage = false) {
   if (!configPath) return undefined;
   const directory = path.dirname(path.resolve(configPath));
   const raw = await readProtectedJson(path.join(directory, REGISTRY), REGISTRY_BYTES, 'dependency_registry_invalid');
@@ -198,15 +219,43 @@ async function readRegistry(configPath?: string) {
     for (const { cache, key } of registry.caches) {
       if (keys.has(key)) fail('dependency_registry_invalid');
       keys.add(key);
-      const current = await validateWorkspaceProject(cache.directory, cache);
-      await assertProtectedWorkspacePath(current);
-      if (!mounts.supports(current.directory)) fail('dependency_registry_invalid');
-      const location = await describeLocation(current, mounts);
+      let location;
+      if (allowMissingCachesForStorage && !await pathExists(cache.directory)) {
+        const { parent, target } = await projectStorageDirectory(cache.directory);
+        await assertProtectedWorkspacePath(parent, false, true);
+        if (!mounts.supports(target)) fail('dependency_registry_invalid');
+        location = { binding: cache, id: `${cache.device}:${cache.inode}`, ancestors: await readWorkspaceAncestorIdentities(parent.directory),
+          aliases: mounts.aliases(target) };
+      } else {
+        const current = await validateWorkspaceProject(cache.directory, cache);
+        await assertProtectedWorkspacePath(current);
+        if (!mounts.supports(current.directory)) fail('dependency_registry_invalid');
+        location = await describeLocation(current, mounts);
+      }
       if (protectedLocations.some((other) => overlap(location, other, mounts.contains))) fail('dependency_registry_invalid');
       protectedLocations.push(location);
     }
     return { ...registry, directory, mounts, protected: protectedLocations };
   } catch { return fail('dependency_registry_invalid'); }
+}
+
+async function projectStorageDirectory(directory: string) {
+  const suffix: string[] = [];
+  let current = path.resolve(directory);
+  while (!await pathExists(current)) {
+    suffix.unshift(path.basename(current));
+    current = path.dirname(current);
+  }
+  const parent = await pinWorkspacePath(current, '.');
+  return { parent, target: path.join(parent.directory, ...suffix), missing: suffix.length > 0 };
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  try { await fs.lstat(candidate); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 async function readProtectedJson(filename: string, limit: number,

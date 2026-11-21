@@ -31,6 +31,7 @@ export interface ManagedWorkspaceStore {
     usedAt?: string;
     sourceRegistryPath?: string;
     sourceRegistryRoot?: string;
+    dependencyRegistryConfigPath?: string;
   }): Promise<ManagedRunAllocation>;
   openDirectory(owner: ManagedRunOwner, purpose: ManagedWorkspacePurpose, authorizedRoots: ManagedWorkspaceAuthorizedRoots): Promise<string>;
 }

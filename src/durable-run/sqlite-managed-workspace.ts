@@ -20,6 +20,7 @@ import {
   type UnmanagedForegroundAdmission,
 } from '../domain/managed-workspace.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from '../domain/workspace.js';
+import { sameWorkspaceDependencySelections } from '../domain/workspace-dependency.js';
 import type { ManagedArtifactStageJournal, ManagedWorkspaceAuthorizedRoots, ManagedWorkspaceRecord, ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import {
   allocateManagedRunDirectories,
@@ -31,6 +32,9 @@ import {
 } from '../managed-workspace-storage.js';
 import { MANAGED_GIT_CHECKOUT_LEAF } from '../managed-workspace-mkdir.js';
 import { readWorkspaceMountTable, workspaceBackingAliases } from '../managed-workspace-ancestry.js';
+import { managedWorkspaceConfigPath } from '../runtime-paths.js';
+import { assertWorkspaceDependencySelectionAuthorized, assertWorkspaceDependencyWriteIsolation } from '../workspace-dependency-registry.js';
+import { validateWorkspaceProject } from '../workspace-projects.js';
 import { assertWorkspaceGitCacheIdentity, assertWorkspaceGitCheckoutMounts, createWorkspaceGitCheckout, gitSnapshotKey,
   validateWorkspaceGitCheckout } from '../workspace-git-snapshot.js';
 
@@ -237,6 +241,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       || !sameWorkspaceProject(intent.project, allocation.project)
       || !sameWorkspaceProject(intent.fallbackWorkspace, allocation.fallbackWorkspace)
       || !sameManagedGitSelection(intent.git, allocation.git)
+      || !sameWorkspaceDependencySelections(intent.dependencySelections, allocation.dependencySelections)
       || !validGitAllocation(allocation)
       || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch)
       || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
@@ -246,7 +251,8 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     return { allocation, lastUsedAt: lastUsedAt.data };
   }
 
-  async ensure({ authorizedRoots, usedAt, sourceRegistryPath, sourceRegistryRoot, ...input }: Parameters<ManagedWorkspaceStore['ensure']>[0]): Promise<ManagedRunAllocation> {
+  async ensure({ authorizedRoots, usedAt, sourceRegistryPath, sourceRegistryRoot, dependencyRegistryConfigPath = managedWorkspaceConfigPath,
+    ...input }: Parameters<ManagedWorkspaceStore['ensure']>[0]): Promise<ManagedRunAllocation> {
     const parsed = managedRunIntentSchema.safeParse({ version: 1, ...input });
     const lastUse = timestamp.safeParse(usedAt ?? input.createdAt);
     if (!parsed.success || !lastUse.success) throw new ManagedWorkspaceStorageError('invalid_binding');
@@ -255,10 +261,13 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     if (snapshot.git && (!snapshot.project || snapshot.git.key !== gitSnapshotKey(snapshot.git))) {
       throw new ManagedWorkspaceStorageError('invalid_binding');
     }
+    await assertWorkspaceDependencyWriteIsolation(dependencyRegistryConfigPath, [snapshot.roots.scratch.directory, snapshot.roots.artifacts.directory]);
+    await assertWorkspaceDependencySelectionAuthorized(dependencyRegistryConfigPath, snapshot.project, snapshot.git, snapshot.dependencySelections);
     const lastUsedAt = new Date(lastUse.data).toISOString();
     const policy = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
     const existing = this.get(owner);
     if (existing) return this.reuse(existing, snapshot, policy, lastUsedAt);
+    for (const { cache } of snapshot.dependencySelections ?? []) await validateWorkspaceProject(authorizedRoots, cache);
     const placement = { ...policy, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace, gitCache: snapshot.git?.cache };
     const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, placement);
     if (snapshot.git && snapshot.project) {
@@ -311,6 +320,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     if (!sameWorkspaceProject(allocation.project, snapshot.project)
       || !sameWorkspaceProject(allocation.fallbackWorkspace, snapshot.fallbackWorkspace)
       || !sameManagedGitSelection(allocation.git, snapshot.git)
+      || !sameWorkspaceDependencySelections(allocation.dependencySelections, snapshot.dependencySelections)
       || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey || allocation.createdAt !== snapshot.createdAt
       || !sameWorkspaceProject(allocation.roots.scratch, snapshot.roots.scratch)
       || !sameWorkspaceProject(allocation.roots.artifacts, snapshot.roots.artifacts)) {

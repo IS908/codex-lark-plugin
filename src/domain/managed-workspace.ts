@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { sameWorkspaceProject, workspaceProjectBindingSchema } from './workspace.js';
+import { workspaceDependencySelectionsSchema, type WorkspaceDependencySelection } from './workspace-dependency.js';
 
 export const MANAGED_DELIVERY_MAX_BYTES = 30_000_000;
 export const MANAGED_DELIVERY_MAX_FILES = 5;
@@ -75,12 +76,17 @@ export const managedGitSelectionSchema = z.strictObject({
 }).refine(({ commit, objectFormat }) => commit.length === (objectFormat === 'sha1' ? 40 : 64));
 export type ManagedGitSelection = z.infer<typeof managedGitSelectionSchema>;
 
+export function dependenciesMatchManagedGit(dependencySelections?: WorkspaceDependencySelection[], git?: ManagedGitSelection): boolean {
+  return !dependencySelections?.length || !!git && dependencySelections.every(({ identity }) => identity.scope === git.scope);
+}
+
 export const managedWorkspaceAdmissionSchema = z.strictObject({
   roots: managedWorkspaceRootsSchema,
   createdAt: z.iso.datetime(),
   fallbackWorkspace: workspaceProjectBindingSchema.optional(),
   git: managedGitSelectionSchema.optional(),
-}).refine(({ git, fallbackWorkspace }) => !git || !fallbackWorkspace);
+  dependencySelections: workspaceDependencySelectionsSchema.optional(),
+}).refine(({ git, fallbackWorkspace, dependencySelections }) => (!git || !fallbackWorkspace) && dependenciesMatchManagedGit(dependencySelections, git));
 
 export function sameManagedGitSelection(a?: ManagedGitSelection, b?: ManagedGitSelection): boolean {
   return a === b || !!a && !!b && sameWorkspaceProject(a.cache, b.cache) && a.repositoryId === b.repositoryId
@@ -88,22 +94,28 @@ export function sameManagedGitSelection(a?: ManagedGitSelection, b?: ManagedGitS
     && a.key === b.key && a.storeFingerprint === b.storeFingerprint;
 }
 
-export const managedRunIntentSchema = z.strictObject({
+const managedRunIntentObject = z.strictObject({
   version: z.literal(1),
   owner: managedRunOwnerSchema,
   roots: managedWorkspaceRootsSchema,
   project: workspaceProjectBindingSchema.optional(),
   fallbackWorkspace: workspaceProjectBindingSchema.optional(),
   git: managedGitSelectionSchema.optional(),
+  dependencySelections: workspaceDependencySelectionsSchema.optional(),
   foregroundSessionKey: foregroundSessionKey.optional(),
   createdAt: z.iso.datetime(),
 });
+function validDependencyBinding({ dependencySelections, git, project }: z.infer<typeof managedRunIntentObject>): boolean {
+  return (!dependencySelections?.length || !!project) && dependenciesMatchManagedGit(dependencySelections, git);
+}
 
-export const managedRunAllocationSchema = managedRunIntentSchema.extend({
+export const managedRunIntentSchema = managedRunIntentObject.refine(validDependencyBinding);
+
+export const managedRunAllocationSchema = managedRunIntentObject.extend({
   scratch: workspaceProjectBindingSchema,
   artifacts: workspaceProjectBindingSchema,
   gitCheckout: z.strictObject({ checkout: workspaceProjectBindingSchema, gitDirectory: workspaceProjectBindingSchema }).optional(),
-});
+}).refine(validDependencyBinding);
 
 export type ManagedRunOwner = z.infer<typeof managedRunOwnerSchema>;
 export type ManagedWorkspaceRoots = z.infer<typeof managedWorkspaceRootsSchema>;

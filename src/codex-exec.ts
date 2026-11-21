@@ -35,6 +35,7 @@ export interface CodexExecRequest {
   timeoutMs?: number;
   sandbox?: CodexExecSandbox;
   model?: string | null;
+  openAiLoopbackUrl?: string;
   profile?: string | null;
   ignoreUserConfig?: boolean;
   strictConfig?: boolean;
@@ -247,6 +248,16 @@ export function buildCodexExecArgs(
   if (request.skipGitRepoCheck ?? true) args.push('--skip-git-repo-check');
   if (request.sandbox) args.push('--sandbox', request.sandbox);
   if (request.model) args.push('--model', request.model);
+  if (request.openAiLoopbackUrl !== undefined) {
+    if (!URL.canParse(request.openAiLoopbackUrl)) throw new Error('Invalid Codex model endpoint.');
+    const endpoint = new URL(request.openAiLoopbackUrl);
+    const loopback = endpoint.hostname === '127.0.0.1' || endpoint.hostname === '[::1]';
+    if (!loopback || (endpoint.protocol !== 'https:' && endpoint.protocol !== 'http:')
+      || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname !== '/v1') {
+      throw new Error('Invalid Codex model endpoint.');
+    }
+    args.push('--config', `openai_base_url=${JSON.stringify(endpoint.href)}`);
+  }
   if (request.profile) args.push('--profile', request.profile);
   if (schemaFile) args.push('--output-schema', schemaFile);
   for (const override of request.configOverrides ?? []) {

@@ -4,7 +4,11 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { mock } from 'node:test';
+import { sameWorkspaceDependencySelections, workspaceDependencySelectionsSchema } from '../src/domain/workspace-dependency.js';
+import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
+import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
 import { describeWorkspaceDependencies, prepareWorkspaceNpmLock, prepareWorkspacePipLock } from '../src/workspace-dependency-input.js';
 import { assertWorkspaceDependencyWriteIsolation, resolveWorkspaceDependencySelections } from '../src/workspace-dependency-registry.js';
 import { readWorkspaceGitCacheIdentity } from '../src/workspace-git-snapshot.js';
@@ -88,10 +92,45 @@ try {
   assert.equal(prepared[0].selection.identity.key, key);
   assert.deepEqual(prepared[0].selection.cache, wheelhouse);
   const expected = prepared.map(({ selection }) => selection);
+  const otherScope = await readWorkspaceGitCacheIdentity({ gitDirectory: gitCache, authorizedRoots, repositoryId, scope: 'team-b', commit });
+  const ledgerPath = path.join(work, 'allocation.sqlite');
+  const firstRun = { authorizedRoots, roots, project: selected, git: pinned, createdAt: '2026-11-21T20:00:00.000Z',
+    owner: { kind: 'foreground', runId: 'dependency-selected' } as const, dependencySelections: expected, dependencyRegistryConfigPath: configPath };
+  const optOut = { ...firstRun, owner: { kind: 'cron_prompt', runId: 'dependency-opt-out' } as const, dependencySelections: [] };
+  const legacy = { ...firstRun, owner: { kind: 'async_task', runId: 'dependency-legacy' } as const, dependencySelections: undefined };
+  const originalLedger = new DatabaseSync(ledgerPath);
+  try {
+    const store = new SqliteManagedWorkspaceStore(originalLedger);
+    const overlapping = { ...optOut, roots: { ...roots, scratch: wheelhouse }, owner: { ...optOut.owner, runId: 'dependency-overlap' } };
+    await assert.rejects(store.ensure(overlapping), { code: 'dependency_write_overlap' });
+    assert.equal(store.get(overlapping.owner), null);
+    assert.deepEqual(await fs.readdir(cache), [wheelName]);
+    const selectedRun = await store.ensure(firstRun);
+    const optedOutRun = await store.ensure(optOut);
+    assert.deepEqual(selectedRun.dependencySelections, expected);
+    assert.notEqual(selectedRun.scratch.directory, optedOutRun.scratch.directory);
+    assert.deepEqual(optedOutRun.dependencySelections, []);
+    assert.equal((await store.ensure(legacy)).dependencySelections, undefined);
+    await assert.rejects(store.ensure({ ...firstRun, owner: { ...firstRun.owner, runId: 'wrong-dependency-scope' },
+      git: { cache: gitCache, ...otherScope } }), { code: 'invalid_binding' });
+  } finally { originalLedger.close(); }
+  const reopenedLedger = new DatabaseSync(ledgerPath);
+  try {
+    const store = new SqliteManagedWorkspaceStore(reopenedLedger);
+    assert.deepEqual(store.get(firstRun.owner)?.allocation.dependencySelections, expected);
+    assert.deepEqual(store.get(optOut.owner)?.allocation.dependencySelections, []);
+    assert.equal(store.get(legacy.owner)?.allocation.dependencySelections, undefined);
+    await assert.rejects(store.ensure({ ...firstRun, dependencySelections: [] }), { code: 'invalid_binding' });
+    await assert.rejects(store.ensure({ ...legacy, dependencySelections: [] }), { code: 'invalid_binding' });
+    await assert.rejects(store.ensure({ ...firstRun, dependencySelections: [{ ...expected[0], cacheFingerprint: 'f'.repeat(64) }] }), { code: 'invalid_binding' });
+    assert.deepEqual((await store.ensure(firstRun)).dependencySelections, expected);
+    const sql = "UPDATE workspace_run_allocations SET allocation_json = json_remove(allocation_json, '$.dependencySelections') WHERE workload_kind = ? AND run_id = ?";
+    assert.equal(reopenedLedger.prepare(sql).run(optOut.owner.kind, optOut.owner.runId).changes, 1);
+    assert.throws(() => store.get(optOut.owner), { code: 'invalid_binding' });
+  } finally { reopenedLedger.close(); }
   assert.deepEqual(await resolveWorkspaceDependencySelections({ ...request, expected }), prepared);
   assert.deepEqual(await resolveWorkspaceDependencySelections({ ...request, expected: [] }), []);
   await assert.rejects(resolveWorkspaceDependencySelections({ ...request, git: undefined }), { code: 'dependency_project_unavailable' });
-  const otherScope = await readWorkspaceGitCacheIdentity({ gitDirectory: gitCache, authorizedRoots, repositoryId, scope: 'team-b', commit });
   await assert.rejects(resolveWorkspaceDependencySelections({ ...request, git: { cache: gitCache, ...otherScope } }),
     { code: 'dependency_project_unavailable' });
   await assert.rejects(resolveWorkspaceDependencySelections({ ...request,
@@ -109,6 +148,20 @@ try {
   finally { changePolicy.mock.restore(); }
   await writeRegistry({ ...policy, projects: [] });
   await assert.rejects(resolveWorkspaceDependencySelections({ ...request, expected }), { code: 'dependency_selection_revoked' });
+  const revokedLedger = new DatabaseSync(ledgerPath);
+  try {
+    const store = new SqliteManagedWorkspaceStore(revokedLedger);
+    const next = { ...firstRun, owner: { ...firstRun.owner, runId: 'dependency-revoked-before-reservation' } };
+    await assert.rejects(store.ensure(next), { code: 'dependency_selection_revoked' });
+    assert.equal(store.get(next.owner), null);
+    await assert.rejects(store.ensure(firstRun), { code: 'dependency_selection_revoked' });
+    assert.deepEqual(store.get(firstRun.owner)?.allocation.dependencySelections, expected);
+  } finally { revokedLedger.close(); }
+  const laterDb = path.join(fixture, 'not-created', 'jobs.sqlite');
+  await assert.rejects(SqliteContinuationRepository.open({ databasePath: laterDb, artifactsDir: path.join(cache, 'nested', 'artifacts'),
+    managedWorkspacePolicy: { managedWorkspaceConfigPath: configPath, currentWorkingRoot: work } }), { code: 'dependency_write_overlap' });
+  await assert.rejects(fs.access(path.dirname(laterDb)), { code: 'ENOENT' });
+  assert.deepEqual(await fs.readdir(cache), [wheelName]);
   assert.deepEqual(await resolveWorkspaceDependencySelections(request), []);
   await assert.rejects(assertWorkspaceDependencyWriteIsolation(configPath, [cache]), { code: 'dependency_write_overlap' });
   await writeRegistry({ ...policy, caches: [entry, { ...entry, scope: 'team-b', key: 'b'.repeat(64) }] });
@@ -129,6 +182,11 @@ try {
   assert.deepEqual(both[0].npmManifest, npmManifest);
   assert.equal(both[0].stagedLock, npmPrepared.lock);
   assert.equal(both[1].npmManifest, undefined);
+  const shared = both.map(({ selection }) => selection);
+  assert.ok(sameWorkspaceDependencySelections(shared, [...shared].reverse()));
+  assert.ok(!workspaceDependencySelectionsSchema.safeParse([shared[0], { ...shared[1], cache: shared[0].cache }]).success);
+  assert.ok(!workspaceDependencySelectionsSchema.safeParse([{ ...shared[0], cache: { ...shared[0].cache,
+    directory: `${shared[0].cache.directory}/.` } }]).success);
   await assert.rejects(resolveWorkspaceDependencySelections({ ...request, expected }), { code: 'dependency_selection_revoked' });
   await assert.rejects(assertWorkspaceDependencyWriteIsolation(configPath, [npmCache]), { code: 'dependency_write_overlap' });
   await writeRegistry({ ...dual, projects: [{ ...dual.projects[0], policies: [{ ecosystem: 'npm', registry: 'http://registry.example.test/' }] }] });
@@ -136,6 +194,20 @@ try {
   await writeRegistry(policy);
   const wheelPath = path.join(cache, wheelName);
   await fs.unlink(wheelPath);
+  await assert.rejects(resolveWorkspaceDependencySelections({ ...request, expected }), { code: 'dependency_artifact_missing' });
+  const deliveryLedger = new DatabaseSync(ledgerPath);
+  try {
+    const record = new SqliteManagedWorkspaceStore(deliveryLedger).get(firstRun.owner);
+    assert.deepEqual(record?.allocation.dependencySelections, expected, 'delivery can still read a committed allocation when its dependencies are missing');
+  } finally { deliveryLedger.close(); }
+  const movedCache = path.join(work, 'unavailable-cache');
+  await fs.rename(cache, movedCache);
+  try {
+    const reopened = await SqliteContinuationRepository.open({ databasePath: path.join(fixture, 'delivery-runtime', 'jobs.sqlite'),
+      artifactsDir: path.join(fixture, 'delivery-runtime', 'artifacts'),
+      managedWorkspacePolicy: { managedWorkspaceConfigPath: configPath, currentWorkingRoot: work } });
+    reopened.close();
+  } finally { await fs.rename(movedCache, cache); }
   await fs.writeFile(wheelPath, wheel);
   await assert.rejects(resolveWorkspaceDependencySelections({ ...request, expected }), { code: 'dependency_cache_changed' });
   await fs.chmod(sidecar, 0o622);

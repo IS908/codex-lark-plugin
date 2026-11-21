@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { createManagedGitSandboxOptions, DEPENDENCY_GUARD_PROFILE, dependencyGuardSandboxOverrides } from '../src/managed-git-sandbox.js';
 import { MANAGED_GIT_CHECKOUT_LEAF } from '../src/managed-workspace-mkdir.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
+import { probeCodexExecWithLoopback } from './fixtures/codex-loopback-exec.js';
 
 const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lark-dependency-launch-')));
 const [home, codexHome, temp, work, cacheParent] = ['home', 'codex', 'temp', 'work', 'cache-root'].map((name) => path.join(root, name));
@@ -31,9 +32,11 @@ while [ "$#" -gt 1 ]; do
 done
 exit 1
 `, { mode: 0o700 });
-  const { runCodexExecCommand } = await import('../src/codex-exec.js');
+  const { buildCodexExecArgs, runCodexExecCommand } = await import('../src/codex-exec.js');
   const { runConfiguredLocalCliToolAsCaller } = await import('../src/local-cli-tools.js');
   const request = { command, cwd: work, sandbox: 'workspace-write', prompt: 'fixture', extraEnv: { LAUNCH_FIXTURE_MARKER: marker } } as const;
+  assert.throws(() => buildCodexExecArgs({ ...request, openAiLoopbackUrl: 'https://example.test/v1' }, marker), /Invalid Codex model endpoint/);
+  assert.throws(() => buildCodexExecArgs({ ...request, openAiLoopbackUrl: 'http://secret@127.0.0.1/v1' }, marker), /Invalid Codex model endpoint/);
   assert.equal((await runCodexExecCommand(request)).text, 'fixture');
   assert.equal(await fs.readFile(marker, 'utf8'), 'launched');
   await fs.unlink(marker);
@@ -99,6 +102,41 @@ exit 1
     await assert.rejects(run(blocked));
     await assert.rejects(fs.access(blocked), { code: 'ENOENT' });
     console.log('workspace dependency native named profile: private write allowed, cache write denied');
+
+    const fakeKey = 'sk-fixture-not-a-credential';
+    await fs.writeFile(path.join(codexHome, 'auth.json'), JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: fakeKey }), { mode: 0o600 });
+    const isolatedEnv = { ...Object.fromEntries(Object.keys(process.env).map((key) => [key, undefined])),
+      HOME: home, CODEX_HOME: codexHome, PATH: '/usr/bin:/bin', OPENAI_API_KEY: fakeKey,
+      HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9', ALL_PROXY: 'http://127.0.0.1:9', NO_PROXY: '127.0.0.1' };
+    const runArtifacts = path.join(root, 'run-artifacts');
+    await fs.mkdir(runArtifacts, { mode: 0o700 });
+    const protectedGit = await createManagedGitSandboxOptions({ mode: 'workspace-write', authorizedRoots: [root],
+      source: await bind(source), cache: await bind(objects), scratch: await bind(scratch), artifacts: await bind(runArtifacts),
+      checkout: { checkout: await bind(checkout), gitDirectory: await bind(gitDirectory) } });
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const modes = [ ['regular', request], ['managed-git', { ...managedRequest,
+      managedGitSandbox: protectedGit, configOverrides: [...protectedGit.overrides] }] ] as const;
+    for (const [mode, launchRequest] of modes) {
+      let sessionId: string | null = null;
+      for (const phase of ['start', 'resume']) {
+        const privateFile = path.join(launchRequest.cwd, `exec-${mode}-${phase}`);
+        const protectedFile = path.join(cache, `exec-${mode}-${phase}`);
+        const success = `LARK_DEPENDENCY_BOUNDARY_${mode}_${phase}`;
+        await probeCodexExecWithLoopback({ cwd: launchRequest.cwd, env: isolatedEnv, overrides: [], marker: success, authorization: `Bearer ${fakeKey}`,
+          command: `/usr/bin/touch ${quote(privateFile)} && ! /usr/bin/touch ${quote(protectedFile)} && printf %s ${quote(success)}`,
+          launch: async (_overrides, loopbackBaseUrl) => {
+            const result = await runCodexExecCommand({ ...launchRequest, command: native, model: 'gpt-5.4', timeoutMs: 25_000,
+              resumeSessionId: sessionId, openAiLoopbackUrl: loopbackBaseUrl, extraEnv: isolatedEnv });
+            assert.ok(result.sessionId, 'actual Codex launch must return a reusable session ID');
+            if (sessionId) assert.equal(result.sessionId, sessionId);
+            sessionId = result.sessionId;
+            return result.text;
+          } });
+        await fs.access(privateFile);
+        await assert.rejects(fs.access(protectedFile), { code: 'ENOENT' });
+      }
+      console.log(`workspace dependency native ${mode} exec and resume: private write allowed, cache write denied`);
+    }
   }
   console.log('workspace dependency launch smoke: PASS');
 } finally { await fs.rm(root, { recursive: true, force: true }); }

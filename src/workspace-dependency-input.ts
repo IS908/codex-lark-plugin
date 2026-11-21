@@ -1,40 +1,13 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { dependencyDigestSchema as digestSchema, dependencyScopeSchema as scopeSchema, dependencyToolchainSchema as toolchainSchema,
+  workspaceDependencyCompatibilityKey as compatibilityKey, workspaceDependencyNpmRegistrySchema } from './domain/workspace-dependency.js';
+
+export { workspaceDependencyIdentitySchema } from './domain/workspace-dependency.js';
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_PACKAGES = 25_000;
 const MAX_JSON_VALUES = 250_000;
-const scopeSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/);
-const tokenSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.+-]{0,127}$/);
-const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
-const toolchainSchema = z.strictObject({
-  runtime: tokenSchema,
-  installer: tokenSchema,
-  abi: tokenSchema,
-  platform: z.enum(['darwin', 'linux']),
-  arch: z.enum(['x64', 'arm64']),
-  platformAbi: tokenSchema,
-});
-
-const commonIdentity = { version: z.literal(1), scope: scopeSchema, toolchain: toolchainSchema, lockSha256: digestSchema };
-const dependencyIdentityShape = z.discriminatedUnion('ecosystem', [
-  z.strictObject({ ...commonIdentity, ecosystem: z.literal('npm'), policy: z.literal('npm-ci-offline-no-scripts-v1'),
-    registry: z.string().max(2048), manifestSha256: digestSchema, key: digestSchema }),
-  z.strictObject({ ...commonIdentity, ecosystem: z.literal('pip'), policy: z.literal('pip-offline-hashed-wheels-v1'), key: digestSchema }),
-]);
-export const workspaceDependencyNpmRegistrySchema = z.string().max(2048).refine((value) => {
-  try { registryUrl(value); return true; } catch { return false; }
-});
-export type WorkspaceDependencyIdentity = z.infer<typeof dependencyIdentityShape>;
-type CompatibilityInputs = Omit<Extract<WorkspaceDependencyIdentity, { ecosystem: 'npm' }>, 'key'>
-  | Omit<Extract<WorkspaceDependencyIdentity, { ecosystem: 'pip' }>, 'key'>;
-
-export const workspaceDependencyIdentitySchema = dependencyIdentityShape.refine((identity) => {
-  try {
-    if (identity.ecosystem === 'npm') registryUrl(identity.registry);
-    return compatibilityKey(identity) === identity.key;
-  } catch { return false; }
-}, 'Invalid dependency compatibility identity.');
 
 export type WorkspaceDependencyInput = { lock: Uint8Array; scope: string; toolchain: z.input<typeof toolchainSchema> } & (
   { ecosystem: 'npm'; manifest: Uint8Array; registry: string } | { ecosystem: 'pip' });
@@ -120,7 +93,8 @@ export function describeWorkspaceDependencies(input: WorkspaceDependencyInput) {
   const lock = decodeInput(input.lock);
   const base = { version: 1 as const, scope: scope.data, toolchain: toolchain.data, lockSha256: digest(input.lock) };
   if (input.ecosystem === 'npm') {
-    const registry = registryUrl(input.registry);
+    if (!workspaceDependencyNpmRegistrySchema.safeParse(input.registry).success) unsupported();
+    const registry = new URL(input.registry);
     const manifest = parseJson(decodeInput(input.manifest));
     const artifacts = readNpmArtifacts(parseJson(lock), manifest, registry);
     const manifestSha256 = digest(input.manifest);
@@ -134,12 +108,6 @@ export function describeWorkspaceDependencies(input: WorkspaceDependencyInput) {
   return { ...identity, key: compatibilityKey(identity), requirements };
 }
 
-function compatibilityKey(identity: CompatibilityInputs): string {
-  const { ecosystem, policy, scope, lockSha256, toolchain: { runtime, installer, abi, platform, arch, platformAbi } } = identity;
-  const parts = ['workspace-dependencies-v1', scope, runtime, installer, abi, platform, arch, platformAbi, lockSha256, ecosystem, policy];
-  if (identity.ecosystem === 'npm') parts.push(identity.registry, identity.manifestSha256);
-  return digest(JSON.stringify(parts));
-}
 
 function digest(bytes: Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -175,12 +143,6 @@ function trustedUrl(value: unknown): URL {
   let url: URL;
   try { url = new URL(value); } catch { return unsupported(); }
   if (url.protocol !== 'https:' || url.username || url.password || url.href !== value) unsupported();
-  return url;
-}
-
-function registryUrl(value: string): URL {
-  const url = trustedUrl(value);
-  if (!url.pathname.endsWith('/') || !/^\/(?:[a-zA-Z0-9_-]+\/)*$/.test(url.pathname)) unsupported();
   return url;
 }
 

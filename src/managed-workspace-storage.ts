@@ -11,6 +11,7 @@ import {
   type ManagedWorkspaceRoots,
 } from './domain/managed-workspace.js';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
+import type { WorkspaceDependencySelection } from './domain/workspace-dependency.js';
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
 import { mkdirInsidePinnedRoot } from './managed-workspace-mkdir.js';
 import { assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
@@ -57,12 +58,13 @@ export async function readManagedWorkspaceRoots({
 }
 
 export async function allocateManagedRunDirectories({
-  roots, owner, createdAt, foregroundSessionKey, ...authorization
+  roots, owner, createdAt, foregroundSessionKey, dependencySelections, ...authorization
 }: WorkspaceAuthorization & {
   roots: ManagedWorkspaceRoots;
   owner: ManagedRunOwner;
   createdAt: string;
   foregroundSessionKey?: string;
+  dependencySelections?: WorkspaceDependencySelection[];
 }): Promise<ManagedRunAllocation> {
   if (!managedRunOwnerSchema.safeParse(owner).success || !z.iso.datetime().safeParse(createdAt).success) {
     throw new ManagedWorkspaceStorageError('invalid_binding');
@@ -72,6 +74,7 @@ export async function allocateManagedRunDirectories({
   const artifacts = await allocateDirectory(roots.artifacts, owner, authorization.authorizedRoots);
   return {
     version: 1, owner, roots, scratch, artifacts, createdAt,
+    ...(dependencySelections !== undefined ? { dependencySelections } : {}),
     ...(foregroundSessionKey ? { foregroundSessionKey } : {}),
     ...(authorization.project ? { project: authorization.project } : {}),
     ...(authorization.fallbackWorkspace ? { fallbackWorkspace: authorization.fallbackWorkspace } : {}),
