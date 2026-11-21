@@ -34,5 +34,6 @@
 - [x] Expose committed Async Task artifacts through the authenticated status and artifact commands. Document opt-in operation and verify on-demand delivery after scratch is unavailable.
 - [x] Reconcile complete retry staging writes under the retry creation lock before applying the target quota. Cover interruption both before and after the exclusive link; do not adopt or remove unverified entries.
 - [ ] Track ownership of incomplete retry writes so their interruption can be recovered without discarding unknown files.
-- [ ] Connect formal references to pending deliveries and the remaining foreground/Cron artifact paths. Test durable delivery with scratch unavailable and legacy delivery after config changes.
+- [x] Persist requested Async Task artifact deliveries in the existing durable outbox and revalidate the commitment and bytes before sending. Verify restart with missing scratch and isolation from the terminal notification.
+- [ ] Connect formal references to the remaining foreground/Cron publishing and delivery paths. Verify legacy delivery after configuration changes.
 - [ ] Run the full suite and marketplace checks, get independent review, merge, verify main CI, publish a tagged release, then close #393. Cache reuse and cleanup remain subsequent #387 milestones.

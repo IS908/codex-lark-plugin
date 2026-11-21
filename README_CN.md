@@ -245,7 +245,8 @@ Cron 不支持启用托管目录。
 
 每次运行登记各自的临时目录和正式产物目录，重试不会从修改后的配置重新选择根目录。
 托管 Async Task 的 `/task status ID` 会显示已提交 checkpoint 的产物 ID；即使临时目录不可用，
-也可以在私聊或任务原群原话题用 `/task artifact ID ARTIFACT_ID` 校验并取回文件。
+也可以在私聊或任务原群原话题用 `/task artifact ID ARTIFACT_ID` 请求投递正式文件。
+待投递请求可跨重启恢复，上传前会再次校验文件。
 配置不会迁移或清理现有文件。
 
 ### 第 4 步：启动

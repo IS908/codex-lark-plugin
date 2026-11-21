@@ -56371,10 +56371,37 @@ async function emitCodexExecConfigDiagnostics(config2) {
 // src/codex-exec-actions.ts
 import fs15 from "node:fs/promises";
 import path19 from "node:path";
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 
-// src/continuation/service.ts
-import path17 from "node:path";
+// src/continuation/artifact-delivery.ts
+import { createHash as createHash5 } from "node:crypto";
+import path14 from "node:path";
+var artifactDeliverySchema = external_exports.strictObject({
+  version: external_exports.literal(1),
+  chatType: external_exports.enum(["p2p", "group"]),
+  artifactId: external_exports.string().regex(/^[A-Za-z0-9_.-]{1,80}$/),
+  path: external_exports.string().min(1).max(2048),
+  sha256: external_exports.string().regex(/^[a-fA-F0-9]{64}$/)
+});
+var IM_ARTIFACT_MAX_BYTES = 3e7;
+var IM_ARTIFACT_SIZE_NOTE = "IM delivery requires a nonempty file no larger than 30 MB.";
+function artifactDeliveryEventKey(messageId) {
+  return `artifact:${createHash5("sha256").update(messageId).digest("hex").slice(0, 32)}`;
+}
+function parseArtifactDelivery(payload) {
+  return artifactDeliverySchema.parse(JSON.parse(payload));
+}
+function artifactDeliveryMatches(job, route, reference) {
+  if (job.deletedAt || !job.permissions.filesystem.managedWorkspaceRoots || route.kind !== "message_thread" || !isFeishuOpenMessageId(route.sourceMessageId) || !route.conversationId) return false;
+  if (reference.chatType === "group" && (job.route.kind !== "message_thread" || route.conversationId !== job.route.conversationId || route.threadId !== job.route.threadId)) return false;
+  return job.checkpoint?.artifacts.some((artifact) => artifact.id === reference.artifactId && artifact.path === reference.path && artifact.sha256 === reference.sha256) ?? false;
+}
+function isImArtifactSize(bytes) {
+  return bytes > 0 && bytes <= IM_ARTIFACT_MAX_BYTES;
+}
+function artifactDeliveryFileName(relativePath) {
+  return path14.posix.basename(relativePath).replace(/[\u0000-\u001f\u007f]/g, "_");
+}
 
 // src/domain/continuation.ts
 var CONTINUATION_LIMITS = {
@@ -56475,9 +56502,9 @@ function retryDelayMs(failureCount, jitterUnit) {
 }
 
 // src/managed-workspace-storage.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import fs12 from "node:fs/promises";
-import path15 from "node:path";
+import path16 from "node:path";
 
 // src/domain/managed-workspace.ts
 var managedRunOwnerSchema = external_exports.strictObject({
@@ -56535,7 +56562,7 @@ var ManagedWorkspaceStorageError = class extends Error {
 
 // src/managed-workspace-mkdir.ts
 import { execFile } from "node:child_process";
-import path14 from "node:path";
+import path15 from "node:path";
 import { promisify } from "node:util";
 var exec = promisify(execFile);
 var managedLeaf = /^(?:foreground|cron_prompt|async_task)-[a-f0-9]{64}$/;
@@ -56590,13 +56617,13 @@ async function mkdirInsidePinnedRoot(root, leaf) {
   if (response?.error === "unprotected_root" || response?.error === "allocation_conflict") {
     throw new ManagedWorkspaceStorageError(response.error);
   }
-  const binding = workspaceProjectBindingSchema.safeParse({ ...response, directory: path14.join(root.directory, leaf) });
+  const binding = workspaceProjectBindingSchema.safeParse({ ...response, directory: path15.join(root.directory, leaf) });
   if (!binding.success) throw new ManagedWorkspaceStorageError("allocation_failed");
   return binding.data;
 }
 
 // src/managed-workspace-storage.ts
-var absolutePath = external_exports.string().refine((value) => path15.isAbsolute(value) && !value.includes("\0"));
+var absolutePath = external_exports.string().refine((value) => path16.isAbsolute(value) && !value.includes("\0"));
 var configSchema = external_exports.strictObject({ version: external_exports.literal(1), scratchRoot: absolutePath, artifactRoot: absolutePath });
 async function readManagedWorkspaceRoots({
   configPath,
@@ -56692,11 +56719,11 @@ function directoryIdentity(binding) {
 }
 async function readAncestors(directory) {
   const identities = /* @__PURE__ */ new Set();
-  for (let current = directory; ; current = path15.dirname(current)) {
+  for (let current = directory; ; current = path16.dirname(current)) {
     const info = await fs12.stat(current, { bigint: true }).catch(() => void 0);
     if (!info?.isDirectory()) throw new WorkspaceProjectError("unavailable_directory");
     identities.add(`${info.dev}:${info.ino}`);
-    if (path15.dirname(current) === current) return identities;
+    if (path16.dirname(current) === current) return identities;
   }
 }
 async function assertProtectedRoot(root) {
@@ -56711,24 +56738,24 @@ async function assertProtectedRoot(root) {
 async function allocateDirectory(root, owner, authorizedRoots) {
   await validateWorkspaceProject(authorizedRoots, root);
   const directory = managedRunDirectoryPath(root, owner);
-  const binding = await mkdirInsidePinnedRoot(root, path15.basename(directory));
+  const binding = await mkdirInsidePinnedRoot(root, path16.basename(directory));
   await validateWorkspaceProject(authorizedRoots, root);
   return validateWorkspaceProject(authorizedRoots, binding);
 }
 function managedRunDirectoryPath(root, owner) {
-  const key = createHash5("sha256").update(owner.runId).digest("hex");
-  return path15.join(root.directory, `${owner.kind}-${key}`);
+  const key = createHash6("sha256").update(owner.runId).digest("hex");
+  return path16.join(root.directory, `${owner.kind}-${key}`);
 }
 
 // src/continuation/idempotency.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 function continuationJobId(idempotencyKey) {
   if (!idempotencyKey) throw new Error("Continuation idempotency key is required.");
-  return `job_${createHash6("sha256").update(idempotencyKey).digest("hex").slice(0, 24)}`;
+  return `job_${createHash7("sha256").update(idempotencyKey).digest("hex").slice(0, 24)}`;
 }
 function continuationCreateIdempotencyKey(sourceMessageId) {
   if (!sourceMessageId) throw new Error("Continuation source message id is required.");
-  return `create-continuation:${createHash6("sha256").update(`${sourceMessageId}\0create_continuation_job`).digest("hex")}`;
+  return `create-continuation:${createHash7("sha256").update(`${sourceMessageId}\0create_continuation_job`).digest("hex")}`;
 }
 function continuationRetryIdempotencyKey(sourceJobId, requestId) {
   if (!sourceJobId || !requestId) {
@@ -56748,7 +56775,7 @@ function redactContinuationText(value) {
 
 // src/continuation/working-directory.ts
 import fs13 from "node:fs/promises";
-import path16 from "node:path";
+import path17 from "node:path";
 var RELATIVE_PATH_ERROR = "Continuation working directory must be relative and remain within LARK_CONTINUATION_WORKING_ROOT.";
 var EXISTING_DIRECTORY_ERROR = "Continuation working directory must be an existing directory, and configured roots must exist.";
 var OUTSIDE_ROOT_ERROR = "Continuation working directory resolves outside the configured continuation working root.";
@@ -56760,18 +56787,18 @@ var ContinuationWorkingDirectoryError = class extends Error {
   }
 };
 async function resolveContinuationWorkingDirectory(configuredRoot, relativeDirectory) {
-  if (!relativeDirectory || path16.isAbsolute(relativeDirectory) || /^[A-Za-z]:[\\/]/.test(relativeDirectory) || relativeDirectory.startsWith("\\\\") || relativeDirectory.split(/[\\/]+/).includes("..")) {
+  if (!relativeDirectory || path17.isAbsolute(relativeDirectory) || /^[A-Za-z]:[\\/]/.test(relativeDirectory) || relativeDirectory.startsWith("\\\\") || relativeDirectory.split(/[\\/]+/).includes("..")) {
     throw new ContinuationWorkingDirectoryError(RELATIVE_PATH_ERROR);
   }
   const root = requireAbsoluteRoot(configuredRoot);
-  const candidate = path16.resolve(root, relativeDirectory);
+  const candidate = path17.resolve(root, relativeDirectory);
   assertLexicallyContained(root, candidate);
   const [realRoot, realCandidate] = await canonicalDirectories(root, candidate);
   assertLexicallyContained(realRoot, realCandidate);
   return { root: realRoot, workingDirectory: realCandidate };
 }
 async function validateContinuationWorkingDirectory(configuredRoots, candidate) {
-  if (!path16.isAbsolute(candidate) || configuredRoots.length === 0) {
+  if (!path17.isAbsolute(candidate) || configuredRoots.length === 0) {
     throw new ContinuationWorkingDirectoryError(RELATIVE_PATH_ERROR);
   }
   const roots = configuredRoots.map(requireAbsoluteRoot);
@@ -56797,7 +56824,7 @@ async function resolveContinuationRequestedPaths(configuredRoot, requestedPaths)
     if (!value || value.includes("\0")) {
       throw new ContinuationWorkingDirectoryError(REQUESTED_PATH_ERROR);
     }
-    const candidate = path16.isAbsolute(value) ? path16.resolve(value) : path16.resolve(root, value);
+    const candidate = path17.isAbsolute(value) ? path17.resolve(value) : path17.resolve(root, value);
     let canonical;
     try {
       canonical = await fs13.realpath(candidate);
@@ -56815,15 +56842,15 @@ async function resolveContinuationRequestedPaths(configuredRoot, requestedPaths)
   return resolved;
 }
 function requireAbsoluteRoot(root) {
-  if (!path16.isAbsolute(root)) {
+  if (!path17.isAbsolute(root)) {
     throw new ContinuationWorkingDirectoryError(
       "LARK_CONTINUATION_WORKING_ROOT must be an absolute path to an existing directory."
     );
   }
-  return path16.resolve(root);
+  return path17.resolve(root);
 }
 function assertLexicallyContained(root, candidate) {
-  if (candidate !== root && !candidate.startsWith(`${root}${path16.sep}`)) {
+  if (candidate !== root && !candidate.startsWith(`${root}${path17.sep}`)) {
     throw new ContinuationWorkingDirectoryError(OUTSIDE_ROOT_ERROR);
   }
 }
@@ -57059,22 +57086,22 @@ var ContinuationService = class {
   async getForActor(jobId, actorOpenId, ownerOpenId) {
     return this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
   }
-  async getArtifactForActor(jobId, artifactId, message, ownerOpenId) {
-    if (message.chatType !== "p2p" && message.chatType !== "group") throw notAccessibleError();
-    const inspect2 = async () => {
-      const job2 = await this.requireAuthorizedJob(jobId, message.senderId, ownerOpenId);
-      if (message.chatType === "group" && (job2.route.kind !== "message_thread" || job2.route.conversationId !== message.chatId || job2.route.threadId !== message.threadId)) {
-        throw notAccessibleError();
-      }
-      const reference2 = job2.checkpoint?.artifacts.find((artifact) => artifact.id === artifactId);
-      if (!job2.permissions.filesystem.managedWorkspaceRoots || !reference2) throw notAccessibleError();
-      return { job: job2, reference: reference2 };
-    };
-    const { job, reference } = await inspect2();
-    const content = await this.options.repository.readManagedArtifact?.(job, reference.path, reference.sha256);
-    const current = (await inspect2()).reference;
-    if (!content || current.path !== reference.path || current.sha256 !== reference.sha256) throw notAccessibleError();
-    return { content, fileName: path17.posix.basename(reference.path).replace(/[\u0000-\u001f\u007f]/g, "_") };
+  async enqueueArtifactForActor(jobId, artifactId, message, ownerOpenId) {
+    const { chatType, chatId, threadId, messageId } = message;
+    if (chatType !== "p2p" && chatType !== "group" || !isFeishuOpenMessageId(messageId)) throw notAccessibleError();
+    const job = await this.requireAuthorizedJob(jobId, message.senderId, ownerOpenId);
+    const reference = job.checkpoint?.artifacts.find((entry) => entry.id === artifactId);
+    if (!reference) throw notAccessibleError();
+    const route = { kind: "message_thread", conversationId: chatId, sourceMessageId: messageId, ...threadId ? { threadId } : {} };
+    const artifact = { version: 1, chatType, artifactId, path: reference.path, sha256: reference.sha256 };
+    if (!artifactDeliveryMatches(job, route, artifact)) throw notAccessibleError();
+    const { repository, clock } = this.options;
+    const content = await repository.readManagedArtifact?.(job, artifact.path, artifact.sha256);
+    if (!content) throw notAccessibleError();
+    if (!isImArtifactSize(content.length)) {
+      throw new ContinuationServiceError("invalid_state", `Managed artifact retained locally: ${IM_ARTIFACT_SIZE_NOTE}`);
+    }
+    if (!await repository.enqueueManagedArtifact?.(jobId, route, artifact, clock.now().toISOString())) throw notAccessibleError();
   }
   async cancelForActor(jobId, actorOpenId, ownerOpenId) {
     const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
@@ -58442,7 +58469,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
         messageId: message.messageId,
         fileKey: attachment.fileKey,
         resourceType,
-        fileName: `continuation-input-${createHash7("sha256").update(`${message.messageId}\0${index}`).digest("hex").slice(0, 16)}.bin`,
+        fileName: `continuation-input-${createHash8("sha256").update(`${message.messageId}\0${index}`).digest("hex").slice(0, 16)}.bin`,
         logPrefix: "[continuation-input]"
       }, {
         maxBytes: CONTINUATION_LIMITS.inputBytesPerFile
@@ -59915,7 +59942,7 @@ function omit2(obj, ...keys) {
 }
 
 // node_modules/@larksuite/channel/dist/index.mjs
-import { createHash as createHash8, randomUUID as randomUUID3 } from "node:crypto";
+import { createHash as createHash9, randomUUID as randomUUID3 } from "node:crypto";
 import { inspect } from "node:util";
 import fs16 from "fs";
 import http2 from "http";
@@ -60680,7 +60707,7 @@ function contentKey(activity) {
     item.start_time_ms ?? item.send_time ?? item.time ?? item.join_time ?? item.leave_time ?? null,
     readActor(item).id || null
   ]);
-  return createHash8("sha256").update(JSON.stringify([activity.activityType, parts])).digest("base64url").slice(0, DIGEST_LENGTH);
+  return createHash9("sha256").update(JSON.stringify([activity.activityType, parts])).digest("base64url").slice(0, DIGEST_LENGTH);
 }
 var INCONCLUSIVE_STATUS = /* @__PURE__ */ new Set([
   408,
@@ -66225,7 +66252,7 @@ ${[
 }
 
 // src/managed-workspace-admission.ts
-import { createHash as createHash9 } from "node:crypto";
+import { createHash as createHash10 } from "node:crypto";
 import path23 from "node:path";
 function managedForegroundRunOwner(message, sessionKey2) {
   const identity = JSON.stringify([
@@ -66235,7 +66262,7 @@ function managedForegroundRunOwner(message, sessionKey2) {
     message.messageType,
     ...message.reaction ? [message.reaction.emojiType, message.timestampMs] : []
   ]);
-  return { kind: "foreground", runId: createHash9("sha256").update(identity).digest("hex") };
+  return { kind: "foreground", runId: createHash10("sha256").update(identity).digest("hex") };
 }
 async function admitManagedForegroundRun(options) {
   const { store, recorded, project, owner } = options;
@@ -67270,7 +67297,6 @@ function registerConversationFlushHandler(options) {
 }
 
 // src/continuation/command-handler.ts
-var MAX_IM_ARTIFACT_BYTES = 3e7;
 var CONTINUATION_COMMAND_DEFINITION = {
   name: "task",
   usage: "/task <list|status|artifact|cancel|retry|resume|retain|delete>",
@@ -67344,13 +67370,11 @@ Job ID: ${resumed.jobId}`);
       auditResult = "error";
       text = CONTINUATION_RUNTIME_UNAVAILABLE;
     } else if (command.action === "artifact") {
-      if (!options.service.getArtifactForActor || !options.sendArtifactReply) {
+      if (!options.service.enqueueArtifactForActor) {
         throw new Error("Managed artifact delivery is unavailable.");
       }
-      const artifact = await options.service.getArtifactForActor(command.jobId, command.artifactId, options.message, options.ownerOpenId);
-      await options.sendArtifactReply(artifact);
-      await auditCommand("lark_task_command", actorOpenId, auditArgs, "ok");
-      return true;
+      await options.service.enqueueArtifactForActor(command.jobId, command.artifactId, options.message, options.ownerOpenId);
+      text = `Artifact delivery queued: ${command.jobId} / ${command.artifactId}`;
     } else {
       text = await executeTaskCommand(
         command,
@@ -67534,7 +67558,7 @@ function formatTaskStatus(job) {
     ...job.resultArtifacts.length > 0 ? [`Artifacts:
 ${job.resultArtifacts.map((artifact) => `- ${artifact}`).join("\n")}`] : [],
     ...job.permissions.filesystem.managedWorkspaceRoots && job.checkpoint?.artifacts.length ? [`Checkpoint artifact IDs: ${job.checkpoint.artifacts.map((artifact) => artifact.id).join(", ")}
-IM delivery requires a nonempty file no larger than 30 MB.`] : []
+${IM_ARTIFACT_SIZE_NOTE}`] : []
   ].join("\n");
 }
 function formatDeliveryEvents(job) {
@@ -67582,26 +67606,6 @@ async function sendCommandReply(options, text) {
     ...isFeishuOpenMessageId(options.message.messageId) ? { reply_to: options.message.messageId } : {},
     thread_id: options.message.threadId
   });
-}
-async function sendContinuationArtifactReply(transport, sendReply, message, artifact) {
-  if (message.chatType !== "p2p" && message.chatType !== "group" || !isFeishuOpenMessageId(message.messageId)) {
-    throw new Error("Managed artifacts require an authenticated IM reply.");
-  }
-  if (artifact.content.length === 0 || artifact.content.length > MAX_IM_ARTIFACT_BYTES) {
-    throw new ContinuationServiceError("invalid_state", "Managed artifact retained locally: IM delivery requires a nonempty file no larger than 30 MB.");
-  }
-  const fileKey = await transport.uploadFile(artifact.content, artifact.fileName);
-  if (!fileKey) throw new Error("Lark did not return a file key for the managed artifact.");
-  const result = await sendReply({
-    chat_id: message.chatId,
-    text: `Artifact: ${artifact.fileName}`,
-    reply_to: message.messageId,
-    thread_id: message.threadId,
-    routing: "standalone",
-    idempotencyKey: `task-artifact:${message.messageId}`,
-    rawMessage: { msgType: "file", content: JSON.stringify({ file_key: fileKey }) }
-  });
-  if (result.isError || !result.messageIds?.length) throw new Error("Lark did not confirm delivery of the managed artifact.");
 }
 
 // src/codex-model-command.ts
@@ -68191,7 +68195,6 @@ function registerCodexDeliveryHandlers(options) {
       service: continuationService ?? null,
       ownerOpenId: appConfig.ownerOpenId,
       sendReply: sendReplyViaFeishu,
-      sendArtifactReply: (artifact) => sendContinuationArtifactReply(channel.getLarkTransport(), sendReplyViaFeishu, message, artifact),
       sendDocCommentReply: async (request) => {
         const response = await channel.getLarkTransport().replyDocComment({
           docToken: request.doc_token,
@@ -68502,14 +68505,14 @@ import os3 from "node:os";
 import path33 from "node:path";
 
 // src/continuation/artifact-store.ts
-import { createHash as createHash11, randomBytes } from "node:crypto";
+import { createHash as createHash12, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import fs19 from "node:fs/promises";
 import path26 from "node:path";
 
 // src/managed-workspace-artifact.ts
 import { execFile as execFile2 } from "node:child_process";
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash11 } from "node:crypto";
 import path25 from "node:path";
 import { promisify as promisify2 } from "node:util";
 var exec2 = promisify2(execFile2);
@@ -68639,10 +68642,10 @@ var artifactProgram = String.raw`
 `;
 async function readManagedArtifact(options) {
   const content = await runArtifactOperation(options, options.expectedSha256?.toLowerCase() ?? "");
-  return { content, sha256: createHash10("sha256").update(content).digest("hex") };
+  return { content, sha256: createHash11("sha256").update(content).digest("hex") };
 }
 async function publishManagedArtifact(options) {
-  const sha2562 = createHash10("sha256").update(options.content).digest("hex");
+  const sha2562 = createHash11("sha256").update(options.content).digest("hex");
   await runArtifactOperation(options, sha2562, options.content);
 }
 async function reconcileManagedArtifact(options) {
@@ -68856,7 +68859,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
           await fs19.copyFile(this.resolve(sourceJobId, reference), target, constants.COPYFILE_EXCL);
           await fs19.chmod(target, 384);
         }
-        const sha2562 = createHash11("sha256").update(await targetStore.readArtifact(targetJobId, reference, expected)).digest("hex");
+        const sha2562 = createHash12("sha256").update(await targetStore.readArtifact(targetJobId, reference, expected)).digest("hex");
         if (sha2562 !== expected) {
           throw new Error(`Continuation retry artifact checksum mismatch: ${reference}`);
         }
@@ -69038,7 +69041,7 @@ async function pathExists(target) {
 }
 
 // src/continuation/input-store.ts
-import { createHash as createHash12, randomBytes as randomBytes2 } from "node:crypto";
+import { createHash as createHash13, randomBytes as randomBytes2 } from "node:crypto";
 import { constants as constants2, createWriteStream as createWriteStream3 } from "node:fs";
 import fs20 from "node:fs/promises";
 import path27 from "node:path";
@@ -69487,7 +69490,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
     if (before.size > maxFileBytes) {
       throw new Error(`Continuation input file byte limit exceeded: ${before.size} > ${maxFileBytes}.`);
     }
-    const digest = createHash12("sha256");
+    const digest = createHash13("sha256");
     let copiedBytes = 0;
     const hashing = new Transform({
       transform(chunk, _encoding, callback) {
@@ -69523,7 +69526,7 @@ async function lstatForVerification(filePath) {
   }
 }
 async function sha256File(filePath) {
-  const digest = createHash12("sha256");
+  const digest = createHash13("sha256");
   const file2 = await fs20.open(
     filePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
@@ -71032,9 +71035,40 @@ function mapExecutorError(error62) {
 var IM_UUID_WINDOW_MS = 60 * 60 * 1e3;
 var DOC_COMMENT_MAX_CHARS = 1e3;
 var SINGLE_ATTEMPT = { attempts: 1, retryTimeout: false };
-function createLarkContinuationDelivery(getTransport, clock) {
+function createLarkContinuationDelivery(getTransport, clock, loadArtifact) {
+  const prepareArtifact = async (claim2) => {
+    const route = claim2.route;
+    if (route.kind !== "message_thread") return invalidArtifact();
+    let reference;
+    let content;
+    try {
+      reference = parseArtifactDelivery(claim2.payload);
+      content = await loadArtifact?.(claim2, reference);
+    } catch {
+      return invalidArtifact();
+    }
+    if (!content) return invalidArtifact();
+    if (!isImArtifactSize(content.length)) return {
+      status: "failed",
+      errorCode: "artifact_delivery_size_unsupported",
+      errorSummary: IM_ARTIFACT_SIZE_NOTE
+    };
+    let transport;
+    try {
+      transport = getTransport();
+    } catch {
+      return deliveryErrorResult("pre_send", "im");
+    }
+    const bytes = content;
+    return () => deliverIm(transport, clock, claim2, route, () => transport.uploadFile(bytes, artifactDeliveryFileName(reference.path)));
+  };
   return {
+    prepareArtifact,
     deliver: async (claim2) => {
+      if (claim2.kind === "artifact") {
+        const prepared = await prepareArtifact(claim2);
+        return typeof prepared === "function" ? prepared() : prepared;
+      }
       let transport;
       try {
         transport = getTransport();
@@ -71056,7 +71090,7 @@ async function deliverContinuation(transport, clock, claim2) {
   }
   return claim2.route.kind === "message_thread" ? deliverIm(transport, clock, claim2, claim2.route) : deliverDocComment(transport, claim2, claim2.route, marker);
 }
-async function deliverIm(transport, clock, claim2, route) {
+async function deliverIm(transport, clock, claim2, route, uploadArtifact) {
   if (claim2.attemptCount > 1 && claim2.firstAttemptAt && clock.now().getTime() - Date.parse(claim2.firstAttemptAt) >= IM_UUID_WINDOW_MS) {
     return {
       status: "delivery_unknown",
@@ -71064,10 +71098,20 @@ async function deliverIm(transport, clock, claim2, route) {
       errorSummary: "The prior IM delivery could not be confirmed before the UUID deduplication window expired."
     };
   }
+  let input2 = { text: claim2.payload };
+  if (uploadArtifact) {
+    try {
+      const key = await uploadArtifact();
+      if (!key) return { status: "retry", errorCode: "artifact_upload_unconfirmed", errorSummary: "Lark returned no attachment key." };
+      input2 = { raw: { msgType: "file", content: JSON.stringify({ file_key: key }) } };
+    } catch (error62) {
+      return deliveryErrorResult(classifyDeliveryError(error62), "im");
+    }
+  }
   try {
     const result = await transport.sendMessage({
       chatId: route.conversationId,
-      input: { text: claim2.payload },
+      input: input2,
       replyTo: route.sourceMessageId,
       ...route.threadId ? { replyInThread: true } : {},
       uuid: claim2.idempotencyKey,
@@ -71083,6 +71127,9 @@ async function deliverIm(transport, clock, claim2, route) {
   } catch (error62) {
     return deliveryErrorResult(classifyDeliveryError(error62), "im");
   }
+}
+function invalidArtifact() {
+  return { status: "failed", errorCode: "artifact_delivery_reference_invalid", errorSummary: "The committed managed artifact is unavailable or no longer matches its delivery reference." };
 }
 async function deliverDocComment(transport, claim2, route, marker) {
   if (claim2.attemptCount > 1) {
@@ -71222,7 +71269,7 @@ function nestedErrorMessage(error62) {
 }
 
 // src/continuation/local-cli-tool-invoker.ts
-import { createHash as createHash13 } from "node:crypto";
+import { createHash as createHash14 } from "node:crypto";
 var ContinuationLocalCliToolInvoker = class {
   constructor(options) {
     this.options = options;
@@ -71330,7 +71377,7 @@ function normalizeLocalCliFailure(result, context) {
     context.operationRisk
   );
   const capabilityAvailable = category !== "capability_unavailable";
-  const fingerprint = createHash13("sha256").update(JSON.stringify({
+  const fingerprint = createHash14("sha256").update(JSON.stringify({
     category,
     failedStep: context.failedStep,
     type,
@@ -71441,7 +71488,7 @@ import path32 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
 
 // src/continuation/progress-policy.ts
-import { createHash as createHash14 } from "node:crypto";
+import { createHash as createHash15 } from "node:crypto";
 function evaluateContinuationProgress(input2) {
   const candidateDelta = createAttemptDelta(input2.previous, input2.candidate);
   const delta = input2.verification.status === "accepted" ? candidateDelta : rejectedAttemptDelta(candidateDelta);
@@ -71538,7 +71585,7 @@ function materialProjection(checkpoint2) {
   };
 }
 function hashCanonical(value) {
-  return createHash14("sha256").update(JSON.stringify(value)).digest("hex");
+  return createHash15("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sorted(values) {
   return [...values].sort();
@@ -71548,7 +71595,7 @@ function compareId(left, right) {
 }
 
 // src/continuation/verifier.ts
-import { createHash as createHash15 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 var MAX_FINDINGS = 20;
 var ContinuationVerifier = class {
   constructor(artifacts, resolveArtifacts) {
@@ -71604,7 +71651,7 @@ var ContinuationVerifier = class {
           continue;
         }
         const content = await artifacts.readArtifact(jobId, artifact.path);
-        const actual = createHash15("sha256").update(content).digest("hex");
+        const actual = createHash16("sha256").update(content).digest("hex");
         if (actual !== artifact.sha256.toLowerCase()) {
           add(`Artifact ${artifact.id} checksum does not match persisted content.`);
         }
@@ -71758,7 +71805,7 @@ function requireEntitiesUnchanged(name, previous, candidate, add) {
 }
 
 // src/durable-run/sqlite-repository.ts
-import { createHash as createHash17, randomBytes as randomBytes3 } from "node:crypto";
+import { createHash as createHash18, randomBytes as randomBytes3 } from "node:crypto";
 import fs21 from "node:fs/promises";
 import path29 from "node:path";
 
@@ -72275,7 +72322,7 @@ function assertBoundedRequiredString(value, label, maxChars) {
 }
 
 // src/durable-run/sqlite-migrations.ts
-import { createHash as createHash16 } from "node:crypto";
+import { createHash as createHash17 } from "node:crypto";
 var DURABLE_RUN_SCHEMA_VERSION = 11;
 var ASYNC_TASK_INPUT_VERSION = 1;
 var ASYNC_TASK_STATE_VERSION = 1;
@@ -72932,7 +72979,7 @@ function legacyOperationStepId(stepIndex, description) {
   return `legacy-step-${stepIndex + 1}-${stableHash(description)}`;
 }
 function stableHash(value) {
-  return createHash16("sha256").update(value).digest("hex").slice(0, 12);
+  return createHash17("sha256").update(value).digest("hex").slice(0, 12);
 }
 function migrateInterrupts(database) {
   const rows = readRows(database, "continuation_interrupts");
@@ -73236,7 +73283,7 @@ function persistedTaskContract(row, projection) {
 }
 function legacyAcceptanceCriteria(descriptions) {
   return descriptions.map((description, index) => ({
-    id: `criterion_${index + 1}_${createHash16("sha256").update(description).digest("hex").slice(0, 12)}`,
+    id: `criterion_${index + 1}_${createHash17("sha256").update(description).digest("hex").slice(0, 12)}`,
     description,
     deliverableIds: []
   }));
@@ -73650,7 +73697,7 @@ function clampInteger(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 function legacyStepId(description, index) {
-  return `legacy-step-${index + 1}-${createHash16("sha256").update(description).digest("hex").slice(0, 12)}`;
+  return `legacy-step-${index + 1}-${createHash17("sha256").update(description).digest("hex").slice(0, 12)}`;
 }
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -74735,10 +74782,10 @@ function uniqueStrings(values) {
   return unique;
 }
 function deliveryEventKey(kind, idempotencyKey) {
-  return `${kind}:${createHash17("sha256").update(idempotencyKey).digest("hex")}`;
+  return `${kind}:${createHash18("sha256").update(idempotencyKey).digest("hex")}`;
 }
 function outboxId(idempotencyKey) {
-  return `outbox_${createHash17("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `outbox_${createHash18("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function newAttemptId() {
   return `att_${randomBytes3(12).toString("hex")}`;
@@ -75152,12 +75199,14 @@ var AsyncTaskKernelAdapter = class {
     const continuationClaim = continuationDeliveryClaimFromDurable(claim2);
     let sendBoundaryStarted = false;
     try {
+      const prepared = continuationClaim.kind === "artifact" ? await this.options.delivery.prepareArtifact?.(continuationClaim) : void 0;
+      if (prepared && typeof prepared !== "function") return durableDeliveryResultFromContinuation(prepared);
       if (context && !await context.markExternalSendStarted()) {
         return { status: "superseded" };
       }
       sendBoundaryStarted = Boolean(context);
       return durableDeliveryResultFromContinuation(
-        await this.options.delivery.deliver(continuationClaim)
+        await (prepared ? prepared() : this.options.delivery.deliver(continuationClaim))
       );
     } catch (error62) {
       const result = {
@@ -75680,7 +75729,7 @@ function isOptionalDeliveryStatus(value) {
   ].includes(String(value));
 }
 function isOptionalDeliveryEvents(value) {
-  return value === void 0 || Array.isArray(value) && value.every((entry) => isRecord4(entry) && requiredString3(entry.eventKey) && ["progress", "interrupt", "terminal"].includes(String(entry.kind)) && isOptionalString(entry.attemptId) && isOptionalDeliveryStatus(entry.status) && nonNegativeInteger(entry.attemptCount) && isOptionalTimestamp(entry.firstAttemptAt) && isOptionalTimestamp(entry.lastAttemptAt) && isOptionalString(entry.lastErrorCode) && isOptionalString(entry.lastErrorSummary) && validTimestamp(entry.createdAt) && validTimestamp(entry.updatedAt));
+  return value === void 0 || Array.isArray(value) && value.every((entry) => isRecord4(entry) && requiredString3(entry.eventKey) && ["progress", "interrupt", "terminal", "artifact"].includes(String(entry.kind)) && isOptionalString(entry.attemptId) && isOptionalDeliveryStatus(entry.status) && nonNegativeInteger(entry.attemptCount) && isOptionalTimestamp(entry.firstAttemptAt) && isOptionalTimestamp(entry.lastAttemptAt) && isOptionalString(entry.lastErrorCode) && isOptionalString(entry.lastErrorSummary) && validTimestamp(entry.createdAt) && validTimestamp(entry.updatedAt));
 }
 function isCountRecord(value) {
   return isRecord4(value) && Object.values(value).every(nonNegativeInteger);
@@ -75745,8 +75794,14 @@ function continuationDeliveryClaimFromDurable(claim2) {
   if (claim2.workloadKind !== "async_task" || typeof claim2.payload !== "string") {
     throw new Error("Invalid Continuation delivery envelope.");
   }
-  if (claim2.kind === "terminal" && claim2.eventKey !== "terminal" || claim2.kind === "progress" && claim2.eventKey !== `progress:${claim2.attemptId ?? ""}` || claim2.kind === "interrupt" && !claim2.eventKey.startsWith("interrupt:") || !["terminal", "progress", "interrupt"].includes(claim2.kind)) {
+  if (claim2.kind === "terminal" && claim2.eventKey !== "terminal" || claim2.kind === "progress" && claim2.eventKey !== `progress:${claim2.attemptId ?? ""}` || claim2.kind === "interrupt" && !claim2.eventKey.startsWith("interrupt:") || !["terminal", "progress", "interrupt", "artifact"].includes(claim2.kind)) {
     throw new Error("Invalid Continuation delivery identity.");
+  }
+  if (claim2.kind === "artifact") {
+    parseArtifactDelivery(claim2.payload);
+    if (!isRecord4(claim2.route) || claim2.route.kind !== "message_thread" || typeof claim2.route.sourceMessageId !== "string" || claim2.eventKey !== artifactDeliveryEventKey(claim2.route.sourceMessageId) || claim2.attemptId) {
+      throw new Error("Invalid Continuation artifact delivery identity.");
+    }
   }
   return {
     outboxId: claim2.outboxId,
@@ -75823,7 +75878,7 @@ function hasOnlyKeys(value, allowed) {
 }
 
 // src/continuation/sqlite-codec.ts
-import { createHash as createHash18, randomBytes as randomBytes4 } from "node:crypto";
+import { createHash as createHash19, randomBytes as randomBytes4 } from "node:crypto";
 import path30 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var PROGRESS_PAYLOAD_MAX_CHARS = 4e3;
@@ -76133,7 +76188,7 @@ function createRequestFingerprint(request) {
   const sourceInputDescriptors = request.sourceInputs.map((input2) => ({
     kind: input2.kind
   }));
-  return createHash18("sha256").update(JSON.stringify({
+  return createHash19("sha256").update(JSON.stringify({
     idempotencyKey: request.idempotencyKey,
     retryOfJobId: request.retryOfJobId ?? null,
     creatorOpenId: request.creatorOpenId,
@@ -76672,10 +76727,10 @@ function makeId(prefix) {
   return `${prefix}_${randomBytes4(12).toString("hex")}`;
 }
 function deliveryIdempotencyKey(jobId, eventKey) {
-  return `ct_${createHash18("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
+  return `ct_${createHash19("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
 }
 function toolCallId(jobId, stepId, requestHash) {
-  return `call_${createHash18("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
+  return `call_${createHash19("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
 }
 function continuationStepId(job) {
   return job.checkpoint?.nextAction?.id ?? job.checkpoint?.currentStepId ?? "initial-step";
@@ -76696,7 +76751,7 @@ function hasOpaqueExecutionEffects(job) {
   return job.permissions.filesystem.mode === "workspace-write" || job.permissions.network === "enabled" || job.permissions.externalSideEffects === "allowed";
 }
 function toolRequestHash(request) {
-  return createHash18("sha256").update(JSON.stringify(request)).digest("hex");
+  return createHash19("sha256").update(JSON.stringify(request)).digest("hex");
 }
 function addMilliseconds2(timestamp2, milliseconds) {
   return new Date(Date.parse(timestamp2) + milliseconds).toISOString();
@@ -76891,7 +76946,7 @@ function isManagedInputArtifact(value) {
 }
 
 // src/continuation/sqlite-transitions.ts
-import { createHash as createHash19 } from "node:crypto";
+import { createHash as createHash20 } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
 function buildContinuationStepTransition(input2) {
   const {
@@ -77218,7 +77273,7 @@ ${outcome.finalMessage}`,
         hints: ["Confirm the effects of the failed step before resuming."],
         failedStep,
         diagnostic: outcome.errorSummary,
-        fingerprint: createHash19("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+        fingerprint: createHash20("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
       },
       prompt: "Confirm what the failed step changed, then resume with the observed result.",
       reason: "The model requested a retry after opaque execution, so automatic replay is unsafe."
@@ -77263,7 +77318,7 @@ function buildContinuationFailureTransition(claim2, current, requestedFailure, n
             hints: ["Confirm the effects of the interrupted step before resuming."],
             failedStep,
             diagnostic: requestedFailure.errorSummary,
-            fingerprint: createHash19("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+            fingerprint: createHash20("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
           },
           prompt: "Confirm what the interrupted step changed, then resume with the observed result.",
           reason: "The execution ended after an opaque operation started, so automatic replay is unsafe."
@@ -77337,7 +77392,7 @@ function durableFailureForContinuationFailure(claim2, failure2) {
     hints: [],
     failedStep,
     diagnostic: bounded.errorSummary,
-    fingerprint: createHash19("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
+    fingerprint: createHash20("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
   };
 }
 function continuationDurableTransition(claim2, current, status, patch, now, extras) {
@@ -77426,7 +77481,7 @@ function continuationProgressDelivery(job, claim2, outcome, now) {
   };
 }
 function continuationInterruptId(jobId, attemptId, failure2) {
-  return `int_${createHash19("sha256").update(`${jobId}\0${attemptId}\0${failure2.fingerprint}`).digest("hex").slice(0, 24)}`;
+  return `int_${createHash20("sha256").update(`${jobId}\0${attemptId}\0${failure2.fingerprint}`).digest("hex").slice(0, 24)}`;
 }
 function continuationInterruptDelivery(job, claim2, interruptId, prompt, failure2, recovery, checkpoint2, now) {
   const eventKey = `interrupt:${interruptId}`;
@@ -77619,6 +77674,28 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
   async readManagedArtifact(job, relativePath, sha2562) {
     if (!job.permissions.filesystem.managedWorkspaceRoots) throw new Error("Managed artifacts are not available for this task.");
     return this.artifactsForJob(job).readArtifact(job.jobId, relativePath, sha2562);
+  }
+  async enqueueManagedArtifact(jobId, route, artifact, now) {
+    const payload = JSON.stringify(artifact);
+    const reference = parseArtifactDelivery(payload);
+    const routeJson = JSON.stringify(route);
+    return this.transaction(() => {
+      const current = this.readJobBy("j.job_id = ?", jobId);
+      if (!current || !artifactDeliveryMatches(current, route, reference)) return false;
+      const eventKey = artifactDeliveryEventKey(route.sourceMessageId);
+      const result = this.database.prepare(`
+        INSERT INTO durable_outbox (
+          outbox_id, run_id, event_key, kind, route_json, idempotency_key, payload_json,
+          metadata_json, status, attempt_count, next_attempt_at, created_at, updated_at
+        ) VALUES (?, ?, ?, 'artifact', ?, ?, ?, '{}', 'pending', 0, ?, ?, ?)
+        ON CONFLICT(run_id, event_key) DO NOTHING
+      `).run(makeId("out"), jobId, eventKey, routeJson, deliveryIdempotencyKey(jobId, eventKey), JSON.stringify(payload), now, now, now);
+      if (Number(result.changes) === 1) return true;
+      const previous = this.database.prepare(`
+        SELECT route_json, payload_json FROM durable_outbox WHERE run_id = ? AND event_key = ? AND kind = 'artifact'
+      `).get(jobId, eventKey);
+      return previous?.route_json === routeJson && previous.payload_json === JSON.stringify(payload);
+    });
   }
   async create(request) {
     validateCreateRequest2(request);
@@ -78445,7 +78522,7 @@ The continuation reached its maximum age.`,
       );
       if (!claim2) return null;
       const job = await this.get(claim2.runId);
-      if (!job || !isDeepStrictEqual4(claim2.route, job.route)) {
+      if (!job || claim2.kind !== "artifact" && !isDeepStrictEqual4(claim2.route, job.route)) {
         await this.durableRuns.commitDelivery(claim2, {
           status: "failed",
           errorCode: "continuation_delivery_route_invalid",
@@ -78453,8 +78530,9 @@ The continuation reached its maximum age.`,
         }, now);
         continue;
       }
+      let parsed;
       try {
-        return continuationDeliveryClaimFromDurable(claim2);
+        parsed = continuationDeliveryClaimFromDurable(claim2);
       } catch {
         await this.durableRuns.commitDelivery(claim2, claim2.recoveredFromExpiredLease ? {
           status: "unknown",
@@ -78467,6 +78545,12 @@ The continuation reached its maximum age.`,
         }, now);
         continue;
       }
+      if (parsed.kind !== "artifact" || isDeliveryRoute2(parsed.route) && artifactDeliveryMatches(job, parsed.route, parseArtifactDelivery(parsed.payload))) return parsed;
+      await this.durableRuns.commitDelivery(claim2, {
+        status: claim2.recoveredFromExpiredLease ? "unknown" : "failed",
+        errorCode: "continuation_delivery_route_invalid",
+        errorSummary: "Stored delivery does not match its Async Task route or artifact reference."
+      }, now);
     }
   }
   async markDeliveryResult(claim2, result, now) {
@@ -78495,7 +78579,7 @@ The continuation reached its maximum age.`,
         status: "failed",
         errorCode: result.errorCode,
         errorSummary: result.errorSummary,
-        ...claim2.kind === "terminal" ? {} : { terminalConflict: "superseded" }
+        ...["progress", "interrupt"].includes(claim2.kind) ? { terminalConflict: "superseded" } : {}
       };
     }
     const resetAttemptCount = claim2.attemptCount === 1 && result.errorCode === "lark_pre_send_unavailable";
@@ -78508,9 +78592,9 @@ The continuation reached its maximum age.`,
         retryDelayMs(Math.max(1, claim2.attemptCount), this.jitter())
       ),
       ...resetAttemptCount ? { resetAttemptCount: true } : {},
-      ...claim2.kind === "terminal" ? {} : {
+      ...["progress", "interrupt"].includes(claim2.kind) ? {
         terminalConflict: resetAttemptCount ? "superseded" : "unknown"
-      }
+      } : {}
     };
   }
   async listPendingInterrupts() {
@@ -79994,7 +80078,11 @@ async function createContinuationRuntime(options) {
       ...options.command ? { command: options.command } : {},
       ...options.runCodexExec ? { runCodexExec: options.runCodexExec } : {}
     });
-    const delivery = options.delivery ?? createLarkContinuationDelivery(options.getTransport, clock);
+    const delivery = options.delivery ?? createLarkContinuationDelivery(options.getTransport, clock, async (claim2, reference) => {
+      const job = await repository.get(claim2.jobId);
+      if (!job || !artifactDeliveryMatches(job, claim2.route, reference)) return void 0;
+      return repository.readManagedArtifact?.(job, reference.path, reference.sha256);
+    });
     const adapter = new AsyncTaskKernelAdapter({
       repository,
       executor,
@@ -80334,7 +80422,7 @@ function persistedStateValidator(registrations) {
 }
 
 // src/cron/run-admission.ts
-import { createHash as createHash20 } from "node:crypto";
+import { createHash as createHash21 } from "node:crypto";
 
 // src/cron/contracts.ts
 var CRON_RUN_INPUT_VERSION = 1;
@@ -81519,7 +81607,7 @@ function cronConcurrencyKey(job) {
   return `cron-job:${cronJobIdentity(job)}`;
 }
 function cronRunId(idempotencyKey) {
-  return `cron_${createHash20("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `cron_${createHash21("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function admitted(run, created, scheduledOccurrence) {
   return {

@@ -1,11 +1,13 @@
 import type {
   AsyncTaskInputArtifact,
   AsyncTaskSourceInput,
+  ContinuationArtifactDelivery,
   ContinuationClaim,
   ContinuationCleanupResult,
   ContinuationCreateRequest,
   ContinuationDeliveryClaim,
   ContinuationDeliveryResult,
+  ContinuationDeliveryRoute,
   ContinuationExecutionResult,
   ContinuationFailure,
   ContinuationJob,
@@ -75,6 +77,9 @@ export interface ContinuationRepository {
   create(request: ContinuationCreateRequest): Promise<{ job: ContinuationJob; created: boolean }>;
   get(jobId: string): Promise<ContinuationJob | null>;
   readManagedArtifact?(job: ContinuationJob, relativePath: string, sha256: string): Promise<Buffer>;
+  enqueueManagedArtifact?(
+    jobId: string, route: ContinuationDeliveryRoute, artifact: ContinuationArtifactDelivery, now: string,
+  ): Promise<boolean>;
   listByCreator(
     creatorOpenId: string,
     limit: number,
@@ -192,6 +197,7 @@ export interface ContinuationToolInvoker {
 
 export interface ContinuationDelivery {
   deliver(claim: ContinuationDeliveryClaim): Promise<ContinuationDeliveryResult>;
+  prepareArtifact?(claim: ContinuationDeliveryClaim): Promise<ContinuationDeliveryResult | (() => Promise<ContinuationDeliveryResult>)>;
 }
 
 export interface ContinuationClock {

@@ -1,4 +1,5 @@
-import path from 'node:path';
+import { isFeishuOpenMessageId } from '../codex-exec-error.js';
+import { artifactDeliveryMatches, IM_ARTIFACT_SIZE_NOTE, isImArtifactSize } from './artifact-delivery.js';
 import type {
   AsyncTaskContract,
   AsyncTaskFactSnapshot,
@@ -65,11 +66,6 @@ export interface ContinuationActionInput {
   requested_paths?: string[];
 }
 
-export interface ContinuationArtifactReply {
-  fileName: string;
-  content: Buffer;
-}
-
 export interface ContinuationTaskService {
   findExistingFromMessage(message: LarkMessage): Promise<ContinuationJob | null>;
   preflightFromMessage(
@@ -95,9 +91,9 @@ export interface ContinuationTaskService {
     limit?: number,
   ): Promise<ContinuationJob[]>;
   getForActor(jobId: string, actorOpenId: string, ownerOpenId?: string | null): Promise<ContinuationJob>;
-  getArtifactForActor?(
+  enqueueArtifactForActor?(
     jobId: string, artifactId: string, message: LarkMessage, ownerOpenId?: string | null,
-  ): Promise<ContinuationArtifactReply>;
+  ): Promise<void>;
   cancelForActor(
     jobId: string,
     actorOpenId: string,
@@ -412,25 +408,24 @@ export class ContinuationService implements ContinuationTaskService {
     return this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
   }
 
-  async getArtifactForActor(
+  async enqueueArtifactForActor(
     jobId: string, artifactId: string, message: LarkMessage, ownerOpenId?: string | null,
-  ): Promise<ContinuationArtifactReply> {
-    if (message.chatType !== 'p2p' && message.chatType !== 'group') throw notAccessibleError();
-    const inspect = async () => {
-      const job = await this.requireAuthorizedJob(jobId, message.senderId, ownerOpenId);
-      if (message.chatType === 'group' && (job.route.kind !== 'message_thread'
-        || job.route.conversationId !== message.chatId || job.route.threadId !== message.threadId)) {
-        throw notAccessibleError();
-      }
-      const reference = job.checkpoint?.artifacts.find((artifact) => artifact.id === artifactId);
-      if (!job.permissions.filesystem.managedWorkspaceRoots || !reference) throw notAccessibleError();
-      return { job, reference };
-    };
-    const { job, reference } = await inspect();
-    const content = await this.options.repository.readManagedArtifact?.(job, reference.path, reference.sha256);
-    const current = (await inspect()).reference;
-    if (!content || current.path !== reference.path || current.sha256 !== reference.sha256) throw notAccessibleError();
-    return { content, fileName: path.posix.basename(reference.path).replace(/[\u0000-\u001f\u007f]/g, '_') };
+  ): Promise<void> {
+    const { chatType, chatId, threadId, messageId } = message;
+    if ((chatType !== 'p2p' && chatType !== 'group') || !isFeishuOpenMessageId(messageId)) throw notAccessibleError();
+    const job = await this.requireAuthorizedJob(jobId, message.senderId, ownerOpenId);
+    const reference = job.checkpoint?.artifacts.find((entry) => entry.id === artifactId);
+    if (!reference) throw notAccessibleError();
+    const route = { kind: 'message_thread', conversationId: chatId, sourceMessageId: messageId, ...(threadId ? { threadId } : {}) } as const;
+    const artifact = { version: 1, chatType, artifactId, path: reference.path, sha256: reference.sha256 } as const;
+    if (!artifactDeliveryMatches(job, route, artifact)) throw notAccessibleError();
+    const { repository, clock } = this.options;
+    const content = await repository.readManagedArtifact?.(job, artifact.path, artifact.sha256);
+    if (!content) throw notAccessibleError();
+    if (!isImArtifactSize(content.length)) {
+      throw new ContinuationServiceError('invalid_state', `Managed artifact retained locally: ${IM_ARTIFACT_SIZE_NOTE}`);
+    }
+    if (!await repository.enqueueManagedArtifact?.(jobId, route, artifact, clock.now().toISOString())) throw notAccessibleError();
   }
 
   async cancelForActor(

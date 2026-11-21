@@ -13,6 +13,7 @@ import type {
   ContinuationToolInvoker,
 } from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
+import { artifactDeliveryMatches } from './artifact-delivery.js';
 import { ContinuationInputStore } from './input-store.js';
 import { createContinuationCodexExecutor } from './codex-runner.js';
 import type { ContinuationWorkspacePolicy } from './managed-workspace.js';
@@ -175,7 +176,11 @@ export async function createContinuationRuntime(
       ...(options.command ? { command: options.command } : {}),
       ...(options.runCodexExec ? { runCodexExec: options.runCodexExec } : {}),
     });
-    const delivery = options.delivery ?? createLarkContinuationDelivery(options.getTransport, clock);
+    const delivery = options.delivery ?? createLarkContinuationDelivery(options.getTransport, clock, async (claim, reference) => {
+      const job = await repository!.get(claim.jobId);
+      if (!job || !artifactDeliveryMatches(job, claim.route, reference)) return undefined;
+      return repository!.readManagedArtifact?.(job, reference.path, reference.sha256);
+    });
     const adapter = new AsyncTaskKernelAdapter({
       repository,
       executor,

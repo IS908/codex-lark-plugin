@@ -41,6 +41,7 @@ import type {
 } from '../ports/durable-run.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { artifactDeliveryEventKey, parseArtifactDelivery } from './artifact-delivery.js';
 import { redactContinuationText } from './redaction.js';
 
 const ASYNC_TASK_INPUT_VERSION = 1;
@@ -442,12 +443,16 @@ export class AsyncTaskKernelAdapter implements
     const continuationClaim = continuationDeliveryClaimFromDurable(claim);
     let sendBoundaryStarted = false;
     try {
+      const prepared = continuationClaim.kind === 'artifact'
+        ? await this.options.delivery.prepareArtifact?.(continuationClaim)
+        : undefined;
+      if (prepared && typeof prepared !== 'function') return durableDeliveryResultFromContinuation(prepared);
       if (context && !await context.markExternalSendStarted()) {
         return { status: 'superseded' };
       }
       sendBoundaryStarted = Boolean(context);
       return durableDeliveryResultFromContinuation(
-        await this.options.delivery.deliver(continuationClaim),
+        await (prepared ? prepared() : this.options.delivery.deliver(continuationClaim)),
       );
     } catch (error) {
       const result: DurableRunDeliveryResult = {
@@ -1284,7 +1289,7 @@ function isOptionalDeliveryEvents(value: unknown): boolean {
   return value === undefined || (Array.isArray(value) && value.every((entry) => (
     isRecord(entry)
     && requiredString(entry.eventKey)
-    && ['progress', 'interrupt', 'terminal'].includes(String(entry.kind))
+    && ['progress', 'interrupt', 'terminal', 'artifact'].includes(String(entry.kind))
     && isOptionalString(entry.attemptId)
     && isOptionalDeliveryStatus(entry.status)
     && nonNegativeInteger(entry.attemptCount)
@@ -1391,9 +1396,16 @@ export function continuationDeliveryClaimFromDurable(
     (claim.kind === 'terminal' && claim.eventKey !== 'terminal')
     || (claim.kind === 'progress' && claim.eventKey !== `progress:${claim.attemptId ?? ''}`)
     || (claim.kind === 'interrupt' && !claim.eventKey.startsWith('interrupt:'))
-    || !['terminal', 'progress', 'interrupt'].includes(claim.kind)
+    || !['terminal', 'progress', 'interrupt', 'artifact'].includes(claim.kind)
   ) {
     throw new Error('Invalid Continuation delivery identity.');
+  }
+  if (claim.kind === 'artifact') {
+    parseArtifactDelivery(claim.payload);
+    if (!isRecord(claim.route) || claim.route.kind !== 'message_thread' || typeof claim.route.sourceMessageId !== 'string'
+      || claim.eventKey !== artifactDeliveryEventKey(claim.route.sourceMessageId) || claim.attemptId) {
+      throw new Error('Invalid Continuation artifact delivery identity.');
+    }
   }
   return {
     outboxId: claim.outboxId,

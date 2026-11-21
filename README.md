@@ -280,8 +280,9 @@ or Cron runs.
 Each admitted run records its roots and uses separate scratch and formal artifact
 directories. Retries do not select new roots from edited configuration. For a
 managed Async Task, `/task status ID` lists committed checkpoint artifact IDs.
-`/task artifact ID ARTIFACT_ID` verifies and sends a file from the formal artifact
-directory, even if scratch is unavailable. Request it in a private chat or the
+`/task artifact ID ARTIFACT_ID` queues an IM attachment from the formal artifact
+directory, even if scratch is unavailable. The delivery survives restarts and
+verifies the file again before upload. Request it in a private chat or the
 original task chat/thread. These settings do not move or clean up existing files.
 
 ### 4. Start

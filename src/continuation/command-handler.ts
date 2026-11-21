@@ -9,18 +9,15 @@ import {
   type ContinuationJob,
 } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
-import type { LarkTransport } from '../lark-transport-contracts.js';
 import { extractMessageText } from '../message-content.js';
 import type { ReplyRequest, ReplySendResult } from '../reply-sender.js';
+import { IM_ARTIFACT_SIZE_NOTE } from './artifact-delivery.js';
 import {
   CONTINUATION_RUNTIME_UNAVAILABLE,
   ContinuationServiceError,
-  type ContinuationArtifactReply,
   type ContinuationListStatus,
   type ContinuationTaskService,
 } from './service.js';
-
-const MAX_IM_ARTIFACT_BYTES = 30_000_000;
 
 export const CONTINUATION_COMMAND_DEFINITION = {
   name: 'task' as const,
@@ -67,7 +64,6 @@ export interface ContinuationCommandHandlerOptions {
   service: ContinuationTaskService | null;
   ownerOpenId?: string | null;
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
-  sendArtifactReply?: (artifact: ContinuationArtifactReply) => Promise<void>;
   sendDocCommentReply?: (request: {
     doc_token: string;
     comment_id: string;
@@ -128,13 +124,11 @@ export async function handleContinuationCommand(
       auditResult = 'error';
       text = CONTINUATION_RUNTIME_UNAVAILABLE;
     } else if (command.action === 'artifact') {
-      if (!options.service.getArtifactForActor || !options.sendArtifactReply) {
+      if (!options.service.enqueueArtifactForActor) {
         throw new Error('Managed artifact delivery is unavailable.');
       }
-      const artifact = await options.service.getArtifactForActor(command.jobId, command.artifactId, options.message, options.ownerOpenId);
-      await options.sendArtifactReply(artifact);
-      await auditCommand('lark_task_command', actorOpenId, auditArgs, 'ok');
-      return true;
+      await options.service.enqueueArtifactForActor(command.jobId, command.artifactId, options.message, options.ownerOpenId);
+      text = `Artifact delivery queued: ${command.jobId} / ${command.artifactId}`;
     } else {
       text = await executeTaskCommand(
         command,
@@ -339,7 +333,7 @@ function formatTaskStatus(job: ContinuationJob): string {
       ? [`Artifacts:\n${job.resultArtifacts.map((artifact) => `- ${artifact}`).join('\n')}`]
       : []),
     ...(job.permissions.filesystem.managedWorkspaceRoots && job.checkpoint?.artifacts.length
-      ? [`Checkpoint artifact IDs: ${job.checkpoint.artifacts.map((artifact) => artifact.id).join(', ')}\nIM delivery requires a nonempty file no larger than 30 MB.`]
+      ? [`Checkpoint artifact IDs: ${job.checkpoint.artifacts.map((artifact) => artifact.id).join(', ')}\n${IM_ARTIFACT_SIZE_NOTE}`]
       : []),
   ].join('\n');
 }
@@ -404,28 +398,4 @@ async function sendCommandReply(
       : {}),
     thread_id: options.message.threadId,
   });
-}
-
-export async function sendContinuationArtifactReply(
-  transport: Pick<LarkTransport, 'uploadFile'>,
-  sendReply: ContinuationCommandHandlerOptions['sendReply'],
-  message: LarkMessage,
-  artifact: ContinuationArtifactReply,
-): Promise<void> {
-  if ((message.chatType !== 'p2p' && message.chatType !== 'group') || !isFeishuOpenMessageId(message.messageId)) {
-    throw new Error('Managed artifacts require an authenticated IM reply.');
-  }
-  if (artifact.content.length === 0 || artifact.content.length > MAX_IM_ARTIFACT_BYTES) {
-    throw new ContinuationServiceError('invalid_state', 'Managed artifact retained locally: IM delivery requires a nonempty file no larger than 30 MB.');
-  }
-  const fileKey = await transport.uploadFile(artifact.content, artifact.fileName);
-  if (!fileKey) throw new Error('Lark did not return a file key for the managed artifact.');
-  const result = await sendReply({
-    chat_id: message.chatId, text: `Artifact: ${artifact.fileName}`,
-    reply_to: message.messageId, thread_id: message.threadId,
-    routing: 'standalone',
-    idempotencyKey: `task-artifact:${message.messageId}`,
-    rawMessage: { msgType: 'file', content: JSON.stringify({ file_key: fileKey }) },
-  });
-  if (result.isError || !result.messageIds?.length) throw new Error('Lark did not confirm delivery of the managed artifact.');
 }

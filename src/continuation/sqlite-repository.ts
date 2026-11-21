@@ -6,11 +6,13 @@ import {
   isContinuationTerminal,
   retryDelayMs,
   type ContinuationClaim,
+  type ContinuationArtifactDelivery,
   type ContinuationCleanupResult,
   type ContinuationCreateRequest,
   type ContinuationDeliveryClaim,
   type ContinuationDeliveryRecord,
   type ContinuationDeliveryResult,
+  type ContinuationDeliveryRoute,
   type ContinuationExecutionResult,
   type ContinuationFailure,
   type ContinuationJob,
@@ -37,6 +39,7 @@ import type {
   ContinuationRepository,
 } from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
+import { artifactDeliveryEventKey, artifactDeliveryMatches, parseArtifactDelivery } from './artifact-delivery.js';
 import {
   continuationJobId,
   continuationRetryIdempotencyKey,
@@ -200,6 +203,29 @@ export class SqliteContinuationRepository implements ContinuationRepository {
   async readManagedArtifact(job: ContinuationJob, relativePath: string, sha256: string): Promise<Buffer> {
     if (!job.permissions.filesystem.managedWorkspaceRoots) throw new Error('Managed artifacts are not available for this task.');
     return this.artifactsForJob(job).readArtifact(job.jobId, relativePath, sha256);
+  }
+
+  async enqueueManagedArtifact(jobId: string, route: ContinuationDeliveryRoute, artifact: ContinuationArtifactDelivery, now: string): Promise<boolean> {
+    const payload = JSON.stringify(artifact);
+    const reference = parseArtifactDelivery(payload);
+    const routeJson = JSON.stringify(route);
+    return this.transaction(() => {
+      const current = this.readJobBy('j.job_id = ?', jobId);
+      if (!current || !artifactDeliveryMatches(current, route, reference)) return false;
+      const eventKey = artifactDeliveryEventKey(route.sourceMessageId);
+      const result = this.database.prepare(`
+        INSERT INTO durable_outbox (
+          outbox_id, run_id, event_key, kind, route_json, idempotency_key, payload_json,
+          metadata_json, status, attempt_count, next_attempt_at, created_at, updated_at
+        ) VALUES (?, ?, ?, 'artifact', ?, ?, ?, '{}', 'pending', 0, ?, ?, ?)
+        ON CONFLICT(run_id, event_key) DO NOTHING
+      `).run(makeId('out'), jobId, eventKey, routeJson, deliveryIdempotencyKey(jobId, eventKey), JSON.stringify(payload), now, now, now);
+      if (Number(result.changes) === 1) return true;
+      const previous = this.database.prepare(`
+        SELECT route_json, payload_json FROM durable_outbox WHERE run_id = ? AND event_key = ? AND kind = 'artifact'
+      `).get(jobId, eventKey);
+      return previous?.route_json === routeJson && previous.payload_json === JSON.stringify(payload);
+    });
   }
 
   async create(
@@ -1163,7 +1189,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       );
       if (!claim) return null;
       const job = await this.get(claim.runId);
-      if (!job || !isDeepStrictEqual(claim.route, job.route)) {
+      if (!job || (claim.kind !== 'artifact' && !isDeepStrictEqual(claim.route, job.route))) {
         await this.durableRuns.commitDelivery(claim, {
           status: 'failed',
           errorCode: 'continuation_delivery_route_invalid',
@@ -1171,8 +1197,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         }, now);
         continue;
       }
+      let parsed: ContinuationDeliveryClaim;
       try {
-        return continuationDeliveryClaimFromDurable(claim);
+        parsed = continuationDeliveryClaimFromDurable(claim);
       } catch {
         await this.durableRuns.commitDelivery(claim, claim.recoveredFromExpiredLease
           ? {
@@ -1187,6 +1214,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
             }, now);
         continue;
       }
+      if (parsed.kind !== 'artifact' || (isDeliveryRoute(parsed.route)
+        && artifactDeliveryMatches(job, parsed.route, parseArtifactDelivery(parsed.payload)))) return parsed;
+      await this.durableRuns.commitDelivery(claim, {
+        status: claim.recoveredFromExpiredLease ? 'unknown' : 'failed',
+        errorCode: 'continuation_delivery_route_invalid',
+        errorSummary: 'Stored delivery does not match its Async Task route or artifact reference.',
+      }, now);
     }
   }
 
@@ -1225,7 +1259,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         status: 'failed',
         errorCode: result.errorCode,
         errorSummary: result.errorSummary,
-        ...(claim.kind === 'terminal' ? {} : { terminalConflict: 'superseded' as const }),
+        ...(['progress', 'interrupt'].includes(claim.kind) ? { terminalConflict: 'superseded' as const } : {}),
       };
     }
     const resetAttemptCount = claim.attemptCount === 1
@@ -1239,13 +1273,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         retryDelayMs(Math.max(1, claim.attemptCount), this.jitter()),
       ),
       ...(resetAttemptCount ? { resetAttemptCount: true } : {}),
-      ...(claim.kind === 'terminal'
-        ? {}
-        : {
+      ...(['progress', 'interrupt'].includes(claim.kind)
+        ? {
             terminalConflict: resetAttemptCount
               ? 'superseded' as const
               : 'unknown' as const,
-          }),
+          }
+        : {}),
     };
   }
 
