@@ -42,7 +42,8 @@ export async function probeCodexExecWithLoopback(input: {
         assert.equal(requests, 2);
         const result = body.input?.find((entry: { type?: string; call_id?: string }) =>
           entry.type === 'function_call_output' && entry.call_id === callId);
-        assert.ok(result && JSON.stringify(result.output).includes(input.marker), 'The sandboxed command did not send its success marker.');
+        const output = JSON.stringify(result?.output ?? null);
+        assert.ok(output.includes(input.marker), `The sandboxed command did not send its success marker: ${output.slice(0, 2_000)}`);
         item = { type: 'message', id: 'msg_managed_git', role: 'assistant', status: 'completed',
           content: [{ type: 'output_text', text: 'fixture finished', annotations: [] }] };
       }

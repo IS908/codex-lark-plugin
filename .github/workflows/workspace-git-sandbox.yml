@@ -42,6 +42,8 @@ jobs:
         env:
           CODEX_NPM_PACKAGE: '@openai/codex@0.171.0-linux-x64'
           CODEX_NPM_SHA512: 'l66NZkQgdk2C3pbcfULDz42yEUB581MVA6I+Y43Wp4OIqEy73HCdmZ0GTjeAHY2ycuH4N00d9VsLrwT1jxshTw=='
+          LARK_APP_ID: cli_test_app_id
+          LARK_APP_SECRET: test_app_secret
         run: |
           unshare --user --map-root-user /usr/bin/true
           bundle_dir=$(mktemp -d)
