@@ -8,6 +8,16 @@ import { WorkspaceProjectError } from './workspace-projects.js';
 
 const exec = promisify(execFile);
 
+export async function readWorkspaceAncestorIdentities(directory: string): Promise<Set<string>> {
+  const identities = new Set<string>();
+  for (let current = directory; ; current = path.dirname(current)) {
+    const info = await fs.stat(current, { bigint: true }).catch(() => undefined);
+    if (!info?.isDirectory()) throw new WorkspaceProjectError('unavailable_directory');
+    identities.add(`${info.dev}:${info.ino}`);
+    if (path.dirname(current) === current) return identities;
+  }
+}
+
 export async function assertProtectedWorkspacePath(binding: WorkspaceProjectBinding, owned = false): Promise<void> {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError('unprotected_root');
   const uid = BigInt(process.geteuid());

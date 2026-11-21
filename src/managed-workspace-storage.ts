@@ -13,8 +13,8 @@ import {
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
 import { mkdirInsidePinnedRoot } from './managed-workspace-mkdir.js';
-import { assertProtectedWorkspacePath } from './managed-workspace-ancestry.js';
-import { listWorkspaceSourceProjects, pinWorkspacePath, validateWorkspaceProject, workspacePathContains, WorkspaceProjectError } from './workspace-projects.js';
+import { assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
+import { listWorkspaceSourceProjects, pinWorkspacePath, validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
 
 const absolutePath = z.string().refine((value) => path.isAbsolute(value) && !value.includes('\0'));
 const configSchema = z.strictObject({ version: z.literal(1), scratchRoot: absolutePath, artifactRoot: absolutePath });
@@ -107,7 +107,7 @@ export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots
   ]);
   assertDisjoint(roots, authorization.project);
   const bindings = [roots.scratch, roots.artifacts, ...(authorization.project ? [authorization.project] : [])];
-  const ancestry = await Promise.all(bindings.map(({ directory }) => readAncestors(directory)));
+  const ancestry = await Promise.all(bindings.map(({ directory }) => readWorkspaceAncestorIdentities(directory)));
   for (const [index, binding] of bindings.entries()) {
     if (ancestry.some((ancestors, other) => index !== other && ancestors.has(directoryIdentity(binding)))) {
       throw new ManagedWorkspaceStorageError('overlapping_roots');
@@ -117,7 +117,7 @@ export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots
     const knownSources = await listWorkspaceSourceProjects(authorization.sourceRegistryPath,
       authorization.sourceRegistryRoot ?? authorization.authorizedRoots[0]);
     for (const source of knownSources) {
-      const sourceAncestors = await readAncestors(source.directory);
+      const sourceAncestors = await readWorkspaceAncestorIdentities(source.directory);
       if ([roots.scratch, roots.artifacts].some((root, index) => workspacePathContains(root.directory, source.directory)
         || workspacePathContains(source.directory, root.directory) || ancestry[index].has(directoryIdentity(source))
         || sourceAncestors.has(directoryIdentity(root)))) throw new ManagedWorkspaceStorageError('overlapping_source');
@@ -146,16 +146,6 @@ function assertDisjoint(roots: ManagedWorkspaceRoots, project?: WorkspaceProject
 
 export function directoryIdentity(binding: Pick<WorkspaceProjectBinding, 'device' | 'inode'>): string {
   return `${binding.device}:${binding.inode}`;
-}
-
-async function readAncestors(directory: string): Promise<Set<string>> {
-  const identities = new Set<string>();
-  for (let current = directory; ; current = path.dirname(current)) {
-    const info = await fs.stat(current, { bigint: true }).catch(() => undefined);
-    if (!info?.isDirectory()) throw new WorkspaceProjectError('unavailable_directory');
-    identities.add(`${info.dev}:${info.ino}`);
-    if (path.dirname(current) === current) return identities;
-  }
 }
 
 async function allocateDirectory(

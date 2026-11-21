@@ -6,8 +6,9 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
-import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath } from './managed-workspace-ancestry.js';
-import { validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
+import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
+import { mkdirGitCheckoutInsidePinnedRun } from './managed-workspace-mkdir.js';
+import { pinWorkspacePath, validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
 
 const exec = promisify(execFile);
 const bareGit = ['--bare', '--git-dir=.', '-c', 'core.warnAmbiguousRefs=false', '-c', 'core.multiPackIndex=false'];
@@ -15,6 +16,8 @@ const cacheGit = [...bareGit, '-c', 'core.deltaBaseCacheLimit=16m', '-c', 'core.
 const maxCachePackBytes = 256n * 1024n * 1024n;
 const maxCacheIndexBytes = 32n * 1024n * 1024n;
 const maxCacheObjects = 250_000;
+const maxCheckoutEntries = 25_000;
+const maxCheckoutBytes = 256n * 1024n * 1024n;
 const repositoryIdentity = z.strictObject({
   // Digest of a trusted repository identity, not a credential-bearing remote URL.
   repositoryId: z.string().regex(/^[a-f0-9]{64}$/),
@@ -30,13 +33,18 @@ type SnapshotRequest = RepositoryIdentity & {
 };
 
 export class WorkspaceGitSnapshotError extends Error {
-  constructor(readonly code: 'invalid_snapshot' | 'git_directory_not_self_contained' | 'git_commit_unavailable' | 'git_unavailable' | 'git_cache_invalid') {
+  constructor(readonly code: 'invalid_snapshot' | 'git_directory_not_self_contained' | 'git_commit_unavailable' | 'git_unavailable'
+    | 'git_cache_invalid' | 'git_cache_mismatch' | 'git_checkout_overlap' | 'git_checkout_mount_unsupported' | 'git_checkout_failed') {
     const messages = {
       invalid_snapshot: 'A Git snapshot requires a full commit ID and a valid repository scope.',
       git_directory_not_self_contained: 'The pinned Git directory is not a supported self-contained object store.',
       git_commit_unavailable: 'The exact commit is unavailable in the pinned local Git directory.',
       git_unavailable: 'A trusted local Git executable is unavailable.',
       git_cache_invalid: 'The pinned Git cache is incomplete, contains unexpected objects or metadata, or changed during validation.',
+      git_cache_mismatch: 'The local Git cache no longer matches the selected cache identity.',
+      git_checkout_overlap: 'The run scratch, source, and Git cache must be separate directories.',
+      git_checkout_mount_unsupported: 'The Git checkout does not support nested mounts or mounted subtrees in the selected paths.',
+      git_checkout_failed: 'The isolated Git checkout could not be prepared within the supported bounds.',
     };
     super(messages[code]);
     this.name = 'WorkspaceGitSnapshotError';
@@ -97,15 +105,21 @@ export async function inspectWorkspaceGitSnapshot(input: SnapshotRequest): Promi
 }
 
 // The producer must authorize the cache separately and normalize it to one exact commit closure.
-export async function verifyWorkspaceGitCache(input: SnapshotRequest): Promise<SnapshotIdentity & {
+export async function verifyWorkspaceGitCache(input: SnapshotRequest): Promise<VerifiedGitCache> {
+  return verifyCache(input);
+}
+
+type VerifiedGitCache = SnapshotIdentity & {
   key: string;
   storeFingerprint: string;
-}> {
+};
+
+async function verifyCache(input: SnapshotRequest, trustedExecutable?: string): Promise<VerifiedGitCache> {
   if (!repositoryIdentity.safeParse({ repositoryId: input.repositoryId, scope: input.scope, commit: input.commit }).success) {
     throw new WorkspaceGitSnapshotError('invalid_snapshot');
   }
   const binding = await validateWorkspaceProject(input.authorizedRoots, input.gitDirectory);
-  const executable = await trustedGitExecutable(binding.directory);
+  const executable = trustedExecutable ?? await trustedGitExecutable(binding.directory);
   const objectFormat = input.commit.length === 40 ? 'sha1' : 'sha256';
   try {
     const { storeFingerprint, packPath } = await fingerprintCache(binding, input.commit, objectFormat);
@@ -123,6 +137,217 @@ export async function verifyWorkspaceGitCache(input: SnapshotRequest): Promise<S
   } catch {
     throw new WorkspaceGitSnapshotError('git_cache_invalid');
   }
+}
+
+// Only initializes a new run-owned directory. The caller must exclude the cache from all run writable roots.
+// Git alternates share object access but do not make the cache read-only.
+export async function createWorkspaceGitCheckout({ cache, expected, source, scratch }: {
+  cache: SnapshotRequest;
+  expected: { key: string; storeFingerprint: string };
+  source: WorkspaceProjectBinding;
+  scratch: WorkspaceProjectBinding;
+}) {
+  const { authorizedRoots, gitDirectory } = cache;
+  const bindings = await Promise.all([source, scratch, gitDirectory].map((binding) => validateWorkspaceProject(authorizedRoots, binding)));
+  await Promise.all([assertProtectedWorkspacePath(source), assertProtectedWorkspacePath(scratch, true), assertProtectedWorkspacePath(gitDirectory)]);
+  const ancestors = await Promise.all(bindings.map(({ directory }) => readWorkspaceAncestorIdentities(directory)));
+  if (bindings.some((left, index) => bindings.some((right, other) => index !== other && (
+    ancestors[other].has(`${left.device}:${left.inode}`) || workspacePathContains(left.directory, right.directory))))) {
+    throw new WorkspaceGitSnapshotError('git_checkout_overlap');
+  }
+  const mountAliases = await linuxCheckoutMountAliases(bindings.map(({ directory }) => directory));
+  const objectsPath = path.join(gitDirectory.directory, 'objects');
+  if (/[\u0000-\u001f\u007f]/.test(objectsPath)) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+  const executable = await trustedGitExecutable(gitDirectory.directory, bindings, mountAliases);
+  const snapshot = await verifyCache(cache, executable);
+  if (snapshot.key !== expected.key || snapshot.storeFingerprint !== expected.storeFingerprint) {
+    throw new WorkspaceGitSnapshotError('git_cache_mismatch');
+  }
+
+  const checkoutGit = ['--git-dir=.git', '--work-tree=.', '-c', 'core.hooksPath=/dev/null', '-c', 'core.attributesFile=/dev/null',
+    '-c', 'core.fsmonitor=false', '-c', 'core.protectHFS=true', '-c', 'core.protectNTFS=true', '-c', 'core.autocrlf=false',
+    '-c', 'core.deltaBaseCacheLimit=16m', '-c', 'core.packedGitLimit=64m'];
+  let tree: CheckoutTree;
+  try {
+    tree = readCheckoutTree(await boundedGit(executable, gitDirectory.directory,
+      [...cacheGit, 'ls-tree', '-rltz', '--full-tree', snapshot.commit], 8 * 1024 * 1024));
+  } catch {
+    throw new WorkspaceGitSnapshotError('git_checkout_failed');
+  }
+
+  const checkout = await mkdirGitCheckoutInsidePinnedRun(scratch);
+  try {
+    await validateWorkspaceProject(authorizedRoots, checkout);
+    await assertProtectedWorkspacePath(checkout, true);
+    await boundedGit(executable, checkout.directory,
+      [...checkoutGit, 'init', '--quiet', '--template=', `--object-format=${snapshot.objectFormat}`]);
+    const localGit = await pinWorkspacePath(checkout.directory, '.git');
+    if (localGit.directory !== path.join(checkout.directory, '.git')) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+    const localInfo = await pinWorkspacePath(localGit.directory, 'objects/info');
+    if (localInfo.directory !== path.join(localGit.directory, 'objects', 'info')) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+    await assertProtectedWorkspacePath(localInfo, true);
+    await fs.writeFile(path.join(localInfo.directory, 'alternates'), `${objectsPath}\n`, { flag: 'wx', mode: 0o600 });
+    if (tree.hasAttributes) await assertCheckoutConversionsWithinBounds(executable, checkout.directory, checkoutGit, snapshot.commit, tree);
+    await reserveCheckoutNames(checkout.directory, tree.names);
+    await boundedGit(executable, checkout.directory,
+      [...checkoutGit, 'checkout', '--detach', '--force', '--quiet', '--no-recurse-submodules', snapshot.commit]);
+    await validateCheckoutFiles(checkout, localGit, tree.files.length);
+    const head = await boundedGit(executable, checkout.directory, [...checkoutGit, 'rev-parse', '--verify', 'HEAD']);
+    if (head.toString('ascii') !== `${snapshot.commit}\n`
+      || (await fingerprintCache(gitDirectory, snapshot.commit, snapshot.objectFormat)).storeFingerprint !== snapshot.storeFingerprint) {
+      throw new WorkspaceGitSnapshotError('git_checkout_failed');
+    }
+    await Promise.all([...bindings, checkout, localGit].map((binding) => validateWorkspaceProject(authorizedRoots, binding)));
+    return { checkout, gitDirectory: localGit, snapshot };
+  } catch {
+    // Uncertain directories are left in place for the run owner to reconcile; never overwrite or clean them here.
+    throw new WorkspaceGitSnapshotError('git_checkout_failed');
+  }
+}
+
+interface CheckoutTree {
+  files: { name: string; bytes: bigint }[];
+  names: { path: string; directory: boolean }[];
+  hasAttributes: boolean;
+}
+
+function readCheckoutTree(result: Buffer): CheckoutTree {
+  if (result.length && result.at(-1) !== 0) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+  const entries = result.toString('latin1').split('\0');
+  if (entries.length > maxCheckoutEntries + 1) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+  const files: CheckoutTree['files'] = [];
+  const names: CheckoutTree['names'] = [];
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+  let hasAttributes = false;
+  let rawBytes = 0n;
+  for (const entry of entries.slice(0, -1)) {
+    const tab = entry.indexOf('\t');
+    const fields = /^([0-7]{6}) (blob|commit|tree) [a-f0-9]+ +([0-9]+|-)$/u.exec(entry.slice(0, tab));
+    if (tab < 0 || !fields) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+    const name = entry.slice(tab + 1);
+    const decodedPath = decoder.decode(Buffer.from(name, 'latin1'));
+    if (decodedPath.split('/').some((part) => !part || part === '.' || part === '..')) {
+      throw new WorkspaceGitSnapshotError('git_checkout_failed');
+    }
+    const directory = (fields[1] === '160000' && fields[2] === 'commit' || fields[1] === '040000' && fields[2] === 'tree') && fields[3] === '-';
+    names.push({ path: decodedPath, directory });
+    if (directory) continue;
+    if (!['100644', '100755', '120000'].includes(fields[1]) || fields[2] !== 'blob' || fields[3] === '-') {
+      throw new WorkspaceGitSnapshotError('git_checkout_failed');
+    }
+    const bytes = BigInt(fields[3]);
+    hasAttributes ||= /(^|\/)\.gitattributes$/i.test(name);
+    rawBytes += bytes;
+    if (rawBytes > maxCheckoutBytes) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+    files.push({ name, bytes });
+  }
+  return { files, names, hasAttributes };
+}
+
+async function reserveCheckoutNames(root: string, names: CheckoutTree['names']): Promise<void> {
+  // Exclusive, empty entries let the destination filesystem detect equivalent names before any blob is written.
+  const directories = [root];
+  const knownAttributes = new Set<string>();
+  for (const entry of names) {
+    const destination = path.join(root, entry.path);
+    if (entry.directory) {
+      await fs.mkdir(destination, { mode: 0o700 });
+      directories.push(destination);
+    } else {
+      await (await fs.open(destination, 'wx', 0o600)).close();
+      if (path.basename(destination) === '.gitattributes') knownAttributes.add(destination);
+    }
+  }
+  for (const directory of directories) {
+    const attributes = path.join(directory, '.gitattributes');
+    if (knownAttributes.has(attributes)) continue;
+    const alias = await fs.lstat(attributes).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      return undefined;
+    });
+    if (alias) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+  }
+}
+
+async function linuxCheckoutMountAliases(workspaces: string[]): Promise<string[]> {
+  if (process.platform !== 'linux') return [];
+  const aliases: string[] = [];
+  try {
+    const value = await fs.readFile('/proc/self/mountinfo', 'utf8');
+    if (!value.endsWith('\n') || value.length > 1_048_576) throw new Error('Unsupported mount table.');
+    const mountPath = (field: string) => field.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
+    for (const entry of value.trimEnd().split('\n')) {
+      const [, , , rawRoot, rawMount] = entry.split(' ');
+      if (!rawRoot?.startsWith('/') || !rawMount?.startsWith('/')) throw new Error('Unsupported mount table.');
+      const mount = mountPath(rawMount);
+      const isSubtree = rawRoot !== '/';
+      if (workspaces.some((workspace) => (isSubtree && workspacePathContains(mount, workspace))
+        || (mount !== workspace && workspacePathContains(workspace, mount)))) throw new Error('Unsupported workspace mount.');
+      if (isSubtree) aliases.push(mount);
+    }
+    return aliases;
+  } catch {
+    throw new WorkspaceGitSnapshotError('git_checkout_mount_unsupported');
+  }
+}
+
+async function assertCheckoutConversionsWithinBounds(
+  executable: string, directory: string, checkoutGit: string[], commit: string, tree: CheckoutTree,
+): Promise<void> {
+  await boundedGit(executable, directory, [...checkoutGit, 'read-tree', commit]);
+  const attributes = await boundedGit(executable, directory, [...checkoutGit, 'check-attr', '--cached', '-z', '--stdin',
+    'ident', 'working-tree-encoding'], 24 * 1024 * 1024, Buffer.from(`${tree.files.map(({ name }) => name).join('\0')}\0`, 'latin1'));
+  const values = attributes.toString('latin1').split('\0');
+  if (values.length !== tree.files.length * 6 + 1) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+  let worstCase = 0n;
+  const switchedOff = (value: string) => value === 'unspecified' || value === 'unset';
+  for (const [index, { name, bytes }] of tree.files.entries()) {
+    const [first, identAttr, ident, second, encodingAttr, encoding] = values.slice(index * 6, index * 6 + 6);
+    if (first !== name || second !== name || identAttr !== 'ident' || encodingAttr !== 'working-tree-encoding' || !switchedOff(encoding)) {
+      throw new WorkspaceGitSnapshotError('git_checkout_failed');
+    }
+    // CRLF can double bytes; expanding each $Id$ to a full SHA-256 identity costs less than 24x.
+    worstCase += bytes * (switchedOff(ident) ? 2n : 48n);
+    if (worstCase > maxCheckoutBytes) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+  }
+}
+
+async function validateCheckoutFiles(checkout: WorkspaceProjectBinding, gitDirectory: WorkspaceProjectBinding, expected: number): Promise<void> {
+  const pending = [checkout.directory];
+  let entries = 0;
+  let files = 0;
+  let actualBytes = 0n;
+  while (pending.length) {
+    const parent = pending.pop()!;
+    for await (const entry of await fs.opendir(parent)) {
+      const child = path.join(parent, entry.name);
+      if (child === gitDirectory.directory) continue;
+      if (++entries > maxCheckoutEntries) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+      const info = await fs.lstat(child, { bigint: true });
+      if (info.isDirectory()) pending.push(child);
+      else if (info.isFile()) {
+        files++;
+        actualBytes += info.size;
+      } else if (info.isSymbolicLink()) {
+        const target = await fs.readlink(child);
+        const resolved = path.resolve(parent, target);
+        if (path.isAbsolute(target) || !workspacePathContains(checkout.directory, resolved)) {
+          throw new WorkspaceGitSnapshotError('git_checkout_failed');
+        }
+        const canonical = await fs.realpath(child);
+        if (!workspacePathContains(checkout.directory, canonical) || workspacePathContains(gitDirectory.directory, canonical)) {
+          throw new WorkspaceGitSnapshotError('git_checkout_failed');
+        }
+        const targetInfo = await fs.stat(canonical);
+        const ancestors = await readWorkspaceAncestorIdentities(targetInfo.isDirectory() ? canonical : path.dirname(canonical));
+        if (ancestors.has(`${gitDirectory.device}:${gitDirectory.inode}`)) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+        files++;
+        actualBytes += info.size;
+      } else throw new WorkspaceGitSnapshotError('git_checkout_failed');
+      if (actualBytes > maxCheckoutBytes) throw new WorkspaceGitSnapshotError('git_checkout_failed');
+    }
+  }
+  if (files !== expected) throw new WorkspaceGitSnapshotError('git_checkout_failed');
 }
 
 async function fingerprintCache(binding: WorkspaceProjectBinding, commit: string, format: ObjectFormat): Promise<{
@@ -259,18 +484,24 @@ async function requireSelfContainedObjectStore(directory: string, commit: string
   if (!await requireStore().catch(() => false)) throw new WorkspaceGitSnapshotError('git_directory_not_self_contained');
 }
 
-async function trustedGitExecutable(gitDirectory: string): Promise<string> {
+async function trustedGitExecutable(gitDirectory: string, protectedWorkspaces: WorkspaceProjectBinding[] = [], mountAliases: string[] = []): Promise<string> {
   const repository = path.basename(gitDirectory) === '.git' ? path.dirname(gitDirectory) : gitDirectory;
+  const excludedPaths = [repository, ...protectedWorkspaces.map(({ directory }) => directory), ...mountAliases];
+  const excludedIdentities = protectedWorkspaces.map(({ device, inode }) => `${device}:${inode}`);
   const uid = process.geteuid?.();
   for (const directory of new Set([...(process.env.PATH ?? '').split(path.delimiter).filter(path.isAbsolute), '/usr/bin', '/bin'])) {
     try {
       const candidate = await fs.realpath(path.join(directory, 'git'));
-      if (workspacePathContains(repository, candidate)) continue;
+      if (excludedPaths.some((workspace) => workspacePathContains(workspace, candidate))) continue;
       const stat = await fs.lstat(candidate);
       if (!stat.isFile() || (stat.uid !== 0 && stat.uid !== uid) || (stat.mode & 0o022) !== 0 || (stat.mode & 0o111) === 0) continue;
       const parent = path.dirname(candidate);
       const meta = await fs.lstat(parent, { bigint: true });
       await assertProtectedWorkspacePath({ directory: parent, device: String(meta.dev), inode: String(meta.ino) });
+      if (excludedIdentities.length) {
+        const ancestry = await readWorkspaceAncestorIdentities(parent);
+        if (excludedIdentities.some((identity) => ancestry.has(identity))) continue;
+      }
       await assertDenyOnlyWorkspaceAcls([candidate]);
       return candidate;
     } catch {
@@ -281,23 +512,27 @@ async function trustedGitExecutable(gitDirectory: string): Promise<string> {
 }
 
 function verifyCacheGit(executable: string, cwd: string, args: string[]): Promise<Buffer> {
-  // Darwin does not support this address-space limit; still bound input, allocations, and time there.
-  const argv = [...cacheGit, ...args];
-  if (process.platform === 'linux') {
-    return git('/bin/sh', cwd, ['-c', 'ulimit -v 786432 || exit 125; exec "$@"', 'lark-git-verifier',
-      executable, ...argv], undefined, 60_000);
-  }
-  return git(executable, cwd, argv, undefined, 60_000);
+  return boundedGit(executable, cwd, [...cacheGit, ...args]);
 }
 
-async function git(executable: string, cwd: string, args: string[], input?: string, timeout = 10_000): Promise<Buffer> {
+function boundedGit(executable: string, cwd: string, args: string[], maxBuffer?: number, input?: Buffer): Promise<Buffer> {
+  // Darwin does not support this address-space limit; still bound input, allocations, and time there.
+  if (process.platform === 'linux') {
+    return git('/bin/sh', cwd, ['-c', 'ulimit -v 786432 || exit 125; exec "$@"', 'lark-git-verifier',
+      executable, ...args], input, 60_000, maxBuffer);
+  }
+  return git(executable, cwd, args, input, 60_000, maxBuffer);
+}
+
+async function git(executable: string, cwd: string, args: string[], input?: string | Buffer, timeout = 10_000, maxBuffer = 256 * 1024): Promise<Buffer> {
   const running = exec(executable, args, {
-    cwd, timeout, killSignal: 'SIGKILL', maxBuffer: 256 * 1024, encoding: 'buffer',
+    cwd, timeout, killSignal: 'SIGKILL', maxBuffer, encoding: 'buffer',
     env: {
       PATH: '/usr/bin:/bin', LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_OPTIONAL_LOCKS: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1',
       GIT_ALLOW_PROTOCOL: '', GIT_TERMINAL_PROMPT: '0',
       GIT_ALLOC_LIMIT: '67108864',
+      GIT_ATTR_NOSYSTEM: '1',
     },
   });
   running.child.stdin?.on('error', () => {});

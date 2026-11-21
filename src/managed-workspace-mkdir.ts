@@ -40,6 +40,14 @@ const mkdirProgram = String.raw`
 
 export async function mkdirInsidePinnedRoot(root: WorkspaceProjectBinding, leaf: string): Promise<WorkspaceProjectBinding> {
   if (!managedLeaf.test(leaf)) throw new ManagedWorkspaceStorageError('invalid_binding');
+  return mkdirInsideRoot(root, leaf);
+}
+
+export function mkdirGitCheckoutInsidePinnedRun(runRoot: WorkspaceProjectBinding): Promise<WorkspaceProjectBinding> {
+  return mkdirInsideRoot(runRoot, 'git-checkout');
+}
+
+async function mkdirInsideRoot(root: WorkspaceProjectBinding, leaf: string): Promise<WorkspaceProjectBinding> {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError('unprotected_root');
   let response;
   try {

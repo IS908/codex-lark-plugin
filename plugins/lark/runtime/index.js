@@ -52307,6 +52307,15 @@ var ManagedWorkspaceStorageError = class extends Error {
 
 // src/managed-workspace-ancestry.ts
 var exec = promisify(execFile);
+async function readWorkspaceAncestorIdentities(directory) {
+  const identities = /* @__PURE__ */ new Set();
+  for (let current = directory; ; current = path7.dirname(current)) {
+    const info = await fs5.stat(current, { bigint: true }).catch(() => void 0);
+    if (!info?.isDirectory()) throw new WorkspaceProjectError("unavailable_directory");
+    identities.add(`${info.dev}:${info.ino}`);
+    if (path7.dirname(current) === current) return identities;
+  }
+}
 async function assertProtectedWorkspacePath(binding, owned = false) {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError("unprotected_root");
   const uid = BigInt(process.geteuid());
@@ -56706,6 +56715,9 @@ var mkdirProgram = String.raw`
 `;
 async function mkdirInsidePinnedRoot(root, leaf) {
   if (!managedLeaf.test(leaf)) throw new ManagedWorkspaceStorageError("invalid_binding");
+  return mkdirInsideRoot(root, leaf);
+}
+async function mkdirInsideRoot(root, leaf) {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError("unprotected_root");
   let response;
   try {
@@ -56810,7 +56822,7 @@ async function validateManagedWorkspaceRoots(roots, authorization) {
   ]);
   assertDisjoint(roots, authorization.project);
   const bindings = [roots.scratch, roots.artifacts, ...authorization.project ? [authorization.project] : []];
-  const ancestry = await Promise.all(bindings.map(({ directory }) => readAncestors(directory)));
+  const ancestry = await Promise.all(bindings.map(({ directory }) => readWorkspaceAncestorIdentities(directory)));
   for (const [index, binding] of bindings.entries()) {
     if (ancestry.some((ancestors, other) => index !== other && ancestors.has(directoryIdentity(binding)))) {
       throw new ManagedWorkspaceStorageError("overlapping_roots");
@@ -56822,7 +56834,7 @@ async function validateManagedWorkspaceRoots(roots, authorization) {
       authorization.sourceRegistryRoot ?? authorization.authorizedRoots[0]
     );
     for (const source of knownSources) {
-      const sourceAncestors = await readAncestors(source.directory);
+      const sourceAncestors = await readWorkspaceAncestorIdentities(source.directory);
       if ([roots.scratch, roots.artifacts].some((root, index) => workspacePathContains(root.directory, source.directory) || workspacePathContains(source.directory, root.directory) || ancestry[index].has(directoryIdentity(source)) || sourceAncestors.has(directoryIdentity(root)))) throw new ManagedWorkspaceStorageError("overlapping_source");
     }
   }
@@ -56847,15 +56859,6 @@ function assertDisjoint(roots, project) {
 }
 function directoryIdentity(binding) {
   return `${binding.device}:${binding.inode}`;
-}
-async function readAncestors(directory) {
-  const identities = /* @__PURE__ */ new Set();
-  for (let current = directory; ; current = path17.dirname(current)) {
-    const info = await fs13.stat(current, { bigint: true }).catch(() => void 0);
-    if (!info?.isDirectory()) throw new WorkspaceProjectError("unavailable_directory");
-    identities.add(`${info.dev}:${info.ino}`);
-    if (path17.dirname(current) === current) return identities;
-  }
 }
 async function allocateDirectory(root, owner, authorizedRoots) {
   await validateWorkspaceProject(authorizedRoots, root);

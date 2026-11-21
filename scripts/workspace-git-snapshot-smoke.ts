@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { deflateSync, inflateSync } from 'node:zlib';
-import { gitSnapshotKey, inspectWorkspaceGitSnapshot, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
+import { createWorkspaceGitCheckout, gitSnapshotKey, inspectWorkspaceGitSnapshot, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-workspace-git-snapshot-'));
@@ -91,11 +91,78 @@ try {
     });
     return { ...request, commit: selected, gitDirectory: await pinWorkspacePath(base, directory) };
   }
-  const cache = await makeCache('normalized-cache', [commit]);
+  const cache = await makeCache('normalized cache', [commit]);
   const verified = await verifyWorkspaceGitCache(cache);
   assert.equal(verified.key, snapshot.key);
   assert.match(verified.storeFingerprint, /^[0-9a-f]{64}$/);
   assert.deepEqual(await verifyWorkspaceGitCache(cache), verified);
+  const sourceBinding = await pinWorkspacePath(base, source);
+  async function isolatedScratch(name: string) {
+    await fs.mkdir(path.join(base, name), { mode: 0o700 });
+    return pinWorkspacePath(base, name);
+  }
+  const [firstScratch, secondScratch] = await Promise.all([isolatedScratch('run-a'), isolatedScratch('run-b')]);
+  const selection = { cache, expected: verified, source: sourceBinding };
+  const [first, second] = await Promise.all([
+    createWorkspaceGitCheckout({ ...selection, scratch: firstScratch }),
+    createWorkspaceGitCheckout({ ...selection, scratch: secondScratch }),
+  ]);
+  const a = first.checkout.directory;
+  const b = second.checkout.directory;
+  assert.notEqual(first.checkout.inode, second.checkout.inode);
+  assert.notEqual(first.gitDirectory.inode, second.gitDirectory.inode);
+  for (const directory of [a, b]) {
+    assert.equal(git('-C', directory, 'rev-parse', 'HEAD'), commit);
+    assert.equal(git('-C', directory, 'remote'), '');
+    assert.equal(await fs.readFile(path.join(directory, 'tracked.txt'), 'utf8'), 'committed');
+    assert.equal(await fs.readFile(path.join(directory, '.git', 'objects', 'info', 'alternates'), 'utf8'),
+      path.join(cache.gitDirectory.directory, 'objects') + '\n');
+    assert.deepEqual(await fs.readdir(path.join(directory, '.git', 'objects', 'pack')), []);
+  }
+  assert.notEqual((await fs.stat(path.join(a, '.git', 'index'))).ino, (await fs.stat(path.join(b, '.git', 'index'))).ino);
+  await fs.writeFile(path.join(a, 'tracked.txt'), 'first run only');
+  await fs.writeFile(path.join(a, 'untracked.txt'), 'first run only');
+  git('-C', a, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qam', 'isolated write');
+  const firstLocalCommit = git('-C', a, 'rev-parse', 'HEAD');
+  assert.throws(() => git('-C', b, 'cat-file', '-t', firstLocalCommit));
+  assert.throws(() => git('-C', source, 'cat-file', '-t', firstLocalCommit));
+  assert.equal(git('-C', b, 'status', '--porcelain'), '');
+  assert.equal(await fs.readFile(path.join(b, 'tracked.txt'), 'utf8'), 'committed');
+  assert.equal(git('-C', source, 'status', '--porcelain'), originalStatus);
+  assert.equal(await fs.readFile(path.join(source, 'tracked.txt'), 'utf8'), 'uncommitted');
+  if (process.platform === 'darwin' && process.env.LARK_TEST_GIT_CHECKOUT_SEATBELT === '1') {
+    const profile = `(version 1) (allow default) (deny network*)\n`
+      + `(deny file-write* (require-not (require-any (subpath ${JSON.stringify(a)}) (literal "/dev/null"))))`;
+    const constrained = (executable: string, args: string[], input?: string) => execFileSync('/usr/bin/sandbox-exec',
+      ['-p', profile, executable, ...args], {
+        cwd: a, env: { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+        encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+    // An ordinary Git write of an existing blob must succeed without refreshing the shared pack.
+    assert.equal(constrained('/usr/bin/git', ['hash-object', '-w', '--stdin'], 'committed'), git('-C', a, 'rev-parse', `${commit}:tracked.txt`));
+    const packDir = path.join(cache.gitDirectory.directory, 'objects', 'pack');
+    const pack = (await fs.readdir(packDir)).find((file) => file.endsWith('.pack'))!;
+    assert.throws(() => constrained('/usr/bin/touch', ['-m', path.join(packDir, pack)]));
+    constrained('/usr/bin/touch', [path.join(a, 'seatbelt-can-write-here')]);
+    assert.deepEqual(await verifyWorkspaceGitCache(cache), verified);
+    console.log('workspace Git cache read-only Seatbelt probe: PASS');
+  }
+  await assert.rejects(createWorkspaceGitCheckout({ ...selection, scratch: firstScratch }),
+    { code: 'allocation_conflict' });
+  assert.equal(git('-C', a, 'rev-parse', 'HEAD'), firstLocalCommit);
+  assert.equal(await fs.readFile(path.join(a, 'untracked.txt'), 'utf8'), 'first run only');
+  assert.deepEqual(await verifyWorkspaceGitCache(cache), verified);
+
+  const wrongScratch = await isolatedScratch('run-cache-mismatch');
+  await assert.rejects(createWorkspaceGitCheckout({ ...selection, scratch: wrongScratch,
+    expected: { ...verified, storeFingerprint: '0'.repeat(64) } }), { code: 'git_cache_mismatch' });
+  assert.deepEqual(await fs.readdir(wrongScratch.directory), []);
+  await assert.rejects(createWorkspaceGitCheckout({ ...selection, scratch: sourceBinding }),
+    { code: 'git_checkout_overlap' });
+  const contested = { ...selection, scratch: await isolatedScratch('run-contested') };
+  const race = await Promise.allSettled([createWorkspaceGitCheckout(contested), createWorkspaceGitCheckout(contested)]);
+  assert.equal(race.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(race.find((result) => result.status === 'rejected')?.reason.code, 'allocation_conflict');
   const config = path.join(cache.gitDirectory.directory, 'config');
   const configContents = await fs.readFile(config);
   await fs.appendFile(config, '[fsck]\n\tmissingTree = ignore\n');
@@ -129,6 +196,47 @@ try {
   assert.equal((await inspectWorkspaceGitSnapshot(incomplete)).commit, extra);
   await assert.rejects(verifyWorkspaceGitCache(incomplete), { code: 'git_cache_invalid' });
 
+  await fs.mkdir(path.join(source, 'nested'));
+  await fs.writeFile(path.join(source, '.gitattributes'), 'nested/data.txt text eol=crlf ident\n');
+  await fs.writeFile(path.join(source, 'nested', 'data.txt'), '$Id$\nline\n');
+  await fs.symlink('nested/data.txt', path.join(source, 'local-link'));
+  git('-C', source, 'add', '.gitattributes', 'nested/data.txt', 'local-link');
+  git('-C', source, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'attributes and local link');
+  const attributesCommit = git('-C', source, 'rev-parse', 'HEAD');
+  const attributesCache = await makeCache('attributes-cache', [attributesCommit], attributesCommit);
+  const attributesCheckout = await createWorkspaceGitCheckout({ cache: attributesCache,
+    expected: await verifyWorkspaceGitCache(attributesCache), source: sourceBinding, scratch: await isolatedScratch('run-with-attributes') });
+  const attributesDir = attributesCheckout.checkout.directory;
+  assert.equal(await fs.readlink(path.join(attributesDir, 'local-link')), 'nested/data.txt');
+  assert.match(await fs.readFile(path.join(attributesDir, 'local-link'), 'utf8'), /^\$Id: [0-9a-f]{40} \$\r\nline\r\n$/);
+  assert.equal(git('-C', attributesDir, 'status', '--porcelain'), '');
+
+  const collisionScratch = await isolatedScratch('run-case-compatibility');
+  const caseProbe = path.join(collisionScratch.directory, 'CaseProbe');
+  await fs.writeFile(caseProbe, '', { flag: 'wx' });
+  const foldsCase = await fs.lstat(path.join(collisionScratch.directory, 'caseprobe')).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+    return false;
+  });
+  await fs.unlink(caseProbe);
+  const trackedBlob = git('-C', source, 'rev-parse', `${commit}:tracked.txt`);
+  for (const name of ['History.txt', 'history.txt']) {
+    git('-C', source, '-c', 'core.ignoreCase=false', 'update-index', '--add', '--cacheinfo', `100644,${trackedBlob},${name}`);
+  }
+  git('-C', source, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'distinct filename casing');
+  const caseCommit = git('-C', source, 'rev-parse', 'HEAD');
+  const caseCache = await makeCache('case-cache', [caseCommit], caseCommit);
+  const caseRequest = { cache: caseCache, expected: await verifyWorkspaceGitCache(caseCache), source: sourceBinding, scratch: collisionScratch };
+  if (foldsCase) {
+    await assert.rejects(createWorkspaceGitCheckout(caseRequest), { code: 'git_checkout_failed' });
+    assert.equal((await fs.stat(path.join(collisionScratch.directory, 'git-checkout', 'History.txt'))).size, 0);
+  } else {
+    const caseCheckout = await createWorkspaceGitCheckout(caseRequest);
+    for (const name of ['History.txt', 'history.txt']) {
+      assert.equal(await fs.readFile(path.join(caseCheckout.checkout.directory, name), 'utf8'), 'committed');
+    }
+  }
+
   const sha256Repo = path.join(base, 'sha256-source');
   git('init', '-q', '--object-format=sha256', sha256Repo);
   git('-C', sha256Repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'fixture');
@@ -139,7 +247,11 @@ try {
   assert.equal(sha256.commit.length, 64);
   assert.notEqual(sha256.key, snapshot.key);
   const sha256Cache = await makeCache('sha256-cache', [sha256Commit], sha256Commit, sha256Repo);
-  assert.equal((await verifyWorkspaceGitCache(sha256Cache)).key, sha256.key);
+  const sha256Verified = await verifyWorkspaceGitCache(sha256Cache);
+  assert.equal(sha256Verified.key, sha256.key);
+  const sha256Checkout = await createWorkspaceGitCheckout({ cache: sha256Cache, expected: sha256Verified,
+    source: await pinWorkspacePath(base, sha256Repo), scratch: await isolatedScratch('run-sha256') });
+  assert.equal(git('-C', sha256Checkout.checkout.directory, 'rev-parse', 'HEAD'), sha256Commit);
 
   const alternate = path.join(gitDirectory.directory, 'objects', 'info', 'alternates');
   await fs.writeFile(alternate, '', { flag: 'wx' });
