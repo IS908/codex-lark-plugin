@@ -335,7 +335,8 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       ...basic, git: snapshot.git, gitCheckout: { checkout, gitDirectory },
     })) : basic;
     const [epoch, scratchBaseline] = await Promise.all([
-      this.localCleanupEpoch(allocation), allocation.gitCheckout ? measureWorkspaceCleanupBaseline(allocation.scratch) : undefined,
+      this.localCleanupEpoch(allocation),
+      measureWorkspaceCleanupBaseline(allocation.scratch, AbortSignal.timeout(10_000), !allocation.gitCheckout),
     ]);
     this.completeAllocation(parsed.data, allocation, epoch, scratchBaseline);
     return allocation;

@@ -95,12 +95,58 @@ async function measureEpoch(): Promise<WorkspaceCleanupEpoch | undefined> {
 }
 
 function stamp(info: BigIntStats): string {
-  return [info.dev, info.ino, info.mode, info.uid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(':');
+  return [info.dev, info.ino, info.mode, info.uid, info.gid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(':');
+}
+
+async function measureExtendedData(entries: readonly string[], signal?: AbortSignal): Promise<string | undefined> {
+  try {
+    if (!entries.length || entries.some((entry) => !path.isAbsolute(entry) || /[\u0000-\u001f\u007f]/.test(entry))) return;
+    const options = { ...nativeOptions, signal };
+    if (process.platform === 'darwin') {
+      const tool = '/usr/bin/xattr';
+      const name = 'com.apple.provenance';
+      const list = await exec(tool, ['-s', '-v', ...entries], options);
+      if (list.stderr) return;
+      if (!list.stdout) return '';
+      if (!list.stdout.endsWith('\n')) return;
+      const listed = new Set(list.stdout.slice(0, -1).split('\n'));
+      const paths = entries.filter((entry) => listed.delete(`${entry}: ${name}`));
+      if (!paths.length || listed.size || paths.length !== list.stdout.split('\n').length - 1) return;
+      // New files can have provenance automatically. Require its original bytes, not just its name.
+      const data = await exec(tool, ['-s', '-p', '-x', '-v', name, ...paths], options);
+      const lines = data.stdout.split('\n');
+      if (data.stderr || lines.pop() !== '' || lines.length !== paths.length * 2) return;
+      for (const [index, entry] of paths.entries()) {
+        if (lines[index * 2] !== `${entry}: ` || !/^(?:[0-9A-F]{2} ){11}$/.test(lines[index * 2 + 1])) return;
+      }
+      return data.stdout;
+    }
+    if (process.platform !== 'linux') return;
+    const tool = '/usr/bin/getfattr';
+    for (const item of ['/usr/bin', '/usr', '/']) {
+      const info = await fs.lstat(item);
+      if (!info.isDirectory() || info.uid !== 0 || (info.mode & 0o022) !== 0) return;
+    }
+    const info = await fs.lstat(tool);
+    if (!info.isFile() || info.uid !== 0 || (info.mode & 0o7022) !== 0) return;
+    const { stdout, stderr } = await exec(tool, ['-h', '-m', '-', '--absolute-names', '--', ...entries], options);
+    if (!stdout && !stderr) return '';
+  } catch { return undefined; }
+}
+
+interface WorkspaceCleanupTree {
+  digest: string;
+  unchanged(): Promise<boolean>;
 }
 
 // The baseline covers owned scratch and every checkout entry, including .git and ignored files.
-export async function measureWorkspaceCleanupBaseline(root: WorkspaceProjectBinding, signal?: AbortSignal): Promise<string | undefined> {
-  const hash = createHash('sha256').update('lark-cleanup-scratch-baseline-v1\0');
+export async function measureWorkspaceCleanupBaseline(root: WorkspaceProjectBinding, signal?: AbortSignal, emptyOnly = false): Promise<string | undefined> {
+  return (await observeWorkspaceCleanupTree(root, signal, emptyOnly))?.digest;
+}
+
+export async function observeWorkspaceCleanupTree(root: WorkspaceProjectBinding,
+  signal?: AbortSignal, emptyOnly = false): Promise<WorkspaceCleanupTree | undefined> {
+  const hash = createHash('sha256').update('lark-cleanup-scratch-baseline-v2\0');
   const visited: Array<{ absolute: string; stamp: string }> = [];
   let bytes = 0n;
   const buffer = Buffer.allocUnsafe(128 * 1024);
@@ -113,15 +159,26 @@ export async function measureWorkspaceCleanupBaseline(root: WorkspaceProjectBind
     for (let i = 0; i < visited.length; i += 32) {
       signal?.throwIfAborted();
       const group = visited.slice(i, i + 32);
-      await assertDenyOnlyWorkspaceAcls(group.map(({ absolute }) => absolute));
-      for (const observation of group) {
-        if (stamp(await fs.lstat(observation.absolute, { bigint: true })) !== observation.stamp) throw new Error('Unstable entry.');
-      }
+      const entries = group.map(({ absolute }) => absolute);
+      await assertDenyOnlyWorkspaceAcls(entries);
+      const attributes = await measureExtendedData(entries, signal);
+      if (attributes === undefined) return;
+      hash.update(JSON.stringify(attributes));
     }
     await assertProtectedWorkspacePath(root, true);
     signal?.throwIfAborted();
-    if (!(await readWorkspaceDependencyMountPolicy()).supports(root.directory)) return;
-    return hash.digest('hex');
+    if (!(await readWorkspaceDependencyMountPolicy()).supports(root.directory) || !await unchanged()) return;
+    return { digest: hash.digest('hex'), unchanged };
+
+    async function unchanged() {
+      try {
+        for (const { absolute, stamp: previous } of visited) {
+          signal?.throwIfAborted();
+          if (stamp(await fs.lstat(absolute, { bigint: true })) !== previous) return false;
+        }
+        return true;
+      } catch { return false; }
+    }
 
     async function visit(relative: string, depth: number) {
       signal?.throwIfAborted();
@@ -139,6 +196,7 @@ export async function measureWorkspaceCleanupBaseline(root: WorkspaceProjectBind
         if (await fs.realpath(absolute) !== absolute) throw new Error('Aliased entry.');
         const names = new Set<string>();
         for await (const entry of await fs.opendir(absolute, { encoding: 'buffer' as BufferEncoding })) {
+          if (emptyOnly) throw new Error('Scratch is occupied.');
           if (names.size + visited.length >= maxEntries) throw new Error('Baseline exceeds scan limits.');
           const raw = entry.name as unknown as Buffer;
           if (!Buffer.isBuffer(raw)) throw new Error('Unverified filename encoding.');

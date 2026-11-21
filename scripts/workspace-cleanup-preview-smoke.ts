@@ -8,8 +8,9 @@ import { mock } from 'node:test';
 import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
 import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
 import type { ManagedGitSelection } from '../src/domain/managed-workspace.js';
+import { parseWorkspaceMountTable, workspaceBackingAliases, workspaceMountLayoutSupported } from '../src/managed-workspace-ancestry.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
-import { previewWorkspaceCleanup } from '../src/workspace-cleanup-preview.js';
+import { previewWorkspaceCleanup, supportsScratch } from '../src/workspace-cleanup-preview.js';
 import { readWorkspaceGitCacheIdentity } from '../src/workspace-git-snapshot.js';
 
 const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'workspace-cleanup-preview-fixture-')));
@@ -22,6 +23,10 @@ const configPath = path.join(channel, 'runtime-config/managed-workspace.json');
 const databasePath = path.join(channel, 'runtime/continuations/jobs.sqlite');
 const now = new Date('2026-11-22T00:00:00.000Z');
 const old = '2026-07-19T00:00:00.000Z';
+const env = { ...process.env, HOME: home, USERPROFILE: home, LARK_CODEX_EXEC_CWD: work, LARK_CONTINUATION_WORKING_ROOT: work,
+  LARK_CONTINUATION_RETENTION_DAYS: '30', LARK_APP_SECRET: 'do-not-print-secret' };
+const cli = (args: string[]) => execFileSync(process.execPath, ['--import', 'tsx', 'src/configure-doctor-cli.ts',
+  '--workspace-cleanup-preview', ...args], { env, encoding: 'utf8' });
 for (const dir of [scratchRoot, artifactRoot, project, path.dirname(configPath), path.dirname(databasePath)]) {
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 }
@@ -67,6 +72,16 @@ try {
       old, old, old, old, pending ? null : old, pending ? null : 'cancelled', pending ? 1 : 0);
   };
   const unused = await register('unused', 'cron_prompt', 'cancelled');
+  const mountTable = parseWorkspaceMountTable('10 1 8:1 / / rw - ext4 /dev/example rw\n'
+    + `11 10 8:1 ${scratchRoot} /mnt/cleanup-fixture rw - ext4 /dev/example rw\n`);
+  const linuxPolicy = {
+    supports: (directory: string) => workspaceMountLayoutSupported([directory], mountTable),
+    aliases: (directory: string) => workspaceBackingAliases(directory, mountTable),
+    contains: (root: string, directory: string) => directory === root || directory.startsWith(`${root}/`),
+  };
+  assert.equal(linuxPolicy.supports(unused.scratch.directory), true);
+  assert.ok(linuxPolicy.aliases(unused.scratch.directory).includes(`/mnt/cleanup-fixture/${path.basename(unused.scratch.directory)}`));
+  assert.equal(supportsScratch(unused.scratch.directory, roots.scratch, linuxPolicy, 'linux'), false);
   const foreground = await register('foreground', 'foreground', 'queued');
   store.rememberForegroundArtifacts(foreground.owner.runId, { version: 2, sessionKey: 'oc_fixture', actorId: 'ou_fixture',
     chatId: 'oc_fixture', sourceMessageId: 'om_fixture', messageType: 'text', reply: { status: 'pending', text: 'do-not-print-report' },
@@ -154,16 +169,53 @@ try {
   assert.ok(finding(dirtyGit)?.reasons.includes('git_baseline_unverified_or_changed'));
   const sharedStorage = await previewWorkspaceCleanup({ ...bootOptions, checkExclusiveStorage: async () => false });
   assert.ok(finding(attempted, sharedStorage)?.reasons.includes('process_quiescence_unverified'));
+  const cliJson: typeof report = JSON.parse(cli(['--json']));
+  assert.equal(cliJson.readOnly, true);
+  if (process.platform === 'linux') {
+    // The same stored witnesses that qualify under the injected epoch must not qualify on Linux.
+    for (const allocation of [attempted, cleanGit]) {
+      const entry = finding(allocation, cliJson);
+      assert.equal(entry?.disposition, 'retain');
+      assert.ok(entry.reasons.includes('process_quiescence_unverified'));
+    }
+  }
   const clean = cleanGit.gitCheckout!.checkout.directory;
+  const tracked = path.join(clean, 'tracked.txt');
+  if (process.platform === 'darwin' || process.platform === 'linux') {
+    const attr = process.platform === 'darwin' ? 'com.example.cleanup-fixture' : 'user.cleanup-fixture';
+    const tool = process.platform === 'darwin' ? '/usr/bin/xattr' : '/usr/bin/setfattr';
+    const write = process.platform === 'darwin' ? ['-w', attr, 'fixture-metadata'] : ['-n', attr, '-v', 'fixture-metadata'];
+    const remove = process.platform === 'darwin' ? ['-d', attr] : ['-x', attr];
+    for (const [target, allocation] of [[tracked, cleanGit], [unused.scratch.directory, unused]] as const) {
+      execFileSync(tool, [...write, target]);
+      try {
+        assert.equal(finding(allocation, await previewWorkspaceCleanup(bootOptions))?.disposition, 'retain',
+          'extended metadata is not covered by the pristine baseline or the empty directory check');
+      } finally { execFileSync(tool, [...remove, target]); }
+    }
+  }
   await fs.writeFile(path.join(clean, '.git', 'refs', 'private'), `${commit}\n`);
   assert.ok(finding(cleanGit, await previewWorkspaceCleanup(bootOptions))?.reasons.includes('git_baseline_unverified_or_changed'));
   await fs.unlink(path.join(clean, '.git', 'refs', 'private'));
-  const tracked = path.join(clean, 'tracked.txt');
   await fs.writeFile(tracked, 'changed by the run');
   assert.ok(finding(cleanGit, await previewWorkspaceCleanup(bootOptions))?.reasons.includes('git_baseline_unverified_or_changed'));
   await fs.writeFile(tracked, 'original');
   const missingCache = `${bare}-unavailable`;
   const open = fs.open.bind(fs);
+  const lateFile = path.join(attempted.scratch.directory, 'late-arrival.txt');
+  let lateReads = 0;
+  const writeLateFile = mock.method(fs, 'open', async (...args: Parameters<typeof open>) => {
+    if (args[0] === tracked && ++lateReads === 2) await fs.writeFile(lateFile, 'fixture');
+    return open(...args);
+  });
+  try {
+    const raced = await previewWorkspaceCleanup(bootOptions);
+    assert.ok(lateReads >= 2);
+    assert.equal(finding(attempted, raced)?.disposition, 'retain', 'a previously scanned candidate changed before reporting');
+  } finally {
+    writeLateFile.mock.restore();
+    await fs.rm(lateFile, { force: true });
+  }
   let trackedReads = 0;
   let cacheMovedDuringScan = false;
   const moveCache = mock.method(fs, 'open', async (...args: Parameters<typeof open>) => {
@@ -263,11 +315,6 @@ try {
     assert.ok(!raced.entries.some(({ disposition }) => disposition === 'candidate'));
   } finally { interposer.mock.restore(); }
 
-  const env = { ...process.env, HOME: home, USERPROFILE: home, LARK_CODEX_EXEC_CWD: work, LARK_CONTINUATION_WORKING_ROOT: work,
-    LARK_CONTINUATION_RETENTION_DAYS: '30', LARK_APP_SECRET: 'do-not-print-secret' };
-  const cli = (args: string[]) => execFileSync(process.execPath, ['--import', 'tsx', 'src/configure-doctor-cli.ts',
-    '--workspace-cleanup-preview', ...args], { env, encoding: 'utf8' });
-  assert.equal(JSON.parse(cli(['--json'])).readOnly, true);
   assert.match(cli([]), /read-only, advisory/);
   assert.doesNotMatch(cli(['--json']), /do-not-print/);
   assert.deepEqual((await fs.readdir(scratchRoot)).sort(), [...before, path.basename(currentUse.scratch.directory)].sort());

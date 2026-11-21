@@ -11,7 +11,7 @@ import { loadWorkspaceDependencyWriteGuard } from './workspace-dependency-regist
 import { readWorkspaceDependencyMountPolicy, type WorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
 import { inventoryWorkspaceStorage } from './workspace-storage.js';
 import { assertDenyOnlyWorkspaceAcls } from './managed-workspace-ancestry.js';
-import { hasExclusiveWorkspaceCleanupStorage, hasLocalWorkspaceCleanupStorage, measureWorkspaceCleanupBaseline, readWorkspaceCleanupEpoch,
+import { hasExclusiveWorkspaceCleanupStorage, hasLocalWorkspaceCleanupStorage, observeWorkspaceCleanupTree, readWorkspaceCleanupEpoch,
   wasUsedOnPriorHostBoot, type WorkspaceCleanupEpoch } from './workspace-cleanup-evidence.js';
 import type { ManagedGitSelection } from './domain/managed-workspace.js';
 import { assertWorkspaceGitCacheIdentity, verifyWorkspaceGitCache } from './workspace-git-snapshot.js';
@@ -91,7 +91,7 @@ export async function previewWorkspaceCleanup(request: PreviewRequest) {
     const epoch = exclusive ? await (request.readEpoch ?? readWorkspaceCleanupEpoch)() : undefined;
     if (!local) report.observations.push('local_storage_unverified');
     const baselineBudget = AbortSignal.timeout(20_000);
-    const candidates = new Map<PreviewEntry, { binding: WorkspaceProjectBinding; stamp: string; baseline?: string; git?: ManagedGitSelection }>();
+    const candidates = new Map<PreviewEntry, { binding: WorkspaceProjectBinding; stamp: string; baseline: string; git?: ManagedGitSelection }>();
     for (const reference of references) {
       const result = await inspect(reference, request, roots, mounts, truncated || invalidRows > 0, epoch, baselineBudget);
       report.entries.push(result.entry);
@@ -106,6 +106,7 @@ export async function previewWorkspaceCleanup(request: PreviewRequest) {
       const referenced = current && await resolveProtectedPaths(paths, request.authorizedRoots[0]);
       if (!referenced || !referenced.complete) report.observations.push('saved_references_unverified');
       const verifiedCaches = new Map<string, boolean>();
+      const observedScratch = new Map<PreviewEntry, NonNullable<Awaited<ReturnType<typeof observeWorkspaceCleanupTree>>>>();
       for (const [entry, { binding, stamp, baseline, git }] of candidates) {
         if (!current || !supportsScratch(binding.directory, roots.scratch, current.mounts)
           || await directoryStamp(binding).catch(() => undefined) !== stamp) demote(entry, 'directory_changed');
@@ -114,8 +115,10 @@ export async function previewWorkspaceCleanup(request: PreviewRequest) {
         }
         if (entry.disposition === 'candidate' && git
           && !await verifyGitBacking(git, request.authorizedRoots, verifiedCaches, baselineBudget)) demote(entry, 'git_backing_unverified');
-        if (entry.disposition === 'candidate' && baseline && await measureWorkspaceCleanupBaseline(binding, baselineBudget) !== baseline) {
-          demote(entry, 'git_baseline_unverified_or_changed');
+        if (entry.disposition === 'candidate') {
+          const tree = await observeWorkspaceCleanupTree(binding, baselineBudget, !git);
+          if (tree?.digest === baseline) observedScratch.set(entry, tree);
+          else demote(entry, git ? 'git_baseline_unverified_or_changed' : 'scratch_baseline_unverified_or_changed');
         }
       }
       // Full object verification can precede other candidates' scans. Recheck each surviving pin at the reporting boundary.
@@ -123,6 +126,14 @@ export async function previewWorkspaceCleanup(request: PreviewRequest) {
         if (entry.disposition !== 'candidate' || !git) continue;
         try { await assertWorkspaceGitCacheIdentity(git, request.authorizedRoots); }
         catch { demote(entry, 'git_backing_unverified'); }
+      }
+      const finalMounts = await readWorkspaceDependencyMountPolicy().catch(() => undefined);
+      for (const [entry, tree] of observedScratch) {
+        if (entry.disposition !== 'candidate') continue;
+        const { binding } = candidates.get(entry)!;
+        if (!finalMounts || !supportsScratch(binding.directory, roots.scratch, finalMounts) || !await tree.unchanged()) {
+          demote(entry, 'directory_changed');
+        }
       }
     }
     if (!await verifyWorkspaceCleanupLedger(request.databasePath, snapshot.stamp)) report.observations.push('ledger_changed');
@@ -184,18 +195,18 @@ async function inspect(reference: WorkspaceCleanupReference, request: PreviewReq
       if (!Number.isFinite(terminalAt) || terminalAt > cutoff || Date.parse(lastUsedAt) > cutoff) entry.reasons.push('retention_window');
     }
     if (reference.retryReference || reference.pendingStage) entry.reasons.push('retry_or_staging_reference');
-    let baseline: string | undefined;
-    if (allocation.gitCheckout) {
-      baseline = reference.scratchBaseline;
-      if (!baseline || (!entry.reasons.length && await measureWorkspaceCleanupBaseline(allocation.scratch, baselineBudget) !== baseline)) {
-        entry.reasons.push('git_baseline_unverified_or_changed');
+    const baseline = reference.scratchBaseline;
+    if (!entry.reasons.length) {
+      if (!allocation.gitCheckout && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push('scratch_contains_files');
+      else if (!baseline || (await observeWorkspaceCleanupTree(allocation.scratch, baselineBudget, !allocation.gitCheckout))?.digest !== baseline) {
+        entry.reasons.push(allocation.gitCheckout ? 'git_baseline_unverified_or_changed' : 'scratch_baseline_unverified_or_changed');
       }
-    } else if (!entry.reasons.length && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push('scratch_contains_files');
+    }
     if (await directoryStamp(allocation.scratch) !== stamp) entry.reasons.push('directory_changed');
     if (incomplete) entry.reasons.push('incomplete_observation');
-    if (!entry.reasons.length) {
+    if (baseline && !entry.reasons.length) {
       entry.disposition = 'candidate';
-      entry.reasons.push(baseline ? 'expired_original_checkout' : 'expired_empty_scratch');
+      entry.reasons.push(allocation.gitCheckout ? 'expired_original_checkout' : 'expired_empty_scratch');
       if (priorBoot) entry.reasons.push('last_use_on_prior_host_boot');
       return { entry, candidate: { binding: allocation.scratch, stamp, baseline, git: allocation.git } };
     }
@@ -220,8 +231,14 @@ async function verifyGitBacking(git: ManagedGitSelection, authorizedRoots: Previ
   } catch { checked.set(key, false); return false; }
 }
 
-function supportsScratch(directory: string, root: WorkspaceProjectBinding, mounts: WorkspaceDependencyMountPolicy): boolean {
+export function supportsScratch(directory: string, root: WorkspaceProjectBinding, mounts: WorkspaceDependencyMountPolicy,
+  platform: NodeJS.Platform = process.platform): boolean {
   if (!mounts.supports(directory) || path.dirname(directory) !== root.directory) return false;
+  if (platform === 'linux') {
+    return [root.directory, directory].every((candidate) => mounts.aliases(candidate).every((alias) => alias === candidate));
+  }
+  if (platform !== 'darwin') return false;
+  // Only the verified macOS Data firmlinks can map the whole scratch tree to another path.
   const allowed = new Set(mounts.aliases(root.directory).map((alias) => path.join(alias, path.basename(directory))));
   return mounts.aliases(directory).every((alias) => allowed.has(alias));
 }

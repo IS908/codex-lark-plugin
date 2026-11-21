@@ -10,8 +10,8 @@ import {
   loadWorkspaceDependencyWriteGuard,
   managedRunDirectoryPath,
   managedRunOwnerSchema,
-  measureWorkspaceCleanupBaseline,
   mkdirTemporaryInsidePinnedRoot,
+  observeWorkspaceCleanupTree,
   parseManagedWorkspaceRecord,
   parseWorkspaceCleanupEpoch,
   pinWorkspacePath,
@@ -24,7 +24,7 @@ import {
   validateManagedRunDirectory,
   verifyWorkspaceGitCache,
   wasUsedOnPriorHostBoot
-} from "./chunks/chunk-7F6TUUVZ.js";
+} from "./chunks/chunk-ZV32EYUV.js";
 import {
   __toESM,
   assertSupportedNodeVersion,
@@ -818,14 +818,17 @@ async function previewWorkspaceCleanup(request) {
       const referenced = current && await resolveProtectedPaths(paths, request.authorizedRoots[0]);
       if (!referenced || !referenced.complete) report.observations.push("saved_references_unverified");
       const verifiedCaches = /* @__PURE__ */ new Map();
+      const observedScratch = /* @__PURE__ */ new Map();
       for (const [entry, { binding, stamp, baseline, git }] of candidates) {
         if (!current || !supportsScratch(binding.directory, roots.scratch, current.mounts) || await directoryStamp(binding).catch(() => void 0) !== stamp) demote(entry, "directory_changed");
         if (current && referenced?.directories.some((directory) => pathsOverlap(binding.directory, directory, current.mounts))) {
           demote(entry, "saved_workspace_reference");
         }
         if (entry.disposition === "candidate" && git && !await verifyGitBacking(git, request.authorizedRoots, verifiedCaches, baselineBudget)) demote(entry, "git_backing_unverified");
-        if (entry.disposition === "candidate" && baseline && await measureWorkspaceCleanupBaseline(binding, baselineBudget) !== baseline) {
-          demote(entry, "git_baseline_unverified_or_changed");
+        if (entry.disposition === "candidate") {
+          const tree = await observeWorkspaceCleanupTree(binding, baselineBudget, !git);
+          if (tree?.digest === baseline) observedScratch.set(entry, tree);
+          else demote(entry, git ? "git_baseline_unverified_or_changed" : "scratch_baseline_unverified_or_changed");
         }
       }
       for (const [entry, { git }] of candidates) {
@@ -834,6 +837,14 @@ async function previewWorkspaceCleanup(request) {
           await assertWorkspaceGitCacheIdentity(git, request.authorizedRoots);
         } catch {
           demote(entry, "git_backing_unverified");
+        }
+      }
+      const finalMounts = await readWorkspaceDependencyMountPolicy().catch(() => void 0);
+      for (const [entry, tree] of observedScratch) {
+        if (entry.disposition !== "candidate") continue;
+        const { binding } = candidates.get(entry);
+        if (!finalMounts || !supportsScratch(binding.directory, roots.scratch, finalMounts) || !await tree.unchanged()) {
+          demote(entry, "directory_changed");
         }
       }
     }
@@ -902,18 +913,18 @@ async function inspect(reference, request, roots, mounts, incomplete, epoch, bas
       if (!Number.isFinite(terminalAt) || terminalAt > cutoff || Date.parse(lastUsedAt) > cutoff) entry.reasons.push("retention_window");
     }
     if (reference.retryReference || reference.pendingStage) entry.reasons.push("retry_or_staging_reference");
-    let baseline;
-    if (allocation.gitCheckout) {
-      baseline = reference.scratchBaseline;
-      if (!baseline || !entry.reasons.length && await measureWorkspaceCleanupBaseline(allocation.scratch, baselineBudget) !== baseline) {
-        entry.reasons.push("git_baseline_unverified_or_changed");
+    const baseline = reference.scratchBaseline;
+    if (!entry.reasons.length) {
+      if (!allocation.gitCheckout && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push("scratch_contains_files");
+      else if (!baseline || (await observeWorkspaceCleanupTree(allocation.scratch, baselineBudget, !allocation.gitCheckout))?.digest !== baseline) {
+        entry.reasons.push(allocation.gitCheckout ? "git_baseline_unverified_or_changed" : "scratch_baseline_unverified_or_changed");
       }
-    } else if (!entry.reasons.length && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push("scratch_contains_files");
+    }
     if (await directoryStamp(allocation.scratch) !== stamp) entry.reasons.push("directory_changed");
     if (incomplete) entry.reasons.push("incomplete_observation");
-    if (!entry.reasons.length) {
+    if (baseline && !entry.reasons.length) {
       entry.disposition = "candidate";
-      entry.reasons.push(baseline ? "expired_original_checkout" : "expired_empty_scratch");
+      entry.reasons.push(allocation.gitCheckout ? "expired_original_checkout" : "expired_empty_scratch");
       if (priorBoot) entry.reasons.push("last_use_on_prior_host_boot");
       return { entry, candidate: { binding: allocation.scratch, stamp, baseline, git: allocation.git } };
     }
@@ -945,8 +956,12 @@ async function verifyGitBacking(git, authorizedRoots, checked, signal) {
     return false;
   }
 }
-function supportsScratch(directory, root, mounts) {
+function supportsScratch(directory, root, mounts, platform = process.platform) {
   if (!mounts.supports(directory) || path4.dirname(directory) !== root.directory) return false;
+  if (platform === "linux") {
+    return [root.directory, directory].every((candidate) => mounts.aliases(candidate).every((alias) => alias === candidate));
+  }
+  if (platform !== "darwin") return false;
   const allowed = new Set(mounts.aliases(root.directory).map((alias) => path4.join(alias, path4.basename(directory))));
   return mounts.aliases(directory).every((alias) => allowed.has(alias));
 }

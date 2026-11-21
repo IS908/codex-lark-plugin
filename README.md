@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.19.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.20.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -250,8 +250,11 @@ a verified Apple silicon Mac and its internal physical Data volume. Other hosts
 still report executed runs as retained. For Git-backed work it also requires a
 recoverable pinned backing cache and an exact match to the original, bounded
 scratch snapshot, including tracked and untracked files and local Git metadata.
-A modified, missing, or unverifiable
-baseline is retained, including additional contents left by an installer or run.
+Empty scratch also needs its original metadata baseline. Changed or unverified
+extended attributes, mount aliases (other than verified macOS Data firmlinks),
+and additional contents left by an installer or run all cause retention.
+On Linux, verifying filesystem attributes requires the system `/usr/bin/getfattr`
+from the `attr` package; without it, the preview retains the affected directories.
 
 #### Select a workspace project
 

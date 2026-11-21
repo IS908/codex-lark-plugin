@@ -50,6 +50,8 @@ jobs:
         with:
           python-version: '3.13'
       - run: npm ci
+      - name: Install native filesystem attribute tools
+        run: sudo apt-get update -qq && sudo apt-get install -y attr
       - run: node --import tsx scripts/workspace-cleanup-ledger-smoke.ts
       - run: node --import tsx scripts/workspace-cleanup-evidence-smoke.ts
       - run: node --import tsx scripts/workspace-cleanup-preview-smoke.ts

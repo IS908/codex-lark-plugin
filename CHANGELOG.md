@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-11-22
+
+### Added
+- Preview managed scratch cleanup eligibility with the read-only `doctor --workspace-cleanup-preview` command, including JSON output (#401).
+- Report retention and protection reasons without moving files or opening the live SQLite database. Executed runs remain protected unless the preview can prove process quiescence and the original scratch contents are preserved.
+
 ## [2.19.0] - 2026-11-22
 
 ### Added

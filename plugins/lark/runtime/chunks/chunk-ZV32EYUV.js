@@ -152942,10 +152942,49 @@ async function measureEpoch() {
   }
 }
 function stamp(info) {
-  return [info.dev, info.ino, info.mode, info.uid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(":");
+  return [info.dev, info.ino, info.mode, info.uid, info.gid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(":");
 }
-async function measureWorkspaceCleanupBaseline(root, signal) {
-  const hash2 = createHash6("sha256").update("lark-cleanup-scratch-baseline-v1\0");
+async function measureExtendedData(entries, signal) {
+  try {
+    if (!entries.length || entries.some((entry) => !path13.isAbsolute(entry) || /[\u0000-\u001f\u007f]/.test(entry))) return;
+    const options2 = { ...nativeOptions, signal };
+    if (process.platform === "darwin") {
+      const tool2 = "/usr/bin/xattr";
+      const name = "com.apple.provenance";
+      const list = await exec5(tool2, ["-s", "-v", ...entries], options2);
+      if (list.stderr) return;
+      if (!list.stdout) return "";
+      if (!list.stdout.endsWith("\n")) return;
+      const listed = new Set(list.stdout.slice(0, -1).split("\n"));
+      const paths = entries.filter((entry) => listed.delete(`${entry}: ${name}`));
+      if (!paths.length || listed.size || paths.length !== list.stdout.split("\n").length - 1) return;
+      const data = await exec5(tool2, ["-s", "-p", "-x", "-v", name, ...paths], options2);
+      const lines = data.stdout.split("\n");
+      if (data.stderr || lines.pop() !== "" || lines.length !== paths.length * 2) return;
+      for (const [index, entry] of paths.entries()) {
+        if (lines[index * 2] !== `${entry}: ` || !/^(?:[0-9A-F]{2} ){11}$/.test(lines[index * 2 + 1])) return;
+      }
+      return data.stdout;
+    }
+    if (process.platform !== "linux") return;
+    const tool = "/usr/bin/getfattr";
+    for (const item of ["/usr/bin", "/usr", "/"]) {
+      const info2 = await fs11.lstat(item);
+      if (!info2.isDirectory() || info2.uid !== 0 || (info2.mode & 18) !== 0) return;
+    }
+    const info = await fs11.lstat(tool);
+    if (!info.isFile() || info.uid !== 0 || (info.mode & 3602) !== 0) return;
+    const { stdout, stderr } = await exec5(tool, ["-h", "-m", "-", "--absolute-names", "--", ...entries], options2);
+    if (!stdout && !stderr) return "";
+  } catch {
+    return void 0;
+  }
+}
+async function measureWorkspaceCleanupBaseline(root, signal, emptyOnly = false) {
+  return (await observeWorkspaceCleanupTree(root, signal, emptyOnly))?.digest;
+}
+async function observeWorkspaceCleanupTree(root, signal, emptyOnly = false) {
+  const hash2 = createHash6("sha256").update("lark-cleanup-scratch-baseline-v2\0");
   const visited = [];
   let bytes = 0n;
   const buffer = Buffer.allocUnsafe(128 * 1024);
@@ -152958,15 +152997,27 @@ async function measureWorkspaceCleanupBaseline(root, signal) {
     for (let i = 0; i < visited.length; i += 32) {
       signal?.throwIfAborted();
       const group = visited.slice(i, i + 32);
-      await assertDenyOnlyWorkspaceAcls(group.map(({ absolute: absolute2 }) => absolute2));
-      for (const observation of group) {
-        if (stamp(await fs11.lstat(observation.absolute, { bigint: true })) !== observation.stamp) throw new Error("Unstable entry.");
-      }
+      const entries = group.map(({ absolute: absolute2 }) => absolute2);
+      await assertDenyOnlyWorkspaceAcls(entries);
+      const attributes = await measureExtendedData(entries, signal);
+      if (attributes === void 0) return;
+      hash2.update(JSON.stringify(attributes));
     }
     await assertProtectedWorkspacePath(root, true);
     signal?.throwIfAborted();
-    if (!(await readWorkspaceDependencyMountPolicy()).supports(root.directory)) return;
-    return hash2.digest("hex");
+    if (!(await readWorkspaceDependencyMountPolicy()).supports(root.directory) || !await unchanged()) return;
+    return { digest: hash2.digest("hex"), unchanged };
+    async function unchanged() {
+      try {
+        for (const { absolute: absolute2, stamp: previous } of visited) {
+          signal?.throwIfAborted();
+          if (stamp(await fs11.lstat(absolute2, { bigint: true })) !== previous) return false;
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    }
     async function visit2(relative, depth) {
       signal?.throwIfAborted();
       if (visited.length >= maxEntries || depth > maxDepth) throw new Error("Baseline exceeds scan limits.");
@@ -152982,6 +153033,7 @@ async function measureWorkspaceCleanupBaseline(root, signal) {
         if (await fs11.realpath(absolute2) !== absolute2) throw new Error("Aliased entry.");
         const names = /* @__PURE__ */ new Set();
         for await (const entry of await fs11.opendir(absolute2, { encoding: "buffer" })) {
+          if (emptyOnly) throw new Error("Scratch is occupied.");
           if (names.size + visited.length >= maxEntries) throw new Error("Baseline exceeds scan limits.");
           const raw = entry.name;
           if (!Buffer.isBuffer(raw)) throw new Error("Unverified filename encoding.");
@@ -153323,7 +153375,7 @@ var SqliteManagedWorkspaceStore = class {
     })) : basic;
     const [epoch2, scratchBaseline] = await Promise.all([
       this.localCleanupEpoch(allocation),
-      allocation.gitCheckout ? measureWorkspaceCleanupBaseline(allocation.scratch) : void 0
+      measureWorkspaceCleanupBaseline(allocation.scratch, AbortSignal.timeout(1e4), !allocation.gitCheckout)
     ]);
     this.completeAllocation(parsed.data, allocation, epoch2, scratchBaseline);
     return allocation;
@@ -153649,7 +153701,7 @@ export {
   readWorkspaceCleanupEpoch,
   hasLocalWorkspaceCleanupStorage,
   hasExclusiveWorkspaceCleanupStorage,
-  measureWorkspaceCleanupBaseline,
+  observeWorkspaceCleanupTree,
   hasWorkspaceCleanupWitnessTrigger,
   SqliteManagedWorkspaceStore,
   parseManagedWorkspaceRecord
