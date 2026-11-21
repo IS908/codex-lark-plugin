@@ -25,13 +25,14 @@ export async function assertProtectedWorkspacePath(binding: WorkspaceProjectBind
     ancestry.push(current);
     if (path.dirname(current) === current) break;
   }
-  if (process.platform === 'darwin') await requireDenyOnlyAcls(ancestry);
+  await assertDenyOnlyWorkspaceAcls(ancestry);
 }
 
 // macOS extended ACLs can grant writes that are not reflected in st_mode.
-async function requireDenyOnlyAcls(directories: string[]): Promise<void> {
+export async function assertDenyOnlyWorkspaceAcls(entries: string[]): Promise<void> {
+  if (process.platform !== 'darwin' || !entries.length) return;
   try {
-    const { stdout, stderr } = await exec('/bin/ls', ['-ldebn', '--', ...directories], {
+    const { stdout, stderr } = await exec('/bin/ls', ['-ldebn', '--', ...entries], {
       encoding: 'utf8', env: { LC_ALL: 'C' }, timeout: 5000, maxBuffer: 1_000_000,
     });
     const lines = stdout.split('\n').filter(Boolean);
@@ -39,7 +40,7 @@ async function requireDenyOnlyAcls(directories: string[]): Promise<void> {
     let headers = 0;
     let needsAcl = false;
     for (const line of lines) {
-      const header = /^d[rwxstST-]{9}([+@]?)\s/.exec(line);
+      const header = /^[-d][rwxstST-]{9}([+@]?)\s/.exec(line);
       if (header && !needsAcl) {
         headers++;
         needsAcl = header[1] === '+';
@@ -49,7 +50,7 @@ async function requireDenyOnlyAcls(directories: string[]): Promise<void> {
         throw new Error('Unsupported ACL.');
       }
     }
-    if (needsAcl || headers !== directories.length) throw new Error('Incomplete ACL data.');
+    if (needsAcl || headers !== entries.length) throw new Error('Incomplete ACL data.');
   } catch {
     throw new ManagedWorkspaceStorageError('unprotected_root');
   }
