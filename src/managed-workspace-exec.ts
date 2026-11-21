@@ -26,6 +26,14 @@ export function managedGitCheckoutSessionScope(allocation?: ManagedRunAllocation
 
 type GitRegistryPolicy = Pick<Parameters<typeof resolveManagedGitSelection>[0], 'configPath' | 'sourceRegistryPath' | 'sourceRegistryRoot'>;
 
+export async function protectProfileDistillation(request: CodexExecRequest, configPath: string): Promise<CodexExecRequest> {
+  if (!await hasManagedGitRegistry(configPath)) return request;
+  const cwd = await fs.realpath(request.cwd ?? process.cwd());
+  await assertCompatibleCodexLayers(process.env, [cwd]);
+  return { ...request, cwd, sandbox: 'read-only', profile: undefined, ignoreUserConfig: true, strictConfig: true,
+    configOverrides: ['approval_policy="never"'] };
+}
+
 export async function protectLegacyGitWorkspace(request: CodexExecRequest, configPath?: string): Promise<CodexExecRequest> {
   if (!await hasManagedGitRegistry(configPath) || request.sandbox === 'read-only') return request;
   if (request.sandbox !== 'workspace-write' || request.profile || request.ignoreUserConfig === false) {

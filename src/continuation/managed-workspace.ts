@@ -24,7 +24,8 @@ export async function allocateContinuationWorkspace(
   const { managedWorkspaceRoots, workspaceProject, managedWorkspaceGit } = job.permissions.filesystem;
   if (!managedWorkspaceRoots) {
     if (policy) await resolveManagedGitSelection({ configPath: policy.managedWorkspaceConfigPath,
-      authorizedRoots: continuationWorkspaceRoots(job, policy), project: workspaceProject, fallbackDirectory: job.workingDirectory,
+      authorizedRoots: workspaceProject ? continuationWorkspaceRoots(job, policy)
+        : [job.permissions.filesystem.root, policy.currentWorkingRoot], project: workspaceProject, fallbackDirectory: job.workingDirectory,
       expected: managedWorkspaceGit, preserveOptOut: true });
     return undefined;
   }

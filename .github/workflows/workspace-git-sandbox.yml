@@ -71,8 +71,10 @@ jobs:
           archive="$bundle_dir/$(npm pack "$CODEX_NPM_PACKAGE" --ignore-scripts --pack-destination "$bundle_dir" --registry=https://registry.npmjs.org)"
           digest=$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)
           test "$digest" = "$CODEX_NPM_SHA512"
-          binary=package/vendor/x86_64-unknown-linux-musl/bin/codex
-          tar -xzf "$archive" -C "$bundle_dir" "$binary"
+          platform=package/vendor/x86_64-unknown-linux-musl
+          binary="$platform/bin/codex"
+          tar -xzf "$archive" -C "$bundle_dir" "$binary" "$platform/codex-resources/bwrap" "$platform/codex-package.json"
+          test -x "$bundle_dir/$platform/codex-resources/bwrap"
           test "$("$bundle_dir/$binary" --version)" = 'codex-cli 0.171.0'
           LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX=1 \
           LARK_TEST_CODEX_NATIVE_BINARY="$bundle_dir/$binary" \

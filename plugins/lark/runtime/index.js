@@ -60173,6 +60173,337 @@ function createCodexExecActionHandlerRegistry(deps) {
   };
 }
 
+// src/managed-workspace-exec.ts
+import { createHash as createHash10 } from "node:crypto";
+import fs20 from "node:fs/promises";
+import os3 from "node:os";
+import path25 from "node:path";
+
+// src/managed-git-sandbox.ts
+import path23 from "node:path";
+var profile = "lark-managed-git";
+var protectedWorkspaceNames = [".git", ".agents", ".codex", ".aws"];
+var protectedGitNames = ["config", "config.worktree", "commondir", "hooks", "objects/info"];
+async function createManagedGitSandboxOptions(input2) {
+  const { source, cache, scratch, artifacts, checkout: { checkout, gitDirectory }, authorizedRoots } = input2;
+  if (checkout.directory !== path23.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) || gitDirectory.directory !== path23.join(checkout.directory, ".git")) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+  const separate = [source, cache, scratch, artifacts, ...input2.additionalWritable ?? []];
+  const all = [...separate, checkout, gitDirectory];
+  for (const binding of all) {
+    if (/[\u0000-\u001f\u007f*?\[\]]/.test(binding.directory)) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+    await validateWorkspaceProject(authorizedRoots, binding);
+    await assertProtectedWorkspacePath(binding, binding !== source && binding !== cache);
+  }
+  const mounts = readWorkspaceMountTable();
+  const writable = input2.mode === "workspace-write" ? [scratch, artifacts, checkout, ...input2.additionalWritable ?? []] : [];
+  if (!workspaceMountLayoutSupported(writable.map(({ directory }) => directory), mounts)) {
+    throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+  }
+  const locations = await Promise.all(separate.map(async (binding) => ({
+    identity: `${binding.device}:${binding.inode}`,
+    ancestors: await readWorkspaceAncestorIdentities(binding.directory),
+    aliases: workspaceBackingAliases(binding.directory, mounts)
+  })));
+  for (const [index, first] of locations.entries()) {
+    if (locations.slice(index + 1).some((second) => first.ancestors.has(second.identity) || second.ancestors.has(first.identity) || first.aliases.some((a) => second.aliases.some((b) => workspacePathContains(a, b) || workspacePathContains(b, a))))) {
+      throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+    }
+  }
+  const rules = /* @__PURE__ */ new Map([[":root", "read"], [source.directory, "read"], [cache.directory, "read"]]);
+  if (input2.mode === "workspace-write") {
+    for (const { directory } of writable) {
+      rules.set(directory, "write");
+      for (const name of protectedWorkspaceNames) rules.set(path23.join(directory, name), "read");
+    }
+    rules.set(gitDirectory.directory, "write");
+    for (const name of protectedGitNames) rules.set(path23.join(gitDirectory.directory, name), "read");
+  }
+  const filesystem = Array.from(rules, ([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(",");
+  const networkEnabled = input2.mode === "workspace-write" && input2.networkEnabled === true;
+  return { profile, overrides: [
+    `default_permissions=${JSON.stringify(profile)}`,
+    `permissions={${profile}={filesystem={${filesystem}},network={enabled=${networkEnabled}}}}`,
+    'approval_policy="never"'
+  ] };
+}
+
+// src/managed-git-launcher.ts
+import fs19 from "node:fs/promises";
+import path24 from "node:path";
+async function resolveManagedGitLauncher(command, env, excluded) {
+  const invalid = () => new ManagedWorkspaceStorageError("git_launcher_untrusted");
+  if (!process.geteuid || process.getuid?.() !== process.geteuid() || !path24.isAbsolute(command) && command !== "codex") throw invalid();
+  const uid = BigInt(process.geteuid());
+  const identities = excluded.map(({ device, inode }) => `${device}:${inode}`);
+  const mounts = readWorkspaceMountTable();
+  const paths = excluded.flatMap(({ directory }) => workspaceBackingAliases(directory, mounts));
+  const trustedDirectory = async (directory) => {
+    if (workspaceBackingAliases(directory, mounts).some((alias) => paths.some((blocked2) => workspacePathContains(blocked2, alias)))) return false;
+    const stat2 = await fs19.lstat(directory, { bigint: true });
+    await assertProtectedWorkspacePath({ directory, device: String(stat2.dev), inode: String(stat2.ino) });
+    const ancestors = await readWorkspaceAncestorIdentities(directory);
+    return identities.every((identity) => !ancestors.has(identity));
+  };
+  const search = [];
+  for (const entry of (env.PATH ?? "/usr/bin:/bin").split(path24.delimiter).filter(path24.isAbsolute)) {
+    try {
+      const directory = await fs19.realpath(entry);
+      if (!directory.includes(path24.delimiter) && await trustedDirectory(directory) && !search.includes(directory)) search.push(directory);
+    } catch {
+    }
+  }
+  const executable = async (candidate) => {
+    const file3 = await fs19.realpath(candidate);
+    if (!await trustedDirectory(path24.dirname(file3))) throw invalid();
+    const stat2 = await fs19.lstat(file3, { bigint: true });
+    if (!stat2.isFile() || ![0n, uid].includes(stat2.uid) || stat2.uid !== 0n && stat2.nlink !== 1n || !(stat2.mode & 0o111n) || (stat2.mode & 0o6022n) !== 0n) throw invalid();
+    await fs19.access(file3, fs19.constants.X_OK);
+    await assertDenyOnlyWorkspaceAcls([file3]);
+    return file3;
+  };
+  const find = async (name) => {
+    for (const directory of search) {
+      try {
+        return await executable(path24.join(directory, name));
+      } catch {
+      }
+    }
+    throw invalid();
+  };
+  for (let index = search.length - 1; index >= 0; index--) {
+    const git2 = path24.join(search[index], "git");
+    const exists = await fs19.lstat(git2).then(() => true, (error62) => {
+      if (error62.code === "ENOENT") return false;
+      throw invalid();
+    });
+    if (exists) {
+      try {
+        await executable(git2);
+      } catch {
+        search.splice(index, 1);
+      }
+    }
+  }
+  if (!search.length) throw invalid();
+  await find("git");
+  const file2 = path24.isAbsolute(command) ? await executable(command).catch(() => {
+    throw invalid();
+  }) : await find(command);
+  const handle = await fs19.open(file2, fs19.constants.O_RDONLY | fs19.constants.O_NOFOLLOW | fs19.constants.O_NONBLOCK);
+  let header;
+  try {
+    const bytes = Buffer.alloc(128);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    header = bytes.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0];
+  } finally {
+    await handle.close();
+  }
+  const subprocessEnv = { ...env, PATH: search.join(path24.delimiter) };
+  for (const key of Object.keys(subprocessEnv)) {
+    if (/^(?:NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV|ZDOTDIR|DYLD_.*|LD_.*)$/.test(key)) delete subprocessEnv[key];
+  }
+  if (header === "#!/usr/bin/env node") return { command: await find("node"), prefix: [file2], env: subprocessEnv };
+  if (header.startsWith("#!")) throw invalid();
+  return { command: file2, prefix: [], env: subprocessEnv };
+}
+
+// src/managed-workspace-exec.ts
+function assertManagedWorkspaceSandbox(sandbox, project) {
+  if (sandbox !== "read-only" && (sandbox !== "workspace-write" || !project)) {
+    throw new ManagedWorkspaceStorageError("unisolated_source");
+  }
+}
+function managedGitCheckoutSessionScope(allocation) {
+  if (!allocation?.git || !allocation.gitCheckout) return void 0;
+  const { directory, device, inode } = allocation.gitCheckout.checkout;
+  return createHash10("sha256").update(JSON.stringify([
+    allocation.owner.kind,
+    allocation.owner.runId,
+    allocation.git.key,
+    allocation.git.storeFingerprint,
+    directory,
+    device,
+    inode
+  ])).digest("hex");
+}
+async function protectProfileDistillation(request, configPath) {
+  if (!await hasManagedGitRegistry(configPath)) return request;
+  const cwd = await fs20.realpath(request.cwd ?? process.cwd());
+  await assertCompatibleCodexLayers(process.env, [cwd]);
+  return {
+    ...request,
+    cwd,
+    sandbox: "read-only",
+    profile: void 0,
+    ignoreUserConfig: true,
+    strictConfig: true,
+    configOverrides: ['approval_policy="never"']
+  };
+}
+async function protectLegacyGitWorkspace(request, configPath) {
+  if (!await hasManagedGitRegistry(configPath) || request.sandbox === "read-only") return request;
+  if (request.sandbox !== "workspace-write" || request.profile || request.ignoreUserConfig === false) {
+    throw new ManagedWorkspaceStorageError("git_sandbox_layers_unsupported");
+  }
+  return { ...request, configOverrides: [
+    ...request.configOverrides ?? [],
+    "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+    "sandbox_workspace_write.exclude_slash_tmp=true"
+  ] };
+}
+async function withManagedWorkspace(request, allocation, gitRegistry) {
+  assertManagedWorkspaceSandbox(request.sandbox, allocation.project);
+  if (request.sandbox === "workspace-write" && request.cwd !== allocation.project?.directory) {
+    throw new ManagedWorkspaceStorageError("unisolated_source");
+  }
+  const scratch = allocation.scratch.directory;
+  const artifacts = allocation.artifacts.directory;
+  const mayWrite = request.sandbox === "workspace-write";
+  const enriched = {
+    ...request,
+    prompt: `${request.prompt}
+
+[Managed run storage]
+${[
+      `Scratch directory: ${JSON.stringify(scratch)}`,
+      `Formal artifact directory: ${JSON.stringify(artifacts)}`,
+      "Use scratch for temporary files. Keep files intended for delivery in the formal artifact directory.",
+      "These paths do not extend the source workspace authorization or override the current sandbox mode."
+    ].join("\n")}`,
+    extraEnv: {
+      ...request.extraEnv,
+      LARK_MANAGED_SCRATCH_DIR: scratch,
+      LARK_MANAGED_ARTIFACTS_DIR: artifacts,
+      ...mayWrite ? { TMPDIR: scratch, TMP: scratch, TEMP: scratch } : {}
+    },
+    ...request.sandbox === "workspace-write" ? {
+      additionalWritableDirs: [.../* @__PURE__ */ new Set([...request.additionalWritableDirs ?? [], scratch, artifacts])]
+    } : {}
+  };
+  return allocation.git || allocation.gitCheckout ? withGitCheckout(request, enriched, allocation, gitRegistry) : protectLegacyGitWorkspace(enriched, gitRegistry?.configPath);
+}
+async function withGitCheckout(request, enriched, allocation, gitRegistry) {
+  const { project, git: git2, gitCheckout, scratch, artifacts } = allocation;
+  const guard = request.workspaceDirectory;
+  const mode = request.sandbox;
+  if (!project || !git2 || !gitCheckout || request.cwd !== project.directory || !guard || !sameWorkspaceProject(guard.binding, project) || mode !== "read-only" && mode !== "workspace-write" || request.profile || request.ignoreUserConfig === false) {
+    throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+  }
+  const existing = request.configOverrides ?? [];
+  const supported = /* @__PURE__ */ new Set([
+    'approval_policy="never"',
+    'sandbox_permissions=["disk-full-read-access"]',
+    "sandbox_workspace_write.network_access=true",
+    "sandbox_workspace_write.network_access=false"
+  ]);
+  if (existing.some((entry) => !supported.has(entry)) || existing.filter((entry) => entry.startsWith("sandbox_workspace_write.network_access=")).length > 1) {
+    throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+  }
+  const writable = new Set(request.additionalWritableDirs ?? []);
+  const extra = (guard.auxiliaryBindings ?? []).filter((binding) => writable.delete(binding.directory));
+  if (writable.size || mode === "read-only" && extra.length) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+  const input2 = {
+    mode,
+    authorizedRoots: guard.authorizedRoots,
+    source: project,
+    cache: git2.cache,
+    scratch,
+    artifacts,
+    checkout: gitCheckout,
+    additionalWritable: extra,
+    networkEnabled: existing.includes("sandbox_workspace_write.network_access=true")
+  };
+  const selection = {
+    cache: {
+      gitDirectory: git2.cache,
+      authorizedRoots: guard.authorizedRoots,
+      commit: git2.commit,
+      scope: git2.scope,
+      repositoryId: git2.repositoryId
+    },
+    expected: git2,
+    source: project,
+    scratch,
+    protectedRoots: [allocation.roots.scratch, allocation.roots.artifacts, ...extra]
+  };
+  const extraEnv = { ...enriched.extraEnv };
+  for (const name of Object.keys({ ...process.env, ...extraEnv })) if (name.startsWith("GIT_")) extraEnv[name] = void 0;
+  Object.assign(extraEnv, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0" });
+  const validate3 = async () => {
+    await resolveManagedGitSelection({ ...gitRegistry, project, roots: allocation.roots, authorizedRoots: guard.authorizedRoots, expected: git2 });
+    await assertCompatibleCodexLayers({ ...process.env, ...extraEnv }, [project.directory, gitCheckout.checkout.directory]);
+    try {
+      await validateWorkspaceGitCheckout(selection, gitCheckout);
+    } catch (error62) {
+      if (error62 instanceof WorkspaceGitSnapshotError) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+      throw error62;
+    }
+    return createManagedGitSandboxOptions(input2);
+  };
+  const options = await validate3();
+  return {
+    ...enriched,
+    cwd: gitCheckout.checkout.directory,
+    sandbox: void 0,
+    additionalWritableDirs: void 0,
+    ignoreUserConfig: true,
+    strictConfig: true,
+    configOverrides: options.overrides,
+    extraEnv,
+    workspaceDirectory: {
+      ...guard,
+      binding: gitCheckout.checkout,
+      requireProtectedAncestry: true,
+      auxiliaryBindings: [...guard.auxiliaryBindings ?? [], scratch, artifacts, gitCheckout.gitDirectory],
+      readOnlyBindings: [...guard.readOnlyBindings ?? [], project, git2.cache]
+    },
+    validateManagedGitLaunch: async (command, env) => {
+      const current = await validate3();
+      if (current.overrides.some((override, index) => override !== options.overrides[index])) {
+        throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+      }
+      return resolveManagedGitLauncher(command, env, [project, git2.cache, allocation.roots.scratch, allocation.roots.artifacts, ...extra]);
+    },
+    prompt: `${enriched.prompt}
+
+[Isolated Git checkout]
+Work in the current checkout. It started at ${git2.commit}. Do not use the original source as a working directory.`
+  };
+}
+async function assertCompatibleCodexLayers(env, workspaces) {
+  const unsupported = () => new ManagedWorkspaceStorageError("git_sandbox_layers_unsupported");
+  const exists = async (target) => fs20.lstat(target).then(() => true, (error62) => {
+    if (error62.code === "ENOENT") return false;
+    throw unsupported();
+  });
+  const rejectRules = async (root) => {
+    const folder = path25.join(root, "rules");
+    if (!await exists(folder)) return;
+    try {
+      for await (const entry of await fs20.opendir(folder)) if (entry.name.endsWith(".rules")) throw unsupported();
+    } catch {
+      throw unsupported();
+    }
+  };
+  const home = env.CODEX_HOME?.trim() || path25.join(env.HOME || os3.homedir(), ".codex");
+  if (!path25.isAbsolute(home)) throw unsupported();
+  await rejectRules(home);
+  if (await exists(path25.join(home, "hooks.json"))) throw unsupported();
+  for (const name of ["config.toml", "managed_config.toml", "requirements.toml", "hooks.json"]) {
+    if (await exists(path25.join("/etc/codex", name))) throw unsupported();
+  }
+  await rejectRules("/etc/codex");
+  const inspected = /* @__PURE__ */ new Set();
+  for (const workspace of workspaces) {
+    for (let directory = workspace; !inspected.has(directory); directory = path25.dirname(directory)) {
+      inspected.add(directory);
+      const local = path25.join(directory, ".codex");
+      if (await exists(path25.join(local, "config.toml")) || await exists(path25.join(local, "hooks.json"))) throw unsupported();
+      await rejectRules(local);
+    }
+  }
+}
+
 // src/memory/distiller.ts
 function buildFlushPrompt(chatId, messages, threadId) {
   const conversation = messages.map((m) => `[${m.timestamp}] ${m.role === "user" ? m.senderId : "bot"}: ${m.text}`).join("\n");
@@ -60276,7 +60607,7 @@ var ProfileDistillationManager = class {
         chatType: input2.chatType,
         l2Rules: await loadL2Rules()
       });
-      const result = normalizeCodexExecResult(await this.runCodexExec({
+      const request = await protectProfileDistillation({
         prompt,
         command: appConfig.codexExecCommand,
         cwd: appConfig.codexExecCwd,
@@ -60287,7 +60618,8 @@ var ProfileDistillationManager = class {
         ignoreUserConfig: appConfig.codexExecIgnoreUserConfig,
         skipGitRepoCheck: true,
         resumeSessionId: null
-      }));
+      }, appConfig.managedWorkspaceConfigPath);
+      const result = normalizeCodexExecResult(await this.runCodexExec(request));
       const tiered = parseTieredProfile(result.text);
       const publicContent = markdownList(tiered.public);
       const privateContent = markdownList(tiered.private);
@@ -60751,12 +61083,12 @@ function omit2(obj, ...keys) {
 }
 
 // node_modules/@larksuite/channel/dist/index.mjs
-import { createHash as createHash10, randomUUID as randomUUID3 } from "node:crypto";
+import { createHash as createHash11, randomUUID as randomUUID3 } from "node:crypto";
 import { inspect } from "node:util";
-import fs19 from "fs";
+import fs21 from "fs";
 import http2 from "http";
 import https from "https";
-import path23 from "path";
+import path26 from "path";
 import { promises } from "dns";
 import { isIP as isIP2 } from "net";
 var AMBIGUOUS = /* @__PURE__ */ Symbol("ambiguous");
@@ -61516,7 +61848,7 @@ function contentKey(activity) {
     item.start_time_ms ?? item.send_time ?? item.time ?? item.join_time ?? item.leave_time ?? null,
     readActor(item).id || null
   ]);
-  return createHash10("sha256").update(JSON.stringify([activity.activityType, parts])).digest("base64url").slice(0, DIGEST_LENGTH);
+  return createHash11("sha256").update(JSON.stringify([activity.activityType, parts])).digest("base64url").slice(0, DIGEST_LENGTH);
 }
 var INCONCLUSIVE_STATUS = /* @__PURE__ */ new Set([
   408,
@@ -63767,20 +64099,20 @@ var MediaUploader = class {
     if (!/^https?:\/\//i.test(source)) {
       const allowedDirs = this.config?.allowedFileDirs;
       if (!allowedDirs || allowedDirs.length === 0) throw new LarkChannelError("upload_failed", "local file source requires `outbound.allowedFileDirs` to be configured");
-      const resolved = path23.resolve(source);
+      const resolved = path26.resolve(source);
       this.assertNotOnPosixBlocklist(resolved);
       try {
-        const realPath = await fs19.promises.realpath(resolved);
+        const realPath = await fs21.promises.realpath(resolved);
         this.assertNotOnPosixBlocklist(realPath);
         if (!(await Promise.all(allowedDirs.map(async (d) => {
-          const r = path23.resolve(d);
+          const r = path26.resolve(d);
           try {
-            return await fs19.promises.realpath(r);
+            return await fs21.promises.realpath(r);
           } catch {
             return r;
           }
-        }))).some((d) => realPath === d || realPath.startsWith(d + path23.sep))) throw new LarkChannelError("upload_failed", `file path is outside allowed directories: ${realPath}`);
-        const fh = await fs19.promises.open(realPath, "r");
+        }))).some((d) => realPath === d || realPath.startsWith(d + path26.sep))) throw new LarkChannelError("upload_failed", `file path is outside allowed directories: ${realPath}`);
+        const fh = await fs21.promises.open(realPath, "r");
         try {
           if (!(await fh.stat()).isFile()) throw new LarkChannelError("upload_failed", `not a regular file: ${realPath}`);
           return await fh.readFile();
@@ -66422,8 +66754,8 @@ import path32 from "node:path";
 
 // src/codex-exec-progress.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import fs20 from "node:fs/promises";
-import path24 from "node:path";
+import fs22 from "node:fs/promises";
+import path27 from "node:path";
 var IDENTITY_FIELDS = /* @__PURE__ */ new Set([
   "chat_id",
   "chatId",
@@ -66446,13 +66778,13 @@ var LOW_SIGNAL_PATTERNS = [
 var CODEX_EXEC_PROGRESS_RETENTION_MS = 12 * 60 * 60 * 1e3;
 var CODEX_EXEC_PROGRESS_CLEANUP_INTERVAL_MS = 60 * 60 * 1e3;
 function progressParentDir(baseDir) {
-  return path24.join(baseDir, ".lark-progress");
+  return path27.join(baseDir, ".lark-progress");
 }
 var CodexExecProgressSink = class {
   constructor(dir, options) {
     this.dir = dir;
     this.options = options;
-    this.filePath = path24.join(dir, "progress.jsonl");
+    this.filePath = path27.join(dir, "progress.jsonl");
     this.token = randomUUID4();
   }
   dir;
@@ -66482,10 +66814,10 @@ var CodexExecProgressSink = class {
     };
   }
   async prepare() {
-    await fs20.mkdir(this.dir, { recursive: true, mode: 448 });
-    await fs20.chmod(this.dir, 448);
-    await fs20.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs20.chmod(this.filePath, 384);
+    await fs22.mkdir(this.dir, { recursive: true, mode: 448 });
+    await fs22.chmod(this.dir, 448);
+    await fs22.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs22.chmod(this.filePath, 384);
   }
   start() {
     if (!this.options.limits.enabled || this.timer) return;
@@ -66502,7 +66834,7 @@ var CodexExecProgressSink = class {
     }
     await this.drain();
     await this.processPendingLine();
-    await fs20.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
+    await fs22.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
   }
   async drain() {
     if (this.draining) {
@@ -66519,7 +66851,7 @@ var CodexExecProgressSink = class {
     }
   }
   async drainOnce() {
-    const text = await fs20.readFile(this.filePath, "utf-8").catch((err) => {
+    const text = await fs22.readFile(this.filePath, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -66634,13 +66966,13 @@ async function createCodexExecProgressSink(options) {
   if (!options.limits.enabled) return null;
   try {
     const parentDir = progressParentDir(options.baseDir);
-    await fs20.mkdir(parentDir, { recursive: true, mode: 448 });
-    await fs20.chmod(parentDir, 448);
+    await fs22.mkdir(parentDir, { recursive: true, mode: 448 });
+    await fs22.chmod(parentDir, 448);
     await cleanupCodexExecProgressFiles(options.baseDir).catch((err) => {
       logSafeError("[codex-exec-progress] cleanup before setup failed:", err);
     });
-    const dir = await fs20.mkdtemp(path24.join(parentDir, "turn-"));
-    await fs20.chmod(dir, 448);
+    const dir = await fs22.mkdtemp(path27.join(parentDir, "turn-"));
+    await fs22.chmod(dir, 448);
     const sink = new CodexExecProgressSink(dir, options);
     await sink.prepare();
     return sink;
@@ -66656,7 +66988,7 @@ async function cleanupCodexExecProgressFiles(baseDir, options = {}) {
   const result = { progressDir, removed: 0, kept: 0, errors: 0 };
   let entries;
   try {
-    entries = await fs20.readdir(progressDir, { withFileTypes: true });
+    entries = await fs22.readdir(progressDir, { withFileTypes: true });
   } catch (err) {
     if (err?.code === "ENOENT") return result;
     result.errors += 1;
@@ -66665,14 +66997,14 @@ async function cleanupCodexExecProgressFiles(baseDir, options = {}) {
   }
   for (const entry of entries) {
     if (!entry.name.startsWith("turn-")) continue;
-    const entryPath = path24.join(progressDir, entry.name);
+    const entryPath = path27.join(progressDir, entry.name);
     try {
-      const entryStat = await fs20.lstat(entryPath);
+      const entryStat = await fs22.lstat(entryPath);
       if (nowMs - entryStat.mtimeMs <= maxAgeMs) {
         result.kept += 1;
         continue;
       }
-      await fs20.rm(entryPath, { recursive: true, force: true });
+      await fs22.rm(entryPath, { recursive: true, force: true });
       result.removed += 1;
     } catch (err) {
       result.errors += 1;
@@ -66723,8 +67055,8 @@ function isLowSignalProgress(text) {
 
 // src/codex-exec-action-channel.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
-import fs21 from "node:fs/promises";
-import path25 from "node:path";
+import fs23 from "node:fs/promises";
+import path28 from "node:path";
 var IDENTITY_FIELDS2 = /* @__PURE__ */ new Set([
   "chat_id",
   "chatId",
@@ -66743,7 +67075,7 @@ var DEFAULT_MAX_ACTIONS = 5;
 var CODEX_EXEC_ACTION_CHANNEL_RETENTION_MS = 12 * 60 * 60 * 1e3;
 var CODEX_EXEC_ACTION_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 60 * 1e3;
 function actionParentDir(baseDir) {
-  return path25.join(baseDir, ".lark-actions");
+  return path28.join(baseDir, ".lark-actions");
 }
 var CodexExecActionChannelError = class extends Error {
   reason;
@@ -66758,7 +67090,7 @@ var CodexExecActionChannel = class {
   constructor(dir, options) {
     this.dir = dir;
     this.options = options;
-    this.filePath = path25.join(dir, "actions.jsonl");
+    this.filePath = path28.join(dir, "actions.jsonl");
     this.token = randomUUID5();
     this.maxActions = options.maxActions ?? DEFAULT_MAX_ACTIONS;
   }
@@ -66782,17 +67114,17 @@ var CodexExecActionChannel = class {
     };
   }
   async prepare() {
-    await fs21.mkdir(this.dir, { recursive: true, mode: 448 });
-    await fs21.chmod(this.dir, 448);
-    await fs21.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs21.chmod(this.filePath, 384);
+    await fs23.mkdir(this.dir, { recursive: true, mode: 448 });
+    await fs23.chmod(this.dir, 448);
+    await fs23.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs23.chmod(this.filePath, 384);
   }
   async reset() {
-    await fs21.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs21.chmod(this.filePath, 384).catch(() => void 0);
+    await fs23.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs23.chmod(this.filePath, 384).catch(() => void 0);
   }
   async read() {
-    const text = await fs21.readFile(this.filePath, "utf-8").catch((err) => {
+    const text = await fs23.readFile(this.filePath, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -66825,7 +67157,7 @@ var CodexExecActionChannel = class {
     return { actions, requestCount };
   }
   async cleanup() {
-    await fs21.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
+    await fs23.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
   }
   parseLine(line) {
     let parsed;
@@ -66876,13 +67208,13 @@ var CodexExecActionChannel = class {
 async function createCodexExecActionChannel(options) {
   try {
     const parentDir = actionParentDir(options.baseDir);
-    await fs21.mkdir(parentDir, { recursive: true, mode: 448 });
-    await fs21.chmod(parentDir, 448);
+    await fs23.mkdir(parentDir, { recursive: true, mode: 448 });
+    await fs23.chmod(parentDir, 448);
     await cleanupCodexExecActionChannels(options.baseDir).catch((err) => {
       logSafeError("[codex-exec-actions] cleanup before setup failed:", err);
     });
-    const dir = await fs21.mkdtemp(path25.join(parentDir, "turn-"));
-    await fs21.chmod(dir, 448);
+    const dir = await fs23.mkdtemp(path28.join(parentDir, "turn-"));
+    await fs23.chmod(dir, 448);
     const channel = new CodexExecActionChannel(dir, options);
     await channel.prepare();
     return channel;
@@ -66898,7 +67230,7 @@ async function cleanupCodexExecActionChannels(baseDir, options = {}) {
   const result = { actionDir, removed: 0, kept: 0, errors: 0 };
   let entries;
   try {
-    entries = await fs21.readdir(actionDir, { withFileTypes: true });
+    entries = await fs23.readdir(actionDir, { withFileTypes: true });
   } catch (err) {
     if (err?.code === "ENOENT") return result;
     result.errors += 1;
@@ -66907,14 +67239,14 @@ async function cleanupCodexExecActionChannels(baseDir, options = {}) {
   }
   for (const entry of entries) {
     if (!entry.name.startsWith("turn-")) continue;
-    const entryPath = path25.join(actionDir, entry.name);
+    const entryPath = path28.join(actionDir, entry.name);
     try {
-      const entryStat = await fs21.lstat(entryPath);
+      const entryStat = await fs23.lstat(entryPath);
       if (nowMs - entryStat.mtimeMs <= maxAgeMs) {
         result.kept += 1;
         continue;
       }
-      await fs21.rm(entryPath, { recursive: true, force: true });
+      await fs23.rm(entryPath, { recursive: true, force: true });
       result.removed += 1;
     } catch (err) {
       result.errors += 1;
@@ -67025,323 +67357,6 @@ function buildCodexExecActionChannelPrompt(info) {
     ...sendMessageLines,
     ...recallMessageLines
   ];
-}
-
-// src/managed-workspace-exec.ts
-import { createHash as createHash11 } from "node:crypto";
-import fs23 from "node:fs/promises";
-import os3 from "node:os";
-import path28 from "node:path";
-
-// src/managed-git-sandbox.ts
-import path26 from "node:path";
-var profile = "lark-managed-git";
-var protectedWorkspaceNames = [".git", ".agents", ".codex", ".aws"];
-var protectedGitNames = ["config", "config.worktree", "commondir", "hooks", "objects/info"];
-async function createManagedGitSandboxOptions(input2) {
-  const { source, cache, scratch, artifacts, checkout: { checkout, gitDirectory }, authorizedRoots } = input2;
-  if (checkout.directory !== path26.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) || gitDirectory.directory !== path26.join(checkout.directory, ".git")) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
-  const separate = [source, cache, scratch, artifacts, ...input2.additionalWritable ?? []];
-  const all = [...separate, checkout, gitDirectory];
-  for (const binding of all) {
-    if (/[\u0000-\u001f\u007f*?\[\]]/.test(binding.directory)) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
-    await validateWorkspaceProject(authorizedRoots, binding);
-    await assertProtectedWorkspacePath(binding, binding !== source && binding !== cache);
-  }
-  const mounts = readWorkspaceMountTable();
-  const writable = input2.mode === "workspace-write" ? [scratch, artifacts, checkout, ...input2.additionalWritable ?? []] : [];
-  if (!workspaceMountLayoutSupported(writable.map(({ directory }) => directory), mounts)) {
-    throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
-  }
-  const locations = await Promise.all(separate.map(async (binding) => ({
-    identity: `${binding.device}:${binding.inode}`,
-    ancestors: await readWorkspaceAncestorIdentities(binding.directory),
-    aliases: workspaceBackingAliases(binding.directory, mounts)
-  })));
-  for (const [index, first] of locations.entries()) {
-    if (locations.slice(index + 1).some((second) => first.ancestors.has(second.identity) || second.ancestors.has(first.identity) || first.aliases.some((a) => second.aliases.some((b) => workspacePathContains(a, b) || workspacePathContains(b, a))))) {
-      throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
-    }
-  }
-  const rules = /* @__PURE__ */ new Map([[":root", "read"], [source.directory, "read"], [cache.directory, "read"]]);
-  if (input2.mode === "workspace-write") {
-    for (const { directory } of writable) {
-      rules.set(directory, "write");
-      for (const name of protectedWorkspaceNames) rules.set(path26.join(directory, name), "read");
-    }
-    rules.set(gitDirectory.directory, "write");
-    for (const name of protectedGitNames) rules.set(path26.join(gitDirectory.directory, name), "read");
-  }
-  const filesystem = Array.from(rules, ([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(",");
-  const networkEnabled = input2.mode === "workspace-write" && input2.networkEnabled === true;
-  return { profile, overrides: [
-    `default_permissions=${JSON.stringify(profile)}`,
-    `permissions={${profile}={filesystem={${filesystem}},network={enabled=${networkEnabled}}}}`,
-    'approval_policy="never"'
-  ] };
-}
-
-// src/managed-git-launcher.ts
-import fs22 from "node:fs/promises";
-import path27 from "node:path";
-async function resolveManagedGitLauncher(command, env, excluded) {
-  const invalid = () => new ManagedWorkspaceStorageError("git_launcher_untrusted");
-  if (!process.geteuid || process.getuid?.() !== process.geteuid() || !path27.isAbsolute(command) && command !== "codex") throw invalid();
-  const uid = BigInt(process.geteuid());
-  const identities = excluded.map(({ device, inode }) => `${device}:${inode}`);
-  const mounts = readWorkspaceMountTable();
-  const paths = excluded.flatMap(({ directory }) => workspaceBackingAliases(directory, mounts));
-  const trustedDirectory = async (directory) => {
-    if (workspaceBackingAliases(directory, mounts).some((alias) => paths.some((blocked2) => workspacePathContains(blocked2, alias)))) return false;
-    const stat2 = await fs22.lstat(directory, { bigint: true });
-    await assertProtectedWorkspacePath({ directory, device: String(stat2.dev), inode: String(stat2.ino) });
-    const ancestors = await readWorkspaceAncestorIdentities(directory);
-    return identities.every((identity) => !ancestors.has(identity));
-  };
-  const search = [];
-  for (const entry of (env.PATH ?? "/usr/bin:/bin").split(path27.delimiter).filter(path27.isAbsolute)) {
-    try {
-      const directory = await fs22.realpath(entry);
-      if (!directory.includes(path27.delimiter) && await trustedDirectory(directory) && !search.includes(directory)) search.push(directory);
-    } catch {
-    }
-  }
-  const executable = async (candidate) => {
-    const file3 = await fs22.realpath(candidate);
-    if (!await trustedDirectory(path27.dirname(file3))) throw invalid();
-    const stat2 = await fs22.lstat(file3, { bigint: true });
-    if (!stat2.isFile() || ![0n, uid].includes(stat2.uid) || stat2.uid !== 0n && stat2.nlink !== 1n || !(stat2.mode & 0o111n) || (stat2.mode & 0o6022n) !== 0n) throw invalid();
-    await fs22.access(file3, fs22.constants.X_OK);
-    await assertDenyOnlyWorkspaceAcls([file3]);
-    return file3;
-  };
-  const find = async (name) => {
-    for (const directory of search) {
-      try {
-        return await executable(path27.join(directory, name));
-      } catch {
-      }
-    }
-    throw invalid();
-  };
-  for (let index = search.length - 1; index >= 0; index--) {
-    const git2 = path27.join(search[index], "git");
-    const exists = await fs22.lstat(git2).then(() => true, (error62) => {
-      if (error62.code === "ENOENT") return false;
-      throw invalid();
-    });
-    if (exists) {
-      try {
-        await executable(git2);
-      } catch {
-        search.splice(index, 1);
-      }
-    }
-  }
-  if (!search.length) throw invalid();
-  await find("git");
-  const file2 = path27.isAbsolute(command) ? await executable(command).catch(() => {
-    throw invalid();
-  }) : await find(command);
-  const handle = await fs22.open(file2, fs22.constants.O_RDONLY | fs22.constants.O_NOFOLLOW | fs22.constants.O_NONBLOCK);
-  let header;
-  try {
-    const bytes = Buffer.alloc(128);
-    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-    header = bytes.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0];
-  } finally {
-    await handle.close();
-  }
-  const subprocessEnv = { ...env, PATH: search.join(path27.delimiter) };
-  for (const key of Object.keys(subprocessEnv)) {
-    if (/^(?:NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV|ZDOTDIR|DYLD_.*|LD_.*)$/.test(key)) delete subprocessEnv[key];
-  }
-  if (header === "#!/usr/bin/env node") return { command: await find("node"), prefix: [file2], env: subprocessEnv };
-  if (header.startsWith("#!")) throw invalid();
-  return { command: file2, prefix: [], env: subprocessEnv };
-}
-
-// src/managed-workspace-exec.ts
-function assertManagedWorkspaceSandbox(sandbox, project) {
-  if (sandbox !== "read-only" && (sandbox !== "workspace-write" || !project)) {
-    throw new ManagedWorkspaceStorageError("unisolated_source");
-  }
-}
-function managedGitCheckoutSessionScope(allocation) {
-  if (!allocation?.git || !allocation.gitCheckout) return void 0;
-  const { directory, device, inode } = allocation.gitCheckout.checkout;
-  return createHash11("sha256").update(JSON.stringify([
-    allocation.owner.kind,
-    allocation.owner.runId,
-    allocation.git.key,
-    allocation.git.storeFingerprint,
-    directory,
-    device,
-    inode
-  ])).digest("hex");
-}
-async function protectLegacyGitWorkspace(request, configPath) {
-  if (!await hasManagedGitRegistry(configPath) || request.sandbox === "read-only") return request;
-  if (request.sandbox !== "workspace-write" || request.profile || request.ignoreUserConfig === false) {
-    throw new ManagedWorkspaceStorageError("git_sandbox_layers_unsupported");
-  }
-  return { ...request, configOverrides: [
-    ...request.configOverrides ?? [],
-    "sandbox_workspace_write.exclude_tmpdir_env_var=true",
-    "sandbox_workspace_write.exclude_slash_tmp=true"
-  ] };
-}
-async function withManagedWorkspace(request, allocation, gitRegistry) {
-  assertManagedWorkspaceSandbox(request.sandbox, allocation.project);
-  if (request.sandbox === "workspace-write" && request.cwd !== allocation.project?.directory) {
-    throw new ManagedWorkspaceStorageError("unisolated_source");
-  }
-  const scratch = allocation.scratch.directory;
-  const artifacts = allocation.artifacts.directory;
-  const mayWrite = request.sandbox === "workspace-write";
-  const enriched = {
-    ...request,
-    prompt: `${request.prompt}
-
-[Managed run storage]
-${[
-      `Scratch directory: ${JSON.stringify(scratch)}`,
-      `Formal artifact directory: ${JSON.stringify(artifacts)}`,
-      "Use scratch for temporary files. Keep files intended for delivery in the formal artifact directory.",
-      "These paths do not extend the source workspace authorization or override the current sandbox mode."
-    ].join("\n")}`,
-    extraEnv: {
-      ...request.extraEnv,
-      LARK_MANAGED_SCRATCH_DIR: scratch,
-      LARK_MANAGED_ARTIFACTS_DIR: artifacts,
-      ...mayWrite ? { TMPDIR: scratch, TMP: scratch, TEMP: scratch } : {}
-    },
-    ...request.sandbox === "workspace-write" ? {
-      additionalWritableDirs: [.../* @__PURE__ */ new Set([...request.additionalWritableDirs ?? [], scratch, artifacts])]
-    } : {}
-  };
-  return allocation.git || allocation.gitCheckout ? withGitCheckout(request, enriched, allocation, gitRegistry) : protectLegacyGitWorkspace(enriched, gitRegistry?.configPath);
-}
-async function withGitCheckout(request, enriched, allocation, gitRegistry) {
-  const { project, git: git2, gitCheckout, scratch, artifacts } = allocation;
-  const guard = request.workspaceDirectory;
-  const mode = request.sandbox;
-  if (!project || !git2 || !gitCheckout || request.cwd !== project.directory || !guard || !sameWorkspaceProject(guard.binding, project) || mode !== "read-only" && mode !== "workspace-write" || request.profile || request.ignoreUserConfig === false) {
-    throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
-  }
-  const existing = request.configOverrides ?? [];
-  const supported = /* @__PURE__ */ new Set([
-    'approval_policy="never"',
-    'sandbox_permissions=["disk-full-read-access"]',
-    "sandbox_workspace_write.network_access=true",
-    "sandbox_workspace_write.network_access=false"
-  ]);
-  if (existing.some((entry) => !supported.has(entry)) || existing.filter((entry) => entry.startsWith("sandbox_workspace_write.network_access=")).length > 1) {
-    throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
-  }
-  const writable = new Set(request.additionalWritableDirs ?? []);
-  const extra = (guard.auxiliaryBindings ?? []).filter((binding) => writable.delete(binding.directory));
-  if (writable.size || mode === "read-only" && extra.length) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
-  const input2 = {
-    mode,
-    authorizedRoots: guard.authorizedRoots,
-    source: project,
-    cache: git2.cache,
-    scratch,
-    artifacts,
-    checkout: gitCheckout,
-    additionalWritable: extra,
-    networkEnabled: existing.includes("sandbox_workspace_write.network_access=true")
-  };
-  const selection = {
-    cache: {
-      gitDirectory: git2.cache,
-      authorizedRoots: guard.authorizedRoots,
-      commit: git2.commit,
-      scope: git2.scope,
-      repositoryId: git2.repositoryId
-    },
-    expected: git2,
-    source: project,
-    scratch,
-    protectedRoots: [allocation.roots.scratch, allocation.roots.artifacts, ...extra]
-  };
-  const extraEnv = { ...enriched.extraEnv };
-  for (const name of Object.keys({ ...process.env, ...extraEnv })) if (name.startsWith("GIT_")) extraEnv[name] = void 0;
-  Object.assign(extraEnv, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0" });
-  const validate3 = async () => {
-    await resolveManagedGitSelection({ ...gitRegistry, project, roots: allocation.roots, authorizedRoots: guard.authorizedRoots, expected: git2 });
-    await assertCompatibleCodexLayers({ ...process.env, ...extraEnv }, [project.directory, gitCheckout.checkout.directory]);
-    try {
-      await validateWorkspaceGitCheckout(selection, gitCheckout);
-    } catch (error62) {
-      if (error62 instanceof WorkspaceGitSnapshotError) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
-      throw error62;
-    }
-    return createManagedGitSandboxOptions(input2);
-  };
-  const options = await validate3();
-  return {
-    ...enriched,
-    cwd: gitCheckout.checkout.directory,
-    sandbox: void 0,
-    additionalWritableDirs: void 0,
-    ignoreUserConfig: true,
-    strictConfig: true,
-    configOverrides: options.overrides,
-    extraEnv,
-    workspaceDirectory: {
-      ...guard,
-      binding: gitCheckout.checkout,
-      requireProtectedAncestry: true,
-      auxiliaryBindings: [...guard.auxiliaryBindings ?? [], scratch, artifacts, gitCheckout.gitDirectory],
-      readOnlyBindings: [...guard.readOnlyBindings ?? [], project, git2.cache]
-    },
-    validateManagedGitLaunch: async (command, env) => {
-      const current = await validate3();
-      if (current.overrides.some((override, index) => override !== options.overrides[index])) {
-        throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
-      }
-      return resolveManagedGitLauncher(command, env, [project, git2.cache, allocation.roots.scratch, allocation.roots.artifacts, ...extra]);
-    },
-    prompt: `${enriched.prompt}
-
-[Isolated Git checkout]
-Work in the current checkout. It started at ${git2.commit}. Do not use the original source as a working directory.`
-  };
-}
-async function assertCompatibleCodexLayers(env, workspaces) {
-  const unsupported = () => new ManagedWorkspaceStorageError("git_sandbox_layers_unsupported");
-  const exists = async (target) => fs23.lstat(target).then(() => true, (error62) => {
-    if (error62.code === "ENOENT") return false;
-    throw unsupported();
-  });
-  const rejectRules = async (root) => {
-    const folder = path28.join(root, "rules");
-    if (!await exists(folder)) return;
-    try {
-      for await (const entry of await fs23.opendir(folder)) if (entry.name.endsWith(".rules")) throw unsupported();
-    } catch {
-      throw unsupported();
-    }
-  };
-  const home = env.CODEX_HOME?.trim() || path28.join(env.HOME || os3.homedir(), ".codex");
-  if (!path28.isAbsolute(home)) throw unsupported();
-  await rejectRules(home);
-  if (await exists(path28.join(home, "hooks.json"))) throw unsupported();
-  for (const name of ["config.toml", "managed_config.toml", "requirements.toml", "hooks.json"]) {
-    if (await exists(path28.join("/etc/codex", name))) throw unsupported();
-  }
-  await rejectRules("/etc/codex");
-  const inspected = /* @__PURE__ */ new Set();
-  for (const workspace of workspaces) {
-    for (let directory = workspace; !inspected.has(directory); directory = path28.dirname(directory)) {
-      inspected.add(directory);
-      const local = path28.join(directory, ".codex");
-      if (await exists(path28.join(local, "config.toml")) || await exists(path28.join(local, "hooks.json"))) throw unsupported();
-      await rejectRules(local);
-    }
-  }
 }
 
 // src/managed-workspace-admission.ts
@@ -71203,7 +71218,7 @@ async function allocateContinuationWorkspace(job, store, policy) {
   if (!managedWorkspaceRoots) {
     if (policy) await resolveManagedGitSelection({
       configPath: policy.managedWorkspaceConfigPath,
-      authorizedRoots: continuationWorkspaceRoots(job, policy),
+      authorizedRoots: workspaceProject ? continuationWorkspaceRoots(job, policy) : [job.permissions.filesystem.root, policy.currentWorkingRoot],
       project: workspaceProject,
       fallbackDirectory: job.workingDirectory,
       expected: managedWorkspaceGit,

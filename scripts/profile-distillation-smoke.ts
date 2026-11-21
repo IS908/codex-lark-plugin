@@ -8,7 +8,8 @@
  *  - per-user lock + cooldown prevents duplicate dispatches
  *  - audit entry is written for each real dispatch
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,7 +18,7 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-const root = mkdtempSync(join(tmpdir(), 'profile-distillation-'));
+const root = realpathSync(mkdtempSync(join(tmpdir(), 'profile-distillation-')));
 const l2Path = join(root, 'privacy-rules.md');
 process.env.LARK_AUDIT_LOG = join(root, 'audit.log');
 writeFileSync(l2Path, '## Always private\n- Project Phoenix\n', 'utf-8');
@@ -176,5 +177,47 @@ let passed = 0;
   passed++;
 }
 
+// 5. A configured Git registry changes only the child process's write permissions.
+{
+  const registry = join(root, 'workspace-git-sources.json');
+  const previous = { ...appConfig };
+  const previousCodexHome = process.env.CODEX_HOME;
+  const calls: import('../src/codex-exec.js').CodexExecRequest[] = [];
+  const chatId = 'oc_git_policy';
+  const userId = 'ou_git_policy';
+  const memoryStore = new MemoryStore(join(root, 'git-policy'));
+  await memoryStore.saveEpisode('chat', 'One fixture episode.', { chatId });
+  const manager = new ProfileDistillationManager({ enabled: true, memoryStore, minEpisodes: 1, maxEpisodes: 5,
+    cooldownMs: 0, audit: async () => {}, runCodexExec: async (request) => {
+      calls.push(request);
+      return { text: '{"public":["A fixture fact"],"private":[]}' };
+    } });
+  const trigger = { userId, chatId, chatType: 'group' } as const;
+  try {
+    Object.assign(appConfig, { codexExecCwd: root, codexExecSandbox: 'workspace-write', codexExecProfile: 'fixture',
+      codexExecIgnoreUserConfig: false, managedWorkspaceConfigPath: join(root, 'managed-workspace.json') });
+    process.env.CODEX_HOME = join(root, 'codex-home');
+    assert.equal((await manager.maybeDispatch(trigger)).status, 'dispatched');
+    assert.equal(calls[0].sandbox, 'workspace-write');
+    assert.equal(calls[0].profile, 'fixture');
+    writeFileSync(registry, JSON.stringify({ version: 1, projects: [{ source: join(root, 'source'), cache: join(root, 'cache'),
+      repositoryId: 'a'.repeat(64), scope: 'fixture', commit: 'b'.repeat(40) }] }), { mode: 0o600 });
+    assert.equal((await manager.maybeDispatch(trigger)).status, 'dispatched');
+    assert.equal(calls[1].sandbox, 'read-only');
+    assert.equal(calls[1].profile, undefined);
+    assert.equal(calls[1].ignoreUserConfig, true);
+    assert.ok(calls[1].configOverrides?.includes('approval_policy="never"'));
+    assert.match(await memoryStore.getProfile(userId, userId) ?? '', /A fixture fact/);
+    writeFileSync(registry, '{}');
+    assert.equal((await manager.maybeDispatch(trigger)).status, 'error');
+    assert.equal(calls.length, 2);
+    passed++;
+  } finally {
+    Object.assign(appConfig, previous);
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+}
+
 rmSync(root, { recursive: true, force: true });
-console.log(`profile-distillation smoke: ${passed}/4 PASS`);
+console.log(`profile-distillation smoke: ${passed}/5 PASS`);

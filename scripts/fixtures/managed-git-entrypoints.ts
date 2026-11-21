@@ -6,6 +6,7 @@ import { buildCodexExecArgs, CodexExecAbortedError, type CodexExecRequest } from
 import { FileCodexExecSessionStore, buildCodexExecSessionKey } from '../../src/codex-session-store.js';
 import { appConfig } from '../../src/config.js';
 import { ContinuationInputStore } from '../../src/continuation/input-store.js';
+import { allocateContinuationWorkspace } from '../../src/continuation/managed-workspace.js';
 import { createContinuationRuntime } from '../../src/continuation/runtime.js';
 import { parseCronRunInput } from '../../src/cron/contracts.js';
 import { createCronPromptExecutor } from '../../src/cron/prompt-executor.js';
@@ -134,6 +135,16 @@ export async function checkManagedGitEntrypoints(input: {
         const revokedAsync = await admit('om_git_async_revoked');
         fixtureJobIds.push(revokedAsync.job.jobId);
         assert.deepEqual(revokedAsync.job.permissions.filesystem.managedWorkspaceGit, git);
+        const unrelated = path.join(base, 'legacy-workspace');
+        await fs.mkdir(unrelated);
+        const legacy = { ...revokedAsync.job, workingDirectory: unrelated, permissions: { ...revokedAsync.job.permissions,
+          filesystem: { root: base } } } as typeof revokedAsync.job;
+        const legacyPolicy = { currentWorkingRoot: base, foregroundWorkingRoot: project.directory, managedWorkspaceConfigPath: storage };
+        assert.equal(await allocateContinuationWorkspace(legacy, undefined, legacyPolicy), undefined);
+        await assert.rejects(allocateContinuationWorkspace({ ...legacy, workingDirectory: project.directory }, undefined, legacyPolicy),
+          { code: 'git_project_overlap' });
+        await assert.rejects(allocateContinuationWorkspace({ ...legacy, workingDirectory: git.cache.directory }, undefined, legacyPolicy),
+          { code: 'overlapping_git_cache' });
         await fs.unlink(gitSources);
         for (let tick = 0; tick < 40; tick++) {
           if ((await runtime.service.getForActor(revokedAsync.job.jobId, message.senderId)).status === 'blocked') break;
