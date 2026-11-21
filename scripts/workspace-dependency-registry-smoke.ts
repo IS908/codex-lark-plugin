@@ -10,6 +10,7 @@ import { sameWorkspaceDependencySelections, workspaceDependencySelectionsSchema 
 import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
 import { describeWorkspaceDependencies, prepareWorkspaceNpmLock, prepareWorkspacePipLock } from '../src/workspace-dependency-input.js';
+import * as dependencyInstall from '../src/workspace-dependency-install.js';
 import { assertWorkspaceDependencySelectionAuthorized, assertWorkspaceDependencyWriteIsolation,
   resolveWorkspaceDependencySelections } from '../src/workspace-dependency-registry.js';
 import { readWorkspaceGitCacheIdentity } from '../src/workspace-git-snapshot.js';
@@ -101,6 +102,10 @@ try {
     owner: { kind: 'foreground', runId: 'dependency-selected' } as const, dependencySelections: expected, dependencyRegistryConfigPath: configPath };
   const optOut = { ...firstRun, owner: { kind: 'cron_prompt', runId: 'dependency-opt-out' } as const, dependencySelections: [] };
   const legacy = { ...firstRun, owner: { kind: 'async_task', runId: 'dependency-legacy' } as const, dependencySelections: undefined };
+  const interrupted = { ...firstRun, owner: { kind: 'cron_prompt', runId: 'dependency-interrupted' } as const };
+  const preparedRun = { ...firstRun, owner: { kind: 'async_task', runId: 'dependency-prepared' } as const };
+  const installNonce = 'b'.repeat(24);
+  let installed: { output: Awaited<ReturnType<typeof pinWorkspacePath>>; measurement: { digest: string; bytes: number; entries: number } };
   const originalLedger = new DatabaseSync(ledgerPath);
   try {
     const store = new SqliteManagedWorkspaceStore(originalLedger);
@@ -114,6 +119,37 @@ try {
     assert.notEqual(selectedRun.scratch.directory, optedOutRun.scratch.directory);
     assert.deepEqual(optedOutRun.dependencySelections, []);
     assert.equal((await store.ensure(legacy)).dependencySelections, undefined);
+    assert.equal(store.getDependencyInstall(firstRun.owner, 'pip'), null);
+    assert.throws(() => store.reserveDependencyInstall(optOut.owner, 'pip', installNonce), { code: 'invalid_binding' });
+    assert.throws(() => store.reserveDependencyInstall(firstRun.owner, 'npm', installNonce), { code: 'invalid_binding' });
+    store.reserveDependencyInstall(firstRun.owner, 'pip', installNonce);
+    const peer = new DatabaseSync(ledgerPath);
+    try {
+      assert.throws(() => new SqliteManagedWorkspaceStore(peer).reserveDependencyInstall(firstRun.owner, 'pip', 'c'.repeat(24)),
+        { code: 'dependency_install_incomplete' });
+    } finally { peer.close(); }
+    const interruptedRun = await store.ensure(interrupted);
+    store.reserveDependencyInstall(interrupted.owner, 'pip', installNonce);
+    const uncommittedOutput = path.join(interruptedRun.scratch.directory, `lark-dependency-install-${installNonce}`, 'python-deps');
+    await fs.mkdir(uncommittedOutput, { recursive: true, mode: 0o700 });
+    await fs.writeFile(path.join(uncommittedOutput, 'ready.py'), '# present but not committed');
+    const lifecycle = await store.ensure(preparedRun);
+    const makeOutput = async (nonce: string) => {
+      const output = path.join(lifecycle.scratch.directory, `lark-dependency-install-${nonce}`, 'python-deps');
+      await fs.mkdir(output, { recursive: true, mode: 0o700 });
+      const binding = await pinWorkspacePath(lifecycle.scratch.directory, output);
+      return { output: binding, measurement: await dependencyInstall.measureWorkspaceDependencyOutput(binding, 'pip') };
+    };
+    const readyOutput = await dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, preparedRun.owner, 'pip', makeOutput);
+    assert.deepEqual(store.getDependencyInstall(preparedRun.owner, 'pip')?.receipt, readyOutput);
+    const output = path.join(selectedRun.scratch.directory, `lark-dependency-install-${installNonce}`, 'python-deps');
+    await fs.mkdir(output, { recursive: true, mode: 0o700 });
+    installed = { output: await pinWorkspacePath(selectedRun.scratch.directory, output), measurement: { digest: 'e'.repeat(64), bytes: 0, entries: 1 } };
+    assert.throws(() => store.completeDependencyInstall(firstRun.owner, 'pip', 'c'.repeat(24), installed), { code: 'invalid_binding' });
+    assert.throws(() => store.completeDependencyInstall(firstRun.owner, 'pip', installNonce, { ...installed, output: optedOutRun.scratch }),
+      { code: 'invalid_binding' });
+    store.completeDependencyInstall(firstRun.owner, 'pip', installNonce, installed);
+    assert.throws(() => store.completeDependencyInstall(firstRun.owner, 'pip', installNonce, installed), { code: 'invalid_binding' });
     await assert.rejects(store.ensure({ ...firstRun, owner: { ...firstRun.owner, runId: 'wrong-dependency-scope' },
       git: { cache: gitCache, ...otherScope } }), { code: 'invalid_binding' });
   } finally { originalLedger.close(); }
@@ -121,6 +157,20 @@ try {
   try {
     const store = new SqliteManagedWorkspaceStore(reopenedLedger);
     assert.deepEqual(store.get(firstRun.owner)?.allocation.dependencySelections, expected);
+    assert.deepEqual(store.getDependencyInstall(firstRun.owner, 'pip'), { nonce: installNonce, receipt: installed });
+    assert.deepEqual(store.getDependencyInstall(interrupted.owner, 'pip'), { nonce: installNonce });
+    assert.throws(() => store.reserveDependencyInstall(interrupted.owner, 'pip', 'c'.repeat(24)), { code: 'dependency_install_incomplete' });
+    const noReinstall = async () => assert.fail('restart must never reinstall');
+    await assert.rejects(dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, interrupted.owner, 'pip', noReinstall),
+      { code: 'dependency_install_incomplete' });
+    const uncommittedOutput = path.join(store.get(interrupted.owner)!.allocation.scratch.directory,
+      `lark-dependency-install-${installNonce}`, 'python-deps', 'ready.py');
+    assert.equal(await fs.readFile(uncommittedOutput, 'utf8'), '# present but not committed');
+    const resumedOutput = await dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, preparedRun.owner, 'pip', noReinstall);
+    assert.deepEqual(resumedOutput, store.getDependencyInstall(preparedRun.owner, 'pip')?.receipt);
+    await fs.writeFile(path.join(resumedOutput.output.directory, 'new.py'), '# changed');
+    await assert.rejects(dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, preparedRun.owner, 'pip', noReinstall),
+      { code: 'dependency_installed_output_invalid' });
     assert.deepEqual(store.get(optOut.owner)?.allocation.dependencySelections, []);
     assert.equal(store.get(legacy.owner)?.allocation.dependencySelections, undefined);
     await assert.rejects(store.ensure({ ...firstRun, dependencySelections: [] }), { code: 'invalid_binding' });

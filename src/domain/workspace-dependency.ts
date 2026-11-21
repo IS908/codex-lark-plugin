@@ -31,6 +31,7 @@ const identityShape = z.discriminatedUnion('ecosystem', [
   z.strictObject({ ...commonIdentity, ecosystem: z.literal('pip'), policy: z.literal('pip-offline-hashed-wheels-v1'), key: dependencyDigestSchema }),
 ]);
 export type WorkspaceDependencyIdentity = z.infer<typeof identityShape>;
+export type WorkspaceDependencyEcosystem = WorkspaceDependencyIdentity['ecosystem'];
 
 type CompatibilityInputs = Omit<Extract<WorkspaceDependencyIdentity, { ecosystem: 'npm' }>, 'key'>
   | Omit<Extract<WorkspaceDependencyIdentity, { ecosystem: 'pip' }>, 'key'>;
@@ -72,6 +73,22 @@ export const workspaceDependencySelectionSchema = z.strictObject({
 }).refine(({ toolchainFingerprint, toolchainBindingDigest }) => (toolchainFingerprint === undefined) === (toolchainBindingDigest === undefined),
   'A measured toolchain requires its declared binding.');
 export type WorkspaceDependencySelection = z.infer<typeof workspaceDependencySelectionSchema>;
+
+export const workspaceDependencyInstallNonceSchema = z.string().regex(/^[0-9a-f]{24}$/);
+export const workspaceDependencyInstallReceiptSchema = z.strictObject({
+  output: workspaceDependencyBindingSchema,
+  measurement: z.strictObject({ digest: dependencyDigestSchema, bytes: z.int().min(0).max(4 * 1024 ** 3), entries: z.int().min(1).max(200_000) }),
+});
+export type WorkspaceDependencyInstallReceipt = z.infer<typeof workspaceDependencyInstallReceiptSchema>;
+export type WorkspaceDependencyInstallRecord = { nonce: string; receipt?: WorkspaceDependencyInstallReceipt };
+
+export function workspaceDependencyInstallLeaf(nonce: string): string {
+  return `lark-dependency-install-${workspaceDependencyInstallNonceSchema.parse(nonce)}`;
+}
+
+export function workspaceDependencyOutputName(ecosystem: WorkspaceDependencyEcosystem): string {
+  return ecosystem === 'npm' ? 'node_modules' : 'python-deps';
+}
 
 export const workspaceDependencySelectionsSchema = z.array(workspaceDependencySelectionSchema).max(2).refine((selections) =>
   new Set(selections.map(({ identity }) => identity.ecosystem)).size === selections.length

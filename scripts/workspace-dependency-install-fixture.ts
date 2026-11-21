@@ -6,7 +6,7 @@ import path from 'node:path';
 import { workspaceDependencyToolchainBindingDigest } from '../src/domain/workspace-dependency.js';
 import type { WorkspaceProjectBinding } from '../src/domain/workspace.js';
 import { verifyWorkspaceDependencyCache } from '../src/workspace-dependency-cache.js';
-import { installWorkspaceDependencyInStaging } from '../src/workspace-dependency-install.js';
+import { installWorkspaceDependencyInStaging, publishWorkspaceDependencyOutput, validatePublishedWorkspaceDependencyOutput } from '../src/workspace-dependency-install.js';
 import type { WorkspaceDependencyInput } from '../src/workspace-dependency-input.js';
 import type { probeWorkspaceDependencyToolchain } from '../src/workspace-dependency-toolchain.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
@@ -71,6 +71,8 @@ export async function exerciseWorkspaceDependencyInstall(fixture: string, common
     assert.deepEqual((await fs.readdir(fixture)).sort(), before);
     const results = await Promise.allSettled([installWorkspaceDependencyInStaging(request), installWorkspaceDependencyInStaging(request)]);
     const complete = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+    const checkoutPath = path.join(common.temporaryRoot.directory, 'git-checkout');
+    let madeCheckout = false;
     try {
       for (const result of results) if (result.status === 'rejected') throw result.reason;
       const [a, b] = complete;
@@ -89,8 +91,21 @@ export async function exerciseWorkspaceDependencyInstall(fixture: string, common
         assert.equal(await fs.realpath(path.join(b.output.directory, '.bin', 'lark-fixture')), two);
         await assert.rejects(fs.stat(path.join(path.dirname(one), 'lifecycle-ran')), { code: 'ENOENT' });
       }
+      await fs.mkdir(checkoutPath, { mode: 0o700 });
+      madeCheckout = true;
+      const checkout = await pinWorkspacePath(common.temporaryRoot.directory, checkoutPath);
+      const { output, measurement } = b;
+      const nonce = path.basename(b.staging.directory).slice('lark-dependency-install-'.length);
+      const publication = { scratch: common.temporaryRoot, checkout, ecosystem: input.ecosystem, nonce, receipt: { output, measurement } };
+      await publishWorkspaceDependencyOutput(publication);
+      const args = input.ecosystem === 'npm' ? ['-p', "require('lark-fixture')"]
+        : ['-ISB', '-c', 'import sys; sys.path.insert(0,sys.argv[1]); import lark_fixture; print(lark_fixture.VALUE)', output.directory];
+      const env = input.ecosystem === 'pip' && process.platform === 'linux' ? { LD_LIBRARY_PATH: path.join(tool.configured.runtime.directory, 'lib') } : {};
+      assert.equal(execFileSync(tool.configured.executable, args, { cwd: checkoutPath, env, encoding: 'utf8' }).trim(), 'lark fixture');
+      await validatePublishedWorkspaceDependencyOutput(publication);
       assert.equal(hash(await fs.readFile(artifact)), original);
     } finally {
+      if (madeCheckout) await fs.rm(checkoutPath, { recursive: true, force: true });
       for (const { staging } of complete) await fs.rm(staging.directory, { recursive: true, force: true });
     }
     await fs.unlink(artifact);
@@ -98,6 +113,7 @@ export async function exerciseWorkspaceDependencyInstall(fixture: string, common
     assert.deepEqual((await fs.readdir(fixture)).sort(), before);
   }
   console.log('workspace dependency staging installs: real offline npm and pip, two private outputs per ecosystem, immutable cache and fail-closed absence');
+  console.log('workspace dependency publication: Node and Python can load the verified private outputs');
 }
 
 async function npmFixture(fixture: string, cache: string, toolchain: Probed['toolchain']) {

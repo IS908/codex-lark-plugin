@@ -20,7 +20,9 @@ import {
   type UnmanagedForegroundAdmission,
 } from '../domain/managed-workspace.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from '../domain/workspace.js';
-import { sameWorkspaceDependencySelections } from '../domain/workspace-dependency.js';
+import { sameWorkspaceDependencySelections, workspaceDependencyInstallLeaf, workspaceDependencyInstallNonceSchema,
+  workspaceDependencyInstallReceiptSchema, workspaceDependencyOutputName, type WorkspaceDependencyEcosystem,
+  type WorkspaceDependencyInstallReceipt, type WorkspaceDependencyInstallRecord } from '../domain/workspace-dependency.js';
 import type { ManagedArtifactStageJournal, ManagedWorkspaceAuthorizedRoots, ManagedWorkspaceRecord, ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import {
   allocateManagedRunDirectories,
@@ -90,6 +92,16 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
         identity_json TEXT CHECK (identity_json IS NULL OR json_valid(identity_json)),
         PRIMARY KEY (run_id, relative_path)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS workspace_dependency_installs (
+        workload_kind TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        ecosystem TEXT NOT NULL CHECK (ecosystem IN ('npm', 'pip')),
+        compatibility_key TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        receipt_json TEXT CHECK (receipt_json IS NULL OR json_valid(receipt_json)),
+        PRIMARY KEY (workload_kind, run_id, ecosystem),
+        FOREIGN KEY (workload_kind, run_id) REFERENCES workspace_run_allocations(workload_kind, run_id)
+      ) STRICT;
       ${sourceRegistries.map(([table, json]) => `
         CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${bindingPathExpr(json)});
         CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${bindingIdentityExpr(json)});
@@ -101,6 +113,48 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
           ON workspace_run_allocations(${bindingIdentityExpr('intent_json', field)});
       `).join('')}
     `);
+  }
+
+  getDependencyInstall(owner: ManagedRunOwner, ecosystem: WorkspaceDependencyEcosystem): WorkspaceDependencyInstallRecord | null {
+    const row = this.database.prepare(`SELECT compatibility_key, nonce, receipt_json FROM workspace_dependency_installs
+      WHERE workload_kind = ? AND run_id = ? AND ecosystem = ?`).get(owner.kind, owner.runId, ecosystem);
+    if (!row) return null;
+    const { scratch, key } = this.dependencyInstallAllocation(owner, ecosystem);
+    const nonce = workspaceDependencyInstallNonceSchema.safeParse(row.nonce);
+    if (!nonce.success || row.compatibility_key !== key) throw new ManagedWorkspaceStorageError('invalid_binding');
+    if (row.receipt_json === null) return { nonce: nonce.data };
+    const receipt = parseStored(workspaceDependencyInstallReceiptSchema, row.receipt_json);
+    assertDependencyReceiptBinding(scratch, ecosystem, nonce.data, receipt);
+    return { nonce: nonce.data, receipt };
+  }
+
+  reserveDependencyInstall(owner: ManagedRunOwner, ecosystem: WorkspaceDependencyEcosystem, nonce: string): void {
+    this.requireAutocommit();
+    const { key } = this.dependencyInstallAllocation(owner, ecosystem);
+    if (!workspaceDependencyInstallNonceSchema.safeParse(nonce).success) throw new ManagedWorkspaceStorageError('invalid_binding');
+    const result = this.database.prepare(`INSERT INTO workspace_dependency_installs
+      (workload_kind, run_id, ecosystem, compatibility_key, nonce) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (workload_kind, run_id, ecosystem) DO NOTHING`).run(owner.kind, owner.runId, ecosystem, key, nonce);
+    if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError('dependency_install_incomplete');
+  }
+
+  completeDependencyInstall(owner: ManagedRunOwner, ecosystem: WorkspaceDependencyEcosystem, nonce: string, receipt: WorkspaceDependencyInstallReceipt): void {
+    this.requireAutocommit();
+    const { scratch, key } = this.dependencyInstallAllocation(owner, ecosystem);
+    const parsed = workspaceDependencyInstallReceiptSchema.safeParse(receipt);
+    if (!parsed.success || !workspaceDependencyInstallNonceSchema.safeParse(nonce).success) throw new ManagedWorkspaceStorageError('invalid_binding');
+    assertDependencyReceiptBinding(scratch, ecosystem, nonce, parsed.data);
+    const result = this.database.prepare(`UPDATE workspace_dependency_installs SET receipt_json = ?
+      WHERE workload_kind = ? AND run_id = ? AND ecosystem = ? AND compatibility_key = ? AND nonce = ? AND receipt_json IS NULL`)
+      .run(JSON.stringify(parsed.data), owner.kind, owner.runId, ecosystem, key, nonce);
+    if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError('invalid_binding');
+  }
+
+  private dependencyInstallAllocation(owner: ManagedRunOwner, ecosystem: WorkspaceDependencyEcosystem) {
+    const allocation = this.get(owner)?.allocation;
+    const selection = allocation?.dependencySelections?.find(({ identity }) => identity.ecosystem === ecosystem);
+    if (!allocation?.gitCheckout || !selection) throw new ManagedWorkspaceStorageError('invalid_binding');
+    return { scratch: allocation.scratch, key: selection.identity.key };
   }
 
   getUnmanagedForeground(runId: string): UnmanagedForegroundAdmission | null {
@@ -463,6 +517,12 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       WHERE workload_kind = ? AND run_id = ?
     `).run(usedAt, owner.kind, owner.runId);
   }
+}
+
+function assertDependencyReceiptBinding(scratch: WorkspaceProjectBinding, ecosystem: WorkspaceDependencyEcosystem, nonce: string,
+  receipt: WorkspaceDependencyInstallReceipt): void {
+  if (receipt.output.device !== scratch.device || receipt.output.directory !== path.join(scratch.directory,
+    workspaceDependencyInstallLeaf(nonce), workspaceDependencyOutputName(ecosystem))) throw new ManagedWorkspaceStorageError('invalid_binding');
 }
 
 function validGitAllocation({ git, gitCheckout, project, fallbackWorkspace, scratch }: ManagedRunAllocation): boolean {

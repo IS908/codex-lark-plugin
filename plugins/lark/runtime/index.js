@@ -51974,6 +51974,17 @@ var workspaceDependencySelectionSchema = external_exports.strictObject({
   ({ toolchainFingerprint, toolchainBindingDigest }) => toolchainFingerprint === void 0 === (toolchainBindingDigest === void 0),
   "A measured toolchain requires its declared binding."
 );
+var workspaceDependencyInstallNonceSchema = external_exports.string().regex(/^[0-9a-f]{24}$/);
+var workspaceDependencyInstallReceiptSchema = external_exports.strictObject({
+  output: workspaceDependencyBindingSchema,
+  measurement: external_exports.strictObject({ digest: dependencyDigestSchema, bytes: external_exports.int().min(0).max(4 * 1024 ** 3), entries: external_exports.int().min(1).max(2e5) })
+});
+function workspaceDependencyInstallLeaf(nonce) {
+  return `lark-dependency-install-${workspaceDependencyInstallNonceSchema.parse(nonce)}`;
+}
+function workspaceDependencyOutputName(ecosystem2) {
+  return ecosystem2 === "npm" ? "node_modules" : "python-deps";
+}
 var workspaceDependencySelectionsSchema = external_exports.array(workspaceDependencySelectionSchema).max(2).refine(
   (selections) => new Set(selections.map(({ identity }) => identity.ecosystem)).size === selections.length && new Set(selections.map(({ cache }) => `${cache.device}:${cache.inode}`)).size === selections.length && new Set(selections.map(({ cache }) => cache.directory)).size === selections.length,
   "Select distinct dependency caches with at most one per ecosystem."
@@ -52108,6 +52119,7 @@ var diagnostic = {
   allocation_incomplete: "The stored managed workspace allocation is incomplete.",
   allocation_transaction: "Managed workspace provisioning requires a committed database context.",
   invalid_binding: "The managed workspace allocation is invalid.",
+  dependency_install_incomplete: "A dependency install was already started for this run but cannot be adopted or repeated.",
   artifact_invalid: "The managed artifact is missing, outside its registered directory, oversized, or no longer matches its checksum."
 };
 var ManagedWorkspaceStorageError = class extends Error {
@@ -78259,6 +78271,16 @@ var SqliteManagedWorkspaceStore = class {
         identity_json TEXT CHECK (identity_json IS NULL OR json_valid(identity_json)),
         PRIMARY KEY (run_id, relative_path)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS workspace_dependency_installs (
+        workload_kind TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        ecosystem TEXT NOT NULL CHECK (ecosystem IN ('npm', 'pip')),
+        compatibility_key TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        receipt_json TEXT CHECK (receipt_json IS NULL OR json_valid(receipt_json)),
+        PRIMARY KEY (workload_kind, run_id, ecosystem),
+        FOREIGN KEY (workload_kind, run_id) REFERENCES workspace_run_allocations(workload_kind, run_id)
+      ) STRICT;
       ${sourceRegistries.map(([table, json2]) => `
         CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${bindingPathExpr(json2)});
         CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${bindingIdentityExpr(json2)});
@@ -78272,6 +78294,43 @@ var SqliteManagedWorkspaceStore = class {
     `);
   }
   database;
+  getDependencyInstall(owner, ecosystem2) {
+    const row = this.database.prepare(`SELECT compatibility_key, nonce, receipt_json FROM workspace_dependency_installs
+      WHERE workload_kind = ? AND run_id = ? AND ecosystem = ?`).get(owner.kind, owner.runId, ecosystem2);
+    if (!row) return null;
+    const { scratch, key } = this.dependencyInstallAllocation(owner, ecosystem2);
+    const nonce = workspaceDependencyInstallNonceSchema.safeParse(row.nonce);
+    if (!nonce.success || row.compatibility_key !== key) throw new ManagedWorkspaceStorageError("invalid_binding");
+    if (row.receipt_json === null) return { nonce: nonce.data };
+    const receipt = parseStored(workspaceDependencyInstallReceiptSchema, row.receipt_json);
+    assertDependencyReceiptBinding(scratch, ecosystem2, nonce.data, receipt);
+    return { nonce: nonce.data, receipt };
+  }
+  reserveDependencyInstall(owner, ecosystem2, nonce) {
+    this.requireAutocommit();
+    const { key } = this.dependencyInstallAllocation(owner, ecosystem2);
+    if (!workspaceDependencyInstallNonceSchema.safeParse(nonce).success) throw new ManagedWorkspaceStorageError("invalid_binding");
+    const result = this.database.prepare(`INSERT INTO workspace_dependency_installs
+      (workload_kind, run_id, ecosystem, compatibility_key, nonce) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (workload_kind, run_id, ecosystem) DO NOTHING`).run(owner.kind, owner.runId, ecosystem2, key, nonce);
+    if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError("dependency_install_incomplete");
+  }
+  completeDependencyInstall(owner, ecosystem2, nonce, receipt) {
+    this.requireAutocommit();
+    const { scratch, key } = this.dependencyInstallAllocation(owner, ecosystem2);
+    const parsed = workspaceDependencyInstallReceiptSchema.safeParse(receipt);
+    if (!parsed.success || !workspaceDependencyInstallNonceSchema.safeParse(nonce).success) throw new ManagedWorkspaceStorageError("invalid_binding");
+    assertDependencyReceiptBinding(scratch, ecosystem2, nonce, parsed.data);
+    const result = this.database.prepare(`UPDATE workspace_dependency_installs SET receipt_json = ?
+      WHERE workload_kind = ? AND run_id = ? AND ecosystem = ? AND compatibility_key = ? AND nonce = ? AND receipt_json IS NULL`).run(JSON.stringify(parsed.data), owner.kind, owner.runId, ecosystem2, key, nonce);
+    if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  dependencyInstallAllocation(owner, ecosystem2) {
+    const allocation = this.get(owner)?.allocation;
+    const selection = allocation?.dependencySelections?.find(({ identity }) => identity.ecosystem === ecosystem2);
+    if (!allocation?.gitCheckout || !selection) throw new ManagedWorkspaceStorageError("invalid_binding");
+    return { scratch: allocation.scratch, key: selection.identity.key };
+  }
   getUnmanagedForeground(runId) {
     const row = this.database.prepare("SELECT admission_json FROM workspace_unmanaged_foreground WHERE run_id = ?").get(runId);
     return row ? parseStored(unmanagedForegroundAdmissionSchema, row.admission_json) : null;
@@ -78594,6 +78653,13 @@ var SqliteManagedWorkspaceStore = class {
     `).run(usedAt, owner.kind, owner.runId);
   }
 };
+function assertDependencyReceiptBinding(scratch, ecosystem2, nonce, receipt) {
+  if (receipt.output.device !== scratch.device || receipt.output.directory !== path37.join(
+    scratch.directory,
+    workspaceDependencyInstallLeaf(nonce),
+    workspaceDependencyOutputName(ecosystem2)
+  )) throw new ManagedWorkspaceStorageError("invalid_binding");
+}
 function validGitAllocation({ git: git2, gitCheckout, project, fallbackWorkspace, scratch }) {
   if (!git2) return gitCheckout === void 0;
   return !!project && !fallbackWorkspace && !!gitCheckout && git2.key === gitSnapshotKey(git2) && gitCheckout.checkout.directory === path37.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) && gitCheckout.gitDirectory.directory === path37.join(gitCheckout.checkout.directory, ".git");
