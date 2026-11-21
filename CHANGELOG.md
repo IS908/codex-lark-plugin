@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.18.1] - 2026-11-22
+
+### Fixed
+- Preserve live Async Task inputs during concurrent cleanup, including records with older estimated process-start timestamps or unavailable native timestamps (#399).
+
 ## [2.18.0] - 2026-11-22
 
 ### Added

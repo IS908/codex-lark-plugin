@@ -17,8 +17,11 @@ import type {
 } from '../ports/continuation.js';
 import {
   currentProcessStartedAt,
+  getLinuxProcessBirthToken,
+  isCleanupProcessInstanceAlive,
   isProcessAlive,
   isProcessInstanceAlive,
+  LINUX_BIRTH_TOKEN_PATTERN,
 } from '../process-identity.js';
 import { continuationJobId } from './idempotency.js';
 
@@ -48,10 +51,12 @@ const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
 const OWNERLESS_LOCK_GRACE_MS = 30_000;
 const ACTIVE_REDACTION_QUARANTINES = new Set<string>();
+const ACTIVE_CREATION_NONCES = new Set<string>();
 
 interface CreationLockOwner {
   pid: number;
   startedAt: number | null;
+  linuxBirthToken: string | null;
   nonce: string | null;
   createdAt: string;
 }
@@ -88,9 +93,11 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       const owner: CreationLockOwner = {
         pid: process.pid,
         startedAt: currentProcessStartedAt(),
+        linuxBirthToken: getLinuxProcessBirthToken(process.pid),
         nonce,
         createdAt: new Date().toISOString(),
       };
+      ACTIVE_CREATION_NONCES.add(nonce);
       try {
         await fs.writeFile(lockDirectory, `${JSON.stringify(owner)}\n`, {
           mode: 0o600,
@@ -126,6 +133,8 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
           throw new Error('Continuation creation is already in progress for this idempotency key.');
         }
         await new Promise((resolve) => setTimeout(resolve, 20));
+      } finally {
+        if (ownerNonce !== nonce) ACTIVE_CREATION_NONCES.delete(nonce);
       }
     }
     let operationError: unknown;
@@ -146,6 +155,8 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
             );
           }
           throw releaseError;
+        } finally {
+          ACTIVE_CREATION_NONCES.delete(ownerNonce);
         }
       }
     }
@@ -418,7 +429,8 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
           const ownerIsActive = redactionQuarantine.ownerStartedAt === null
             ? isProcessAlive(redactionQuarantine.ownerPid)
               && stateAgeMs < OWNERLESS_LOCK_GRACE_MS
-            : await isProcessInstanceAlive(redactionQuarantine.ownerPid, redactionQuarantine.ownerStartedAt);
+            : await isProcessInstanceAlive(redactionQuarantine.ownerPid, redactionQuarantine.ownerStartedAt,
+              stateAgeMs, OWNERLESS_LOCK_GRACE_MS);
           if (
             ownerIsActive
             && (redactionQuarantine.ownerPid !== process.pid
@@ -697,6 +709,7 @@ async function readCreationOwner(lockDirectory: string): Promise<CreationLockOwn
       nonce?: unknown;
       createdAt?: unknown;
       startedAt?: unknown;
+      linuxBirthToken?: unknown;
     };
     if (
       !Number.isInteger(parsed.pid)
@@ -710,6 +723,8 @@ async function readCreationOwner(lockDirectory: string): Promise<CreationLockOwn
     return {
       pid: Number(parsed.pid),
       startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null,
+      linuxBirthToken: typeof parsed.linuxBirthToken === 'string' && LINUX_BIRTH_TOKEN_PATTERN.test(parsed.linuxBirthToken)
+        ? parsed.linuxBirthToken : null,
       nonce,
       createdAt: parsed.createdAt,
     };
@@ -732,7 +747,10 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
   const owner = await readCreationOwner(lockDirectory);
   if (owner === null) {
     if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
-  } else if (await isProcessInstanceAlive(owner.pid, owner.startedAt)) return false;
+  } else if (owner.pid === process.pid) {
+    // A record naming this PID but not an active nonce belongs to an earlier lifetime or failed operation.
+    if (owner.nonce !== null && ACTIVE_CREATION_NONCES.has(owner.nonce)) return false;
+  } else if (await isCleanupProcessInstanceAlive(owner.pid, owner.startedAt, owner.linuxBirthToken)) return false;
 
   const quarantine = path.join(
     rootDir,
@@ -805,7 +823,8 @@ async function isCreationReclaimActive(
 ): Promise<boolean> {
   const stateAgeMs = nowMs - (reclaim.createdAt ?? mtimeMs);
   if (stateAgeMs >= OWNERLESS_LOCK_GRACE_MS) return false;
-  return isProcessInstanceAlive(reclaim.pid, reclaim.startedAt);
+  return reclaim.startedAt === null ? isProcessAlive(reclaim.pid)
+    : isProcessInstanceAlive(reclaim.pid, reclaim.startedAt, stateAgeMs, OWNERLESS_LOCK_GRACE_MS);
 }
 
 async function releaseCreationLock(

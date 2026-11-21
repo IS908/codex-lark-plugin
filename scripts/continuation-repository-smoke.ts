@@ -114,6 +114,7 @@ async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath
       const lock = join(rootDir, 'inputs', `.creating-${jobId}`);
       const owner = JSON.parse(await readFile(lock, 'utf8'));
       owner.startedAt = stamp === 'legacy-estimate' ? currentProcessStartedAt() + 1_040 : null;
+      delete owner.linuxBirthToken;
       await writeFile(lock, `${JSON.stringify(owner)}\n`, 'utf8');
       await utimes(lock, aged, aged);
     }
@@ -3605,6 +3606,23 @@ assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', concurrentResultA
 concurrentCreateA.close();
 concurrentCreateB.close();
 
+const agedCreation = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+const localLiveJob = continuationJobId('live-cleanup-current-process');
+await concurrentStore.withCreationLock(localLiveJob, async () => {
+  await concurrentStore.install(localLiveJob, [{ sourcePath: concurrentCreateSource, fileName: 'source.txt', kind: 'message_attachment' }]);
+  const localLive = join(concurrentCreateRoot, 'inputs', localLiveJob);
+  await utimes(localLive, agedCreation, agedCreation);
+  await concurrentStore.cleanupOrphans(new Set());
+  assert.ok((await lstat(localLive)).isDirectory());
+});
+
+const reusedLegacyJob = continuationJobId('live-cleanup-reused-legacy-pid');
+const reusedLegacyInput = join(concurrentCreateRoot, 'inputs', reusedLegacyJob);
+const reusedLegacyLock = join(concurrentCreateRoot, 'inputs', `.creating-${reusedLegacyJob}`);
+await mkdir(reusedLegacyInput);
+await writeFile(reusedLegacyLock, JSON.stringify({ pid: process.pid, createdAt: agedCreation.toISOString() }));
+await utimes(reusedLegacyInput, agedCreation, agedCreation);
+await utimes(reusedLegacyLock, agedCreation, agedCreation);
 for (const stamp of ['native', 'legacy-estimate', 'legacy-pid-only']) {
   const liveCleanupJobId = continuationJobId(`live-cleanup-create-${stamp}`);
   const liveCreateChild = spawn(process.execPath, [
@@ -3616,6 +3634,8 @@ for (const stamp of ['native', 'legacy-estimate', 'legacy-pid-only']) {
     const liveCreateStderr = await waitForChildMarker(liveCreateChild, 'MANAGED_INPUT_INSTALLED');
     await concurrentStore.cleanupOrphans(new Set(), Date.now());
     assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', liveCleanupJobId))).isDirectory(), true, stamp);
+    await assert.rejects(lstat(reusedLegacyInput), { code: 'ENOENT' });
+    await assert.rejects(lstat(reusedLegacyLock), { code: 'ENOENT' });
     await writeFile(join(concurrentCreateRoot, `.release-${liveCleanupJobId}`), 'release', 'utf8');
     assert.equal(await liveCreateExit, 0, liveCreateStderr);
   } finally {

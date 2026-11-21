@@ -1,14 +1,17 @@
 import { createRequire as __larkCreateRequire } from 'node:module'; import { fileURLToPath as __larkFileURLToPath } from 'node:url'; import { dirname as __larkPathDirname } from 'node:path'; const require = __larkCreateRequire(import.meta.url); const __filename = __larkFileURLToPath(import.meta.url); const __dirname = __larkPathDirname(__filename);
 import {
   BoundedCache,
+  LINUX_BIRTH_TOKEN_PATTERN,
   acquireLarkInstanceLock,
   appendRotatingLine,
   currentProcessStartedAt,
+  getLinuxProcessBirthToken,
+  isCleanupProcessInstanceAlive,
   isProcessAlive,
   isProcessInstanceAlive,
   registerLockCleanup,
   sweepInbox
-} from "./chunks/chunk-KZLKRYZX.js";
+} from "./chunks/chunk-HC52HRFT.js";
 import {
   require_lib,
   require_src
@@ -70369,7 +70372,12 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
         });
         if (!candidateMetadata) return;
         const stateAgeMs = nowMs - (quarantine.createdAt ?? candidateMetadata.mtimeMs);
-        const ownerIsActive = quarantine.ownerStartedAt === null ? isProcessAlive(quarantine.ownerPid) && stateAgeMs < LEGACY_QUARANTINE_GRACE_MS : await isProcessInstanceAlive(quarantine.ownerPid, quarantine.ownerStartedAt);
+        const ownerIsActive = quarantine.ownerStartedAt === null ? isProcessAlive(quarantine.ownerPid) && stateAgeMs < LEGACY_QUARANTINE_GRACE_MS : await isProcessInstanceAlive(
+          quarantine.ownerPid,
+          quarantine.ownerStartedAt,
+          stateAgeMs,
+          LEGACY_QUARANTINE_GRACE_MS
+        );
         if (ownerIsActive && (quarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES.has(entry.name))) return;
         try {
           await fs24.rename(candidate, this.jobDirectory(quarantine.jobId));
@@ -70479,6 +70487,7 @@ var REDACTION_QUARANTINE_PREFIX2 = ".redacting-";
 var CREATION_LOCK_WAIT_MS = 5 * 60 * 1e3;
 var OWNERLESS_LOCK_GRACE_MS = 3e4;
 var ACTIVE_REDACTION_QUARANTINES2 = /* @__PURE__ */ new Set();
+var ACTIVE_CREATION_NONCES = /* @__PURE__ */ new Set();
 var ContinuationInputStore = class {
   rootDir;
   maxFiles;
@@ -70508,9 +70517,11 @@ var ContinuationInputStore = class {
       const owner = {
         pid: process.pid,
         startedAt: currentProcessStartedAt(),
+        linuxBirthToken: getLinuxProcessBirthToken(process.pid),
         nonce,
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
+      ACTIVE_CREATION_NONCES.add(nonce);
       try {
         await fs25.writeFile(lockDirectory, `${JSON.stringify(owner)}
 `, {
@@ -70547,6 +70558,8 @@ var ContinuationInputStore = class {
           throw new Error("Continuation creation is already in progress for this idempotency key.");
         }
         await new Promise((resolve) => setTimeout(resolve, 20));
+      } finally {
+        if (ownerNonce !== nonce) ACTIVE_CREATION_NONCES.delete(nonce);
       }
     }
     let operationError;
@@ -70567,6 +70580,8 @@ var ContinuationInputStore = class {
             );
           }
           throw releaseError;
+        } finally {
+          ACTIVE_CREATION_NONCES.delete(ownerNonce);
         }
       }
     }
@@ -70806,7 +70821,12 @@ var ContinuationInputStore = class {
           });
           if (!candidateMetadata) return;
           const stateAgeMs = nowMs - (redactionQuarantine.createdAt ?? candidateMetadata.mtimeMs);
-          const ownerIsActive = redactionQuarantine.ownerStartedAt === null ? isProcessAlive(redactionQuarantine.ownerPid) && stateAgeMs < OWNERLESS_LOCK_GRACE_MS : await isProcessInstanceAlive(redactionQuarantine.ownerPid, redactionQuarantine.ownerStartedAt);
+          const ownerIsActive = redactionQuarantine.ownerStartedAt === null ? isProcessAlive(redactionQuarantine.ownerPid) && stateAgeMs < OWNERLESS_LOCK_GRACE_MS : await isProcessInstanceAlive(
+            redactionQuarantine.ownerPid,
+            redactionQuarantine.ownerStartedAt,
+            stateAgeMs,
+            OWNERLESS_LOCK_GRACE_MS
+          );
           if (ownerIsActive && (redactionQuarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES2.has(entry.name))) return;
           try {
             await fs25.rename(candidate2, this.jobDirectory(redactionQuarantine.jobId));
@@ -71030,6 +71050,7 @@ async function readCreationOwner(lockDirectory) {
     return {
       pid: Number(parsed.pid),
       startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null,
+      linuxBirthToken: typeof parsed.linuxBirthToken === "string" && LINUX_BIRTH_TOKEN_PATTERN.test(parsed.linuxBirthToken) ? parsed.linuxBirthToken : null,
       nonce,
       createdAt: parsed.createdAt
     };
@@ -71051,7 +71072,9 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
   const owner = await readCreationOwner(lockDirectory);
   if (owner === null) {
     if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
-  } else if (await isProcessInstanceAlive(owner.pid, owner.startedAt)) return false;
+  } else if (owner.pid === process.pid) {
+    if (owner.nonce !== null && ACTIVE_CREATION_NONCES.has(owner.nonce)) return false;
+  } else if (await isCleanupProcessInstanceAlive(owner.pid, owner.startedAt, owner.linuxBirthToken)) return false;
   const quarantine = path34.join(
     rootDir,
     `${CREATION_RECLAIM_PREFIX}${path34.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes3(8).toString("hex")}`
@@ -71107,7 +71130,7 @@ function parseCreationReclaim(name) {
 async function isCreationReclaimActive(reclaim, mtimeMs, nowMs) {
   const stateAgeMs = nowMs - (reclaim.createdAt ?? mtimeMs);
   if (stateAgeMs >= OWNERLESS_LOCK_GRACE_MS) return false;
-  return isProcessInstanceAlive(reclaim.pid, reclaim.startedAt);
+  return reclaim.startedAt === null ? isProcessAlive(reclaim.pid) : isProcessInstanceAlive(reclaim.pid, reclaim.startedAt, stateAgeMs, OWNERLESS_LOCK_GRACE_MS);
 }
 async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   const owner = await readCreationOwner(lockDirectory);
