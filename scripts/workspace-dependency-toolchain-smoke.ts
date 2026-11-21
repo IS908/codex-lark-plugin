@@ -8,6 +8,17 @@ import { pinWorkspacePath } from '../src/workspace-projects.js';
 
 const fixture = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lark-dependency-toolchain-')));
 const pin = async (directory: string) => pinWorkspacePath(directory, '.');
+
+async function makeLinuxFixturePrivate(root: string): Promise<void> {
+  const info = await fs.lstat(root);
+  if (info.isSymbolicLink()) return;
+  assert.ok(info.isDirectory() || (info.isFile() && info.nlink === 1), 'Only ordinary fixture files can be made private.');
+  await fs.chmod(root, info.isDirectory() || (info.mode & 0o111) !== 0 ? 0o700 : 0o600);
+  if (info.isDirectory()) {
+    for await (const child of await fs.opendir(root)) await makeLinuxFixturePrivate(path.join(root, child.name));
+  }
+}
+
 try {
   const runtime = path.join(fixture, 'runtime');
   const npm = path.join(fixture, 'npm');
@@ -101,6 +112,11 @@ print(json.dumps(dict(prefix=os.path.realpath(sys.prefix), installer=os.path.dir
         filter: (source) => !/^lib\/python[0-9.]+\/site-packages$/.test(path.relative(pythonMetadata.prefix, source)) });
     }
     await fs.cp(pythonMetadata.installer, pipRoot, { recursive: true, verbatimSymlinks: true });
+    if (process.platform === 'linux') {
+      // Normalize only the disposable copies; hosted toolcache permissions vary by runner image.
+      await makeLinuxFixturePrivate(pythonRuntime);
+      await makeLinuxFixturePrivate(pipRoot);
+    }
     const pipProbe = await probeWorkspaceDependencyToolchain({ ...common,
       configured: { ecosystem: 'pip', executable: pythonExecutable, runtime: await pin(pythonRuntime), installer: await pin(pipRoot) } });
     assert.equal(pipProbe.toolchain.abi, pythonMetadata.abi);
