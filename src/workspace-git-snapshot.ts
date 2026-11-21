@@ -156,9 +156,10 @@ export async function readWorkspaceGitDependencyInputs(request: SnapshotRequest,
     || !file.split('/').every((part) => /^[a-zA-Z0-9_.-]+$/.test(part) && !['.', '..'].includes(part)))) throw unavailable();
   const { gitDirectory, authorizedRoots, commit } = request;
   await assertWorkspaceGitCheckoutMounts([gitDirectory]);
-  const measured = await readWorkspaceGitCacheIdentity(request);
-  if (measured.key !== expected.key || measured.storeFingerprint !== expected.storeFingerprint) throw new WorkspaceGitSnapshotError('git_cache_mismatch');
   const executable = await trustedGitExecutable();
+  // The admission footprint alone does not prove that a tree and blob belong to the pinned commit.
+  const measured = await verifyCache(request, executable);
+  if (measured.key !== expected.key || measured.storeFingerprint !== expected.storeFingerprint) throw new WorkspaceGitSnapshotError('git_cache_mismatch');
   const selected = new Map<string, Buffer>();
   for (const file of files) {
     try {

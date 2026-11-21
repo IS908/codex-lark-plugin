@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { deflateSync, inflateSync } from 'node:zlib';
-import { createWorkspaceGitCheckout, gitSnapshotKey, inspectWorkspaceGitSnapshot, readWorkspaceGitDependencyInputs, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
+import { createWorkspaceGitCheckout, gitSnapshotKey, inspectWorkspaceGitSnapshot, readWorkspaceGitCacheIdentity, readWorkspaceGitDependencyInputs, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
 import { createManagedGitSandboxOptions } from '../src/managed-git-sandbox.js';
 import { workspaceMountLayoutSupported } from '../src/managed-workspace-ancestry.js';
@@ -303,6 +303,8 @@ try {
   const overbroad = await makeCache('cache-with-extra-objects', [extra]);
   assert.deepEqual(await inspectWorkspaceGitSnapshot(overbroad), snapshot);
   await assert.rejects(verifyWorkspaceGitCache(overbroad), { code: 'git_cache_invalid' });
+  const overbroadFootprint = await readWorkspaceGitCacheIdentity(overbroad);
+  await assert.rejects(readWorkspaceGitDependencyInputs(overbroad, overbroadFootprint, ['tracked.txt']), { code: 'git_cache_invalid' });
   const incomplete = await makeCache('cache-with-missing-objects', [extra, `^${commit}`], extra);
   assert.equal((await inspectWorkspaceGitSnapshot(incomplete)).commit, extra);
   await assert.rejects(verifyWorkspaceGitCache(incomplete), { code: 'git_cache_invalid' });
