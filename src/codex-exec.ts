@@ -40,6 +40,7 @@ export interface CodexExecRequest {
   ignoreUserConfig?: boolean;
   strictConfig?: boolean;
   validateManagedGitLaunch?: (command: string, env: NodeJS.ProcessEnv) => Promise<{ command: string; prefix: string[]; env: NodeJS.ProcessEnv }>;
+  validateManagedDependencyApproval?: () => Promise<void>;
   managedGitSandbox?: ManagedGitSandboxOptions;
   skipGitRepoCheck?: boolean;
   resumeSessionId?: string | null;
@@ -445,6 +446,7 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
       await currentGuard.assertWrites(guarded.writable, [finalEnv.CODEX_HOME!, tmpDir]);
       await validateTemporary();
     }
+    await request.validateManagedDependencyApproval?.();
     if (request.abortSignal?.aborted) throw new CodexExecAbortedError('', '');
     await new Promise<void>((resolve, reject) => {
       const usePosixProcessGroup = process.platform !== 'win32';

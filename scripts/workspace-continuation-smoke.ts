@@ -190,6 +190,7 @@ try {
     const allocatedRetryId = continuationRetryJobId(validJobId, 'explicit-retry');
     await store.ensure({ owner: { kind: 'async_task', runId: allocatedRetryId }, authorizedRoots: [base],
       roots: failed.permissions.filesystem.managedWorkspaceRoots!, project: failed.permissions.filesystem.workspaceProject,
+      dependencySelections: failed.permissions.filesystem.dependencySelections,
       createdAt: firstRetryAt });
     const retry = await restarted.service.retryForActor(validJobId, source.senderId, undefined, 'explicit-retry');
     assert.equal(retry.jobId, allocatedRetryId);

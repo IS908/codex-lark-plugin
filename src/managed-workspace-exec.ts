@@ -11,6 +11,8 @@ import { hasManagedGitRegistry, resolveManagedGitSelection } from './managed-git
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
 import { validateWorkspaceGitCheckout, WorkspaceGitSnapshotError } from './workspace-git-snapshot.js';
 import { hasWorkspaceDependencyRegistry } from './workspace-dependency-registry.js';
+import type { ManagedWorkspaceStore } from './ports/managed-workspace.js';
+import { prepareManagedWorkspaceDependencies, validateManagedWorkspaceDependencyApproval, validateManagedWorkspaceDependencyReceipts } from './managed-workspace-dependencies.js';
 
 export function assertManagedWorkspaceSandbox(sandbox: CodexExecSandbox | undefined, project?: WorkspaceProjectBinding): void {
   if (sandbox !== 'read-only' && (sandbox !== 'workspace-write' || !project)) {
@@ -59,7 +61,7 @@ export async function protectLegacyGitWorkspace(request: CodexExecRequest, confi
 }
 
 export async function withManagedWorkspace(request: CodexExecRequest, allocation: ManagedRunAllocation,
-  gitRegistry?: GitRegistryPolicy): Promise<CodexExecRequest> {
+  gitRegistry?: GitRegistryPolicy, store?: ManagedWorkspaceStore): Promise<CodexExecRequest> {
   assertManagedWorkspaceSandbox(request.sandbox, allocation.project);
   if (request.sandbox === 'workspace-write' && request.cwd !== allocation.project?.directory) {
     throw new ManagedWorkspaceStorageError('unisolated_source');
@@ -85,12 +87,12 @@ export async function withManagedWorkspace(request: CodexExecRequest, allocation
       additionalWritableDirs: [...new Set([...(request.additionalWritableDirs ?? []), scratch, artifacts])],
     } : {}),
   };
-  return allocation.git || allocation.gitCheckout ? withGitCheckout(request, enriched, allocation, gitRegistry)
+  return allocation.git || allocation.gitCheckout ? withGitCheckout(request, enriched, allocation, gitRegistry, store)
     : protectLegacyGitWorkspace(enriched, gitRegistry?.configPath);
 }
 
 async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecRequest, allocation: ManagedRunAllocation,
-  gitRegistry?: GitRegistryPolicy): Promise<CodexExecRequest> {
+  gitRegistry?: GitRegistryPolicy, store?: ManagedWorkspaceStore): Promise<CodexExecRequest> {
   const { project, git, gitCheckout, scratch, artifacts } = allocation;
   const guard = request.workspaceDirectory;
   const mode = request.sandbox;
@@ -129,6 +131,13 @@ async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecReq
     return createManagedGitSandboxOptions(input);
   };
   const options = await validate();
+  const hasDependencies = Boolean(allocation.dependencySelections?.length);
+  if (hasDependencies && !store) throw new ManagedWorkspaceStorageError('invalid_binding');
+  const { pythonDirectory } = hasDependencies && store ? await prepareManagedWorkspaceDependencies(allocation, store, {
+    ...gitRegistry, authorizedRoots: guard.authorizedRoots, codexCommand: request.command ?? appConfig.codexExecCommand,
+    signal: request.abortSignal,
+  }) : {};
+  if (hasDependencies) extraEnv.LARK_MANAGED_PYTHON_DEPS = pythonDirectory;
   return {
     ...enriched, cwd: gitCheckout.checkout.directory, sandbox: undefined, additionalWritableDirs: undefined,
     ignoreUserConfig: true, strictConfig: true, configOverrides: [...options.overrides], extraEnv,
@@ -141,9 +150,12 @@ async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecReq
       if (current.overrides.length !== options.overrides.length || current.overrides.some((override, index) => override !== options.overrides[index])) {
         throw new ManagedWorkspaceStorageError('git_sandbox_invalid');
       }
+      if (hasDependencies && store) await validateManagedWorkspaceDependencyReceipts(allocation, store);
       return resolveManagedGitLauncher(command, env, [project, git.cache, allocation.roots.scratch, allocation.roots.artifacts, ...extra],
         pluginExecutionRoots(...guard.authorizedRoots));
     },
-    prompt: `${enriched.prompt}\n\n[Isolated Git checkout]\nWork in the current checkout. It started at ${git.commit}. Do not use the original source as a working directory.`,
+    ...(hasDependencies ? { validateManagedDependencyApproval: () => validateManagedWorkspaceDependencyApproval(allocation, gitRegistry?.configPath) } : {}),
+    prompt: `${enriched.prompt}\n\n[Isolated Git checkout]\nWork in the current checkout. It started at ${git.commit}. Do not use the original source as a working directory.${
+      pythonDirectory ? '\nFor Python commands that need the installed packages, set PYTHONPATH="$LARK_MANAGED_PYTHON_DEPS" and use python -B to avoid writing bytecode into the verified tree.' : ''}`,
   };
 }

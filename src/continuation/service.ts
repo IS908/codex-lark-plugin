@@ -18,6 +18,7 @@ import type { ContinuationClock, ContinuationRepository } from '../ports/continu
 import { pinWorkspacePath, validateWorkspaceProject } from '../workspace-projects.js';
 import { readManagedWorkspaceRoots, validateManagedWorkspaceRoots } from '../managed-workspace-storage.js';
 import { resolveManagedGitSelection } from '../managed-git-registry.js';
+import { admitManagedWorkspaceDependencies } from '../managed-workspace-dependencies.js';
 import {
   continuationCreateIdempotencyKey,
   continuationJobId,
@@ -35,6 +36,7 @@ export interface ContinuationServiceOptions {
   foregroundWorkingRoot?: string;
   sourceRegistryPath?: string;
   managedWorkspaceConfigPath?: string;
+  codexCommand?: string;
   filesystemMode: ContinuationFilesystemMode;
   maxAttempts: number;
   maxRetries: number;
@@ -299,6 +301,11 @@ export class ContinuationService implements ContinuationTaskService {
       roots: managedWorkspaceRoots, project: workspaceProject, configPath: this.options.managedWorkspaceConfigPath, authorizedRoots,
       sourceRegistryPath: this.options.sourceRegistryPath, sourceRegistryRoot: authorizedRoots[1],
     }) : undefined;
+    const dependencySelections = this.options.managedWorkspaceConfigPath ? await admitManagedWorkspaceDependencies({
+      roots: managedWorkspaceRoots, project: workspaceProject, git: managedWorkspaceGit, configPath: this.options.managedWorkspaceConfigPath,
+      authorizedRoots, sourceRegistryPath: this.options.sourceRegistryPath, sourceRegistryRoot: authorizedRoots[1],
+      codexCommand: this.options.codexCommand ?? 'codex',
+    }) : undefined;
     const route = deriveRoute(message);
     const brief = sanitizeBrief(action);
     if (managedWorkspaceGit && brief.requiredTools.length) {
@@ -349,6 +356,7 @@ export class ContinuationService implements ContinuationTaskService {
         ...(workspaceProject ? { workspaceProject } : {}),
         ...(managedWorkspaceRoots ? { managedWorkspaceRoots } : {}),
         ...(managedWorkspaceGit ? { managedWorkspaceGit } : {}),
+        ...(managedWorkspaceRoots && dependencySelections !== undefined ? { dependencySelections } : {}),
       },
       hostTools: brief.requiredTools,
       network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',

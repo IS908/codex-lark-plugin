@@ -158,6 +158,7 @@ export async function createContinuationRuntime(
       foregroundWorkingRoot: options.foregroundWorkingRoot,
       sourceRegistryPath: options.sourceRegistryPath,
       managedWorkspaceConfigPath: options.dryRun ? undefined : options.managedWorkspaceConfigPath,
+      codexCommand: options.command,
       filesystemMode: boundedContinuationSandbox(options.configuredSandbox),
       maxAttempts: options.maxAttempts,
       maxRetries: options.maxRetries,

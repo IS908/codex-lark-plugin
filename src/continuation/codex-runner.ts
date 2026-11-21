@@ -30,6 +30,8 @@ import type {
 import { untrustedDataBlock } from '../prompts.js';
 import type { ManagedRunAllocation } from '../domain/managed-workspace.js';
 import { ManagedWorkspaceStorageError } from '../managed-workspace-errors.js';
+import { WorkspaceDependencyPolicyError } from '../workspace-dependency-registry.js';
+import { isManagedWorkspaceDependencyError } from '../managed-workspace-dependencies.js';
 import { protectLegacyGitWorkspace, withManagedWorkspace } from '../managed-workspace-exec.js';
 import type { ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import { validateWorkspaceProject, WorkspaceProjectError } from '../workspace-projects.js';
@@ -386,15 +388,15 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       const managed = await allocateContinuationWorkspace(claim.job, store, this.options);
       const artifactStore = continuationArtifactView(this.options.artifactStore, claim.job, store, this.options);
       const artifactDir = await artifactStore.ensure(claim.job.jobId);
-      return await this.executeGuardedStep(claim, workingDirectory, artifactDir, artifactStore, managed, signal);
+      return await this.executeGuardedStep(claim, workingDirectory, artifactDir, artifactStore, managed, store, signal);
     } catch (error) {
       if (error instanceof ContinuationWorkingDirectoryError || error instanceof WorkspaceProjectError
-        || error instanceof ManagedWorkspaceStorageError) {
+        || error instanceof ManagedWorkspaceStorageError || error instanceof WorkspaceDependencyPolicyError) {
         return {
           outcome: blockedCapabilityOutcome({
             checkpoint: checkpointForClaim(claim),
             errorCode: 'continuation_working_directory_denied',
-            errorSummary: error instanceof WorkspaceProjectError || error instanceof ManagedWorkspaceStorageError
+            errorSummary: error instanceof WorkspaceProjectError || error instanceof ManagedWorkspaceStorageError || error instanceof WorkspaceDependencyPolicyError
               ? error.message
               : 'The continuation working directory is no longer authorized by its snapshot and current operator policy.',
             requiredCapability: 'filesystem.workspace',
@@ -434,6 +436,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     artifactDir: string,
     artifactStore: ContinuationArtifactStore,
     managed: ManagedRunAllocation | undefined,
+    store: ManagedWorkspaceStore | undefined,
     parentSignal: AbortSignal,
   ): Promise<ContinuationExecutionResult> {
     const artifactGuard = await this.startArtifactGuard(claim.job.jobId, parentSignal, artifactStore);
@@ -484,7 +487,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       const request = managed ? await withManagedWorkspace(baseRequest, managed, {
         configPath: this.options.managedWorkspaceConfigPath, sourceRegistryPath: this.options.sourceRegistryPath,
         sourceRegistryRoot: this.options.foregroundWorkingRoot ?? this.options.currentWorkingRoot,
-      }) : await protectLegacyGitWorkspace(baseRequest, this.options.managedWorkspaceConfigPath);
+      }, store) : await protectLegacyGitWorkspace(baseRequest, this.options.managedWorkspaceConfigPath);
 
       const recovery = managed?.git ? undefined : await this.options.toolInvoker?.recover(claim);
       if (recovery?.status === 'failed') {
@@ -1276,6 +1279,7 @@ function assertByteLimit(name: string, value: unknown, limit: number): void {
 
 function mapExecutorError(error: unknown): ContinuationExecutionError {
   if (error instanceof ContinuationExecutionError) return error;
+  if (isManagedWorkspaceDependencyError(error)) return new ContinuationExecutionError(error.code, error.message, false, { cause: error });
   if (error instanceof CodexExecAbortedError) {
     return new ContinuationExecutionError(
       'continuation_aborted',

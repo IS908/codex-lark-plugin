@@ -143,7 +143,7 @@ async function npmFixture(fixture: string, cache: string, toolchain: Probed['too
   return [input, [{ resolved, integrity }], blob] as const;
 }
 
-async function pipFixture(fixture: string, cache: string, toolchain: Probed['toolchain']) {
+export async function pipFixture(fixture: string, cache: string, toolchain: Probed['toolchain']) {
   const source = path.join(fixture, 'pip-source');
   await fs.mkdir(cache);
   const info = 'lark_fixture-1.0.0.dist-info';

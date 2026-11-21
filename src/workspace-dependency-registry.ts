@@ -56,7 +56,7 @@ export class WorkspaceDependencyPolicyError extends Error {
 }
 
 type PreparedDependency = { selection: WorkspaceDependencySelection; stagedLock: string; npmManifest?: Buffer;
-  execution?: WorkspaceDependencyToolchainConfig };
+  execution?: WorkspaceDependencyToolchainConfig; input: WorkspaceDependencyInput; artifactManifest: unknown[] };
 
 export async function resolveWorkspaceDependencySelections(request: {
   configPath?: string;
@@ -136,7 +136,7 @@ export async function resolveWorkspaceDependencySelections(request: {
     const { cache, identity, artifactManifestSha256, cacheFingerprint } = measured;
     prepared.push({ selection: { cache, identity, artifactManifestSha256, cacheFingerprint,
       ...(toolchainFingerprint ? { toolchainFingerprint, toolchainBindingDigest } : {}) },
-      stagedLock: measured.stagedLock, ...(execution ? { execution } : {}),
+      stagedLock: measured.stagedLock, input, artifactManifest, ...(execution ? { execution } : {}),
       ...(input.ecosystem === 'npm' ? { npmManifest: input.manifest } : {}) });
   }
   // Revoke, rather than substitute, if observed policy changed during expensive verification.

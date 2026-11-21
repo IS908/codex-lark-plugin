@@ -60,6 +60,14 @@ interface WorkspaceDependencyInstallMaterial {
   artifactManifest: unknown;
   configured: WorkspaceDependencyToolchainConfig;
   expansionLimits?: WorkspaceDependencyExpansionLimits;
+  signal?: AbortSignal;
+  validateApproval?: () => Promise<void>;
+}
+
+async function assertInstallAllowed(request: Pick<WorkspaceDependencyInstallMaterial, 'signal' | 'validateApproval'>): Promise<void> {
+  request.signal?.throwIfAborted();
+  await request.validateApproval?.();
+  request.signal?.throwIfAborted();
 }
 
 /** Produces an owned private candidate only; publication and restart validation are separate. */
@@ -68,6 +76,7 @@ export async function installWorkspaceDependencyInStaging(request: WorkspaceDepe
   selection: WorkspaceDependencySelection;
   reservedNonce?: string;
 }) {
+  request.signal?.throwIfAborted();
   const selected = workspaceDependencySelectionSchema.safeParse(request.selection);
   const tool = workspaceDependencyToolchainConfigSchema.safeParse(request.configured);
   if (!selected.success || !tool.success || selected.data.identity.ecosystem !== tool.data.ecosystem
@@ -116,7 +125,7 @@ export async function installWorkspaceDependencyInStaging(request: WorkspaceDepe
   if (!mounts.supports(snapshotPath)) fail('dependency_install_storage_invalid');
   await guard?.assertNewDirectory(snapshotPath);
   const inspected = await probeWorkspaceDependencyToolchain({ configured, codexCommand: request.codexCommand,
-    temporaryRoot: parent, configPath: request.configPath, expectedFingerprint: selection.toolchainFingerprint });
+    temporaryRoot: parent, configPath: request.configPath, expectedFingerprint: selection.toolchainFingerprint, signal: request.signal });
   const current = inspected.toolchain;
   const recorded = selection.identity.toolchain;
   if (current.runtime !== recorded.runtime || current.installer !== recorded.installer || current.abi !== recorded.abi
@@ -124,6 +133,7 @@ export async function installWorkspaceDependencyInStaging(request: WorkspaceDepe
     fail('dependency_install_selection_mismatch');
   }
   let staging: WorkspaceProjectBinding | undefined;
+  request.signal?.throwIfAborted();
   const snapshot = await mkdirTemporaryInsidePinnedRoot(parent, snapshotLeaf);
   let safeToRemove = true;
   try {
@@ -154,7 +164,8 @@ export async function installWorkspaceDependencyInStaging(request: WorkspaceDepe
         `--target=${path.join(cwd, outputName)}`, `--requirement=${path.join(cwd, 'requirements.lock')}`];
     }
     await assertProtectedWorkspacePath(staging, true);
-    await runWorkspaceDependencyProcess(launch, args, cwd, installLimitMs, outputLimitBytes);
+    await assertInstallAllowed(request);
+    await runWorkspaceDependencyProcess(launch, args, cwd, installLimitMs, outputLimitBytes, request.signal);
     await verifyCache();
     await inspectWorkspaceDependencyToolchain(configured, selection.toolchainFingerprint);
     await assertProtectedWorkspacePath(staging, true);
@@ -169,6 +180,7 @@ export async function installWorkspaceDependencyInStaging(request: WorkspaceDepe
     const output = await pinWorkspacePath(cwd, outputName);
     if (output.directory !== path.join(cwd, outputName)) fail('dependency_installed_output_invalid');
     const measurement = await measureWorkspaceDependencyOutput(output, input.ecosystem);
+    request.signal?.throwIfAborted();
     return { staging, output, measurement };
   } catch (error) {
     safeToRemove = !(error instanceof WorkspaceDependencyProcessError) || error.quiescent;
@@ -176,6 +188,7 @@ export async function installWorkspaceDependencyInStaging(request: WorkspaceDepe
       await assertProtectedWorkspacePath(staging, true);
       await fs.rm(staging.directory, { recursive: true, force: true });
     }
+    request.signal?.throwIfAborted();
     if (error instanceof WorkspaceDependencyProcessError) {
       fail(error.reason === 'timeout' ? 'dependency_install_timeout' : error.reason === 'output'
         ? 'dependency_install_output_limit' : 'dependency_install_failed');
@@ -218,12 +231,14 @@ export async function ensureManagedWorkspaceDependencyOutput(store: ManagedWorks
     || workspaceDependencyToolchainBindingDigest(configured.data) !== selection.toolchainBindingDigest
     || describeWorkspaceDependencies(material.input).key !== selection.identity.key) fail('dependency_install_selection_mismatch');
   await validatePublicationCheckout(locations);
+  await assertInstallAllowed(material);
   const nonce = randomBytes(12).toString('hex');
   store.reserveDependencyInstall(owner, ecosystem, nonce);
   // A failed or interrupted publication must never adopt an uncommitted filesystem result on replay.
   const { output, measurement } = await installWorkspaceDependencyInStaging({ ...material, selection, temporaryRoot: allocation.scratch, reservedNonce: nonce });
   const receipt = { output, measurement };
-  await publishWorkspaceDependencyOutput({ ...locations, nonce, receipt });
+  await publishWorkspaceDependencyOutput({ ...locations, nonce, receipt }, material);
+  await assertInstallAllowed(material);
   store.completeDependencyInstall(owner, ecosystem, nonce, receipt);
   return receipt;
 }
@@ -239,8 +254,10 @@ const attachNpmOutput = String.raw`
   catch (error) { process.exit(error.code === 'EEXIST' ? 2 : 1); }
 `;
 
-export async function publishWorkspaceDependencyOutput(request: Publication): Promise<void> {
+export async function publishWorkspaceDependencyOutput(request: Publication,
+  policy?: Pick<WorkspaceDependencyInstallMaterial, 'signal' | 'validateApproval'>): Promise<void> {
   await validateReceiptTree(request);
+  if (policy) await assertInstallAllowed(policy);
   if (request.ecosystem === 'pip') return;
   const { checkout, receipt } = request;
   try {

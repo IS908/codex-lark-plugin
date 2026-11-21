@@ -11,6 +11,7 @@ import { runWorkspaceDependencyProcess } from '../src/workspace-dependency-proce
 import { inspectWorkspaceDependencyToolchain, probeWorkspaceDependencyToolchain } from '../src/workspace-dependency-toolchain.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
 import { exerciseWorkspaceDependencyInstall } from './workspace-dependency-install-fixture.js';
+import { checkManagedDependencyEntrypoints } from './fixtures/managed-dependency-entrypoints.js';
 
 const fixture = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lark-dependency-toolchain-')));
 const pin = async (directory: string) => pinWorkspacePath(directory, '.');
@@ -89,6 +90,22 @@ try {
     { reason: 'timeout', quiescent: false });
   await assert.rejects(runWorkspaceDependencyProcess(processFixture, ["process.stdout.write('x'.repeat(4096))"], fixture, 5000, 1024),
     { reason: 'output', quiescent: false });
+  const canceled = new AbortController();
+  canceled.abort();
+  await assert.rejects(runWorkspaceDependencyProcess(processFixture, ['process.exit(0)'], fixture, 5000, 1024, canceled.signal),
+    { reason: 'aborted', quiescent: true });
+  const controller = new AbortController();
+  const started = path.join(fixture, 'process-abort-started');
+  const observed = assert.rejects(runWorkspaceDependencyProcess(processFixture, [
+    "require('node:fs').writeFileSync(process.argv[1], 'started'); setInterval(() => {}, 1000);", started,
+  ], fixture, 5000, 1024, controller.signal), { reason: 'aborted', quiescent: false });
+  try {
+    for (let i = 0; i < 100 && !(await fs.stat(started).catch(() => undefined)); i++) {
+      await new Promise((done) => setTimeout(done, 20));
+    }
+    assert.equal(await fs.readFile(started, 'utf8'), 'started');
+  } finally { controller.abort(); }
+  await observed;
 
   const native = process.env.LARK_TEST_CODEX_NATIVE_BINARY;
   if (native) {
@@ -250,6 +267,7 @@ print(json.dumps(dict(prefix=os.path.realpath(sys.prefix), installer=os.path.dir
     assert.equal(pipProbe.toolchain.platformAbi, npmProbe.toolchain.platformAbi);
     console.log(`workspace dependency native toolchains: Node ${npmProbe.toolchain.runtime}/npm ${npmProbe.toolchain.installer}; CPython ${pipProbe.toolchain.runtime}/pip ${pipProbe.toolchain.installer}; ${pipProbe.toolchain.platformAbi}`);
     await exerciseWorkspaceDependencyInstall(fixture, common, npmProbe, pipProbe);
+    await checkManagedDependencyEntrypoints(fixture, native, pipProbe);
   }
   console.log('workspace dependency toolchain smoke: PASS');
 } finally { await fs.rm(fixture, { recursive: true, force: true }); }

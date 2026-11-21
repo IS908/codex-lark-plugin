@@ -29,6 +29,13 @@ try {
   await assert.rejects(installer.publishWorkspaceDependencyOutput(request), { code: 'dependency_install_output_conflict' });
   assert.equal((await fs.stat(existing, { bigint: true })).ino, unowned.ino, 'even an empty unowned directory is not replaced');
   await fs.rmdir(existing);
+  const denied = new Error('Approval changed.');
+  await assert.rejects(installer.publishWorkspaceDependencyOutput(request, { validateApproval: async () => { throw denied; } }), denied);
+  await assert.rejects(fs.lstat(existing), { code: 'ENOENT' });
+  const controller = new AbortController();
+  await assert.rejects(installer.publishWorkspaceDependencyOutput(request, { signal: controller.signal,
+    validateApproval: async () => { controller.abort(); } }), { name: 'AbortError' });
+  await assert.rejects(fs.lstat(existing), { code: 'ENOENT' });
   await installer.publishWorkspaceDependencyOutput(request);
   assert.equal(await fs.realpath(existing), output.directory);
   assert.equal(execFileSync(process.execPath, ['-p', "require('lark-publish')"], { cwd: checkoutPath, env: {}, encoding: 'utf8' }).trim(), '42');

@@ -155,7 +155,9 @@ export async function probeWorkspaceDependencyToolchain(input: {
   temporaryRoot: WorkspaceProjectBinding;
   configPath?: string;
   expectedFingerprint?: string;
+  signal?: AbortSignal;
 }) {
+  input.signal?.throwIfAborted();
   const selected = await inspectWorkspaceDependencyToolchain(input.configured, input.expectedFingerprint);
   const { ecosystem, runtime, installer } = selected.configured;
   const mounts = await readWorkspaceDependencyMountPolicy().catch(invalid);
@@ -180,7 +182,7 @@ export async function probeWorkspaceDependencyToolchain(input: {
       staging: home, protectedBindings: guard?.protectedBindings });
     const run = async (args: string[]) => {
       stage = 'runtime';
-      await runWorkspaceDependencyProcess(launcher, args, cwd, 15_000, 16 * 1024);
+      await runWorkspaceDependencyProcess(launcher, args, cwd, 15_000, 16 * 1024, input.signal);
       stage = 'protocol';
       await assertProtectedWorkspacePath(home, true);
       return readProbeResult(path.join(cwd, probeResultFile));
@@ -202,6 +204,7 @@ export async function probeWorkspaceDependencyToolchain(input: {
     return { ...selected, toolchain: toolchain.data };
   } catch (error) {
     if (error instanceof WorkspaceDependencyProcessError) cleanup = error.quiescent;
+    input.signal?.throwIfAborted();
     if (error instanceof WorkspaceDependencyToolchainError) throw error;
     throw new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed', stage);
   } finally {

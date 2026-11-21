@@ -2986,7 +2986,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3013,7 +3013,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s22) {
       return s1.schema === s22.schema && s1.root === s22.root && s1.baseId === s22.baseId;
     }
-    function resolve(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3264,8 +3264,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path44) {
-      let input2 = path44;
+    function removeDotSegments(path48) {
+      let input2 = path48;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3339,11 +3339,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path44) {
-      if (path44 === "" || path44[0] === "/") {
-        return removeDotSegments(path44);
+    function removeDotSegmentsRelative(path48) {
+      if (path48 === "" || path48[0] === "/") {
+        return removeDotSegments(path48);
       }
-      const segments = path44.split("/");
+      const segments = path48.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3706,8 +3706,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path44 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path44 && path44 !== "/" ? path44 : void 0;
+        const path48 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path48 && path48 !== "/" ? path48 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -3877,7 +3877,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve(baseURI, relativeURI, options2) {
+    function resolve2(baseURI, relativeURI, options2) {
       const schemelessOptions = options2 ? Object.assign({ scheme: "null" }, options2) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4268,7 +4268,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize2,
-      resolve,
+      resolve: resolve2,
       resolveComponent,
       equal,
       serialize,
@@ -5112,8 +5112,8 @@ var require_multipleOf = __commonJS({
         const { gen, data, schemaCode, it: it2 } = cxt;
         const prec = it2.opts.multipleOfPrecision;
         const res = gen.let("res");
-        const invalid = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid}))`);
+        const invalid6 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid6}))`);
       }
     };
     exports.default = def;
@@ -5776,7 +5776,7 @@ var require_contains = __commonJS({
           const count = gen.let("count", 0);
           validateItems(schValid, () => gen.if(schValid, () => checkLimits(count)));
         }
-        function validateItems(_valid, block) {
+        function validateItems(_valid, block2) {
           gen.forRange("i", 0, len, (i) => {
             cxt.subschema({
               keyword: "contains",
@@ -5784,7 +5784,7 @@ var require_contains = __commonJS({
               dataPropType: util_1.Type.Num,
               compositeRule: true
             }, _valid);
-            block();
+            block2();
           });
         }
         function checkLimits(count) {
@@ -7244,12 +7244,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f2;
     };
-    function addFormats(ajv, list, fs33, exportName) {
+    function addFormats(ajv, list, fs37, exportName) {
       var _a3;
       var _b;
       (_a3 = (_b = ajv.opts.code).formats) !== null && _a3 !== void 0 ? _a3 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f2 of list)
-        ajv.addFormat(f2, fs33[f2]);
+        ajv.addFormat(f2, fs37[f2]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -7315,10 +7315,10 @@ var require_pend = __commonJS({
 // node_modules/yauzl/fd-slicer.js
 var require_fd_slicer = __commonJS({
   "node_modules/yauzl/fd-slicer.js"(exports) {
-    var fs33 = __require("fs");
+    var fs37 = __require("fs");
     var util2 = __require("util");
     var stream = __require("stream");
-    var Readable = stream.Readable;
+    var Readable2 = stream.Readable;
     var PassThrough = stream.PassThrough;
     var Pend = require_pend();
     var EventEmitter = __require("events").EventEmitter;
@@ -7335,7 +7335,7 @@ var require_fd_slicer = __commonJS({
     FdSlicer.prototype.read = function(buffer, offset, length, position, callback) {
       var self = this;
       self.pend.go(function(cb) {
-        fs33.read(self.fd, buffer, offset, length, position, function(err, bytesRead, buffer2) {
+        fs37.read(self.fd, buffer, offset, length, position, function(err, bytesRead, buffer2) {
           cb();
           callback(err, bytesRead, buffer2);
         });
@@ -7352,7 +7352,7 @@ var require_fd_slicer = __commonJS({
       self.refCount -= 1;
       if (self.refCount < 0) throw new Error("invalid unref");
       if (self.refCount > 0) return;
-      fs33.close(self.fd, onCloseDone);
+      fs37.close(self.fd, onCloseDone);
       function onCloseDone(err) {
         if (err) {
           self.emit("error", err);
@@ -7361,10 +7361,10 @@ var require_fd_slicer = __commonJS({
         }
       }
     };
-    util2.inherits(ReadStream, Readable);
+    util2.inherits(ReadStream, Readable2);
     function ReadStream(context, options2) {
       options2 = options2 || {};
-      Readable.call(this, options2);
+      Readable2.call(this, options2);
       this.context = context;
       this.context.ref();
       this.start = options2.start || 0;
@@ -7384,7 +7384,7 @@ var require_fd_slicer = __commonJS({
       }
       self.context.pend.go(function(cb) {
         var buffer = Buffer.allocUnsafe(toRead);
-        fs33.read(self.context.fd, buffer, 0, toRead, self.pos, function(err, bytesRead) {
+        fs37.read(self.context.fd, buffer, 0, toRead, self.pos, function(err, bytesRead) {
           if (err) {
             self.destroy(err);
           } else if (bytesRead === 0) {
@@ -7744,7 +7744,7 @@ var require_crc32 = __commonJS({
 // node_modules/yauzl/index.js
 var require_yauzl = __commonJS({
   "node_modules/yauzl/index.js"(exports) {
-    var fs33 = __require("fs");
+    var fs37 = __require("fs");
     var zlib = __require("zlib");
     var fd_slicer = require_fd_slicer();
     var util2 = __require("util");
@@ -7769,39 +7769,39 @@ var require_yauzl = __commonJS({
     exports.Entry = Entry;
     exports.LocalFileHeader = LocalFileHeader;
     exports.RandomAccessReader = RandomAccessReader2;
-    function openPromise(path44, options2) {
-      return new Promise((resolve, reject) => {
-        open2(path44, { ...options2, lazyEntries: true }, function(err, zipfile) {
+    function openPromise(path48, options2) {
+      return new Promise((resolve2, reject) => {
+        open2(path48, { ...options2, lazyEntries: true }, function(err, zipfile) {
           if (err) return reject(err);
-          resolve(zipfile);
+          resolve2(zipfile);
         });
       });
     }
     function fromFdPromise(fd, options2) {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         fromFd(fd, { ...options2, lazyEntries: true }, function(err, zipfile) {
           if (err) return reject(err);
-          resolve(zipfile);
+          resolve2(zipfile);
         });
       });
     }
     function fromBufferPromise(buffer, options2) {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         fromBuffer(buffer, { ...options2, lazyEntries: true }, function(err, zipfile) {
           if (err) return reject(err);
-          resolve(zipfile);
+          resolve2(zipfile);
         });
       });
     }
     function fromRandomAccessReaderPromise2(reader, totalSize, options2) {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         fromRandomAccessReader(reader, totalSize, { ...options2, lazyEntries: true }, function(err, zipfile) {
           if (err) return reject(err);
-          resolve(zipfile);
+          resolve2(zipfile);
         });
       });
     }
-    function open2(path44, options2, callback) {
+    function open2(path48, options2, callback) {
       if (typeof options2 === "function") {
         callback = options2;
         options2 = null;
@@ -7813,10 +7813,10 @@ var require_yauzl = __commonJS({
       if (options2.validateEntrySizes == null) options2.validateEntrySizes = true;
       if (options2.strictFileNames == null) options2.strictFileNames = false;
       if (callback == null) callback = defaultCallback;
-      fs33.open(path44, "r", function(err, fd) {
+      fs37.open(path48, "r", function(err, fd) {
         if (err) return callback(err);
         fromFd(fd, options2, function(err2, zipfile) {
-          if (err2) fs33.close(fd, defaultCallback);
+          if (err2) fs37.close(fd, defaultCallback);
           callback(err2, zipfile);
         });
       });
@@ -7833,7 +7833,7 @@ var require_yauzl = __commonJS({
       if (options2.validateEntrySizes == null) options2.validateEntrySizes = true;
       if (options2.strictFileNames == null) options2.strictFileNames = false;
       if (callback == null) callback = defaultCallback;
-      fs33.fstat(fd, function(err, stats) {
+      fs37.fstat(fd, function(err, stats) {
         if (err) return callback(err);
         var reader = new fd_slicer.FdSlicer(fd);
         fromRandomAccessReader(reader, stats.size, options2, callback);
@@ -8081,15 +8081,15 @@ var require_yauzl = __commonJS({
         if (self.autoClose) self.close();
       }
       function onEntry(entry) {
-        let { resolve } = pendingResolveReject;
+        let { resolve: resolve2 } = pendingResolveReject;
         pendingResolveReject = null;
-        resolve({ value: entry });
+        resolve2({ value: entry });
       }
       function onEnd() {
-        let { resolve } = pendingResolveReject;
+        let { resolve: resolve2 } = pendingResolveReject;
         pendingResolveReject = null;
         cleanup();
-        resolve({ done: true });
+        resolve2({ done: true });
       }
       function onError(err) {
         let { reject } = pendingResolveReject;
@@ -8102,9 +8102,9 @@ var require_yauzl = __commonJS({
           return this;
         },
         next() {
-          const promise2 = new Promise((resolve, reject) => {
+          const promise2 = new Promise((resolve2, reject) => {
             if (pendingResolveReject != null) throw new Error("next() called before previous Promise was resolved.");
-            pendingResolveReject = { resolve, reject };
+            pendingResolveReject = { resolve: resolve2, reject };
           });
           self.readEntry();
           return promise2;
@@ -8293,26 +8293,26 @@ var require_yauzl = __commonJS({
       });
     };
     ZipFile.prototype.openReadStreamPromise = function(entry, options2) {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         this.openReadStream(entry, options2, function(err, readStream) {
           if (err) return reject(err);
-          resolve(readStream);
+          resolve2(readStream);
         });
       });
     };
     ZipFile.prototype.openReadStreamLowLevelPromise = function(fileDataStart, compressedSize, relativeStart, relativeEnd, decompress, uncompressedSize) {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         this.openReadStream(fileDataStart, compressedSize, relativeStart, relativeEnd, decompress, uncompressedSize, function(err, readStream) {
           if (err) return reject(err);
-          resolve(readStream);
+          resolve2(readStream);
         });
       });
     };
     ZipFile.prototype.readLocalFileHeaderPromise = function(entry, options2) {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         this.readLocalFileHeader(entry, options2, function(err, localFileHeader) {
           if (err) return reject(err);
-          resolve(localFileHeader);
+          resolve2(localFileHeader);
         });
       });
     };
@@ -11585,12 +11585,12 @@ var require_luxon = __commonJS({
         if (!reason) {
           throw new InvalidArgumentError("need to specify a reason the Duration is invalid");
         }
-        const invalid = reason instanceof Invalid ? reason : new Invalid(reason, explanation);
+        const invalid6 = reason instanceof Invalid ? reason : new Invalid(reason, explanation);
         if (Settings.throwOnInvalid) {
-          throw new InvalidDurationError(invalid);
+          throw new InvalidDurationError(invalid6);
         } else {
           return new _Duration({
-            invalid
+            invalid: invalid6
           });
         }
       }
@@ -12182,12 +12182,12 @@ var require_luxon = __commonJS({
         if (!reason) {
           throw new InvalidArgumentError("need to specify a reason the Interval is invalid");
         }
-        const invalid = reason instanceof Invalid ? reason : new Invalid(reason, explanation);
+        const invalid6 = reason instanceof Invalid ? reason : new Invalid(reason, explanation);
         if (Settings.throwOnInvalid) {
-          throw new InvalidIntervalError(invalid);
+          throw new InvalidIntervalError(invalid6);
         } else {
           return new _Interval({
-            invalid
+            invalid: invalid6
           });
         }
       }
@@ -13689,9 +13689,9 @@ var require_luxon = __commonJS({
             obj[u2] = defaultUnitValues[u2];
           }
         }
-        const invalid = hasInvalidGregorianData(obj) || hasInvalidTimeData(obj);
-        if (invalid) {
-          return DateTime.invalid(invalid);
+        const invalid6 = hasInvalidGregorianData(obj) || hasInvalidTimeData(obj);
+        if (invalid6) {
+          return DateTime.invalid(invalid6);
         }
         const offsetProvis = guessOffsetForZone(zone);
         [ts2, o] = objToTS(obj, offsetProvis, zone);
@@ -13748,24 +13748,24 @@ var require_luxon = __commonJS({
        */
       constructor(config2) {
         const zone = config2.zone || Settings.defaultZone;
-        let invalid = config2.invalid || (Number.isNaN(config2.ts) ? new Invalid("invalid input") : null) || (!zone.isValid ? unsupportedZone(zone) : null);
+        let invalid6 = config2.invalid || (Number.isNaN(config2.ts) ? new Invalid("invalid input") : null) || (!zone.isValid ? unsupportedZone(zone) : null);
         this.ts = isUndefined(config2.ts) ? Settings.now() : config2.ts;
         let c = null, o = null;
-        if (!invalid) {
+        if (!invalid6) {
           const unchanged = config2.old && config2.old.ts === this.ts && config2.old.zone.equals(zone);
           if (unchanged) {
             [c, o] = [config2.old.c, config2.old.o];
           } else {
             const ot2 = isNumber(config2.o) && !config2.old ? config2.o : zone.offset(this.ts);
             c = tsToObj(this.ts, ot2);
-            invalid = Number.isNaN(c.year) ? new Invalid("invalid input") : null;
-            c = invalid ? null : c;
-            o = invalid ? null : ot2;
+            invalid6 = Number.isNaN(c.year) ? new Invalid("invalid input") : null;
+            c = invalid6 ? null : c;
+            o = invalid6 ? null : ot2;
           }
         }
         this._zone = zone;
         this.loc = config2.loc || Locale.create();
-        this.invalid = invalid;
+        this.invalid = invalid6;
         this.weekData = null;
         this.localWeekData = null;
         this.c = c;
@@ -13999,9 +13999,9 @@ var require_luxon = __commonJS({
             normalized[u2] = objNow[u2];
           }
         }
-        const higherOrderInvalid = useWeekData ? hasInvalidWeekData(normalized, minDaysInFirstWeek, startOfWeek) : containsOrdinal ? hasInvalidOrdinalData(normalized) : hasInvalidGregorianData(normalized), invalid = higherOrderInvalid || hasInvalidTimeData(normalized);
-        if (invalid) {
-          return _DateTime.invalid(invalid);
+        const higherOrderInvalid = useWeekData ? hasInvalidWeekData(normalized, minDaysInFirstWeek, startOfWeek) : containsOrdinal ? hasInvalidOrdinalData(normalized) : hasInvalidGregorianData(normalized), invalid6 = higherOrderInvalid || hasInvalidTimeData(normalized);
+        if (invalid6) {
+          return _DateTime.invalid(invalid6);
         }
         const gregorian = useWeekData ? weekToGregorian(normalized, minDaysInFirstWeek, startOfWeek) : containsOrdinal ? ordinalToGregorian(normalized) : normalized, [tsFinal, offsetFinal] = objToTS(gregorian, offsetProvis, zoneToUse), inst = new _DateTime({
           ts: tsFinal,
@@ -14102,9 +14102,9 @@ var require_luxon = __commonJS({
           locale,
           numberingSystem,
           defaultToEN: true
-        }), [vals, parsedZone, specificOffset, invalid] = parseFromTokens(localeToUse, text, fmt);
-        if (invalid) {
-          return _DateTime.invalid(invalid);
+        }), [vals, parsedZone, specificOffset, invalid6] = parseFromTokens(localeToUse, text, fmt);
+        if (invalid6) {
+          return _DateTime.invalid(invalid6);
         } else {
           return parseDataToDateTime(vals, parsedZone, opts, `format ${fmt}`, text, specificOffset);
         }
@@ -14150,12 +14150,12 @@ var require_luxon = __commonJS({
         if (!reason) {
           throw new InvalidArgumentError("need to specify a reason the DateTime is invalid");
         }
-        const invalid = reason instanceof Invalid ? reason : new Invalid(reason, explanation);
+        const invalid6 = reason instanceof Invalid ? reason : new Invalid(reason, explanation);
         if (Settings.throwOnInvalid) {
-          throw new InvalidDateTimeError(invalid);
+          throw new InvalidDateTimeError(invalid6);
         } else {
           return new _DateTime({
-            invalid
+            invalid: invalid6
           });
         }
       }
@@ -17750,8 +17750,8 @@ var require_CronFileParser = __commonJS({
           expressions: [],
           errors: {}
         };
-        for (const block of blocks) {
-          const entry = block.trim();
+        for (const block2 of blocks) {
+          const entry = block2.trim();
           if (entry.length === 0 || entry.startsWith("#")) {
             continue;
           }
@@ -18208,8 +18208,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path44, errorMaps, issueData } = params;
-  const fullPath = [...path44, ...issueData.path || []];
+  const { data, path: path48, errorMaps, issueData } = params;
+  const fullPath = [...path48, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -18324,11 +18324,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path44, key) {
+  constructor(parent, value, path48, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path44;
+    this._path = path48;
     this._key = key;
   }
   get path() {
@@ -22283,10 +22283,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path44) {
-  if (!path44)
+function getElementAtPath(obj, path48) {
+  if (!path48)
     return obj;
-  return path44.reduce((acc, key) => acc?.[key], obj);
+  return path48.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -22626,11 +22626,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path44, issues) {
+function prefixIssues(path48, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path44);
+    iss.path.unshift(path48);
     return iss;
   });
 }
@@ -23092,16 +23092,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path44 = []) => {
+  const processError = (error63, path48 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path44, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path48, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path44, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path48, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path44, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path48, ...issue2.path]);
       } else {
-        const fullpath = [...path44, ...issue2.path];
+        const fullpath = [...path48, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -23140,17 +23140,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path44 = []) => {
+  const processError = (error63, path48 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path44, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path48, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path44, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path48, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path44, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path48, ...issue2.path]);
       } else {
-        const fullpath = [...path44, ...issue2.path];
+        const fullpath = [...path48, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -23189,8 +23189,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path44 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path44) {
+  const path48 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path48) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -26533,7 +26533,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve) {
+function isRecursive(inst, stack, resolve2) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -26543,7 +26543,7 @@ function isRecursive(inst, stack, resolve) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve);
+      const answer = isRecursive(child, stack, resolve2);
       if (answer > result)
         result = answer;
     }
@@ -26554,7 +26554,7 @@ function isRecursive(inst, stack, resolve) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve2) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -26618,7 +26618,7 @@ function isRecursive(inst, stack, resolve) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve2 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -38533,21 +38533,21 @@ function visit(schema, fnOrHandlers) {
       case "object": {
         const oldShape = def.shape;
         const keys = Object.keys(oldShape);
-        let changed = false;
+        let changed3 = false;
         const newShape = {};
         for (const k2 of keys) {
           const mapped = run(oldShape[k2]);
           if (mapped !== oldShape[k2])
-            changed = true;
+            changed3 = true;
           newShape[k2] = mapped;
         }
         let newCatchall = def.catchall;
         if (def.catchall) {
           newCatchall = run(def.catchall);
           if (newCatchall !== def.catchall)
-            changed = true;
+            changed3 = true;
         }
-        return changed ? clone(s3, { ...def, shape: newShape, catchall: newCatchall }) : s3;
+        return changed3 ? clone(s3, { ...def, shape: newShape, catchall: newCatchall }) : s3;
       }
       case "array": {
         const mapped = run(def.element);
@@ -38555,21 +38555,21 @@ function visit(schema, fnOrHandlers) {
       }
       case "tuple": {
         const oldItems = def.items;
-        let changed = false;
+        let changed3 = false;
         const newItems = [];
         for (const item of oldItems) {
           const mapped = run(item);
           if (mapped !== item)
-            changed = true;
+            changed3 = true;
           newItems.push(mapped);
         }
         let newRest = def.rest;
         if (def.rest) {
           newRest = run(def.rest);
           if (newRest !== def.rest)
-            changed = true;
+            changed3 = true;
         }
-        return changed ? clone(s3, { ...def, items: newItems, rest: newRest }) : s3;
+        return changed3 ? clone(s3, { ...def, items: newItems, rest: newRest }) : s3;
       }
       case "record":
       case "map": {
@@ -38583,15 +38583,15 @@ function visit(schema, fnOrHandlers) {
       }
       case "union": {
         const oldOptions = def.options;
-        let changed = false;
+        let changed3 = false;
         const newOptions = [];
         for (const opt of oldOptions) {
           const mapped = run(opt);
           if (mapped !== opt)
-            changed = true;
+            changed3 = true;
           newOptions.push(mapped);
         }
-        return changed ? clone(s3, { ...def, options: newOptions }) : s3;
+        return changed3 ? clone(s3, { ...def, options: newOptions }) : s3;
       }
       case "intersection": {
         const newLeft = run(def.left);
@@ -38741,11 +38741,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path44) {
-  if (path44.length === 0) {
+function getDotPath(path48) {
+  if (path48.length === 0) {
     return "object root";
   }
-  return path44.reduce((acc, seg, index) => {
+  return path48.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -40972,13 +40972,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path44 = ref.slice(1).split("/").filter(Boolean);
-  if (path44.length === 0) {
+  const path48 = ref.slice(1).split("/").filter(Boolean);
+  if (path48.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path44[0] === defsKey) {
-    const key = path44[1] === void 0 ? void 0 : decodeJSONPointerSegment(path44[1]);
+  if (path48[0] === defsKey) {
+    const key = path48[1] === void 0 ? void 0 : decodeJSONPointerSegment(path48[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -45056,7 +45056,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
         options2?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -45073,7 +45073,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options2) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options2 ?? {};
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -45151,7 +45151,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve(parseResult.data);
+            resolve2(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -45413,12 +45413,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve, interval);
+      const timeoutId = setTimeout(resolve2, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -46558,7 +46558,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -47222,12 +47222,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve) => {
+    return new Promise((resolve2) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve();
+        resolve2();
       } else {
-        this._stdout.once("drain", resolve);
+        this._stdout.once("drain", resolve2);
       }
     });
   }
@@ -47263,7 +47263,7 @@ var FeishuTimeoutError = class extends Error {
   }
 };
 function sleep(ms2) {
-  return new Promise((resolve) => setTimeout(resolve, ms2));
+  return new Promise((resolve2) => setTimeout(resolve2, ms2));
 }
 function positiveInt(value, fallback) {
   if (!Number.isFinite(value) || value === void 0 || value <= 0) return fallback;
@@ -47455,16 +47455,16 @@ async function validateAccessControlMutation(input2) {
     resolvedFromCurrentChat
   };
 }
-function formatAccessControlMutationMessage(changed, action, list, _value) {
+function formatAccessControlMutationMessage(changed3, action, list, _value) {
   if (list === "allowed_user_ids") {
-    if (changed) return action === "add" ? "User access added." : "User access removed.";
+    if (changed3) return action === "add" ? "User access added." : "User access removed.";
     return action === "add" ? "User access already allowed." : "User access was not configured.";
   }
   if (list === "allowed_chat_ids") {
-    if (changed) return action === "add" ? "Chat access added." : "Chat access removed.";
+    if (changed3) return action === "add" ? "Chat access added." : "Chat access removed.";
     return action === "add" ? "Chat access already allowed." : "Chat access was not configured.";
   }
-  if (changed) return action === "add" ? "No-mention mode enabled." : "No-mention mode disabled.";
+  if (changed3) return action === "add" ? "No-mention mode enabled." : "No-mention mode disabled.";
   return action === "add" ? "No-mention mode already enabled." : "No-mention mode already disabled.";
 }
 
@@ -48815,7 +48815,7 @@ async function fetchMessageWithLarkCliUserIdentity(messageId) {
   }
 }
 function runProcess(command, args, options2) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const child = spawn(command, args, {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
@@ -48834,7 +48834,7 @@ function runProcess(command, args, options2) {
       settled = true;
       clearTimeout(timer);
       if (!keepForceKillTimer && forceKillTimer) clearTimeout(forceKillTimer);
-      resolve(result);
+      resolve2(result);
     };
     const append = (current, chunk, currentBytes) => {
       const nextBytes = currentBytes + chunk.length;
@@ -49645,13 +49645,13 @@ function sha256(value) {
 function escapeAttr(value) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-function renderBlock(block) {
-  return `${block.label}
-${block.content}`;
+function renderBlock(block2) {
+  return `${block2.label}
+${block2.content}`;
 }
-function renderSuppressedProfileStub(block) {
+function renderSuppressedProfileStub(block2) {
   return [
-    `<memory_context_omitted kind="${escapeAttr(block.kind)}" key="${escapeAttr(block.key)}" reason="unchanged_within_dedup_window">`,
+    `<memory_context_omitted kind="${escapeAttr(block2.kind)}" key="${escapeAttr(block2.key)}" reason="unchanged_within_dedup_window">`,
     "Previously injected unchanged profile context for this chat/thread; content omitted to avoid repeated hot-context injection.",
     "</memory_context_omitted>"
   ].join("\n");
@@ -49693,21 +49693,21 @@ var MemoryContextDeduper = class {
     let injectedCount = 0;
     let suppressedCount = 0;
     let bytesSaved = 0;
-    for (const block of blocks) {
-      const blockText = renderBlock(block);
+    for (const block2 of blocks) {
+      const blockText = renderBlock(block2);
       const hash2 = sha256(blockText);
-      const previous = state.get(block.key);
+      const previous = state.get(block2.key);
       const unchanged = previous?.hash === hash2;
       const withinWindow = previous ? nowMs - previous.injectedAtMs < this.windowMs : false;
       if (unchanged && withinWindow) {
         suppressedCount += 1;
         bytesSaved += Buffer.byteLength(blockText, "utf8");
-        if (block.kind === "profile" || block.kind === "mentioned_profile") {
-          rendered.push(renderSuppressedProfileStub(block));
+        if (block2.kind === "profile" || block2.kind === "mentioned_profile") {
+          rendered.push(renderSuppressedProfileStub(block2));
         }
         continue;
       }
-      state.set(block.key, { hash: hash2, injectedAtMs: nowMs });
+      state.set(block2.key, { hash: hash2, injectedAtMs: nowMs });
       injectedCount += 1;
       rendered.push(blockText);
     }
@@ -49850,8 +49850,8 @@ function untrustedDataBlock(label, content) {
 function quotedInteractiveCardRecoveryNote(parentContent) {
   if (!parentContent) return "";
   const messageIds = [];
-  for (const block of parentContent.split("\n---\n")) {
-    const header = block.split("\ncontent:\n", 1)[0] ?? "";
+  for (const block2 of parentContent.split("\n---\n")) {
+    const header = block2.split("\ncontent:\n", 1)[0] ?? "";
     const messageId = header.match(/^message_id:\s*(om_[A-Za-z0-9_]+)\s*$/m)?.[1];
     if (messageId && /^msg_type:\s*interactive(?:_card)?\s*$/m.test(header) && /^hydration_status:\s*failed\s*$/m.test(header) && /^reason:\s*fetch_failed\s*$/m.test(header)) {
       messageIds.push(messageId);
@@ -50088,7 +50088,7 @@ var DEFAULT_BODY_MAX_BYTES = 1200;
 function buildRecentThreadContext(args) {
   const turnLimit = positiveInt2(args.options?.turnLimit, DEFAULT_TURN_LIMIT);
   const messageLimit = positiveInt2(args.options?.messageLimit, DEFAULT_MESSAGE_LIMIT);
-  const maxBytes = positiveInt2(args.options?.maxBytes, DEFAULT_MAX_BYTES);
+  const maxBytes2 = positiveInt2(args.options?.maxBytes, DEFAULT_MAX_BYTES);
   const bodyMaxBytes = positiveInt2(args.options?.bodyMaxBytes, DEFAULT_BODY_MAX_BYTES);
   const sorted2 = args.messages.map((message, index) => ({ message, index })).filter(({ message }) => sameThread(message.threadId, args.threadId)).sort(compareBufferedMessages);
   if (sorted2.length === 0) return void 0;
@@ -50102,7 +50102,7 @@ function buildRecentThreadContext(args) {
     quotedContent: args.quotedContent,
     bodyMaxBytes
   }));
-  return fitBlocksToBudget(blocks, maxBytes);
+  return fitBlocksToBudget(blocks, maxBytes2);
 }
 function selectRecentMessages(sorted2, currentMessageId, turnLimit, messageLimit) {
   const current = sorted2.find(({ message }) => message.messageId === currentMessageId) ?? sorted2.at(-1);
@@ -50138,11 +50138,11 @@ function formatRecentMessageBlock(args) {
   };
   return formatLarkMessageContextBlock(context, { current: args.current });
 }
-function fitBlocksToBudget(blocks, maxBytes) {
+function fitBlocksToBudget(blocks, maxBytes2) {
   let remaining = [...blocks];
-  while (remaining.length > 0 && Buffer.byteLength(joinBlocks(remaining), "utf8") > maxBytes) {
+  while (remaining.length > 0 && Buffer.byteLength(joinBlocks(remaining), "utf8") > maxBytes2) {
     if (remaining.length === 1) {
-      return capUtf8PreservingHead(remaining[0], maxBytes);
+      return capUtf8PreservingHead(remaining[0], maxBytes2);
     }
     remaining = remaining.slice(1);
   }
@@ -50176,10 +50176,10 @@ function dedupeQuotedBody(text, quotedContent) {
   if (!quotedContent.includes(normalized)) return text;
   return "[body duplicated in Quoted Message section]";
 }
-function capUtf8PreservingHead(text, maxBytes) {
+function capUtf8PreservingHead(text, maxBytes2) {
   const buf = Buffer.from(text, "utf8");
-  if (buf.length <= maxBytes) return text;
-  let cut = maxBytes;
+  if (buf.length <= maxBytes2) return text;
+  let cut = maxBytes2;
   while (cut > 0 && (buf[cut] & 192) === 128) cut--;
   return `${buf.subarray(0, cut).toString("utf8")} ...[truncated]`;
 }
@@ -50419,9 +50419,9 @@ function filterBufferedMessagesAfterBoundary(messages2, boundary) {
 }
 function filterParentContentAfterBoundary(parentContent, boundary) {
   if (!parentContent || !boundary) return parentContent;
-  const filtered = parentContent.split("\n---\n").map((block) => {
-    const metadata = parseContextBlockMetadata(block);
-    if (isContextAfterBoundary(metadata, boundary)) return block;
+  const filtered = parentContent.split("\n---\n").map((block2) => {
+    const metadata = parseContextBlockMetadata(block2);
+    if (isContextAfterBoundary(metadata, boundary)) return block2;
     return formatBoundaryOmittedBlock(metadata, boundary);
   });
   return filtered.join("\n---\n");
@@ -50458,11 +50458,11 @@ function isContextAfterBoundary(source, boundary) {
   if (timestampMs === void 0) return false;
   return timestampMs > boundary.cutoffTimestampMs;
 }
-function parseContextBlockMetadata(block) {
+function parseContextBlockMetadata(block2) {
   return {
-    ...matchLine(block, "message_id") ? { messageId: matchLine(block, "message_id") } : {},
-    ...normalizeTimestampMs2(Number(matchLine(block, "timestamp_ms"))) !== void 0 ? { timestampMs: normalizeTimestampMs2(Number(matchLine(block, "timestamp_ms"))) } : {},
-    ...matchLine(block, "timestamp") ? { timestamp: matchLine(block, "timestamp") } : {}
+    ...matchLine(block2, "message_id") ? { messageId: matchLine(block2, "message_id") } : {},
+    ...normalizeTimestampMs2(Number(matchLine(block2, "timestamp_ms"))) !== void 0 ? { timestampMs: normalizeTimestampMs2(Number(matchLine(block2, "timestamp_ms"))) } : {},
+    ...matchLine(block2, "timestamp") ? { timestamp: matchLine(block2, "timestamp") } : {}
   };
 }
 function formatBoundaryOmittedBlock(metadata, boundary) {
@@ -50476,9 +50476,9 @@ function formatBoundaryOmittedBlock(metadata, boundary) {
     `cutoff_timestamp_ms: ${boundary.cutoffTimestampMs}`
   ].join("\n");
 }
-function matchLine(block, name) {
+function matchLine(block2, name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = block.match(new RegExp(`^${escaped}:\\s*(.+?)\\s*$`, "m"));
+  const match = block2.match(new RegExp(`^${escaped}:\\s*(.+?)\\s*$`, "m"));
   return match?.[1]?.trim() || void 0;
 }
 function normalizeTimestampMs2(value) {
@@ -50490,11 +50490,11 @@ function normalizeTimestampText(value) {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : void 0;
 }
-function capUtf8Text(text, maxBytes) {
+function capUtf8Text(text, maxBytes2) {
   if (!text) return void 0;
   const buf = Buffer.from(text, "utf8");
-  if (buf.length <= maxBytes) return text;
-  let cut = maxBytes;
+  if (buf.length <= maxBytes2) return text;
+  let cut = maxBytes2;
   while (cut > 0 && (buf[cut] & 192) === 128) cut--;
   return `${buf.subarray(0, cut).toString("utf8")} ...[truncated]`;
 }
@@ -50599,7 +50599,7 @@ async function enrichLarkMessageWithMemory(msg, deps) {
       searchQuery = `${context} ${msg.text}`;
     }
   }
-  const profile2 = await deps.memoryStore.getProfile(msg.senderId, msg.senderId, {
+  const profile3 = await deps.memoryStore.getProfile(msg.senderId, msg.senderId, {
     includePrivate: profilePolicy.mode === "sender-private"
   }).catch(() => null);
   await auditProfileAccess(deps, {
@@ -50611,12 +50611,12 @@ async function enrichLarkMessageWithMemory(msg, deps) {
     consultedTiers: profilePolicy.mode === "sender-private" ? ["public", "private"] : ["public"],
     decision: profilePolicy.reason
   });
-  if (profile2) {
+  if (profile3) {
     blocks.push({
       key: `profile:${msg.senderId}`,
       kind: "profile",
       label: profilePolicy.mode === "sender-private" && msg.chatType === "group" ? "[User Profile: public + current-sender private]" : "[User Profile]",
-      content: profile2
+      content: profile3
     });
   }
   if (msg.mentions?.length) {
@@ -50759,11 +50759,11 @@ var DOC_COMMENT_BODY_CAP_BYTES = 8 * 1024;
 function passesDocCommentWhitelist(senderId) {
   return accessControlStore.allowsDocComment(senderId);
 }
-function capUtf8(s3, maxBytes) {
+function capUtf8(s3, maxBytes2) {
   if (s3 === void 0) return void 0;
   const buf = Buffer.from(s3, "utf8");
-  if (buf.length <= maxBytes) return s3;
-  let cut = maxBytes;
+  if (buf.length <= maxBytes2) return s3;
+  let cut = maxBytes2;
   while (cut > 0 && (buf[cut] & 192) === 128) cut--;
   return `${buf.subarray(0, cut).toString("utf8")} ...[truncated]`;
 }
@@ -51015,9 +51015,9 @@ async function removeIfExists(filePath) {
   } catch {
   }
 }
-function ensureWithinLimit(bytes, maxBytes, label = "resource") {
-  if (bytes > maxBytes) {
-    throw new Error(`writeSdkResource: ${label} exceeds maxBytes (${bytes} > ${maxBytes})`);
+function ensureWithinLimit(bytes, maxBytes2, label = "resource") {
+  if (bytes > maxBytes2) {
+    throw new Error(`writeSdkResource: ${label} exceeds maxBytes (${bytes} > ${maxBytes2})`);
   }
 }
 function contentLengthOf(data) {
@@ -51028,22 +51028,22 @@ function contentLengthOf(data) {
   const value = Number(raw);
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
-function assertWriteFileFallbackAllowed(data, maxBytes) {
+function assertWriteFileFallbackAllowed(data, maxBytes2) {
   const contentLength = contentLengthOf(data);
   if (contentLength === null) {
     throw new Error(
       "writeSdkResource: writeFile-only SDK response cannot enforce maxBytes without content-length; SDK response must provide getReadableStream() for bounded downloads."
     );
   }
-  ensureWithinLimit(contentLength, maxBytes, "content-length");
+  ensureWithinLimit(contentLength, maxBytes2, "content-length");
 }
-async function finalizeTempFile(tmpPath, filePath, maxBytes) {
+async function finalizeTempFile(tmpPath, filePath, maxBytes2) {
   const stat2 = await fsp.stat(tmpPath);
-  ensureWithinLimit(stat2.size, maxBytes, "resource");
+  ensureWithinLimit(stat2.size, maxBytes2, "resource");
   await fsp.rename(tmpPath, filePath);
 }
 function waitForWritable(out, event, timeoutError) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const cleanup = () => {
       out.off(event, onEvent);
       out.off("error", onError);
@@ -51051,7 +51051,7 @@ function waitForWritable(out, event, timeoutError) {
     };
     const onEvent = () => {
       cleanup();
-      resolve();
+      resolve2();
     };
     const onError = (err) => {
       cleanup();
@@ -51072,7 +51072,7 @@ async function destroyWritableAndWaitForClose(out) {
   out.destroy();
   await closed;
 }
-async function streamToDisk(stream, tmpPath, maxBytes, timeoutMs, label) {
+async function streamToDisk(stream, tmpPath, maxBytes2, timeoutMs, label) {
   const out = createWriteStream(tmpPath, { flags: "wx" });
   let bytes = 0;
   let timer;
@@ -51089,7 +51089,7 @@ async function streamToDisk(stream, tmpPath, maxBytes, timeoutMs, label) {
     for await (const chunk of stream) {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       bytes += buf.length;
-      ensureWithinLimit(bytes, maxBytes, "stream");
+      ensureWithinLimit(bytes, maxBytes2, "stream");
       if (!out.write(buf)) await waitForWritable(out, "drain", () => timedOut);
       if (timedOut) throw timedOut;
     }
@@ -51108,15 +51108,15 @@ async function writeSdkResource(data, filePath, options2 = {}) {
   if (data === null || data === void 0) {
     throw new Error("writeSdkResource: data is null/undefined");
   }
-  const maxBytes = positiveInt3(options2.maxBytes, appConfig.downloadMaxBytes);
+  const maxBytes2 = positiveInt3(options2.maxBytes, appConfig.downloadMaxBytes);
   const timeoutMs = positiveInt3(options2.timeoutMs, appConfig.downloadTimeoutMs);
   await fsp.mkdir(dirname(filePath), { recursive: true });
   const tmpPath = tempPathFor(filePath);
   if (Buffer.isBuffer(data)) {
-    ensureWithinLimit(data.length, maxBytes, "Buffer");
+    ensureWithinLimit(data.length, maxBytes2, "Buffer");
     try {
       await fsp.writeFile(tmpPath, data, { flag: "wx" });
-      await finalizeTempFile(tmpPath, filePath, maxBytes);
+      await finalizeTempFile(tmpPath, filePath, maxBytes2);
     } catch (err) {
       await removeIfExists(tmpPath);
       throw err;
@@ -51130,11 +51130,11 @@ async function writeSdkResource(data, filePath, options2 = {}) {
       await streamToDisk(
         readable,
         tmpPath,
-        maxBytes,
+        maxBytes2,
         timeoutMs,
         "writeSdkResource.stream"
       );
-      await finalizeTempFile(tmpPath, filePath, maxBytes);
+      await finalizeTempFile(tmpPath, filePath, maxBytes2);
     } catch (err) {
       readable.destroy?.(err instanceof Error ? err : new Error(String(err)));
       await removeIfExists(tmpPath);
@@ -51143,12 +51143,12 @@ async function writeSdkResource(data, filePath, options2 = {}) {
     return;
   }
   if (typeof d.writeFile === "function") {
-    assertWriteFileFallbackAllowed(d, maxBytes);
+    assertWriteFileFallbackAllowed(d, maxBytes2);
     let writePromise = null;
     try {
       writePromise = Promise.resolve(d.writeFile(tmpPath));
       await withTimeout(writePromise, timeoutMs, "writeSdkResource.writeFile");
-      await finalizeTempFile(tmpPath, filePath, maxBytes);
+      await finalizeTempFile(tmpPath, filePath, maxBytes2);
     } catch (err) {
       if (writePromise) {
         void writePromise.finally(() => removeIfExists(tmpPath)).catch(() => void 0);
@@ -51261,7 +51261,7 @@ async function addQuotedContext(message, transport, options2 = {}) {
   const quotedMessageId = selectQuotedMessageId(message);
   if (!quotedMessageId) return { loaded: false };
   const maxDepth = normalizePositiveInteger(options2.maxDepth, DEFAULT_MAX_DEPTH);
-  const maxBytes = normalizePositiveInteger(options2.maxBytes, DEFAULT_MAX_BYTES2);
+  const maxBytes2 = normalizePositiveInteger(options2.maxBytes, DEFAULT_MAX_BYTES2);
   const visited = /* @__PURE__ */ new Set([message.messageId]);
   const blocks = [];
   let loaded = false;
@@ -51295,7 +51295,7 @@ async function addQuotedContext(message, transport, options2 = {}) {
       rootMessageId: fetched.rootMessageId,
       threadId: fetched.threadId
     });
-    const block = formatLarkMessageContextBlock({
+    const block2 = formatLarkMessageContextBlock({
       messageId: resolvedMessageId,
       msgType: fetched.msgType,
       text: fetched.text,
@@ -51312,7 +51312,7 @@ async function addQuotedContext(message, transport, options2 = {}) {
       interactiveCard: fetched.interactiveCard,
       replyTo: nextMessageId && !visited.has(nextMessageId) ? nextMessageId : fetched.replyTo
     });
-    if (utf8Bytes(joinBlocks2([...blocks, block])) > maxBytes) {
+    if (utf8Bytes(joinBlocks2([...blocks, block2])) > maxBytes2) {
       blocks.push(formatLarkMessageContextBlock({
         messageId: resolvedMessageId,
         text: null,
@@ -51324,7 +51324,7 @@ async function addQuotedContext(message, transport, options2 = {}) {
       }));
       break;
     }
-    blocks.push(block);
+    blocks.push(block2);
     loaded = true;
     currentMessageId = nextMessageId;
   }
@@ -51486,11 +51486,11 @@ function passesWhitelist(senderId, chatId) {
   return accessControlStore.allowsMessage(senderId, chatId);
 }
 var SDK_COMMENT_CONTEXT_CAP_BYTES = 8 * 1024;
-function capUtf8Text2(s3, maxBytes) {
+function capUtf8Text2(s3, maxBytes2) {
   if (s3 === void 0) return void 0;
   const buf = Buffer.from(s3, "utf8");
-  if (buf.length <= maxBytes) return s3;
-  let cut = maxBytes;
+  if (buf.length <= maxBytes2) return s3;
+  let cut = maxBytes2;
   while (cut > 0 && (buf[cut] & 192) === 128) cut--;
   return `${buf.subarray(0, cut).toString("utf8")} ...[truncated]`;
 }
@@ -51885,12 +51885,12 @@ function sdkCommentReplyText(reply2) {
 
 // src/local-cli-tools.ts
 import { spawn as spawn2 } from "node:child_process";
-import fs12 from "node:fs/promises";
-import path15 from "node:path";
+import fs13 from "node:fs/promises";
+import path16 from "node:path";
 
 // src/workspace-dependency-registry.ts
-import fs11 from "node:fs/promises";
-import path14 from "node:path";
+import fs12 from "node:fs/promises";
+import path15 from "node:path";
 
 // src/domain/workspace-dependency.ts
 import { createHash as createHash3 } from "node:crypto";
@@ -52120,11 +52120,12 @@ var diagnostic = {
   allocation_transaction: "Managed workspace provisioning requires a committed database context.",
   invalid_binding: "The managed workspace allocation is invalid.",
   dependency_install_incomplete: "A dependency install was already started for this run but cannot be adopted or repeated.",
+  dependency_selection_failed: "The operator-approved dependency selection could not be verified for this run.",
   artifact_invalid: "The managed artifact is missing, outside its registered directory, oversized, or no longer matches its checksum."
 };
 var ManagedWorkspaceStorageError = class extends Error {
-  constructor(code) {
-    super(diagnostic[code]);
+  constructor(code, options2) {
+    super(diagnostic[code], options2);
     this.code = code;
     this.name = "ManagedWorkspaceStorageError";
   }
@@ -52617,26 +52618,26 @@ function nativeCodexHome(env) {
   return env.CODEX_HOME?.trim() || path10.join(env.HOME || os.homedir(), ".codex");
 }
 async function assertCompatibleCodexLayers(env, workspaces) {
-  const unsupported2 = () => new ManagedWorkspaceStorageError("git_sandbox_layers_unsupported");
+  const unsupported3 = () => new ManagedWorkspaceStorageError("git_sandbox_layers_unsupported");
   const exists = async (target) => fs6.lstat(target).then(() => true, (error62) => {
     if (error62.code === "ENOENT") return false;
-    throw unsupported2();
+    throw unsupported3();
   });
   const rejectRules = async (root) => {
     const folder = path10.join(root, "rules");
     if (!await exists(folder)) return;
     try {
-      for await (const entry of await fs6.opendir(folder)) if (entry.name.endsWith(".rules")) throw unsupported2();
+      for await (const entry of await fs6.opendir(folder)) if (entry.name.endsWith(".rules")) throw unsupported3();
     } catch {
-      throw unsupported2();
+      throw unsupported3();
     }
   };
   const home = nativeCodexHome(env);
-  if (!path10.isAbsolute(home)) throw unsupported2();
+  if (!path10.isAbsolute(home)) throw unsupported3();
   await rejectRules(home);
-  if (await exists(path10.join(home, "hooks.json"))) throw unsupported2();
+  if (await exists(path10.join(home, "hooks.json"))) throw unsupported3();
   for (const name of ["config.toml", "managed_config.toml", "requirements.toml", "hooks.json"]) {
-    if (await exists(path10.join("/etc/codex", name))) throw unsupported2();
+    if (await exists(path10.join("/etc/codex", name))) throw unsupported3();
   }
   await rejectRules("/etc/codex");
   const inspected = /* @__PURE__ */ new Set();
@@ -52644,7 +52645,7 @@ async function assertCompatibleCodexLayers(env, workspaces) {
     for (let directory = workspace; !inspected.has(directory); directory = path10.dirname(directory)) {
       inspected.add(directory);
       const local = path10.join(directory, ".codex");
-      if (await exists(path10.join(local, "config.toml")) || await exists(path10.join(local, "hooks.json"))) throw unsupported2();
+      if (await exists(path10.join(local, "config.toml")) || await exists(path10.join(local, "hooks.json"))) throw unsupported3();
       await rejectRules(local);
     }
   }
@@ -52667,14 +52668,14 @@ async function resolveSystemGit() {
   return file2;
 }
 async function resolveManagedGitLauncher(command, env, excluded, executionRoots = []) {
-  const invalid = () => new ManagedWorkspaceStorageError("git_launcher_untrusted");
-  if (!process.geteuid || process.getuid?.() !== process.geteuid() || !path10.isAbsolute(command) && command !== "codex") throw invalid();
+  const invalid6 = () => new ManagedWorkspaceStorageError("git_launcher_untrusted");
+  if (!process.geteuid || process.getuid?.() !== process.geteuid() || !path10.isAbsolute(command) && command !== "codex") throw invalid6();
   const uid = BigInt(process.geteuid());
   const identities = excluded.map(({ device, inode }) => `${device}:${inode}`);
   const mounts = readWorkspaceMountTable();
   const canonicalRoots = await Promise.all(executionRoots.map((root) => fs6.realpath(root).catch((error62) => {
     if (error62.code === "ENOENT") return path10.resolve(root);
-    throw invalid();
+    throw invalid6();
   })));
   const paths = [...excluded.map(({ directory }) => directory), ...canonicalRoots].flatMap((root) => workspaceBackingAliases(root, mounts));
   const trustedDirectory = async (directory) => {
@@ -52694,9 +52695,9 @@ async function resolveManagedGitLauncher(command, env, excluded, executionRoots 
   }
   const executable = async (candidate) => {
     const file3 = await fs6.realpath(candidate);
-    if (!await trustedDirectory(path10.dirname(file3)) || !workspaceMountLayoutSupported([file3], mounts)) throw invalid();
+    if (!await trustedDirectory(path10.dirname(file3)) || !workspaceMountLayoutSupported([file3], mounts)) throw invalid6();
     const stat2 = await fs6.lstat(file3, { bigint: true });
-    if (!stat2.isFile() || ![0n, uid].includes(stat2.uid) || stat2.uid !== 0n && stat2.nlink !== 1n || !(stat2.mode & 0o111n) || (stat2.mode & 0o6022n) !== 0n) throw invalid();
+    if (!stat2.isFile() || ![0n, uid].includes(stat2.uid) || stat2.uid !== 0n && stat2.nlink !== 1n || !(stat2.mode & 0o111n) || (stat2.mode & 0o6022n) !== 0n) throw invalid6();
     await fs6.access(file3, fs6.constants.X_OK);
     await assertDenyOnlyWorkspaceAcls([file3]);
     const handle = await fs6.open(file3, fs6.constants.O_RDONLY | fs6.constants.O_NOFOLLOW | fs6.constants.O_NONBLOCK);
@@ -52705,7 +52706,7 @@ async function resolveManagedGitLauncher(command, env, excluded, executionRoots 
       const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
       const magic = bytes.toString("hex");
       const native = process.platform === "linux" ? magic === "7f454c46" : process.platform === "darwin" && ["feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "cafebabf", "bebafeca", "bfbafeca"].includes(magic);
-      if (bytesRead !== bytes.length || !native) throw invalid();
+      if (bytesRead !== bytes.length || !native) throw invalid6();
     } finally {
       await handle.close();
     }
@@ -52718,18 +52719,18 @@ async function resolveManagedGitLauncher(command, env, excluded, executionRoots 
       } catch {
       }
     }
-    throw invalid();
+    throw invalid6();
   };
   for (const directory of systemPath.split(":")) {
     await assertSystemDirectory(await fs6.realpath(directory)).catch(() => {
-      throw invalid();
+      throw invalid6();
     });
   }
   await resolveSystemGit().catch(() => {
-    throw invalid();
+    throw invalid6();
   });
   const file2 = path10.isAbsolute(command) ? await executable(command).catch(() => {
-    throw invalid();
+    throw invalid6();
   }) : await find(command);
   const bin = path10.dirname(file2);
   const packageDir = path10.dirname(bin);
@@ -52739,26 +52740,26 @@ async function resolveManagedGitLauncher(command, env, excluded, executionRoots 
       if (error62.code === "ENOENT") return void 0;
       throw error62;
     });
-    if (!present && process.platform === "linux") throw invalid();
+    if (!present && process.platform === "linux") throw invalid6();
     if (present) {
-      if (bundledPath.includes(path10.delimiter) || !present.isDirectory() || await fs6.realpath(bundledPath) !== bundledPath || !await trustedDirectory(bundledPath)) throw invalid();
+      if (bundledPath.includes(path10.delimiter) || !present.isDirectory() || await fs6.realpath(bundledPath) !== bundledPath || !await trustedDirectory(bundledPath)) throw invalid6();
       const rg = path10.join(bundledPath, "rg");
       const files = await fs6.readdir(bundledPath);
-      if (files.length !== 1 || files[0] !== "rg" || await executable(rg) !== rg) throw invalid();
+      if (files.length !== 1 || files[0] !== "rg" || await executable(rg) !== rg) throw invalid6();
     }
   } catch {
-    throw invalid();
+    throw invalid6();
   }
   if (process.platform === "linux") {
     try {
       const manifest = path10.join(packageDir, "codex-package.json");
       const meta3 = await fs6.lstat(manifest, { bigint: true });
-      if (path10.basename(bin) !== "bin" || path10.basename(file2) !== "codex" || !await trustedDirectory(packageDir) || !meta3.isFile() || ![0n, uid].includes(meta3.uid) || meta3.nlink !== 1n || (meta3.mode & 0o022n) !== 0n || meta3.size > 16384n) throw invalid();
+      if (path10.basename(bin) !== "bin" || path10.basename(file2) !== "codex" || !await trustedDirectory(packageDir) || !meta3.isFile() || ![0n, uid].includes(meta3.uid) || meta3.nlink !== 1n || (meta3.mode & 0o022n) !== 0n || meta3.size > 16384n) throw invalid6();
       const metadata = JSON.parse(await fs6.readFile(manifest, "utf8"));
-      if (metadata?.layoutVersion !== 1 || metadata.version !== "0.171.0" || metadata.variant !== "codex" || metadata.entrypoint !== "bin/codex" || metadata.resourcesDir !== "codex-resources" || metadata.pathDir !== "codex-path") throw invalid();
+      if (metadata?.layoutVersion !== 1 || metadata.version !== "0.171.0" || metadata.variant !== "codex" || metadata.entrypoint !== "bin/codex" || metadata.resourcesDir !== "codex-resources" || metadata.pathDir !== "codex-path") throw invalid6();
       const resources = path10.join(packageDir, "codex-resources");
       const bundled = path10.join(resources, "bwrap");
-      if (await executable(bundled) !== bundled) throw invalid();
+      if (await executable(bundled) !== bundled) throw invalid6();
       for (const candidate of systemPath.split(":").map((directory) => path10.join(directory, "bwrap"))) {
         const system = await fs6.realpath(candidate).catch((error62) => {
           if (error62.code === "ENOENT") return void 0;
@@ -52766,11 +52767,11 @@ async function resolveManagedGitLauncher(command, env, excluded, executionRoots 
         });
         if (!system) continue;
         const helper = await fs6.lstat(system, { bigint: true });
-        if (helper.uid !== 0n || !helper.isFile() || (helper.mode & 0o022n) !== 0n || !workspaceMountLayoutSupported([system], mounts)) throw invalid();
+        if (helper.uid !== 0n || !helper.isFile() || (helper.mode & 0o022n) !== 0n || !workspaceMountLayoutSupported([system], mounts)) throw invalid6();
         await assertSystemDirectory(path10.dirname(system));
       }
     } catch {
-      throw invalid();
+      throw invalid6();
     }
   }
   const subprocessEnv = { ...env, PATH: systemPath, SHELL: "/bin/sh" };
@@ -52842,6 +52843,39 @@ async function assertWorkspaceGitCacheIdentity(input2, authorizedRoots) {
     throw new WorkspaceGitSnapshotError("git_cache_invalid");
   });
   if (measured.storeFingerprint !== input2.storeFingerprint) throw new WorkspaceGitSnapshotError("git_cache_mismatch");
+}
+async function readWorkspaceGitDependencyInputs(request, expected, files) {
+  const unavailable = () => new WorkspaceGitSnapshotError("git_dependency_input_unavailable");
+  if (files.length < 1 || files.length > 3 || new Set(files).size !== files.length || files.some((file2) => file2.length > 240 || !file2.split("/").every((part) => /^[a-zA-Z0-9_.-]+$/.test(part) && ![".", ".."].includes(part)))) throw unavailable();
+  const { gitDirectory, authorizedRoots, commit } = request;
+  await assertWorkspaceGitCheckoutMounts([gitDirectory]);
+  const executable = await trustedGitExecutable();
+  const measured = await verifyCache(request, executable);
+  if (measured.key !== expected.key || measured.storeFingerprint !== expected.storeFingerprint) throw new WorkspaceGitSnapshotError("git_cache_mismatch");
+  const selected = /* @__PURE__ */ new Map();
+  for (const file2 of files) {
+    try {
+      const entry = await verifyCacheGit(executable, gitDirectory.directory, ["--literal-pathspecs", "ls-tree", "-z", "-l", "--full-tree", commit, "--", file2]);
+      const separator = entry.indexOf(9);
+      if (separator < 0 || entry.at(-1) !== 0 || !entry.subarray(separator + 1, -1).equals(Buffer.from(file2))) throw unavailable();
+      const fields = /^100(?:644|755) blob ([a-f0-9]+) +([0-9]+)$/.exec(entry.subarray(0, separator).toString("ascii"));
+      if (!fields || fields[1].length !== commit.length) throw unavailable();
+      const size = Number(fields[2]);
+      if (!Number.isSafeInteger(size) || size > maxDependencyInputBytes) throw unavailable();
+      const content = await boundedGit(executable, gitDirectory.directory, [...cacheGit, "cat-file", "blob", fields[1]], maxDependencyInputBytes);
+      if (content.length !== size || createHash5(measured.objectFormat).update(`blob ${size}\0`).update(content).digest("hex") !== fields[1]) throw unavailable();
+      selected.set(file2, content);
+    } catch {
+      throw unavailable();
+    }
+  }
+  await assertWorkspaceGitCacheIdentity({
+    cache: gitDirectory,
+    commit,
+    objectFormat: measured.objectFormat,
+    storeFingerprint: expected.storeFingerprint
+  }, authorizedRoots);
+  return selected;
 }
 async function assertWorkspaceGitCheckoutMounts(bindings) {
   assertLinuxCheckoutMounts(bindings.map(({ directory }) => directory));
@@ -53129,7 +53163,7 @@ async function validateCheckoutFiles(checkout, gitDirectory, expected) {
 async function fingerprintCache(binding, commit, format) {
   const { directory, device, inode } = binding;
   await assertProtectedWorkspacePath(binding);
-  const stamp = [];
+  const stamp2 = [];
   const uid = process.geteuid?.();
   if (uid === void 0) throw new WorkspaceGitSnapshotError("git_cache_invalid");
   const record3 = async (relative, isDirectory) => {
@@ -53139,7 +53173,7 @@ async function fingerprintCache(binding, commit, format) {
       throw new WorkspaceGitSnapshotError("git_cache_invalid");
     }
     await assertDenyOnlyWorkspaceAcls([file2]);
-    stamp.push([relative, ...[info.dev, info.ino, info.mode, info.uid, info.gid, info.size, info.mtimeNs, info.ctimeNs].map(String)]);
+    stamp2.push([relative, ...[info.dev, info.ino, info.mode, info.uid, info.gid, info.size, info.mtimeNs, info.ctimeNs].map(String)]);
     return info;
   };
   const names = async (relative, max) => {
@@ -53177,7 +53211,7 @@ async function fingerprintCache(binding, commit, format) {
       throw new WorkspaceGitSnapshotError("git_cache_invalid");
     }
   }
-  return { storeFingerprint: createHash5("sha256").update(JSON.stringify(["git-cache-footprint-v1", stamp])).digest("hex"), packPath };
+  return { storeFingerprint: createHash5("sha256").update(JSON.stringify(["git-cache-footprint-v1", stamp2])).digest("hex"), packPath };
 }
 async function readPinnedCachePrefix(file2, expected, length) {
   const fd = await fs7.open(file2, fs7.constants.O_RDONLY | fs7.constants.O_NOFOLLOW | fs7.constants.O_NONBLOCK);
@@ -53320,33 +53354,43 @@ function overlap(a, b2) {
   return a.ancestors.has(b2.id) || b2.ancestors.has(a.id) || a.aliases.some((left) => b2.aliases.some((right) => workspacePathContains(left, right) || workspacePathContains(right, left)));
 }
 async function readRegistry2(filename) {
-  const invalid = () => new ManagedWorkspaceStorageError("git_registry_invalid");
+  const invalid6 = () => new ManagedWorkspaceStorageError("git_registry_invalid");
   let fd;
   try {
     fd = await fs8.open(filename, fs8.constants.O_RDONLY | fs8.constants.O_NOFOLLOW | fs8.constants.O_NONBLOCK);
   } catch (error62) {
     if (error62.code === "ENOENT") return void 0;
-    throw invalid();
+    throw invalid6();
   }
   try {
     const parent = path12.dirname(filename);
     const binding = await pinWorkspacePath(parent, ".");
-    if (binding.directory !== parent || !process.geteuid) throw invalid();
+    if (binding.directory !== parent || !process.geteuid) throw invalid6();
     await assertProtectedWorkspacePath(binding, true);
     const info = await fd.stat({ bigint: true });
-    if (!info.isFile() || info.uid !== BigInt(process.geteuid()) || info.nlink !== 1n || (info.mode & 0o022n) !== 0n || info.size < 1n || info.size > BigInt(maxRegistryBytes)) throw invalid();
+    if (!info.isFile() || info.uid !== BigInt(process.geteuid()) || info.nlink !== 1n || (info.mode & 0o022n) !== 0n || info.size < 1n || info.size > BigInt(maxRegistryBytes)) throw invalid6();
     await assertDenyOnlyWorkspaceAcls([filename]);
     const bytes = Buffer.alloc(Number(info.size));
     const { bytesRead } = await fd.read(bytes, 0, bytes.length, 0);
     const current = await fs8.lstat(filename, { bigint: true });
-    if (bytesRead !== bytes.length || info.dev !== current.dev || info.ino !== current.ino || info.size !== current.size || info.ctimeNs !== current.ctimeNs || info.mtimeNs !== current.mtimeNs) throw invalid();
+    if (bytesRead !== bytes.length || info.dev !== current.dev || info.ino !== current.ino || info.size !== current.size || info.ctimeNs !== current.ctimeNs || info.mtimeNs !== current.mtimeNs) throw invalid6();
     return registrySchema2.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
   } catch {
-    throw invalid();
+    throw invalid6();
   } finally {
     await fd.close();
   }
 }
+
+// src/workspace-dependency-cache.ts
+import { createHash as createHash7 } from "node:crypto";
+import fs11 from "node:fs/promises";
+import path14 from "node:path";
+
+// src/workspace-dependency-archive.ts
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createGunzip } from "node:zlib";
 
 // node_modules/tar/dist/esm/index.min.js
 import Qr from "events";
@@ -56320,15 +56364,455 @@ var To = (s3) => {
 // src/workspace-dependency-archive.ts
 var import_yauzl = __toESM(require_yauzl(), 1);
 var defaultLimits = { bytes: 2 * 1024 ** 3, entries: 15e4 };
+var block = 4096;
 var readSize = 64 * 1024;
 var utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+var WorkspaceDependencyArchiveError = class extends Error {
+  constructor(code) {
+    super(code === "dependency_archive_invalid" ? "A selected dependency archive uses an invalid or unsupported layout." : "The selected dependency archives exceed the install expansion budget.");
+    this.code = code;
+  }
+  code;
+};
+function createWorkspaceDependencyExpansionBudget(limits = defaultLimits) {
+  if (!Number.isSafeInteger(limits.bytes) || limits.bytes < 1 || limits.bytes > defaultLimits.bytes || !Number.isSafeInteger(limits.entries) || limits.entries < 1 || limits.entries > defaultLimits.entries) invalid();
+  const maxBytes2 = limits.bytes;
+  const maxEntries = limits.entries;
+  let bytes = 0;
+  let entries = 0;
+  let tarStreamBytes = 0;
+  let usable = true;
+  const exceeds = () => {
+    throw new WorkspaceDependencyArchiveError("dependency_archive_budget_exceeded");
+  };
+  const charge = (extra, slots, copies) => {
+    bytes += extra * copies;
+    entries += slots * copies;
+    if (!Number.isSafeInteger(bytes) || !Number.isSafeInteger(entries) || bytes > maxBytes2 || entries > maxEntries) exceeds();
+  };
+  return {
+    async inspect(file2, size, ecosystem2, copies = 1) {
+      if (!usable || !Number.isSafeInteger(size) || size < 1 || !Number.isSafeInteger(copies) || copies < 1) invalid();
+      try {
+        const seen = /* @__PURE__ */ new Set();
+        charge(block, 1, copies);
+        const entry = (name, length, directory) => {
+          const parts = archivePath(name, directory);
+          if (ecosystem2 === "npm" && (parts[0] !== "package" || !directory && parts.length < 2)) invalid();
+          const key = parts.join("/");
+          if (seen.has(key) || !Number.isSafeInteger(length) || length < 0 || directory && length !== 0) invalid();
+          seen.add(key);
+          charge(Math.ceil(length / block) * block + block * parts.length, parts.length, copies);
+        };
+        if (ecosystem2 === "npm") {
+          await inspectTar(file2, size, entry, (length) => {
+            tarStreamBytes += length * copies;
+            if (tarStreamBytes > maxBytes2) exceeds();
+          });
+        } else await inspectWheel(file2, size, entry);
+        if (!seen.size) invalid();
+      } catch (error62) {
+        usable = false;
+        if (error62 instanceof WorkspaceDependencyArchiveError) throw error62;
+        invalid();
+      }
+    }
+  };
+}
+async function inspectTar(file2, size, record3, count) {
+  let error62;
+  let ended = false;
+  const parser = new rt({
+    strict: true,
+    brotli: false,
+    zstd: false,
+    maxMetaEntrySize: 16 * 1024,
+    onReadEntry(entry) {
+      const directory = entry.type === "Directory";
+      if (entry.type !== "File" && entry.type !== "OldFile" && !directory) invalid();
+      record3(entry.path, entry.size, directory);
+      entry.resume();
+    }
+  });
+  parser.on("error", (err) => {
+    error62 = err;
+  });
+  parser.on("ignoredEntry", invalid);
+  parser.on("meta", validateTarMetadata);
+  parser.on("end", () => {
+    ended = true;
+  });
+  let first = true;
+  await pipeline(Readable.from(readRange(file2, 0, size)), createGunzip(), async (chunks) => {
+    for await (const data of chunks) {
+      const chunk = data;
+      count(chunk.length);
+      if (first) {
+        if (chunk[0] < 32 || chunk[0] > 126) invalid();
+        first = false;
+      }
+      parser.write(chunk);
+      if (error62) throw error62;
+    }
+    parser.end();
+    if (error62) throw error62;
+    if (!ended) invalid();
+  });
+}
+function validateTarMetadata(meta3) {
+  const lines = meta3.replace(/\n$/, "").split("\n");
+  for (const line of lines) {
+    const item = /^(\d+) (path|mtime|atime|ctime|uid|gid|uname|gname)=([^\u0000-\u001f]*)$/.exec(line);
+    if (!item || Number(item[1]) !== Buffer.byteLength(line) + 1) invalid();
+  }
+}
+async function inspectWheel(file2, size, record3) {
+  const reader = new PinnedZipReader(file2);
+  const zip = await (0, import_yauzl.fromRandomAccessReaderPromise)(reader, size, { autoClose: true, decodeStrings: false, validateEntrySizes: true });
+  for await (const entry of zip.eachEntry()) {
+    const name = utf8.decode(entry.fileNameRaw);
+    const directory = name.endsWith("/");
+    const kind = entry.externalFileAttributes >>> 16 & 61440;
+    const flags = entry.generalPurposeBitFlag;
+    if (!Buffer.from(name).equals(entry.fileNameRaw) || (flags & ~2062) !== 0 || !(flags & 2048) && /[^\x00-\x7f]/.test(name) || kind !== 0 && kind !== (directory ? 16384 : 32768) || ![0, 8].includes(entry.compressionMethod)) invalid();
+    const local = await zip.readLocalFileHeaderPromise(entry);
+    const agrees = (localValue, centralValue) => localValue === centralValue || (flags & 8) !== 0 && localValue === 0;
+    if (!local.fileName.equals(entry.fileNameRaw) || local.generalPurposeBitFlag !== flags || local.compressionMethod !== entry.compressionMethod || !agrees(local.crc32, entry.crc32) || !agrees(local.uncompressedSize, entry.uncompressedSize) || !agrees(local.compressedSize, entry.compressedSize)) invalid();
+    record3(name, entry.uncompressedSize, directory);
+    const stream = await zip.openReadStreamPromise(entry);
+    for await (const _chunk of stream) {
+    }
+  }
+}
+var PinnedZipReader = class extends import_yauzl.RandomAccessReader {
+  constructor(file2) {
+    super();
+    this.file = file2;
+  }
+  file;
+  _readStreamForRange(start, end) {
+    return Readable.from(readRange(this.file, start, end));
+  }
+  close(callback) {
+    callback(null);
+  }
+};
+async function* readRange(file2, start, end) {
+  for (let offset = start; offset < end; ) {
+    const buffer = Buffer.allocUnsafe(Math.min(readSize, end - offset));
+    const { bytesRead } = await file2.read(buffer, 0, buffer.length, offset);
+    if (!bytesRead) invalid();
+    offset += bytesRead;
+    yield buffer.subarray(0, bytesRead);
+  }
+}
+function archivePath(value, directory) {
+  const name = directory && value.endsWith("/") ? value.slice(0, -1) : value;
+  const parts = name.split("/");
+  if (!name || Buffer.byteLength(name) > 4096 || parts.length > 96 || /[\\:\u0000-\u001f\u007f\ufffd]/u.test(name) || parts.some((part) => !part || part === "." || part === ".." || Buffer.byteLength(part) > 255)) invalid();
+  return parts;
+}
+function invalid() {
+  throw new WorkspaceDependencyArchiveError("dependency_archive_invalid");
+}
 
 // src/workspace-dependency-input.ts
+import { createHash as createHash6 } from "node:crypto";
 var MAX_INPUT_BYTES = 8 * 1024 * 1024;
 var MAX_PACKAGES = 25e3;
+var MAX_JSON_VALUES = 25e4;
+var WorkspaceDependencyInputError = class extends Error {
+  constructor(code) {
+    super({
+      dependency_input_invalid: "Dependency inputs are incomplete or invalid.",
+      dependency_input_unsupported: "Dependency inputs use an unsupported format or source.",
+      dependency_artifact_missing: "The artifact manifest does not cover the dependency lock.",
+      dependency_artifact_conflict: "The artifact manifest conflicts with the dependency lock."
+    }[code]);
+    this.code = code;
+  }
+  code;
+};
 var npmArtifactManifestSchema = external_exports.array(external_exports.strictObject({ resolved: external_exports.string().max(2048), integrity: external_exports.string().max(95) })).max(MAX_PACKAGES);
 var pythonArtifactManifestSchema = external_exports.array(external_exports.strictObject({ filename: external_exports.string().max(255), sha256: dependencyDigestSchema })).max(MAX_PACKAGES);
+function prepareWorkspaceNpmLock(input2, manifest) {
+  const plan = describeWorkspaceDependencies(input2);
+  if (plan.ecosystem !== "npm") invalid2();
+  const parsed = npmArtifactManifestSchema.safeParse(manifest);
+  if (!parsed.success) invalid2();
+  const accepted = /* @__PURE__ */ new Map();
+  for (const { resolved, integrity } of parsed.data) {
+    if (accepted.has(resolved) || !validNpmIntegrity(integrity)) invalid2();
+    accepted.set(resolved, integrity);
+  }
+  const lock = parseJson(decodeInput(input2.lock));
+  const packages = jsonRecord.parse(lock.packages);
+  const { artifacts, ...identity } = plan;
+  const used = /* @__PURE__ */ new Set();
+  const copiesByIntegrity = /* @__PURE__ */ new Map();
+  for (const { path: path48, resolved, integrity } of artifacts) {
+    const expected = accepted.get(resolved);
+    if (!expected) throw new WorkspaceDependencyInputError("dependency_artifact_missing");
+    if (integrity !== null && expected !== integrity) throw new WorkspaceDependencyInputError("dependency_artifact_conflict");
+    used.add(resolved);
+    copiesByIntegrity.set(expected, (copiesByIntegrity.get(expected) ?? 0) + 1);
+    packages[path48] = { ...jsonRecord.parse(packages[path48]), resolved, integrity: expected };
+  }
+  if (used.size !== accepted.size) throw new WorkspaceDependencyInputError("dependency_artifact_conflict");
+  const sorted2 = [...accepted.entries()].sort(([a], [b2]) => lexical(a, b2));
+  const staged = JSON.stringify({ ...lock, packages }) + "\n";
+  if (Buffer.byteLength(staged) > MAX_INPUT_BYTES) invalid2();
+  return {
+    identity,
+    lock: staged,
+    copiesByIntegrity,
+    artifacts: sorted2.map(([resolved, integrity]) => ({ resolved, integrity })),
+    artifactManifestSha256: digest(JSON.stringify(["npm-artifacts-v1", sorted2]))
+  };
+}
+function prepareWorkspacePipLock(input2, manifest) {
+  const plan = describeWorkspaceDependencies(input2);
+  if (plan.ecosystem !== "pip") invalid2();
+  const parsed = pythonArtifactManifestSchema.safeParse(manifest);
+  if (!parsed.success) invalid2();
+  const { requirements, ...identity } = plan;
+  const pins = new Map(requirements.map(({ name, version: version2, hashes }) => [name, { version: version2, hashes: new Set(hashes) }]));
+  const collected = /* @__PURE__ */ new Map();
+  const seen = /* @__PURE__ */ new Set();
+  for (const { filename, sha256: sha2562 } of parsed.data) {
+    const wheel = /^([a-zA-Z0-9_]+)-([0-9][a-zA-Z0-9_.!+]*)(?:-\d[a-zA-Z0-9_]*)?-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+\.whl$/.exec(filename);
+    if (!wheel || seen.has(filename)) invalid2();
+    seen.add(filename);
+    const name = pythonName(wheel[1]);
+    const pin = pins.get(name);
+    if (!pin || !pin.hashes.has(sha2562) || !matchesPythonPin(pin.version, wheel[2])) {
+      throw new WorkspaceDependencyInputError("dependency_artifact_conflict");
+    }
+    if (!collected.has(name)) collected.set(name, /* @__PURE__ */ new Set());
+    collected.get(name).add(sha2562);
+  }
+  const lock = requirements.map(({ name, version: version2 }) => {
+    const hashes = collected.get(name);
+    if (!hashes) throw new WorkspaceDependencyInputError("dependency_artifact_missing");
+    return `${name}==${version2} ${[...hashes].sort().map((hash2) => `--hash=sha256:${hash2}`).join(" ")}`;
+  }).join("\n") + "\n";
+  if (Buffer.byteLength(lock) > MAX_INPUT_BYTES) invalid2();
+  const sorted2 = parsed.data.map(({ filename, sha256: sha2562 }) => [filename, sha2562]).sort(([a], [b2]) => lexical(a, b2));
+  return {
+    identity,
+    lock,
+    artifacts: sorted2.map(([filename, sha2562]) => ({ filename, sha256: sha2562 })),
+    artifactManifestSha256: digest(JSON.stringify(["pip-artifacts-v1", sorted2]))
+  };
+}
+function describeWorkspaceDependencies(input2) {
+  const scope = dependencyScopeSchema.safeParse(input2.scope);
+  const toolchain = dependencyToolchainSchema.safeParse(input2.toolchain);
+  if (!scope.success || !toolchain.success) invalid2();
+  const lock = decodeInput(input2.lock);
+  const base = { version: 1, scope: scope.data, toolchain: toolchain.data, lockSha256: digest(input2.lock) };
+  if (input2.ecosystem === "npm") {
+    if (!workspaceDependencyNpmRegistrySchema.safeParse(input2.registry).success) unsupported();
+    const registry2 = new URL(input2.registry);
+    const manifest = parseJson(decodeInput(input2.manifest));
+    const artifacts = readNpmArtifacts(parseJson(lock), manifest, registry2);
+    const manifestSha256 = digest(input2.manifest);
+    const policy3 = "npm-ci-offline-no-scripts-v1";
+    const identity2 = { ...base, ecosystem: "npm", policy: policy3, registry: registry2.href, manifestSha256 };
+    return { ...identity2, key: workspaceDependencyCompatibilityKey(identity2), artifacts };
+  }
+  const requirements = readPythonRequirements(lock);
+  const policy2 = "pip-offline-hashed-wheels-v1";
+  const identity = { ...base, ecosystem: "pip", policy: policy2 };
+  return { ...identity, key: workspaceDependencyCompatibilityKey(identity), requirements };
+}
+function digest(bytes) {
+  return createHash6("sha256").update(bytes).digest("hex");
+}
+function decodeInput(bytes) {
+  if (!bytes.byteLength || bytes.byteLength > MAX_INPUT_BYTES) invalid2();
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return invalid2();
+  }
+}
 var jsonRecord = external_exports.record(external_exports.string(), external_exports.unknown());
+function parseJson(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return invalid2();
+  }
+  const stack = [{ value: raw, depth: 0 }];
+  let count = 0;
+  while (stack.length) {
+    const { value, depth } = stack.pop();
+    if (++count > MAX_JSON_VALUES || depth > 64) invalid2();
+    if (value !== null && typeof value === "object") {
+      const children = Object.values(value);
+      if (count + stack.length + children.length > MAX_JSON_VALUES) invalid2();
+      for (const child of children) stack.push({ value: child, depth: depth + 1 });
+    }
+  }
+  const record3 = jsonRecord.safeParse(raw);
+  return record3.success ? record3.data : invalid2();
+}
+function trustedUrl(value) {
+  if (typeof value !== "string" || value.length > 2048 || /[\s\\?#]/.test(value)) unsupported();
+  let url2;
+  try {
+    url2 = new URL(value);
+  } catch {
+    return unsupported();
+  }
+  if (url2.protocol !== "https:" || url2.username || url2.password || url2.href !== value) unsupported();
+  return url2;
+}
+var npmName = /^(?:@[a-z0-9][a-z0-9_.-]*\/)?[a-z0-9][a-z0-9_.-]*$/;
+var npmRangeOrTag = /^(?:[a-zA-Z0-9*^~<>=][a-zA-Z0-9*^~<>=.+| -]{0,255})$/;
+var npmVersion = /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?$/;
+var npmFields = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
+function validNpmIntegrity(integrity) {
+  return typeof integrity === "string" && /^sha512-[A-Za-z0-9+/]{86}==$/.test(integrity) && `sha512-${Buffer.from(integrity.slice(7), "base64").toString("base64")}` === integrity;
+}
+function npmDependencyTables(record3) {
+  if (["workspaces", "bundleDependencies", "bundledDependencies", "patchedDependencies", "patched"].some((name) => Object.hasOwn(record3, name)) || ["link", "inBundle", "hasShrinkwrap"].some((flag) => Object.hasOwn(record3, flag) && record3[flag] !== false)) unsupported();
+  if (Object.hasOwn(record3, "overrides")) validateNpmOverrides(record3.overrides);
+  return npmFields.map((field) => {
+    const table = jsonRecord.safeParse(record3[field] === void 0 ? {} : record3[field]);
+    if (!table.success) invalid2();
+    return Object.entries(table.data).map(([name, spec]) => {
+      if (!npmName.test(name) || typeof spec !== "string" || !npmRangeOrTag.test(spec)) unsupported();
+      return [name, spec];
+    }).sort(([left], [right]) => lexical(left, right));
+  });
+}
+function validateNpmOverrides(input2) {
+  let count = 0;
+  const visit3 = (value, depth) => {
+    const table = jsonRecord.safeParse(value);
+    if (!table.success || depth >= 32) unsupported();
+    for (const [selector, spec] of Object.entries(table.data)) {
+      if (++count > MAX_PACKAGES) invalid2();
+      const at2 = selector.lastIndexOf("@");
+      if (!(depth > 0 && selector === ".") && !(at2 > 0 ? npmName.test(selector.slice(0, at2)) && npmRangeOrTag.test(selector.slice(at2 + 1)) : npmName.test(selector))) unsupported();
+      if (typeof spec === "string") {
+        if (!npmRangeOrTag.test(spec) && !(spec.startsWith("$") && npmName.test(spec.slice(1)))) unsupported();
+      } else if (selector !== ".") visit3(spec, depth + 1);
+      else unsupported();
+    }
+  };
+  visit3(input2, 0);
+}
+function readNpmArtifacts(lock, manifest, registry2) {
+  if (lock.lockfileVersion !== 3 || Object.hasOwn(lock, "patchedDependencies") || Object.hasOwn(lock, "patched")) unsupported();
+  const packages = jsonRecord.safeParse(lock.packages);
+  if (!packages.success) invalid2();
+  const root = jsonRecord.safeParse(packages.data[""]);
+  if (!root.success || Object.keys(packages.data).length > MAX_PACKAGES + 1) invalid2();
+  const rootDependencies = npmDependencyTables(root.data);
+  if (JSON.stringify(rootDependencies) !== JSON.stringify(npmDependencyTables(manifest)) || root.data.name !== manifest.name || root.data.version !== manifest.version || rootDependencies[3].some(([name]) => optionalNpmPeer(root.data, name) !== optionalNpmPeer(manifest, name))) invalid2();
+  requireNpmDependencyRecords(packages.data, "", manifest, rootDependencies);
+  return Object.entries(packages.data).filter(([relative]) => relative !== "").sort(([left], [right]) => lexical(left, right)).map(([relative, raw]) => {
+    if (relative.length > 4096) unsupported();
+    const segments = relative.split("/");
+    let name = "";
+    let depth = 0;
+    for (let i = 0; i < segments.length; ) {
+      if (++depth > 32 || segments[i++] !== "node_modules" || i === segments.length) unsupported();
+      name = segments[i++];
+      if (name.startsWith("@")) name += `/${segments[i++] ?? ""}`;
+      if (!npmName.test(name)) unsupported();
+    }
+    const parsed = jsonRecord.safeParse(raw);
+    if (!parsed.success) invalid2();
+    const { version: version2, integrity, resolved } = parsed.data;
+    requireNpmDependencyRecords(packages.data, relative, parsed.data, npmDependencyTables(parsed.data));
+    if (typeof version2 !== "string" || !npmVersion.test(version2) || parsed.data.name !== void 0 && parsed.data.name !== name || integrity !== void 0 && !validNpmIntegrity(integrity)) unsupported();
+    const filename = `${name.split("/").at(-1)}-${version2}.tgz`;
+    const expected = `${registry2.href}${name}/-/${filename}`;
+    if (resolved !== void 0 && trustedUrl(resolved).href !== expected) unsupported();
+    return { path: relative, resolved: expected, integrity: integrity ?? null };
+  });
+}
+function optionalNpmPeer(record3, name) {
+  const table = record3.peerDependenciesMeta;
+  if (typeof table !== "object" || table === null || !Object.hasOwn(table, name)) return false;
+  const meta3 = table[name];
+  return typeof meta3 === "object" && meta3 !== null && Object.hasOwn(meta3, "optional") && meta3.optional === true;
+}
+function requireNpmDependencyRecords(packages, owner, record3, [dependencies, dev, optional2, peers]) {
+  const optionalNames = new Set(optional2.map(([name]) => name));
+  for (const [name] of [...dependencies, ...owner === "" ? dev : [], ...peers.filter(([peer]) => !optionalNpmPeer(record3, peer))]) {
+    if (optionalNames.has(name)) continue;
+    let cursor = owner;
+    for (; ; ) {
+      if (Object.hasOwn(packages, `${cursor ? `${cursor}/` : ""}node_modules/${name}`)) break;
+      if (!cursor) invalid2();
+      cursor = cursor.slice(0, Math.max(0, cursor.lastIndexOf("/node_modules/")));
+    }
+  }
+}
+var canonicalPythonVersion = /^(?:(\d+)!)?(\d+(?:\.\d+)*)(?:(a|b|rc)(\d+))?(?:\.post(\d+))?(?:\.dev(\d+))?(?:\+([a-z0-9]+(?:\.[a-z0-9]+)*))?$/;
+function matchesPythonPin(pin, version2) {
+  const required3 = canonicalPythonVersion.exec(pin);
+  const wheel = canonicalPythonVersion.exec(version2);
+  if (!required3 || !wheel) return false;
+  const number4 = (part) => part.replace(/^0+(?=\d)/, "");
+  const publicVersion = ([, epoch, release, pre, preNumber, post, dev]) => [
+    number4(epoch ?? "0"),
+    release.split(".").map(number4).join(".").replace(/(?:\.0)+$/, ""),
+    pre ?? "",
+    number4(preNumber ?? ""),
+    number4(post ?? ""),
+    number4(dev ?? "")
+  ].join("/");
+  const local = (value) => value?.split(".").map((part) => /^\d+$/.test(part) ? number4(part) : part).join(".");
+  return publicVersion(required3) === publicVersion(wheel) && (required3[7] === void 0 || local(required3[7]) === local(wheel[7]));
+}
+function readPythonRequirements(text) {
+  const records = /* @__PURE__ */ new Map();
+  let continued = "";
+  for (const raw of text.replaceAll("\r\n", "\n").split("\n")) {
+    if (/[\u0000-\u0008\u000a-\u001f\u007f]/.test(raw)) invalid2();
+    const comment = raw.search(/(?:^|\s)#/);
+    const line = (comment >= 0 ? raw.slice(0, comment) : raw).trim();
+    if (raw.includes("\\") && (comment >= 0 || !raw.endsWith("\\") || raw.slice(0, -1).includes("\\"))) unsupported();
+    if (!line) {
+      if (continued) unsupported();
+      continue;
+    }
+    if (continued.length + raw.length > 65536) invalid2();
+    if (line.endsWith("\\")) {
+      if (line === "\\") unsupported();
+      continued += raw.slice(0, -1);
+      continue;
+    }
+    const [requirement, ...flags] = `${continued}${comment >= 0 ? raw.slice(0, comment) : raw}`.trim().split(/\s+/);
+    continued = "";
+    const pin = /^([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?)==([0-9][A-Za-z0-9.!+_-]*)$/.exec(requirement);
+    if (!pin || pin[2].length > 128 || !canonicalPythonVersion.test(pin[2]) || flags.length === 0 || flags.some((flag) => !/^--hash=sha256:[a-fA-F0-9]{64}$/.test(flag))) unsupported();
+    const name = pythonName(pin[1]);
+    if (records.has(name) || records.size >= MAX_PACKAGES) invalid2();
+    records.set(name, { name, version: pin[2], hashes: [...new Set(flags.map((flag) => flag.slice(14).toLowerCase()))].sort() });
+  }
+  if (continued || !records.size) invalid2();
+  return [...records.values()].sort((a, b2) => lexical(a.name, b2.name));
+}
+function pythonName(name) {
+  return name.toLowerCase().replace(/[-_.]+/g, "-");
+}
+function lexical(a, b2) {
+  return a < b2 ? -1 : a > b2 ? 1 : 0;
+}
+function invalid2() {
+  throw new WorkspaceDependencyInputError("dependency_input_invalid");
+}
+function unsupported() {
+  throw new WorkspaceDependencyInputError("dependency_input_unsupported");
+}
 
 // src/workspace-dependency-mounts.ts
 import { execFile as execFile4 } from "node:child_process";
@@ -56347,23 +56831,23 @@ async function readWorkspaceDependencyMountPolicy() {
       contains: workspacePathContains
     };
   }
-  if (process.platform !== "darwin") return unsupported();
+  if (process.platform !== "darwin") return unsupported2();
   const { stdout, stderr } = await exec4("/sbin/mount", [], { timeout: 5e3, maxBuffer: 1024 * 1024, env: { LC_ALL: "C" } });
-  if (stderr) return unsupported();
+  if (stderr) return unsupported2();
   return createDarwinDependencyMountPolicy(stdout, await readVerifiedFirmlinks());
 }
 function createDarwinDependencyMountPolicy(table, firmlinks) {
-  if (!table.endsWith("\n") || Buffer.byteLength(table) > 1024 * 1024) return unsupported();
+  if (!table.endsWith("\n") || Buffer.byteLength(table) > 1024 * 1024) return unsupported2();
   const mounts = table.slice(0, -1).split("\n").map((line) => {
     const i = line.lastIndexOf(" (");
     const from = line.slice(0, i).split(" on ");
     const flags = line.slice(i + 2, -1).split(", ");
-    if (i < 0 || !line.endsWith(")") || from.length !== 2 || !from[0] || !absolute(from[1]) || !/^[a-zA-Z0-9_+-]+$/.test(flags[0]) || /[\u0000-\u001f\u007f]/.test(line)) return unsupported();
+    if (i < 0 || !line.endsWith(")") || from.length !== 2 || !from[0] || !absolute(from[1]) || !/^[a-zA-Z0-9_+-]+$/.test(flags[0]) || /[\u0000-\u001f\u007f]/.test(line)) return unsupported2();
     return { directory: from[1], flags };
   });
   const system = mounts.filter(({ directory }) => directory === "/");
   const data = mounts.filter(({ directory }) => directory === DATA);
-  if (system.length !== 1 || data.length !== 1 || system[0].flags[0] !== "apfs" || data[0].flags[0] !== "apfs" || !system[0].flags.includes("sealed") || !system[0].flags.includes("read-only") || !data[0].flags.includes("local") || !data[0].flags.includes("root data")) return unsupported();
+  if (system.length !== 1 || data.length !== 1 || system[0].flags[0] !== "apfs" || data[0].flags[0] !== "apfs" || !system[0].flags.includes("sealed") || !system[0].flags.includes("read-only") || !data[0].flags.includes("local") || !data[0].flags.includes("root data")) return unsupported2();
   function aliases(directory) {
     const aliases2 = /* @__PURE__ */ new Set([directory]);
     for (const [visible, backing] of firmlinks) {
@@ -56390,32 +56874,32 @@ async function readVerifiedFirmlinks() {
   let bytes;
   try {
     const info = await file2.stat();
-    if (!info.isFile() || info.uid !== 0 || info.nlink !== 1 || (info.mode & 18) !== 0 || info.size < 1 || info.size > 64 * 1024) return unsupported();
+    if (!info.isFile() || info.uid !== 0 || info.nlink !== 1 || (info.mode & 18) !== 0 || info.size < 1 || info.size > 64 * 1024) return unsupported2();
     await assertDenyOnlyWorkspaceAcls([FIRMLINKS]);
     bytes = Buffer.alloc(info.size);
-    if ((await file2.read(bytes, 0, bytes.length, 0)).bytesRead !== bytes.length) return unsupported();
+    if ((await file2.read(bytes, 0, bytes.length, 0)).bytesRead !== bytes.length) return unsupported2();
   } finally {
     await file2.close();
   }
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  if (!text.endsWith("\n")) return unsupported();
+  if (!text.endsWith("\n")) return unsupported2();
   const mappings = [];
   for (const line of text.slice(0, -1).split("\n")) {
     const [visible, relative, ...extra] = line.split("	");
-    if (extra.length || !absolute(visible) || visible === "/" || !relative || path13.isAbsolute(relative) || relative.split("/").some((part) => !part || part === "." || part === "..") || /[\u0000-\u001f\u007f]/.test(relative)) return unsupported();
+    if (extra.length || !absolute(visible) || visible === "/" || !relative || path13.isAbsolute(relative) || relative.split("/").some((part) => !part || part === "." || part === "..") || /[\u0000-\u001f\u007f]/.test(relative)) return unsupported2();
     const backing = path13.join(DATA, relative);
     const [first, second] = await Promise.all([directoryIdentity2(visible), directoryIdentity2(backing)]);
     if (!first && !second) continue;
-    if (!first || first !== second) return unsupported();
+    if (!first || first !== second) return unsupported2();
     mappings.push([visible, backing]);
   }
-  if (!mappings.length) return unsupported();
+  if (!mappings.length) return unsupported2();
   return mappings;
 }
 async function directoryIdentity2(directory) {
   try {
     const info = await fs10.lstat(directory, { bigint: true });
-    if (!info.isDirectory()) return unsupported();
+    if (!info.isDirectory()) return unsupported2();
     return `${info.dev}:${info.ino}`;
   } catch (error62) {
     if (error62.code === "ENOENT") return void 0;
@@ -56428,7 +56912,7 @@ function absolute(value) {
 function contains(root, entry) {
   return workspacePathContains(root.normalize("NFD").toLowerCase(), entry.normalize("NFD").toLowerCase());
 }
-function unsupported() {
+function unsupported2() {
   throw new Error("Unsupported dependency workspace mount layout.");
 }
 
@@ -56437,9 +56921,188 @@ var MAX_ARTIFACT_BYTES = 1024n ** 3n;
 var MAX_CACHE_BYTES = 4n * MAX_ARTIFACT_BYTES;
 var MAX_WORKSPACE_DEPENDENCY_SNAPSHOT_BYTES = Number(MAX_ARTIFACT_BYTES);
 var READ_BYTES = 256 * 1024;
+var WorkspaceDependencyCacheError = class extends Error {
+  constructor(code) {
+    super({
+      dependency_cache_invalid: "Dependency cache layout or permissions are invalid.",
+      dependency_artifact_missing: "The cache does not contain a selected dependency artifact.",
+      dependency_artifact_conflict: "A dependency artifact does not match its selected hash.",
+      dependency_cache_changed: "The dependency cache changed since it was verified.",
+      dependency_snapshot_limit: "The verified artifact snapshot exceeds the compressed-byte budget."
+    }[code]);
+    this.code = code;
+  }
+  code;
+};
+async function verifyWorkspaceDependencyCache(request) {
+  const prepared = request.input.ecosystem === "npm" ? prepareWorkspaceNpmLock(request.input, request.artifactManifest) : prepareWorkspacePipLock(request.input, request.artifactManifest);
+  if (request.expectedFingerprint !== void 0 && !/^[0-9a-f]{64}$/.test(request.expectedFingerprint)) invalid3();
+  const budget = request.inspectExpansion ? createWorkspaceDependencyExpansionBudget(request.expansionLimits) : void 0;
+  const copiesByIntegrity = "copiesByIntegrity" in prepared ? prepared.copiesByIntegrity : void 0;
+  const tree = /* @__PURE__ */ new Map();
+  for (const artifact of prepared.artifacts) {
+    if ("integrity" in artifact) {
+      const digest2 = Buffer.from(artifact.integrity.slice(7), "base64").toString("hex");
+      const copies = copiesByIntegrity?.get(artifact.integrity);
+      if (!copies) invalid3();
+      put(tree, ["_cacache", "content-v2", "sha512", digest2.slice(0, 2), digest2.slice(2, 4), digest2.slice(4)], { algorithm: "sha512", digest: digest2, copies });
+    } else {
+      put(tree, [artifact.filename], { algorithm: "sha256", digest: artifact.sha256, copies: 1 });
+    }
+  }
+  try {
+    const cache = await validateWorkspaceProject(request.authorizedRoots, request.cache);
+    await assertProtectedWorkspacePath(cache);
+    if (!workspaceMountLayoutSupported([cache.directory], readWorkspaceMountTable()) || !process.geteuid) invalid3();
+    const snapshot = request.snapshot && await validateWorkspaceProject(request.snapshot.directory, request.snapshot);
+    if (snapshot) {
+      const mounts = await readWorkspaceDependencyMountPolicy();
+      await assertProtectedWorkspacePath(snapshot, true);
+      if ((await fs11.lstat(snapshot.directory)).mode & 63) invalid3();
+      const folder = await fs11.opendir(snapshot.directory);
+      try {
+        if (await folder.read() || !mounts.supports(snapshot.directory) || mounts.aliases(snapshot.directory).some((write) => mounts.aliases(cache.directory).some((read) => mounts.contains(read, write) || mounts.contains(write, read)))) invalid3();
+      } finally {
+        await folder.close();
+      }
+    }
+    const uid = BigInt(process.geteuid());
+    const measured = /* @__PURE__ */ new Map();
+    const scratch = Buffer.alloc(READ_BYTES);
+    let bytes = 0n;
+    for (let pending = [["", tree]]; pending.length; ) {
+      await verifyAcls(cache.directory, pending.map(([relative]) => relative));
+      const next = [];
+      for (const [relative, expected] of pending) {
+        if (expected instanceof Map) await inspectDirectory(relative, expected, next);
+        else await verifyFile(relative, expected);
+      }
+      pending = next;
+    }
+    await validateWorkspaceProject(request.authorizedRoots, cache);
+    const stamps = [];
+    for (const relative of [...measured.keys()].sort()) {
+      const first = measured.get(relative);
+      if (!sameIdentity(first, await fs11.lstat(path14.join(cache.directory, relative), { bigint: true }))) changed();
+      stamps.push([relative, ...fingerprintParts(first)]);
+    }
+    const cacheFingerprint = createHash7("sha256").update(JSON.stringify([
+      "workspace-dependency-cache-v1",
+      prepared.identity.key,
+      prepared.artifactManifestSha256,
+      stamps
+    ])).digest("hex");
+    if (request.expectedFingerprint !== void 0 && cacheFingerprint !== request.expectedFingerprint) changed();
+    if (snapshot) await assertProtectedWorkspacePath(snapshot, true);
+    return {
+      cache,
+      identity: prepared.identity,
+      stagedLock: prepared.lock,
+      artifactManifestSha256: prepared.artifactManifestSha256,
+      cacheFingerprint,
+      bytes: Number(bytes)
+    };
+    async function inspectDirectory(relative, expected, next) {
+      const directory = path14.join(cache.directory, relative);
+      const before = await fs11.lstat(directory, { bigint: true });
+      if (!before.isDirectory() || !trusted(before, uid, cache.device) || !relative && String(before.ino) !== cache.inode) invalid3();
+      if (snapshot && relative) await fs11.mkdir(path14.join(snapshot.directory, relative), { mode: 448 });
+      measured.set(relative, before);
+      const found = /* @__PURE__ */ new Set();
+      for await (const entry of await fs11.opendir(directory)) {
+        const item = expected.get(entry.name);
+        if (!item || found.has(entry.name)) invalid3();
+        found.add(entry.name);
+        const child = relative ? `${relative}/${entry.name}` : entry.name;
+        next.push([child, item]);
+      }
+      if (found.size !== expected.size) throw new WorkspaceDependencyCacheError("dependency_artifact_missing");
+    }
+    async function verifyFile(relative, expected) {
+      const filename = path14.join(cache.directory, relative);
+      const info = await fs11.lstat(filename, { bigint: true });
+      if (!info.isFile() || info.nlink !== 1n || !trusted(info, uid, cache.device) || info.size < 1n || info.size > MAX_ARTIFACT_BYTES) invalid3();
+      bytes += info.size;
+      if (bytes > MAX_CACHE_BYTES) invalid3();
+      if (snapshot && bytes > MAX_ARTIFACT_BYTES) throw new WorkspaceDependencyCacheError("dependency_snapshot_limit");
+      const fd = await fs11.open(filename, fs11.constants.O_RDONLY | fs11.constants.O_NOFOLLOW | fs11.constants.O_NONBLOCK);
+      try {
+        if (!sameIdentity(info, await fd.stat({ bigint: true }))) changed();
+        const hash2 = createHash7(expected.algorithm);
+        let remaining = Number(info.size);
+        const copy = snapshot && await fs11.open(path14.join(snapshot.directory, relative), "wx", 256);
+        try {
+          while (remaining) {
+            const { bytesRead } = await fd.read(scratch, 0, Math.min(remaining, scratch.length), null);
+            if (!bytesRead) changed();
+            const chunk = scratch.subarray(0, bytesRead);
+            hash2.update(chunk);
+            await copy?.writeFile(chunk);
+            remaining -= bytesRead;
+          }
+        } finally {
+          await copy?.close();
+        }
+        if (!sameIdentity(info, await fd.stat({ bigint: true }))) changed();
+        if (hash2.digest("hex") !== expected.digest) throw new WorkspaceDependencyCacheError("dependency_artifact_conflict");
+        await budget?.inspect(fd, Number(info.size), request.input.ecosystem, expected.copies);
+        if (!sameIdentity(info, await fd.stat({ bigint: true }))) changed();
+        measured.set(relative, info);
+      } finally {
+        await fd.close();
+      }
+    }
+  } catch (error62) {
+    if (error62 instanceof WorkspaceDependencyCacheError || error62 instanceof WorkspaceDependencyArchiveError) throw error62;
+    if (error62.code === "ENOENT") throw new WorkspaceDependencyCacheError("dependency_artifact_missing");
+    return invalid3();
+  }
+}
+function put(tree, parts, file2) {
+  for (const part of parts.slice(0, -1)) {
+    const existing = tree.get(part) ?? /* @__PURE__ */ new Map();
+    if (!(existing instanceof Map)) invalid3();
+    tree.set(part, existing);
+    tree = existing;
+  }
+  tree.set(parts.at(-1), file2);
+}
+function trusted(info, uid, device) {
+  return String(info.dev) === device && (info.uid === uid || info.uid === 0n) && (info.mode & 0o022n) === 0n;
+}
+function fingerprintParts(info) {
+  return [info.dev, info.ino, info.mode, info.uid, info.gid, info.nlink, info.size, info.ctimeNs, info.mtimeNs].map(String);
+}
+function sameIdentity(a, b2) {
+  return a.dev === b2.dev && a.ino === b2.ino && a.mode === b2.mode && a.uid === b2.uid && a.gid === b2.gid && a.nlink === b2.nlink && a.size === b2.size && a.ctimeNs === b2.ctimeNs && a.mtimeNs === b2.mtimeNs;
+}
+async function verifyAcls(root, entries) {
+  if (process.platform !== "darwin") return;
+  let batch = [];
+  let size = 0;
+  for (const relative of entries) {
+    const filename = path14.join(root, relative);
+    const bytes = Buffer.byteLength(filename) + 1;
+    if (size + bytes > 64 * 1024) {
+      await assertDenyOnlyWorkspaceAcls(batch);
+      batch = [];
+      size = 0;
+    }
+    batch.push(filename);
+    size += bytes;
+  }
+  await assertDenyOnlyWorkspaceAcls(batch);
+}
+function changed() {
+  throw new WorkspaceDependencyCacheError("dependency_cache_changed");
+}
+function invalid3() {
+  throw new WorkspaceDependencyCacheError("dependency_cache_invalid");
+}
 
 // src/workspace-dependency-registry.ts
 var REGISTRY = "workspace-dependencies.json";
+var MANIFESTS = "workspace-dependency-manifests";
 var REGISTRY_BYTES = 256 * 1024;
 var MANIFEST_BYTES = 8 * 1024 * 1024;
 var ecosystem = external_exports.enum(["npm", "pip"]);
@@ -56476,6 +57139,102 @@ var WorkspaceDependencyPolicyError = class extends Error {
   }
   code;
 };
+async function resolveWorkspaceDependencySelections(request) {
+  const { project, git: git2, authorizedRoots, expected, roots } = request;
+  if (expected?.length === 0) return [];
+  const registry2 = await readRegistry3(request.configPath);
+  const inactive = () => expected ? fail("dependency_selection_revoked") : [];
+  if (!registry2 || !project) return inactive();
+  const entry = registry2.projects.find(({ source }) => source.directory === project.directory);
+  if (!entry) return inactive();
+  if (!roots || !git2 || git2.repositoryId !== entry.repositoryId || !sameWorkspaceProject(entry.source, project)) {
+    return fail(expected ? "dependency_selection_revoked" : "dependency_project_unavailable");
+  }
+  const assertGit = async (revoked) => {
+    try {
+      if (await resolveManagedGitSelection({
+        configPath: request.configPath,
+        roots,
+        project,
+        authorizedRoots,
+        sourceRegistryPath: request.sourceRegistryPath,
+        sourceRegistryRoot: request.sourceRegistryRoot,
+        expected: git2
+      })) return;
+    } catch {
+    }
+    fail(revoked ? "dependency_selection_revoked" : "dependency_project_unavailable");
+  };
+  await assertGit(Boolean(expected));
+  const policies = [...entry.policies].sort((a, b2) => a.ecosystem.localeCompare(b2.ecosystem));
+  if (expected && (expected.length !== policies.length || policies.some(({ ecosystem: ecosystem2 }) => expected.filter(({ identity }) => identity.ecosystem === ecosystem2).length !== 1))) fail("dependency_selection_revoked");
+  const filenames = policies.flatMap(({ ecosystem: ecosystem2 }) => ecosystem2 === "pip" ? ["requirements.lock"] : ["package.json", "package-lock.json"]);
+  const files = await readWorkspaceGitDependencyInputs({ gitDirectory: git2.cache, authorizedRoots, ...git2 }, git2, filenames);
+  const prepared = [];
+  const approvedEntries = [];
+  const approvedToolchains = [];
+  for (const policy2 of policies) {
+    const previous = expected?.find(({ identity: identity2 }) => identity2.ecosystem === policy2.ecosystem);
+    const execution = registry2.toolchains.find(({ ecosystem: ecosystem2 }) => ecosystem2 === policy2.ecosystem);
+    const toolchainBindingDigest = execution && workspaceDependencyToolchainBindingDigest(execution);
+    if (previous && previous.toolchainBindingDigest !== toolchainBindingDigest) fail("dependency_selection_revoked");
+    let toolchain;
+    let toolchainFingerprint;
+    if (execution) {
+      if (!request.probeToolchain) fail("dependency_toolchain_unavailable");
+      const probed = await request.probeToolchain(execution, previous?.toolchainFingerprint);
+      if (!dependencyDigestSchema.safeParse(probed.fingerprint).success) fail("dependency_toolchain_unavailable");
+      if (previous && probed.fingerprint !== previous.toolchainFingerprint) fail("dependency_selection_revoked");
+      approvedToolchains.push(execution);
+      ({ toolchain, fingerprint: toolchainFingerprint } = probed);
+    } else {
+      if (request.probeToolchain || !request.toolchains?.[policy2.ecosystem]) fail("dependency_toolchain_unavailable");
+      toolchain = request.toolchains[policy2.ecosystem];
+    }
+    const identityFields = { scope: git2.scope, toolchain };
+    const input2 = policy2.ecosystem === "pip" ? { ...policy2, ...identityFields, lock: files.get("requirements.lock") } : { ...policy2, ...identityFields, lock: files.get("package-lock.json"), manifest: files.get("package.json") };
+    const { key } = describeWorkspaceDependencies(input2);
+    const approved = registry2.caches.find((entry2) => entry2.key === key && entry2.scope === input2.scope && entry2.ecosystem === input2.ecosystem);
+    if (!approved) fail(expected ? "dependency_selection_revoked" : "dependency_cache_unavailable");
+    approvedEntries.push(approved);
+    if (previous && (previous.identity.key !== key || !sameWorkspaceProject(previous.cache, approved.cache) || previous.artifactManifestSha256 !== approved.artifactManifestSha256)) fail("dependency_selection_revoked");
+    const artifactManifest = await readProtectedJson(
+      path15.join(registry2.directory, MANIFESTS, `${key}.json`),
+      MANIFEST_BYTES,
+      "dependency_manifest_invalid"
+    );
+    if (artifactManifest === void 0) fail("dependency_manifest_missing");
+    if (!Array.isArray(artifactManifest)) fail("dependency_manifest_invalid");
+    const measured = await verifyWorkspaceDependencyCache({
+      input: input2,
+      artifactManifest,
+      cache: approved.cache,
+      authorizedRoots,
+      expectedFingerprint: previous?.cacheFingerprint
+    });
+    if (measured.artifactManifestSha256 !== approved.artifactManifestSha256) fail("dependency_manifest_mismatch");
+    const { cache, identity, artifactManifestSha256, cacheFingerprint } = measured;
+    prepared.push({
+      selection: {
+        cache,
+        identity,
+        artifactManifestSha256,
+        cacheFingerprint,
+        ...toolchainFingerprint ? { toolchainFingerprint, toolchainBindingDigest } : {}
+      },
+      stagedLock: measured.stagedLock,
+      input: input2,
+      artifactManifest,
+      ...execution ? { execution } : {},
+      ...input2.ecosystem === "npm" ? { npmManifest: input2.manifest } : {}
+    });
+  }
+  await assertGit(true);
+  const current = await readRegistry3(request.configPath);
+  const currentProject = current?.projects.find(({ source }) => source.directory === project.directory);
+  if (JSON.stringify(currentProject) !== JSON.stringify(entry) || approvedEntries.some((approved) => JSON.stringify(current?.caches.find(({ key }) => key === approved.key)) !== JSON.stringify(approved)) || approvedToolchains.some((approved) => JSON.stringify(current?.toolchains.find(({ ecosystem: ecosystem2 }) => ecosystem2 === approved.ecosystem)) !== JSON.stringify(approved))) fail("dependency_selection_revoked");
+  return prepared;
+}
 async function assertWorkspaceDependencyWriteIsolation(configPath, writableRoots) {
   await (await loadWorkspaceDependencyWriteGuard(configPath))?.assertWrites(writableRoots);
 }
@@ -56513,8 +57272,8 @@ async function loadWorkspaceDependencyWriteGuard(configPath, options2) {
       }
     },
     async assertNewDirectory(directory) {
-      const parent = await pinWorkspacePath(path14.dirname(directory), ".");
-      const canonical = path14.join(parent.directory, path14.basename(directory));
+      const parent = await pinWorkspacePath(path15.dirname(directory), ".");
+      const canonical = path15.join(parent.directory, path15.basename(directory));
       check2(canonical, {
         id: "",
         ancestors: await readWorkspaceAncestorIdentities(parent.directory),
@@ -56531,7 +57290,7 @@ async function loadWorkspaceDependencyWriteGuard(configPath, options2) {
           ancestors: await readWorkspaceAncestorIdentities(parent.directory),
           aliases: registry2.mounts.aliases(target)
         }, registry2.protected);
-        if (target !== path14.resolve(directory)) fail("dependency_storage_unverifiable");
+        if (target !== path15.resolve(directory)) fail("dependency_storage_unverifiable");
         await assertProtectedWorkspacePath(parent, false, missing);
       }
     }
@@ -56539,7 +57298,7 @@ async function loadWorkspaceDependencyWriteGuard(configPath, options2) {
 }
 async function hasWorkspaceDependencyRegistry(configPath) {
   try {
-    await fs11.lstat(path14.join(path14.dirname(path14.resolve(configPath)), REGISTRY));
+    await fs12.lstat(path15.join(path15.dirname(path15.resolve(configPath)), REGISTRY));
     return true;
   } catch (error62) {
     if (error62.code === "ENOENT") return false;
@@ -56548,8 +57307,8 @@ async function hasWorkspaceDependencyRegistry(configPath) {
 }
 async function readRegistry3(configPath, allowMissingCachesForStorage = false) {
   if (!configPath) return void 0;
-  const directory = path14.dirname(path14.resolve(configPath));
-  const raw = await readProtectedJson(path14.join(directory, REGISTRY), REGISTRY_BYTES, "dependency_registry_invalid");
+  const directory = path15.dirname(path15.resolve(configPath));
+  const raw = await readProtectedJson(path15.join(directory, REGISTRY), REGISTRY_BYTES, "dependency_registry_invalid");
   if (raw === void 0) return void 0;
   try {
     const registry2 = registrySchema3.parse(raw);
@@ -56606,17 +57365,17 @@ async function protectedRegistryLocation(binding, mounts, allowMissing) {
 }
 async function projectStorageDirectory(directory) {
   const suffix = [];
-  let current = path14.resolve(directory);
+  let current = path15.resolve(directory);
   while (!await pathExists(current)) {
-    suffix.unshift(path14.basename(current));
-    current = path14.dirname(current);
+    suffix.unshift(path15.basename(current));
+    current = path15.dirname(current);
   }
   const parent = await pinWorkspacePath(current, ".");
-  return { parent, target: path14.join(parent.directory, ...suffix), missing: suffix.length > 0 };
+  return { parent, target: path15.join(parent.directory, ...suffix), missing: suffix.length > 0 };
 }
 async function pathExists(candidate) {
   try {
-    await fs11.lstat(candidate);
+    await fs12.lstat(candidate);
     return true;
   } catch (error62) {
     if (error62.code === "ENOENT") return false;
@@ -56625,22 +57384,22 @@ async function pathExists(candidate) {
 }
 async function readProtectedJson(filename, limit, code) {
   try {
-    const first = await fs11.lstat(filename, { bigint: true }).catch((error62) => {
+    const first = await fs12.lstat(filename, { bigint: true }).catch((error62) => {
       if (error62.code === "ENOENT") return void 0;
       throw error62;
     });
     if (!first) return void 0;
-    const directory = path14.dirname(filename);
+    const directory = path15.dirname(filename);
     const parent = await pinWorkspacePath(directory, ".");
     if (!process.geteuid || parent.directory !== directory || !first.isFile() || first.uid !== BigInt(process.geteuid()) || first.nlink !== 1n || (first.mode & 0o022n) !== 0n || first.size < 1n || first.size > BigInt(limit)) fail(code);
     await assertProtectedWorkspacePath(parent, true);
     await assertDenyOnlyWorkspaceAcls([filename]);
-    const descriptor = await fs11.open(filename, fs11.constants.O_RDONLY | fs11.constants.O_NOFOLLOW | fs11.constants.O_NONBLOCK);
+    const descriptor = await fs12.open(filename, fs12.constants.O_RDONLY | fs12.constants.O_NOFOLLOW | fs12.constants.O_NONBLOCK);
     try {
       if (!sameFile(first, await descriptor.stat({ bigint: true }))) fail(code);
       const buffer = Buffer.alloc(Number(first.size));
       const { bytesRead } = await descriptor.read(buffer, 0, buffer.length, 0);
-      if (bytesRead !== buffer.length || !sameFile(first, await descriptor.stat({ bigint: true })) || !sameFile(first, await fs11.lstat(filename, { bigint: true }))) fail(code);
+      if (bytesRead !== buffer.length || !sameFile(first, await descriptor.stat({ bigint: true })) || !sameFile(first, await fs12.lstat(filename, { bigint: true }))) fail(code);
       await validateWorkspaceProject(directory, parent);
       return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer));
     } finally {
@@ -56764,7 +57523,7 @@ function parseToolConfig(name, raw) {
   if (typeof raw.command !== "string" || !raw.command) {
     throw new Error(`Tool ${name} command must be a non-empty string`);
   }
-  if (!path15.isAbsolute(raw.command)) {
+  if (!path16.isAbsolute(raw.command)) {
     throw new Error(`Tool ${name} command must be an absolute path`);
   }
   const hasAllowlist = raw.paramAllowlist !== void 0;
@@ -56794,7 +57553,7 @@ function parseToolConfig(name, raw) {
 async function loadConfig(configPath = appConfig.localCliToolsConfigPath) {
   let rawText;
   try {
-    rawText = await fs12.readFile(configPath, "utf-8");
+    rawText = await fs13.readFile(configPath, "utf-8");
   } catch (err) {
     if (err?.code === "ENOENT") return { tools: {} };
     throw err;
@@ -56867,12 +57626,12 @@ function buildProcessEnv(config2) {
   for (const key of config2.envAllowlist) copyFromProcess(key);
   return { ...env, ...config2.env };
 }
-function appendCappedOutput(current, chunk, state, maxBytes) {
-  if (state.bytes >= maxBytes) {
+function appendCappedOutput(current, chunk, state, maxBytes2) {
+  if (state.bytes >= maxBytes2) {
     state.truncated = true;
     return current;
   }
-  const remaining = maxBytes - state.bytes;
+  const remaining = maxBytes2 - state.bytes;
   const slice = chunk.subarray(0, remaining);
   state.bytes += slice.length;
   if (slice.length < chunk.length) state.truncated = true;
@@ -56884,7 +57643,7 @@ async function runProcess2(command, args, timeoutMs, maxOutputBytes, env, abortS
   let stderr = "";
   const outputState = { bytes: 0, truncated: false };
   let timedOut = false;
-  return await new Promise((resolve, reject) => {
+  return await new Promise((resolve2, reject) => {
     const child = spawn2(command, args, {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
@@ -56927,7 +57686,7 @@ async function runProcess2(command, args, timeoutMs, maxOutputBytes, env, abortS
         reject(new LocalCliToolAbortedError());
         return;
       }
-      resolve({
+      resolve2({
         exitCode: code,
         signal,
         timedOut,
@@ -57107,24 +57866,24 @@ function registerLocalCliTools(options2) {
 }
 
 // src/tools/tool-context.ts
-function createTransportProxy(resolve) {
+function createTransportProxy(resolve2) {
   return {
-    sendMessage: (request) => resolve().sendMessage(request),
-    getChatMembers: (chatId) => resolve().getChatMembers(chatId),
-    editMessage: (request) => resolve().editMessage(request),
-    updateCard: (request) => resolve().updateCard(request),
-    recallMessage: (messageId) => resolve().recallMessage(messageId),
-    addReaction: (messageId, emojiType) => resolve().addReaction(messageId, emojiType),
-    removeReaction: (messageId, reactionId) => resolve().removeReaction(messageId, reactionId),
-    removeReactionByEmoji: (messageId, emojiType) => resolve().removeReactionByEmoji(messageId, emojiType),
-    downloadResource: (messageId, fileKey, resourceType) => resolve().downloadResource(messageId, fileKey, resourceType),
-    uploadImage: (data) => resolve().uploadImage(data),
-    uploadFile: (data, fileName) => resolve().uploadFile(data, fileName),
-    replyDocComment: (request) => resolve().replyDocComment(request),
-    findDocCommentReplyByMarker: (request) => resolve().findDocCommentReplyByMarker(request),
-    createDocComment: (request) => resolve().createDocComment(request),
-    fetchMessageText: (messageId) => resolve().fetchMessageText(messageId),
-    fetchMessageContext: (messageId) => resolve().fetchMessageContext(messageId)
+    sendMessage: (request) => resolve2().sendMessage(request),
+    getChatMembers: (chatId) => resolve2().getChatMembers(chatId),
+    editMessage: (request) => resolve2().editMessage(request),
+    updateCard: (request) => resolve2().updateCard(request),
+    recallMessage: (messageId) => resolve2().recallMessage(messageId),
+    addReaction: (messageId, emojiType) => resolve2().addReaction(messageId, emojiType),
+    removeReaction: (messageId, reactionId) => resolve2().removeReaction(messageId, reactionId),
+    removeReactionByEmoji: (messageId, emojiType) => resolve2().removeReactionByEmoji(messageId, emojiType),
+    downloadResource: (messageId, fileKey, resourceType) => resolve2().downloadResource(messageId, fileKey, resourceType),
+    uploadImage: (data) => resolve2().uploadImage(data),
+    uploadFile: (data, fileName) => resolve2().uploadFile(data, fileName),
+    replyDocComment: (request) => resolve2().replyDocComment(request),
+    findDocCommentReplyByMarker: (request) => resolve2().findDocCommentReplyByMarker(request),
+    createDocComment: (request) => resolve2().createDocComment(request),
+    fetchMessageText: (messageId) => resolve2().fetchMessageText(messageId),
+    fetchMessageContext: (messageId) => resolve2().fetchMessageContext(messageId)
   };
 }
 function createToolContext(args) {
@@ -57398,13 +58157,13 @@ function registerDocCommentTools(deps) {
 }
 
 // src/tools/reply.ts
-import fs15 from "node:fs/promises";
-import path19 from "node:path";
+import fs16 from "node:fs/promises";
+import path20 from "node:path";
 
 // src/reply-sender.ts
-import { createHash as createHash6 } from "node:crypto";
-import fs14 from "node:fs/promises";
-import path18 from "node:path";
+import { createHash as createHash8 } from "node:crypto";
+import fs15 from "node:fs/promises";
+import path19 from "node:path";
 
 // src/feishu-card.ts
 var CARD_MD_LIMIT = 4e3;
@@ -57520,16 +58279,16 @@ function _optimizeMarkdownStyle(text, cardVersion = 2) {
     r = r.replace(/^((?!#{4,5} )(?!\*\*).+)\n\n(<br>)\n\n(\|)/gm, "$1\n$2\n$3");
     r = r.replace(/^(\*\*.+)\n\n(<br>)\n\n(\|)/gm, "$1\n$2\n\n$3");
     r = r.replace(/(\|[^\n]*\n)\n(<br>\n)((?!#{4,5} )(?!\*\*))/gm, "$1$2$3");
-    codeBlocks.forEach((block, i) => {
+    codeBlocks.forEach((block2, i) => {
       r = r.replace(`${MARK}${i}___`, `
 <br>
-${block}
+${block2}
 <br>
 `);
     });
   } else {
-    codeBlocks.forEach((block, i) => {
-      r = r.replace(`${MARK}${i}___`, block);
+    codeBlocks.forEach((block2, i) => {
+      r = r.replace(`${MARK}${i}___`, block2);
     });
   }
   r = r.replace(/\n{3,}/g, "\n\n");
@@ -57617,17 +58376,17 @@ function splitCodeBlockSafe(text, maxLen) {
     if (idx < maxLen * 0.3) idx = remaining.lastIndexOf("\n", maxLen);
     if (idx < maxLen * 0.3) idx = maxLen;
     idx = retreatFromSplitMention(remaining, idx, maxLen);
-    const block = findContainingBlock(idx, ranges);
-    if (block) {
-      if (block.open > 0 && block.open > maxLen * 0.3) {
-        const retreatIdx = remaining.lastIndexOf("\n", block.open);
-        idx = retreatIdx > maxLen * 0.3 ? retreatIdx : block.open;
+    const block2 = findContainingBlock(idx, ranges);
+    if (block2) {
+      if (block2.open > 0 && block2.open > maxLen * 0.3) {
+        const retreatIdx = remaining.lastIndexOf("\n", block2.open);
+        idx = retreatIdx > maxLen * 0.3 ? retreatIdx : block2.open;
         chunks.push(remaining.slice(0, idx).trimEnd());
         remaining = remaining.slice(idx).replace(/^\n+/, "");
       } else {
         const chunk = remaining.slice(0, idx).trimEnd() + "\n```";
         chunks.push(chunk);
-        const reopener = "```" + block.lang + "\n";
+        const reopener = "```" + block2.lang + "\n";
         remaining = reopener + remaining.slice(idx).replace(/^\n/, "");
       }
     } else {
@@ -58244,12 +59003,12 @@ function formatCountMetricLogFields(name, metric) {
 // src/codex-exec.ts
 import { spawn as spawn3 } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import fs13 from "node:fs/promises";
+import fs14 from "node:fs/promises";
 import os3 from "node:os";
-import path17 from "node:path";
+import path18 from "node:path";
 
 // src/managed-git-sandbox.ts
-import path16 from "node:path";
+import path17 from "node:path";
 var profile = "lark-managed-git";
 var protectedWorkspaceNames = [".git", ".agents", ".codex", ".aws"];
 var protectedGitNames = ["config", "config.worktree", "commondir", "hooks", "objects/info"];
@@ -58268,7 +59027,7 @@ function namedCodexSandboxOverrides(name, rules, networkEnabled) {
 function addCodexWorkspaceWriteRoot(rules, directory) {
   if (/[\u0000-\u001f\u007f*?\[\]]/.test(directory)) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
   rules.set(directory, "write");
-  for (const name of protectedWorkspaceNames) rules.set(path16.join(directory, name), "read");
+  for (const name of protectedWorkspaceNames) rules.set(path17.join(directory, name), "read");
 }
 var DEPENDENCY_GUARD_PROFILE = "lark-dependency-guard";
 function dependencyGuardSandboxOverrides(writableDirectories, networkEnabled) {
@@ -58278,7 +59037,7 @@ function dependencyGuardSandboxOverrides(writableDirectories, networkEnabled) {
 }
 async function createManagedGitSandboxOptions(input2) {
   const { source, cache, scratch, artifacts, checkout: { checkout, gitDirectory }, authorizedRoots } = input2;
-  if (checkout.directory !== path16.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) || gitDirectory.directory !== path16.join(checkout.directory, ".git")) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
+  if (checkout.directory !== path17.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) || gitDirectory.directory !== path17.join(checkout.directory, ".git")) throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
   const separate = [source, cache, scratch, artifacts, ...input2.additionalWritable ?? []];
   const all = [...separate, checkout, gitDirectory];
   for (const binding of all) {
@@ -58305,7 +59064,7 @@ async function createManagedGitSandboxOptions(input2) {
   if (input2.mode === "workspace-write") {
     for (const { directory } of writable) addCodexWorkspaceWriteRoot(rules, directory);
     rules.set(gitDirectory.directory, "write");
-    for (const name of protectedGitNames) rules.set(path16.join(gitDirectory.directory, name), "read");
+    for (const name of protectedGitNames) rules.set(path17.join(gitDirectory.directory, name), "read");
   }
   const networkEnabled = input2.mode === "workspace-write" && input2.networkEnabled === true;
   const options2 = Object.freeze({
@@ -58726,14 +59485,14 @@ function normalizeCodexExecResult(result) {
   return result;
 }
 async function prepareDependencyLaunch(request, cwd, tmpDir, env, guard) {
-  const unsupported2 = () => new WorkspaceDependencyPolicyError("dependency_launch_unsupported");
+  const unsupported3 = () => new WorkspaceDependencyPolicyError("dependency_launch_unsupported");
   const managed = request.managedGitSandbox;
   const extra = request.additionalWritableDirs ?? [];
   const configOverrides = new Set(request.configOverrides ?? []);
-  if (request.profile || request.ignoreUserConfig === false) throw unsupported2();
+  if (request.profile || request.ignoreUserConfig === false) throw unsupported3();
   let writable;
   if (managed) {
-    if (!isGeneratedManagedGitSandbox(managed) || !request.validateManagedGitLaunch || request.sandbox !== void 0 || !request.strictConfig || extra.length || request.configOverrides?.length !== managed.overrides.length || managed.overrides.some((value, index) => request.configOverrides?.[index] !== value)) throw unsupported2();
+    if (!isGeneratedManagedGitSandbox(managed) || !request.validateManagedGitLaunch || request.sandbox !== void 0 || !request.strictConfig || extra.length || request.configOverrides?.length !== managed.overrides.length || managed.overrides.some((value, index) => request.configOverrides?.[index] !== value)) throw unsupported3();
     writable = managed.writableDirectories;
   } else {
     const supported = /* @__PURE__ */ new Set([
@@ -58745,27 +59504,27 @@ async function prepareDependencyLaunch(request, cwd, tmpDir, env, guard) {
       "sandbox_workspace_write.exclude_slash_tmp=true"
     ]);
     if (request.sandbox !== "read-only" && request.sandbox !== "workspace-write" || request.sandbox === "read-only" && extra.length || [...configOverrides].some((entry) => !supported.has(entry)) || configOverrides.has("sandbox_workspace_write.network_access=true") && configOverrides.has("sandbox_workspace_write.network_access=false")) {
-      throw unsupported2();
+      throw unsupported3();
     }
     writable = request.sandbox === "workspace-write" ? [cwd, ...extra] : [];
   }
   const home = env.CODEX_HOME?.trim();
   const homeRequired = () => new WorkspaceDependencyPolicyError("dependency_runtime_home_required");
-  if (!home || !path17.isAbsolute(home)) throw homeRequired();
-  if (![cwd, ...writable].every(path17.isAbsolute)) throw unsupported2();
-  const realCwd = await fs13.realpath(cwd);
-  const codexHome = await fs13.realpath(home).catch(() => {
+  if (!home || !path18.isAbsolute(home)) throw homeRequired();
+  if (![cwd, ...writable].every(path18.isAbsolute)) throw unsupported3();
+  const realCwd = await fs14.realpath(cwd);
+  const codexHome = await fs14.realpath(home).catch(() => {
     throw homeRequired();
   });
-  const realWritable = await Promise.all(writable.map((directory) => fs13.realpath(directory)));
-  if (managed && realWritable.some((value, index) => value !== writable[index])) throw unsupported2();
+  const realWritable = await Promise.all(writable.map((directory) => fs14.realpath(directory)));
+  if (managed && realWritable.some((value, index) => value !== writable[index])) throw unsupported3();
   await guard.assertWrites([codexHome]);
   await guard.assertWrites([tmpDir], [codexHome]);
   await guard.assertWrites(realWritable, [codexHome, tmpDir]);
   const scratch = request.extraEnv?.LARK_MANAGED_SCRATCH_DIR;
   const childTmp = scratch && realWritable.includes(scratch) && env.TMPDIR === scratch ? scratch : tmpDir;
   const sqliteHome = env.CODEX_SQLITE_HOME?.trim();
-  if (sqliteHome && (!path17.isAbsolute(sqliteHome) || await fs13.realpath(sqliteHome) !== codexHome)) throw unsupported2();
+  if (sqliteHome && (!path18.isAbsolute(sqliteHome) || await fs14.realpath(sqliteHome) !== codexHome)) throw unsupported3();
   const childEnv = {
     ...env,
     CODEX_HOME: codexHome,
@@ -58792,19 +59551,19 @@ async function runCodexExecCommand(request) {
   const initialGuard = await loadWorkspaceDependencyWriteGuard(managedWorkspaceConfigPath);
   const tempLeaf = `lark-codex-exec-${randomBytes(12).toString("hex")}`;
   const pinnedTemporary = initialGuard && await mkdirTemporaryInsidePinnedRoot(
-    await initialGuard.assertNewDirectory(path17.join(os3.tmpdir(), tempLeaf)),
+    await initialGuard.assertNewDirectory(path18.join(os3.tmpdir(), tempLeaf)),
     tempLeaf
   );
-  const tmpDir = pinnedTemporary?.directory ?? await fs13.mkdtemp(path17.join(os3.tmpdir(), "lark-codex-exec-"));
+  const tmpDir = pinnedTemporary?.directory ?? await fs14.mkdtemp(path18.join(os3.tmpdir(), "lark-codex-exec-"));
   const validateTemporary = async () => {
     if (pinnedTemporary) await assertProtectedWorkspacePath(pinnedTemporary, true);
   };
   const removeTemporary = async () => {
     await validateTemporary();
-    await fs13.rm(tmpDir, { recursive: true, force: true });
+    await fs14.rm(tmpDir, { recursive: true, force: true });
   };
-  const outputFile = path17.join(tmpDir, "last-message.txt");
-  const schemaFile = request.outputSchema ? path17.join(tmpDir, "outcome-schema.json") : void 0;
+  const outputFile = path18.join(tmpDir, "last-message.txt");
+  const schemaFile = request.outputSchema ? path18.join(tmpDir, "outcome-schema.json") : void 0;
   const command = request.command ?? "codex";
   const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const cwd = request.cwd ?? process.cwd();
@@ -58812,13 +59571,13 @@ async function runCodexExecCommand(request) {
     if (request.abortSignal?.aborted) throw new CodexExecAbortedError("", "");
     if (schemaFile) {
       await validateTemporary();
-      await fs13.writeFile(schemaFile, `${JSON.stringify(request.outputSchema)}
+      await fs14.writeFile(schemaFile, `${JSON.stringify(request.outputSchema)}
 `, {
         encoding: "utf-8",
         mode: 384,
         ...pinnedTemporary ? { flag: "wx" } : {}
       });
-      if (!pinnedTemporary) await fs13.chmod(schemaFile, 384);
+      if (!pinnedTemporary) await fs14.chmod(schemaFile, 384);
     }
   } catch (error62) {
     await removeTemporary().catch(() => {
@@ -58884,7 +59643,7 @@ async function runCodexExecCommand(request) {
         ...(readOnlyBindings ?? []).map((auxiliary) => assertProtectedWorkspacePath(auxiliary))
       ]);
     } else if (!guard) {
-      await fs13.mkdir(cwd, { recursive: true });
+      await fs14.mkdir(cwd, { recursive: true });
     }
     if (guarded && guard) {
       const currentGuard = await loadWorkspaceDependencyWriteGuard(managedWorkspaceConfigPath);
@@ -58896,8 +59655,9 @@ async function runCodexExecCommand(request) {
       await currentGuard.assertWrites(guarded.writable, [finalEnv.CODEX_HOME, tmpDir]);
       await validateTemporary();
     }
+    await request.validateManagedDependencyApproval?.();
     if (request.abortSignal?.aborted) throw new CodexExecAbortedError("", "");
-    await new Promise((resolve, reject) => {
+    await new Promise((resolve2, reject) => {
       const usePosixProcessGroup = process.platform !== "win32";
       const child = spawn3(launcher?.command ?? command, launcher ? [...launcher.prefix, ...args] : args, {
         cwd: guarded?.cwd ?? cwd,
@@ -59026,7 +59786,7 @@ async function runCodexExecCommand(request) {
             reject(new CodexExecProcessError(code, signal, stdout, stderr, detail));
             return;
           }
-          resolve();
+          resolve2();
         })().catch(reject);
       });
       child.stdin.on("error", (error62) => {
@@ -59047,7 +59807,7 @@ async function runCodexExecCommand(request) {
     usage = mergeCodexExecUsage(usage, metrics.usage ?? null);
     await logCodexExecRuntimeMetrics(metrics, { logId: request.traceLogId });
     await validateTemporary();
-    const answer = await fs13.readFile(outputFile, "utf8");
+    const answer = await fs14.readFile(outputFile, "utf8");
     return {
       text: answer.trim(),
       sessionId,
@@ -59411,7 +60171,7 @@ async function sendFeishuReply(deps, request) {
   if (!route.ok) return route.result;
   const { effectiveReplyTo, shouldStayInThread } = route;
   async function sendTransportMessage(args) {
-    const uuid3 = idempotencyKey ? createHash6("sha256").update(`${idempotencyKey}:${sendOrdinal++}`).digest("hex").slice(0, 32) : void 0;
+    const uuid3 = idempotencyKey ? createHash8("sha256").update(`${idempotencyKey}:${sendOrdinal++}`).digest("hex").slice(0, 32) : void 0;
     return await transport.sendMessage({
       chatId: chat_id,
       input: args.input,
@@ -59518,7 +60278,7 @@ async function sendFeishuReply(deps, request) {
           }
           continue;
         }
-        const fileData = await fs14.readFile(part.path);
+        const fileData = await fs15.readFile(part.path);
         const imageKey = await transport.uploadImage(fileData);
         if (!imageKey) throw new Error(`Image upload returned no image_key for ${part.path}`);
         const resp = await sendTransportMessage({
@@ -59571,7 +60331,7 @@ async function sendFeishuReply(deps, request) {
           uploadedParts.push(part);
           continue;
         }
-        const fileData = await fs14.readFile(part.path);
+        const fileData = await fs15.readFile(part.path);
         const imageKey = await transport.uploadImage(fileData);
         if (!imageKey) throw new Error(`Image upload returned no image_key for ${part.path}`);
         uploadedParts.push({ type: "image", imageKey, alt: part.alt });
@@ -59744,7 +60504,7 @@ async function sendFeishuReply(deps, request) {
   if (files?.length) {
     for (const file2 of files) {
       try {
-        const fileData = await fs14.readFile(file2.path);
+        const fileData = await fs15.readFile(file2.path);
         if (file2.type === "image") {
           const imageKey = await transport.uploadImage(fileData);
           if (imageKey) {
@@ -59756,7 +60516,7 @@ async function sendFeishuReply(deps, request) {
             recordAndRevokeAck(text || "[image]", sent?.messageId);
           }
         } else {
-          const fileName = path18.basename(file2.path);
+          const fileName = path19.basename(file2.path);
           const fileKey = await transport.uploadFile(fileData, fileName);
           if (fileKey) {
             const sent = await sendFollowup({ fileKey, fileName });
@@ -59825,17 +60585,17 @@ function createQuotedContextFromCardContent(content, fallbackText) {
     msgType: "interactive"
   };
 }
-function capUtf8Text3(text, maxBytes) {
+function capUtf8Text3(text, maxBytes2) {
   const buf = Buffer.from(text, "utf8");
-  if (buf.length <= maxBytes) return text;
-  let cut = maxBytes;
+  if (buf.length <= maxBytes2) return text;
+  let cut = maxBytes2;
   while (cut > 0 && (buf[cut] & 192) === 128) cut--;
   return `${buf.subarray(0, cut).toString("utf8")} ...[truncated]`;
 }
 
 // src/tools/reply.ts
 function capSanitizedFilename(raw, maxLen) {
-  const sanitized = path19.basename(raw).replace(/[^\w.\-]/g, "_");
+  const sanitized = path20.basename(raw).replace(/[^\w.\-]/g, "_");
   if (sanitized.length <= maxLen) return sanitized;
   const dotIdx = sanitized.lastIndexOf(".");
   if (dotIdx <= 0 || dotIdx === sanitized.length - 1) {
@@ -59936,11 +60696,11 @@ function registerReplyTools(ctx) {
     },
     async ({ message_id, file_key, file_name }) => {
       const inboxDir = appConfig.inboxDir;
-      await fs15.mkdir(inboxDir, { recursive: true });
+      await fs16.mkdir(inboxDir, { recursive: true });
       const resourceType = file_key.startsWith("img_") ? "image" : "file";
       const sanitizedName = file_name ? capSanitizedFilename(file_name, 200) : "";
       const savedName = sanitizedName ? `${file_key}-${sanitizedName}` : file_key;
-      const filePath = path19.join(inboxDir, savedName);
+      const filePath = path20.join(inboxDir, savedName);
       try {
         const data = await transport.downloadResource(message_id, file_key, resourceType);
         if (!data) {
@@ -60187,14 +60947,14 @@ function registerMessageMutationTools(ctx) {
 }
 
 // src/memory/file.ts
-import fs16 from "node:fs/promises";
+import fs17 from "node:fs/promises";
 import { existsSync } from "node:fs";
-import path20 from "node:path";
+import path21 from "node:path";
 
 // src/memory/profile-policy.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash9 } from "node:crypto";
 function lineHash(text) {
-  return createHash7("sha1").update(text).digest("hex").slice(0, 8);
+  return createHash9("sha1").update(text).digest("hex").slice(0, 8);
 }
 function normalizeProfileLine(line) {
   return line.trim().replace(/^[-*]\s+/, "").toLowerCase();
@@ -60252,17 +61012,17 @@ function mergeProfileLines(existing, incoming, ctx) {
 }
 
 // src/memory/file.ts
-function capUtf8Bytes(content, maxBytes) {
-  if (!Number.isFinite(maxBytes) || maxBytes <= 0) return content;
+function capUtf8Bytes(content, maxBytes2) {
+  if (!Number.isFinite(maxBytes2) || maxBytes2 <= 0) return content;
   const bytes = Buffer.byteLength(content, "utf8");
-  if (bytes <= maxBytes) return content;
+  if (bytes <= maxBytes2) return content;
   const marker = `
 
-[truncated to ${maxBytes} bytes]
+[truncated to ${maxBytes2} bytes]
 `;
   const markerBytes = Buffer.byteLength(marker, "utf8");
-  if (markerBytes >= maxBytes) return marker.slice(0, maxBytes);
-  const keepBytes = maxBytes - markerBytes;
+  if (markerBytes >= maxBytes2) return marker.slice(0, maxBytes2);
+  const keepBytes = maxBytes2 - markerBytes;
   let used = 0;
   let prefix = "";
   for (const char of content) {
@@ -60301,13 +61061,13 @@ var MemoryStore = class {
   }
   // ── User Profile (tiered, v0.10.0+) ──
   profileDir(userId) {
-    return path20.join(this.baseDir, "profiles", userId);
+    return path21.join(this.baseDir, "profiles", userId);
   }
   profileTierPath(userId, tier) {
-    return path20.join(this.profileDir(userId), `${tier}.md`);
+    return path21.join(this.profileDir(userId), `${tier}.md`);
   }
   legacyProfilePath(userId) {
-    return path20.join(this.baseDir, "profiles", `${userId}.md`);
+    return path21.join(this.baseDir, "profiles", `${userId}.md`);
   }
   async loadL2PrivatePhrases() {
     return extractL2PrivatePhrases(await loadL2Rules()).map((p2) => p2.toLowerCase());
@@ -60329,8 +61089,8 @@ var MemoryStore = class {
     const previous = this.profileLocks.get(userId) ?? Promise.resolve();
     let release;
     const current = previous.catch(() => {
-    }).then(() => new Promise((resolve) => {
-      release = resolve;
+    }).then(() => new Promise((resolve2) => {
+      release = resolve2;
     }));
     this.profileLocks.set(userId, current);
     await previous.catch(() => {
@@ -60350,23 +61110,23 @@ var MemoryStore = class {
     if (!existsSync(legacy)) return;
     if (existsSync(dir)) {
       try {
-        await fs16.unlink(legacy);
+        await fs17.unlink(legacy);
       } catch {
       }
       return;
     }
-    const content = await fs16.readFile(legacy, "utf-8");
+    const content = await fs17.readFile(legacy, "utf-8");
     const l2Phrases = await this.loadL2PrivatePhrases();
     const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
     const publicCount = publicContent.split("\n").filter((line) => line.trim()).length;
     const privateCount = privateContent.split("\n").filter((line) => line.trim()).length;
-    await fs16.mkdir(dir, { recursive: true });
-    await fs16.writeFile(this.profileTierPath(userId, "public"), publicContent, "utf-8");
+    await fs17.mkdir(dir, { recursive: true });
+    await fs17.writeFile(this.profileTierPath(userId, "public"), publicContent, "utf-8");
     if (privateContent.trim()) {
-      await fs16.writeFile(this.profileTierPath(userId, "private"), privateContent, "utf-8");
+      await fs17.writeFile(this.profileTierPath(userId, "private"), privateContent, "utf-8");
     }
     try {
-      await fs16.unlink(legacy);
+      await fs17.unlink(legacy);
     } catch {
     }
     console.error(
@@ -60393,7 +61153,7 @@ var MemoryStore = class {
       const readOpt = async (p2) => {
         if (!existsSync(p2)) return "";
         try {
-          return await fs16.readFile(p2, "utf-8");
+          return await fs17.readFile(p2, "utf-8");
         } catch {
           return "";
         }
@@ -60433,7 +61193,7 @@ var MemoryStore = class {
     await this.withProfileLock(userId, async () => {
       await this.migrateIfNeededUnlocked(userId);
       const dir = this.profileDir(userId);
-      await fs16.mkdir(dir, { recursive: true });
+      await fs17.mkdir(dir, { recursive: true });
       if (tier === "public") {
         const l2Phrases = await this.loadL2PrivatePhrases();
         const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
@@ -60450,19 +61210,19 @@ var MemoryStore = class {
     const filePath = this.profileTierPath(userId, tier);
     if (mode === "replace") {
       if (tier !== "private" || !existsSync(filePath)) {
-        await fs16.writeFile(filePath, content, "utf-8");
+        await fs17.writeFile(filePath, content, "utf-8");
         return;
       }
-      const existing2 = await fs16.readFile(filePath, "utf-8");
+      const existing2 = await fs17.readFile(filePath, "utf-8");
       const deterministicExisting = existing2.split("\n").filter((line) => line.trim() && isDeterministicPrivate(line, l2PrivatePhrases)).join("\n");
       const next = deterministicExisting ? mergeProfileLines(content, deterministicExisting, { userId, tier }) : content;
-      await fs16.writeFile(filePath, next, "utf-8");
+      await fs17.writeFile(filePath, next, "utf-8");
       return;
     }
-    const existing = existsSync(filePath) ? await fs16.readFile(filePath, "utf-8") : "";
+    const existing = existsSync(filePath) ? await fs17.readFile(filePath, "utf-8") : "";
     const merged = mergeProfileLines(existing, content, { userId, tier });
     if (merged === existing) return;
-    await fs16.writeFile(filePath, merged, "utf-8");
+    await fs17.writeFile(filePath, merged, "utf-8");
   }
   /**
    * Return the lines of a profile tier as addressable items. Each line carries
@@ -60485,7 +61245,7 @@ var MemoryStore = class {
   async listProfileLinesUnlocked(ownerId, tier) {
     const p2 = this.profileTierPath(ownerId, tier);
     if (!existsSync(p2)) return [];
-    const content = filterCredentialMaterial(await fs16.readFile(p2, "utf-8")).content;
+    const content = filterCredentialMaterial(await fs17.readFile(p2, "utf-8")).content;
     return content.split("\n").map((raw) => raw.trim().replace(/^[-*]\s+/, "")).filter(Boolean).map((text, index) => ({ index, hash: lineHash(text), text }));
   }
   /**
@@ -60505,26 +61265,26 @@ var MemoryStore = class {
       const kept = lines.filter((l) => l.hash !== hash2);
       if (kept.length === lines.length) return false;
       const next = kept.map((l) => `- ${l.text}`).join("\n") + (kept.length > 0 ? "\n" : "");
-      await fs16.writeFile(this.profileTierPath(ownerId, tier), next, "utf-8");
+      await fs17.writeFile(this.profileTierPath(ownerId, tier), next, "utf-8");
       return true;
     });
   }
   // ── Episodes ──
   async searchEpisodes(query, scope) {
     if (!scope?.chatId) return [];
-    const dir = scope.threadId ? path20.join(this.baseDir, "episodes", scope.chatId, "threads", scope.threadId) : path20.join(this.baseDir, "episodes", scope.chatId);
+    const dir = scope.threadId ? path21.join(this.baseDir, "episodes", scope.chatId, "threads", scope.threadId) : path21.join(this.baseDir, "episodes", scope.chatId);
     try {
-      const files = await fs16.readdir(dir);
+      const files = await fs17.readdir(dir);
       const mdFiles = files.filter((f2) => f2.endsWith(".md") && !f2.startsWith("archive-"));
       const keywords = this.extractKeywords(query);
       const scored = [];
       for (const file2 of mdFiles) {
-        const filePath = path20.join(dir, file2);
+        const filePath = path21.join(dir, file2);
         const content = filterCredentialMaterial(
-          await fs16.readFile(filePath, "utf-8")
+          await fs17.readFile(filePath, "utf-8")
         ).content;
         if (!content.trim()) continue;
-        const stat2 = await fs16.stat(filePath);
+        const stat2 = await fs17.stat(filePath);
         const firstLines = content.split("\n").slice(0, 3).join(" ").toLowerCase();
         const filenameLower = file2.toLowerCase();
         let keywordScore = 0;
@@ -60559,31 +61319,31 @@ var MemoryStore = class {
   }
   async saveEpisode(type, content, meta3) {
     assertNoCredentialMaterial(content);
-    const dir = type === "thread" && meta3.threadId ? path20.join(this.baseDir, "episodes", meta3.chatId, "threads", meta3.threadId) : path20.join(this.baseDir, "episodes", meta3.chatId);
-    await fs16.mkdir(dir, { recursive: true });
+    const dir = type === "thread" && meta3.threadId ? path21.join(this.baseDir, "episodes", meta3.chatId, "threads", meta3.threadId) : path21.join(this.baseDir, "episodes", meta3.chatId);
+    await fs17.mkdir(dir, { recursive: true });
     const timestamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
     let fileName = `${timestamp2}.md`;
-    for (let i = 1; existsSync(path20.join(dir, fileName)); i++) {
+    for (let i = 1; existsSync(path21.join(dir, fileName)); i++) {
       fileName = `${timestamp2}-${i}.md`;
     }
-    await fs16.writeFile(path20.join(dir, fileName), capEpisodeContent(content), "utf-8");
+    await fs17.writeFile(path21.join(dir, fileName), capEpisodeContent(content), "utf-8");
     await this.pruneEpisodeDir(dir, {
       maxFilesPerScope: appConfig.maxEpisodeFilesPerScope,
       maxBytesPerScope: appConfig.maxEpisodeScopeBytes
     });
   }
   async listEpisodes(chatId, threadId) {
-    const dir = threadId ? path20.join(this.baseDir, "episodes", chatId, "threads", threadId) : path20.join(this.baseDir, "episodes", chatId);
+    const dir = threadId ? path21.join(this.baseDir, "episodes", chatId, "threads", threadId) : path21.join(this.baseDir, "episodes", chatId);
     try {
-      const files = await fs16.readdir(dir);
+      const files = await fs17.readdir(dir);
       const episodes = [];
       for (const file2 of files.filter((f2) => f2.endsWith(".md"))) {
-        const filePath = path20.join(dir, file2);
+        const filePath = path21.join(dir, file2);
         const content = filterCredentialMaterial(
-          await fs16.readFile(filePath, "utf-8")
+          await fs17.readFile(filePath, "utf-8")
         ).content;
         if (!content.trim()) continue;
-        const stat2 = await fs16.stat(filePath);
+        const stat2 = await fs17.stat(filePath);
         episodes.push({
           id: file2,
           content,
@@ -60599,16 +61359,16 @@ var MemoryStore = class {
     }
   }
   async deleteEpisodes(chatId, ids) {
-    const dir = path20.join(this.baseDir, "episodes", chatId);
+    const dir = path21.join(this.baseDir, "episodes", chatId);
     for (const id of ids) {
       try {
-        await fs16.unlink(path20.join(dir, id));
+        await fs17.unlink(path21.join(dir, id));
       } catch {
       }
     }
   }
   async pruneEpisodes(options2 = {}) {
-    const episodesDir = path20.join(this.baseDir, "episodes");
+    const episodesDir = path21.join(this.baseDir, "episodes");
     const totals = { removedFiles: 0, removedBytes: 0 };
     await this.walkEpisodeDirs(episodesDir, async (dir) => {
       const result = await this.pruneEpisodeDir(dir, {
@@ -60623,7 +61383,7 @@ var MemoryStore = class {
   async walkEpisodeDirs(dir, visit3) {
     let entries;
     try {
-      entries = await fs16.readdir(dir, { withFileTypes: true });
+      entries = await fs17.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -60631,20 +61391,20 @@ var MemoryStore = class {
       await visit3(dir);
     }
     for (const entry of entries) {
-      if (entry.isDirectory()) await this.walkEpisodeDirs(path20.join(dir, entry.name), visit3);
+      if (entry.isDirectory()) await this.walkEpisodeDirs(path21.join(dir, entry.name), visit3);
     }
   }
   async pruneEpisodeDir(dir, options2) {
-    const maxFiles = Number.isFinite(options2.maxFilesPerScope) ? Math.max(0, Math.floor(options2.maxFilesPerScope)) : 0;
-    const maxBytes = Number.isFinite(options2.maxBytesPerScope) ? Math.max(0, Math.floor(options2.maxBytesPerScope)) : 0;
-    if (maxFiles <= 0 && maxBytes <= 0) return { removedFiles: 0, removedBytes: 0 };
-    const entries = await fs16.readdir(dir, { withFileTypes: true }).catch(() => []);
+    const maxFiles2 = Number.isFinite(options2.maxFilesPerScope) ? Math.max(0, Math.floor(options2.maxFilesPerScope)) : 0;
+    const maxBytes2 = Number.isFinite(options2.maxBytesPerScope) ? Math.max(0, Math.floor(options2.maxBytesPerScope)) : 0;
+    if (maxFiles2 <= 0 && maxBytes2 <= 0) return { removedFiles: 0, removedBytes: 0 };
+    const entries = await fs17.readdir(dir, { withFileTypes: true }).catch(() => []);
     const files = [];
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      const filePath = path20.join(dir, entry.name);
+      const filePath = path21.join(dir, entry.name);
       try {
-        const s3 = await fs16.stat(filePath);
+        const s3 = await fs17.stat(filePath);
         files.push({ path: filePath, mtimeMs: s3.mtimeMs, size: s3.size });
       } catch {
       }
@@ -60654,8 +61414,8 @@ var MemoryStore = class {
     let keptBytes = 0;
     const remove = [];
     for (const file2 of files) {
-      const overCount = maxFiles > 0 && keptCount >= maxFiles;
-      const overBytes = maxBytes > 0 && keptBytes + file2.size > maxBytes;
+      const overCount = maxFiles2 > 0 && keptCount >= maxFiles2;
+      const overBytes = maxBytes2 > 0 && keptBytes + file2.size > maxBytes2;
       if (overCount || overBytes) {
         remove.push(file2);
       } else {
@@ -60667,7 +61427,7 @@ var MemoryStore = class {
     let removedBytes = 0;
     for (const file2 of remove) {
       try {
-        await fs16.unlink(file2.path);
+        await fs17.unlink(file2.path);
         removedFiles++;
         removedBytes += file2.size;
       } catch {
@@ -60677,14 +61437,14 @@ var MemoryStore = class {
   }
   // ── Skills ──
   async searchSkills(query) {
-    const dir = path20.join(this.baseDir, "skills");
+    const dir = path21.join(this.baseDir, "skills");
     try {
-      const files = await fs16.readdir(dir);
+      const files = await fs17.readdir(dir);
       const keywords = this.extractKeywords(query);
       const results = [];
       for (const file2 of files.filter((f2) => f2.endsWith(".md"))) {
-        const filePath = path20.join(dir, file2);
-        const filtered = filterCredentialMaterial(await fs16.readFile(filePath, "utf-8"));
+        const filePath = path21.join(dir, file2);
+        const filtered = filterCredentialMaterial(await fs17.readFile(filePath, "utf-8"));
         if (filtered.blockedClasses.length > 0) continue;
         const content = filtered.content;
         const lines = content.split("\n");
@@ -60712,14 +61472,14 @@ var MemoryStore = class {
     assertNoCredentialMaterial(`${name}
 ${description}
 ${content}`);
-    const dir = path20.join(this.baseDir, "skills");
-    await fs16.mkdir(dir, { recursive: true });
+    const dir = path21.join(this.baseDir, "skills");
+    await fs17.mkdir(dir, { recursive: true });
     const fileName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".md";
     const fileContent = `# ${name}
 ${description}
 
 ${content}`;
-    await fs16.writeFile(path20.join(dir, fileName), fileContent, "utf-8");
+    await fs17.writeFile(path21.join(dir, fileName), fileContent, "utf-8");
   }
   // ── Helpers ──
   extractKeywords(query) {
@@ -60968,8 +61728,8 @@ function registerMemoryTools(ctx) {
 
 // src/job-store.ts
 var import_cron_parser = __toESM(require_dist2(), 1);
-import fs17 from "node:fs/promises";
-import path21 from "node:path";
+import fs18 from "node:fs/promises";
+import path22 from "node:path";
 
 // src/job-timezone.ts
 function normalizeJobTimezone(input2) {
@@ -61136,21 +61896,21 @@ function formatCronDateTime(isoTimestamp2, timezone = appConfig.cronTimezone, em
 }
 async function ensureJobsDir() {
   const dir = appConfig.jobsDir;
-  await fs17.mkdir(dir, { recursive: true });
+  await fs18.mkdir(dir, { recursive: true });
   return dir;
 }
 function jobPath(id) {
-  return path21.join(appConfig.jobsDir, `${id}.json`);
+  return path22.join(appConfig.jobsDir, `${id}.json`);
 }
 function canonicalJobIdFromFile(file2) {
-  return path21.basename(file2, ".json");
+  return path22.basename(file2, ".json");
 }
 var jobWriteQueues = /* @__PURE__ */ new Map();
 async function withJobWriteQueue(id, fn) {
   const previous = jobWriteQueues.get(id) ?? Promise.resolve();
   let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
+  const gate = new Promise((resolve2) => {
+    release = resolve2;
   });
   const queued = previous.catch(() => void 0).then(() => gate);
   jobWriteQueues.set(id, queued);
@@ -61206,7 +61966,7 @@ async function readJob(id) {
 }
 async function readJobUnlocked(id) {
   try {
-    const data = await fs17.readFile(jobPath(id), "utf-8");
+    const data = await fs18.readFile(jobPath(id), "utf-8");
     return applyCanonicalJobId(backfillJob(JSON.parse(data)), id, `${id}.json`);
   } catch {
     return null;
@@ -61218,7 +61978,7 @@ async function writeJob(job) {
 async function writeJobUnlocked(job) {
   await ensureJobsDir();
   if (!Number.isSafeInteger(job.meta.revision) || job.meta.revision < 1) job.meta.revision = 1;
-  await fs17.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), "utf-8");
+  await fs18.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), "utf-8");
 }
 async function mutateJob(id, mutate) {
   return withJobWriteQueue(id, async () => {
@@ -61257,7 +62017,7 @@ function jobDefinitionSnapshot(meta3) {
 async function deleteJob(id) {
   return withJobWriteQueue(id, async () => {
     try {
-      await fs17.unlink(jobPath(id));
+      await fs18.unlink(jobPath(id));
       return true;
     } catch {
       return false;
@@ -61268,7 +62028,7 @@ async function listAllJobs() {
   const dir = appConfig.jobsDir;
   let files;
   try {
-    files = await fs17.readdir(dir);
+    files = await fs18.readdir(dir);
   } catch {
     return [];
   }
@@ -61276,7 +62036,7 @@ async function listAllJobs() {
   const results = await Promise.all(
     jsonFiles.map(async (file2) => {
       try {
-        const data = await fs17.readFile(path21.join(dir, file2), "utf-8");
+        const data = await fs18.readFile(path22.join(dir, file2), "utf-8");
         const id = canonicalJobIdFromFile(file2);
         return applyCanonicalJobId(backfillJob(JSON.parse(data)), id, file2);
       } catch (err) {
@@ -61294,7 +62054,7 @@ async function listAllJobs() {
 }
 async function jobExists(id) {
   try {
-    await fs17.access(jobPath(id));
+    await fs18.access(jobPath(id));
     return true;
   } catch {
     return false;
@@ -62117,8 +62877,8 @@ function registerTools(server, client, memoryStore, identitySession, channel, co
 }
 
 // src/memory/buffer.ts
-import fs18 from "node:fs/promises";
-import path22 from "node:path";
+import fs19 from "node:fs/promises";
+import path23 from "node:path";
 var ConversationBuffer = class {
   buffers = /* @__PURE__ */ new Map();
   timers = /* @__PURE__ */ new Map();
@@ -62181,21 +62941,21 @@ var ConversationBuffer = class {
    * If a chat's most recent episode is older than LARK_INACTIVITY_HOURS, trigger flush.
    */
   async rearmFromDisk() {
-    const episodesDir = path22.join(appConfig.memoriesDir, "episodes");
+    const episodesDir = path23.join(appConfig.memoriesDir, "episodes");
     try {
-      const chatDirs = await fs18.readdir(episodesDir);
+      const chatDirs = await fs19.readdir(episodesDir);
       const thresholdMs = appConfig.inactivityHours * 60 * 60 * 1e3;
       const now = Date.now();
       for (const chatId of chatDirs) {
-        const chatDir = path22.join(episodesDir, chatId);
-        const stat2 = await fs18.stat(chatDir);
+        const chatDir = path23.join(episodesDir, chatId);
+        const stat2 = await fs19.stat(chatDir);
         if (!stat2.isDirectory()) continue;
-        const files = await fs18.readdir(chatDir);
+        const files = await fs19.readdir(chatDir);
         const mdFiles = files.filter((f2) => f2.endsWith(".md"));
         if (mdFiles.length === 0) continue;
         let latestMs = 0;
         for (const f2 of mdFiles) {
-          const fStat = await fs18.stat(path22.join(chatDir, f2));
+          const fStat = await fs19.stat(path23.join(chatDir, f2));
           if (fStat.mtimeMs > latestMs) latestMs = fStat.mtimeMs;
         }
         if (now - latestMs < thresholdMs * 2) {
@@ -62443,12 +63203,12 @@ var packageName = typeof pkg.name === "string" && pkg.name ? pkg.name : "codex-l
 var packageVersion = pkg.version;
 
 // src/codex-exec-config.ts
-import fs19 from "node:fs/promises";
+import fs20 from "node:fs/promises";
 import os4 from "node:os";
-import path23 from "node:path";
+import path24 from "node:path";
 async function readTextIfExists(filePath) {
   try {
-    return await fs19.readFile(filePath, "utf-8");
+    return await fs20.readFile(filePath, "utf-8");
   } catch (err) {
     if (err?.code === "ENOENT" || err?.code === "ENOTDIR") return null;
     throw err;
@@ -62497,8 +63257,8 @@ function tomlSections(raw) {
   sections.push({ name: normalizeTomlSection(currentName), body: body.join("\n") });
   return sections;
 }
-function codexProfileHasLarkMcpServer(raw, profile2) {
-  const profilePrefix = `profiles.${profile2}`;
+function codexProfileHasLarkMcpServer(raw, profile3) {
+  const profilePrefix = `profiles.${profile3}`;
   return tomlSections(raw).some((section) => {
     if (section.name !== profilePrefix && !section.name.startsWith(`${profilePrefix}.`)) return false;
     const haystack = `${section.name}
@@ -62508,7 +63268,7 @@ ${section.body}`.toLowerCase();
 }
 async function collectCodexExecConfigDiagnostics(input2) {
   const diagnostics = [];
-  const mcpJsonPath = path23.join(input2.codexExecCwd, ".mcp.json");
+  const mcpJsonPath = path24.join(input2.codexExecCwd, ".mcp.json");
   const projectMcp = await readTextIfExists(mcpJsonPath);
   if (projectMcp && projectMcpHasLarkServer(projectMcp)) {
     diagnostics.push({
@@ -62525,13 +63285,13 @@ async function collectCodexExecConfigDiagnostics(input2) {
     });
   }
   if (input2.codexExecProfile) {
-    const codexHome = input2.codexHome ?? process.env.CODEX_HOME ?? path23.join(os4.homedir(), ".codex");
-    const codexConfig = await readTextIfExists(path23.join(codexHome, "config.toml"));
+    const codexHome = input2.codexHome ?? process.env.CODEX_HOME ?? path24.join(os4.homedir(), ".codex");
+    const codexConfig = await readTextIfExists(path24.join(codexHome, "config.toml"));
     if (codexConfig && codexProfileHasLarkMcpServer(codexConfig, input2.codexExecProfile)) {
       diagnostics.push({
         code: "codex_exec_profile_lark_mcp",
         severity: "warning",
-        message: `LARK_CODEX_EXEC_PROFILE=${input2.codexExecProfile} appears to include a Lark MCP server in ${path23.join(codexHome, "config.toml")}. This profile can recursively start the current plugin from child codex exec turns; choose a profile without the Lark MCP server.`
+        message: `LARK_CODEX_EXEC_PROFILE=${input2.codexExecProfile} appears to include a Lark MCP server in ${path24.join(codexHome, "config.toml")}. This profile can recursively start the current plugin from child codex exec turns; choose a profile without the Lark MCP server.`
       });
     }
   }
@@ -62549,13 +63309,13 @@ async function emitCodexExecConfigDiagnostics(config2) {
 }
 
 // src/codex-exec-actions.ts
-import fs22 from "node:fs/promises";
-import path27 from "node:path";
-import { createHash as createHash10 } from "node:crypto";
+import fs26 from "node:fs/promises";
+import path31 from "node:path";
+import { createHash as createHash14 } from "node:crypto";
 
 // src/continuation/artifact-delivery.ts
-import { createHash as createHash8 } from "node:crypto";
-import path24 from "node:path";
+import { createHash as createHash10 } from "node:crypto";
+import path25 from "node:path";
 var artifactDeliverySchema = external_exports.strictObject({
   version: external_exports.literal(1),
   chatType: external_exports.enum(["p2p", "group"]),
@@ -62566,7 +63326,7 @@ var artifactDeliverySchema = external_exports.strictObject({
 var IM_ARTIFACT_MAX_BYTES = 3e7;
 var IM_ARTIFACT_SIZE_NOTE = "IM delivery requires a nonempty file no larger than 30 MB.";
 function artifactDeliveryEventKey(messageId) {
-  return `artifact:${createHash8("sha256").update(messageId).digest("hex").slice(0, 32)}`;
+  return `artifact:${createHash10("sha256").update(messageId).digest("hex").slice(0, 32)}`;
 }
 function parseArtifactDelivery(payload) {
   return artifactDeliverySchema.parse(JSON.parse(payload));
@@ -62580,7 +63340,7 @@ function isImArtifactSize(bytes) {
   return bytes > 0 && bytes <= IM_ARTIFACT_MAX_BYTES;
 }
 function artifactDeliveryFileName(relativePath) {
-  return path24.posix.basename(relativePath).replace(/[\u0000-\u001f\u007f]/g, "_");
+  return path25.posix.basename(relativePath).replace(/[\u0000-\u001f\u007f]/g, "_");
 }
 
 // src/domain/continuation.ts
@@ -62681,15 +63441,952 @@ function retryDelayMs(failureCount, jitterUnit) {
   return Math.round(base * (1 + boundedJitter * 0.2));
 }
 
+// src/workspace-dependency-install.ts
+import { execFile as execFile5 } from "node:child_process";
+import { createHash as createHash12, randomBytes as randomBytes3 } from "node:crypto";
+import fs23 from "node:fs/promises";
+import path28 from "node:path";
+import { promisify as promisify5 } from "node:util";
+
+// src/workspace-dependency-process.ts
+import { spawn as spawn4 } from "node:child_process";
+var WorkspaceDependencyProcessError = class extends Error {
+  constructor(reason, quiescent) {
+    super("The private dependency process did not complete successfully.");
+    this.reason = reason;
+    this.quiescent = quiescent;
+  }
+  reason;
+  quiescent;
+};
+function runWorkspaceDependencyProcess(launch, args, cwd, timeoutMs, outputLimit, signal) {
+  return new Promise((resolve2, reject) => {
+    if (signal?.aborted) {
+      reject(new WorkspaceDependencyProcessError("aborted", true));
+      return;
+    }
+    const child = spawn4(launch.command, [...launch.args, ...args], { cwd, env: launch.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    let size = 0;
+    let stopping;
+    let grace;
+    const stop = (reason) => {
+      if (stopping) return;
+      stopping = reason;
+      clearTimeout(timer);
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+          }
+        }
+      }
+      grace = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.unref();
+        reject(new WorkspaceDependencyProcessError(reason, false));
+      }, 1e3);
+    };
+    const timer = setTimeout(() => stop("timeout"), timeoutMs);
+    const onAbort = () => stop("aborted");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > outputLimit) stop("output");
+    });
+    child.once("error", () => {
+      signal?.removeEventListener("abort", onAbort);
+      clearTimeout(timer);
+      clearTimeout(grace);
+      reject(new WorkspaceDependencyProcessError("spawn", !child.pid));
+    });
+    child.once("close", (code) => {
+      signal?.removeEventListener("abort", onAbort);
+      clearTimeout(timer);
+      clearTimeout(grace);
+      const quiescent = !stopping && code !== null && launch.isolatesDescendants === true;
+      if (quiescent && code === 0) resolve2();
+      else reject(new WorkspaceDependencyProcessError(stopping ?? "exit", quiescent));
+    });
+  });
+}
+
+// src/workspace-dependency-sandbox.ts
+import fs21 from "node:fs/promises";
+import path26 from "node:path";
+var profile2 = "lark-dependency-installer";
+var seatbelt = "/usr/bin/sandbox-exec";
+var unshare = "/usr/bin/unshare";
+var darwinSystem = ["/usr/lib", "/System/Library/Frameworks", "/System/Library/PrivateFrameworks", "/System/Library/SubFrameworks"];
+var darwinVersion = "/System/Library/CoreServices/SystemVersion.plist";
+var processSysctls = [
+  "kern.ostype",
+  "kern.osrelease",
+  "kern.osversion",
+  "kern.osproductversion",
+  "kern.version",
+  "kern.argmax",
+  "kern.hostname",
+  "kern.osvariant_status",
+  "machdep.cpu.brand_string",
+  "machdep.ptrauth_enabled",
+  "security.mac.lockdown_mode_state",
+  "sysctl.proc_cputype"
+];
+var WorkspaceDependencySandboxError = class extends Error {
+  code = "dependency_installer_sandbox_invalid";
+  constructor() {
+    super("The dependency installer sandbox cannot enforce the required filesystem boundary.");
+  }
+};
+async function prepareWorkspaceDependencySandbox(input2) {
+  try {
+    const { ecosystem: ecosystem2, executable, runtime, installer } = workspaceDependencyToolchainConfigSchema.parse(input2.configured);
+    const staging = await validateWorkspaceProject(input2.staging.directory, input2.staging);
+    await assertProtectedWorkspacePath(staging, true);
+    const stageInfo = await fs21.lstat(staging.directory, { bigint: true });
+    if ((stageInfo.mode & 0o077n) !== 0n) invalid4();
+    const readonly2 = [runtime, installer, ...input2.artifacts ? [input2.artifacts] : []];
+    const mounts = await readWorkspaceDependencyMountPolicy();
+    if (!process.getuid || process.getuid() === 0 || process.getuid() !== process.geteuid?.() || !literalPath(staging.directory) || !literalPath(executable) || !workspacePathContains(runtime.directory, executable) || !mounts.supports(staging.directory) || await fs21.realpath(executable) !== executable) invalid4();
+    const binary = await fs21.lstat(executable, { bigint: true });
+    if (!binary.isFile() || ![0n, BigInt(process.getuid())].includes(binary.uid) || binary.nlink !== 1n || (binary.mode & 0o6022n) !== 0n || (binary.mode & 0o111n) === 0n) invalid4();
+    await assertDenyOnlyWorkspaceAcls([executable]);
+    const stagingAncestors = await readWorkspaceAncestorIdentities(staging.directory);
+    const aliases = mounts.aliases(staging.directory);
+    for (const root of [...readonly2, ...input2.protectedBindings ?? []]) {
+      const actual = await validateWorkspaceProject(root.directory, root);
+      await assertProtectedWorkspacePath(actual);
+      if (!literalPath(root.directory) || !mounts.supports(root.directory) || stagingAncestors.has(`${root.device}:${root.inode}`) || (await readWorkspaceAncestorIdentities(root.directory)).has(`${staging.device}:${staging.inode}`) || mounts.aliases(root.directory).some((read) => aliases.some((write) => mounts.contains(read, write) || mounts.contains(write, read)))) invalid4();
+    }
+    const cwd = staging.directory;
+    const env = {
+      HOME: cwd,
+      CODEX_HOME: cwd,
+      CODEX_SQLITE_HOME: cwd,
+      TMPDIR: cwd,
+      TMP: cwd,
+      TEMP: cwd,
+      PATH: "/usr/bin:/bin",
+      LC_ALL: "C",
+      PIP_CONFIG_FILE: "/dev/null",
+      OPENSSL_CONF: "/dev/null"
+    };
+    if (process.platform === "darwin") {
+      const system2 = await fs21.stat("/", { bigint: true });
+      for (const item of [seatbelt, darwinVersion, ...darwinSystem]) {
+        if (!mounts.supportsSystemRead?.(item) || !await protectedSystemPath(item, system2.dev)) invalid4();
+      }
+      return {
+        command: seatbelt,
+        args: ["-p", darwinPolicy(executable, runtime.directory, readonly2.map(({ directory }) => directory), cwd), executable],
+        env,
+        isolatesDescendants: true
+      };
+    }
+    if (process.platform !== "linux" || !path26.isAbsolute(input2.codexCommand)) invalid4();
+    if (await protectedSystemPath(unshare) !== unshare || !mounts.supports(unshare)) invalid4();
+    env.CODEX_HOME = path26.join(cwd, "codex-home");
+    env.TMPDIR = env.TMP = env.TEMP = path26.join(cwd, "tmp");
+    for (const directory of [env.CODEX_HOME, env.TMPDIR]) await fs21.mkdir(directory, { mode: 448 });
+    await assertProtectedWorkspacePath(staging, true);
+    await assertCompatibleCodexLayers(env, [cwd]);
+    const launcher = await resolveManagedGitLauncher(input2.codexCommand, env, [staging, ...readonly2, ...input2.protectedBindings ?? []]);
+    const system = await linuxSystemReads();
+    for (const entry of system.readable) {
+      if (!mounts.supports(entry) || !mounts.supports(await fs21.realpath(entry))) invalid4();
+    }
+    if (!literalPath(launcher.command)) invalid4();
+    const rules = new Map([...system.readable, launcher.command, ...readonly2.map(({ directory }) => directory)].map((root) => [root, "read"]));
+    addCodexWorkspaceWriteRoot(rules, cwd);
+    let command = [executable];
+    if (ecosystem2 === "pip") {
+      const lib = path26.join(runtime.directory, "lib");
+      if (/[:;$]/.test(lib) || await fs21.realpath(lib) !== lib || !(await fs21.lstat(lib)).isDirectory()) invalid4();
+      command = [system.loader, "--inhibit-cache", "--library-path", lib, "--argv0", executable, executable];
+    }
+    return {
+      command: unshare,
+      args: [
+        "--user",
+        "--map-current-user",
+        "--pid",
+        "--fork",
+        "--kill-child",
+        "--mount-proc",
+        "--",
+        launcher.command,
+        "sandbox",
+        ...namedCodexSandboxOverrides(profile2, rules, false).flatMap((setting) => ["-c", setting]),
+        "-P",
+        profile2,
+        "-C",
+        cwd,
+        "--",
+        ...command
+      ],
+      env: launcher.env,
+      isolatesDescendants: true
+    };
+  } catch {
+    return invalid4();
+  }
+}
+async function linuxSystemReads() {
+  const arch = process.arch === "x64" ? { triple: "x86_64-linux-gnu", loader: "/lib64/ld-linux-x86-64.so.2" } : process.arch === "arm64" ? { triple: "aarch64-linux-gnu", loader: "/lib/ld-linux-aarch64.so.1" } : invalid4();
+  const dirs = [`/lib/${arch.triple}`, `/usr/lib/${arch.triple}`];
+  const paths = await Promise.all(dirs.map((directory) => protectedSystemPath(directory)));
+  const resolvedLoader = await protectedSystemPath(arch.loader);
+  if (paths.some((real) => real && !dirs.includes(real)) || !resolvedLoader || !paths.some((real) => real && workspacePathContains(real, resolvedLoader))) invalid4();
+  return { readable: [...dirs.filter((_2, index) => !!paths[index]), arch.loader], loader: arch.loader };
+}
+async function protectedSystemPath(candidate, device) {
+  try {
+    const real = await fs21.realpath(candidate);
+    const stat2 = await fs21.lstat(real, { bigint: true });
+    if (!literalPath(real) || stat2.uid !== 0n || device !== void 0 && (real !== candidate || stat2.dev !== device) || (stat2.mode & 0o6022n) !== 0n || !stat2.isDirectory() && !stat2.isFile()) invalid4();
+    const parent = stat2.isDirectory() ? real : path26.dirname(real);
+    const bound = await fs21.lstat(parent, { bigint: true });
+    if (bound.uid !== 0n) invalid4();
+    await assertProtectedWorkspacePath({ directory: parent, device: String(bound.dev), inode: String(bound.ino) });
+    return real;
+  } catch (error62) {
+    if (error62.code === "ENOENT") return void 0;
+    throw error62;
+  }
+}
+function darwinPolicy(executable, runtime, readonly2, cwd) {
+  const q2 = JSON.stringify;
+  const subpaths = (paths) => [...new Set(paths)].map((entry) => `(subpath ${q2(entry)})`).join(" ");
+  return [
+    "(version 1)",
+    "(deny default)",
+    `(allow process-exec (literal ${q2(executable)}))`,
+    "(deny process-fork)",
+    "(allow process-info* (target same-sandbox))",
+    "(allow signal (target same-sandbox))",
+    `(allow sysctl-read (sysctl-name-prefix "hw.") ${processSysctls.map((name) => `(sysctl-name ${q2(name)})`).join(" ")})`,
+    // dyld opens / as an anchor; this literal does not grant its descendants.
+    '(allow file-read* (literal "/") (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
+    `(allow file-read* (literal ${q2(darwinVersion)}))`,
+    `(allow file-read* ${subpaths([...darwinSystem, ...readonly2, cwd])})`,
+    `(allow file-map-executable ${subpaths([...darwinSystem, runtime])})`,
+    `(allow file-read-metadata (path-ancestors ${q2(cwd)}))`,
+    `(allow file-write* (subpath ${q2(cwd)}))`,
+    "(deny file-link)",
+    "(deny system-fcntl (fcntl-command 80 110))"
+  ].join("\n");
+}
+function literalPath(value) {
+  return value !== "/" && value === path26.resolve(value) && value.length <= 4096 && !/[\u0000-\u001f\u007f*?\[\]\\]/.test(value);
+}
+function invalid4() {
+  throw new WorkspaceDependencySandboxError();
+}
+
+// src/workspace-dependency-toolchain.ts
+import { createHash as createHash11, randomBytes as randomBytes2 } from "node:crypto";
+import fs22 from "node:fs/promises";
+import path27 from "node:path";
+var maxFiles = 2e4;
+var maxBytes = 1024n * 1024n * 1024n;
+var maxMetadataBytes = 64n * 1024n;
+var installerVersion = /^\d+\.\d+(?:\.\d+)?(?:[-+][a-zA-Z0-9.]+)?$/;
+var probeResultFile = "measurement.json";
+var nodeMeasurement = dependencyToolchainSchema.omit({ installer: true });
+var WorkspaceDependencyToolchainError = class extends Error {
+  constructor(code, probeStage) {
+    super({
+      dependency_toolchain_invalid: "The configured dependency toolchain or its protected paths are invalid.",
+      dependency_toolchain_changed: "The configured dependency toolchain changed after it was selected.",
+      dependency_toolchain_probe_failed: "The dependency toolchain could not be verified in the private offline sandbox."
+    }[code]);
+    this.code = code;
+    this.probeStage = probeStage;
+  }
+  code;
+  probeStage;
+};
+var nodeProbe = `const os = require('node:os');
+const platformAbi = process.platform === 'darwin' ? 'darwin-' + os.release()
+  : 'glibc-' + (process.report.getReport().header.glibcVersionRuntime || 'unsupported');
+require('node:fs').writeFileSync('${probeResultFile}', JSON.stringify({ runtime: process.versions.node,
+  abi: process.versions.modules, platform: process.platform, arch: process.arch, platformAbi }), { flag: 'wx', mode: 0o600 });`;
+var workspaceDependencyPipBootstrap = `
+import _imp, sys
+runtime, package = sys.argv[1:3]
+assert all(entry.startswith(runtime + '/') and '..' not in entry.split('/') for entry in sys.path)
+assert _imp.is_frozen('os')
+import os
+inside = lambda root, candidate: os.path.commonpath((root, os.path.realpath(candidate))) == root
+assert sys.implementation.name == 'cpython'
+assert inside(runtime, sys.executable)
+assert all(inside(runtime, entry) for entry in sys.path)
+import importlib.util, json, sysconfig
+init = os.path.join(package, '__init__.py')
+spec = importlib.util.spec_from_file_location('pip', init, submodule_search_locations=[package])
+pip = importlib.util.module_from_spec(spec)
+sys.modules['pip'] = pip
+spec.loader.exec_module(pip)
+`;
+var pipProbe = workspaceDependencyPipBootstrap + `
+platformAbi = ('darwin-' + os.uname().release if sys.platform == 'darwin'
+    else (os.confstr('CS_GNU_LIBC_VERSION') or 'unsupported').replace(' ', '-'))
+os.umask(0o077)
+with open('${probeResultFile}', 'x', encoding='utf-8') as result:
+    json.dump(dict(runtime='.'.join(map(str, sys.version_info[:3])), installer=pip.__version__,
+        abi=sysconfig.get_config_var('SOABI'), platform=sys.platform,
+        arch={'x86_64':'x64','aarch64':'arm64','arm64':'arm64'}.get(os.uname().machine), platformAbi=platformAbi), result)
+`;
+async function inspectWorkspaceDependencyToolchain(input2, expectedFingerprint) {
+  const parsed = workspaceDependencyToolchainConfigSchema.safeParse(input2);
+  if (!parsed.success || expectedFingerprint !== void 0 && !dependencyDigestSchema.safeParse(expectedFingerprint).success) invalid5();
+  const configured = parsed.data;
+  const { ecosystem: ecosystem2, executable, runtime, installer } = configured;
+  try {
+    if (!process.geteuid || process.geteuid() !== process.getuid?.() || !workspacePathContains(runtime.directory, executable)) invalid5();
+    const mounts = await readWorkspaceDependencyMountPolicy();
+    const roots = [runtime, installer];
+    const metadata = ecosystem2 === "npm" ? path27.join(installer.directory, "package.json") : void 0;
+    const visits = /* @__PURE__ */ new Map();
+    const uid = BigInt(process.geteuid());
+    let total = 0n;
+    for (const root of roots) {
+      await validateWorkspaceProject(root.directory, root);
+      await assertProtectedWorkspacePath(root);
+      if (!mounts.supports(root.directory)) invalid5();
+      for (let pending = [root.directory]; pending.length; ) {
+        const next = [];
+        const batch = [];
+        for (const fullPath of pending) {
+          if (visits.has(fullPath)) continue;
+          if (visits.size >= maxFiles || fullPath.length > 4096 || /[\u0000-\u001f\u007f]/.test(fullPath)) invalid5();
+          const info = await fs22.lstat(fullPath, { bigint: true });
+          if (String(info.dev) !== root.device || ![0n, uid].includes(info.uid)) invalid5();
+          const entry = { info };
+          visits.set(fullPath, entry);
+          if (info.isSymbolicLink()) {
+            const target = await fs22.realpath(fullPath);
+            const unusedSite = ecosystem2 === "pip" && /^lib\/python[0-9.]+\/site-packages$/.test(path27.relative(runtime.directory, fullPath));
+            if (!unusedSite && !roots.some(({ directory }) => workspacePathContains(directory, target))) invalid5();
+            entry.target = target;
+          } else {
+            if ((info.mode & 0o6022n) !== 0n || !info.isDirectory() && (!info.isFile() || info.nlink !== 1n)) invalid5();
+            batch.push([fullPath, info]);
+          }
+        }
+        await checkAcls(batch.map(([file2]) => file2));
+        for (const [file2, info] of batch) {
+          if (info.isDirectory()) {
+            for await (const child of await fs22.opendir(file2)) {
+              if (next.length + visits.size >= maxFiles) invalid5();
+              next.push(path27.join(file2, child.name));
+            }
+          } else {
+            total += info.size;
+            if (total > maxBytes) invalid5();
+            Object.assign(visits.get(file2), await measureFile(file2, info, file2 === metadata));
+          }
+        }
+        pending = next;
+      }
+    }
+    const bin = visits.get(executable);
+    const entrypoint = path27.join(installer.directory, ecosystem2 === "npm" ? "bin/npm-cli.js" : "__init__.py");
+    if (!bin?.digest || !(bin.info.mode & 0o111n) || !nativeHeader(bin.header) || !visits.get(entrypoint)?.digest) invalid5();
+    let npmVersion2;
+    if (metadata) {
+      const contents = visits.get(metadata)?.content;
+      if (!contents) invalid5();
+      const manifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(contents));
+      if (manifest?.name !== "npm" || typeof manifest.version !== "string" || !installerVersion.test(manifest.version)) invalid5();
+      npmVersion2 = manifest.version;
+    }
+    await fs22.access(executable, fs22.constants.X_OK);
+    for (const { target } of visits.values()) {
+      if (target && roots.some(({ directory }) => workspacePathContains(directory, target)) && !visits.has(target)) invalid5();
+    }
+    const hash2 = createHash11("sha256").update(JSON.stringify(["dependency-toolchain-v1", ecosystem2, executable, runtime, installer]));
+    for (const [file2, entry] of [...visits].sort(([a], [b2]) => a < b2 ? -1 : a === b2 ? 0 : 1)) {
+      if (stamp(entry.info) !== stamp(await fs22.lstat(file2, { bigint: true }))) changed2();
+      if (entry.target !== void 0 && await fs22.realpath(file2) !== entry.target) changed2();
+      hash2.update(JSON.stringify([file2, stamp(entry.info), entry.digest ?? null, entry.target ?? null]));
+    }
+    const fingerprint = hash2.digest("hex");
+    if (expectedFingerprint !== void 0 && fingerprint !== expectedFingerprint) changed2();
+    return { configured, entrypoint, fingerprint, npmVersion: npmVersion2 };
+  } catch (error62) {
+    if (error62 instanceof WorkspaceDependencyToolchainError) throw error62;
+    return invalid5();
+  }
+}
+async function probeWorkspaceDependencyToolchain(input2) {
+  input2.signal?.throwIfAborted();
+  const selected = await inspectWorkspaceDependencyToolchain(input2.configured, input2.expectedFingerprint);
+  const { ecosystem: ecosystem2, runtime, installer } = selected.configured;
+  const mounts = await readWorkspaceDependencyMountPolicy().catch(invalid5);
+  const guard = await loadWorkspaceDependencyWriteGuard(input2.configPath);
+  const parent = await validateWorkspaceProject(input2.temporaryRoot.directory, input2.temporaryRoot);
+  await assertProtectedWorkspacePath(parent, false, true);
+  const leaf = `lark-dependency-probe-${randomBytes2(12).toString("hex")}`;
+  const planned = path27.join(parent.directory, leaf);
+  const ancestors = await readWorkspaceAncestorIdentities(parent.directory);
+  if (!path27.isAbsolute(input2.codexCommand) || !mounts.supports(planned) || [runtime, installer].some((root) => ancestors.has(`${root.device}:${root.inode}`) || mounts.aliases(planned).some((candidate) => mounts.aliases(root.directory).some((protectedPath) => mounts.contains(protectedPath, candidate) || mounts.contains(candidate, protectedPath))))) invalid5();
+  if (guard) await guard.assertNewDirectory(planned);
+  const home = await mkdirTemporaryInsidePinnedRoot(parent, leaf);
+  let stage = "private_home";
+  let cleanup = true;
+  try {
+    await assertProtectedWorkspacePath(home, true);
+    stage = "sandbox";
+    const cwd = home.directory;
+    const launcher = await prepareWorkspaceDependencySandbox({
+      codexCommand: input2.codexCommand,
+      configured: selected.configured,
+      staging: home,
+      protectedBindings: guard?.protectedBindings
+    });
+    const run = async (args) => {
+      stage = "runtime";
+      await runWorkspaceDependencyProcess(launcher, args, cwd, 15e3, 16 * 1024, input2.signal);
+      stage = "protocol";
+      await assertProtectedWorkspacePath(home, true);
+      return readProbeResult(path27.join(cwd, probeResultFile));
+    };
+    let output2;
+    if (ecosystem2 === "npm") {
+      const measured = nodeMeasurement.parse(await run(["--no-global-search-paths", "-e", nodeProbe]));
+      output2 = { ...measured, installer: selected.npmVersion };
+    } else {
+      output2 = await run(["-I", "-S", "-B", "-c", pipProbe, runtime.directory, installer.directory]);
+    }
+    const toolchain = dependencyToolchainSchema.safeParse(output2);
+    if (!toolchain.success || toolchain.data.platform !== process.platform || toolchain.data.arch !== process.arch || !/^(?:darwin|glibc)-[0-9]+(?:\.[0-9]+){1,2}$/.test(toolchain.data.platformAbi) || !/^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.]+)?$/.test(toolchain.data.runtime) || !installerVersion.test(toolchain.data.installer)) invalid5();
+    await inspectWorkspaceDependencyToolchain(selected.configured, selected.fingerprint);
+    return { ...selected, toolchain: toolchain.data };
+  } catch (error62) {
+    if (error62 instanceof WorkspaceDependencyProcessError) cleanup = error62.quiescent;
+    input2.signal?.throwIfAborted();
+    if (error62 instanceof WorkspaceDependencyToolchainError) throw error62;
+    throw new WorkspaceDependencyToolchainError("dependency_toolchain_probe_failed", stage);
+  } finally {
+    if (cleanup) {
+      await assertProtectedWorkspacePath(home, true);
+      await fs22.rm(home.directory, { recursive: true, force: true });
+    }
+  }
+}
+async function readProbeResult(filename) {
+  const fd = await fs22.open(filename, fs22.constants.O_RDONLY | fs22.constants.O_NOFOLLOW | fs22.constants.O_NONBLOCK);
+  try {
+    const info = await fd.stat({ bigint: true });
+    if (!process.geteuid || !info.isFile() || info.uid !== BigInt(process.geteuid()) || info.nlink !== 1n || (info.mode & 0o077n) !== 0n || info.size < 1n || info.size > 4096n) throw new Error("Invalid probe result file.");
+    const bytes = Buffer.alloc(Number(info.size));
+    const { bytesRead } = await fd.read(bytes, 0, bytes.length, 0);
+    if (bytesRead !== bytes.length || stamp(info) !== stamp(await fd.stat({ bigint: true })) || stamp(info) !== stamp(await fs22.lstat(filename, { bigint: true }))) throw new Error("Changed probe result file.");
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } finally {
+    await fd.close();
+  }
+}
+async function measureFile(file2, expected, capture) {
+  if (capture && expected.size > maxMetadataBytes) invalid5();
+  const fd = await fs22.open(file2, fs22.constants.O_RDONLY | fs22.constants.O_NOFOLLOW | fs22.constants.O_NONBLOCK);
+  try {
+    const expectedStamp = stamp(expected);
+    if (stamp(await fd.stat({ bigint: true })) !== expectedStamp) changed2();
+    const hash2 = createHash11("sha256");
+    const buffer = Buffer.alloc(128 * 1024);
+    const content = capture ? Buffer.alloc(Number(expected.size)) : void 0;
+    let remaining = Number(expected.size);
+    let header;
+    while (remaining) {
+      const { bytesRead } = await fd.read(buffer, 0, Math.min(remaining, buffer.length), null);
+      if (!bytesRead) changed2();
+      header ??= buffer.subarray(0, Math.min(bytesRead, 4)).toString("hex");
+      hash2.update(buffer.subarray(0, bytesRead));
+      if (content) buffer.copy(content, content.length - remaining, 0, bytesRead);
+      remaining -= bytesRead;
+    }
+    if (stamp(await fd.stat({ bigint: true })) !== expectedStamp) changed2();
+    return { digest: hash2.digest("hex"), header, content };
+  } finally {
+    await fd.close();
+  }
+}
+async function checkAcls(files) {
+  if (process.platform !== "darwin") return;
+  for (let index = 0; index < files.length; index += 16) await assertDenyOnlyWorkspaceAcls(files.slice(index, index + 16));
+}
+function nativeHeader(header) {
+  return !!header && (process.platform === "linux" ? header === "7f454c46" : process.platform === "darwin" && ["feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "cafebabf", "bebafeca", "bfbafeca"].includes(header));
+}
+function stamp(info) {
+  return [info.dev, info.ino, info.mode, info.uid, info.gid, info.nlink, info.size, info.ctimeNs, info.mtimeNs].join(":");
+}
+function invalid5() {
+  throw new WorkspaceDependencyToolchainError("dependency_toolchain_invalid");
+}
+function changed2() {
+  throw new WorkspaceDependencyToolchainError("dependency_toolchain_changed");
+}
+
+// src/workspace-dependency-install.ts
+var pipInstall = workspaceDependencyPipBootstrap + `
+from pip._internal.cli.main import main
+raise SystemExit(main(sys.argv[3:]))
+`;
+var installLimitMs = 45e3;
+var outputLimitBytes = 64 * 1024;
+var maxInstalledEntries = 2e5;
+var maxInstalledBytes = 4n * 1024n ** 3n;
+var maxInstalledDepth = 96;
+var filesystemUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+var exec5 = promisify5(execFile5);
+var WorkspaceDependencyInstallError = class extends Error {
+  constructor(code) {
+    super({
+      dependency_install_selection_mismatch: "The offline install inputs do not match the saved dependency selection.",
+      dependency_install_storage_invalid: "The offline installer cannot use the requested private staging location.",
+      dependency_install_failed: "Dependency installation failed in the private offline sandbox.",
+      dependency_install_timeout: "The private offline dependency installation exceeded its time limit.",
+      dependency_install_output_limit: "The private offline dependency installation exceeded its log limit.",
+      dependency_install_output_conflict: "The isolated checkout already contains a node_modules path that cannot be replaced.",
+      dependency_installed_output_invalid: "Installed dependencies failed private output validation."
+    }[code]);
+    this.code = code;
+  }
+  code;
+};
+async function assertInstallAllowed(request) {
+  request.signal?.throwIfAborted();
+  await request.validateApproval?.();
+  request.signal?.throwIfAborted();
+}
+async function installWorkspaceDependencyInStaging(request) {
+  request.signal?.throwIfAborted();
+  const selected = workspaceDependencySelectionSchema.safeParse(request.selection);
+  const tool = workspaceDependencyToolchainConfigSchema.safeParse(request.configured);
+  if (!selected.success || !tool.success || selected.data.identity.ecosystem !== tool.data.ecosystem || selected.data.identity.ecosystem !== request.input.ecosystem || !selected.data.toolchainFingerprint || !selected.data.toolchainBindingDigest || selected.data.toolchainBindingDigest !== workspaceDependencyToolchainBindingDigest(tool.data)) {
+    fail2("dependency_install_selection_mismatch");
+  }
+  const { data: selection } = selected;
+  const { data: configured } = tool;
+  const input2 = request.input.ecosystem === "npm" ? { ...request.input, lock: Buffer.from(request.input.lock), manifest: Buffer.from(request.input.manifest) } : { ...request.input, lock: Buffer.from(request.input.lock) };
+  const artifactManifest = structuredClone(request.artifactManifest);
+  const verifyCache2 = async (inspectExpansion = false, snapshot2) => {
+    const verified2 = await verifyWorkspaceDependencyCache({
+      input: input2,
+      artifactManifest,
+      cache: selection.cache,
+      authorizedRoots: request.authorizedRoots,
+      expectedFingerprint: selection.cacheFingerprint,
+      inspectExpansion,
+      expansionLimits: request.expansionLimits,
+      snapshot: snapshot2
+    });
+    if (verified2.identity.key !== selection.identity.key || verified2.artifactManifestSha256 !== selection.artifactManifestSha256) {
+      fail2("dependency_install_selection_mismatch");
+    }
+    return verified2;
+  };
+  const verified = await verifyCache2(true);
+  if (verified.bytes > MAX_WORKSPACE_DEPENDENCY_SNAPSHOT_BYTES) throw new WorkspaceDependencyCacheError("dependency_snapshot_limit");
+  const mounts = await readWorkspaceDependencyMountPolicy();
+  const aliasesOverlap = (left, right) => mounts.aliases(left).some((a) => mounts.aliases(right).some((b2) => mounts.contains(a, b2) || mounts.contains(b2, a)));
+  const cacheAncestors = await readWorkspaceAncestorIdentities(selection.cache.directory);
+  for (const readonly2 of [configured.runtime, configured.installer]) {
+    const toolchainAncestors = await readWorkspaceAncestorIdentities(readonly2.directory);
+    if (cacheAncestors.has(`${readonly2.device}:${readonly2.inode}`) || toolchainAncestors.has(`${selection.cache.device}:${selection.cache.inode}`) || aliasesOverlap(selection.cache.directory, readonly2.directory)) fail2("dependency_install_storage_invalid");
+  }
+  const guard = await loadWorkspaceDependencyWriteGuard(request.configPath);
+  const parent = await validateWorkspaceProject(request.temporaryRoot.directory, request.temporaryRoot);
+  await assertProtectedWorkspacePath(parent, false, true);
+  const nonce = request.reservedNonce ?? randomBytes3(12).toString("hex");
+  const leaf = workspaceDependencyInstallLeaf(nonce);
+  const snapshotLeaf = `lark-dependency-snapshot-${nonce}`;
+  const planned = path28.join(parent.directory, leaf);
+  const ancestors = await readWorkspaceAncestorIdentities(parent.directory);
+  if (!mounts.supports(planned) || [selection.cache, configured.runtime, configured.installer].some((root) => ancestors.has(`${root.device}:${root.inode}`) || aliasesOverlap(root.directory, planned))) fail2("dependency_install_storage_invalid");
+  await guard?.assertNewDirectory(planned);
+  const snapshotPath = path28.join(parent.directory, snapshotLeaf);
+  if (!mounts.supports(snapshotPath)) fail2("dependency_install_storage_invalid");
+  await guard?.assertNewDirectory(snapshotPath);
+  const inspected = await probeWorkspaceDependencyToolchain({
+    configured,
+    codexCommand: request.codexCommand,
+    temporaryRoot: parent,
+    configPath: request.configPath,
+    expectedFingerprint: selection.toolchainFingerprint,
+    signal: request.signal
+  });
+  const current = inspected.toolchain;
+  const recorded = selection.identity.toolchain;
+  if (current.runtime !== recorded.runtime || current.installer !== recorded.installer || current.abi !== recorded.abi || current.platform !== recorded.platform || current.arch !== recorded.arch || current.platformAbi !== recorded.platformAbi) {
+    fail2("dependency_install_selection_mismatch");
+  }
+  let staging;
+  request.signal?.throwIfAborted();
+  const snapshot = await mkdirTemporaryInsidePinnedRoot(parent, snapshotLeaf);
+  let safeToRemove = true;
+  try {
+    await verifyCache2(false, snapshot);
+    staging = await mkdirTemporaryInsidePinnedRoot(parent, leaf);
+    const cwd = staging.directory;
+    const launch = await prepareWorkspaceDependencySandbox({
+      codexCommand: request.codexCommand,
+      configured,
+      staging,
+      artifacts: snapshot,
+      protectedBindings: guard?.protectedBindings
+    });
+    const write = (name, bytes) => fs23.writeFile(path28.join(cwd, name), bytes, { flag: "wx", mode: 384 });
+    let args;
+    const outputName = workspaceDependencyOutputName(input2.ecosystem);
+    if (input2.ecosystem === "npm") {
+      if (selection.identity.ecosystem !== "npm") fail2("dependency_install_selection_mismatch");
+      await write("package.json", input2.manifest);
+      await write("package-lock.json", verified.stagedLock);
+      await write("installer-user.npmrc", "");
+      await write("installer-global.npmrc", "");
+      args = [
+        "--no-global-search-paths",
+        inspected.entrypoint,
+        "ci",
+        "--offline",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--no-progress",
+        "--no-update-notifier",
+        "--logs-max=0",
+        "--fetch-retries=0",
+        "--include=dev",
+        "--include=optional",
+        "--include=peer",
+        `--userconfig=${path28.join(cwd, "installer-user.npmrc")}`,
+        `--globalconfig=${path28.join(cwd, "installer-global.npmrc")}`,
+        `--registry=${selection.identity.registry}`,
+        `--cache=${snapshot.directory}`
+      ];
+    } else {
+      await write("requirements.lock", verified.stagedLock);
+      args = [
+        "-I",
+        "-S",
+        "-B",
+        "-c",
+        pipInstall,
+        configured.runtime.directory,
+        configured.installer.directory,
+        "--isolated",
+        "--disable-pip-version-check",
+        "--no-cache-dir",
+        "install",
+        "--no-index",
+        `--find-links=${snapshot.directory}`,
+        "--only-binary=:all:",
+        "--require-hashes",
+        "--ignore-installed",
+        "--no-compile",
+        `--target=${path28.join(cwd, outputName)}`,
+        `--requirement=${path28.join(cwd, "requirements.lock")}`
+      ];
+    }
+    await assertProtectedWorkspacePath(staging, true);
+    await assertInstallAllowed(request);
+    await runWorkspaceDependencyProcess(launch, args, cwd, installLimitMs, outputLimitBytes, request.signal);
+    await verifyCache2();
+    await inspectWorkspaceDependencyToolchain(configured, selection.toolchainFingerprint);
+    await assertProtectedWorkspacePath(staging, true);
+    if (input2.ecosystem === "npm") {
+      const destination = path28.join(cwd, outputName);
+      const exists = await fs23.lstat(destination).catch((error62) => {
+        if (error62.code !== "ENOENT") throw error62;
+      });
+      if (!exists) await fs23.mkdir(destination, { mode: 448 });
+    }
+    const output2 = await pinWorkspacePath(cwd, outputName);
+    if (output2.directory !== path28.join(cwd, outputName)) fail2("dependency_installed_output_invalid");
+    const measurement = await measureWorkspaceDependencyOutput(output2, input2.ecosystem);
+    request.signal?.throwIfAborted();
+    return { staging, output: output2, measurement };
+  } catch (error62) {
+    safeToRemove = !(error62 instanceof WorkspaceDependencyProcessError) || error62.quiescent;
+    if (staging && safeToRemove) {
+      await assertProtectedWorkspacePath(staging, true);
+      await fs23.rm(staging.directory, { recursive: true, force: true });
+    }
+    request.signal?.throwIfAborted();
+    if (error62 instanceof WorkspaceDependencyProcessError) {
+      fail2(error62.reason === "timeout" ? "dependency_install_timeout" : error62.reason === "output" ? "dependency_install_output_limit" : "dependency_install_failed");
+    }
+    throw error62;
+  } finally {
+    if (safeToRemove) {
+      await assertProtectedWorkspacePath(snapshot, true);
+      await fs23.rm(snapshot.directory, { recursive: true, force: true });
+    }
+  }
+}
+async function ensureManagedWorkspaceDependencyOutput(store, owner, ecosystem2, material) {
+  const allocation = store.get(owner)?.allocation;
+  const selection = allocation?.dependencySelections?.find(({ identity }) => identity.ecosystem === ecosystem2);
+  if (!allocation?.gitCheckout || !selection) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  const locations = { scratch: allocation.scratch, ...allocation.gitCheckout, ecosystem: ecosystem2 };
+  const recorded = store.getDependencyInstall(owner, ecosystem2);
+  if (recorded) {
+    if (!recorded.receipt) throw new ManagedWorkspaceStorageError("dependency_install_incomplete");
+    await validatePublishedWorkspaceDependencyOutput({ ...locations, nonce: recorded.nonce, receipt: recorded.receipt });
+    return recorded.receipt;
+  }
+  if (!material || material.input.ecosystem !== ecosystem2) fail2("dependency_install_selection_mismatch");
+  const configured = workspaceDependencyToolchainConfigSchema.safeParse(material.configured);
+  if (!configured.success || !selection.toolchainFingerprint || workspaceDependencyToolchainBindingDigest(configured.data) !== selection.toolchainBindingDigest || describeWorkspaceDependencies(material.input).key !== selection.identity.key) fail2("dependency_install_selection_mismatch");
+  await validatePublicationCheckout(locations);
+  await assertInstallAllowed(material);
+  const nonce = randomBytes3(12).toString("hex");
+  store.reserveDependencyInstall(owner, ecosystem2, nonce);
+  const { output: output2, measurement } = await installWorkspaceDependencyInStaging({ ...material, selection, temporaryRoot: allocation.scratch, reservedNonce: nonce });
+  const receipt = { output: output2, measurement };
+  await publishWorkspaceDependencyOutput({ ...locations, nonce, receipt }, material);
+  await assertInstallAllowed(material);
+  store.completeDependencyInstall(owner, ecosystem2, nonce, receipt);
+  return receipt;
+}
+var attachNpmOutput = String.raw`
+  const fs = require('node:fs');
+  const [directory, dev, ino, target] = process.argv.slice(1);
+  const root = fs.statSync('.', { bigint: true });
+  if (process.cwd() !== directory || String(root.dev) !== dev || String(root.ino) !== ino
+    || !process.geteuid || root.uid !== BigInt(process.geteuid()) || (root.mode & 0o022n) !== 0n) process.exit(1);
+  try { fs.symlinkSync(target, 'node_modules', 'dir'); }
+  catch (error) { process.exit(error.code === 'EEXIST' ? 2 : 1); }
+`;
+async function publishWorkspaceDependencyOutput(request, policy2) {
+  await validateReceiptTree(request);
+  if (policy2) await assertInstallAllowed(policy2);
+  if (request.ecosystem === "pip") return;
+  const { checkout, receipt } = request;
+  try {
+    await exec5(process.execPath, [
+      "--input-type=commonjs",
+      "-e",
+      attachNpmOutput,
+      "--",
+      checkout.directory,
+      checkout.device,
+      checkout.inode,
+      path28.relative(checkout.directory, receipt.output.directory)
+    ], { cwd: checkout.directory, env: {}, timeout: 1e4, maxBuffer: 1024 });
+  } catch (error62) {
+    return fail2(error62.code === 2 ? "dependency_install_output_conflict" : "dependency_installed_output_invalid");
+  }
+  await validateNpmAttachment(request);
+}
+async function validatePublishedWorkspaceDependencyOutput(request) {
+  await validateReceiptTree(request);
+  if (request.ecosystem === "npm") await validateNpmAttachment(request);
+}
+async function validateReceiptTree(request) {
+  const { scratch, ecosystem: ecosystem2, receipt, nonce } = request;
+  try {
+    workspaceDependencyInstallReceiptSchema.parse(receipt);
+    if (receipt.output.device !== scratch.device || receipt.output.directory !== path28.join(scratch.directory, workspaceDependencyInstallLeaf(nonce), workspaceDependencyOutputName(ecosystem2))) {
+      fail2("dependency_installed_output_invalid");
+    }
+    const actual = await measureWorkspaceDependencyOutput(receipt.output, ecosystem2);
+    if (actual.digest !== receipt.measurement.digest || actual.entries !== receipt.measurement.entries || actual.bytes !== receipt.measurement.bytes) {
+      fail2("dependency_installed_output_invalid");
+    }
+    await validatePublicationCheckout(request);
+  } catch {
+    return fail2("dependency_installed_output_invalid");
+  }
+}
+async function validatePublicationCheckout({ scratch, checkout, gitDirectory }) {
+  try {
+    if (checkout.directory !== path28.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) || checkout.device !== scratch.device || gitDirectory.directory !== path28.join(checkout.directory, ".git") || gitDirectory.device !== checkout.device) fail2("dependency_installed_output_invalid");
+    await assertProtectedWorkspacePath(scratch, true);
+    await assertProtectedWorkspacePath(checkout, true);
+    await assertProtectedWorkspacePath(gitDirectory, true);
+    const mounts = await readWorkspaceDependencyMountPolicy();
+    if (!mounts.supports(checkout.directory) || !mounts.supports(gitDirectory.directory)) fail2("dependency_installed_output_invalid");
+  } catch {
+    return fail2("dependency_installed_output_invalid");
+  }
+}
+async function validateNpmAttachment(request) {
+  const { checkout, receipt } = request;
+  try {
+    const dependencyLink = path28.join(checkout.directory, workspaceDependencyOutputName("npm"));
+    const link = await fs23.lstat(dependencyLink, { bigint: true });
+    if (!link.isSymbolicLink() || link.nlink !== 1n || !process.geteuid || link.uid !== BigInt(process.geteuid()) || await fs23.readlink(dependencyLink) !== path28.relative(checkout.directory, receipt.output.directory) || await fs23.realpath(dependencyLink) !== receipt.output.directory || outputStamp(link) !== outputStamp(await fs23.lstat(dependencyLink, { bigint: true }))) fail2("dependency_installed_output_invalid");
+    await validatePublicationCheckout(request);
+    await assertProtectedWorkspacePath(receipt.output, true);
+  } catch {
+    return fail2("dependency_installed_output_invalid");
+  }
+}
+async function measureWorkspaceDependencyOutput(output2, ecosystem2) {
+  const hash2 = createHash12("sha256").update(JSON.stringify(["workspace-installed-dependencies-v1", ecosystem2]));
+  const pending = [{ relative: "", depth: 0 }];
+  const visited = [];
+  const scratch = Buffer.allocUnsafe(128 * 1024);
+  let entries = 0;
+  let bytes = 0n;
+  try {
+    if (!process.geteuid) fail2("dependency_installed_output_invalid");
+    const uid = BigInt(process.geteuid());
+    await assertProtectedWorkspacePath(output2, true);
+    if (!(await readWorkspaceDependencyMountPolicy()).supports(output2.directory)) fail2("dependency_installed_output_invalid");
+    while (pending.length) {
+      const { relative, depth } = pending.pop();
+      const filename = path28.join(output2.directory, relative);
+      if (++entries > maxInstalledEntries || depth > maxInstalledDepth || filename.length > 4096 || /[\u0000-\u001f\u007f]/.test(relative)) fail2("dependency_installed_output_invalid");
+      const info = await fs23.lstat(filename, { bigint: true });
+      if (String(info.dev) !== output2.device || info.uid !== uid) fail2("dependency_installed_output_invalid");
+      const stamp2 = outputStamp(info);
+      visited.push({ filename, stamp: stamp2, acl: !info.isSymbolicLink() });
+      if (info.isSymbolicLink()) {
+        const target = decodeFilesystemUtf8(await fs23.readlink(filename, { encoding: "buffer" }));
+        const physical = await fs23.realpath(filename);
+        if (ecosystem2 !== "npm" || info.nlink !== 1n || path28.isAbsolute(target) || !workspacePathContains(output2.directory, path28.resolve(path28.dirname(filename), target)) || physical === output2.directory || !workspacePathContains(output2.directory, physical)) fail2("dependency_installed_output_invalid");
+        hash2.update(JSON.stringify([relative, "link", target]));
+        continue;
+      }
+      if ((info.mode & 0o7022n) !== 0n) fail2("dependency_installed_output_invalid");
+      if (info.isDirectory()) {
+        const children = [];
+        for await (const child of await fs23.opendir(filename, { encoding: "buffer" })) {
+          if (entries + children.length + pending.length >= maxInstalledEntries) fail2("dependency_installed_output_invalid");
+          children.push(path28.join(relative, decodeFilesystemUtf8(child.name)));
+        }
+        for (const child of children.sort().reverse()) pending.push({ relative: child, depth: depth + 1 });
+        hash2.update(JSON.stringify([relative, "directory", String(info.mode & 0o777n)]));
+      } else {
+        if (!info.isFile() || info.nlink !== 1n || (bytes += info.size) > maxInstalledBytes) fail2("dependency_installed_output_invalid");
+        const digest2 = await digestOutputFile(filename, info, scratch);
+        hash2.update(JSON.stringify([relative, "file", String(info.mode & 0o777n), digest2]));
+      }
+    }
+    for (let index = 0; index < visited.length; index += 16) {
+      const batch = visited.slice(index, index + 16);
+      await assertDenyOnlyWorkspaceAcls(batch.filter(({ acl }) => acl).map(({ filename }) => filename));
+      for (const { filename, stamp: stamp2 } of batch) {
+        if (stamp2 !== outputStamp(await fs23.lstat(filename, { bigint: true }))) fail2("dependency_installed_output_invalid");
+      }
+    }
+    return { digest: hash2.digest("hex"), entries, bytes: Number(bytes) };
+  } catch {
+    return fail2("dependency_installed_output_invalid");
+  }
+}
+async function digestOutputFile(filename, info, scratch) {
+  const fd = await fs23.open(filename, fs23.constants.O_RDONLY | fs23.constants.O_NOFOLLOW | fs23.constants.O_NONBLOCK);
+  try {
+    const stamp2 = outputStamp(info);
+    if (stamp2 !== outputStamp(await fd.stat({ bigint: true }))) fail2("dependency_installed_output_invalid");
+    const hash2 = createHash12("sha256");
+    let remaining = Number(info.size);
+    while (remaining > 0) {
+      const { bytesRead } = await fd.read(scratch, 0, Math.min(scratch.length, remaining), null);
+      if (bytesRead === 0) fail2("dependency_installed_output_invalid");
+      hash2.update(scratch.subarray(0, bytesRead));
+      remaining -= bytesRead;
+    }
+    if (stamp2 !== outputStamp(await fd.stat({ bigint: true }))) fail2("dependency_installed_output_invalid");
+    return hash2.digest("hex");
+  } finally {
+    await fd.close();
+  }
+}
+function outputStamp(info) {
+  return [info.dev, info.ino, info.mode, info.uid, info.gid, info.nlink, info.size, info.ctimeNs, info.mtimeNs].join(":");
+}
+function decodeFilesystemUtf8(value) {
+  if (!Buffer.isBuffer(value)) fail2("dependency_installed_output_invalid");
+  const name = filesystemUtf8.decode(value);
+  if (!Buffer.from(name, "utf8").equals(value)) fail2("dependency_installed_output_invalid");
+  return name;
+}
+function fail2(code) {
+  throw new WorkspaceDependencyInstallError(code);
+}
+
+// src/managed-workspace-dependencies.ts
+function isManagedWorkspaceDependencyError(error62) {
+  return error62 instanceof Error && "code" in error62 && typeof error62.code === "string" && error62.code.startsWith("dependency_");
+}
+function resolve(request, expected) {
+  return resolveWorkspaceDependencySelections({ ...request, expected, probeToolchain: (configured, expectedFingerprint) => {
+    if (!request.roots) throw new ManagedWorkspaceStorageError("invalid_binding");
+    return probeWorkspaceDependencyToolchain({
+      configured,
+      expectedFingerprint,
+      codexCommand: request.codexCommand,
+      temporaryRoot: request.roots.scratch,
+      configPath: request.configPath,
+      signal: request.signal
+    });
+  } });
+}
+async function admitManagedWorkspaceDependencies(request) {
+  try {
+    return (await resolve(request)).map(({ selection }) => selection);
+  } catch (cause) {
+    if (isManagedWorkspaceDependencyError(cause)) throw cause;
+    throw new ManagedWorkspaceStorageError("dependency_selection_failed", { cause });
+  }
+}
+async function prepareManagedWorkspaceDependencies(allocation, store, policy2) {
+  const { project, git: git2, roots, dependencySelections, owner } = allocation;
+  if (!dependencySelections?.length) return {};
+  policy2.signal?.throwIfAborted();
+  const prepared = await resolve({ ...policy2, project, git: git2, roots }, dependencySelections);
+  let pythonDirectory;
+  for (const { selection, execution, input: input2, artifactManifest } of prepared) {
+    policy2.signal?.throwIfAborted();
+    if (!execution) throw new ManagedWorkspaceStorageError("invalid_binding");
+    const receipt = await ensureManagedWorkspaceDependencyOutput(store, owner, selection.identity.ecosystem, {
+      ...policy2,
+      input: input2,
+      artifactManifest,
+      configured: execution,
+      validateApproval: () => validateManagedWorkspaceDependencyApproval(allocation, policy2.configPath)
+    });
+    if (selection.identity.ecosystem === "pip") pythonDirectory = receipt.output.directory;
+  }
+  policy2.signal?.throwIfAborted();
+  return { pythonDirectory };
+}
+async function validateManagedWorkspaceDependencyApproval(allocation, configPath) {
+  const { project, git: git2, dependencySelections } = allocation;
+  if (!dependencySelections?.length) return;
+  if (!configPath) throw new ManagedWorkspaceStorageError("invalid_binding");
+  await assertWorkspaceDependencySelectionAuthorized(configPath, project, git2, dependencySelections);
+}
+async function validateManagedWorkspaceDependencyReceipts(allocation, store) {
+  for (const { identity } of allocation.dependencySelections ?? []) {
+    await ensureManagedWorkspaceDependencyOutput(store, allocation.owner, identity.ecosystem);
+  }
+}
+
 // src/continuation/idempotency.ts
-import { createHash as createHash9 } from "node:crypto";
+import { createHash as createHash13 } from "node:crypto";
 function continuationJobId(idempotencyKey) {
   if (!idempotencyKey) throw new Error("Continuation idempotency key is required.");
-  return `job_${createHash9("sha256").update(idempotencyKey).digest("hex").slice(0, 24)}`;
+  return `job_${createHash13("sha256").update(idempotencyKey).digest("hex").slice(0, 24)}`;
 }
 function continuationCreateIdempotencyKey(sourceMessageId) {
   if (!sourceMessageId) throw new Error("Continuation source message id is required.");
-  return `create-continuation:${createHash9("sha256").update(`${sourceMessageId}\0create_continuation_job`).digest("hex")}`;
+  return `create-continuation:${createHash13("sha256").update(`${sourceMessageId}\0create_continuation_job`).digest("hex")}`;
 }
 function continuationRetryIdempotencyKey(sourceJobId, requestId) {
   if (!sourceJobId || !requestId) {
@@ -62708,8 +64405,8 @@ function redactContinuationText(value) {
 }
 
 // src/continuation/working-directory.ts
-import fs20 from "node:fs/promises";
-import path25 from "node:path";
+import fs24 from "node:fs/promises";
+import path29 from "node:path";
 var RELATIVE_PATH_ERROR = "Continuation working directory must be relative and remain within LARK_CONTINUATION_WORKING_ROOT.";
 var EXISTING_DIRECTORY_ERROR = "Continuation working directory must be an existing directory, and configured roots must exist.";
 var OUTSIDE_ROOT_ERROR = "Continuation working directory resolves outside the configured continuation working root.";
@@ -62721,18 +64418,18 @@ var ContinuationWorkingDirectoryError = class extends Error {
   }
 };
 async function resolveContinuationWorkingDirectory(configuredRoot, relativeDirectory) {
-  if (!relativeDirectory || path25.isAbsolute(relativeDirectory) || /^[A-Za-z]:[\\/]/.test(relativeDirectory) || relativeDirectory.startsWith("\\\\") || relativeDirectory.split(/[\\/]+/).includes("..")) {
+  if (!relativeDirectory || path29.isAbsolute(relativeDirectory) || /^[A-Za-z]:[\\/]/.test(relativeDirectory) || relativeDirectory.startsWith("\\\\") || relativeDirectory.split(/[\\/]+/).includes("..")) {
     throw new ContinuationWorkingDirectoryError(RELATIVE_PATH_ERROR);
   }
   const root = requireAbsoluteRoot(configuredRoot);
-  const candidate = path25.resolve(root, relativeDirectory);
+  const candidate = path29.resolve(root, relativeDirectory);
   assertLexicallyContained(root, candidate);
   const [realRoot, realCandidate] = await canonicalDirectories(root, candidate);
   assertLexicallyContained(realRoot, realCandidate);
   return { root: realRoot, workingDirectory: realCandidate };
 }
 async function validateContinuationWorkingDirectory(configuredRoots, candidate) {
-  if (!path25.isAbsolute(candidate) || configuredRoots.length === 0) {
+  if (!path29.isAbsolute(candidate) || configuredRoots.length === 0) {
     throw new ContinuationWorkingDirectoryError(RELATIVE_PATH_ERROR);
   }
   const roots = configuredRoots.map(requireAbsoluteRoot);
@@ -62758,11 +64455,11 @@ async function resolveContinuationRequestedPaths(configuredRoot, requestedPaths)
     if (!value || value.includes("\0")) {
       throw new ContinuationWorkingDirectoryError(REQUESTED_PATH_ERROR);
     }
-    const candidate = path25.isAbsolute(value) ? path25.resolve(value) : path25.resolve(root, value);
+    const candidate = path29.isAbsolute(value) ? path29.resolve(value) : path29.resolve(root, value);
     let canonical;
     try {
-      canonical = await fs20.realpath(candidate);
-      await fs20.stat(canonical);
+      canonical = await fs24.realpath(candidate);
+      await fs24.stat(canonical);
     } catch {
       throw new ContinuationWorkingDirectoryError(
         `Continuation requested path does not exist or is not accessible: ${value}`
@@ -62776,15 +64473,15 @@ async function resolveContinuationRequestedPaths(configuredRoot, requestedPaths)
   return resolved;
 }
 function requireAbsoluteRoot(root) {
-  if (!path25.isAbsolute(root)) {
+  if (!path29.isAbsolute(root)) {
     throw new ContinuationWorkingDirectoryError(
       "LARK_CONTINUATION_WORKING_ROOT must be an absolute path to an existing directory."
     );
   }
-  return path25.resolve(root);
+  return path29.resolve(root);
 }
 function assertLexicallyContained(root, candidate) {
-  if (candidate !== root && !candidate.startsWith(`${root}${path25.sep}`)) {
+  if (candidate !== root && !candidate.startsWith(`${root}${path29.sep}`)) {
     throw new ContinuationWorkingDirectoryError(OUTSIDE_ROOT_ERROR);
   }
 }
@@ -62796,8 +64493,8 @@ async function canonicalDirectories(root, candidate) {
   }
 }
 async function canonicalDirectory(directory) {
-  const canonical = await fs20.realpath(directory);
-  const metadata = await fs20.stat(canonical);
+  const canonical = await fs24.realpath(directory);
+  const metadata = await fs24.stat(canonical);
   if (!metadata.isDirectory()) throw new Error("not a directory");
   return canonical;
 }
@@ -62936,6 +64633,16 @@ var ContinuationService = class {
       sourceRegistryPath: this.options.sourceRegistryPath,
       sourceRegistryRoot: authorizedRoots[1]
     }) : void 0;
+    const dependencySelections = this.options.managedWorkspaceConfigPath ? await admitManagedWorkspaceDependencies({
+      roots: managedWorkspaceRoots,
+      project: workspaceProject,
+      git: managedWorkspaceGit,
+      configPath: this.options.managedWorkspaceConfigPath,
+      authorizedRoots,
+      sourceRegistryPath: this.options.sourceRegistryPath,
+      sourceRegistryRoot: authorizedRoots[1],
+      codexCommand: this.options.codexCommand ?? "codex"
+    }) : void 0;
     const route = deriveRoute(message);
     const brief = sanitizeBrief(action);
     if (managedWorkspaceGit && brief.requiredTools.length) {
@@ -62970,24 +64677,25 @@ var ContinuationService = class {
       taskContract,
       CONTINUATION_LIMITS.contextSnapshotBytes
     );
-    const profile2 = this.options.canUseTrustedPersonalWorkspace?.(message.senderId) ? "trusted_personal_workspace" : "bounded";
+    const profile3 = this.options.canUseTrustedPersonalWorkspace?.(message.senderId) ? "trusted_personal_workspace" : "bounded";
     const requestedPaths = await this.resolveRequestedPaths(
       action,
       resolvedWorkingDirectory.workingDirectory
     );
     const permissions = {
-      profile: profile2,
+      profile: profile3,
       filesystem: {
         root: resolvedWorkingDirectory.root,
         mode: this.options.filesystemMode,
         requestedPaths,
         ...workspaceProject ? { workspaceProject } : {},
         ...managedWorkspaceRoots ? { managedWorkspaceRoots } : {},
-        ...managedWorkspaceGit ? { managedWorkspaceGit } : {}
+        ...managedWorkspaceGit ? { managedWorkspaceGit } : {},
+        ...managedWorkspaceRoots && dependencySelections !== void 0 ? { dependencySelections } : {}
       },
       hostTools: brief.requiredTools,
-      network: profile2 === "trusted_personal_workspace" ? "enabled" : "none",
-      externalSideEffects: profile2 === "trusted_personal_workspace" ? "allowed" : "denied",
+      network: profile3 === "trusted_personal_workspace" ? "enabled" : "none",
+      externalSideEffects: profile3 === "trusted_personal_workspace" ? "allowed" : "denied",
       approval: { mode: "never" }
     };
     assertJsonByteLimit(
@@ -63421,7 +65129,7 @@ function boundedFactText(value) {
 }
 
 // src/run-trace-query.ts
-import fs21 from "node:fs/promises";
+import fs25 from "node:fs/promises";
 var DEFAULT_WITHIN_HOURS = 12;
 var MAX_WITHIN_HOURS = 168;
 var DEFAULT_MAX_TOOL_CALLS = 50;
@@ -63482,7 +65190,7 @@ async function readTraceLines(options2) {
   const files = traceLogFiles(options2.logPath, options2.maxFiles);
   const out = [];
   for (const file2 of files) {
-    const text = await fs21.readFile(file2, "utf-8").catch((err) => {
+    const text = await fs25.readFile(file2, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -63493,9 +65201,9 @@ async function readTraceLines(options2) {
   }
   return out;
 }
-function traceLogFiles(logPath, maxFiles) {
+function traceLogFiles(logPath, maxFiles2) {
   const files = [];
-  for (let i = Math.max(0, maxFiles); i >= 1; i--) files.push(`${logPath}.${i}`);
+  for (let i = Math.max(0, maxFiles2); i >= 1; i--) files.push(`${logPath}.${i}`);
   files.push(logPath);
   return files;
 }
@@ -63641,7 +65349,7 @@ async function dispatchRegisteredAction(registry2, action, message) {
 }
 
 // src/codex-exec-action-schemas.ts
-import path26 from "node:path";
+import path30 from "node:path";
 var SaveMemoryActionSchema = external_exports.object({
   type: external_exports.literal("save_memory"),
   memory_type: external_exports.enum(["profile", "chat", "thread"]),
@@ -63783,7 +65491,7 @@ var ContinuationCheckpointActionSchema = external_exports.object({
   references: external_exports.array(external_exports.string().max(CONTINUATION_LIMITS.objectiveBytes)).max(CONTINUATION_LIMITS.acceptanceCriteriaCount)
 }).strict();
 var RelativeContinuationDirectorySchema = external_exports.string().min(1).refine((value) => {
-  if (path26.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\")) {
+  if (path30.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\")) {
     return false;
   }
   return !value.split(/[\\/]+/).includes("..");
@@ -64377,7 +66085,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
   } = plan;
   let totalBytes = 0;
   for (const imagePath of imagePaths) {
-    const sizeBytes = (await fs22.stat(imagePath)).size;
+    const sizeBytes = (await fs26.stat(imagePath)).size;
     if (sizeBytes > CONTINUATION_LIMITS.inputBytesPerFile) {
       throw new Error("A continuation input exceeds the per-file byte limit.");
     }
@@ -64389,7 +66097,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
   if (descriptors.length === 0) {
     return {
       inputs: imagePaths.map((imagePath, imageIndex) => ({
-        sourcePath: path27.resolve(imagePath),
+        sourcePath: path31.resolve(imagePath),
         fileName: plannedImageFileNames[imageIndex],
         kind: "message_image"
       })),
@@ -64399,7 +66107,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
   }
   for (const [imageIndex, imagePath] of imagePaths.entries()) {
     inputs.push({
-      sourcePath: path27.resolve(imagePath),
+      sourcePath: path31.resolve(imagePath),
       fileName: plannedImageFileNames[imageIndex],
       kind: "message_image"
     });
@@ -64418,7 +66126,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
         messageId: message.messageId,
         fileKey: attachment.fileKey,
         resourceType,
-        fileName: `continuation-input-${createHash10("sha256").update(`${message.messageId}\0${index}`).digest("hex").slice(0, 16)}.bin`,
+        fileName: `continuation-input-${createHash14("sha256").update(`${message.messageId}\0${index}`).digest("hex").slice(0, 16)}.bin`,
         logPrefix: "[continuation-input]"
       }, {
         maxBytes: CONTINUATION_LIMITS.inputBytesPerFile
@@ -64427,12 +66135,12 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
         throw new Error("One or more continuation attachments could not be downloaded.");
       }
       temporaryPaths.push(downloaded);
-      totalBytes += (await fs22.stat(downloaded)).size;
+      totalBytes += (await fs26.stat(downloaded)).size;
       if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
         throw new Error("Continuation inputs exceed the total byte limit.");
       }
       inputs.push({
-        sourcePath: path27.resolve(downloaded),
+        sourcePath: path31.resolve(downloaded),
         fileName,
         kind: resourceType === "image" ? "message_image" : "message_attachment"
       });
@@ -64463,7 +66171,7 @@ function planContinuationSourceInputs(message) {
   const matchedImageDescriptors = /* @__PURE__ */ new Set();
   const matchedDescriptorByImageIndex = imagePaths.map((imagePath, imageIndex) => {
     const explicitFileKey = downloadedImageFileKeys?.[imageIndex];
-    const candidateIndexes = descriptors.flatMap((attachment, index) => !matchedImageDescriptors.has(index) && attachment.fileType === "image" && path27.basename(imagePath).includes(`-${attachment.fileKey}-`) ? [index] : []);
+    const candidateIndexes = descriptors.flatMap((attachment, index) => !matchedImageDescriptors.has(index) && attachment.fileType === "image" && path31.basename(imagePath).includes(`-${attachment.fileKey}-`) ? [index] : []);
     const descriptorIndex = explicitFileKey === void 0 ? candidateIndexes.length === 1 ? candidateIndexes[0] : -1 : descriptors.findIndex((attachment, index) => !matchedImageDescriptors.has(index) && attachment.fileType === "image" && attachment.fileKey === explicitFileKey);
     if (explicitFileKey !== void 0 && descriptorIndex < 0) {
       throw new Error("Continuation downloaded image mapping is invalid.");
@@ -64479,7 +66187,7 @@ function planContinuationSourceInputs(message) {
   });
   const plannedImageFileNames = imagePaths.map((imagePath, imageIndex) => {
     const descriptorIndex = matchedDescriptorByImageIndex[imageIndex];
-    return descriptorIndex === null ? safeContinuationInputName(path27.basename(imagePath)) : descriptorFileNames[descriptorIndex];
+    return descriptorIndex === null ? safeContinuationInputName(path31.basename(imagePath)) : descriptorFileNames[descriptorIndex];
   });
   const inputCount = imagePaths.length + descriptors.length - matchedImageDescriptors.size;
   if (inputCount > CONTINUATION_LIMITS.inputFileCount) {
@@ -64495,10 +66203,10 @@ function planContinuationSourceInputs(message) {
   };
 }
 async function cleanupContinuationTemporaryInputs(temporaryPaths) {
-  await Promise.allSettled(temporaryPaths.map((filePath) => fs22.rm(filePath, { force: true })));
+  await Promise.allSettled(temporaryPaths.map((filePath) => fs26.rm(filePath, { force: true })));
 }
 function safeContinuationInputName(value) {
-  if (!value || value.length > 120 || value === "." || value === ".." || value === ".manifest.json" || value.includes("/") || value.includes("\\") || value.includes("\0") || path27.basename(value) !== value) {
+  if (!value || value.length > 120 || value === "." || value === ".." || value === ".manifest.json" || value.includes("/") || value.includes("\\") || value.includes("\0") || path31.basename(value) !== value) {
     throw new Error("Continuation attachment file name is invalid.");
   }
   return value;
@@ -64993,7 +66701,7 @@ function resolveActionTransport(transport) {
   return typeof transport === "function" ? transport() : transport;
 }
 function resolveSendMessageLocalPath(rawPath) {
-  return path27.isAbsolute(rawPath) ? rawPath : path27.resolve(appConfig.codexExecCwd, rawPath);
+  return path31.isAbsolute(rawPath) ? rawPath : path31.resolve(appConfig.codexExecCwd, rawPath);
 }
 function firstCurrentMessageImagePath(message) {
   return message.imagePath ?? message.imagePaths?.[0] ?? null;
@@ -65093,7 +66801,7 @@ async function resolveSendMessageImagePath(source, rawPath, message, deps) {
     filePath = resolveSendMessageLocalPath(rawPath);
   }
   try {
-    await fs22.access(filePath);
+    await fs26.access(filePath);
   } catch {
     return {
       ok: false,
@@ -65190,7 +66898,7 @@ async function executeSendMessage(action, message, deps) {
   } else {
     filePath = resolveSendMessageLocalPath(action.message.path);
     try {
-      await fs22.access(filePath);
+      await fs26.access(filePath);
     } catch {
       return {
         ok: false,
@@ -65315,8 +67023,8 @@ function createCodexExecActionHandlerRegistry(deps) {
 }
 
 // src/managed-workspace-exec.ts
-import { createHash as createHash11 } from "node:crypto";
-import fs23 from "node:fs/promises";
+import { createHash as createHash15 } from "node:crypto";
+import fs27 from "node:fs/promises";
 function assertManagedWorkspaceSandbox(sandbox, project) {
   if (sandbox !== "read-only" && (sandbox !== "workspace-write" || !project)) {
     throw new ManagedWorkspaceStorageError("unisolated_source");
@@ -65325,7 +67033,7 @@ function assertManagedWorkspaceSandbox(sandbox, project) {
 function managedGitCheckoutSessionScope(allocation) {
   if (!allocation?.git || !allocation.gitCheckout) return void 0;
   const { directory, device, inode } = allocation.gitCheckout.checkout;
-  return createHash11("sha256").update(JSON.stringify([
+  return createHash15("sha256").update(JSON.stringify([
     allocation.owner.kind,
     allocation.owner.runId,
     allocation.git.key,
@@ -65340,7 +67048,7 @@ function pluginExecutionRoots(...roots) {
 }
 async function protectProfileDistillation(request, configPath) {
   if (!await hasManagedGitRegistry(configPath) && !await hasWorkspaceDependencyRegistry(configPath)) return request;
-  const cwd = await fs23.realpath(request.cwd ?? process.cwd());
+  const cwd = await fs27.realpath(request.cwd ?? process.cwd());
   await assertCompatibleCodexLayers(process.env, [cwd]);
   return {
     ...request,
@@ -65358,7 +67066,7 @@ async function protectLegacyGitWorkspace(request, configPath) {
   if (request.sandbox !== "read-only" && request.sandbox !== "workspace-write" || request.profile || request.ignoreUserConfig === false) {
     throw new ManagedWorkspaceStorageError("git_sandbox_layers_unsupported");
   }
-  const cwd = await fs23.realpath(request.cwd ?? process.cwd());
+  const cwd = await fs27.realpath(request.cwd ?? process.cwd());
   const protectedRequest = {
     ...request,
     cwd,
@@ -65376,7 +67084,7 @@ async function protectLegacyGitWorkspace(request, configPath) {
     "sandbox_workspace_write.exclude_slash_tmp=true"
   ] };
 }
-async function withManagedWorkspace(request, allocation, gitRegistry) {
+async function withManagedWorkspace(request, allocation, gitRegistry, store) {
   assertManagedWorkspaceSandbox(request.sandbox, allocation.project);
   if (request.sandbox === "workspace-write" && request.cwd !== allocation.project?.directory) {
     throw new ManagedWorkspaceStorageError("unisolated_source");
@@ -65405,9 +67113,9 @@ ${[
       additionalWritableDirs: [.../* @__PURE__ */ new Set([...request.additionalWritableDirs ?? [], scratch, artifacts])]
     } : {}
   };
-  return allocation.git || allocation.gitCheckout ? withGitCheckout(request, enriched, allocation, gitRegistry) : protectLegacyGitWorkspace(enriched, gitRegistry?.configPath);
+  return allocation.git || allocation.gitCheckout ? withGitCheckout(request, enriched, allocation, gitRegistry, store) : protectLegacyGitWorkspace(enriched, gitRegistry?.configPath);
 }
-async function withGitCheckout(request, enriched, allocation, gitRegistry) {
+async function withGitCheckout(request, enriched, allocation, gitRegistry, store) {
   const { project, git: git2, gitCheckout, scratch, artifacts } = allocation;
   const guard = request.workspaceDirectory;
   const mode = request.sandbox;
@@ -65466,6 +67174,15 @@ async function withGitCheckout(request, enriched, allocation, gitRegistry) {
     return createManagedGitSandboxOptions(input2);
   };
   const options2 = await validate3();
+  const hasDependencies = Boolean(allocation.dependencySelections?.length);
+  if (hasDependencies && !store) throw new ManagedWorkspaceStorageError("invalid_binding");
+  const { pythonDirectory } = hasDependencies && store ? await prepareManagedWorkspaceDependencies(allocation, store, {
+    ...gitRegistry,
+    authorizedRoots: guard.authorizedRoots,
+    codexCommand: request.command ?? appConfig.codexExecCommand,
+    signal: request.abortSignal
+  }) : {};
+  if (hasDependencies) extraEnv.LARK_MANAGED_PYTHON_DEPS = pythonDirectory;
   return {
     ...enriched,
     cwd: gitCheckout.checkout.directory,
@@ -65488,6 +67205,7 @@ async function withGitCheckout(request, enriched, allocation, gitRegistry) {
       if (current.overrides.length !== options2.overrides.length || current.overrides.some((override, index) => override !== options2.overrides[index])) {
         throw new ManagedWorkspaceStorageError("git_sandbox_invalid");
       }
+      if (hasDependencies && store) await validateManagedWorkspaceDependencyReceipts(allocation, store);
       return resolveManagedGitLauncher(
         command,
         env,
@@ -65495,10 +67213,11 @@ async function withGitCheckout(request, enriched, allocation, gitRegistry) {
         pluginExecutionRoots(...guard.authorizedRoots)
       );
     },
+    ...hasDependencies ? { validateManagedDependencyApproval: () => validateManagedWorkspaceDependencyApproval(allocation, gitRegistry?.configPath) } : {},
     prompt: `${enriched.prompt}
 
 [Isolated Git checkout]
-Work in the current checkout. It started at ${git2.commit}. Do not use the original source as a working directory.`
+Work in the current checkout. It started at ${git2.commit}. Do not use the original source as a working directory.${pythonDirectory ? '\nFor Python commands that need the installed packages, set PYTHONPATH="$LARK_MANAGED_PYTHON_DEPS" and use python -B to avoid writing bytecode into the verified tree.' : ""}`
   };
 }
 
@@ -65646,8 +67365,8 @@ var ProfileDistillationManager = class {
     const previous = this.locks.get(userId) ?? Promise.resolve();
     let release;
     const current = previous.catch(() => {
-    }).then(() => new Promise((resolve) => {
-      release = resolve;
+    }).then(() => new Promise((resolve2) => {
+      release = resolve2;
     }));
     this.locks.set(userId, current);
     await previous.catch(() => {
@@ -65665,7 +67384,7 @@ var ProfileDistillationManager = class {
 var import_node_sdk = __toESM(require_lib(), 1);
 import { createWriteStream as createWriteStream2 } from "node:fs";
 import { stat, writeFile } from "node:fs/promises";
-import { pipeline } from "node:stream/promises";
+import { pipeline as pipeline2 } from "node:stream/promises";
 
 // node_modules/@larksuite/channel/node_modules/https-proxy-agent/dist/index.js
 var import_debug2 = __toESM(require_src(), 1);
@@ -65797,7 +67516,7 @@ import { URL as URL2 } from "url";
 var import_debug = __toESM(require_src(), 1);
 var debug = (0, import_debug.default)("https-proxy-agent:parse-proxy-response");
 function parseProxyResponse(socket) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     let buffersLength = 0;
     const buffers = [];
     function read() {
@@ -65863,7 +67582,7 @@ function parseProxyResponse(socket) {
       }
       debug("got proxy server response: %o %o", firstLine2, headers);
       cleanup();
-      resolve({
+      resolve2({
         connect: {
           statusCode,
           statusText,
@@ -66081,12 +67800,12 @@ function omit2(obj, ...keys) {
 }
 
 // node_modules/@larksuite/channel/dist/index.mjs
-import { createHash as createHash12, randomUUID as randomUUID3 } from "node:crypto";
+import { createHash as createHash16, randomUUID as randomUUID3 } from "node:crypto";
 import { inspect } from "node:util";
-import fs24 from "fs";
+import fs28 from "fs";
 import http2 from "http";
 import https from "https";
-import path28 from "path";
+import path32 from "path";
 import { promises } from "dns";
 import { isIP as isIP2 } from "net";
 var AMBIGUOUS = /* @__PURE__ */ Symbol("ambiguous");
@@ -66846,7 +68565,7 @@ function contentKey(activity) {
     item.start_time_ms ?? item.send_time ?? item.time ?? item.join_time ?? item.leave_time ?? null,
     readActor(item).id || null
   ]);
-  return createHash12("sha256").update(JSON.stringify([activity.activityType, parts])).digest("base64url").slice(0, DIGEST_LENGTH);
+  return createHash16("sha256").update(JSON.stringify([activity.activityType, parts])).digest("base64url").slice(0, DIGEST_LENGTH);
 }
 var INCONCLUSIVE_STATUS = /* @__PURE__ */ new Set([
   408,
@@ -68826,8 +70545,8 @@ function _optimize(text, cardVersion) {
   const MARK = "___CB_";
   const codeBlocks = [];
   let r = text.replace(/(^|\n)(`{3,})([^\n]*)\n[\s\S]*?\n\2(?=\n|$)/g, (m2, prefix = "") => {
-    const block = m2.slice(String(prefix).length);
-    return `${prefix}${MARK}${codeBlocks.push(block) - 1}___`;
+    const block2 = m2.slice(String(prefix).length);
+    return `${prefix}${MARK}${codeBlocks.push(block2) - 1}___`;
   });
   if (/^#{1,3} /m.test(text)) {
     r = r.replace(/^#{2,6} (.+)$/gm, "##### $1");
@@ -68845,15 +70564,15 @@ function _optimize(text, cardVersion) {
     r = r.replace(/^((?!#{4,5} )(?!\*\*).+)\n\n(<br>)\n\n(\|)/gm, "$1\n$2\n$3");
     r = r.replace(/^(\*\*.+)\n\n(<br>)\n\n(\|)/gm, "$1\n$2\n\n$3");
     r = r.replace(/(\|[^\n]*\n)\n(<br>\n)((?!#{4,5} )(?!\*\*))/gm, "$1$2$3");
-    codeBlocks.forEach((block, i) => {
+    codeBlocks.forEach((block2, i) => {
       r = r.replace(`${MARK}${i}___`, `
 <br>
-${block}
+${block2}
 <br>
 `);
     });
-  } else codeBlocks.forEach((block, i) => {
-    r = r.replace(`${MARK}${i}___`, block);
+  } else codeBlocks.forEach((block2, i) => {
+    r = r.replace(`${MARK}${i}___`, block2);
   });
   r = r.replace(/\n{3,}/g, "\n\n");
   return r;
@@ -69097,20 +70816,20 @@ var MediaUploader = class {
     if (!/^https?:\/\//i.test(source)) {
       const allowedDirs = this.config?.allowedFileDirs;
       if (!allowedDirs || allowedDirs.length === 0) throw new LarkChannelError("upload_failed", "local file source requires `outbound.allowedFileDirs` to be configured");
-      const resolved = path28.resolve(source);
+      const resolved = path32.resolve(source);
       this.assertNotOnPosixBlocklist(resolved);
       try {
-        const realPath = await fs24.promises.realpath(resolved);
+        const realPath = await fs28.promises.realpath(resolved);
         this.assertNotOnPosixBlocklist(realPath);
         if (!(await Promise.all(allowedDirs.map(async (d) => {
-          const r = path28.resolve(d);
+          const r = path32.resolve(d);
           try {
-            return await fs24.promises.realpath(r);
+            return await fs28.promises.realpath(r);
           } catch {
             return r;
           }
-        }))).some((d) => realPath === d || realPath.startsWith(d + path28.sep))) throw new LarkChannelError("upload_failed", `file path is outside allowed directories: ${realPath}`);
-        const fh = await fs24.promises.open(realPath, "r");
+        }))).some((d) => realPath === d || realPath.startsWith(d + path32.sep))) throw new LarkChannelError("upload_failed", `file path is outside allowed directories: ${realPath}`);
+        const fh = await fs28.promises.open(realPath, "r");
         try {
           if (!(await fh.stat()).isFile()) throw new LarkChannelError("upload_failed", `not a regular file: ${realPath}`);
           return await fh.readFile();
@@ -70701,7 +72420,7 @@ var LarkChannel2 = class {
   * corresponding public events.
   */
   connectWebSocket(timeoutMs) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
@@ -70725,7 +72444,7 @@ var LarkChannel2 = class {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
-          resolve();
+          resolve2();
         },
         onError: (err) => {
           if (settled) return;
@@ -71530,7 +73249,7 @@ async function streamToFile(raw, destPath) {
   if (typeof raw === "object" && raw !== null) {
     const r = raw;
     if (typeof r.getReadableStream === "function") {
-      await pipeline(r.getReadableStream(), createWriteStream2(destPath));
+      await pipeline2(r.getReadableStream(), createWriteStream2(destPath));
       const { size } = await stat(destPath);
       return size;
     }
@@ -71567,12 +73286,12 @@ async function bufferFromStream(raw) {
   throw new LarkChannelError("unknown", "unexpected download response type");
 }
 function readableToBuffer(stream) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const chunks = [];
     stream.on("data", (chunk) => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
+    stream.on("end", () => resolve2(Buffer.concat(chunks)));
     stream.on("error", reject);
   });
 }
@@ -71686,16 +73405,16 @@ function startSdkChannelRuntimeWithRetry(channel, options2 = {}) {
   let stopped = false;
   let retryTimer = null;
   let wakeRetry = null;
-  const waitForRetry = (delayMs) => new Promise((resolve) => {
+  const waitForRetry = (delayMs) => new Promise((resolve2) => {
     if (delayMs <= 0 || stopped) {
-      resolve();
+      resolve2();
       return;
     }
-    wakeRetry = resolve;
+    wakeRetry = resolve2;
     retryTimer = setTimeout(() => {
       retryTimer = null;
       wakeRetry = null;
-      resolve();
+      resolve2();
     }, delayMs);
   });
   const run = async () => {
@@ -71748,12 +73467,12 @@ function startSdkChannelRuntimeWithRetry(channel, options2 = {}) {
 }
 
 // src/codex-exec-delivery.ts
-import path34 from "node:path";
+import path38 from "node:path";
 
 // src/codex-exec-progress.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import fs25 from "node:fs/promises";
-import path29 from "node:path";
+import fs29 from "node:fs/promises";
+import path33 from "node:path";
 var IDENTITY_FIELDS = /* @__PURE__ */ new Set([
   "chat_id",
   "chatId",
@@ -71776,13 +73495,13 @@ var LOW_SIGNAL_PATTERNS = [
 var CODEX_EXEC_PROGRESS_RETENTION_MS = 12 * 60 * 60 * 1e3;
 var CODEX_EXEC_PROGRESS_CLEANUP_INTERVAL_MS = 60 * 60 * 1e3;
 function progressParentDir(baseDir) {
-  return path29.join(baseDir, ".lark-progress");
+  return path33.join(baseDir, ".lark-progress");
 }
 var CodexExecProgressSink = class {
   constructor(dir, options2) {
     this.dir = dir;
     this.options = options2;
-    this.filePath = path29.join(dir, "progress.jsonl");
+    this.filePath = path33.join(dir, "progress.jsonl");
     this.token = randomUUID4();
   }
   dir;
@@ -71812,10 +73531,10 @@ var CodexExecProgressSink = class {
     };
   }
   async prepare() {
-    await fs25.mkdir(this.dir, { recursive: true, mode: 448 });
-    await fs25.chmod(this.dir, 448);
-    await fs25.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs25.chmod(this.filePath, 384);
+    await fs29.mkdir(this.dir, { recursive: true, mode: 448 });
+    await fs29.chmod(this.dir, 448);
+    await fs29.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs29.chmod(this.filePath, 384);
   }
   start() {
     if (!this.options.limits.enabled || this.timer) return;
@@ -71832,7 +73551,7 @@ var CodexExecProgressSink = class {
     }
     await this.drain();
     await this.processPendingLine();
-    await fs25.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
+    await fs29.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
   }
   async drain() {
     if (this.draining) {
@@ -71849,7 +73568,7 @@ var CodexExecProgressSink = class {
     }
   }
   async drainOnce() {
-    const text = await fs25.readFile(this.filePath, "utf-8").catch((err) => {
+    const text = await fs29.readFile(this.filePath, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -71964,13 +73683,13 @@ async function createCodexExecProgressSink(options2) {
   if (!options2.limits.enabled) return null;
   try {
     const parentDir = progressParentDir(options2.baseDir);
-    await fs25.mkdir(parentDir, { recursive: true, mode: 448 });
-    await fs25.chmod(parentDir, 448);
+    await fs29.mkdir(parentDir, { recursive: true, mode: 448 });
+    await fs29.chmod(parentDir, 448);
     await cleanupCodexExecProgressFiles(options2.baseDir).catch((err) => {
       logSafeError("[codex-exec-progress] cleanup before setup failed:", err);
     });
-    const dir = await fs25.mkdtemp(path29.join(parentDir, "turn-"));
-    await fs25.chmod(dir, 448);
+    const dir = await fs29.mkdtemp(path33.join(parentDir, "turn-"));
+    await fs29.chmod(dir, 448);
     const sink = new CodexExecProgressSink(dir, options2);
     await sink.prepare();
     return sink;
@@ -71986,7 +73705,7 @@ async function cleanupCodexExecProgressFiles(baseDir, options2 = {}) {
   const result = { progressDir, removed: 0, kept: 0, errors: 0 };
   let entries;
   try {
-    entries = await fs25.readdir(progressDir, { withFileTypes: true });
+    entries = await fs29.readdir(progressDir, { withFileTypes: true });
   } catch (err) {
     if (err?.code === "ENOENT") return result;
     result.errors += 1;
@@ -71995,14 +73714,14 @@ async function cleanupCodexExecProgressFiles(baseDir, options2 = {}) {
   }
   for (const entry of entries) {
     if (!entry.name.startsWith("turn-")) continue;
-    const entryPath = path29.join(progressDir, entry.name);
+    const entryPath = path33.join(progressDir, entry.name);
     try {
-      const entryStat = await fs25.lstat(entryPath);
+      const entryStat = await fs29.lstat(entryPath);
       if (nowMs - entryStat.mtimeMs <= maxAgeMs) {
         result.kept += 1;
         continue;
       }
-      await fs25.rm(entryPath, { recursive: true, force: true });
+      await fs29.rm(entryPath, { recursive: true, force: true });
       result.removed += 1;
     } catch (err) {
       result.errors += 1;
@@ -72053,8 +73772,8 @@ function isLowSignalProgress(text) {
 
 // src/codex-exec-action-channel.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
-import fs26 from "node:fs/promises";
-import path30 from "node:path";
+import fs30 from "node:fs/promises";
+import path34 from "node:path";
 var IDENTITY_FIELDS2 = /* @__PURE__ */ new Set([
   "chat_id",
   "chatId",
@@ -72073,7 +73792,7 @@ var DEFAULT_MAX_ACTIONS = 5;
 var CODEX_EXEC_ACTION_CHANNEL_RETENTION_MS = 12 * 60 * 60 * 1e3;
 var CODEX_EXEC_ACTION_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 60 * 1e3;
 function actionParentDir(baseDir) {
-  return path30.join(baseDir, ".lark-actions");
+  return path34.join(baseDir, ".lark-actions");
 }
 var CodexExecActionChannelError = class extends Error {
   reason;
@@ -72088,7 +73807,7 @@ var CodexExecActionChannel = class {
   constructor(dir, options2) {
     this.dir = dir;
     this.options = options2;
-    this.filePath = path30.join(dir, "actions.jsonl");
+    this.filePath = path34.join(dir, "actions.jsonl");
     this.token = randomUUID5();
     this.maxActions = options2.maxActions ?? DEFAULT_MAX_ACTIONS;
   }
@@ -72112,17 +73831,17 @@ var CodexExecActionChannel = class {
     };
   }
   async prepare() {
-    await fs26.mkdir(this.dir, { recursive: true, mode: 448 });
-    await fs26.chmod(this.dir, 448);
-    await fs26.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs26.chmod(this.filePath, 384);
+    await fs30.mkdir(this.dir, { recursive: true, mode: 448 });
+    await fs30.chmod(this.dir, 448);
+    await fs30.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs30.chmod(this.filePath, 384);
   }
   async reset() {
-    await fs26.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs26.chmod(this.filePath, 384).catch(() => void 0);
+    await fs30.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs30.chmod(this.filePath, 384).catch(() => void 0);
   }
   async read() {
-    const text = await fs26.readFile(this.filePath, "utf-8").catch((err) => {
+    const text = await fs30.readFile(this.filePath, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -72155,7 +73874,7 @@ var CodexExecActionChannel = class {
     return { actions, requestCount };
   }
   async cleanup() {
-    await fs26.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
+    await fs30.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
   }
   parseLine(line) {
     let parsed;
@@ -72206,13 +73925,13 @@ var CodexExecActionChannel = class {
 async function createCodexExecActionChannel(options2) {
   try {
     const parentDir = actionParentDir(options2.baseDir);
-    await fs26.mkdir(parentDir, { recursive: true, mode: 448 });
-    await fs26.chmod(parentDir, 448);
+    await fs30.mkdir(parentDir, { recursive: true, mode: 448 });
+    await fs30.chmod(parentDir, 448);
     await cleanupCodexExecActionChannels(options2.baseDir).catch((err) => {
       logSafeError("[codex-exec-actions] cleanup before setup failed:", err);
     });
-    const dir = await fs26.mkdtemp(path30.join(parentDir, "turn-"));
-    await fs26.chmod(dir, 448);
+    const dir = await fs30.mkdtemp(path34.join(parentDir, "turn-"));
+    await fs30.chmod(dir, 448);
     const channel = new CodexExecActionChannel(dir, options2);
     await channel.prepare();
     return channel;
@@ -72228,7 +73947,7 @@ async function cleanupCodexExecActionChannels(baseDir, options2 = {}) {
   const result = { actionDir, removed: 0, kept: 0, errors: 0 };
   let entries;
   try {
-    entries = await fs26.readdir(actionDir, { withFileTypes: true });
+    entries = await fs30.readdir(actionDir, { withFileTypes: true });
   } catch (err) {
     if (err?.code === "ENOENT") return result;
     result.errors += 1;
@@ -72237,14 +73956,14 @@ async function cleanupCodexExecActionChannels(baseDir, options2 = {}) {
   }
   for (const entry of entries) {
     if (!entry.name.startsWith("turn-")) continue;
-    const entryPath = path30.join(actionDir, entry.name);
+    const entryPath = path34.join(actionDir, entry.name);
     try {
-      const entryStat = await fs26.lstat(entryPath);
+      const entryStat = await fs30.lstat(entryPath);
       if (nowMs - entryStat.mtimeMs <= maxAgeMs) {
         result.kept += 1;
         continue;
       }
-      await fs26.rm(entryPath, { recursive: true, force: true });
+      await fs30.rm(entryPath, { recursive: true, force: true });
       result.removed += 1;
     } catch (err) {
       result.errors += 1;
@@ -72358,8 +74077,8 @@ function buildCodexExecActionChannelPrompt(info) {
 }
 
 // src/managed-workspace-admission.ts
-import { createHash as createHash13 } from "node:crypto";
-import path31 from "node:path";
+import { createHash as createHash17 } from "node:crypto";
+import path35 from "node:path";
 function managedForegroundRunOwner(message, sessionKey2) {
   const identity = JSON.stringify([
     sessionKey2,
@@ -72368,7 +74087,7 @@ function managedForegroundRunOwner(message, sessionKey2) {
     message.messageType,
     ...message.reaction ? [message.reaction.emojiType, message.timestampMs] : []
   ]);
-  return { kind: "foreground", runId: createHash13("sha256").update(identity).digest("hex") };
+  return { kind: "foreground", runId: createHash17("sha256").update(identity).digest("hex") };
 }
 async function admitManagedForegroundRun(options2) {
   const { store, recorded, project, owner } = options2;
@@ -72380,9 +74099,15 @@ async function admitManagedForegroundRun(options2) {
     sourceRegistryPath: options2.sourceRegistryPath
   });
   if (!roots) {
+    await admitManagedWorkspaceDependencies({
+      configPath: options2.configPath,
+      project,
+      authorizedRoots,
+      codexCommand: options2.codexCommand ?? "codex"
+    });
     if (store) store.rememberUnmanagedForeground(owner.runId, {
       sessionKey: options2.sessionKey,
-      ...project ? { project } : { fallbackCwd: path31.resolve(options2.authorizedRoot) }
+      ...project ? { project } : { fallbackCwd: path35.resolve(options2.authorizedRoot) }
     });
     return void 0;
   }
@@ -72400,6 +74125,13 @@ async function admitManagedForegroundRun(options2) {
     expected: recorded?.allocation.git,
     preserveOptOut: Boolean(recorded && !recorded.allocation.git)
   });
+  const dependencySelections = recorded ? recorded.allocation.dependencySelections : await admitManagedWorkspaceDependencies({
+    ...options2,
+    roots,
+    git: git2,
+    authorizedRoots,
+    codexCommand: options2.codexCommand ?? "codex"
+  });
   return store.ensure({
     owner,
     roots,
@@ -72408,6 +74140,8 @@ async function admitManagedForegroundRun(options2) {
     sourceRegistryPath: options2.sourceRegistryPath,
     fallbackWorkspace,
     ...git2 ? { git: git2 } : {},
+    dependencySelections,
+    dependencyRegistryConfigPath: options2.configPath,
     foregroundSessionKey: options2.sessionKey,
     createdAt: recorded?.allocation.createdAt ?? now,
     usedAt: now
@@ -72415,11 +74149,11 @@ async function admitManagedForegroundRun(options2) {
 }
 
 // src/managed-workspace-artifact.ts
-import { execFile as execFile5 } from "node:child_process";
-import { createHash as createHash14, randomBytes as randomBytes2 } from "node:crypto";
-import path32 from "node:path";
-import { promisify as promisify5 } from "node:util";
-var exec5 = promisify5(execFile5);
+import { execFile as execFile6 } from "node:child_process";
+import { createHash as createHash18, randomBytes as randomBytes4 } from "node:crypto";
+import path36 from "node:path";
+import { promisify as promisify6 } from "node:util";
+var exec6 = promisify6(execFile6);
 var HARD_BYTE_LIMIT = 100 * 1024 * 1024;
 var artifactProgram = String.raw`
   const fs = require('node:fs');
@@ -72582,17 +74316,17 @@ var artifactProgram = String.raw`
 `;
 async function readManagedArtifact(options2) {
   const content = await runArtifactOperation(options2, options2.expectedSha256?.toLowerCase() ?? "");
-  return { content, sha256: createHash14("sha256").update(content).digest("hex") };
+  return { content, sha256: createHash18("sha256").update(content).digest("hex") };
 }
 async function publishManagedArtifact(options2) {
-  const sha2562 = createHash14("sha256").update(options2.content).digest("hex");
+  const sha2562 = createHash18("sha256").update(options2.content).digest("hex");
   const { stageJournal, relativePath } = options2;
   if (!stageJournal) {
     await runArtifactOperation(options2, sha2562, options2.content);
     return;
   }
   await reconcileManagedArtifact({ ...options2, expectedSha256: sha2562 });
-  const stage = { sha256: sha2562, nonce: randomBytes2(16).toString("hex") };
+  const stage = { sha256: sha2562, nonce: randomBytes4(16).toString("hex") };
   stageJournal.reserve(relativePath, stage);
   const output2 = await runArtifactOperation(options2, sha2562, void 0, "prepare", stage);
   const identity = managedArtifactIdentitySchema.parse(JSON.parse(output2.toString("utf8")));
@@ -72614,12 +74348,12 @@ async function reconcileManagedArtifact(options2) {
   await runArtifactOperation(options2, sha2562, void 0, "reconcile");
 }
 async function runArtifactOperation(options2, sha2562, input2, operation = input2 ? "publish" : "read", stage) {
-  const { binding, relativePath, maxBytes, revalidate } = options2;
+  const { binding, relativePath, maxBytes: maxBytes2, revalidate } = options2;
   const safePath = isManagedArtifactRelativePath(relativePath);
-  if (!safePath || path32.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || stage && (!managedArtifactStageSchema.safeParse(stage).success || stage.sha256 !== sha2562) || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
+  if (!safePath || path36.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes2) || maxBytes2 < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || stage && (!managedArtifactStageSchema.safeParse(stage).success || stage.sha256 !== sha2562) || maxBytes2 > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes2) throw new ManagedWorkspaceStorageError("artifact_invalid");
   try {
     if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
-    const running = exec5(process.execPath, [
+    const running = exec6(process.execPath, [
       "--input-type=commonjs",
       "-e",
       artifactProgram,
@@ -72629,13 +74363,13 @@ async function runArtifactOperation(options2, sha2562, input2, operation = input
       binding.device,
       binding.inode,
       relativePath,
-      String(maxBytes),
+      String(maxBytes2),
       sha2562,
       ...stage ? [stage.nonce, stage.identity?.device ?? "", stage.identity?.inode ?? ""] : []
     ], {
       cwd: binding.directory,
       env: {},
-      maxBuffer: maxBytes + 1024,
+      maxBuffer: maxBytes2 + 1024,
       timeout: 3e4,
       encoding: "buffer"
     });
@@ -72651,7 +74385,7 @@ async function runArtifactOperation(options2, sha2562, input2, operation = input
 }
 
 // src/foreground-artifact-delivery.ts
-import path33 from "node:path";
+import path37 from "node:path";
 async function deliverForegroundArtifacts(store, allocation, batch, authorizedRoot, options2) {
   const sessionKey2 = buildCodexExecSessionKey(batch.chatId, batch.threadId);
   const owner = managedForegroundRunOwner({
@@ -72705,7 +74439,7 @@ async function deliverForegroundArtifacts(store, allocation, batch, authorizedRo
     if (!maySend()) return true;
     let fileKey;
     try {
-      fileKey = await options2.upload(bytes, path33.posix.basename(reference.relativePath));
+      fileKey = await options2.upload(bytes, path37.posix.basename(reference.relativePath));
     } catch {
     }
     if (!fileKey) continue;
@@ -73013,7 +74747,7 @@ async function deliverMessageViaCodexExec(opts) {
   };
   const foreground = message.chatType === "p2p" || message.chatType === "group" || message.chatType === "doc_comment";
   const workspaceOwner = foreground && opts.managedWorkspaceStore ? managedForegroundRunOwner(message, sessionKey2) : void 0;
-  const managedStore = workspaceOwner ? opts.managedWorkspaceStore?.() : void 0;
+  const managedStore = workspaceOwner || opts.managedWorkspace ? opts.managedWorkspaceStore?.() : void 0;
   const priorManaged = workspaceOwner ? managedStore?.get(workspaceOwner) : void 0;
   const priorUnmanaged = workspaceOwner ? managedStore?.getUnmanagedForeground(workspaceOwner.runId) : void 0;
   if (priorUnmanaged && (priorManaged || priorUnmanaged.sessionKey !== sessionKey2)) {
@@ -73048,7 +74782,7 @@ async function deliverMessageViaCodexExec(opts) {
   if (priorUnmanaged) {
     if ("project" in priorUnmanaged) {
       workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, priorUnmanaged.project);
-    } else if (priorUnmanaged.fallbackCwd !== path34.resolve(workspaceOptions.authorizedRoot)) {
+    } else if (priorUnmanaged.fallbackCwd !== path38.resolve(workspaceOptions.authorizedRoot)) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
   } else if (priorManaged) {
@@ -73068,7 +74802,8 @@ async function deliverMessageViaCodexExec(opts) {
     authorizedRoot: workspaceOptions.authorizedRoot,
     project: workspace,
     sourceRegistryPath: workspaceOptions.registryPath,
-    sandbox: appConfig.codexExecSandbox
+    sandbox: appConfig.codexExecSandbox,
+    codexCommand: appConfig.codexExecCommand
   }) : opts.managedWorkspace;
   if (managed && !sameWorkspaceProject(managed.project, workspace)) {
     throw new ManagedWorkspaceStorageError("invalid_binding");
@@ -73078,7 +74813,7 @@ async function deliverMessageViaCodexExec(opts) {
     authorizedRoots: [workspaceOptions.authorizedRoot],
     project: workspace,
     preserveOptOut: true,
-    ...appConfig.codexExecSandbox !== "read-only" ? { fallbackDirectory: path34.resolve(workspaceOptions.authorizedRoot) } : {}
+    ...appConfig.codexExecSandbox !== "read-only" ? { fallbackDirectory: path38.resolve(workspaceOptions.authorizedRoot) } : {}
   });
   const foregroundArtifacts = [];
   const onManagedArtifact = managedStore && artifactIO ? (reference) => {
@@ -73092,8 +74827,8 @@ async function deliverMessageViaCodexExec(opts) {
   const existingSession = compatibleSession?.managedGitCheckoutScope === gitCheckoutScope && sameWorkspaceProject(compatibleSession?.workspaceProject, workspace) && (workspace === void 0 || compatibleSession?.workspaceProjectSenderId === message.senderId) ? compatibleSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
-  const progressBaseDir = path34.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
-  const actionBaseDir = path34.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
+  const progressBaseDir = path38.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
+  const actionBaseDir = path38.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
   const actionChannel = await createCodexExecActionChannel({
     baseDir: actionBaseDir,
     caller: message.senderId,
@@ -73170,7 +74905,7 @@ async function deliverMessageViaCodexExec(opts) {
     if (!launchWorkspace) return runCodexExec(await protectLegacyGitWorkspace(runRequest, appConfig.managedWorkspaceConfigPath));
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...progressSink ? [progressSink.filePath] : []];
-    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path34.dirname(file2)))) : [];
+    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path38.dirname(file2)))) : [];
     if (managed) {
       await Promise.all([
         validateManagedRunDirectory(managed, "scratch", [authorizedRoot]),
@@ -73194,14 +74929,14 @@ async function deliverMessageViaCodexExec(opts) {
     return runCodexExec(managed ? await withManagedWorkspace(guardedRequest, managed, {
       configPath: appConfig.managedWorkspaceConfigPath,
       sourceRegistryPath: workspaceOptions.registryPath
-    }) : await protectLegacyGitWorkspace(guardedRequest, appConfig.managedWorkspaceConfigPath));
+    }, managedStore) : await protectLegacyGitWorkspace(guardedRequest, appConfig.managedWorkspaceConfigPath));
   };
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey2);
   try {
     progressSink?.start();
     result = normalizeCodexExecResult(await runInWorkspace(request));
   } catch (err) {
-    if (!request.resumeSessionId || opts.abortSignal?.aborted || err instanceof CodexExecAbortedError || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError || err instanceof ManagedWorkspaceStorageError) {
+    if (!request.resumeSessionId || opts.abortSignal?.aborted || err instanceof CodexExecAbortedError || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError || err instanceof ManagedWorkspaceStorageError || isManagedWorkspaceDependencyError(err)) {
       await actionChannel.cleanup();
       throw err;
     }
@@ -75041,25 +76776,25 @@ async function startChannelServices(options2) {
 }
 
 // src/continuation/runtime.ts
-import { randomBytes as randomBytes7 } from "node:crypto";
-import fs32 from "node:fs/promises";
+import { randomBytes as randomBytes9 } from "node:crypto";
+import fs36 from "node:fs/promises";
 import os5 from "node:os";
-import path42 from "node:path";
+import path46 from "node:path";
 
 // src/continuation/artifact-store.ts
-import { createHash as createHash15, randomBytes as randomBytes3 } from "node:crypto";
+import { createHash as createHash19, randomBytes as randomBytes5 } from "node:crypto";
 import { constants } from "node:fs";
-import fs27 from "node:fs/promises";
-import path35 from "node:path";
+import fs31 from "node:fs/promises";
+import path39 from "node:path";
 var REDACTION_QUARANTINE_PREFIX = ".redacting-";
 var ACTIVE_REDACTION_QUARANTINES = /* @__PURE__ */ new Set();
 var LEGACY_QUARANTINE_GRACE_MS = 3e4;
 var ContinuationArtifactStore = class _ContinuationArtifactStore {
-  constructor(rootDir, maxBytes = CONTINUATION_LIMITS.managedArtifactBytesPerJob, maxEntries = CONTINUATION_LIMITS.managedArtifactEntriesPerJob, maxDepth = CONTINUATION_LIMITS.managedArtifactDirectoryDepth) {
-    this.maxBytes = maxBytes;
+  constructor(rootDir, maxBytes2 = CONTINUATION_LIMITS.managedArtifactBytesPerJob, maxEntries = CONTINUATION_LIMITS.managedArtifactEntriesPerJob, maxDepth = CONTINUATION_LIMITS.managedArtifactDirectoryDepth) {
+    this.maxBytes = maxBytes2;
     this.maxEntries = maxEntries;
     this.maxDepth = maxDepth;
-    this.rootDir = path35.resolve(rootDir);
+    this.rootDir = path39.resolve(rootDir);
   }
   maxBytes;
   maxEntries;
@@ -75067,31 +76802,31 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
   rootDir;
   managedJob;
   forManagedJob(jobId, binding, revalidate, stageJournal) {
-    const store = new _ContinuationArtifactStore(path35.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
+    const store = new _ContinuationArtifactStore(path39.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
     store.managedJob = { jobId, binding, revalidate, stageJournal };
     return store;
   }
   async ensureRoot() {
-    await fs27.mkdir(this.rootDir, { recursive: true, mode: 448 });
+    await fs31.mkdir(this.rootDir, { recursive: true, mode: 448 });
     await assertRealDirectory(this.rootDir);
-    await fs27.chmod(this.rootDir, 448);
+    await fs31.chmod(this.rootDir, 448);
   }
   async ensure(jobId) {
     if (this.managedJob) return this.checkDirectory(jobId);
     await this.ensureRoot();
     const directory = this.jobDirectory(jobId);
-    await fs27.mkdir(directory, { recursive: true, mode: 448 });
+    await fs31.mkdir(directory, { recursive: true, mode: 448 });
     await assertRealDirectory(directory);
-    await fs27.chmod(directory, 448);
+    await fs31.chmod(directory, 448);
     return directory;
   }
   resolve(jobId, relativePath) {
-    if (!relativePath || path35.isAbsolute(relativePath)) {
+    if (!relativePath || path39.isAbsolute(relativePath)) {
       throw new Error("Continuation artifact path must be relative.");
     }
     const directory = this.jobDirectory(jobId);
-    const resolved = path35.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path35.sep}`)) {
+    const resolved = path39.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path39.sep}`)) {
       throw new Error("Continuation artifact path resolves outside job directory.");
     }
     return resolved;
@@ -75108,7 +76843,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       }
       let handle;
       try {
-        handle = await fs27.opendir(current);
+        handle = await fs31.opendir(current);
       } catch (err) {
         if (err?.code === "ENOENT") return;
         throw err;
@@ -75120,8 +76855,8 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
             `Continuation artifact entry limit exceeded for ${jobId}: ${totalEntries} > ${this.maxEntries}.`
           );
         }
-        const entryPath = path35.join(current, entry.name);
-        const metadata = await fs27.lstat(entryPath).catch((error62) => {
+        const entryPath = path39.join(current, entry.name);
+        const metadata = await fs31.lstat(entryPath).catch((error62) => {
           if (error62.code === "ENOENT") return null;
           throw error62;
         });
@@ -75151,7 +76886,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     const seen = /* @__PURE__ */ new Set();
     for (const reference of references) {
       const resolved = this.resolve(jobId, reference);
-      const metadata = await fs27.lstat(resolved).catch((error62) => {
+      const metadata = await fs31.lstat(resolved).catch((error62) => {
         if (error62.code === "ENOENT") {
           throw new Error(`Continuation artifact does not exist: ${reference}`);
         }
@@ -75160,7 +76895,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (metadata.isSymbolicLink() || !metadata.isFile()) {
         throw new Error(`Continuation artifact is not a regular file: ${reference}`);
       }
-      const normalized = path35.relative(directory, resolved).split(path35.sep).join("/");
+      const normalized = path39.relative(directory, resolved).split(path39.sep).join("/");
       if (!seen.has(normalized)) {
         seen.add(normalized);
         canonical.push(normalized);
@@ -75170,7 +76905,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     return canonical;
   }
   async readArtifact(jobId, relativePath, expectedSha256) {
-    if (!this.managedJob) return fs27.readFile(this.resolve(jobId, relativePath));
+    if (!this.managedJob) return fs31.readFile(this.resolve(jobId, relativePath));
     this.jobDirectory(jobId);
     const { content } = await readManagedArtifact({
       binding: this.managedJob.binding,
@@ -75220,11 +76955,11 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
           });
         } else {
           const target = targetStore.resolve(targetJobId, reference);
-          await fs27.mkdir(path35.dirname(target), { recursive: true, mode: 448 });
-          await fs27.copyFile(this.resolve(sourceJobId, reference), target, constants.COPYFILE_EXCL);
-          await fs27.chmod(target, 384);
+          await fs31.mkdir(path39.dirname(target), { recursive: true, mode: 448 });
+          await fs31.copyFile(this.resolve(sourceJobId, reference), target, constants.COPYFILE_EXCL);
+          await fs31.chmod(target, 384);
         }
-        const sha2562 = createHash15("sha256").update(await targetStore.readArtifact(targetJobId, reference, expected)).digest("hex");
+        const sha2562 = createHash19("sha256").update(await targetStore.readArtifact(targetJobId, reference, expected)).digest("hex");
         if (sha2562 !== expected) {
           throw new Error(`Continuation retry artifact checksum mismatch: ${reference}`);
         }
@@ -75238,16 +76973,16 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     }
   }
   async remove(jobId) {
-    await fs27.rm(this.jobDirectory(jobId), { recursive: true, force: true });
+    await fs31.rm(this.jobDirectory(jobId), { recursive: true, force: true });
   }
   async quarantine(jobId) {
     await this.ensureRoot();
     const source = this.jobDirectory(jobId);
-    const token2 = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes3(8).toString("hex")}`;
+    const token2 = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes5(8).toString("hex")}`;
     const destination = this.quarantineDirectory(jobId, token2);
     let sourceMetadata;
     try {
-      sourceMetadata = await fs27.lstat(source);
+      sourceMetadata = await fs31.lstat(source);
     } catch (error62) {
       if (error62?.code === "ENOENT") return null;
       throw error62;
@@ -75255,13 +76990,13 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     if (sourceMetadata.isSymbolicLink() || !sourceMetadata.isDirectory()) {
       throw new Error("Continuation artifact quarantine source is not a real directory.");
     }
-    const quarantineName = path35.basename(destination);
+    const quarantineName = path39.basename(destination);
     ACTIVE_REDACTION_QUARANTINES.add(quarantineName);
     try {
-      await fs27.rename(source, destination);
-      const moved = await fs27.lstat(destination);
+      await fs31.rename(source, destination);
+      const moved = await fs31.lstat(destination);
       if (moved.dev !== sourceMetadata.dev || moved.ino !== sourceMetadata.ino) {
-        await fs27.rename(destination, source).catch(() => {
+        await fs31.rename(destination, source).catch(() => {
         });
         throw new Error("Continuation artifact quarantine identity changed during rename.");
       }
@@ -75274,9 +77009,9 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
   async restoreQuarantine(jobId, token2) {
     const source = this.quarantineDirectory(jobId, token2);
     try {
-      await fs27.rename(source, this.jobDirectory(jobId));
+      await fs31.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path35.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path39.basename(source));
     }
   }
   async discardQuarantine(jobId, token2) {
@@ -75284,24 +77019,24 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     try {
       await removeArtifactTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path35.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path39.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown, withJobLock) {
     await this.ensureRoot();
-    const entries = await fs27.readdir(this.rootDir, { withFileTypes: true });
+    const entries = await fs31.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const quarantine = parseRedactionQuarantine(entry.name);
       if (!quarantine) continue;
-      const candidate = path35.join(this.rootDir, entry.name);
+      const candidate = path39.join(this.rootDir, entry.name);
       const reconcile = async () => {
         const shouldRestore = isJobKnown ? await isJobKnown(quarantine.jobId) : jobIds.has(quarantine.jobId);
         if (!shouldRestore) {
           await removeArtifactTree(candidate);
           return;
         }
-        const candidateMetadata = await fs27.lstat(candidate).catch((error62) => {
+        const candidateMetadata = await fs31.lstat(candidate).catch((error62) => {
           if (error62?.code === "ENOENT") return null;
           throw error62;
         });
@@ -75315,7 +77050,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
         );
         if (ownerIsActive && (quarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES.has(entry.name))) return;
         try {
-          await fs27.rename(candidate, this.jobDirectory(quarantine.jobId));
+          await fs31.rename(candidate, this.jobDirectory(quarantine.jobId));
         } catch (error62) {
           const code = error62?.code;
           if (!["EEXIST", "ENOENT", "EACCES"].includes(code ?? "") || await pathExists2(candidate) || !await isRestoredDirectory(this.jobDirectory(quarantine.jobId))) throw error62;
@@ -75344,8 +77079,8 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (jobId !== this.managedJob.jobId) throw new Error("Managed artifact store belongs to a different run.");
       return this.managedJob.binding.directory;
     }
-    const resolved = path35.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path35.sep}`)) {
+    const resolved = path39.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path39.sep}`)) {
       throw new Error("Continuation artifact job directory escapes the artifact root.");
     }
     return resolved;
@@ -75355,7 +77090,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token2)) {
       throw new Error("Continuation artifact quarantine token is invalid.");
     }
-    return path35.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token2}`);
+    return path39.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token2}`);
   }
 };
 function parseRedactionQuarantine(name) {
@@ -75371,7 +77106,7 @@ function parseRedactionQuarantine(name) {
   return { jobId: match[1], ownerPid, ownerStartedAt, createdAt };
 }
 async function removeArtifactTree(directory) {
-  const metadata = await fs27.lstat(directory).catch((error62) => {
+  const metadata = await fs31.lstat(directory).catch((error62) => {
     if (error62.code === "ENOENT") return null;
     throw error62;
   });
@@ -75379,17 +77114,17 @@ async function removeArtifactTree(directory) {
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Refusing to remove non-directory continuation artifact tree: ${directory}`);
   }
-  await fs27.rm(directory, { recursive: true });
+  await fs31.rm(directory, { recursive: true });
 }
 async function assertRealDirectory(directory) {
-  const metadata = await fs27.lstat(directory);
+  const metadata = await fs31.lstat(directory);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Continuation artifact path is not a real directory: ${directory}`);
   }
 }
 async function isRestoredDirectory(directory) {
   try {
-    const metadata = await fs27.lstat(directory);
+    const metadata = await fs31.lstat(directory);
     return metadata.isDirectory() && !metadata.isSymbolicLink();
   } catch {
     return false;
@@ -75397,7 +77132,7 @@ async function isRestoredDirectory(directory) {
 }
 async function pathExists2(target) {
   try {
-    await fs27.lstat(target);
+    await fs31.lstat(target);
     return true;
   } catch (error62) {
     if (error62?.code === "ENOENT") return false;
@@ -75406,12 +77141,12 @@ async function pathExists2(target) {
 }
 
 // src/continuation/input-store.ts
-import { createHash as createHash16, randomBytes as randomBytes4 } from "node:crypto";
+import { createHash as createHash20, randomBytes as randomBytes6 } from "node:crypto";
 import { constants as constants2, createWriteStream as createWriteStream3 } from "node:fs";
-import fs28 from "node:fs/promises";
-import path36 from "node:path";
+import fs32 from "node:fs/promises";
+import path40 from "node:path";
 import { Transform } from "node:stream";
-import { pipeline as pipeline2 } from "node:stream/promises";
+import { pipeline as pipeline3 } from "node:stream/promises";
 var InvalidManagedInputError = class extends Error {
 };
 var ContinuationCreationLockBusyError = class extends Error {
@@ -75439,26 +77174,26 @@ var ContinuationInputStore = class {
   maxTotalBytes;
   orphanAgeMs;
   constructor(rootDir, options2 = {}) {
-    this.rootDir = path36.resolve(rootDir);
+    this.rootDir = path40.resolve(rootDir);
     this.maxFiles = options2.maxFiles ?? CONTINUATION_LIMITS.inputFileCount;
     this.maxFileBytes = options2.maxFileBytes ?? CONTINUATION_LIMITS.inputBytesPerFile;
     this.maxTotalBytes = options2.maxTotalBytes ?? CONTINUATION_LIMITS.managedInputBytesPerJob;
     this.orphanAgeMs = options2.orphanAgeMs ?? DEFAULT_ORPHAN_AGE_MS;
   }
   async ensureRoot() {
-    await fs28.mkdir(this.rootDir, { recursive: true, mode: 448 });
+    await fs32.mkdir(this.rootDir, { recursive: true, mode: 448 });
     await assertDirectory(this.rootDir);
-    await fs28.chmod(this.rootDir, 448);
+    await fs32.chmod(this.rootDir, 448);
   }
   async withCreationLock(jobId, operation, { wait = true } = {}) {
     assertJobId(jobId);
     await this.ensureRoot();
-    const lockDirectory = path36.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
+    const lockDirectory = path40.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
     let ownerNonce;
     let attemptedReclaim = false;
     while (true) {
-      const nonce = randomBytes4(16).toString("hex");
+      const nonce = randomBytes6(16).toString("hex");
       const owner = {
         pid: process.pid,
         startedAt: currentProcessStartedAt(),
@@ -75467,7 +77202,7 @@ var ContinuationInputStore = class {
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       try {
-        await fs28.writeFile(lockDirectory, `${JSON.stringify(owner)}
+        await fs32.writeFile(lockDirectory, `${JSON.stringify(owner)}
 `, {
           mode: 384,
           flag: "wx"
@@ -75480,7 +77215,7 @@ var ContinuationInputStore = class {
           if (Date.now() >= deadline) {
             throw new Error("Continuation creation-lock reclaim did not finish before the wait deadline.");
           }
-          await new Promise((resolve) => setTimeout(resolve, 20));
+          await new Promise((resolve2) => setTimeout(resolve2, 20));
           continue;
         }
         break;
@@ -75506,7 +77241,7 @@ var ContinuationInputStore = class {
         if (Date.now() >= deadline) {
           throw new Error("Continuation creation is already in progress for this idempotency key.");
         }
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve2) => setTimeout(resolve2, 20));
       }
     }
     let operationError;
@@ -75536,11 +77271,11 @@ var ContinuationInputStore = class {
     this.validateSources(sources);
     await this.ensureRoot();
     const finalDirectory = this.jobDirectory(jobId);
-    const stagingDirectory = path36.join(
+    const stagingDirectory = path40.join(
       this.rootDir,
-      `.staging-${jobId}-${process.pid}-${randomBytes4(8).toString("hex")}`
+      `.staging-${jobId}-${process.pid}-${randomBytes6(8).toString("hex")}`
     );
-    await fs28.mkdir(stagingDirectory, { mode: 448 });
+    await fs32.mkdir(stagingDirectory, { mode: 448 });
     let installed = false;
     try {
       const artifacts = [];
@@ -75551,7 +77286,7 @@ var ContinuationInputStore = class {
         const relativePath = neutralInputFileName(id, source.fileName);
         const copied = await copyRegularFile(
           source.sourcePath,
-          path36.join(stagingDirectory, relativePath),
+          path40.join(stagingDirectory, relativePath),
           this.maxFileBytes
         );
         if (source.expectedSizeBytes !== void 0 && copied.sizeBytes !== source.expectedSizeBytes) {
@@ -75574,14 +77309,14 @@ var ContinuationInputStore = class {
         });
       }
       const manifest = { version: 1, jobId, requestFingerprint, inputs: artifacts };
-      const manifestPath = path36.join(stagingDirectory, MANIFEST_FILE);
-      await fs28.writeFile(manifestPath, `${JSON.stringify(manifest)}
+      const manifestPath = path40.join(stagingDirectory, MANIFEST_FILE);
+      await fs32.writeFile(manifestPath, `${JSON.stringify(manifest)}
 `, { mode: 384, flag: "wx" });
       for (const artifact of artifacts) {
-        await fs28.chmod(path36.join(stagingDirectory, artifact.relativePath), 256);
+        await fs32.chmod(path40.join(stagingDirectory, artifact.relativePath), 256);
       }
-      await fs28.chmod(manifestPath, 256);
-      await fs28.chmod(stagingDirectory, 320);
+      await fs32.chmod(manifestPath, 256);
+      await fs32.chmod(stagingDirectory, 320);
       const existing = await this.readManifestIfPresent(finalDirectory, jobId);
       if (existing) {
         assertEquivalentManifest(existing, manifest);
@@ -75589,7 +77324,7 @@ var ContinuationInputStore = class {
         return { artifacts: existing.inputs, installed: false };
       }
       try {
-        await fs28.rename(stagingDirectory, finalDirectory);
+        await fs32.rename(stagingDirectory, finalDirectory);
         installed = true;
         return { artifacts, installed: true };
       } catch (error62) {
@@ -75639,9 +77374,9 @@ var ContinuationInputStore = class {
       if (!metadata) return { ok: false, reason: "missing" };
       if (metadata.isSymbolicLink() || !metadata.isFile()) return { ok: false, reason: "invalid" };
       if (metadata.size !== artifact.sizeBytes) return { ok: false, reason: "modified" };
-      let digest;
+      let digest2;
       try {
-        digest = await sha256File(filePath);
+        digest2 = await sha256File(filePath);
       } catch (error62) {
         const code = error62?.code;
         if (code === "ENOENT") {
@@ -75655,17 +77390,17 @@ var ContinuationInputStore = class {
         }
         throw error62;
       }
-      if (digest !== artifact.sha256) return { ok: false, reason: "modified" };
+      if (digest2 !== artifact.sha256) return { ok: false, reason: "modified" };
     }
     return { ok: true };
   }
   resolve(jobId, relativePath) {
     const directory = this.jobDirectory(jobId);
-    if (!relativePath || path36.isAbsolute(relativePath)) {
+    if (!relativePath || path40.isAbsolute(relativePath)) {
       throw new Error("Continuation input path must be relative.");
     }
-    const resolved = path36.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path36.sep}`)) {
+    const resolved = path40.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path40.sep}`)) {
       throw new Error("Continuation input path resolves outside its managed directory.");
     }
     return resolved;
@@ -75675,11 +77410,11 @@ var ContinuationInputStore = class {
   }
   async quarantine(jobId) {
     const source = this.jobDirectory(jobId);
-    const token2 = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes4(8).toString("hex")}`;
+    const token2 = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes6(8).toString("hex")}`;
     const destination = this.quarantineDirectory(jobId, token2);
     let metadata;
     try {
-      metadata = await fs28.lstat(source);
+      metadata = await fs32.lstat(source);
     } catch (error62) {
       if (error62?.code === "ENOENT") return null;
       throw error62;
@@ -75687,19 +77422,19 @@ var ContinuationInputStore = class {
     if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
       throw new Error("Continuation input path is not a real directory.");
     }
-    const quarantineName = path36.basename(destination);
+    const quarantineName = path40.basename(destination);
     ACTIVE_REDACTION_QUARANTINES2.add(quarantineName);
     try {
-      await fs28.rename(source, destination);
+      await fs32.rename(source, destination);
     } catch (error62) {
       ACTIVE_REDACTION_QUARANTINES2.delete(quarantineName);
       if (error62?.code === "ENOENT") return null;
       throw error62;
     }
     try {
-      const moved = await fs28.lstat(destination);
+      const moved = await fs32.lstat(destination);
       if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
-        await fs28.rename(destination, source).catch(() => {
+        await fs32.rename(destination, source).catch(() => {
         });
         throw new Error("Continuation input quarantine identity changed during rename.");
       }
@@ -75712,9 +77447,9 @@ var ContinuationInputStore = class {
   async restoreQuarantine(jobId, token2) {
     const source = this.quarantineDirectory(jobId, token2);
     try {
-      await fs28.rename(source, this.jobDirectory(jobId));
+      await fs32.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path36.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path40.basename(source));
     }
   }
   async discardQuarantine(jobId, token2) {
@@ -75722,18 +77457,18 @@ var ContinuationInputStore = class {
     try {
       await removeManagedTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path36.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path40.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown, withJobLock = (jobId, operation) => this.withCreationLock(jobId, operation)) {
     await this.ensureRoot();
-    const entries = await fs28.readdir(this.rootDir, { withFileTypes: true });
+    const entries = await fs32.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isFile() && !entry.isDirectory() || entry.isSymbolicLink()) continue;
       const reclaim = parseCreationReclaim(entry.name);
       if (!reclaim) continue;
-      const candidate = path36.join(this.rootDir, entry.name);
-      const metadata = await fs28.lstat(candidate).catch((error62) => {
+      const candidate = path40.join(this.rootDir, entry.name);
+      const metadata = await fs32.lstat(candidate).catch((error62) => {
         if (error62.code === "ENOENT") return null;
         throw error62;
       });
@@ -75743,7 +77478,7 @@ var ContinuationInputStore = class {
     const liveCreationJobs = /* @__PURE__ */ new Set();
     for (const entry of entries) {
       if (!entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
-      const lockDirectory = path36.join(this.rootDir, entry.name);
+      const lockDirectory = path40.join(this.rootDir, entry.name);
       const jobId = entry.name.slice(CREATION_LOCK_PREFIX.length);
       if (!await tryReclaimCreationLock(lockDirectory, this.rootDir)) {
         liveCreationJobs.add(jobId);
@@ -75753,14 +77488,14 @@ var ContinuationInputStore = class {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const redactionQuarantine = parseRedactionQuarantine2(entry.name);
       if (redactionQuarantine) {
-        const candidate2 = path36.join(this.rootDir, entry.name);
+        const candidate2 = path40.join(this.rootDir, entry.name);
         await withJobLock(redactionQuarantine.jobId, async () => {
           const shouldRestore = isJobKnown ? await isJobKnown(redactionQuarantine.jobId) : jobIds.has(redactionQuarantine.jobId);
           if (!shouldRestore) {
             await removeManagedTree(candidate2);
             return;
           }
-          const candidateMetadata = await fs28.lstat(candidate2).catch((error62) => {
+          const candidateMetadata = await fs32.lstat(candidate2).catch((error62) => {
             if (error62?.code === "ENOENT") return null;
             throw error62;
           });
@@ -75774,7 +77509,7 @@ var ContinuationInputStore = class {
           );
           if (ownerIsActive && (redactionQuarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES2.has(entry.name))) return;
           try {
-            await fs28.rename(candidate2, this.jobDirectory(redactionQuarantine.jobId));
+            await fs32.rename(candidate2, this.jobDirectory(redactionQuarantine.jobId));
           } catch (error62) {
             const code = error62?.code;
             if (!["EEXIST", "ENOENT", "EACCES"].includes(code ?? "") || await pathExists3(candidate2) || !await isRestoredDirectory2(this.jobDirectory(redactionQuarantine.jobId))) throw error62;
@@ -75787,7 +77522,7 @@ var ContinuationInputStore = class {
       if (!isStaging && jobIds.has(entry.name)) continue;
       if (!isStaging && liveCreationJobs.has(entry.name)) continue;
       if (isStaging && [...liveCreationJobs].some((jobId) => entry.name.startsWith(`.staging-${jobId}-`))) continue;
-      const candidate = path36.join(this.rootDir, entry.name);
+      const candidate = path40.join(this.rootDir, entry.name);
       if (!isStaging && isValidJobId(entry.name)) {
         await withJobLock(entry.name, async () => {
           if (jobIds.has(entry.name) || await isJobKnown?.(entry.name)) return;
@@ -75807,7 +77542,7 @@ var ContinuationInputStore = class {
         throw new Error("Continuation input kind is invalid.");
       }
       validateFileName(source.fileName);
-      if (!path36.isAbsolute(source.sourcePath)) {
+      if (!path40.isAbsolute(source.sourcePath)) {
         throw new Error("Continuation input source path must be absolute and server-admitted.");
       }
       if (source.expectedSha256 !== void 0 && !/^[a-f0-9]{64}$/.test(source.expectedSha256)) {
@@ -75820,8 +77555,8 @@ var ContinuationInputStore = class {
   }
   jobDirectory(jobId) {
     assertJobId(jobId);
-    const resolved = path36.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path36.sep}`)) {
+    const resolved = path40.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path40.sep}`)) {
       throw new Error("Continuation input job directory escapes the input root.");
     }
     return resolved;
@@ -75831,12 +77566,12 @@ var ContinuationInputStore = class {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token2)) {
       throw new Error("Continuation input quarantine token is invalid.");
     }
-    return path36.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token2}`);
+    return path40.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token2}`);
   }
   async readManifestIfPresent(directory, jobId) {
     try {
       await assertDirectory(directory);
-      const parsed = JSON.parse(await fs28.readFile(path36.join(directory, MANIFEST_FILE), "utf8"));
+      const parsed = JSON.parse(await fs32.readFile(path40.join(directory, MANIFEST_FILE), "utf8"));
       if (parsed.version !== 1 || parsed.jobId !== jobId || typeof parsed.requestFingerprint !== "string" || !Array.isArray(parsed.inputs)) {
         throw new Error("Continuation input manifest is invalid.");
       }
@@ -75857,11 +77592,11 @@ var ContinuationInputStore = class {
   }
 };
 async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
-  const pathMetadata = await fs28.lstat(sourcePath);
+  const pathMetadata = await fs32.lstat(sourcePath);
   if (pathMetadata.isSymbolicLink() || !pathMetadata.isFile()) {
     throw new Error("Continuation input source must be a regular file.");
   }
-  const source = await fs28.open(
+  const source = await fs32.open(
     sourcePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
   );
@@ -75871,7 +77606,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
     if (before.size > maxFileBytes) {
       throw new Error(`Continuation input file byte limit exceeded: ${before.size} > ${maxFileBytes}.`);
     }
-    const digest = createHash16("sha256");
+    const digest2 = createHash20("sha256");
     let copiedBytes = 0;
     const hashing = new Transform({
       transform(chunk, _encoding, callback) {
@@ -75880,11 +77615,11 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
           callback(new Error(`Continuation input file byte limit exceeded: ${copiedBytes} > ${maxFileBytes}.`));
           return;
         }
-        digest.update(chunk);
+        digest2.update(chunk);
         callback(null, chunk);
       }
     });
-    await pipeline2(
+    await pipeline3(
       source.createReadStream({ autoClose: false }),
       hashing,
       createWriteStream3(destinationPath, { flags: "wx", mode: 384 })
@@ -75893,22 +77628,22 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
     if (before.size !== after.size || copiedBytes !== after.size) {
       throw new Error("Continuation input source changed while it was being admitted.");
     }
-    return { sha256: digest.digest("hex"), sizeBytes: copiedBytes };
+    return { sha256: digest2.digest("hex"), sizeBytes: copiedBytes };
   } finally {
     await source.close();
   }
 }
 async function lstatForVerification(filePath) {
   try {
-    return await fs28.lstat(filePath);
+    return await fs32.lstat(filePath);
   } catch (error62) {
     if (error62?.code === "ENOENT") return null;
     throw error62;
   }
 }
 async function sha256File(filePath) {
-  const digest = createHash16("sha256");
-  const file2 = await fs28.open(
+  const digest2 = createHash20("sha256");
+  const file2 = await fs32.open(
     filePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
   );
@@ -75916,19 +77651,19 @@ async function sha256File(filePath) {
     if (!(await file2.stat()).isFile()) {
       throw new InvalidManagedInputError("Continuation managed input is not a regular file.");
     }
-    for await (const chunk of file2.createReadStream({ autoClose: false })) digest.update(chunk);
-    return digest.digest("hex");
+    for await (const chunk of file2.createReadStream({ autoClose: false })) digest2.update(chunk);
+    return digest2.digest("hex");
   } finally {
     await file2.close();
   }
 }
 function validateFileName(fileName) {
-  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path36.basename(fileName) !== fileName) {
+  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path40.basename(fileName) !== fileName) {
     throw new Error("Continuation input file name is invalid.");
   }
 }
 function neutralInputFileName(id, originalFileName) {
-  const extension = path36.extname(originalFileName).toLowerCase();
+  const extension = path40.extname(originalFileName).toLowerCase();
   return /^\.[a-z0-9]{1,8}$/.test(extension) ? `${id}${extension}` : id;
 }
 function validateArtifact(artifact) {
@@ -75936,7 +77671,7 @@ function validateArtifact(artifact) {
     throw new Error("Continuation input artifact id is invalid.");
   }
   validateFileName(artifact.fileName);
-  if (!artifact.relativePath || path36.isAbsolute(artifact.relativePath)) {
+  if (!artifact.relativePath || path40.isAbsolute(artifact.relativePath)) {
     throw new Error("Continuation input artifact path is invalid.");
   }
   if (!/^[a-f0-9]{64}$/.test(artifact.sha256)) {
@@ -75947,7 +77682,7 @@ function validateArtifact(artifact) {
   }
 }
 async function assertDirectory(directory) {
-  const metadata = await fs28.lstat(directory);
+  const metadata = await fs32.lstat(directory);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Continuation input path is not a real directory: ${directory}`);
   }
@@ -75986,9 +77721,9 @@ function safeAdmissionError(error62) {
 }
 async function readCreationOwner(lockDirectory) {
   try {
-    const metadata = await fs28.lstat(lockDirectory);
-    const ownerPath = metadata.isDirectory() ? path36.join(lockDirectory, "owner.json") : lockDirectory;
-    const parsed = JSON.parse(await fs28.readFile(ownerPath, "utf8"));
+    const metadata = await fs32.lstat(lockDirectory);
+    const ownerPath = metadata.isDirectory() ? path40.join(lockDirectory, "owner.json") : lockDirectory;
+    const parsed = JSON.parse(await fs32.readFile(ownerPath, "utf8"));
     if (!Number.isInteger(parsed.pid) || Number(parsed.pid) <= 0 || typeof parsed.createdAt !== "string") return null;
     const nonce = typeof parsed.nonce === "string" && /^[a-f0-9]{32}$/.test(parsed.nonce) ? parsed.nonce : null;
     const startedAt = Number(parsed.startedAt);
@@ -76006,7 +77741,7 @@ async function readCreationOwner(lockDirectory) {
 async function tryReclaimCreationLock(lockDirectory, rootDir) {
   let metadata;
   try {
-    metadata = await fs28.lstat(lockDirectory);
+    metadata = await fs32.lstat(lockDirectory);
   } catch (error62) {
     if (error62?.code === "ENOENT") return true;
     throw error62;
@@ -76018,20 +77753,20 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
   if (owner === null) {
     if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
   } else if (await isCleanupProcessInstanceAlive(owner.pid, owner.startedAt, owner.linuxBirthToken)) return false;
-  const quarantine = path36.join(
+  const quarantine = path40.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}${path36.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes4(8).toString("hex")}`
+    `${CREATION_RECLAIM_PREFIX}${path40.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes6(8).toString("hex")}`
   );
   try {
-    await fs28.rename(lockDirectory, quarantine);
+    await fs32.rename(lockDirectory, quarantine);
   } catch (error62) {
     if (error62?.code === "ENOENT") return true;
     throw error62;
   }
-  const moved = await fs28.lstat(quarantine);
+  const moved = await fs32.lstat(quarantine);
   if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
     try {
-      await fs28.rename(quarantine, lockDirectory);
+      await fs32.rename(quarantine, lockDirectory);
     } catch (error62) {
       throw new Error("Continuation creation lock changed during reclaim and could not be restored.", {
         cause: error62
@@ -76043,11 +77778,11 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
   return true;
 }
 async function hasCompetingCreationReclaim(rootDir, lockDirectory) {
-  const prefix = `${CREATION_RECLAIM_PREFIX}${path36.basename(lockDirectory)}-`;
-  for (const entry of await fs28.readdir(rootDir)) {
+  const prefix = `${CREATION_RECLAIM_PREFIX}${path40.basename(lockDirectory)}-`;
+  for (const entry of await fs32.readdir(rootDir)) {
     if (!entry.startsWith(prefix)) continue;
-    const candidate = path36.join(rootDir, entry);
-    const metadata = await fs28.lstat(candidate).catch((error62) => {
+    const candidate = path40.join(rootDir, entry);
+    const metadata = await fs32.lstat(candidate).catch((error62) => {
       if (error62.code === "ENOENT") return null;
       throw error62;
     });
@@ -76080,12 +77815,12 @@ async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   if (owner?.nonce !== nonce) {
     throw new Error("Continuation creation lock ownership changed before release.");
   }
-  const releaseDirectory = path36.join(
+  const releaseDirectory = path40.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}release-${path36.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
+    `${CREATION_RECLAIM_PREFIX}release-${path40.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
   );
   try {
-    await fs28.rename(lockDirectory, releaseDirectory);
+    await fs32.rename(lockDirectory, releaseDirectory);
   } catch (error62) {
     if (error62?.code === "ENOENT") {
       throw new Error("Continuation creation lock disappeared before release.", { cause: error62 });
@@ -76095,7 +77830,7 @@ async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   const movedOwner = await readCreationOwner(releaseDirectory);
   if (movedOwner?.nonce !== nonce) {
     try {
-      await fs28.rename(releaseDirectory, lockDirectory);
+      await fs32.rename(releaseDirectory, lockDirectory);
     } catch (error62) {
       throw new Error("Continuation creation lock changed during release and could not be restored.", {
         cause: error62
@@ -76130,33 +77865,33 @@ function parseRedactionQuarantine2(name) {
 async function removeManagedTree(target) {
   let metadata;
   try {
-    metadata = await fs28.lstat(target);
+    metadata = await fs32.lstat(target);
   } catch (error62) {
     if (error62?.code === "ENOENT") return;
     throw error62;
   }
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    await fs28.rm(target, { force: true });
+    await fs32.rm(target, { force: true });
     return;
   }
   try {
-    await fs28.chmod(target, 448);
+    await fs32.chmod(target, 448);
   } catch (error62) {
     if (error62?.code === "ENOENT") return;
     throw error62;
   }
   let entries;
   try {
-    entries = await fs28.readdir(target);
+    entries = await fs32.readdir(target);
   } catch (error62) {
     if (error62?.code === "ENOENT") return;
     throw error62;
   }
   for (const entry of entries) {
-    const child = path36.join(target, entry);
+    const child = path40.join(target, entry);
     let childMetadata;
     try {
-      childMetadata = await fs28.lstat(child);
+      childMetadata = await fs32.lstat(child);
     } catch (error62) {
       if (error62?.code === "ENOENT") continue;
       throw error62;
@@ -76166,24 +77901,24 @@ async function removeManagedTree(target) {
     } else {
       if (!childMetadata.isSymbolicLink()) {
         try {
-          await fs28.chmod(child, 384);
+          await fs32.chmod(child, 384);
         } catch (error62) {
           if (error62?.code === "ENOENT") continue;
           throw error62;
         }
       }
-      await fs28.rm(child, { force: true });
+      await fs32.rm(child, { force: true });
     }
   }
   try {
-    await fs28.rmdir(target);
+    await fs32.rmdir(target);
   } catch (error62) {
     if (error62?.code !== "ENOENT") throw error62;
   }
 }
 async function isRestoredDirectory2(directory) {
   try {
-    const metadata = await fs28.lstat(directory);
+    const metadata = await fs32.lstat(directory);
     return metadata.isDirectory() && !metadata.isSymbolicLink();
   } catch {
     return false;
@@ -76191,7 +77926,7 @@ async function isRestoredDirectory2(directory) {
 }
 async function pathExists3(target) {
   try {
-    await fs28.lstat(target);
+    await fs32.lstat(target);
     return true;
   } catch (error62) {
     if (error62?.code === "ENOENT") return false;
@@ -76199,7 +77934,7 @@ async function pathExists3(target) {
   }
 }
 async function removeAgedOrphan(candidate, nowMs, orphanAgeMs) {
-  const metadata = await fs28.stat(candidate).catch((error62) => {
+  const metadata = await fs32.stat(candidate).catch((error62) => {
     if (error62?.code === "ENOENT") return null;
     throw error62;
   });
@@ -76216,7 +77951,7 @@ function continuationWorkspaceRoots(job, policy2) {
   ];
 }
 async function allocateContinuationWorkspace(job, store, policy2) {
-  const { managedWorkspaceRoots, workspaceProject, managedWorkspaceGit } = job.permissions.filesystem;
+  const { managedWorkspaceRoots, workspaceProject, managedWorkspaceGit, dependencySelections } = job.permissions.filesystem;
   if (!managedWorkspaceRoots) {
     if (policy2) await resolveManagedGitSelection({
       configPath: policy2.managedWorkspaceConfigPath,
@@ -76252,6 +77987,8 @@ async function allocateContinuationWorkspace(job, store, policy2) {
     authorizedRoots,
     sourceRegistryPath: policy2.sourceRegistryPath,
     sourceRegistryRoot,
+    dependencySelections,
+    dependencyRegistryConfigPath: policy2.managedWorkspaceConfigPath,
     ...managedWorkspaceGit ? { git: managedWorkspaceGit } : {}
   });
 }
@@ -76648,14 +78385,14 @@ var ContinuationCodexExecutor = class {
       const managed = await allocateContinuationWorkspace(claim2.job, store, this.options);
       const artifactStore = continuationArtifactView(this.options.artifactStore, claim2.job, store, this.options);
       const artifactDir = await artifactStore.ensure(claim2.job.jobId);
-      return await this.executeGuardedStep(claim2, workingDirectory, artifactDir, artifactStore, managed, signal);
+      return await this.executeGuardedStep(claim2, workingDirectory, artifactDir, artifactStore, managed, store, signal);
     } catch (error62) {
-      if (error62 instanceof ContinuationWorkingDirectoryError || error62 instanceof WorkspaceProjectError || error62 instanceof ManagedWorkspaceStorageError) {
+      if (error62 instanceof ContinuationWorkingDirectoryError || error62 instanceof WorkspaceProjectError || error62 instanceof ManagedWorkspaceStorageError || error62 instanceof WorkspaceDependencyPolicyError) {
         return {
           outcome: blockedCapabilityOutcome({
             checkpoint: checkpointForClaim(claim2),
             errorCode: "continuation_working_directory_denied",
-            errorSummary: error62 instanceof WorkspaceProjectError || error62 instanceof ManagedWorkspaceStorageError ? error62.message : "The continuation working directory is no longer authorized by its snapshot and current operator policy.",
+            errorSummary: error62 instanceof WorkspaceProjectError || error62 instanceof ManagedWorkspaceStorageError || error62 instanceof WorkspaceDependencyPolicyError ? error62.message : "The continuation working directory is no longer authorized by its snapshot and current operator policy.",
             requiredCapability: "filesystem.workspace",
             unperformedWork: ["Use an authorized continuation working directory."]
           })
@@ -76686,7 +78423,7 @@ var ContinuationCodexExecutor = class {
       } : {}
     };
   }
-  async executeGuardedStep(claim2, workingDirectory, artifactDir, artifactStore, managed, parentSignal) {
+  async executeGuardedStep(claim2, workingDirectory, artifactDir, artifactStore, managed, store, parentSignal) {
     const artifactGuard = await this.startArtifactGuard(claim2.job.jobId, parentSignal, artifactStore);
     try {
       const managedInputs = claim2.job.sourceFacts.inputs.map((input2) => {
@@ -76732,7 +78469,7 @@ var ContinuationCodexExecutor = class {
         configPath: this.options.managedWorkspaceConfigPath,
         sourceRegistryPath: this.options.sourceRegistryPath,
         sourceRegistryRoot: this.options.foregroundWorkingRoot ?? this.options.currentWorkingRoot
-      }) : await protectLegacyGitWorkspace(baseRequest, this.options.managedWorkspaceConfigPath);
+      }, store) : await protectLegacyGitWorkspace(baseRequest, this.options.managedWorkspaceConfigPath);
       const recovery = managed?.git ? void 0 : await this.options.toolInvoker?.recover(claim2);
       if (recovery?.status === "failed") {
         return {
@@ -77407,6 +79144,7 @@ function assertByteLimit(name, value, limit) {
 }
 function mapExecutorError(error62) {
   if (error62 instanceof ContinuationExecutionError) return error62;
+  if (isManagedWorkspaceDependencyError(error62)) return new ContinuationExecutionError(error62.code, error62.message, false, { cause: error62 });
   if (error62 instanceof CodexExecAbortedError) {
     return new ContinuationExecutionError(
       "continuation_aborted",
@@ -77678,7 +79416,7 @@ function nestedErrorMessage(error62) {
 }
 
 // src/continuation/local-cli-tool-invoker.ts
-import { createHash as createHash17 } from "node:crypto";
+import { createHash as createHash21 } from "node:crypto";
 var ContinuationLocalCliToolInvoker = class {
   constructor(options2) {
     this.options = options2;
@@ -77786,7 +79524,7 @@ function normalizeLocalCliFailure(result, context) {
     context.operationRisk
   );
   const capabilityAvailable = category !== "capability_unavailable";
-  const fingerprint = createHash17("sha256").update(JSON.stringify({
+  const fingerprint = createHash21("sha256").update(JSON.stringify({
     category,
     failedStep: context.failedStep,
     type,
@@ -77893,12 +79631,12 @@ function stringArray(value) {
 }
 
 // src/continuation/sqlite-repository.ts
-import fs31 from "node:fs/promises";
-import path41 from "node:path";
+import fs35 from "node:fs/promises";
+import path45 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
 
 // src/continuation/progress-policy.ts
-import { createHash as createHash18 } from "node:crypto";
+import { createHash as createHash22 } from "node:crypto";
 function evaluateContinuationProgress(input2) {
   const candidateDelta = createAttemptDelta(input2.previous, input2.candidate);
   const delta = input2.verification.status === "accepted" ? candidateDelta : rejectedAttemptDelta(candidateDelta);
@@ -77979,7 +79717,7 @@ function materialProjection(checkpoint2) {
     completedStepIds: sorted(checkpoint2.completedStepIds),
     completedCriterionIds: sorted(checkpoint2.completedCriterionIds),
     completedDeliverableIds: sorted(checkpoint2.completedDeliverableIds),
-    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path44, sha256: sha2562 }) => ({ id, deliverableId, path: path44, sha256: sha2562 })).sort(compareId),
+    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path48, sha256: sha2562 }) => ({ id, deliverableId, path: path48, sha256: sha2562 })).sort(compareId),
     evidence: [...checkpoint2.evidence].map((entry) => ({
       id: entry.id,
       requirementId: entry.requirementId,
@@ -77995,7 +79733,7 @@ function materialProjection(checkpoint2) {
   };
 }
 function hashCanonical(value) {
-  return createHash18("sha256").update(JSON.stringify(value)).digest("hex");
+  return createHash22("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sorted(values) {
   return [...values].sort();
@@ -78005,7 +79743,7 @@ function compareId(left, right) {
 }
 
 // src/continuation/verifier.ts
-import { createHash as createHash19 } from "node:crypto";
+import { createHash as createHash23 } from "node:crypto";
 var MAX_FINDINGS = 20;
 var ContinuationVerifier = class {
   constructor(artifacts, resolveArtifacts) {
@@ -78061,7 +79799,7 @@ var ContinuationVerifier = class {
           continue;
         }
         const content = await artifacts.readArtifact(jobId, artifact.path);
-        const actual = createHash19("sha256").update(content).digest("hex");
+        const actual = createHash23("sha256").update(content).digest("hex");
         if (actual !== artifact.sha256.toLowerCase()) {
           add(`Artifact ${artifact.id} checksum does not match persisted content.`);
         }
@@ -78215,12 +79953,12 @@ function requireEntitiesUnchanged(name, previous, candidate, add) {
 }
 
 // src/durable-run/sqlite-repository.ts
-import { createHash as createHash21, randomBytes as randomBytes5 } from "node:crypto";
-import fs29 from "node:fs/promises";
-import path38 from "node:path";
+import { createHash as createHash25, randomBytes as randomBytes7 } from "node:crypto";
+import fs33 from "node:fs/promises";
+import path42 from "node:path";
 
 // src/durable-run/sqlite-managed-workspace.ts
-import path37 from "node:path";
+import path41 from "node:path";
 var timestamp = external_exports.iso.datetime();
 var sourceRegistries = [
   ["workspace_run_allocations", "intent_json"],
@@ -78615,12 +80353,12 @@ var SqliteManagedWorkspaceStore = class {
       for (const { directory: requested } of paths) {
         const aliases = gitRelated ? workspaceBackingAliases(requested, mounts ?? []) : [requested];
         for (const directory of aliases) {
-          for (let current = directory; ; current = path37.dirname(current)) {
+          for (let current = directory; ; current = path41.dirname(current)) {
             if (exact.get(current)) throw new ManagedWorkspaceStorageError(error62);
-            if (path37.dirname(current) === current) break;
+            if (path41.dirname(current) === current) break;
           }
-          const prefix = directory.endsWith(path37.sep) ? directory : `${directory}${path37.sep}`;
-          const upper = `${prefix.slice(0, -1)}${String.fromCharCode(path37.sep.charCodeAt(0) + 1)}`;
+          const prefix = directory.endsWith(path41.sep) ? directory : `${directory}${path41.sep}`;
+          const upper = `${prefix.slice(0, -1)}${String.fromCharCode(path41.sep.charCodeAt(0) + 1)}`;
           if (nested.get(prefix, upper)) throw new ManagedWorkspaceStorageError(error62);
         }
       }
@@ -78630,12 +80368,12 @@ var SqliteManagedWorkspaceStore = class {
     const exact = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations WHERE scratch_path = ? OR artifact_path = ? LIMIT 1
     `);
-    for (let current = candidate; ; current = path37.dirname(current)) {
+    for (let current = candidate; ; current = path41.dirname(current)) {
       if (exact.get(current, current)) throw new ManagedWorkspaceStorageError("overlapping_runs");
-      if (path37.dirname(current) === current) break;
+      if (path41.dirname(current) === current) break;
     }
-    const prefix = `${candidate}${path37.sep}`;
-    const upper = `${candidate}${String.fromCharCode(path37.sep.charCodeAt(0) + 1)}`;
+    const prefix = `${candidate}${path41.sep}`;
+    const upper = `${candidate}${String.fromCharCode(path41.sep.charCodeAt(0) + 1)}`;
     const nested = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations
       WHERE (scratch_path >= ? AND scratch_path < ?) OR (artifact_path >= ? AND artifact_path < ?)
@@ -78654,7 +80392,7 @@ var SqliteManagedWorkspaceStore = class {
   }
 };
 function assertDependencyReceiptBinding(scratch, ecosystem2, nonce, receipt) {
-  if (receipt.output.device !== scratch.device || receipt.output.directory !== path37.join(
+  if (receipt.output.device !== scratch.device || receipt.output.directory !== path41.join(
     scratch.directory,
     workspaceDependencyInstallLeaf(nonce),
     workspaceDependencyOutputName(ecosystem2)
@@ -78662,7 +80400,7 @@ function assertDependencyReceiptBinding(scratch, ecosystem2, nonce, receipt) {
 }
 function validGitAllocation({ git: git2, gitCheckout, project, fallbackWorkspace, scratch }) {
   if (!git2) return gitCheckout === void 0;
-  return !!project && !fallbackWorkspace && !!gitCheckout && git2.key === gitSnapshotKey(git2) && gitCheckout.checkout.directory === path37.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) && gitCheckout.gitDirectory.directory === path37.join(gitCheckout.checkout.directory, ".git");
+  return !!project && !fallbackWorkspace && !!gitCheckout && git2.key === gitSnapshotKey(git2) && gitCheckout.checkout.directory === path41.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) && gitCheckout.gitDirectory.directory === path41.join(gitCheckout.checkout.directory, ".git");
 }
 function checkoutSelection(allocation, authorizedRoots) {
   const { git: git2, project, scratch } = allocation;
@@ -78821,8 +80559,8 @@ function assertDurableRunDeliveryRequests(deliveriesInput, context) {
     serializeDurableRunJson(delivery.payload, "delivery payload");
   }
 }
-function serializeDurableRunJson(value, label, maxBytes = DURABLE_RUN_WORKLOAD_JSON_MAX_BYTES) {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+function serializeDurableRunJson(value, label, maxBytes2 = DURABLE_RUN_WORKLOAD_JSON_MAX_BYTES) {
+  if (!Number.isSafeInteger(maxBytes2) || maxBytes2 < 1) {
     throw new Error("Durable run JSON byte limit must be a positive integer.");
   }
   let snapshot;
@@ -78838,8 +80576,8 @@ function serializeDurableRunJson(value, label, maxBytes = DURABLE_RUN_WORKLOAD_J
     throw new Error(`${label} must contain only JSON-compatible values.`);
   }
   const byteLength = new TextEncoder().encode(serialized).byteLength;
-  if (byteLength > maxBytes) {
-    throw new Error(`${label} JSON exceeds ${maxBytes} bytes.`);
+  if (byteLength > maxBytes2) {
+    throw new Error(`${label} JSON exceeds ${maxBytes2} bytes.`);
   }
   return serialized;
 }
@@ -79015,7 +80753,7 @@ function assertBoundedRequiredString(value, label, maxChars) {
 }
 
 // src/durable-run/sqlite-migrations.ts
-import { createHash as createHash20 } from "node:crypto";
+import { createHash as createHash24 } from "node:crypto";
 var DURABLE_RUN_SCHEMA_VERSION = 11;
 var ASYNC_TASK_INPUT_VERSION = 1;
 var ASYNC_TASK_STATE_VERSION = 1;
@@ -79672,7 +81410,7 @@ function legacyOperationStepId(stepIndex, description) {
   return `legacy-step-${stepIndex + 1}-${stableHash(description)}`;
 }
 function stableHash(value) {
-  return createHash20("sha256").update(value).digest("hex").slice(0, 12);
+  return createHash24("sha256").update(value).digest("hex").slice(0, 12);
 }
 function migrateInterrupts(database) {
   const rows = readRows(database, "continuation_interrupts");
@@ -79976,7 +81714,7 @@ function persistedTaskContract(row, projection) {
 }
 function legacyAcceptanceCriteria(descriptions) {
   return descriptions.map((description, index) => ({
-    id: `criterion_${index + 1}_${createHash20("sha256").update(description).digest("hex").slice(0, 12)}`,
+    id: `criterion_${index + 1}_${createHash24("sha256").update(description).digest("hex").slice(0, 12)}`,
     description,
     deliverableIds: []
   }));
@@ -80209,7 +81947,7 @@ function hardenDurableAttemptOwnership(database) {
         ON durable_attempts(run_id, attempt_id);
     `);
     for (const { table } of needsRebuild) {
-      const invalid = database.prepare(`
+      const invalid6 = database.prepare(`
         SELECT child.run_id, child.attempt_id
         FROM ${table} child
         LEFT JOIN durable_attempts attempt
@@ -80217,7 +81955,7 @@ function hardenDurableAttemptOwnership(database) {
         WHERE child.attempt_id IS NOT NULL AND attempt.attempt_id IS NULL
         LIMIT 1
       `).get();
-      if (invalid) {
+      if (invalid6) {
         throw new Error(
           `Durable Run schema cannot fence ${table}: Attempt does not belong to Run.`
         );
@@ -80390,7 +82128,7 @@ function clampInteger(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 function legacyStepId(description, index) {
-  return `legacy-step-${index + 1}-${createHash20("sha256").update(description).digest("hex").slice(0, 12)}`;
+  return `legacy-step-${index + 1}-${createHash24("sha256").update(description).digest("hex").slice(0, 12)}`;
 }
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -80412,16 +82150,16 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
     return new _SqliteDurableRunRepository(database, DEFAULT_DELIVERY_LEASE_MS, false);
   }
   static async open(options2) {
-    const databasePath = path38.resolve(options2.databasePath);
-    await fs29.mkdir(path38.dirname(databasePath), { recursive: true, mode: 448 });
-    await fs29.chmod(path38.dirname(databasePath), 448);
+    const databasePath = path42.resolve(options2.databasePath);
+    await fs33.mkdir(path42.dirname(databasePath), { recursive: true, mode: 448 });
+    await fs33.chmod(path42.dirname(databasePath), 448);
     const { DatabaseSync } = await import("node:sqlite");
     const database = new DatabaseSync(databasePath, {
       timeout: 5e3,
       enableForeignKeyConstraints: true
     });
     try {
-      await fs29.chmod(databasePath, 384);
+      await fs33.chmod(databasePath, 384);
       database.exec(`
         PRAGMA busy_timeout = 5000;
         PRAGMA foreign_keys = ON;
@@ -80548,9 +82286,9 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
         if (!candidate) return null;
         const runId = requiredString2(candidate, "run_id");
         const persisted = this.requiredRun(runId);
-        const invalid = validatePersistedState(persisted, validateRun);
-        if (invalid) {
-          this.terminalizeInvalidRun(runId, persisted.rowVersion, invalid, now);
+        const invalid6 = validatePersistedState(persisted, validateRun);
+        if (invalid6) {
+          this.terminalizeInvalidRun(runId, persisted.rowVersion, invalid6, now);
           return "invalid";
         }
         const update = this.database.prepare(`
@@ -80852,12 +82590,12 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
         const runId = requiredString2(row, "run_id");
         const oldVersion = requiredNumber2(row, "row_version");
         const persisted = this.requiredRun(runId);
-        const invalid = validatePersistedState(persisted, validateRun);
-        if (invalid) {
+        const invalid6 = validatePersistedState(persisted, validateRun);
+        if (invalid6) {
           this.terminalizeInvalidRun(
             runId,
             oldVersion,
-            invalid,
+            invalid6,
             now,
             requiredString2(row, "attempt_id")
           );
@@ -81185,8 +82923,8 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
       concurrencyKey
     );
   }
-  terminalizeUnclaimableRuns(workloadKinds, now, resolve) {
-    if (!resolve) return;
+  terminalizeUnclaimableRuns(workloadKinds, now, resolve2) {
+    if (!resolve2) return;
     const placeholders = workloadKinds.map(() => "?").join(", ");
     const rows = this.database.prepare(`
       SELECT run_id, row_version, expires_at, attempt_count, max_attempts
@@ -81202,7 +82940,7 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
       const runId = requiredString2(row, "run_id");
       let failure2;
       try {
-        failure2 = resolve(
+        failure2 = resolve2(
           this.requiredRun(runId),
           expired ? "expired" : "attempts_exhausted"
         );
@@ -81475,13 +83213,13 @@ function uniqueStrings(values) {
   return unique;
 }
 function deliveryEventKey(kind, idempotencyKey) {
-  return `${kind}:${createHash21("sha256").update(idempotencyKey).digest("hex")}`;
+  return `${kind}:${createHash25("sha256").update(idempotencyKey).digest("hex")}`;
 }
 function outboxId(idempotencyKey) {
-  return `outbox_${createHash21("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `outbox_${createHash25("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function newAttemptId() {
-  return `att_${randomBytes5(12).toString("hex")}`;
+  return `att_${randomBytes7(12).toString("hex")}`;
 }
 function addMilliseconds(value, milliseconds) {
   const timestamp2 = Date.parse(value);
@@ -81503,7 +83241,7 @@ async function retrySqliteBusy(operation, timeoutMs = 5e3) {
       return operation();
     } catch (error62) {
       if (!isSqliteBusy(error62) || Date.now() - started >= timeoutMs) throw error62;
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve2) => setTimeout(resolve2, 10));
     }
   }
 }
@@ -82323,7 +84061,12 @@ function isDeliveryRoute(value) {
 }
 function isPermissionEnvelope(value) {
   if (!isRecord4(value) || !isRecord4(value.filesystem) || !isRecord4(value.approval)) return false;
-  return ["bounded", "trusted_personal_workspace"].includes(String(value.profile)) && typeof value.filesystem.root === "string" && ["read-only", "workspace-write"].includes(String(value.filesystem.mode)) && isStringArray(value.filesystem.requestedPaths) && (value.filesystem.workspaceProject === void 0 || workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success) && (value.filesystem.managedWorkspaceRoots === void 0 || workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success && managedWorkspaceRootsSchema.safeParse(value.filesystem.managedWorkspaceRoots).success) && (value.filesystem.managedWorkspaceGit === void 0 || value.filesystem.managedWorkspaceRoots !== void 0 && managedGitSelectionSchema.safeParse(value.filesystem.managedWorkspaceGit).success) && isStringArray(value.hostTools) && ["none", "enabled"].includes(String(value.network)) && ["denied", "allowed"].includes(String(value.externalSideEffects)) && ["never", "interactive"].includes(String(value.approval.mode));
+  return ["bounded", "trusted_personal_workspace"].includes(String(value.profile)) && typeof value.filesystem.root === "string" && ["read-only", "workspace-write"].includes(String(value.filesystem.mode)) && isStringArray(value.filesystem.requestedPaths) && (value.filesystem.workspaceProject === void 0 || workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success) && (value.filesystem.managedWorkspaceRoots === void 0 || workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success && managedWorkspaceRootsSchema.safeParse(value.filesystem.managedWorkspaceRoots).success) && (value.filesystem.managedWorkspaceGit === void 0 || value.filesystem.managedWorkspaceRoots !== void 0 && managedGitSelectionSchema.safeParse(value.filesystem.managedWorkspaceGit).success) && (value.filesystem.dependencySelections === void 0 || value.filesystem.managedWorkspaceRoots !== void 0 && validDependencySelections(value.filesystem.dependencySelections, value.filesystem.managedWorkspaceGit)) && isStringArray(value.hostTools) && ["none", "enabled"].includes(String(value.network)) && ["denied", "allowed"].includes(String(value.externalSideEffects)) && ["never", "interactive"].includes(String(value.approval.mode));
+}
+function validDependencySelections(value, git2) {
+  const selections = workspaceDependencySelectionsSchema.safeParse(value);
+  const managedGit = managedGitSelectionSchema.safeParse(git2);
+  return selections.success && dependenciesMatchManagedGit(selections.data, managedGit.data);
 }
 function isCheckpoint(value) {
   return isRecord4(value) && typeof value.summary === "string" && isStringArray(value.completedSteps) && isStringArray(value.remainingSteps) && isStringArray(value.constraints) && isStringArray(value.decisions) && isStringArray(value.references);
@@ -82571,8 +84314,8 @@ function hasOnlyKeys(value, allowed) {
 }
 
 // src/continuation/sqlite-codec.ts
-import { createHash as createHash22, randomBytes as randomBytes6 } from "node:crypto";
-import path39 from "node:path";
+import { createHash as createHash26, randomBytes as randomBytes8 } from "node:crypto";
+import path43 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var PROGRESS_PAYLOAD_MAX_CHARS = 4e3;
 var MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT = 2;
@@ -82881,7 +84624,7 @@ function createRequestFingerprint(request) {
   const sourceInputDescriptors = request.sourceInputs.map((input2) => ({
     kind: input2.kind
   }));
-  return createHash22("sha256").update(JSON.stringify({
+  return createHash26("sha256").update(JSON.stringify({
     idempotencyKey: request.idempotencyKey,
     retryOfJobId: request.retryOfJobId ?? null,
     creatorOpenId: request.creatorOpenId,
@@ -83285,7 +85028,7 @@ function validateToolResult(result) {
   assertJsonBytes("tool result", result, CONTINUATION_LIMITS.toolResultBytes);
 }
 function parseToolResult(value) {
-  const parsed = parseJson(value, null);
+  const parsed = parseJson2(value, null);
   if (!parsed || typeof parsed !== "object" || typeof parsed.ok !== "boolean" || typeof parsed.message !== "string") {
     throw new Error("Invalid continuation tool result in database.");
   }
@@ -83293,7 +85036,7 @@ function parseToolResult(value) {
   return parsed;
 }
 function parsePermissionEnvelope(value) {
-  const parsed = parseJson(value, null);
+  const parsed = parseJson2(value, null);
   const normalized = normalizePermissionEnvelope(parsed);
   validatePermissionEnvelope(normalized, false);
   return normalized;
@@ -83338,8 +85081,9 @@ function validatePermissionEnvelope(value, requireAbsoluteRoot2) {
     "requestedPaths",
     "workspaceProject",
     "managedWorkspaceRoots",
-    "managedWorkspaceGit"
-  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || filesystem.managedWorkspaceGit !== void 0 && (!filesystem.managedWorkspaceRoots || !managedGitSelectionSchema.safeParse(filesystem.managedWorkspaceGit).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path39.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path39.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
+    "managedWorkspaceGit",
+    "dependencySelections"
+  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || filesystem.managedWorkspaceGit !== void 0 && (!filesystem.managedWorkspaceRoots || !managedGitSelectionSchema.safeParse(filesystem.managedWorkspaceGit).success) || filesystem.dependencySelections !== void 0 && (!filesystem.managedWorkspaceRoots || !workspaceDependencySelectionsSchema.safeParse(filesystem.dependencySelections).success || !dependenciesMatchManagedGit(filesystem.dependencySelections, filesystem.managedWorkspaceGit)) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path43.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path43.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
     throw new Error("Continuation permission envelope is invalid.");
   }
   if (envelope.profile === "bounded" && (envelope.network !== "none" || envelope.externalSideEffects !== "denied") || envelope.profile === "trusted_personal_workspace" && (requestedPaths.length === 0 || envelope.network !== "enabled" || envelope.externalSideEffects !== "allowed")) {
@@ -83400,10 +85144,10 @@ function boundedDurableRunFailure(failure2) {
   assertJsonBytes("durable failure", bounded, CONTINUATION_LIMITS.contextSnapshotBytes);
   return bounded;
 }
-function truncateUtf8(value, maxBytes) {
-  if (Buffer.byteLength(value, "utf-8") <= maxBytes) return value;
+function truncateUtf8(value, maxBytes2) {
+  if (Buffer.byteLength(value, "utf-8") <= maxBytes2) return value;
   const suffix = "...";
-  const buffer = Buffer.from(value, "utf-8").subarray(0, maxBytes - suffix.length);
+  const buffer = Buffer.from(value, "utf-8").subarray(0, maxBytes2 - suffix.length);
   return `${buffer.toString("utf-8").replace(/\uFFFD+$/u, "")}${suffix}`;
 }
 function assertJsonBytes(name, value, limit) {
@@ -83418,13 +85162,13 @@ function assertUtf8Bytes(name, value, limit) {
   }
 }
 function makeId(prefix) {
-  return `${prefix}_${randomBytes6(12).toString("hex")}`;
+  return `${prefix}_${randomBytes8(12).toString("hex")}`;
 }
 function deliveryIdempotencyKey(jobId, eventKey) {
-  return `ct_${createHash22("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
+  return `ct_${createHash26("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
 }
 function toolCallId(jobId, stepId, requestHash) {
-  return `call_${createHash22("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
+  return `call_${createHash26("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
 }
 function continuationStepId(job) {
   return job.checkpoint?.nextAction?.id ?? job.checkpoint?.currentStepId ?? "initial-step";
@@ -83445,7 +85189,7 @@ function hasOpaqueExecutionEffects(job) {
   return job.permissions.filesystem.mode === "workspace-write" || job.permissions.network === "enabled" || job.permissions.externalSideEffects === "allowed";
 }
 function toolRequestHash(request) {
-  return createHash22("sha256").update(JSON.stringify(request)).digest("hex");
+  return createHash26("sha256").update(JSON.stringify(request)).digest("hex");
 }
 function addMilliseconds2(timestamp2, milliseconds) {
   return new Date(Date.parse(timestamp2) + milliseconds).toISOString();
@@ -83457,7 +85201,7 @@ function emptyRoute() {
     sourceMessageId: ""
   };
 }
-function parseJson(value, fallback) {
+function parseJson2(value, fallback) {
   if (typeof value !== "string") return fallback;
   try {
     return JSON.parse(value);
@@ -83640,7 +85384,7 @@ function isManagedInputArtifact(value) {
 }
 
 // src/continuation/sqlite-transitions.ts
-import { createHash as createHash23 } from "node:crypto";
+import { createHash as createHash27 } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
 function buildContinuationStepTransition(input2) {
   const {
@@ -83967,7 +85711,7 @@ ${outcome.finalMessage}`,
         hints: ["Confirm the effects of the failed step before resuming."],
         failedStep,
         diagnostic: outcome.errorSummary,
-        fingerprint: createHash23("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+        fingerprint: createHash27("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
       },
       prompt: "Confirm what the failed step changed, then resume with the observed result.",
       reason: "The model requested a retry after opaque execution, so automatic replay is unsafe."
@@ -84012,7 +85756,7 @@ function buildContinuationFailureTransition(claim2, current, requestedFailure, n
             hints: ["Confirm the effects of the interrupted step before resuming."],
             failedStep,
             diagnostic: requestedFailure.errorSummary,
-            fingerprint: createHash23("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+            fingerprint: createHash27("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
           },
           prompt: "Confirm what the interrupted step changed, then resume with the observed result.",
           reason: "The execution ended after an opaque operation started, so automatic replay is unsafe."
@@ -84086,7 +85830,7 @@ function durableFailureForContinuationFailure(claim2, failure2) {
     hints: [],
     failedStep,
     diagnostic: bounded.errorSummary,
-    fingerprint: createHash23("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
+    fingerprint: createHash27("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
   };
 }
 function continuationDurableTransition(claim2, current, status, patch, now, extras) {
@@ -84175,7 +85919,7 @@ function continuationProgressDelivery(job, claim2, outcome, now) {
   };
 }
 function continuationInterruptId(jobId, attemptId, failure2) {
-  return `int_${createHash23("sha256").update(`${jobId}\0${attemptId}\0${failure2.fingerprint}`).digest("hex").slice(0, 24)}`;
+  return `int_${createHash27("sha256").update(`${jobId}\0${attemptId}\0${failure2.fingerprint}`).digest("hex").slice(0, 24)}`;
 }
 function continuationInterruptDelivery(job, claim2, interruptId, prompt, failure2, recovery, checkpoint2, now) {
   const eventKey = `interrupt:${interruptId}`;
@@ -84233,20 +85977,20 @@ function staleClaimError(jobId) {
 }
 
 // src/continuation/sqlite-database.ts
-import fs30 from "node:fs/promises";
-import path40 from "node:path";
+import fs34 from "node:fs/promises";
+import path44 from "node:path";
 var ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
 async function openContinuationDatabase(databasePath) {
-  const resolvedPath = path40.resolve(databasePath);
-  await fs30.mkdir(path40.dirname(resolvedPath), { recursive: true, mode: 448 });
-  await fs30.chmod(path40.dirname(resolvedPath), 448);
+  const resolvedPath = path44.resolve(databasePath);
+  await fs34.mkdir(path44.dirname(resolvedPath), { recursive: true, mode: 448 });
+  await fs34.chmod(path44.dirname(resolvedPath), 448);
   const { DatabaseSync } = await import("node:sqlite");
   const database = new DatabaseSync(resolvedPath, {
     timeout: 5e3,
     enableForeignKeyConstraints: true
   });
   try {
-    await fs30.chmod(resolvedPath, 384);
+    await fs34.chmod(resolvedPath, 384);
     return database;
   } catch (error62) {
     database.close();
@@ -84297,7 +86041,7 @@ async function retrySqliteBusy2(operation, timeoutMs) {
     } catch (error62) {
       const sqliteError = error62;
       if (Date.now() >= deadline || sqliteError.errcode !== 5 && !/database is (?:locked|busy)/i.test(sqliteError.message)) throw error62;
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve2) => setTimeout(resolve2, 20));
     }
   }
 }
@@ -84327,10 +86071,10 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
   durableRuns;
   cronMessageOrigins;
   static async open(options2) {
-    const databasePath = path41.resolve(options2.databasePath);
+    const databasePath = path45.resolve(options2.databasePath);
     const artifacts = options2.artifactStore ?? new ContinuationArtifactStore(options2.artifactsDir);
     const inputs = options2.inputStore ?? new ContinuationInputStore(
-      options2.inputsDir ?? path41.join(path41.dirname(path41.resolve(options2.artifactsDir)), "inputs")
+      options2.inputsDir ?? path45.join(path45.dirname(path45.resolve(options2.artifactsDir)), "inputs")
     );
     const guard = await loadWorkspaceDependencyWriteGuard(
       options2.managedWorkspacePolicy?.managedWorkspaceConfigPath ?? managedWorkspaceConfigPath,
@@ -84338,9 +86082,9 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
     );
     if (guard) {
       if (!(inputs instanceof ContinuationInputStore)) throw new WorkspaceDependencyPolicyError("dependency_storage_unverifiable");
-      await guard.assertStorageDirectories([path41.dirname(databasePath), artifacts.rootDir, inputs.rootDir]);
+      await guard.assertStorageDirectories([path45.dirname(databasePath), artifacts.rootDir, inputs.rootDir]);
       for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-        const info = await fs31.lstat(`${databasePath}${suffix}`, { bigint: true }).catch((error62) => {
+        const info = await fs35.lstat(`${databasePath}${suffix}`, { bigint: true }).catch((error62) => {
           if (error62.code === "ENOENT") return void 0;
           throw error62;
         });
@@ -85497,8 +87241,8 @@ The continuation reached its maximum age.`,
   async serializeJobMutation(jobId, operation) {
     const previous = this.jobMutationTails.get(jobId) ?? Promise.resolve();
     let release;
-    const current = new Promise((resolve) => {
-      release = resolve;
+    const current = new Promise((resolve2) => {
+      release = resolve2;
     });
     const tail = previous.catch(() => {
     }).then(() => current);
@@ -86511,11 +88255,11 @@ var DurableRunWorker = class {
       if (active.heartbeatTimer) clearInterval(active.heartbeatTimer);
     }
     if (active.heartbeatInFlight) {
-      await new Promise((resolve) => {
+      await new Promise((resolve2) => {
         const wait = setInterval(() => {
           if (active.heartbeatInFlight) return;
           clearInterval(wait);
-          resolve();
+          resolve2();
         }, 1);
         wait.unref();
       });
@@ -86727,7 +88471,7 @@ async function createContinuationRuntime(options2) {
     const storage = options2.dryRun ? await createDryRunStorage(options2.managedWorkspaceConfigPath ?? managedWorkspaceConfigPath) : {
       databasePath: options2.databasePath,
       artifactsDir: options2.artifactsDir,
-      inputsDir: path42.join(path42.dirname(options2.artifactsDir), "inputs")
+      inputsDir: path46.join(path46.dirname(options2.artifactsDir), "inputs")
     };
     cleanupTemporary = "cleanup" in storage ? storage.cleanup : void 0;
     repository = await (options2.openRepository ?? defaultOpenRepository)({
@@ -86782,6 +88526,7 @@ async function createContinuationRuntime(options2) {
       foregroundWorkingRoot: options2.foregroundWorkingRoot,
       sourceRegistryPath: options2.sourceRegistryPath,
       managedWorkspaceConfigPath: options2.dryRun ? void 0 : options2.managedWorkspaceConfigPath,
+      codexCommand: options2.command,
       filesystemMode: boundedContinuationSandbox(options2.configuredSandbox),
       maxAttempts: options2.maxAttempts,
       maxRetries: options2.maxRetries,
@@ -86904,17 +88649,17 @@ async function defaultOpenRepository(options2) {
 }
 async function createDryRunStorage(configPath) {
   const guard = await loadWorkspaceDependencyWriteGuard(configPath, { allowMissingCachesForStorage: true });
-  const leaf = `codex-lark-continuation-dry-run-${randomBytes7(12).toString("hex")}`;
-  const pinned = guard && await mkdirTemporaryInsidePinnedRoot(await guard.assertNewDirectory(path42.join(os5.tmpdir(), leaf)), leaf);
-  const root = pinned?.directory ?? await fs32.mkdtemp(path42.join(os5.tmpdir(), "codex-lark-continuation-dry-run-"));
+  const leaf = `codex-lark-continuation-dry-run-${randomBytes9(12).toString("hex")}`;
+  const pinned = guard && await mkdirTemporaryInsidePinnedRoot(await guard.assertNewDirectory(path46.join(os5.tmpdir(), leaf)), leaf);
+  const root = pinned?.directory ?? await fs36.mkdtemp(path46.join(os5.tmpdir(), "codex-lark-continuation-dry-run-"));
   return {
     async cleanup() {
       if (pinned) await assertProtectedWorkspacePath(pinned, true);
-      await fs32.rm(root, { recursive: true, force: true });
+      await fs36.rm(root, { recursive: true, force: true });
     },
-    databasePath: path42.join(root, "jobs.sqlite"),
-    artifactsDir: path42.join(root, "artifacts"),
-    inputsDir: path42.join(root, "inputs")
+    databasePath: path46.join(root, "jobs.sqlite"),
+    artifactsDir: path46.join(root, "artifacts"),
+    inputsDir: path46.join(root, "inputs")
   };
 }
 function retentionCutoff(now, retentionDays) {
@@ -87159,7 +88904,7 @@ function persistedStateValidator(registrations) {
 }
 
 // src/cron/run-admission.ts
-import { createHash as createHash24 } from "node:crypto";
+import { createHash as createHash28 } from "node:crypto";
 
 // src/cron/contracts.ts
 var CRON_RUN_INPUT_VERSION = 1;
@@ -87394,7 +89139,7 @@ function literal2(value, values, label) {
 }
 
 // src/cron/delivery.ts
-import path43 from "node:path";
+import path47 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual6 } from "node:util";
 
 // src/scheduler-policy.ts
@@ -87861,7 +89606,7 @@ async function deliverCronArtifact(options2, claim2, now, context) {
   }
   try {
     if (context && !await context.markExternalSendStarted()) return { status: "superseded" };
-    const key = await artifacts.uploadFile(content, path43.posix.basename(payload.artifact.relativePath));
+    const key = await artifacts.uploadFile(content, path47.posix.basename(payload.artifact.relativePath));
     if (!key) throw new Error("Lark returned no attachment key.");
     const response = await options2.sendReply({
       chat_id: route.targetChatId,
@@ -88326,23 +90071,25 @@ var CronRunAdmission = class {
     let managedWorkspaceFailure;
     let fallbackWorkspace;
     let git2;
+    let dependencySelections;
     try {
       if (job.meta.type === "prompt") {
         managedWorkspaceRoots = await this.options.resolveManagedWorkspaceRoots?.(job.meta.workspace_project);
         if (managedWorkspaceRoots) {
           git2 = await this.options.resolveManagedGitSelection?.(job.meta.workspace_project, managedWorkspaceRoots);
         }
+        dependencySelections = await this.options.resolveDependencySelections?.(job.meta.workspace_project, managedWorkspaceRoots, git2);
         if (managedWorkspaceRoots && !job.meta.workspace_project) {
           fallbackWorkspace = await this.options.pinManagedFallbackWorkspace?.();
           if (!fallbackWorkspace) throw new ManagedWorkspaceStorageError("invalid_binding");
         }
       }
     } catch (error62) {
-      if (!(error62 instanceof ManagedWorkspaceStorageError || error62 instanceof WorkspaceProjectError)) throw error62;
+      if (!(error62 instanceof ManagedWorkspaceStorageError || error62 instanceof WorkspaceProjectError || isManagedWorkspaceDependencyError(error62))) throw error62;
       managedWorkspaceFailure = error62.message;
       managedWorkspaceRoots = void 0;
     }
-    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace, git2);
+    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace, git2, dependencySelections);
   }
   async waitForExecution(runId, signal) {
     let pollMs = this.waitPollMs;
@@ -88392,8 +90139,8 @@ var CronRunAdmission = class {
   async withJobAdmissionQueue(jobId, operation) {
     const previous = this.admissionQueues.get(jobId) ?? Promise.resolve();
     let release;
-    const gate = new Promise((resolve) => {
-      release = resolve;
+    const gate = new Promise((resolve2) => {
+      release = resolve2;
     });
     const queued = previous.catch(() => void 0).then(() => gate);
     this.admissionQueues.set(jobId, queued);
@@ -88406,14 +90153,15 @@ var CronRunAdmission = class {
     }
   }
 };
-function cronRunCreateRequest(job, idempotencyKey, runId, now, scheduledOccurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace, git2) {
+function cronRunCreateRequest(job, idempotencyKey, runId, now, scheduledOccurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace, git2, dependencySelections) {
   const input2 = {
     schemaVersion: 1,
     ...managedWorkspaceRoots ? { managedWorkspace: {
       roots: managedWorkspaceRoots,
       createdAt: now.toISOString(),
       ...fallbackWorkspace ? { fallbackWorkspace } : {},
-      ...git2 ? { git: git2 } : {}
+      ...git2 ? { git: git2 } : {},
+      ...dependencySelections !== void 0 ? { dependencySelections } : {}
     } } : {},
     ...managedWorkspaceFailure ? { managedWorkspaceFailure } : {},
     job: {
@@ -88469,7 +90217,7 @@ function cronConcurrencyKey(job) {
   return `cron-job:${cronJobIdentity(job)}`;
 }
 function cronRunId(idempotencyKey) {
-  return `cron_${createHash24("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `cron_${createHash28("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function admitted(run, created, scheduledOccurrence) {
   return {
@@ -88520,14 +90268,14 @@ function positiveInteger5(value, fallback) {
   return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : fallback;
 }
 function abortableDelay(milliseconds, signal) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const onAbort = () => {
       clearTimeout(timer);
       reject(signal?.reason ?? new Error("Cron execution wait aborted."));
     };
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve();
+      resolve2();
     }, milliseconds);
     signal?.addEventListener("abort", onAbort, { once: true });
   });
@@ -89103,6 +90851,7 @@ function createCronPromptExecutor(options2) {
         modelOverride: input2.job.model,
         cronWorkspaceProject: input2.job.workspaceProject,
         ...managedWorkspace ? { managedWorkspace } : {},
+        ...managedWorkspace ? { managedWorkspaceStore: options2.managedWorkspaceStore } : {},
         ...managedWorkspace ? { onManagedArtifact: (reference) => {
           artifacts.push(reference);
         } } : {},
@@ -89191,6 +90940,7 @@ async function allocateWorkspace(input2, store) {
     ...input2.managedWorkspace,
     authorizedRoots: [appConfig.codexExecCwd],
     sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
+    dependencyRegistryConfigPath: appConfig.managedWorkspaceConfigPath,
     owner: { kind: "cron_prompt", runId: input2.runId },
     ...input2.job.workspaceProject ? { project: input2.job.workspaceProject } : {},
     usedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -89226,10 +90976,10 @@ function snapshotAsJobFile2(input2) {
 
 // src/cron/control-service.ts
 function createCronControlService(options2 = {}) {
-  const resolve = options2.resolveJob ?? resolveJobReference;
+  const resolve2 = options2.resolveJob ?? resolveJobReference;
   const update = options2.updateJob ?? updateJob;
   async function resolveTarget(input2) {
-    const resolved = await resolve({ jobId: input2.jobId });
+    const resolved = await resolve2({ jobId: input2.jobId });
     if (!resolved.ok) {
       return {
         ok: false,
@@ -89644,6 +91394,15 @@ async function main() {
         configPath: appConfig.managedWorkspaceConfigPath,
         authorizedRoots: [appConfig.codexExecCwd],
         sourceRegistryPath: appConfig.workspaceProjectsConfigPath
+      }),
+      resolveDependencySelections: (project, roots, git2) => admitManagedWorkspaceDependencies({
+        project,
+        roots,
+        git: git2,
+        configPath: appConfig.managedWorkspaceConfigPath,
+        authorizedRoots: [appConfig.codexExecCwd],
+        sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
+        codexCommand: appConfig.codexExecCommand
       }),
       resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
         configPath: appConfig.managedWorkspaceConfigPath,

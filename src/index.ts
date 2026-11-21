@@ -54,6 +54,7 @@ import { CronMessageWorkload } from './cron/message-workload.js';
 import { createCronPromptExecutor } from './cron/prompt-executor.js';
 import { readManagedWorkspaceRoots } from './managed-workspace-storage.js';
 import { resolveManagedGitSelection } from './managed-git-registry.js';
+import { admitManagedWorkspaceDependencies } from './managed-workspace-dependencies.js';
 import { createCronDelivery } from './cron/delivery.js';
 import { drainForegroundArtifacts } from './foreground-artifact-delivery.js';
 import { pinWorkspacePath } from './workspace-projects.js';
@@ -269,6 +270,9 @@ async function main() {
       resolveManagedGitSelection: (project, roots) => resolveManagedGitSelection({ project, roots,
         configPath: appConfig.managedWorkspaceConfigPath, authorizedRoots: [appConfig.codexExecCwd],
         sourceRegistryPath: appConfig.workspaceProjectsConfigPath }),
+      resolveDependencySelections: (project, roots, git) => admitManagedWorkspaceDependencies({ project, roots, git,
+        configPath: appConfig.managedWorkspaceConfigPath, authorizedRoots: [appConfig.codexExecCwd],
+        sourceRegistryPath: appConfig.workspaceProjectsConfigPath, codexCommand: appConfig.codexExecCommand }),
       resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
         configPath: appConfig.managedWorkspaceConfigPath,
         authorizedRoots: [appConfig.codexExecCwd],

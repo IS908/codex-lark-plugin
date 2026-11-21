@@ -9,6 +9,7 @@ import { ManagedWorkspaceStorageError, readManagedWorkspaceRoots } from './manag
 import { assertManagedWorkspaceSandbox } from './managed-workspace-exec.js';
 import { pinWorkspacePath } from './workspace-projects.js';
 import { resolveManagedGitSelection } from './managed-git-registry.js';
+import { admitManagedWorkspaceDependencies } from './managed-workspace-dependencies.js';
 
 export function managedForegroundRunOwner(
   message: Pick<LarkMessage, 'messageId' | 'senderId' | 'messageType' | 'reaction' | 'timestampMs'>, sessionKey: string,
@@ -26,6 +27,7 @@ export async function admitManagedForegroundRun(options: {
   store?: ManagedWorkspaceStore;
   recorded?: ManagedWorkspaceRecord | null;
   configPath: string;
+  codexCommand?: string;
   authorizedRoot: string;
   sourceRegistryPath?: string;
   sandbox: CodexExecSandbox;
@@ -37,6 +39,8 @@ export async function admitManagedForegroundRun(options: {
     configPath: options.configPath, authorizedRoots, project, sourceRegistryPath: options.sourceRegistryPath,
   });
   if (!roots) {
+    await admitManagedWorkspaceDependencies({ configPath: options.configPath, project, authorizedRoots,
+      codexCommand: options.codexCommand ?? 'codex' });
     if (store) store.rememberUnmanagedForeground(owner.runId, {
       sessionKey: options.sessionKey,
       ...(project ? { project } : { fallbackCwd: path.resolve(options.authorizedRoot) }),
@@ -54,10 +58,15 @@ export async function admitManagedForegroundRun(options: {
     configPath: options.configPath, roots, project, authorizedRoots, sourceRegistryPath: options.sourceRegistryPath,
     expected: recorded?.allocation.git, preserveOptOut: Boolean(recorded && !recorded.allocation.git),
   });
+  const dependencySelections = recorded ? recorded.allocation.dependencySelections : await admitManagedWorkspaceDependencies({
+    ...options, roots, git, authorizedRoots, codexCommand: options.codexCommand ?? 'codex',
+  });
   return store.ensure({
     owner, roots, authorizedRoots, project, sourceRegistryPath: options.sourceRegistryPath,
     fallbackWorkspace,
     ...(git ? { git } : {}),
+    dependencySelections,
+    dependencyRegistryConfigPath: options.configPath,
     foregroundSessionKey: options.sessionKey,
     createdAt: recorded?.allocation.createdAt ?? now,
     usedAt: now,

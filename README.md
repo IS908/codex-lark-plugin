@@ -362,6 +362,8 @@ tools are unavailable for that run. Removing or changing a registry entry
 blocks previously admitted runs that no longer match, including after restart.
 Nothing fetches, deletes, migrates, or silently falls back to the source.
 
+For separately approved npm and pip caches, see [offline dependency reuse](docs/workspace-dependencies.md).
+
 ### 4. Start
 
 If installed via the plugin marketplace, the plugin starts automatically when Codex launches. Dependencies are installed on first run.

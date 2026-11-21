@@ -11,6 +11,7 @@ on:
       - 'scripts/workspace-dependency-*-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
+      - 'scripts/fixtures/managed-dependency-entrypoints.ts'
       - 'package-lock.json'
   push:
     branches: [main]
@@ -23,6 +24,7 @@ on:
       - 'scripts/workspace-dependency-*-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
+      - 'scripts/fixtures/managed-dependency-entrypoints.ts'
       - 'package-lock.json'
   workflow_dispatch:
 
