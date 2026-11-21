@@ -6,8 +6,9 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
-import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
-import { mkdirGitCheckoutInsidePinnedRun } from './managed-workspace-mkdir.js';
+import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities,
+  readWorkspaceMountTable } from './managed-workspace-ancestry.js';
+import { MANAGED_GIT_CHECKOUT_LEAF, mkdirGitCheckoutInsidePinnedRun } from './managed-workspace-mkdir.js';
 import { pinWorkspacePath, validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
 
 const exec = promisify(execFile);
@@ -34,7 +35,8 @@ type SnapshotRequest = RepositoryIdentity & {
 
 export class WorkspaceGitSnapshotError extends Error {
   constructor(readonly code: 'invalid_snapshot' | 'git_directory_not_self_contained' | 'git_commit_unavailable' | 'git_unavailable'
-    | 'git_cache_invalid' | 'git_cache_mismatch' | 'git_checkout_overlap' | 'git_checkout_mount_unsupported' | 'git_checkout_failed') {
+    | 'git_cache_invalid' | 'git_cache_mismatch' | 'git_checkout_overlap' | 'git_checkout_mount_unsupported' | 'git_checkout_failed'
+    | 'git_checkout_changed') {
     const messages = {
       invalid_snapshot: 'A Git snapshot requires a full commit ID and a valid repository scope.',
       git_directory_not_self_contained: 'The pinned Git directory is not a supported self-contained object store.',
@@ -45,6 +47,7 @@ export class WorkspaceGitSnapshotError extends Error {
       git_checkout_overlap: 'The run scratch, source, and Git cache must be separate directories.',
       git_checkout_mount_unsupported: 'The Git checkout does not support nested mounts or mounted subtrees in the selected paths.',
       git_checkout_failed: 'The isolated Git checkout could not be prepared within the supported bounds.',
+      git_checkout_changed: 'The isolated Git checkout metadata no longer matches the selected object store.',
     };
     super(messages[code]);
     this.name = 'WorkspaceGitSnapshotError';
@@ -114,6 +117,24 @@ type VerifiedGitCache = SnapshotIdentity & {
   storeFingerprint: string;
 };
 
+// Reject stale selections before a caller reserves a run or takes ownership of the cache key.
+export async function assertWorkspaceGitCacheIdentity(input: {
+  cache: WorkspaceProjectBinding;
+  commit: string;
+  objectFormat: ObjectFormat;
+  storeFingerprint: string;
+}, authorizedRoots: SnapshotRequest['authorizedRoots']): Promise<void> {
+  const binding = await validateWorkspaceProject(authorizedRoots, input.cache);
+  const measured = await fingerprintCache(binding, input.commit, input.objectFormat).catch(() => {
+    throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  });
+  if (measured.storeFingerprint !== input.storeFingerprint) throw new WorkspaceGitSnapshotError('git_cache_mismatch');
+}
+
+export async function assertWorkspaceGitCheckoutMounts(bindings: WorkspaceProjectBinding[]): Promise<void> {
+  await linuxCheckoutMountAliases(bindings.map(({ directory }) => directory));
+}
+
 async function verifyCache(input: SnapshotRequest, trustedExecutable?: string): Promise<VerifiedGitCache> {
   if (!repositoryIdentity.safeParse({ repositoryId: input.repositoryId, scope: input.scope, commit: input.commit }).success) {
     throw new WorkspaceGitSnapshotError('invalid_snapshot');
@@ -139,14 +160,15 @@ async function verifyCache(input: SnapshotRequest, trustedExecutable?: string): 
   }
 }
 
-// Only initializes a new run-owned directory. The caller must exclude the cache from all run writable roots.
-// Git alternates share object access but do not make the cache read-only.
-export async function createWorkspaceGitCheckout({ cache, expected, source, scratch }: {
+interface CheckoutSelection {
   cache: SnapshotRequest;
   expected: { key: string; storeFingerprint: string };
   source: WorkspaceProjectBinding;
   scratch: WorkspaceProjectBinding;
-}) {
+  protectedRoots?: WorkspaceProjectBinding[];
+}
+
+async function inspectCheckoutSelection({ cache, expected, source, scratch, protectedRoots = [] }: CheckoutSelection) {
   const { authorizedRoots, gitDirectory } = cache;
   const bindings = await Promise.all([source, scratch, gitDirectory].map((binding) => validateWorkspaceProject(authorizedRoots, binding)));
   await Promise.all([assertProtectedWorkspacePath(source), assertProtectedWorkspacePath(scratch, true), assertProtectedWorkspacePath(gitDirectory)]);
@@ -155,14 +177,23 @@ export async function createWorkspaceGitCheckout({ cache, expected, source, scra
     ancestors[other].has(`${left.device}:${left.inode}`) || workspacePathContains(left.directory, right.directory))))) {
     throw new WorkspaceGitSnapshotError('git_checkout_overlap');
   }
-  const mountAliases = await linuxCheckoutMountAliases(bindings.map(({ directory }) => directory));
+  const exclusions = [...bindings, ...await Promise.all(protectedRoots.map((binding) => validateWorkspaceProject(authorizedRoots, binding)))];
+  const mountAliases = await linuxCheckoutMountAliases(exclusions.map(({ directory }) => directory));
   const objectsPath = path.join(gitDirectory.directory, 'objects');
   if (/[\u0000-\u001f\u007f]/.test(objectsPath)) throw new WorkspaceGitSnapshotError('git_checkout_failed');
-  const executable = await trustedGitExecutable(gitDirectory.directory, bindings, mountAliases);
+  const executable = await trustedGitExecutable(gitDirectory.directory, exclusions, mountAliases);
   const snapshot = await verifyCache(cache, executable);
   if (snapshot.key !== expected.key || snapshot.storeFingerprint !== expected.storeFingerprint) {
     throw new WorkspaceGitSnapshotError('git_cache_mismatch');
   }
+  return { bindings, objectsPath, executable, snapshot };
+}
+
+// Only initializes a new run-owned directory. The caller must exclude the cache from all run writable roots.
+// Git alternates share object access but do not make the cache read-only.
+export async function createWorkspaceGitCheckout(selection: CheckoutSelection) {
+  const { cache: { authorizedRoots, gitDirectory }, scratch } = selection;
+  const { bindings, objectsPath, executable, snapshot } = await inspectCheckoutSelection(selection);
 
   const checkoutGit = ['--git-dir=.git', '--work-tree=.', '-c', 'core.hooksPath=/dev/null', '-c', 'core.attributesFile=/dev/null',
     '-c', 'core.fsmonitor=false', '-c', 'core.protectHFS=true', '-c', 'core.protectNTFS=true', '-c', 'core.autocrlf=false',
@@ -203,6 +234,46 @@ export async function createWorkspaceGitCheckout({ cache, expected, source, scra
     // Uncertain directories are left in place for the run owner to reconcile; never overwrite or clean them here.
     throw new WorkspaceGitSnapshotError('git_checkout_failed');
   }
+}
+
+export async function validateWorkspaceGitCheckout(selection: CheckoutSelection, allocation: {
+  checkout: WorkspaceProjectBinding;
+  gitDirectory: WorkspaceProjectBinding;
+}): Promise<void> {
+  const { checkout, gitDirectory } = allocation;
+  const roots = selection.cache.authorizedRoots;
+  if (checkout.directory !== path.join(selection.scratch.directory, MANAGED_GIT_CHECKOUT_LEAF)
+    || gitDirectory.directory !== path.join(checkout.directory, '.git')) throw new WorkspaceGitSnapshotError('git_checkout_changed');
+  await Promise.all([checkout, gitDirectory].map((binding) => validateWorkspaceProject(roots, binding)));
+  const { objectsPath, snapshot } = await inspectCheckoutSelection(selection);
+  try {
+    // Local HEAD, index and config are run-owned. Never invoke host Git in a resumed checkout.
+    const info = await pinWorkspacePath(gitDirectory.directory, 'objects/info');
+    if (info.directory !== path.join(gitDirectory.directory, 'objects', 'info')) throw new Error('Displaced object metadata.');
+    await assertProtectedWorkspacePath(info, true);
+    for (const indirect of ['commondir', 'config.worktree', 'objects/info/http-alternates']) {
+      const exists = await fs.lstat(path.join(gitDirectory.directory, indirect)).then(() => true, (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return false;
+      });
+      if (exists) throw new Error('Unexpected Git metadata indirection.');
+    }
+    const file = path.join(info.directory, 'alternates');
+    const stat = await fs.lstat(file, { bigint: true });
+    const payload = Buffer.from(`${objectsPath}\n`);
+    if (!stat.isFile() || stat.nlink !== 1n || stat.size !== BigInt(payload.length)
+      || stat.uid !== BigInt(process.geteuid!()) || (stat.mode & 0o022n) !== 0n) throw new Error('Invalid object reference.');
+    await assertDenyOnlyWorkspaceAcls([file]);
+    if (!(await readPinnedCachePrefix(file, stat, payload.length)).equals(payload)) throw new Error('Changed object reference.');
+    const { gitDirectory: cache } = selection.cache;
+    if ((await fingerprintCache(cache, snapshot.commit, snapshot.objectFormat)).storeFingerprint !== snapshot.storeFingerprint) {
+      throw new WorkspaceGitSnapshotError('git_cache_mismatch');
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceGitSnapshotError && error.code === 'git_cache_mismatch') throw error;
+    throw new WorkspaceGitSnapshotError('git_checkout_changed');
+  }
+  await Promise.all([checkout, gitDirectory].map((binding) => validateWorkspaceProject(roots, binding)));
 }
 
 interface CheckoutTree {
@@ -270,17 +341,10 @@ async function reserveCheckoutNames(root: string, names: CheckoutTree['names']):
 }
 
 async function linuxCheckoutMountAliases(workspaces: string[]): Promise<string[]> {
-  if (process.platform !== 'linux') return [];
   const aliases: string[] = [];
   try {
-    const value = await fs.readFile('/proc/self/mountinfo', 'utf8');
-    if (!value.endsWith('\n') || value.length > 1_048_576) throw new Error('Unsupported mount table.');
-    const mountPath = (field: string) => field.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
-    for (const entry of value.trimEnd().split('\n')) {
-      const [, , , rawRoot, rawMount] = entry.split(' ');
-      if (!rawRoot?.startsWith('/') || !rawMount?.startsWith('/')) throw new Error('Unsupported mount table.');
-      const mount = mountPath(rawMount);
-      const isSubtree = rawRoot !== '/';
+    for (const { directory: mount, root } of readWorkspaceMountTable()) {
+      const isSubtree = root !== '/';
       if (workspaces.some((workspace) => (isSubtree && workspacePathContains(mount, workspace))
         || (mount !== workspace && workspacePathContains(workspace, mount)))) throw new Error('Unsupported workspace mount.');
       if (isSubtree) aliases.push(mount);

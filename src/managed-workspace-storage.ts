@@ -28,6 +28,7 @@ interface WorkspaceAuthorization {
   fallbackWorkspace?: WorkspaceProjectBinding;
   sourceRegistryPath?: string;
   sourceRegistryRoot?: string;
+  gitCache?: WorkspaceProjectBinding;
 }
 
 export async function readManagedWorkspaceRoots({
@@ -99,14 +100,13 @@ export async function validateManagedRunDirectory(
 
 export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots, authorization: WorkspaceAuthorization) {
   if (authorization.fallbackWorkspace && authorization.project) throw new ManagedWorkspaceStorageError('invalid_binding');
+  const storage = [roots.scratch, roots.artifacts, ...(authorization.gitCache ? [authorization.gitCache] : [])];
+  const bindings = [...storage, ...(authorization.project ? [authorization.project] : [])];
   await Promise.all([
-    validateWorkspaceProject(authorization.authorizedRoots, roots.scratch),
-    validateWorkspaceProject(authorization.authorizedRoots, roots.artifacts),
-    ...(authorization.project ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.project)] : []),
+    ...bindings.map((binding) => validateWorkspaceProject(authorization.authorizedRoots, binding)),
     ...(authorization.fallbackWorkspace ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.fallbackWorkspace)] : []),
   ]);
-  assertDisjoint(roots, authorization.project);
-  const bindings = [roots.scratch, roots.artifacts, ...(authorization.project ? [authorization.project] : [])];
+  assertDisjoint(roots, authorization.project, authorization.gitCache);
   const ancestry = await Promise.all(bindings.map(({ directory }) => readWorkspaceAncestorIdentities(directory)));
   for (const [index, binding] of bindings.entries()) {
     if (ancestry.some((ancestors, other) => index !== other && ancestors.has(directoryIdentity(binding)))) {
@@ -118,24 +118,27 @@ export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots
       authorization.sourceRegistryRoot ?? authorization.authorizedRoots[0]);
     for (const source of knownSources) {
       const sourceAncestors = await readWorkspaceAncestorIdentities(source.directory);
-      if ([roots.scratch, roots.artifacts].some((root, index) => workspacePathContains(root.directory, source.directory)
+      if (storage.some((root, index) => workspacePathContains(root.directory, source.directory)
         || workspacePathContains(source.directory, root.directory) || ancestry[index].has(directoryIdentity(source))
         || sourceAncestors.has(directoryIdentity(root)))) throw new ManagedWorkspaceStorageError('overlapping_source');
     }
   }
   await Promise.all([
     assertProtectedWorkspacePath(roots.scratch, true), assertProtectedWorkspacePath(roots.artifacts, true),
+    ...(authorization.gitCache ? [assertProtectedWorkspacePath(authorization.gitCache)] : []),
     ...(authorization.project ? [assertProtectedWorkspacePath(authorization.project)] : []),
     ...(authorization.fallbackWorkspace ? [assertProtectedWorkspacePath(authorization.fallbackWorkspace)] : []),
   ]);
   return {
     all: new Set(ancestry.flatMap((ancestors) => [...ancestors])),
     storage: new Set(ancestry.slice(0, 2).flatMap((ancestors) => [...ancestors])),
+    cache: authorization.gitCache ? ancestry[2] : undefined,
+    project: authorization.project ? ancestry[storage.length] : undefined,
   };
 }
 
-function assertDisjoint(roots: ManagedWorkspaceRoots, project?: WorkspaceProjectBinding): void {
-  const bindings = [roots.scratch, roots.artifacts, ...(project ? [project] : [])];
+function assertDisjoint(roots: ManagedWorkspaceRoots, project?: WorkspaceProjectBinding, cache?: WorkspaceProjectBinding): void {
+  const bindings = [roots.scratch, roots.artifacts, ...(project ? [project] : []), ...(cache ? [cache] : [])];
   for (const [index, binding] of bindings.entries()) {
     if (bindings.slice(index + 1).some((other) => directoryIdentity(binding) === directoryIdentity(other)
       || workspacePathContains(binding.directory, other.directory) || workspacePathContains(other.directory, binding.directory))) {

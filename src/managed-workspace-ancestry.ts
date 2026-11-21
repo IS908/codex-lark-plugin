@@ -1,12 +1,56 @@
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
-import { WorkspaceProjectError } from './workspace-projects.js';
+import { WorkspaceProjectError, workspacePathContains } from './workspace-projects.js';
 
 const exec = promisify(execFile);
+
+export interface WorkspaceMount {
+  device: string;
+  root: string;
+  directory: string;
+}
+
+export function readWorkspaceMountTable(): WorkspaceMount[] {
+  if (process.platform !== 'linux') return [];
+  return parseWorkspaceMountTable(readFileSync('/proc/self/mountinfo', 'utf8'));
+}
+
+export function parseWorkspaceMountTable(value: string): WorkspaceMount[] {
+  if (!value.endsWith('\n') || value.length > 1_048_576) throw new Error('Unsupported mount table.');
+  const decode = (field: string) => field.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
+  return value.trimEnd().split('\n').map((entry) => {
+    const [, , device, root, mount] = entry.split(' ');
+    if (!/^\d+:\d+$/.test(device ?? '') || !root?.startsWith('/') || !mount?.startsWith('/')) throw new Error('Unsupported mount table.');
+    return { device, root: decode(root), directory: decode(mount) };
+  });
+}
+
+// Include mounts of strict subtrees: their visible ancestors also grant access through the mountpoint.
+export function workspaceBackingAliases(directory: string, mounts: WorkspaceMount[]): string[] {
+  const aliases = new Set([directory]);
+  const paths = new Set([directory, ...mounts.filter((mount) => workspacePathContains(directory, mount.directory)).map((mount) => mount.directory)]);
+  for (const visible of paths) {
+    const covering = mounts.filter((mount) => workspacePathContains(mount.directory, visible));
+    const longest = Math.max(0, ...covering.map((mount) => mount.directory.length));
+    for (const origin of covering.filter((mount) => mount.directory.length === longest)) {
+      const backing = path.join(origin.root, path.relative(origin.directory, visible));
+      for (const target of mounts) {
+        if (target.device !== origin.device) continue;
+        if (workspacePathContains(target.root, backing)) {
+          aliases.add(path.join(target.directory, path.relative(target.root, backing)));
+        } else if (workspacePathContains(backing, target.root)) {
+          aliases.add(target.directory);
+        }
+      }
+    }
+  }
+  return [...aliases];
+}
 
 export async function readWorkspaceAncestorIdentities(directory: string): Promise<Set<string>> {
   const identities = new Set<string>();

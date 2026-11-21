@@ -3260,8 +3260,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path37) {
-      let input2 = path37;
+    function removeDotSegments(path38) {
+      let input2 = path38;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3335,11 +3335,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path37) {
-      if (path37 === "" || path37[0] === "/") {
-        return removeDotSegments(path37);
+    function removeDotSegmentsRelative(path38) {
+      if (path38 === "" || path38[0] === "/") {
+        return removeDotSegments(path38);
       }
-      const segments = path37.split("/");
+      const segments = path38.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3702,8 +3702,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path37 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path37 && path37 !== "/" ? path37 : void 0;
+        const path38 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path38 && path38 !== "/" ? path38 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7240,12 +7240,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs25, exportName) {
+    function addFormats(ajv, list, fs26, exportName) {
       var _a3;
       var _b;
       (_a3 = (_b = ajv.opts.code).formats) !== null && _a3 !== void 0 ? _a3 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs25[f]);
+        ajv.addFormat(f, fs26[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -16388,8 +16388,8 @@ var require_CronFileParser = __commonJS({
        * @throws If file cannot be read
        */
       static parseFileSync(filePath) {
-        const { readFileSync } = __require("fs");
-        const data = readFileSync(filePath, "utf8");
+        const { readFileSync: readFileSync2 } = __require("fs");
+        const data = readFileSync2(filePath, "utf8");
         return _CronFileParser.#parseContent(data);
       }
       /**
@@ -16861,8 +16861,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path37, errorMaps, issueData } = params;
-  const fullPath = [...path37, ...issueData.path || []];
+  const { data, path: path38, errorMaps, issueData } = params;
+  const fullPath = [...path38, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -16977,11 +16977,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path37, key) {
+  constructor(parent, value, path38, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path37;
+    this._path = path38;
     this._key = key;
   }
   get path() {
@@ -20936,10 +20936,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path37) {
-  if (!path37)
+function getElementAtPath(obj, path38) {
+  if (!path38)
     return obj;
-  return path37.reduce((acc, key) => acc?.[key], obj);
+  return path38.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -21279,11 +21279,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path37, issues) {
+function prefixIssues(path38, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path37);
+    iss.path.unshift(path38);
     return iss;
   });
 }
@@ -21745,16 +21745,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path37 = []) => {
+  const processError = (error63, path38 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path37, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path38, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path38, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path38, ...issue2.path]);
       } else {
-        const fullpath = [...path37, ...issue2.path];
+        const fullpath = [...path38, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -21793,17 +21793,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path37 = []) => {
+  const processError = (error63, path38 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path37, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path38, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path38, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path38, ...issue2.path]);
       } else {
-        const fullpath = [...path37, ...issue2.path];
+        const fullpath = [...path38, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -21842,8 +21842,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path37 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path37) {
+  const path38 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path38) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -37394,11 +37394,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path37) {
-  if (path37.length === 0) {
+function getDotPath(path38) {
+  if (path38.length === 0) {
     return "object root";
   }
-  return path37.reduce((acc, seg, index) => {
+  return path38.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -39625,13 +39625,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path37 = ref.slice(1).split("/").filter(Boolean);
-  if (path37.length === 0) {
+  const path38 = ref.slice(1).split("/").filter(Boolean);
+  if (path38.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path37[0] === defsKey) {
-    const key = path37[1] === void 0 ? void 0 : decodeJSONPointerSegment(path37[1]);
+  if (path38[0] === defsKey) {
+    const key = path38[1] === void 0 ? void 0 : decodeJSONPointerSegment(path38[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -52277,6 +52277,7 @@ function workspacePathContains(root, candidate) {
 
 // src/managed-workspace-ancestry.ts
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import fs5 from "node:fs/promises";
 import path7 from "node:path";
 import { promisify } from "node:util";
@@ -52289,6 +52290,8 @@ var diagnostic = {
   overlapping_roots: "Managed scratch, artifacts, and the selected source project must use disjoint directories.",
   overlapping_runs: "The managed workspace would overlap an existing or reserved run directory.",
   overlapping_source: "The managed storage location overlaps a registered source project.",
+  overlapping_git_cache: "The managed storage location overlaps a recorded Git object cache.",
+  git_cache_conflict: "The Git cache key or physical directory already belongs to a different cache identity.",
   allocation_conflict: "The managed run directory already exists without a matching stored allocation.",
   allocation_failed: "The managed run directories could not be allocated.",
   allocation_incomplete: "The stored managed workspace allocation is incomplete.",
@@ -52307,6 +52310,39 @@ var ManagedWorkspaceStorageError = class extends Error {
 
 // src/managed-workspace-ancestry.ts
 var exec = promisify(execFile);
+function readWorkspaceMountTable() {
+  if (process.platform !== "linux") return [];
+  return parseWorkspaceMountTable(readFileSync("/proc/self/mountinfo", "utf8"));
+}
+function parseWorkspaceMountTable(value) {
+  if (!value.endsWith("\n") || value.length > 1048576) throw new Error("Unsupported mount table.");
+  const decode3 = (field) => field.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
+  return value.trimEnd().split("\n").map((entry) => {
+    const [, , device, root, mount] = entry.split(" ");
+    if (!/^\d+:\d+$/.test(device ?? "") || !root?.startsWith("/") || !mount?.startsWith("/")) throw new Error("Unsupported mount table.");
+    return { device, root: decode3(root), directory: decode3(mount) };
+  });
+}
+function workspaceBackingAliases(directory, mounts) {
+  const aliases = /* @__PURE__ */ new Set([directory]);
+  const paths = /* @__PURE__ */ new Set([directory, ...mounts.filter((mount) => workspacePathContains(directory, mount.directory)).map((mount) => mount.directory)]);
+  for (const visible of paths) {
+    const covering = mounts.filter((mount) => workspacePathContains(mount.directory, visible));
+    const longest = Math.max(0, ...covering.map((mount) => mount.directory.length));
+    for (const origin of covering.filter((mount) => mount.directory.length === longest)) {
+      const backing = path7.join(origin.root, path7.relative(origin.directory, visible));
+      for (const target of mounts) {
+        if (target.device !== origin.device) continue;
+        if (workspacePathContains(target.root, backing)) {
+          aliases.add(path7.join(target.directory, path7.relative(target.root, backing)));
+        } else if (workspacePathContains(backing, target.root)) {
+          aliases.add(target.directory);
+        }
+      }
+    }
+  }
+  return [...aliases];
+}
 async function readWorkspaceAncestorIdentities(directory) {
   const identities = /* @__PURE__ */ new Set();
   for (let current = directory; ; current = path7.dirname(current)) {
@@ -56665,18 +56701,33 @@ var unmanagedForegroundAdmissionSchema = external_exports.union([
   external_exports.strictObject({ sessionKey: foregroundSessionKey, project: workspaceProjectBindingSchema }),
   external_exports.strictObject({ sessionKey: foregroundSessionKey, fallbackCwd: workspaceProjectBindingSchema.shape.directory })
 ]);
+var gitDigest = external_exports.string().regex(/^[a-f0-9]{64}$/);
+var managedGitSelectionSchema = external_exports.strictObject({
+  cache: workspaceProjectBindingSchema,
+  repositoryId: gitDigest,
+  scope: external_exports.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/),
+  objectFormat: external_exports.enum(["sha1", "sha256"]),
+  commit: external_exports.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+  key: gitDigest,
+  storeFingerprint: gitDigest
+}).refine(({ commit, objectFormat }) => commit.length === (objectFormat === "sha1" ? 40 : 64));
+function sameManagedGitSelection(a, b) {
+  return a === b || !!a && !!b && sameWorkspaceProject(a.cache, b.cache) && a.repositoryId === b.repositoryId && a.scope === b.scope && a.objectFormat === b.objectFormat && a.commit === b.commit && a.key === b.key && a.storeFingerprint === b.storeFingerprint;
+}
 var managedRunIntentSchema = external_exports.strictObject({
   version: external_exports.literal(1),
   owner: managedRunOwnerSchema,
   roots: managedWorkspaceRootsSchema,
   project: workspaceProjectBindingSchema.optional(),
   fallbackWorkspace: workspaceProjectBindingSchema.optional(),
+  git: managedGitSelectionSchema.optional(),
   foregroundSessionKey: foregroundSessionKey.optional(),
   createdAt: external_exports.iso.datetime()
 });
 var managedRunAllocationSchema = managedRunIntentSchema.extend({
   scratch: workspaceProjectBindingSchema,
-  artifacts: workspaceProjectBindingSchema
+  artifacts: workspaceProjectBindingSchema,
+  gitCheckout: external_exports.strictObject({ checkout: workspaceProjectBindingSchema, gitDirectory: workspaceProjectBindingSchema }).optional()
 });
 
 // src/managed-workspace-mkdir.ts
@@ -56685,6 +56736,7 @@ import path16 from "node:path";
 import { promisify as promisify2 } from "node:util";
 var exec2 = promisify2(execFile2);
 var managedLeaf = /^(?:foreground|cron_prompt|async_task)-[a-f0-9]{64}$/;
+var MANAGED_GIT_CHECKOUT_LEAF = "git-checkout";
 var mkdirProgram = String.raw`
   const fs = require('node:fs');
   const [leaf, parentPath, device, inode] = process.argv.slice(1);
@@ -56716,6 +56768,9 @@ var mkdirProgram = String.raw`
 async function mkdirInsidePinnedRoot(root, leaf) {
   if (!managedLeaf.test(leaf)) throw new ManagedWorkspaceStorageError("invalid_binding");
   return mkdirInsideRoot(root, leaf);
+}
+function mkdirGitCheckoutInsidePinnedRun(runRoot) {
+  return mkdirInsideRoot(runRoot, MANAGED_GIT_CHECKOUT_LEAF);
 }
 async function mkdirInsideRoot(root, leaf) {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError("unprotected_root");
@@ -56814,14 +56869,13 @@ async function validateManagedRunDirectory(value, purpose, authorizedRoots) {
 }
 async function validateManagedWorkspaceRoots(roots, authorization) {
   if (authorization.fallbackWorkspace && authorization.project) throw new ManagedWorkspaceStorageError("invalid_binding");
+  const storage = [roots.scratch, roots.artifacts, ...authorization.gitCache ? [authorization.gitCache] : []];
+  const bindings = [...storage, ...authorization.project ? [authorization.project] : []];
   await Promise.all([
-    validateWorkspaceProject(authorization.authorizedRoots, roots.scratch),
-    validateWorkspaceProject(authorization.authorizedRoots, roots.artifacts),
-    ...authorization.project ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.project)] : [],
+    ...bindings.map((binding) => validateWorkspaceProject(authorization.authorizedRoots, binding)),
     ...authorization.fallbackWorkspace ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.fallbackWorkspace)] : []
   ]);
-  assertDisjoint(roots, authorization.project);
-  const bindings = [roots.scratch, roots.artifacts, ...authorization.project ? [authorization.project] : []];
+  assertDisjoint(roots, authorization.project, authorization.gitCache);
   const ancestry = await Promise.all(bindings.map(({ directory }) => readWorkspaceAncestorIdentities(directory)));
   for (const [index, binding] of bindings.entries()) {
     if (ancestry.some((ancestors, other) => index !== other && ancestors.has(directoryIdentity(binding)))) {
@@ -56835,22 +56889,25 @@ async function validateManagedWorkspaceRoots(roots, authorization) {
     );
     for (const source of knownSources) {
       const sourceAncestors = await readWorkspaceAncestorIdentities(source.directory);
-      if ([roots.scratch, roots.artifacts].some((root, index) => workspacePathContains(root.directory, source.directory) || workspacePathContains(source.directory, root.directory) || ancestry[index].has(directoryIdentity(source)) || sourceAncestors.has(directoryIdentity(root)))) throw new ManagedWorkspaceStorageError("overlapping_source");
+      if (storage.some((root, index) => workspacePathContains(root.directory, source.directory) || workspacePathContains(source.directory, root.directory) || ancestry[index].has(directoryIdentity(source)) || sourceAncestors.has(directoryIdentity(root)))) throw new ManagedWorkspaceStorageError("overlapping_source");
     }
   }
   await Promise.all([
     assertProtectedWorkspacePath(roots.scratch, true),
     assertProtectedWorkspacePath(roots.artifacts, true),
+    ...authorization.gitCache ? [assertProtectedWorkspacePath(authorization.gitCache)] : [],
     ...authorization.project ? [assertProtectedWorkspacePath(authorization.project)] : [],
     ...authorization.fallbackWorkspace ? [assertProtectedWorkspacePath(authorization.fallbackWorkspace)] : []
   ]);
   return {
     all: new Set(ancestry.flatMap((ancestors) => [...ancestors])),
-    storage: new Set(ancestry.slice(0, 2).flatMap((ancestors) => [...ancestors]))
+    storage: new Set(ancestry.slice(0, 2).flatMap((ancestors) => [...ancestors])),
+    cache: authorization.gitCache ? ancestry[2] : void 0,
+    project: authorization.project ? ancestry[storage.length] : void 0
   };
 }
-function assertDisjoint(roots, project) {
-  const bindings = [roots.scratch, roots.artifacts, ...project ? [project] : []];
+function assertDisjoint(roots, project, cache) {
+  const bindings = [roots.scratch, roots.artifacts, ...project ? [project] : [], ...cache ? [cache] : []];
   for (const [index, binding] of bindings.entries()) {
     if (bindings.slice(index + 1).some((other) => directoryIdentity(binding) === directoryIdentity(other) || workspacePathContains(binding.directory, other.directory) || workspacePathContains(other.directory, binding.directory))) {
       throw new ManagedWorkspaceStorageError("overlapping_roots");
@@ -69043,9 +69100,9 @@ async function startChannelServices(options) {
 }
 
 // src/continuation/runtime.ts
-import fs24 from "node:fs/promises";
+import fs25 from "node:fs/promises";
 import os3 from "node:os";
-import path35 from "node:path";
+import path36 from "node:path";
 
 // src/continuation/artifact-store.ts
 import { createHash as createHash12, randomBytes as randomBytes2 } from "node:crypto";
@@ -71856,7 +71913,7 @@ function stringArray(value) {
 }
 
 // src/continuation/sqlite-repository.ts
-import path34 from "node:path";
+import path35 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
 
 // src/continuation/progress-policy.ts
@@ -71941,7 +71998,7 @@ function materialProjection(checkpoint2) {
     completedStepIds: sorted(checkpoint2.completedStepIds),
     completedCriterionIds: sorted(checkpoint2.completedCriterionIds),
     completedDeliverableIds: sorted(checkpoint2.completedDeliverableIds),
-    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path37, sha256: sha2562 }) => ({ id, deliverableId, path: path37, sha256: sha2562 })).sort(compareId),
+    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path38, sha256: sha2562 }) => ({ id, deliverableId, path: path38, sha256: sha2562 })).sort(compareId),
     evidence: [...checkpoint2.evidence].map((entry) => ({
       id: entry.id,
       requirementId: entry.requirementId,
@@ -72177,19 +72234,494 @@ function requireEntitiesUnchanged(name, previous, candidate, add) {
 }
 
 // src/durable-run/sqlite-repository.ts
-import { createHash as createHash18, randomBytes as randomBytes4 } from "node:crypto";
-import fs22 from "node:fs/promises";
-import path31 from "node:path";
+import { createHash as createHash19, randomBytes as randomBytes4 } from "node:crypto";
+import fs23 from "node:fs/promises";
+import path32 from "node:path";
 
 // src/durable-run/sqlite-managed-workspace.ts
+import path31 from "node:path";
+
+// src/workspace-git-snapshot.ts
+import { execFile as execFile4 } from "node:child_process";
+import { createHash as createHash17 } from "node:crypto";
+import fs22 from "node:fs/promises";
 import path30 from "node:path";
+import { promisify as promisify4 } from "node:util";
+var exec4 = promisify4(execFile4);
+var bareGit = ["--bare", "--git-dir=.", "-c", "core.warnAmbiguousRefs=false", "-c", "core.multiPackIndex=false"];
+var cacheGit = [...bareGit, "-c", "core.deltaBaseCacheLimit=16m", "-c", "core.packedGitLimit=64m"];
+var maxCachePackBytes = 256n * 1024n * 1024n;
+var maxCacheIndexBytes = 32n * 1024n * 1024n;
+var maxCacheObjects = 25e4;
+var maxCheckoutEntries = 25e3;
+var maxCheckoutBytes = 256n * 1024n * 1024n;
+var repositoryIdentity = external_exports.strictObject({
+  // Digest of a trusted repository identity, not a credential-bearing remote URL.
+  repositoryId: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  scope: external_exports.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/),
+  commit: external_exports.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+});
+var WorkspaceGitSnapshotError = class extends Error {
+  constructor(code) {
+    const messages = {
+      invalid_snapshot: "A Git snapshot requires a full commit ID and a valid repository scope.",
+      git_directory_not_self_contained: "The pinned Git directory is not a supported self-contained object store.",
+      git_commit_unavailable: "The exact commit is unavailable in the pinned local Git directory.",
+      git_unavailable: "A trusted local Git executable is unavailable.",
+      git_cache_invalid: "The pinned Git cache is incomplete, contains unexpected objects or metadata, or changed during validation.",
+      git_cache_mismatch: "The local Git cache no longer matches the selected cache identity.",
+      git_checkout_overlap: "The run scratch, source, and Git cache must be separate directories.",
+      git_checkout_mount_unsupported: "The Git checkout does not support nested mounts or mounted subtrees in the selected paths.",
+      git_checkout_failed: "The isolated Git checkout could not be prepared within the supported bounds.",
+      git_checkout_changed: "The isolated Git checkout metadata no longer matches the selected object store."
+    };
+    super(messages[code]);
+    this.code = code;
+    this.name = "WorkspaceGitSnapshotError";
+  }
+  code;
+};
+function gitSnapshotKey(identity) {
+  const { repositoryId, scope, commit, objectFormat } = identity;
+  if (!repositoryIdentity.safeParse({ repositoryId, scope, commit }).success || objectFormat !== "sha1" && objectFormat !== "sha256" || commit.length !== (objectFormat === "sha1" ? 40 : 64)) {
+    throw new WorkspaceGitSnapshotError("invalid_snapshot");
+  }
+  return createHash17("sha256").update(JSON.stringify(["git-snapshot-v1", repositoryId, scope, objectFormat, commit])).digest("hex");
+}
+async function assertWorkspaceGitCacheIdentity(input2, authorizedRoots) {
+  const binding = await validateWorkspaceProject(authorizedRoots, input2.cache);
+  const measured = await fingerprintCache(binding, input2.commit, input2.objectFormat).catch(() => {
+    throw new WorkspaceGitSnapshotError("git_cache_invalid");
+  });
+  if (measured.storeFingerprint !== input2.storeFingerprint) throw new WorkspaceGitSnapshotError("git_cache_mismatch");
+}
+async function assertWorkspaceGitCheckoutMounts(bindings) {
+  await linuxCheckoutMountAliases(bindings.map(({ directory }) => directory));
+}
+async function verifyCache(input2, trustedExecutable) {
+  if (!repositoryIdentity.safeParse({ repositoryId: input2.repositoryId, scope: input2.scope, commit: input2.commit }).success) {
+    throw new WorkspaceGitSnapshotError("invalid_snapshot");
+  }
+  const binding = await validateWorkspaceProject(input2.authorizedRoots, input2.gitDirectory);
+  const executable = trustedExecutable ?? await trustedGitExecutable(binding.directory);
+  const objectFormat = input2.commit.length === 40 ? "sha1" : "sha256";
+  try {
+    const { storeFingerprint, packPath } = await fingerprintCache(binding, input2.commit, objectFormat);
+    await verifyCacheGit(executable, binding.directory, ["index-pack", "--verify", "--threads=1", packPath]);
+    const type = await verifyCacheGit(executable, binding.directory, ["cat-file", "-t", input2.commit]);
+    if (type.toString("ascii") !== "commit\n") throw new WorkspaceGitSnapshotError("git_cache_invalid");
+    const unreachable = await verifyCacheGit(executable, binding.directory, [
+      "fsck",
+      "--full",
+      "--strict",
+      "--no-reflogs",
+      "--no-progress",
+      "--unreachable",
+      input2.commit
+    ]);
+    if (unreachable.length || storeFingerprint !== (await fingerprintCache(binding, input2.commit, objectFormat)).storeFingerprint) {
+      throw new WorkspaceGitSnapshotError("git_cache_invalid");
+    }
+    await validateWorkspaceProject(input2.authorizedRoots, binding);
+    const identity = { repositoryId: input2.repositoryId, scope: input2.scope, commit: input2.commit, objectFormat };
+    return { ...identity, key: gitSnapshotKey(identity), storeFingerprint };
+  } catch {
+    throw new WorkspaceGitSnapshotError("git_cache_invalid");
+  }
+}
+async function inspectCheckoutSelection({ cache, expected, source, scratch, protectedRoots = [] }) {
+  const { authorizedRoots, gitDirectory } = cache;
+  const bindings = await Promise.all([source, scratch, gitDirectory].map((binding) => validateWorkspaceProject(authorizedRoots, binding)));
+  await Promise.all([assertProtectedWorkspacePath(source), assertProtectedWorkspacePath(scratch, true), assertProtectedWorkspacePath(gitDirectory)]);
+  const ancestors = await Promise.all(bindings.map(({ directory }) => readWorkspaceAncestorIdentities(directory)));
+  if (bindings.some((left, index) => bindings.some((right, other) => index !== other && (ancestors[other].has(`${left.device}:${left.inode}`) || workspacePathContains(left.directory, right.directory))))) {
+    throw new WorkspaceGitSnapshotError("git_checkout_overlap");
+  }
+  const exclusions = [...bindings, ...await Promise.all(protectedRoots.map((binding) => validateWorkspaceProject(authorizedRoots, binding)))];
+  const mountAliases = await linuxCheckoutMountAliases(exclusions.map(({ directory }) => directory));
+  const objectsPath = path30.join(gitDirectory.directory, "objects");
+  if (/[\u0000-\u001f\u007f]/.test(objectsPath)) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+  const executable = await trustedGitExecutable(gitDirectory.directory, exclusions, mountAliases);
+  const snapshot = await verifyCache(cache, executable);
+  if (snapshot.key !== expected.key || snapshot.storeFingerprint !== expected.storeFingerprint) {
+    throw new WorkspaceGitSnapshotError("git_cache_mismatch");
+  }
+  return { bindings, objectsPath, executable, snapshot };
+}
+async function createWorkspaceGitCheckout(selection) {
+  const { cache: { authorizedRoots, gitDirectory }, scratch } = selection;
+  const { bindings, objectsPath, executable, snapshot } = await inspectCheckoutSelection(selection);
+  const checkoutGit = [
+    "--git-dir=.git",
+    "--work-tree=.",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.attributesFile=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.protectHFS=true",
+    "-c",
+    "core.protectNTFS=true",
+    "-c",
+    "core.autocrlf=false",
+    "-c",
+    "core.deltaBaseCacheLimit=16m",
+    "-c",
+    "core.packedGitLimit=64m"
+  ];
+  let tree;
+  try {
+    tree = readCheckoutTree(await boundedGit(
+      executable,
+      gitDirectory.directory,
+      [...cacheGit, "ls-tree", "-rltz", "--full-tree", snapshot.commit],
+      8 * 1024 * 1024
+    ));
+  } catch {
+    throw new WorkspaceGitSnapshotError("git_checkout_failed");
+  }
+  const checkout = await mkdirGitCheckoutInsidePinnedRun(scratch);
+  try {
+    await validateWorkspaceProject(authorizedRoots, checkout);
+    await assertProtectedWorkspacePath(checkout, true);
+    await boundedGit(
+      executable,
+      checkout.directory,
+      [...checkoutGit, "init", "--quiet", "--template=", `--object-format=${snapshot.objectFormat}`]
+    );
+    const localGit = await pinWorkspacePath(checkout.directory, ".git");
+    if (localGit.directory !== path30.join(checkout.directory, ".git")) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+    const localInfo = await pinWorkspacePath(localGit.directory, "objects/info");
+    if (localInfo.directory !== path30.join(localGit.directory, "objects", "info")) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+    await assertProtectedWorkspacePath(localInfo, true);
+    await fs22.writeFile(path30.join(localInfo.directory, "alternates"), `${objectsPath}
+`, { flag: "wx", mode: 384 });
+    if (tree.hasAttributes) await assertCheckoutConversionsWithinBounds(executable, checkout.directory, checkoutGit, snapshot.commit, tree);
+    await reserveCheckoutNames(checkout.directory, tree.names);
+    await boundedGit(
+      executable,
+      checkout.directory,
+      [...checkoutGit, "checkout", "--detach", "--force", "--quiet", "--no-recurse-submodules", snapshot.commit]
+    );
+    await validateCheckoutFiles(checkout, localGit, tree.files.length);
+    const head = await boundedGit(executable, checkout.directory, [...checkoutGit, "rev-parse", "--verify", "HEAD"]);
+    if (head.toString("ascii") !== `${snapshot.commit}
+` || (await fingerprintCache(gitDirectory, snapshot.commit, snapshot.objectFormat)).storeFingerprint !== snapshot.storeFingerprint) {
+      throw new WorkspaceGitSnapshotError("git_checkout_failed");
+    }
+    await Promise.all([...bindings, checkout, localGit].map((binding) => validateWorkspaceProject(authorizedRoots, binding)));
+    return { checkout, gitDirectory: localGit, snapshot };
+  } catch {
+    throw new WorkspaceGitSnapshotError("git_checkout_failed");
+  }
+}
+async function validateWorkspaceGitCheckout(selection, allocation) {
+  const { checkout, gitDirectory } = allocation;
+  const roots = selection.cache.authorizedRoots;
+  if (checkout.directory !== path30.join(selection.scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) || gitDirectory.directory !== path30.join(checkout.directory, ".git")) throw new WorkspaceGitSnapshotError("git_checkout_changed");
+  await Promise.all([checkout, gitDirectory].map((binding) => validateWorkspaceProject(roots, binding)));
+  const { objectsPath, snapshot } = await inspectCheckoutSelection(selection);
+  try {
+    const info = await pinWorkspacePath(gitDirectory.directory, "objects/info");
+    if (info.directory !== path30.join(gitDirectory.directory, "objects", "info")) throw new Error("Displaced object metadata.");
+    await assertProtectedWorkspacePath(info, true);
+    for (const indirect of ["commondir", "config.worktree", "objects/info/http-alternates"]) {
+      const exists = await fs22.lstat(path30.join(gitDirectory.directory, indirect)).then(() => true, (error62) => {
+        if (error62.code !== "ENOENT") throw error62;
+        return false;
+      });
+      if (exists) throw new Error("Unexpected Git metadata indirection.");
+    }
+    const file2 = path30.join(info.directory, "alternates");
+    const stat2 = await fs22.lstat(file2, { bigint: true });
+    const payload = Buffer.from(`${objectsPath}
+`);
+    if (!stat2.isFile() || stat2.nlink !== 1n || stat2.size !== BigInt(payload.length) || stat2.uid !== BigInt(process.geteuid()) || (stat2.mode & 0o022n) !== 0n) throw new Error("Invalid object reference.");
+    await assertDenyOnlyWorkspaceAcls([file2]);
+    if (!(await readPinnedCachePrefix(file2, stat2, payload.length)).equals(payload)) throw new Error("Changed object reference.");
+    const { gitDirectory: cache } = selection.cache;
+    if ((await fingerprintCache(cache, snapshot.commit, snapshot.objectFormat)).storeFingerprint !== snapshot.storeFingerprint) {
+      throw new WorkspaceGitSnapshotError("git_cache_mismatch");
+    }
+  } catch (error62) {
+    if (error62 instanceof WorkspaceGitSnapshotError && error62.code === "git_cache_mismatch") throw error62;
+    throw new WorkspaceGitSnapshotError("git_checkout_changed");
+  }
+  await Promise.all([checkout, gitDirectory].map((binding) => validateWorkspaceProject(roots, binding)));
+}
+function readCheckoutTree(result) {
+  if (result.length && result.at(-1) !== 0) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+  const entries = result.toString("latin1").split("\0");
+  if (entries.length > maxCheckoutEntries + 1) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+  const files = [];
+  const names = [];
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  let hasAttributes = false;
+  let rawBytes = 0n;
+  for (const entry of entries.slice(0, -1)) {
+    const tab = entry.indexOf("	");
+    const fields = /^([0-7]{6}) (blob|commit|tree) [a-f0-9]+ +([0-9]+|-)$/u.exec(entry.slice(0, tab));
+    if (tab < 0 || !fields) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+    const name = entry.slice(tab + 1);
+    const decodedPath = decoder.decode(Buffer.from(name, "latin1"));
+    if (decodedPath.split("/").some((part) => !part || part === "." || part === "..")) {
+      throw new WorkspaceGitSnapshotError("git_checkout_failed");
+    }
+    const directory = (fields[1] === "160000" && fields[2] === "commit" || fields[1] === "040000" && fields[2] === "tree") && fields[3] === "-";
+    names.push({ path: decodedPath, directory });
+    if (directory) continue;
+    if (!["100644", "100755", "120000"].includes(fields[1]) || fields[2] !== "blob" || fields[3] === "-") {
+      throw new WorkspaceGitSnapshotError("git_checkout_failed");
+    }
+    const bytes = BigInt(fields[3]);
+    hasAttributes ||= /(^|\/)\.gitattributes$/i.test(name);
+    rawBytes += bytes;
+    if (rawBytes > maxCheckoutBytes) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+    files.push({ name, bytes });
+  }
+  return { files, names, hasAttributes };
+}
+async function reserveCheckoutNames(root, names) {
+  const directories = [root];
+  const knownAttributes = /* @__PURE__ */ new Set();
+  for (const entry of names) {
+    const destination = path30.join(root, entry.path);
+    if (entry.directory) {
+      await fs22.mkdir(destination, { mode: 448 });
+      directories.push(destination);
+    } else {
+      await (await fs22.open(destination, "wx", 384)).close();
+      if (path30.basename(destination) === ".gitattributes") knownAttributes.add(destination);
+    }
+  }
+  for (const directory of directories) {
+    const attributes = path30.join(directory, ".gitattributes");
+    if (knownAttributes.has(attributes)) continue;
+    const alias = await fs22.lstat(attributes).catch((error62) => {
+      if (error62.code !== "ENOENT") throw error62;
+      return void 0;
+    });
+    if (alias) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+  }
+}
+async function linuxCheckoutMountAliases(workspaces) {
+  const aliases = [];
+  try {
+    for (const { directory: mount, root } of readWorkspaceMountTable()) {
+      const isSubtree = root !== "/";
+      if (workspaces.some((workspace) => isSubtree && workspacePathContains(mount, workspace) || mount !== workspace && workspacePathContains(workspace, mount))) throw new Error("Unsupported workspace mount.");
+      if (isSubtree) aliases.push(mount);
+    }
+    return aliases;
+  } catch {
+    throw new WorkspaceGitSnapshotError("git_checkout_mount_unsupported");
+  }
+}
+async function assertCheckoutConversionsWithinBounds(executable, directory, checkoutGit, commit, tree) {
+  await boundedGit(executable, directory, [...checkoutGit, "read-tree", commit]);
+  const attributes = await boundedGit(executable, directory, [
+    ...checkoutGit,
+    "check-attr",
+    "--cached",
+    "-z",
+    "--stdin",
+    "ident",
+    "working-tree-encoding"
+  ], 24 * 1024 * 1024, Buffer.from(`${tree.files.map(({ name }) => name).join("\0")}\0`, "latin1"));
+  const values = attributes.toString("latin1").split("\0");
+  if (values.length !== tree.files.length * 6 + 1) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+  let worstCase = 0n;
+  const switchedOff = (value) => value === "unspecified" || value === "unset";
+  for (const [index, { name, bytes }] of tree.files.entries()) {
+    const [first, identAttr, ident, second, encodingAttr, encoding] = values.slice(index * 6, index * 6 + 6);
+    if (first !== name || second !== name || identAttr !== "ident" || encodingAttr !== "working-tree-encoding" || !switchedOff(encoding)) {
+      throw new WorkspaceGitSnapshotError("git_checkout_failed");
+    }
+    worstCase += bytes * (switchedOff(ident) ? 2n : 48n);
+    if (worstCase > maxCheckoutBytes) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+  }
+}
+async function validateCheckoutFiles(checkout, gitDirectory, expected) {
+  const pending = [checkout.directory];
+  let entries = 0;
+  let files = 0;
+  let actualBytes = 0n;
+  while (pending.length) {
+    const parent = pending.pop();
+    for await (const entry of await fs22.opendir(parent)) {
+      const child = path30.join(parent, entry.name);
+      if (child === gitDirectory.directory) continue;
+      if (++entries > maxCheckoutEntries) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+      const info = await fs22.lstat(child, { bigint: true });
+      if (info.isDirectory()) pending.push(child);
+      else if (info.isFile()) {
+        files++;
+        actualBytes += info.size;
+      } else if (info.isSymbolicLink()) {
+        const target = await fs22.readlink(child);
+        const resolved = path30.resolve(parent, target);
+        if (path30.isAbsolute(target) || !workspacePathContains(checkout.directory, resolved)) {
+          throw new WorkspaceGitSnapshotError("git_checkout_failed");
+        }
+        const canonical = await fs22.realpath(child);
+        if (!workspacePathContains(checkout.directory, canonical) || workspacePathContains(gitDirectory.directory, canonical)) {
+          throw new WorkspaceGitSnapshotError("git_checkout_failed");
+        }
+        const targetInfo = await fs22.stat(canonical);
+        const ancestors = await readWorkspaceAncestorIdentities(targetInfo.isDirectory() ? canonical : path30.dirname(canonical));
+        if (ancestors.has(`${gitDirectory.device}:${gitDirectory.inode}`)) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+        files++;
+        actualBytes += info.size;
+      } else throw new WorkspaceGitSnapshotError("git_checkout_failed");
+      if (actualBytes > maxCheckoutBytes) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+    }
+  }
+  if (files !== expected) throw new WorkspaceGitSnapshotError("git_checkout_failed");
+}
+async function fingerprintCache(binding, commit, format) {
+  const { directory, device, inode } = binding;
+  await assertProtectedWorkspacePath(binding);
+  const stamp = [];
+  const uid = process.geteuid?.();
+  if (uid === void 0) throw new WorkspaceGitSnapshotError("git_cache_invalid");
+  const record3 = async (relative, isDirectory) => {
+    const file2 = path30.join(directory, relative);
+    const info = await fs22.lstat(file2, { bigint: true });
+    if ((isDirectory ? !info.isDirectory() : !info.isFile() || info.nlink !== 1n) || String(info.dev) !== device || info.uid !== 0n && info.uid !== BigInt(uid) || (info.mode & 0o022n) !== 0n) {
+      throw new WorkspaceGitSnapshotError("git_cache_invalid");
+    }
+    await assertDenyOnlyWorkspaceAcls([file2]);
+    stamp.push([relative, ...[info.dev, info.ino, info.mode, info.uid, info.gid, info.size, info.mtimeNs, info.ctimeNs].map(String)]);
+    return info;
+  };
+  const names = async (relative, max) => {
+    const entries = [];
+    for await (const entry of await fs22.opendir(path30.join(directory, relative))) {
+      if (entries.length >= max) throw new WorkspaceGitSnapshotError("git_cache_invalid");
+      entries.push(entry.name);
+    }
+    return entries.sort().join("\n");
+  };
+  if (String((await record3(".", true)).ino) !== inode || await names(".", 4) !== "HEAD\nconfig\nobjects\nrefs") {
+    throw new WorkspaceGitSnapshotError("git_cache_invalid");
+  }
+  await record3("refs", true);
+  await record3("objects", true);
+  await record3("objects/pack", true);
+  if (await names("refs", 0) !== "" || await names("objects", 1) !== "pack") {
+    throw new WorkspaceGitSnapshotError("git_cache_invalid");
+  }
+  const pack = new RegExp(`^pack-([a-f0-9]{${commit.length}})\\.idx\\npack-\\1\\.pack$`).exec(await names("objects/pack", 2));
+  if (!pack) throw new WorkspaceGitSnapshotError("git_cache_invalid");
+  const packPath = `objects/pack/pack-${pack[1]}.pack`;
+  const idx = await record3(`objects/pack/pack-${pack[1]}.idx`, false);
+  const packInfo = await record3(packPath, false);
+  if (idx.size > maxCacheIndexBytes || packInfo.size > maxCachePackBytes) throw new WorkspaceGitSnapshotError("git_cache_invalid");
+  const header = await readPinnedCachePrefix(path30.join(directory, packPath), packInfo, 12);
+  if (header.subarray(0, 4).toString("ascii") !== "PACK" || header.readUInt32BE(8) > maxCacheObjects) {
+    throw new WorkspaceGitSnapshotError("git_cache_invalid");
+  }
+  const config2 = format === "sha1" ? "[core]\n	repositoryformatversion = 0\n	bare = true\n" : "[core]\n	repositoryformatversion = 1\n	bare = true\n[extensions]\n	objectformat = sha256\n";
+  for (const [file2, expected] of [["HEAD", `${commit}
+`], ["config", config2]]) {
+    const info = await record3(file2, false);
+    if (info.size !== BigInt(expected.length) || (await readPinnedCachePrefix(path30.join(directory, file2), info, expected.length)).toString("utf8") !== expected) {
+      throw new WorkspaceGitSnapshotError("git_cache_invalid");
+    }
+  }
+  return { storeFingerprint: createHash17("sha256").update(JSON.stringify(["git-cache-footprint-v1", stamp])).digest("hex"), packPath };
+}
+async function readPinnedCachePrefix(file2, expected, length) {
+  const fd = await fs22.open(file2, fs22.constants.O_RDONLY | fs22.constants.O_NOFOLLOW | fs22.constants.O_NONBLOCK);
+  try {
+    const info = await fd.stat({ bigint: true });
+    if (!info.isFile() || info.dev !== expected.dev || info.ino !== expected.ino || info.size !== expected.size || info.mtimeNs !== expected.mtimeNs || info.ctimeNs !== expected.ctimeNs) throw new WorkspaceGitSnapshotError("git_cache_invalid");
+    const bytes = Buffer.alloc(length);
+    const { bytesRead } = await fd.read(bytes, 0, length, 0);
+    if (bytesRead !== length) throw new WorkspaceGitSnapshotError("git_cache_invalid");
+    return bytes;
+  } finally {
+    await fd.close();
+  }
+}
+async function trustedGitExecutable(gitDirectory, protectedWorkspaces = [], mountAliases = []) {
+  const repository = path30.basename(gitDirectory) === ".git" ? path30.dirname(gitDirectory) : gitDirectory;
+  const excludedPaths = [repository, ...protectedWorkspaces.map(({ directory }) => directory), ...mountAliases];
+  const excludedIdentities = protectedWorkspaces.map(({ device, inode }) => `${device}:${inode}`);
+  const uid = process.geteuid?.();
+  for (const directory of /* @__PURE__ */ new Set([...(process.env.PATH ?? "").split(path30.delimiter).filter(path30.isAbsolute), "/usr/bin", "/bin"])) {
+    try {
+      const candidate = await fs22.realpath(path30.join(directory, "git"));
+      if (excludedPaths.some((workspace) => workspacePathContains(workspace, candidate))) continue;
+      const stat2 = await fs22.lstat(candidate);
+      if (!stat2.isFile() || stat2.uid !== 0 && stat2.uid !== uid || (stat2.mode & 18) !== 0 || (stat2.mode & 73) === 0) continue;
+      const parent = path30.dirname(candidate);
+      const meta3 = await fs22.lstat(parent, { bigint: true });
+      await assertProtectedWorkspacePath({ directory: parent, device: String(meta3.dev), inode: String(meta3.ino) });
+      if (excludedIdentities.length) {
+        const ancestry = await readWorkspaceAncestorIdentities(parent);
+        if (excludedIdentities.some((identity) => ancestry.has(identity))) continue;
+      }
+      await assertDenyOnlyWorkspaceAcls([candidate]);
+      return candidate;
+    } catch {
+    }
+  }
+  throw new WorkspaceGitSnapshotError("git_unavailable");
+}
+function verifyCacheGit(executable, cwd, args) {
+  return boundedGit(executable, cwd, [...cacheGit, ...args]);
+}
+function boundedGit(executable, cwd, args, maxBuffer, input2) {
+  if (process.platform === "linux") {
+    return git("/bin/sh", cwd, [
+      "-c",
+      'ulimit -v 786432 || exit 125; exec "$@"',
+      "lark-git-verifier",
+      executable,
+      ...args
+    ], input2, 6e4, maxBuffer);
+  }
+  return git(executable, cwd, args, input2, 6e4, maxBuffer);
+}
+async function git(executable, cwd, args, input2, timeout = 1e4, maxBuffer = 256 * 1024) {
+  const running = exec4(executable, args, {
+    cwd,
+    timeout,
+    killSignal: "SIGKILL",
+    maxBuffer,
+    encoding: "buffer",
+    env: {
+      PATH: "/usr/bin:/bin",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_OPTIONAL_LOCKS: "0",
+      GIT_NO_REPLACE_OBJECTS: "1",
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_ALLOW_PROTOCOL: "",
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ALLOC_LIMIT: "67108864",
+      GIT_ATTR_NOSYSTEM: "1"
+    }
+  });
+  running.child.stdin?.on("error", () => {
+  });
+  running.child.stdin?.end(input2);
+  return (await running).stdout;
+}
+
+// src/durable-run/sqlite-managed-workspace.ts
 var timestamp = external_exports.iso.datetime();
 var sourceRegistries = [
   ["workspace_run_allocations", "intent_json"],
   ["workspace_unmanaged_foreground", "admission_json"]
 ];
-var sourcePathExpr = (column) => `json_extract(${column}, '$.project.directory')`;
-var sourceIdentityExpr = (column) => `(json_extract(${column}, '$.project.device') || ':' || json_extract(${column}, '$.project.inode'))`;
+var bindingFields = ["roots.scratch", "roots.artifacts", "git.cache"];
+var bindingPathExpr = (column, field = "project") => `json_extract(${column}, '$.${field}.directory')`;
+var bindingIdentityExpr = (column, field = "project") => `(json_extract(${column}, '$.${field}.device') || ':' || json_extract(${column}, '$.${field}.inode'))`;
 var SqliteManagedWorkspaceStore = class {
   constructor(database) {
     this.database = database;
@@ -72210,6 +72742,12 @@ var SqliteManagedWorkspaceStore = class {
       CREATE INDEX IF NOT EXISTS workspace_run_artifact_path ON workspace_run_allocations(artifact_path);
       CREATE INDEX IF NOT EXISTS workspace_run_scratch_identity ON workspace_run_allocations(scratch_identity);
       CREATE INDEX IF NOT EXISTS workspace_run_artifact_identity ON workspace_run_allocations(artifact_identity);
+      CREATE TABLE IF NOT EXISTS workspace_git_caches (
+        cache_key TEXT PRIMARY KEY,
+        cache_path TEXT NOT NULL UNIQUE,
+        cache_identity TEXT NOT NULL UNIQUE,
+        selection_json TEXT NOT NULL CHECK (json_valid(selection_json))
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS workspace_unmanaged_foreground (
         run_id TEXT PRIMARY KEY,
         admission_json TEXT NOT NULL CHECK (json_valid(admission_json))
@@ -72227,8 +72765,14 @@ var SqliteManagedWorkspaceStore = class {
         PRIMARY KEY (run_id, relative_path)
       ) STRICT;
       ${sourceRegistries.map(([table, json2]) => `
-        CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${sourcePathExpr(json2)});
-        CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${sourceIdentityExpr(json2)});
+        CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${bindingPathExpr(json2)});
+        CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${bindingIdentityExpr(json2)});
+      `).join("")}
+      ${bindingFields.map((field) => `
+        CREATE INDEX IF NOT EXISTS workspace_run_${field.replace(".", "_")}_path
+          ON workspace_run_allocations(${bindingPathExpr("intent_json", field)});
+        CREATE INDEX IF NOT EXISTS workspace_run_${field.replace(".", "_")}_identity
+          ON workspace_run_allocations(${bindingIdentityExpr("intent_json", field)});
       `).join("")}
     `);
   }
@@ -72323,7 +72867,10 @@ var SqliteManagedWorkspaceStore = class {
         const matches = "project" in prior ? "project" in admission && sameWorkspaceProject(prior.project, admission.project) : "fallbackCwd" in admission && prior.fallbackCwd === admission.fallbackCwd;
         if (prior.sessionKey !== admission.sessionKey || !matches) throw new ManagedWorkspaceStorageError("invalid_binding");
       } else {
-        if ("project" in admission) this.requireUnoccupied(admission.project.directory);
+        if ("project" in admission) {
+          this.requireUnoccupied(admission.project.directory);
+          this.requireProtectedPathsDisjoint([admission.project], /* @__PURE__ */ new Set([directoryIdentity(admission.project)]), "caches");
+        }
         this.database.prepare("INSERT INTO workspace_unmanaged_foreground (run_id, admission_json) VALUES (?, ?)").run(runId, JSON.stringify(parsed.data));
       }
       this.database.exec("COMMIT");
@@ -72342,9 +72889,10 @@ var SqliteManagedWorkspaceStore = class {
     const intent = parseStored(managedRunIntentSchema, row.intent_json);
     const allocation = parseStored(managedRunAllocationSchema, row.allocation_json);
     const lastUsedAt = timestamp.safeParse(row.last_used_at);
-    if (!lastUsedAt.success || intent.owner.kind !== owner.kind || intent.owner.runId !== owner.runId || allocation.owner.kind !== owner.kind || allocation.owner.runId !== owner.runId || row.scratch_path !== allocation.scratch.directory || row.artifact_path !== allocation.artifacts.directory || row.scratch_identity !== directoryIdentity(allocation.scratch) || row.artifact_identity !== directoryIdentity(allocation.artifacts) || intent.createdAt !== allocation.createdAt || intent.foregroundSessionKey !== allocation.foregroundSessionKey || !sameWorkspaceProject(intent.project, allocation.project) || !sameWorkspaceProject(intent.fallbackWorkspace, allocation.fallbackWorkspace) || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch) || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
+    if (!lastUsedAt.success || intent.owner.kind !== owner.kind || intent.owner.runId !== owner.runId || allocation.owner.kind !== owner.kind || allocation.owner.runId !== owner.runId || row.scratch_path !== allocation.scratch.directory || row.artifact_path !== allocation.artifacts.directory || row.scratch_identity !== directoryIdentity(allocation.scratch) || row.artifact_identity !== directoryIdentity(allocation.artifacts) || intent.createdAt !== allocation.createdAt || intent.foregroundSessionKey !== allocation.foregroundSessionKey || !sameWorkspaceProject(intent.project, allocation.project) || !sameWorkspaceProject(intent.fallbackWorkspace, allocation.fallbackWorkspace) || !sameManagedGitSelection(intent.git, allocation.git) || !validGitAllocation(allocation) || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch) || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
+    if (allocation.git && !this.recordedGitCacheMatches(allocation.git, "read")) throw new ManagedWorkspaceStorageError("invalid_binding");
     return { allocation, lastUsedAt: lastUsedAt.data };
   }
   async ensure({ authorizedRoots, usedAt, sourceRegistryPath, sourceRegistryRoot, ...input2 }) {
@@ -72353,27 +72901,29 @@ var SqliteManagedWorkspaceStore = class {
     if (!parsed.success || !lastUse.success) throw new ManagedWorkspaceStorageError("invalid_binding");
     this.requireAutocommit();
     const { owner, ...snapshot } = parsed.data;
+    if (snapshot.git && (!snapshot.project || snapshot.git.key !== gitSnapshotKey(snapshot.git))) {
+      throw new ManagedWorkspaceStorageError("invalid_binding");
+    }
     const lastUsedAt = new Date(lastUse.data).toISOString();
     const policy = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
     const existing = this.get(owner);
     if (existing) return this.reuse(existing, snapshot, policy, lastUsedAt);
-    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { ...policy, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace });
+    const placement = { ...policy, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace, gitCache: snapshot.git?.cache };
+    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, placement);
+    if (snapshot.git && snapshot.project) {
+      await assertWorkspaceGitCheckoutMounts([snapshot.roots.scratch, snapshot.roots.artifacts, snapshot.project, snapshot.git.cache]);
+      await assertWorkspaceGitCacheIdentity(snapshot.git, authorizedRoots);
+    }
     const concurrent = this.reserve(parsed.data, lastUsedAt, ancestry);
     if (concurrent) return this.reuse(concurrent, snapshot, policy, lastUsedAt);
-    const allocation = await allocateManagedRunDirectories({ ...snapshot, owner, ...policy });
-    this.requireAutocommit();
-    const committed = this.database.prepare(`
-      UPDATE workspace_run_allocations SET allocation_json = ?, scratch_identity = ?, artifact_identity = ?
-      WHERE workload_kind = ? AND run_id = ? AND intent_json = ? AND allocation_json IS NULL
-    `).run(
-      JSON.stringify(allocation),
-      directoryIdentity(allocation.scratch),
-      directoryIdentity(allocation.artifacts),
-      owner.kind,
-      owner.runId,
-      JSON.stringify(parsed.data)
-    );
-    if (committed.changes !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+    const basic = await allocateManagedRunDirectories({ ...snapshot, owner, ...placement });
+    const selection = checkoutSelection({ ...basic, git: snapshot.git }, authorizedRoots);
+    const allocation = selection ? await createWorkspaceGitCheckout(selection).then(({ checkout, gitDirectory }) => ({
+      ...basic,
+      git: snapshot.git,
+      gitCheckout: { checkout, gitDirectory }
+    })) : basic;
+    this.completeAllocation(parsed.data, allocation);
     return allocation;
   }
   async openDirectory(owner, purpose, authorizedRoots) {
@@ -72381,17 +72931,49 @@ var SqliteManagedWorkspaceStore = class {
     if (!stored) throw new ManagedWorkspaceStorageError("invalid_binding");
     return validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
   }
+  completeAllocation(intent, allocation) {
+    this.requireAutocommit();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (allocation.git) this.recordedGitCacheMatches(allocation.git, "register");
+      const committed = this.database.prepare(`
+        UPDATE workspace_run_allocations SET allocation_json = ?, scratch_identity = ?, artifact_identity = ?
+        WHERE workload_kind = ? AND run_id = ? AND intent_json = ? AND allocation_json IS NULL
+      `).run(
+        JSON.stringify(allocation),
+        directoryIdentity(allocation.scratch),
+        directoryIdentity(allocation.artifacts),
+        intent.owner.kind,
+        intent.owner.runId,
+        JSON.stringify(intent)
+      );
+      if (committed.changes !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+      this.database.exec("COMMIT");
+    } catch (error62) {
+      this.database.exec("ROLLBACK");
+      throw error62;
+    }
+  }
   async reuse({ allocation }, snapshot, policy, lastUsedAt) {
-    if (!sameWorkspaceProject(allocation.project, snapshot.project) || !sameWorkspaceProject(allocation.fallbackWorkspace, snapshot.fallbackWorkspace) || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey || allocation.createdAt !== snapshot.createdAt || !sameWorkspaceProject(allocation.roots.scratch, snapshot.roots.scratch) || !sameWorkspaceProject(allocation.roots.artifacts, snapshot.roots.artifacts)) {
+    if (!sameWorkspaceProject(allocation.project, snapshot.project) || !sameWorkspaceProject(allocation.fallbackWorkspace, snapshot.fallbackWorkspace) || !sameManagedGitSelection(allocation.git, snapshot.git) || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey || allocation.createdAt !== snapshot.createdAt || !sameWorkspaceProject(allocation.roots.scratch, snapshot.roots.scratch) || !sameWorkspaceProject(allocation.roots.artifacts, snapshot.roots.artifacts)) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
     const [ancestry] = await Promise.all([
-      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project, fallbackWorkspace: allocation.fallbackWorkspace }),
+      validateManagedWorkspaceRoots(allocation.roots, {
+        ...policy,
+        project: allocation.project,
+        fallbackWorkspace: allocation.fallbackWorkspace,
+        gitCache: allocation.git?.cache
+      }),
       validateManagedRunDirectory(allocation, "scratch", policy.authorizedRoots),
       validateManagedRunDirectory(allocation, "artifacts", policy.authorizedRoots)
     ]);
+    const selection = checkoutSelection(allocation, policy.authorizedRoots);
+    if (selection && allocation.gitCheckout) await validateWorkspaceGitCheckout(selection, allocation.gitCheckout);
     this.requireAutocommit();
-    this.requireSourceDisjoint(allocation.roots, ancestry.storage);
+    this.requireProtectedPathsDisjoint([allocation.roots.scratch, allocation.roots.artifacts], ancestry.storage);
+    if (allocation.git && ancestry.cache) this.requireProtectedPathsDisjoint([allocation.git.cache], ancestry.cache, "cache-placement");
+    if (allocation.project && ancestry.project) this.requireProtectedPathsDisjoint([allocation.project], ancestry.project, "caches");
     this.touch(allocation.owner, lastUsedAt);
     return allocation;
   }
@@ -72404,10 +72986,16 @@ var SqliteManagedWorkspaceStore = class {
       }
       const existing = this.get(intent.owner);
       if (!existing) {
-        this.requireSourceDisjoint(intent.roots, ancestry.storage);
+        this.requireProtectedPathsDisjoint([intent.roots.scratch, intent.roots.artifacts], ancestry.storage);
+        if (intent.git && ancestry.cache) {
+          this.requireUnoccupied(intent.git.cache.directory);
+          this.requireProtectedPathsDisjoint([intent.git.cache], ancestry.cache, "cache-placement");
+          this.recordedGitCacheMatches(intent.git, "check");
+        }
         const scratchPath = managedRunDirectoryPath(intent.roots.scratch, intent.owner);
         const artifactPath = managedRunDirectoryPath(intent.roots.artifacts, intent.owner);
         if (intent.project) this.requireUnoccupied(intent.project.directory);
+        if (intent.project && ancestry.project) this.requireProtectedPathsDisjoint([intent.project], ancestry.project, "caches");
         this.requireUnoccupied(scratchPath);
         this.requireUnoccupied(artifactPath);
         const byIdentity = this.database.prepare(`
@@ -72429,23 +73017,48 @@ var SqliteManagedWorkspaceStore = class {
       throw error62;
     }
   }
-  requireSourceDisjoint(roots, storageAncestry) {
-    for (const [table, json2] of sourceRegistries) {
-      const byIdentity = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${sourceIdentityExpr(json2)} = ? LIMIT 1`);
+  recordedGitCacheMatches(git2, mode) {
+    const identity = directoryIdentity(git2.cache);
+    const rows = this.database.prepare(`SELECT cache_key, cache_path, cache_identity, selection_json FROM workspace_git_caches
+      WHERE cache_key = ? OR cache_path = ? OR cache_identity = ?`).all(git2.key, git2.cache.directory, identity);
+    if (!rows.length && mode === "register") {
+      this.database.prepare(`INSERT INTO workspace_git_caches (cache_key, cache_path, cache_identity, selection_json)
+        VALUES (?, ?, ?, ?)`).run(git2.key, git2.cache.directory, identity, JSON.stringify(git2));
+      return true;
+    }
+    const [row] = rows;
+    const matches = rows.length === 1 && row.cache_key === git2.key && row.cache_path === git2.cache.directory && row.cache_identity === identity && sameManagedGitSelection(parseStored(managedGitSelectionSchema, row.selection_json), git2);
+    if (!matches && rows.length && mode !== "read") throw new ManagedWorkspaceStorageError("git_cache_conflict");
+    return matches;
+  }
+  requireProtectedPathsDisjoint(paths, storageAncestry, mode = "all") {
+    const intentPath = (field, error62) => ["workspace_run_allocations", bindingPathExpr("intent_json", field), bindingIdentityExpr("intent_json", field), error62];
+    const registries = [
+      ...mode !== "caches" ? sourceRegistries.map(([table, column]) => [table, bindingPathExpr(column), bindingIdentityExpr(column), "overlapping_source"]) : [],
+      ...mode === "cache-placement" ? [intentPath("roots.scratch", "overlapping_runs"), intentPath("roots.artifacts", "overlapping_runs")] : [["workspace_git_caches", "cache_path", "cache_identity", "overlapping_git_cache"], intentPath("git.cache", "overlapping_git_cache")]
+    ];
+    let mounts;
+    for (const [table, expr, identityExpr, error62] of registries) {
+      const gitRelated = mode === "cache-placement" || error62 === "overlapping_git_cache";
+      if (gitRelated && !this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} IS NOT NULL LIMIT 1`).get()) continue;
+      if (gitRelated) mounts ??= readWorkspaceMountTable();
+      const byIdentity = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${identityExpr} = ? LIMIT 1`);
       for (const identity of storageAncestry) {
-        if (byIdentity.get(identity)) throw new ManagedWorkspaceStorageError("overlapping_source");
+        if (byIdentity.get(identity)) throw new ManagedWorkspaceStorageError(error62);
       }
-      const expr = sourcePathExpr(json2);
       const exact = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} = ? LIMIT 1`);
       const nested = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} >= ? AND ${expr} < ? LIMIT 1`);
-      for (const { directory } of [roots.scratch, roots.artifacts]) {
-        for (let current = directory; ; current = path30.dirname(current)) {
-          if (exact.get(current)) throw new ManagedWorkspaceStorageError("overlapping_source");
-          if (path30.dirname(current) === current) break;
+      for (const { directory: requested } of paths) {
+        const aliases = gitRelated ? workspaceBackingAliases(requested, mounts ?? []) : [requested];
+        for (const directory of aliases) {
+          for (let current = directory; ; current = path31.dirname(current)) {
+            if (exact.get(current)) throw new ManagedWorkspaceStorageError(error62);
+            if (path31.dirname(current) === current) break;
+          }
+          const prefix = directory.endsWith(path31.sep) ? directory : `${directory}${path31.sep}`;
+          const upper = `${prefix.slice(0, -1)}${String.fromCharCode(path31.sep.charCodeAt(0) + 1)}`;
+          if (nested.get(prefix, upper)) throw new ManagedWorkspaceStorageError(error62);
         }
-        const prefix = `${directory}${path30.sep}`;
-        const upper = `${directory}${String.fromCharCode(path30.sep.charCodeAt(0) + 1)}`;
-        if (nested.get(prefix, upper)) throw new ManagedWorkspaceStorageError("overlapping_source");
       }
     }
   }
@@ -72453,12 +73066,12 @@ var SqliteManagedWorkspaceStore = class {
     const exact = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations WHERE scratch_path = ? OR artifact_path = ? LIMIT 1
     `);
-    for (let current = candidate; ; current = path30.dirname(current)) {
+    for (let current = candidate; ; current = path31.dirname(current)) {
       if (exact.get(current, current)) throw new ManagedWorkspaceStorageError("overlapping_runs");
-      if (path30.dirname(current) === current) break;
+      if (path31.dirname(current) === current) break;
     }
-    const prefix = `${candidate}${path30.sep}`;
-    const upper = `${candidate}${String.fromCharCode(path30.sep.charCodeAt(0) + 1)}`;
+    const prefix = `${candidate}${path31.sep}`;
+    const upper = `${candidate}${String.fromCharCode(path31.sep.charCodeAt(0) + 1)}`;
     const nested = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations
       WHERE (scratch_path >= ? AND scratch_path < ?) OR (artifact_path >= ? AND artifact_path < ?)
@@ -72476,6 +73089,22 @@ var SqliteManagedWorkspaceStore = class {
     `).run(usedAt, owner.kind, owner.runId);
   }
 };
+function validGitAllocation({ git: git2, gitCheckout, project, fallbackWorkspace, scratch }) {
+  if (!git2) return gitCheckout === void 0;
+  return !!project && !fallbackWorkspace && !!gitCheckout && git2.key === gitSnapshotKey(git2) && gitCheckout.checkout.directory === path31.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) && gitCheckout.gitDirectory.directory === path31.join(gitCheckout.checkout.directory, ".git");
+}
+function checkoutSelection(allocation, authorizedRoots) {
+  const { git: git2, project, scratch } = allocation;
+  if (!git2) return void 0;
+  if (!project) throw new ManagedWorkspaceStorageError("invalid_binding");
+  return {
+    cache: { gitDirectory: git2.cache, repositoryId: git2.repositoryId, scope: git2.scope, commit: git2.commit, authorizedRoots },
+    expected: git2,
+    source: project,
+    scratch,
+    protectedRoots: [allocation.roots.scratch, allocation.roots.artifacts]
+  };
+}
 function parseStored(schema, value) {
   try {
     if (typeof value !== "string") throw new Error("Expected a JSON string.");
@@ -72815,7 +73444,7 @@ function assertBoundedRequiredString(value, label, maxChars) {
 }
 
 // src/durable-run/sqlite-migrations.ts
-import { createHash as createHash17 } from "node:crypto";
+import { createHash as createHash18 } from "node:crypto";
 var DURABLE_RUN_SCHEMA_VERSION = 11;
 var ASYNC_TASK_INPUT_VERSION = 1;
 var ASYNC_TASK_STATE_VERSION = 1;
@@ -73472,7 +74101,7 @@ function legacyOperationStepId(stepIndex, description) {
   return `legacy-step-${stepIndex + 1}-${stableHash(description)}`;
 }
 function stableHash(value) {
-  return createHash17("sha256").update(value).digest("hex").slice(0, 12);
+  return createHash18("sha256").update(value).digest("hex").slice(0, 12);
 }
 function migrateInterrupts(database) {
   const rows = readRows(database, "continuation_interrupts");
@@ -73776,7 +74405,7 @@ function persistedTaskContract(row, projection) {
 }
 function legacyAcceptanceCriteria(descriptions) {
   return descriptions.map((description, index) => ({
-    id: `criterion_${index + 1}_${createHash17("sha256").update(description).digest("hex").slice(0, 12)}`,
+    id: `criterion_${index + 1}_${createHash18("sha256").update(description).digest("hex").slice(0, 12)}`,
     description,
     deliverableIds: []
   }));
@@ -74190,7 +74819,7 @@ function clampInteger(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 function legacyStepId(description, index) {
-  return `legacy-step-${index + 1}-${createHash17("sha256").update(description).digest("hex").slice(0, 12)}`;
+  return `legacy-step-${index + 1}-${createHash18("sha256").update(description).digest("hex").slice(0, 12)}`;
 }
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -74212,16 +74841,16 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
     return new _SqliteDurableRunRepository(database, DEFAULT_DELIVERY_LEASE_MS, false);
   }
   static async open(options) {
-    const databasePath = path31.resolve(options.databasePath);
-    await fs22.mkdir(path31.dirname(databasePath), { recursive: true, mode: 448 });
-    await fs22.chmod(path31.dirname(databasePath), 448);
+    const databasePath = path32.resolve(options.databasePath);
+    await fs23.mkdir(path32.dirname(databasePath), { recursive: true, mode: 448 });
+    await fs23.chmod(path32.dirname(databasePath), 448);
     const { DatabaseSync } = await import("node:sqlite");
     const database = new DatabaseSync(databasePath, {
       timeout: 5e3,
       enableForeignKeyConstraints: true
     });
     try {
-      await fs22.chmod(databasePath, 384);
+      await fs23.chmod(databasePath, 384);
       database.exec(`
         PRAGMA busy_timeout = 5000;
         PRAGMA foreign_keys = ON;
@@ -75275,10 +75904,10 @@ function uniqueStrings(values) {
   return unique;
 }
 function deliveryEventKey(kind, idempotencyKey) {
-  return `${kind}:${createHash18("sha256").update(idempotencyKey).digest("hex")}`;
+  return `${kind}:${createHash19("sha256").update(idempotencyKey).digest("hex")}`;
 }
 function outboxId(idempotencyKey) {
-  return `outbox_${createHash18("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `outbox_${createHash19("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function newAttemptId() {
   return `att_${randomBytes4(12).toString("hex")}`;
@@ -76371,8 +77000,8 @@ function hasOnlyKeys(value, allowed) {
 }
 
 // src/continuation/sqlite-codec.ts
-import { createHash as createHash19, randomBytes as randomBytes5 } from "node:crypto";
-import path32 from "node:path";
+import { createHash as createHash20, randomBytes as randomBytes5 } from "node:crypto";
+import path33 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var PROGRESS_PAYLOAD_MAX_CHARS = 4e3;
 var MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT = 2;
@@ -76681,7 +77310,7 @@ function createRequestFingerprint(request) {
   const sourceInputDescriptors = request.sourceInputs.map((input2) => ({
     kind: input2.kind
   }));
-  return createHash19("sha256").update(JSON.stringify({
+  return createHash20("sha256").update(JSON.stringify({
     idempotencyKey: request.idempotencyKey,
     retryOfJobId: request.retryOfJobId ?? null,
     creatorOpenId: request.creatorOpenId,
@@ -77138,7 +77767,7 @@ function validatePermissionEnvelope(value, requireAbsoluteRoot2) {
     "requestedPaths",
     "workspaceProject",
     "managedWorkspaceRoots"
-  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path32.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path32.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
+  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path33.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path33.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
     throw new Error("Continuation permission envelope is invalid.");
   }
   if (envelope.profile === "bounded" && (envelope.network !== "none" || envelope.externalSideEffects !== "denied") || envelope.profile === "trusted_personal_workspace" && (requestedPaths.length === 0 || envelope.network !== "enabled" || envelope.externalSideEffects !== "allowed")) {
@@ -77220,10 +77849,10 @@ function makeId(prefix) {
   return `${prefix}_${randomBytes5(12).toString("hex")}`;
 }
 function deliveryIdempotencyKey(jobId, eventKey) {
-  return `ct_${createHash19("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
+  return `ct_${createHash20("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
 }
 function toolCallId(jobId, stepId, requestHash) {
-  return `call_${createHash19("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
+  return `call_${createHash20("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
 }
 function continuationStepId(job) {
   return job.checkpoint?.nextAction?.id ?? job.checkpoint?.currentStepId ?? "initial-step";
@@ -77244,7 +77873,7 @@ function hasOpaqueExecutionEffects(job) {
   return job.permissions.filesystem.mode === "workspace-write" || job.permissions.network === "enabled" || job.permissions.externalSideEffects === "allowed";
 }
 function toolRequestHash(request) {
-  return createHash19("sha256").update(JSON.stringify(request)).digest("hex");
+  return createHash20("sha256").update(JSON.stringify(request)).digest("hex");
 }
 function addMilliseconds2(timestamp2, milliseconds) {
   return new Date(Date.parse(timestamp2) + milliseconds).toISOString();
@@ -77439,7 +78068,7 @@ function isManagedInputArtifact(value) {
 }
 
 // src/continuation/sqlite-transitions.ts
-import { createHash as createHash20 } from "node:crypto";
+import { createHash as createHash21 } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
 function buildContinuationStepTransition(input2) {
   const {
@@ -77766,7 +78395,7 @@ ${outcome.finalMessage}`,
         hints: ["Confirm the effects of the failed step before resuming."],
         failedStep,
         diagnostic: outcome.errorSummary,
-        fingerprint: createHash20("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+        fingerprint: createHash21("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
       },
       prompt: "Confirm what the failed step changed, then resume with the observed result.",
       reason: "The model requested a retry after opaque execution, so automatic replay is unsafe."
@@ -77811,7 +78440,7 @@ function buildContinuationFailureTransition(claim2, current, requestedFailure, n
             hints: ["Confirm the effects of the interrupted step before resuming."],
             failedStep,
             diagnostic: requestedFailure.errorSummary,
-            fingerprint: createHash20("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+            fingerprint: createHash21("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
           },
           prompt: "Confirm what the interrupted step changed, then resume with the observed result.",
           reason: "The execution ended after an opaque operation started, so automatic replay is unsafe."
@@ -77885,7 +78514,7 @@ function durableFailureForContinuationFailure(claim2, failure2) {
     hints: [],
     failedStep,
     diagnostic: bounded.errorSummary,
-    fingerprint: createHash20("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
+    fingerprint: createHash21("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
   };
 }
 function continuationDurableTransition(claim2, current, status, patch, now, extras) {
@@ -77974,7 +78603,7 @@ function continuationProgressDelivery(job, claim2, outcome, now) {
   };
 }
 function continuationInterruptId(jobId, attemptId, failure2) {
-  return `int_${createHash20("sha256").update(`${jobId}\0${attemptId}\0${failure2.fingerprint}`).digest("hex").slice(0, 24)}`;
+  return `int_${createHash21("sha256").update(`${jobId}\0${attemptId}\0${failure2.fingerprint}`).digest("hex").slice(0, 24)}`;
 }
 function continuationInterruptDelivery(job, claim2, interruptId, prompt, failure2, recovery, checkpoint2, now) {
   const eventKey = `interrupt:${interruptId}`;
@@ -78032,20 +78661,20 @@ function staleClaimError(jobId) {
 }
 
 // src/continuation/sqlite-database.ts
-import fs23 from "node:fs/promises";
-import path33 from "node:path";
+import fs24 from "node:fs/promises";
+import path34 from "node:path";
 var ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
 async function openContinuationDatabase(databasePath) {
-  const resolvedPath = path33.resolve(databasePath);
-  await fs23.mkdir(path33.dirname(resolvedPath), { recursive: true, mode: 448 });
-  await fs23.chmod(path33.dirname(resolvedPath), 448);
+  const resolvedPath = path34.resolve(databasePath);
+  await fs24.mkdir(path34.dirname(resolvedPath), { recursive: true, mode: 448 });
+  await fs24.chmod(path34.dirname(resolvedPath), 448);
   const { DatabaseSync } = await import("node:sqlite");
   const database = new DatabaseSync(resolvedPath, {
     timeout: 5e3,
     enableForeignKeyConstraints: true
   });
   try {
-    await fs23.chmod(resolvedPath, 384);
+    await fs24.chmod(resolvedPath, 384);
     return database;
   } catch (error62) {
     database.close();
@@ -78126,13 +78755,13 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
   durableRuns;
   cronMessageOrigins;
   static async open(options) {
-    const databasePath = path34.resolve(options.databasePath);
+    const databasePath = path35.resolve(options.databasePath);
     const database = await openContinuationDatabase(databasePath);
     try {
       const artifacts = options.artifactStore ?? new ContinuationArtifactStore(options.artifactsDir);
       await artifacts.ensureRoot();
       const inputs = options.inputStore ?? new ContinuationInputStore(
-        options.inputsDir ?? path34.join(path34.dirname(path34.resolve(options.artifactsDir)), "inputs")
+        options.inputsDir ?? path35.join(path35.dirname(path35.resolve(options.artifactsDir)), "inputs")
       );
       await inputs.ensureRoot();
       const repository = new _SqliteContinuationRepository(
@@ -80507,7 +81136,7 @@ async function createContinuationRuntime(options) {
     const storage = options.dryRun ? await createDryRunStorage() : {
       databasePath: options.databasePath,
       artifactsDir: options.artifactsDir,
-      inputsDir: path35.join(path35.dirname(options.artifactsDir), "inputs")
+      inputsDir: path36.join(path36.dirname(options.artifactsDir), "inputs")
     };
     temporaryRoot = "root" in storage ? storage.root : void 0;
     repository = await (options.openRepository ?? defaultOpenRepository)({
@@ -80536,7 +81165,7 @@ async function createContinuationRuntime(options) {
             try {
               repository.close();
             } finally {
-              if (temporaryRoot) await fs24.rm(temporaryRoot, { recursive: true, force: true });
+              if (temporaryRoot) await fs25.rm(temporaryRoot, { recursive: true, force: true });
             }
           })();
           return closePromise2;
@@ -80642,7 +81271,7 @@ async function createContinuationRuntime(options) {
           try {
             repository.close();
           } finally {
-            if (temporaryRoot) await fs24.rm(temporaryRoot, { recursive: true, force: true });
+            if (temporaryRoot) await fs25.rm(temporaryRoot, { recursive: true, force: true });
           }
         })();
         return closePromise;
@@ -80653,7 +81282,7 @@ async function createContinuationRuntime(options) {
       repository?.close();
     } catch {
     }
-    if (temporaryRoot) await fs24.rm(temporaryRoot, { recursive: true, force: true }).catch(() => {
+    if (temporaryRoot) await fs25.rm(temporaryRoot, { recursive: true, force: true }).catch(() => {
     });
     safeReportError(options, error62);
     safeDebug(options, "[continuation] event=runtime_unavailable job_id=- attempt_id=- state=initialization_failed");
@@ -80680,12 +81309,12 @@ async function defaultOpenRepository(options) {
   return SqliteContinuationRepository.open(options);
 }
 async function createDryRunStorage() {
-  const root = await fs24.mkdtemp(path35.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
+  const root = await fs25.mkdtemp(path36.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
   return {
     root,
-    databasePath: path35.join(root, "jobs.sqlite"),
-    artifactsDir: path35.join(root, "artifacts"),
-    inputsDir: path35.join(root, "inputs")
+    databasePath: path36.join(root, "jobs.sqlite"),
+    artifactsDir: path36.join(root, "artifacts"),
+    inputsDir: path36.join(root, "inputs")
   };
 }
 function retentionCutoff(now, retentionDays) {
@@ -80930,7 +81559,7 @@ function persistedStateValidator(registrations) {
 }
 
 // src/cron/run-admission.ts
-import { createHash as createHash21 } from "node:crypto";
+import { createHash as createHash22 } from "node:crypto";
 
 // src/cron/contracts.ts
 var CRON_RUN_INPUT_VERSION = 1;
@@ -81165,7 +81794,7 @@ function literal2(value, values, label) {
 }
 
 // src/cron/delivery.ts
-import path36 from "node:path";
+import path37 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual6 } from "node:util";
 
 // src/scheduler-policy.ts
@@ -81632,7 +82261,7 @@ async function deliverCronArtifact(options, claim2, now, context) {
   }
   try {
     if (context && !await context.markExternalSendStarted()) return { status: "superseded" };
-    const key = await artifacts.uploadFile(content, path36.posix.basename(payload.artifact.relativePath));
+    const key = await artifacts.uploadFile(content, path37.posix.basename(payload.artifact.relativePath));
     if (!key) throw new Error("Lark returned no attachment key.");
     const response = await options.sendReply({
       chat_id: route.targetChatId,
@@ -82235,7 +82864,7 @@ function cronConcurrencyKey(job) {
   return `cron-job:${cronJobIdentity(job)}`;
 }
 function cronRunId(idempotencyKey) {
-  return `cron_${createHash21("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `cron_${createHash22("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function admitted(run, created, scheduledOccurrence) {
   return {

@@ -7,16 +7,19 @@ import {
   isManagedArtifactRelativePath,
   managedArtifactIdentitySchema,
   managedArtifactStageSchema,
+  managedGitSelectionSchema,
   managedRunIntentSchema,
+  sameManagedGitSelection,
   unmanagedForegroundAdmissionSchema,
   type ManagedRunAllocation,
+  type ManagedGitSelection,
   type ForegroundArtifactBatch,
   type ManagedRunIntent,
   type ManagedRunOwner,
   type ManagedWorkspacePurpose,
   type UnmanagedForegroundAdmission,
 } from '../domain/managed-workspace.js';
-import { sameWorkspaceProject } from '../domain/workspace.js';
+import { sameWorkspaceProject, type WorkspaceProjectBinding } from '../domain/workspace.js';
 import type { ManagedArtifactStageJournal, ManagedWorkspaceAuthorizedRoots, ManagedWorkspaceRecord, ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import {
   allocateManagedRunDirectories,
@@ -26,14 +29,20 @@ import {
   validateManagedRunDirectory,
   validateManagedWorkspaceRoots,
 } from '../managed-workspace-storage.js';
+import { MANAGED_GIT_CHECKOUT_LEAF } from '../managed-workspace-mkdir.js';
+import { readWorkspaceMountTable, workspaceBackingAliases } from '../managed-workspace-ancestry.js';
+import { assertWorkspaceGitCacheIdentity, assertWorkspaceGitCheckoutMounts, createWorkspaceGitCheckout, gitSnapshotKey,
+  validateWorkspaceGitCheckout } from '../workspace-git-snapshot.js';
 
 const timestamp = z.iso.datetime();
 const sourceRegistries = [
   ['workspace_run_allocations', 'intent_json'],
   ['workspace_unmanaged_foreground', 'admission_json'],
 ] as const;
-const sourcePathExpr = (column: string) => `json_extract(${column}, '$.project.directory')`;
-const sourceIdentityExpr = (column: string) => `(json_extract(${column}, '$.project.device') || ':' || json_extract(${column}, '$.project.inode'))`;
+const bindingFields = ['roots.scratch', 'roots.artifacts', 'git.cache'] as const;
+const bindingPathExpr = (column: string, field = 'project') => `json_extract(${column}, '$.${field}.directory')`;
+const bindingIdentityExpr = (column: string, field = 'project') =>
+  `(json_extract(${column}, '$.${field}.device') || ':' || json_extract(${column}, '$.${field}.inode'))`;
 type RootAncestry = Awaited<ReturnType<typeof validateManagedWorkspaceRoots>>;
 
 export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
@@ -55,6 +64,12 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       CREATE INDEX IF NOT EXISTS workspace_run_artifact_path ON workspace_run_allocations(artifact_path);
       CREATE INDEX IF NOT EXISTS workspace_run_scratch_identity ON workspace_run_allocations(scratch_identity);
       CREATE INDEX IF NOT EXISTS workspace_run_artifact_identity ON workspace_run_allocations(artifact_identity);
+      CREATE TABLE IF NOT EXISTS workspace_git_caches (
+        cache_key TEXT PRIMARY KEY,
+        cache_path TEXT NOT NULL UNIQUE,
+        cache_identity TEXT NOT NULL UNIQUE,
+        selection_json TEXT NOT NULL CHECK (json_valid(selection_json))
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS workspace_unmanaged_foreground (
         run_id TEXT PRIMARY KEY,
         admission_json TEXT NOT NULL CHECK (json_valid(admission_json))
@@ -72,8 +87,14 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
         PRIMARY KEY (run_id, relative_path)
       ) STRICT;
       ${sourceRegistries.map(([table, json]) => `
-        CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${sourcePathExpr(json)});
-        CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${sourceIdentityExpr(json)});
+        CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${bindingPathExpr(json)});
+        CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${bindingIdentityExpr(json)});
+      `).join('')}
+      ${bindingFields.map((field) => `
+        CREATE INDEX IF NOT EXISTS workspace_run_${field.replace('.', '_')}_path
+          ON workspace_run_allocations(${bindingPathExpr('intent_json', field)});
+        CREATE INDEX IF NOT EXISTS workspace_run_${field.replace('.', '_')}_identity
+          ON workspace_run_allocations(${bindingIdentityExpr('intent_json', field)});
       `).join('')}
     `);
   }
@@ -183,7 +204,10 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
           : 'fallbackCwd' in admission && prior.fallbackCwd === admission.fallbackCwd;
         if (prior.sessionKey !== admission.sessionKey || !matches) throw new ManagedWorkspaceStorageError('invalid_binding');
       } else {
-        if ('project' in admission) this.requireUnoccupied(admission.project.directory);
+        if ('project' in admission) {
+          this.requireUnoccupied(admission.project.directory);
+          this.requireProtectedPathsDisjoint([admission.project], new Set([directoryIdentity(admission.project)]), 'caches');
+        }
         this.database.prepare('INSERT INTO workspace_unmanaged_foreground (run_id, admission_json) VALUES (?, ?)')
           .run(runId, JSON.stringify(parsed.data));
       }
@@ -212,10 +236,13 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       || intent.foregroundSessionKey !== allocation.foregroundSessionKey
       || !sameWorkspaceProject(intent.project, allocation.project)
       || !sameWorkspaceProject(intent.fallbackWorkspace, allocation.fallbackWorkspace)
+      || !sameManagedGitSelection(intent.git, allocation.git)
+      || !validGitAllocation(allocation)
       || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch)
       || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
       throw new ManagedWorkspaceStorageError('invalid_binding');
     }
+    if (allocation.git && !this.recordedGitCacheMatches(allocation.git, 'read')) throw new ManagedWorkspaceStorageError('invalid_binding');
     return { allocation, lastUsedAt: lastUsedAt.data };
   }
 
@@ -225,23 +252,29 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     if (!parsed.success || !lastUse.success) throw new ManagedWorkspaceStorageError('invalid_binding');
     this.requireAutocommit();
     const { owner, ...snapshot } = parsed.data;
+    if (snapshot.git && (!snapshot.project || snapshot.git.key !== gitSnapshotKey(snapshot.git))) {
+      throw new ManagedWorkspaceStorageError('invalid_binding');
+    }
     const lastUsedAt = new Date(lastUse.data).toISOString();
     const policy = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
     const existing = this.get(owner);
     if (existing) return this.reuse(existing, snapshot, policy, lastUsedAt);
-    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { ...policy, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace });
+    const placement = { ...policy, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace, gitCache: snapshot.git?.cache };
+    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, placement);
+    if (snapshot.git && snapshot.project) {
+      await assertWorkspaceGitCheckoutMounts([snapshot.roots.scratch, snapshot.roots.artifacts, snapshot.project, snapshot.git.cache]);
+      await assertWorkspaceGitCacheIdentity(snapshot.git, authorizedRoots);
+    }
     const concurrent = this.reserve(parsed.data, lastUsedAt, ancestry);
     if (concurrent) return this.reuse(concurrent, snapshot, policy, lastUsedAt);
 
     // A reservation is not permission to adopt an existing folder after a crash.
-    const allocation = await allocateManagedRunDirectories({ ...snapshot, owner, ...policy });
-    this.requireAutocommit();
-    const committed = this.database.prepare(`
-      UPDATE workspace_run_allocations SET allocation_json = ?, scratch_identity = ?, artifact_identity = ?
-      WHERE workload_kind = ? AND run_id = ? AND intent_json = ? AND allocation_json IS NULL
-    `).run(JSON.stringify(allocation), directoryIdentity(allocation.scratch), directoryIdentity(allocation.artifacts),
-      owner.kind, owner.runId, JSON.stringify(parsed.data));
-    if (committed.changes !== 1) throw new ManagedWorkspaceStorageError('invalid_binding');
+    const basic = await allocateManagedRunDirectories({ ...snapshot, owner, ...placement });
+    const selection = checkoutSelection({ ...basic, git: snapshot.git }, authorizedRoots);
+    const allocation = selection ? await createWorkspaceGitCheckout(selection).then(({ checkout, gitDirectory }) => ({
+      ...basic, git: snapshot.git, gitCheckout: { checkout, gitDirectory },
+    })) : basic;
+    this.completeAllocation(parsed.data, allocation);
     return allocation;
   }
 
@@ -251,6 +284,25 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     return validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
   }
 
+  private completeAllocation(intent: ManagedRunIntent, allocation: ManagedRunAllocation): void {
+    this.requireAutocommit();
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      // Only a fully verified checkout can claim a cache key. An incomplete intent protects paths, not key ownership.
+      if (allocation.git) this.recordedGitCacheMatches(allocation.git, 'register');
+      const committed = this.database.prepare(`
+        UPDATE workspace_run_allocations SET allocation_json = ?, scratch_identity = ?, artifact_identity = ?
+        WHERE workload_kind = ? AND run_id = ? AND intent_json = ? AND allocation_json IS NULL
+      `).run(JSON.stringify(allocation), directoryIdentity(allocation.scratch), directoryIdentity(allocation.artifacts),
+        intent.owner.kind, intent.owner.runId, JSON.stringify(intent));
+      if (committed.changes !== 1) throw new ManagedWorkspaceStorageError('invalid_binding');
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   private async reuse(
     { allocation }: ManagedWorkspaceRecord, snapshot: Omit<ManagedRunIntent, 'owner'>,
     policy: Pick<Parameters<ManagedWorkspaceStore['ensure']>[0], 'authorizedRoots' | 'sourceRegistryPath' | 'sourceRegistryRoot'>,
@@ -258,18 +310,24 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
   ): Promise<ManagedRunAllocation> {
     if (!sameWorkspaceProject(allocation.project, snapshot.project)
       || !sameWorkspaceProject(allocation.fallbackWorkspace, snapshot.fallbackWorkspace)
+      || !sameManagedGitSelection(allocation.git, snapshot.git)
       || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey || allocation.createdAt !== snapshot.createdAt
       || !sameWorkspaceProject(allocation.roots.scratch, snapshot.roots.scratch)
       || !sameWorkspaceProject(allocation.roots.artifacts, snapshot.roots.artifacts)) {
       throw new ManagedWorkspaceStorageError('invalid_binding');
     }
     const [ancestry] = await Promise.all([
-      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project, fallbackWorkspace: allocation.fallbackWorkspace }),
+      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project, fallbackWorkspace: allocation.fallbackWorkspace,
+        gitCache: allocation.git?.cache }),
       validateManagedRunDirectory(allocation, 'scratch', policy.authorizedRoots),
       validateManagedRunDirectory(allocation, 'artifacts', policy.authorizedRoots),
     ]);
+    const selection = checkoutSelection(allocation, policy.authorizedRoots);
+    if (selection && allocation.gitCheckout) await validateWorkspaceGitCheckout(selection, allocation.gitCheckout);
     this.requireAutocommit();
-    this.requireSourceDisjoint(allocation.roots, ancestry.storage);
+    this.requireProtectedPathsDisjoint([allocation.roots.scratch, allocation.roots.artifacts], ancestry.storage);
+    if (allocation.git && ancestry.cache) this.requireProtectedPathsDisjoint([allocation.git.cache], ancestry.cache, 'cache-placement');
+    if (allocation.project && ancestry.project) this.requireProtectedPathsDisjoint([allocation.project], ancestry.project, 'caches');
     this.touch(allocation.owner, lastUsedAt);
     return allocation;
   }
@@ -283,10 +341,16 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       }
       const existing = this.get(intent.owner);
       if (!existing) {
-        this.requireSourceDisjoint(intent.roots, ancestry.storage);
+        this.requireProtectedPathsDisjoint([intent.roots.scratch, intent.roots.artifacts], ancestry.storage);
+        if (intent.git && ancestry.cache) {
+          this.requireUnoccupied(intent.git.cache.directory);
+          this.requireProtectedPathsDisjoint([intent.git.cache], ancestry.cache, 'cache-placement');
+          this.recordedGitCacheMatches(intent.git, 'check');
+        }
         const scratchPath = managedRunDirectoryPath(intent.roots.scratch, intent.owner);
         const artifactPath = managedRunDirectoryPath(intent.roots.artifacts, intent.owner);
         if (intent.project) this.requireUnoccupied(intent.project.directory);
+        if (intent.project && ancestry.project) this.requireProtectedPathsDisjoint([intent.project], ancestry.project, 'caches');
         this.requireUnoccupied(scratchPath);
         this.requireUnoccupied(artifactPath);
         const byIdentity = this.database.prepare(`
@@ -309,23 +373,53 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     }
   }
 
-  private requireSourceDisjoint(roots: ManagedRunIntent['roots'], storageAncestry: Set<string>): void {
-    for (const [table, json] of sourceRegistries) {
-      const byIdentity = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${sourceIdentityExpr(json)} = ? LIMIT 1`);
+  private recordedGitCacheMatches(git: ManagedGitSelection, mode: 'read' | 'check' | 'register'): boolean {
+    const identity = directoryIdentity(git.cache);
+    const rows = this.database.prepare(`SELECT cache_key, cache_path, cache_identity, selection_json FROM workspace_git_caches
+      WHERE cache_key = ? OR cache_path = ? OR cache_identity = ?`).all(git.key, git.cache.directory, identity);
+    if (!rows.length && mode === 'register') {
+      this.database.prepare(`INSERT INTO workspace_git_caches (cache_key, cache_path, cache_identity, selection_json)
+        VALUES (?, ?, ?, ?)`).run(git.key, git.cache.directory, identity, JSON.stringify(git));
+      return true;
+    }
+    const [row] = rows;
+    const matches = rows.length === 1 && row.cache_key === git.key && row.cache_path === git.cache.directory
+      && row.cache_identity === identity && sameManagedGitSelection(parseStored(managedGitSelectionSchema, row.selection_json), git);
+    if (!matches && rows.length && mode !== 'read') throw new ManagedWorkspaceStorageError('git_cache_conflict');
+    return matches;
+  }
+
+  private requireProtectedPathsDisjoint(paths: WorkspaceProjectBinding[], storageAncestry: Set<string>, mode: 'all' | 'cache-placement' | 'caches' = 'all'): void {
+    const intentPath = (field: typeof bindingFields[number], error: 'overlapping_git_cache' | 'overlapping_runs') =>
+      ['workspace_run_allocations', bindingPathExpr('intent_json', field), bindingIdentityExpr('intent_json', field), error] as const;
+    const registries = [
+      ...(mode !== 'caches' ? sourceRegistries.map(([table, column]) =>
+        [table, bindingPathExpr(column), bindingIdentityExpr(column), 'overlapping_source'] as const) : []),
+      ...(mode === 'cache-placement' ? [intentPath('roots.scratch', 'overlapping_runs'), intentPath('roots.artifacts', 'overlapping_runs')]
+        : [['workspace_git_caches', 'cache_path', 'cache_identity', 'overlapping_git_cache'] as const, intentPath('git.cache', 'overlapping_git_cache')]),
+    ];
+    let mounts: ReturnType<typeof readWorkspaceMountTable> | undefined;
+    for (const [table, expr, identityExpr, error] of registries) {
+      const gitRelated = mode === 'cache-placement' || error === 'overlapping_git_cache';
+      if (gitRelated && !this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} IS NOT NULL LIMIT 1`).get()) continue;
+      if (gitRelated) mounts ??= readWorkspaceMountTable();
+      const byIdentity = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${identityExpr} = ? LIMIT 1`);
       for (const identity of storageAncestry) {
-        if (byIdentity.get(identity)) throw new ManagedWorkspaceStorageError('overlapping_source');
+        if (byIdentity.get(identity)) throw new ManagedWorkspaceStorageError(error);
       }
-      const expr = sourcePathExpr(json);
       const exact = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} = ? LIMIT 1`);
       const nested = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} >= ? AND ${expr} < ? LIMIT 1`);
-      for (const { directory } of [roots.scratch, roots.artifacts]) {
-        for (let current = directory; ; current = path.dirname(current)) {
-          if (exact.get(current)) throw new ManagedWorkspaceStorageError('overlapping_source');
-          if (path.dirname(current) === current) break;
+      for (const { directory: requested } of paths) {
+        const aliases = gitRelated ? workspaceBackingAliases(requested, mounts ?? []) : [requested];
+        for (const directory of aliases) {
+          for (let current = directory; ; current = path.dirname(current)) {
+            if (exact.get(current)) throw new ManagedWorkspaceStorageError(error);
+            if (path.dirname(current) === current) break;
+          }
+          const prefix = directory.endsWith(path.sep) ? directory : `${directory}${path.sep}`;
+          const upper = `${prefix.slice(0, -1)}${String.fromCharCode(path.sep.charCodeAt(0) + 1)}`;
+          if (nested.get(prefix, upper)) throw new ManagedWorkspaceStorageError(error);
         }
-        const prefix = `${directory}${path.sep}`;
-        const upper = `${directory}${String.fromCharCode(path.sep.charCodeAt(0) + 1)}`;
-        if (nested.get(prefix, upper)) throw new ManagedWorkspaceStorageError('overlapping_source');
       }
     }
   }
@@ -359,6 +453,23 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       WHERE workload_kind = ? AND run_id = ?
     `).run(usedAt, owner.kind, owner.runId);
   }
+}
+
+function validGitAllocation({ git, gitCheckout, project, fallbackWorkspace, scratch }: ManagedRunAllocation): boolean {
+  if (!git) return gitCheckout === undefined;
+  return !!project && !fallbackWorkspace && !!gitCheckout && git.key === gitSnapshotKey(git)
+    && gitCheckout.checkout.directory === path.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF)
+    && gitCheckout.gitDirectory.directory === path.join(gitCheckout.checkout.directory, '.git');
+}
+
+function checkoutSelection(allocation: ManagedRunAllocation, authorizedRoots: ManagedWorkspaceAuthorizedRoots) {
+  const { git, project, scratch } = allocation;
+  if (!git) return undefined;
+  if (!project) throw new ManagedWorkspaceStorageError('invalid_binding');
+  return {
+    cache: { gitDirectory: git.cache, repositoryId: git.repositoryId, scope: git.scope, commit: git.commit, authorizedRoots },
+    expected: git, source: project, scratch, protectedRoots: [allocation.roots.scratch, allocation.roots.artifacts],
+  };
 }
 
 function parseStored<T>(schema: z.ZodType<T>, value: unknown): T {

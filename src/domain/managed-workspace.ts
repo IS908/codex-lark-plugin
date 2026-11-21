@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { workspaceProjectBindingSchema } from './workspace.js';
+import { sameWorkspaceProject, workspaceProjectBindingSchema } from './workspace.js';
 
 export const MANAGED_DELIVERY_MAX_BYTES = 30_000_000;
 export const MANAGED_DELIVERY_MAX_FILES = 5;
@@ -69,12 +69,31 @@ export const unmanagedForegroundAdmissionSchema = z.union([
   z.strictObject({ sessionKey: foregroundSessionKey, fallbackCwd: workspaceProjectBindingSchema.shape.directory }),
 ]);
 
+const gitDigest = z.string().regex(/^[a-f0-9]{64}$/);
+export const managedGitSelectionSchema = z.strictObject({
+  cache: workspaceProjectBindingSchema,
+  repositoryId: gitDigest,
+  scope: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/),
+  objectFormat: z.enum(['sha1', 'sha256']),
+  commit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+  key: gitDigest,
+  storeFingerprint: gitDigest,
+}).refine(({ commit, objectFormat }) => commit.length === (objectFormat === 'sha1' ? 40 : 64));
+export type ManagedGitSelection = z.infer<typeof managedGitSelectionSchema>;
+
+export function sameManagedGitSelection(a?: ManagedGitSelection, b?: ManagedGitSelection): boolean {
+  return a === b || !!a && !!b && sameWorkspaceProject(a.cache, b.cache) && a.repositoryId === b.repositoryId
+    && a.scope === b.scope && a.objectFormat === b.objectFormat && a.commit === b.commit
+    && a.key === b.key && a.storeFingerprint === b.storeFingerprint;
+}
+
 export const managedRunIntentSchema = z.strictObject({
   version: z.literal(1),
   owner: managedRunOwnerSchema,
   roots: managedWorkspaceRootsSchema,
   project: workspaceProjectBindingSchema.optional(),
   fallbackWorkspace: workspaceProjectBindingSchema.optional(),
+  git: managedGitSelectionSchema.optional(),
   foregroundSessionKey: foregroundSessionKey.optional(),
   createdAt: z.iso.datetime(),
 });
@@ -82,6 +101,7 @@ export const managedRunIntentSchema = z.strictObject({
 export const managedRunAllocationSchema = managedRunIntentSchema.extend({
   scratch: workspaceProjectBindingSchema,
   artifacts: workspaceProjectBindingSchema,
+  gitCheckout: z.strictObject({ checkout: workspaceProjectBindingSchema, gitDirectory: workspaceProjectBindingSchema }).optional(),
 });
 
 export type ManagedRunOwner = z.infer<typeof managedRunOwnerSchema>;
