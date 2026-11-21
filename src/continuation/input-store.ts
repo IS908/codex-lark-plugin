@@ -17,8 +17,11 @@ import type {
 } from '../ports/continuation.js';
 import {
   currentProcessStartedAt,
+  getLinuxProcessBirthToken,
+  isCleanupProcessInstanceAlive,
   isProcessAlive,
   isProcessInstanceAlive,
+  LINUX_BIRTH_TOKEN_PATTERN,
 } from '../process-identity.js';
 import { continuationJobId } from './idempotency.js';
 
@@ -39,6 +42,17 @@ interface InputManifest {
 }
 
 class InvalidManagedInputError extends Error {}
+class ContinuationCreationLockBusyError extends Error {}
+
+export async function withContinuationCleanupLock<T>(store: Pick<ContinuationInputStorePort, 'withCreationLock'>, jobId: string,
+  operation: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await store.withCreationLock(jobId, operation, { wait: false });
+  } catch (error) {
+    if (!(error instanceof ContinuationCreationLockBusyError)) throw error;
+    console.error(`[continuation] storage reconciliation deferred for locked job ${jobId}`);
+  }
+}
 
 const MANIFEST_FILE = '.manifest.json';
 const DEFAULT_ORPHAN_AGE_MS = 60 * 60 * 1_000;
@@ -47,12 +61,12 @@ const CREATION_RECLAIM_PREFIX = '.reclaim-';
 const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
 const OWNERLESS_LOCK_GRACE_MS = 30_000;
-const UNKNOWN_CREATION_OWNER_GRACE_MS = CREATION_LOCK_WAIT_MS + OWNERLESS_LOCK_GRACE_MS;
 const ACTIVE_REDACTION_QUARANTINES = new Set<string>();
 
 interface CreationLockOwner {
   pid: number;
   startedAt: number | null;
+  linuxBirthToken: string | null;
   nonce: string | null;
   createdAt: string;
 }
@@ -78,17 +92,19 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     await fs.chmod(this.rootDir, 0o700);
   }
 
-  async withCreationLock<T>(jobId: string, operation: () => Promise<T>): Promise<T> {
+  async withCreationLock<T>(jobId: string, operation: () => Promise<T>, { wait = true }: { wait?: boolean } = {}): Promise<T> {
     assertJobId(jobId);
     await this.ensureRoot();
     const lockDirectory = path.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
     let ownerNonce: string | undefined;
+    let attemptedReclaim = false;
     while (true) {
       const nonce = randomBytes(16).toString('hex');
       const owner: CreationLockOwner = {
         pid: process.pid,
         startedAt: currentProcessStartedAt(),
+        linuxBirthToken: getLinuxProcessBirthToken(process.pid),
         nonce,
         createdAt: new Date().toISOString(),
       };
@@ -101,6 +117,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         if (await hasCompetingCreationReclaim(this.rootDir, lockDirectory)) {
           await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce);
           ownerNonce = undefined;
+          if (!wait) throw new ContinuationCreationLockBusyError();
           if (Date.now() >= deadline) {
             throw new Error('Continuation creation-lock reclaim did not finish before the wait deadline.');
           }
@@ -122,7 +139,11 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
           }
         }
         if (!isCreationLockContention(error)) throw error;
-        if (await tryReclaimCreationLock(lockDirectory, this.rootDir)) continue;
+        if ((wait || !attemptedReclaim) && await tryReclaimCreationLock(lockDirectory, this.rootDir)) {
+          attemptedReclaim = true;
+          continue;
+        }
+        if (!wait) throw new ContinuationCreationLockBusyError();
         if (Date.now() >= deadline) {
           throw new Error('Continuation creation is already in progress for this idempotency key.');
         }
@@ -373,6 +394,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     jobIds: ReadonlySet<string>,
     nowMs = Date.now(),
     isJobKnown?: (jobId: string) => boolean | Promise<boolean>,
+    withJobLock: (jobId: string, operation: () => Promise<void>) => Promise<void> = (jobId, operation) => this.withCreationLock(jobId, operation),
   ): Promise<void> {
     await this.ensureRoot();
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
@@ -402,7 +424,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       const redactionQuarantine = parseRedactionQuarantine(entry.name);
       if (redactionQuarantine) {
         const candidate = path.join(this.rootDir, entry.name);
-        await this.withCreationLock(redactionQuarantine.jobId, async () => {
+        await withJobLock(redactionQuarantine.jobId, async () => {
           const shouldRestore = isJobKnown
             ? await isJobKnown(redactionQuarantine.jobId)
             : jobIds.has(redactionQuarantine.jobId);
@@ -419,12 +441,8 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
           const ownerIsActive = redactionQuarantine.ownerStartedAt === null
             ? isProcessAlive(redactionQuarantine.ownerPid)
               && stateAgeMs < OWNERLESS_LOCK_GRACE_MS
-            : await isProcessInstanceAlive(
-              redactionQuarantine.ownerPid,
-              redactionQuarantine.ownerStartedAt,
-              stateAgeMs,
-              OWNERLESS_LOCK_GRACE_MS,
-            );
+            : await isProcessInstanceAlive(redactionQuarantine.ownerPid, redactionQuarantine.ownerStartedAt,
+              stateAgeMs, OWNERLESS_LOCK_GRACE_MS);
           if (
             ownerIsActive
             && (redactionQuarantine.ownerPid !== process.pid
@@ -451,7 +469,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         entry.name.startsWith(`.staging-${jobId}-`))) continue;
       const candidate = path.join(this.rootDir, entry.name);
       if (!isStaging && isValidJobId(entry.name)) {
-        await this.withCreationLock(entry.name, async () => {
+        await withJobLock(entry.name, async () => {
           if (jobIds.has(entry.name) || await isJobKnown?.(entry.name)) return;
           await removeAgedOrphan(candidate, nowMs, this.orphanAgeMs);
         });
@@ -703,6 +721,7 @@ async function readCreationOwner(lockDirectory: string): Promise<CreationLockOwn
       nonce?: unknown;
       createdAt?: unknown;
       startedAt?: unknown;
+      linuxBirthToken?: unknown;
     };
     if (
       !Number.isInteger(parsed.pid)
@@ -716,6 +735,8 @@ async function readCreationOwner(lockDirectory: string): Promise<CreationLockOwn
     return {
       pid: Number(parsed.pid),
       startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null,
+      linuxBirthToken: typeof parsed.linuxBirthToken === 'string' && LINUX_BIRTH_TOKEN_PATTERN.test(parsed.linuxBirthToken)
+        ? parsed.linuxBirthToken : null,
       nonce,
       createdAt: parsed.createdAt,
     };
@@ -738,16 +759,7 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
   const owner = await readCreationOwner(lockDirectory);
   if (owner === null) {
     if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
-  } else if (owner.startedAt === null) {
-    if (isProcessAlive(owner.pid) && Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) {
-      return false;
-    }
-  } else if (await isProcessInstanceAlive(
-    owner.pid,
-    owner.startedAt,
-    Date.now() - metadata.mtimeMs,
-    UNKNOWN_CREATION_OWNER_GRACE_MS,
-  )) return false;
+  } else if (await isCleanupProcessInstanceAlive(owner.pid, owner.startedAt, owner.linuxBirthToken)) return false;
 
   const quarantine = path.join(
     rootDir,
@@ -820,14 +832,8 @@ async function isCreationReclaimActive(
 ): Promise<boolean> {
   const stateAgeMs = nowMs - (reclaim.createdAt ?? mtimeMs);
   if (stateAgeMs >= OWNERLESS_LOCK_GRACE_MS) return false;
-  return reclaim.startedAt === null
-    ? isProcessAlive(reclaim.pid)
-    : isProcessInstanceAlive(
-      reclaim.pid,
-      reclaim.startedAt,
-      stateAgeMs,
-      OWNERLESS_LOCK_GRACE_MS,
-    );
+  return reclaim.startedAt === null ? isProcessAlive(reclaim.pid)
+    : isProcessInstanceAlive(reclaim.pid, reclaim.startedAt, stateAgeMs, OWNERLESS_LOCK_GRACE_MS);
 }
 
 async function releaseCreationLock(

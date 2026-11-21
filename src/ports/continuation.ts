@@ -44,7 +44,7 @@ export type ContinuationInputVerification =
 
 export interface ContinuationInputStorePort {
   ensureRoot(): Promise<void>;
-  withCreationLock<T>(jobId: string, operation: () => Promise<T>): Promise<T>;
+  withCreationLock<T>(jobId: string, operation: () => Promise<T>, options?: { wait?: boolean }): Promise<T>;
   install(
     jobId: string,
     sources: readonly AsyncTaskSourceInput[],
@@ -66,8 +66,11 @@ export interface ContinuationInputStorePort {
     jobIds: ReadonlySet<string>,
     nowMs?: number,
     isJobKnown?: (jobId: string) => boolean | Promise<boolean>,
+    withJobLock?: (jobId: string, operation: () => Promise<void>) => Promise<void>,
   ): Promise<void>;
 }
+
+export interface ContinuationMaintenanceOptions { deferBusy?: boolean }
 
 export interface ContinuationRepository {
   readonly durableRuns: DurableRunRepository;
@@ -135,7 +138,7 @@ export interface ContinuationRepository {
   ): Promise<ContinuationPreparedTransition>;
   verifyClaimInputs(claim: ContinuationClaim): Promise<ContinuationInputVerification>;
   recoverExpiredLeases(now: string): Promise<DurableRunInterruptedAttempt[]>;
-  expireOverdue(now: string): Promise<number>;
+  expireOverdue(now: string, options?: ContinuationMaintenanceOptions): Promise<number>;
   cloneForRetry(jobId: string, requestId: string, now: string): Promise<ContinuationJob>;
   redactTerminal(jobId: string, now: string): Promise<boolean>;
   setRetained(jobId: string, retained: boolean, now: string): Promise<boolean>;
@@ -168,7 +171,7 @@ export interface ContinuationRepository {
     input: string,
     now: string,
   ): Promise<'resumed' | 'stale' | 'missing'>;
-  purgeExpired(retainAfter: string, now: string): Promise<ContinuationCleanupResult[]>;
+  purgeExpired(retainAfter: string, now: string, options?: ContinuationMaintenanceOptions): Promise<ContinuationCleanupResult[]>;
   close(): void;
 }
 

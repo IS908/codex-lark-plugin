@@ -23,7 +23,7 @@ import {
   fstatSync,
   futimesSync,
   openSync,
-  readFileSync,
+  readFileSync as readFileSync2,
   unlinkSync
 } from "node:fs";
 import { gzip } from "node:zlib";
@@ -31,13 +31,25 @@ import { basename, dirname, join } from "node:path";
 import { promisify as promisify2 } from "node:util";
 
 // src/process-identity.ts
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
 var PROCESS_START_TOLERANCE_MS = 1e3;
-var CURRENT_PROCESS_STARTED_AT = Math.floor(Date.now() - process.uptime() * 1e3);
+var ESTIMATED_PROCESS_STARTED_AT = Math.floor(Date.now() - process.uptime() * 1e3);
+var PS_OPTIONS = { encoding: "utf8", env: { LC_ALL: "C", TZ: "UTC" }, timeout: 2e3, maxBuffer: 4096 };
+var ownProcessStartedAt;
+var linuxBootId;
+var ownLinuxBirthToken;
 function currentProcessStartedAt() {
-  return CURRENT_PROCESS_STARTED_AT;
+  if (ownProcessStartedAt === void 0) {
+    try {
+      ownProcessStartedAt = parseProcessStart(execFileSync("/bin/ps", psArgs(process.pid), PS_OPTIONS)) ?? ESTIMATED_PROCESS_STARTED_AT;
+    } catch {
+      ownProcessStartedAt = ESTIMATED_PROCESS_STARTED_AT;
+    }
+  }
+  return ownProcessStartedAt;
 }
 function isProcessAlive(pid) {
   try {
@@ -48,16 +60,23 @@ function isProcessAlive(pid) {
   }
 }
 async function getProcessStartedAt(pid) {
-  if (pid === process.pid) return CURRENT_PROCESS_STARTED_AT;
+  if (!Number.isSafeInteger(pid) || pid < 1) return null;
+  if (pid === process.pid) return currentProcessStartedAt();
   try {
-    const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(pid)]);
-    const raw = String(stdout).trim();
-    if (!raw) return null;
-    const parsed = Date.parse(raw);
-    return Number.isFinite(parsed) ? parsed : null;
+    const { stdout } = await execFileAsync("/bin/ps", psArgs(pid), PS_OPTIONS);
+    return parseProcessStart(stdout);
   } catch {
     return null;
   }
+}
+function psArgs(pid) {
+  return ["-o", "lstart=", "-p", String(pid)];
+}
+function parseProcessStart(output) {
+  const raw = output.trim();
+  if (!raw) return null;
+  const startedAt = Date.parse(`${raw} UTC`);
+  return Number.isFinite(startedAt) ? startedAt : null;
 }
 function isSameProcessStart(a, b) {
   return Math.abs(a - b) <= PROCESS_START_TOLERANCE_MS;
@@ -67,17 +86,41 @@ function isRecordedProcessInstanceActive(processAlive, recordedStartedAt, actual
   if (actualStartedAt === null) return stateAgeMs < unknownIdentityGraceMs;
   return isSameProcessStart(actualStartedAt, recordedStartedAt);
 }
-async function isProcessInstanceAlive(pid, startedAt, stateAgeMs, unknownIdentityGraceMs) {
-  const processAlive = isProcessAlive(pid);
+var LINUX_BIRTH_TOKEN_PATTERN = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}:\d{1,20}$/;
+function getLinuxProcessBirthToken(pid) {
+  if (process.platform !== "linux" || !Number.isSafeInteger(pid) || pid < 1) return null;
+  if (pid === process.pid && ownLinuxBirthToken !== void 0) return ownLinuxBirthToken;
+  let token = null;
+  try {
+    if (linuxBootId === void 0) linuxBootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    const stat2 = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const endOfCommand = stat2.lastIndexOf(") ");
+    const ticks = endOfCommand > 0 && stat2.startsWith(`${pid} (`) ? stat2.slice(endOfCommand + 2).trim().split(/\s+/)[19] : "";
+    const measured = `${linuxBootId}:${ticks}`;
+    if (LINUX_BIRTH_TOKEN_PATTERN.test(measured)) token = measured;
+  } catch {
+  }
+  if (pid === process.pid) ownLinuxBirthToken = token;
+  return token;
+}
+function isCleanupProcessOwnerActive(processAlive, recordedStartedAt, actualStartedAt, linuxBirth) {
   if (!processAlive) return false;
-  const actualStartedAt = await getProcessStartedAt(pid);
-  return isRecordedProcessInstanceActive(
-    processAlive,
-    startedAt,
-    actualStartedAt,
-    stateAgeMs,
-    unknownIdentityGraceMs
+  if (linuxBirth) return linuxBirth.recorded === null || linuxBirth.actual === null || linuxBirth.recorded === linuxBirth.actual;
+  return recordedStartedAt === null || actualStartedAt === null || actualStartedAt <= recordedStartedAt;
+}
+async function isCleanupProcessInstanceAlive(pid, recordedStartedAt, linuxBirthToken) {
+  if (!isProcessAlive(pid)) return false;
+  if (process.platform === "linux") return isCleanupProcessOwnerActive(
+    true,
+    recordedStartedAt,
+    null,
+    { recorded: linuxBirthToken, actual: linuxBirthToken === null ? null : getLinuxProcessBirthToken(pid) }
   );
+  return isCleanupProcessOwnerActive(true, recordedStartedAt, await getProcessStartedAt(pid));
+}
+async function isProcessInstanceAlive(pid, startedAt, stateAgeMs, unknownIdentityGraceMs) {
+  if (!isProcessAlive(pid)) return false;
+  return isRecordedProcessInstanceActive(true, startedAt, await getProcessStartedAt(pid), stateAgeMs, unknownIdentityGraceMs);
 }
 
 // src/resource-governance.ts
@@ -153,7 +196,7 @@ function refreshLockHeartbeat(lockPath, record, expectedUid) {
     fd = openSync(lockPath, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
     const metadata = fstatSync(fd);
     if (!metadata.isFile() || expectedUid !== void 0 && metadata.uid !== expectedUid) return;
-    if (!sameLockOwner(parseLock(readFileSync(fd, "utf8")), record)) return;
+    if (!sameLockOwner(parseLock(readFileSync2(fd, "utf8")), record)) return;
     const now = /* @__PURE__ */ new Date();
     futimesSync(fd, now, now);
   } catch {
@@ -183,7 +226,7 @@ function makeHandle(lockPath, pid, startedAt, heartbeatIntervalMs, expectedUid) 
       released = true;
       clearInterval(heartbeat);
       try {
-        const existing = parseLock(readFileSync(lockPath, "utf-8"));
+        const existing = parseLock(readFileSync2(lockPath, "utf-8"));
         if (existing?.pid === pid && existing.startedAt === startedAt) unlinkSync(lockPath);
       } catch {
       }
@@ -862,6 +905,9 @@ function releaseLocks(locks) {
 export {
   currentProcessStartedAt,
   isProcessAlive,
+  LINUX_BIRTH_TOKEN_PATTERN,
+  getLinuxProcessBirthToken,
+  isCleanupProcessInstanceAlive,
   isProcessInstanceAlive,
   registerLockCleanup,
   appendRotatingLine,

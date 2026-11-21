@@ -229,7 +229,7 @@ export class AsyncTaskKernelAdapter implements
     now: string,
   ): Promise<DurableRunInterruptedAttempt[]> {
     if (!workloadKinds.includes(this.kind)) return [];
-    await this.options.repository.expireOverdue(now);
+    await this.options.repository.expireOverdue(now, { deferBusy: true });
     return this.options.repository.recoverExpiredLeases(now);
   }
 

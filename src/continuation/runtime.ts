@@ -136,12 +136,13 @@ export async function createContinuationRuntime(
     }
     const now = clock.now().toISOString();
     const continuationAudit = options.audit ?? defaultContinuationAudit;
-    await repository.expireOverdue(now);
+    await repository.expireOverdue(now, { deferBusy: true });
     await runRetentionCleanup(
       repository,
       retentionCutoff(now, options.retentionDays),
       now,
       continuationAudit,
+      true,
     );
 
     const artifactStore = new ContinuationArtifactStore(storage.artifactsDir);
@@ -305,8 +306,9 @@ async function runRetentionCleanup(
   retainAfter: string,
   now: string,
   audit: ContinuationAudit,
+  deferBusy = false,
 ): Promise<void> {
-  const results = await repository.purgeExpired(retainAfter, now);
+  const results = await repository.purgeExpired(retainAfter, now, { deferBusy });
   for (const cleanup of results) {
     const detail = cleanup.result === 'cleaned'
       ? `automatic_retention status=${cleanup.status} completed_at=${cleanup.completedAt}`
