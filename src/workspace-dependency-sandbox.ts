@@ -27,7 +27,7 @@ export async function prepareWorkspaceDependencySandbox(input: {
   protectedBindings?: WorkspaceProjectBinding[];
 }) {
   try {
-    const { executable, runtime, installer } = workspaceDependencyToolchainConfigSchema.parse(input.configured);
+    const { ecosystem, executable, runtime, installer } = workspaceDependencyToolchainConfigSchema.parse(input.configured);
     const staging = await validateWorkspaceProject(input.staging.directory, input.staging);
     await assertProtectedWorkspacePath(staging, true);
     const stageInfo = await fs.lstat(staging.directory, { bigint: true });
@@ -69,20 +69,27 @@ export async function prepareWorkspaceDependencySandbox(input: {
     await assertCompatibleCodexLayers(env, [cwd]);
     const launcher = await resolveManagedGitLauncher(input.codexCommand, env, [staging, ...readonly, ...(input.protectedBindings ?? [])]);
     const system = await linuxSystemReads();
-    for (const entry of system) {
+    for (const entry of system.readable) {
       if (!mounts.supports(entry) || !mounts.supports(await fs.realpath(entry))) invalid();
     }
     if (!literalPath(launcher.command)) invalid();
     // The pinned Linux launcher re-enters itself inside Bubblewrap before executing the payload.
-    const rules = new Map<string, 'read' | 'write'>([...system, launcher.command, ...readonly.map(({ directory }) => directory)]
+    const rules = new Map<string, 'read' | 'write'>([...system.readable, launcher.command, ...readonly.map(({ directory }) => directory)]
       .map((root) => [root, 'read']));
     addCodexWorkspaceWriteRoot(rules, cwd);
+    let command = [executable];
+    if (ecosystem === 'pip') {
+      const lib = path.join(runtime.directory, 'lib');
+      if (/[:;$]/.test(lib) || await fs.realpath(lib) !== lib || !(await fs.lstat(lib)).isDirectory()) invalid();
+      // Select only the registered runtime's libraries, after Bubblewrap has entered the restricted filesystem.
+      command = [system.loader, '--inhibit-cache', '--library-path', lib, '--argv0', executable, executable];
+    }
     return { command: launcher.command, args: ['sandbox', ...namedCodexSandboxOverrides(profile, rules, false)
-      .flatMap((setting) => ['-c', setting]), '-P', profile, '-C', cwd, '--', executable], env: launcher.env };
+      .flatMap((setting) => ['-c', setting]), '-P', profile, '-C', cwd, '--', ...command], env: launcher.env };
   } catch { return invalid(); }
 }
 
-async function linuxSystemReads(): Promise<string[]> {
+async function linuxSystemReads() {
   const arch = process.arch === 'x64' ? { triple: 'x86_64-linux-gnu', loader: '/lib64/ld-linux-x86-64.so.2' }
     : process.arch === 'arm64' ? { triple: 'aarch64-linux-gnu', loader: '/lib/ld-linux-aarch64.so.1' } : invalid();
   const dirs = [`/lib/${arch.triple}`, `/usr/lib/${arch.triple}`];
@@ -90,7 +97,7 @@ async function linuxSystemReads(): Promise<string[]> {
   const resolvedLoader = await protectedSystemPath(arch.loader);
   if (paths.some((real) => real && !dirs.includes(real))
     || !resolvedLoader || !paths.some((real) => real && workspacePathContains(real, resolvedLoader))) invalid();
-  return [...dirs.filter((_, index) => !!paths[index]), arch.loader];
+  return { readable: [...dirs.filter((_, index) => !!paths[index]), arch.loader], loader: arch.loader };
 }
 
 async function protectedSystemPath(candidate: string, device?: bigint): Promise<string | undefined> {
