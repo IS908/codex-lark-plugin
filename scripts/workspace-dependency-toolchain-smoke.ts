@@ -160,8 +160,15 @@ print(json.dumps(dict(prefix=os.path.realpath(sys.prefix), installer=os.path.dir
       await makeLinuxFixturePrivate(pythonRuntime);
       await makeLinuxFixturePrivate(pipRoot);
     }
-    const pipProbe = await probeWorkspaceDependencyToolchain({ ...common,
-      configured: { ecosystem: 'pip', executable: pythonExecutable, runtime: await pin(pythonRuntime), installer: await pin(pipRoot) } });
+    const pythonConfig = { ecosystem: 'pip', executable: pythonExecutable, runtime: await pin(pythonRuntime), installer: await pin(pipRoot) } as const;
+    const pipProbe = await probeWorkspaceDependencyToolchain({ ...common, configured: pythonConfig }).catch(async (error) => {
+      const diagnostic = path.join(fixture, 'python-startup-diagnostic');
+      await fs.mkdir(diagnostic, { mode: 0o700 });
+      const command = await prepareWorkspaceDependencySandbox({ ...common, configured: pythonConfig, staging: await pin(diagnostic) });
+      await promisify(execFile)(command.command, [...command.args, '-I', '-S', '-B', '-c', 'import os, sysconfig, json; os.uname()'],
+        { cwd: diagnostic, env: command.env, timeout: 15_000, maxBuffer: 8192 });
+      throw error;
+    });
     assert.equal(pipProbe.toolchain.abi, pythonMetadata.abi);
     assert.match(pipProbe.toolchain.installer, /^\d+\.\d+/);
     assert.equal(pipProbe.toolchain.platformAbi, npmProbe.toolchain.platformAbi);

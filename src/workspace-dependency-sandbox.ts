@@ -10,7 +10,7 @@ import { validateWorkspaceProject, workspacePathContains } from './workspace-pro
 
 const profile = 'lark-dependency-installer';
 const seatbelt = '/usr/bin/sandbox-exec';
-const darwinSystem = ['/usr/lib', '/System/Library'];
+const darwinSystem = ['/usr/lib', '/System/Library/Frameworks', '/System/Library/PrivateFrameworks', '/System/Library/SubFrameworks'];
 const processSysctls = ['kern.ostype', 'kern.osrelease', 'kern.osversion', 'kern.osproductversion', 'kern.version', 'kern.argmax', 'kern.hostname',
   'kern.osvariant_status', 'machdep.cpu.brand_string', 'machdep.ptrauth_enabled', 'security.mac.lockdown_mode_state', 'sysctl.proc_cputype'];
 
@@ -53,15 +53,19 @@ export async function prepareWorkspaceDependencySandbox(input: {
     }
     const cwd = staging.directory;
     const env = { HOME: cwd, CODEX_HOME: cwd, CODEX_SQLITE_HOME: cwd, TMPDIR: cwd, TMP: cwd, TEMP: cwd,
-      PATH: '/usr/bin:/bin', LC_ALL: 'C', PIP_CONFIG_FILE: '/dev/null' };
+      PATH: '/usr/bin:/bin', LC_ALL: 'C', PIP_CONFIG_FILE: '/dev/null', OPENSSL_CONF: '/dev/null' };
     if (process.platform === 'darwin') {
       const system = await fs.stat('/', { bigint: true });
       for (const item of [seatbelt, ...darwinSystem]) {
-        if (!(await protectedSystemPath(item, system.dev))) invalid();
+        if (!mounts.supportsSystemRead?.(item) || !(await protectedSystemPath(item, system.dev))) invalid();
       }
       return { command: seatbelt, args: ['-p', darwinPolicy(executable, runtime.directory, readonly.map(({ directory }) => directory), cwd), executable], env };
     }
     if (process.platform !== 'linux' || !path.isAbsolute(input.codexCommand)) invalid();
+    env.CODEX_HOME = path.join(cwd, 'codex-home');
+    env.TMPDIR = env.TMP = env.TEMP = path.join(cwd, 'tmp');
+    for (const directory of [env.CODEX_HOME, env.TMPDIR]) await fs.mkdir(directory, { mode: 0o700 });
+    await assertProtectedWorkspacePath(staging, true);
     await assertCompatibleCodexLayers(env, [cwd]);
     const launcher = await resolveManagedGitLauncher(input.codexCommand, env, [staging, ...readonly, ...(input.protectedBindings ?? [])]);
     const system = await linuxSystemReads();

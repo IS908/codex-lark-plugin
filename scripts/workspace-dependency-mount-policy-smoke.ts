@@ -6,7 +6,8 @@ import { createDarwinDependencyMountPolicy, readWorkspaceDependencyMountPolicy }
 
 const data = '/System/Volumes/Data';
 const system = `/dev/disk0s1 on / (apfs, sealed, local, read-only)\n/dev/disk0s2 on ${data} (apfs, local, root data)\n`;
-const firmlinks = [ ['/Users', `${data}/Users`], ['/private', `${data}/private`] ] as const;
+const firmlinks = [ ['/Users', `${data}/Users`], ['/private', `${data}/private`],
+  ['/System/Library/Caches', `${data}/System/Library/Caches`] ] as const;
 const policy = createDarwinDependencyMountPolicy(`${system}remote on ${data}/Users/fixture/nested (smbfs, nodev)\n`, firmlinks);
 assert.deepEqual(policy.aliases('/Users/fixture/cache'), ['/Users/fixture/cache', `${data}/Users/fixture/cache`]);
 assert.deepEqual(policy.aliases(`${data}/private/tmp/cache`), [`${data}/private/tmp/cache`, '/private/tmp/cache']);
@@ -16,6 +17,12 @@ assert.equal(policy.supports('/Users/fixture/nested/writable'), false);
 assert.equal(policy.supports(`${data}/Users/fixture/nested`), false);
 assert.equal(policy.supports('/Volumes/external/work'), false);
 assert.equal(policy.supports('/'), false);
+assert.equal(policy.supportsSystemRead?.('/System/Library'), false, 'recursive reads may not span a Data-backed child');
+assert.equal(policy.supportsSystemRead?.('/System/Library/Frameworks'), true);
+assert.equal(policy.supportsSystemRead?.('/System/Library/Caches'), false);
+assert.equal(policy.supportsSystemRead?.('/Users/fixture'), false);
+assert.equal(createDarwinDependencyMountPolicy(`${system}nested on /usr/lib/opaque (tmpfs, nodev)\n`, firmlinks)
+  .supportsSystemRead?.('/usr/lib'), false);
 assert.throws(() => createDarwinDependencyMountPolicy(system.replace('root data', 'journaled'), firmlinks));
 assert.throws(() => createDarwinDependencyMountPolicy(`${system}opaque on /unrecognized (smbfs, nodev)\nnon-mount line\n`, firmlinks));
 

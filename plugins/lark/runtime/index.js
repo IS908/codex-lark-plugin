@@ -52047,10 +52047,16 @@ function createDarwinDependencyMountPolicy(table, firmlinks) {
     return [...aliases2];
   }
   const unmodeled = mounts.filter(({ directory }) => directory !== "/" && directory !== DATA).flatMap(({ directory }) => aliases(directory));
-  return { aliases, contains, supports: (directory) => {
-    const candidates = aliases(directory);
-    return candidates.some((alias) => contains(DATA, alias)) && !candidates.some((alias) => unmodeled.some((mount) => contains(alias, mount) || contains(mount, alias)));
-  } };
+  const systemExclusions = [DATA, ...unmodeled, ...firmlinks.flatMap(([visible, backing]) => [visible, backing])];
+  return {
+    aliases,
+    contains,
+    supportsSystemRead: (directory) => absolute(directory) && directory !== "/" && !systemExclusions.some((excluded) => contains(directory, excluded) || contains(excluded, directory)),
+    supports: (directory) => {
+      const candidates = aliases(directory);
+      return candidates.some((alias) => contains(DATA, alias)) && !candidates.some((alias) => unmodeled.some((mount) => contains(alias, mount) || contains(mount, alias)));
+    }
+  };
 }
 async function readVerifiedFirmlinks() {
   const file2 = await fs9.open(FIRMLINKS, fs9.constants.O_RDONLY | fs9.constants.O_NOFOLLOW | fs9.constants.O_NONBLOCK);

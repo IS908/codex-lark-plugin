@@ -13,6 +13,7 @@ const FIRMLINKS = '/usr/share/firmlinks';
 export interface WorkspaceDependencyMountPolicy {
   aliases(directory: string): string[];
   supports(directory: string): boolean;
+  supportsSystemRead?(directory: string): boolean;
   contains(root: string, directory: string): boolean;
 }
 
@@ -54,7 +55,10 @@ export function createDarwinDependencyMountPolicy(table: string, firmlinks: read
     return [...aliases];
   }
   const unmodeled = mounts.filter(({ directory }) => directory !== '/' && directory !== DATA).flatMap(({ directory }) => aliases(directory));
-  return { aliases, contains, supports: (directory) => {
+  const systemExclusions = [DATA, ...unmodeled, ...firmlinks.flatMap(([visible, backing]) => [visible, backing])];
+  return { aliases, contains, supportsSystemRead: (directory) => absolute(directory) && directory !== '/'
+    && !systemExclusions.some((excluded) => contains(directory, excluded) || contains(excluded, directory)),
+  supports: (directory) => {
     const candidates = aliases(directory);
     // Only an identified Data volume path with no overlapping mount has a proven local backing layout.
     return candidates.some((alias) => contains(DATA, alias)) && !candidates.some((alias) =>
