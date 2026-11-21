@@ -219,7 +219,7 @@ async function readRegistry(configPath?: string, allowMissingCachesForStorage = 
     for (const { cache, key } of registry.caches) {
       if (keys.has(key)) fail('dependency_registry_invalid');
       keys.add(key);
-      let location;
+      let location: Awaited<ReturnType<typeof describeLocation>>;
       if (allowMissingCachesForStorage && !await pathExists(cache.directory)) {
         const { parent, target } = await projectStorageDirectory(cache.directory);
         await assertProtectedWorkspacePath(parent, false, true);
