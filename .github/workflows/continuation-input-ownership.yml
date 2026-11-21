@@ -8,6 +8,7 @@ on:
       - 'src/process-identity.ts'
       - 'scripts/process-identity-smoke.ts'
       - 'scripts/continuation-repository-smoke.ts'
+      - 'scripts/fixtures/continuation-hold-input.ts'
       - 'package-lock.json'
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - 'src/process-identity.ts'
       - 'scripts/process-identity-smoke.ts'
       - 'scripts/continuation-repository-smoke.ts'
+      - 'scripts/fixtures/continuation-hold-input.ts'
       - 'package-lock.json'
 
 permissions:

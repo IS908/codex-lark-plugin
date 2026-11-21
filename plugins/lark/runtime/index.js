@@ -70479,6 +70479,16 @@ import { Transform } from "node:stream";
 import { pipeline as pipeline2 } from "node:stream/promises";
 var InvalidManagedInputError = class extends Error {
 };
+var ContinuationCreationLockBusyError = class extends Error {
+};
+async function withContinuationCleanupLock(store, jobId, operation) {
+  try {
+    return await store.withCreationLock(jobId, operation, { wait: false });
+  } catch (error62) {
+    if (!(error62 instanceof ContinuationCreationLockBusyError)) throw error62;
+    console.error(`[continuation] storage reconciliation deferred for locked job ${jobId}`);
+  }
+}
 var MANIFEST_FILE = ".manifest.json";
 var DEFAULT_ORPHAN_AGE_MS = 60 * 60 * 1e3;
 var CREATION_LOCK_PREFIX = ".creating-";
@@ -70487,7 +70497,6 @@ var REDACTION_QUARANTINE_PREFIX2 = ".redacting-";
 var CREATION_LOCK_WAIT_MS = 5 * 60 * 1e3;
 var OWNERLESS_LOCK_GRACE_MS = 3e4;
 var ACTIVE_REDACTION_QUARANTINES2 = /* @__PURE__ */ new Set();
-var ACTIVE_CREATION_NONCES = /* @__PURE__ */ new Set();
 var ContinuationInputStore = class {
   rootDir;
   maxFiles;
@@ -70506,12 +70515,13 @@ var ContinuationInputStore = class {
     await assertDirectory(this.rootDir);
     await fs25.chmod(this.rootDir, 448);
   }
-  async withCreationLock(jobId, operation) {
+  async withCreationLock(jobId, operation, { wait = true } = {}) {
     assertJobId(jobId);
     await this.ensureRoot();
     const lockDirectory = path34.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
     let ownerNonce;
+    let attemptedReclaim = false;
     while (true) {
       const nonce = randomBytes3(16).toString("hex");
       const owner = {
@@ -70521,7 +70531,6 @@ var ContinuationInputStore = class {
         nonce,
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
-      ACTIVE_CREATION_NONCES.add(nonce);
       try {
         await fs25.writeFile(lockDirectory, `${JSON.stringify(owner)}
 `, {
@@ -70532,6 +70541,7 @@ var ContinuationInputStore = class {
         if (await hasCompetingCreationReclaim(this.rootDir, lockDirectory)) {
           await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce);
           ownerNonce = void 0;
+          if (!wait) throw new ContinuationCreationLockBusyError();
           if (Date.now() >= deadline) {
             throw new Error("Continuation creation-lock reclaim did not finish before the wait deadline.");
           }
@@ -70553,13 +70563,15 @@ var ContinuationInputStore = class {
           }
         }
         if (!isCreationLockContention(error62)) throw error62;
-        if (await tryReclaimCreationLock(lockDirectory, this.rootDir)) continue;
+        if ((wait || !attemptedReclaim) && await tryReclaimCreationLock(lockDirectory, this.rootDir)) {
+          attemptedReclaim = true;
+          continue;
+        }
+        if (!wait) throw new ContinuationCreationLockBusyError();
         if (Date.now() >= deadline) {
           throw new Error("Continuation creation is already in progress for this idempotency key.");
         }
         await new Promise((resolve) => setTimeout(resolve, 20));
-      } finally {
-        if (ownerNonce !== nonce) ACTIVE_CREATION_NONCES.delete(nonce);
       }
     }
     let operationError;
@@ -70580,8 +70592,6 @@ var ContinuationInputStore = class {
             );
           }
           throw releaseError;
-        } finally {
-          ACTIVE_CREATION_NONCES.delete(ownerNonce);
         }
       }
     }
@@ -70780,7 +70790,7 @@ var ContinuationInputStore = class {
       ACTIVE_REDACTION_QUARANTINES2.delete(path34.basename(source));
     }
   }
-  async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown) {
+  async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown, withJobLock = (jobId, operation) => this.withCreationLock(jobId, operation)) {
     await this.ensureRoot();
     const entries = await fs25.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -70809,7 +70819,7 @@ var ContinuationInputStore = class {
       const redactionQuarantine = parseRedactionQuarantine2(entry.name);
       if (redactionQuarantine) {
         const candidate2 = path34.join(this.rootDir, entry.name);
-        await this.withCreationLock(redactionQuarantine.jobId, async () => {
+        await withJobLock(redactionQuarantine.jobId, async () => {
           const shouldRestore = isJobKnown ? await isJobKnown(redactionQuarantine.jobId) : jobIds.has(redactionQuarantine.jobId);
           if (!shouldRestore) {
             await removeManagedTree(candidate2);
@@ -70844,7 +70854,7 @@ var ContinuationInputStore = class {
       if (isStaging && [...liveCreationJobs].some((jobId) => entry.name.startsWith(`.staging-${jobId}-`))) continue;
       const candidate = path34.join(this.rootDir, entry.name);
       if (!isStaging && isValidJobId(entry.name)) {
-        await this.withCreationLock(entry.name, async () => {
+        await withJobLock(entry.name, async () => {
           if (jobIds.has(entry.name) || await isJobKnown?.(entry.name)) return;
           await removeAgedOrphan(candidate, nowMs, this.orphanAgeMs);
         });
@@ -71072,8 +71082,6 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
   const owner = await readCreationOwner(lockDirectory);
   if (owner === null) {
     if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
-  } else if (owner.pid === process.pid) {
-    if (owner.nonce !== null && ACTIVE_CREATION_NONCES.has(owner.nonce)) return false;
   } else if (await isCleanupProcessInstanceAlive(owner.pid, owner.startedAt, owner.linuxBirthToken)) return false;
   const quarantine = path34.join(
     rootDir,
@@ -76715,7 +76723,7 @@ var AsyncTaskKernelAdapter = class {
   }
   async recoverExpiredLeases(workloadKinds, now) {
     if (!workloadKinds.includes(this.kind)) return [];
-    await this.options.repository.expireOverdue(now);
+    await this.options.repository.expireOverdue(now, { deferBusy: true });
     return this.options.repository.recoverExpiredLeases(now);
   }
   async claimDelivery(workloadKinds, workerId, now, leaseExpiresAt) {
@@ -79336,7 +79344,7 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
         options.managedWorkspacePolicy
       );
       await repository.initialize();
-      await repository.reconcileStorageOrphans();
+      await repository.reconcileStorageOrphans(true);
       return repository;
     } catch (error62) {
       database.close();
@@ -79880,7 +79888,7 @@ The background task was cancelled.`,
     this.forgetActiveDurableClaim(claim2);
     return committed;
   }
-  async expireOverdue(now) {
+  async expireOverdue(now, { deferBusy = false } = {}) {
     const corruptJobIds = [];
     let expiredCount = this.transaction(() => {
       const rows = this.database.prepare(`
@@ -79948,7 +79956,7 @@ The continuation reached its maximum age.`,
       return expired;
     });
     for (const jobId of corruptJobIds) {
-      if (await this.recoverCorruptJobStorage(jobId, now, false)) expiredCount += 1;
+      if (await this.recoverCorruptStorageForMaintenance(jobId, now, deferBusy)) expiredCount += 1;
     }
     return expiredCount;
   }
@@ -80391,8 +80399,8 @@ The continuation reached its maximum age.`,
       return "resumed";
     });
   }
-  async purgeExpired(retainAfter, now) {
-    await this.reconcileStorageOrphans();
+  async purgeExpired(retainAfter, now, { deferBusy = false } = {}) {
+    await this.reconcileStorageOrphans(deferBusy);
     const rows = this.database.prepare(`
       SELECT j.job_id, j.creator_open_id, j.status, j.completed_at
       FROM continuation_jobs j
@@ -80428,12 +80436,10 @@ The continuation reached its maximum age.`,
         completedAt: stringField2(row, "completed_at")
       };
       try {
+        const operation = () => this.redactTerminalInternal(jobId, now, retainAfter);
         if (await this.serializeJobMutation(
           jobId,
-          () => this.inputs.withCreationLock(
-            jobId,
-            () => this.redactTerminalInternal(jobId, now, retainAfter)
-          )
+          () => deferBusy ? withContinuationCleanupLock(this.inputs, jobId, operation) : this.inputs.withCreationLock(jobId, operation)
         )) {
           results.push({ ...base, result: "cleaned" });
         }
@@ -80491,7 +80497,7 @@ The continuation reached its maximum age.`,
       if (this.jobMutationTails.get(jobId) === tail) this.jobMutationTails.delete(jobId);
     }
   }
-  async reconcileStorageOrphans() {
+  async reconcileStorageOrphans(deferBusy = false) {
     const rows = this.database.prepare(`
       SELECT job_id, error_code
       FROM continuation_jobs
@@ -80505,22 +80511,28 @@ The continuation reached its maximum age.`,
         AND (error_code IS NULL OR error_code <> 'continuation_persisted_state_invalid')
     `).get(jobId));
     const nowMs = Date.now();
+    const withJobLock = deferBusy ? (jobId, operation) => withContinuationCleanupLock(this.inputs, jobId, operation) : (jobId, operation) => this.inputs.withCreationLock(jobId, operation);
     for (const jobId of corruptJobIds) {
-      await this.recoverCorruptJobStorage(jobId, new Date(nowMs).toISOString(), false);
+      await this.recoverCorruptStorageForMaintenance(jobId, new Date(nowMs).toISOString(), deferBusy);
     }
-    const results = await Promise.allSettled([
-      this.artifacts.cleanupOrphans(
-        knownJobs,
-        nowMs,
-        isJobKnown,
-        (jobId, operation) => this.inputs.withCreationLock(jobId, operation)
-      ),
-      this.inputs.cleanupOrphans(knownJobs, nowMs, isJobKnown)
-    ]);
-    const errors = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+    const cleanups = [
+      () => this.artifacts.cleanupOrphans(knownJobs, nowMs, isJobKnown, withJobLock),
+      () => this.inputs.cleanupOrphans(knownJobs, nowMs, isJobKnown, withJobLock)
+    ];
+    const errors = [];
+    const run = (cleanup) => cleanup().catch((error62) => {
+      errors.push(error62);
+    });
+    if (deferBusy) {
+      for (const cleanup of cleanups) await run(cleanup);
+    } else await Promise.all(cleanups.map(run));
     if (errors.length > 0) {
       throw new AggregateError(errors, "Continuation storage reconciliation failed.");
     }
+  }
+  async recoverCorruptStorageForMaintenance(jobId, now, deferBusy) {
+    if (!deferBusy) return this.recoverCorruptJobStorage(jobId, now, false);
+    return await withContinuationCleanupLock(this.inputs, jobId, () => this.recoverCorruptJobStorage(jobId, now, false, true)) ?? false;
   }
   async cleanupCorruptStorageLocked(jobId) {
     const results = await Promise.allSettled([
@@ -81739,12 +81751,13 @@ async function createContinuationRuntime(options) {
     }
     const now = clock.now().toISOString();
     const continuationAudit = options.audit ?? defaultContinuationAudit;
-    await repository.expireOverdue(now);
+    await repository.expireOverdue(now, { deferBusy: true });
     await runRetentionCleanup(
       repository,
       retentionCutoff(now, options.retentionDays),
       now,
-      continuationAudit
+      continuationAudit,
+      true
     );
     const artifactStore = new ContinuationArtifactStore(storage.artifactsDir);
     const inputStore = new ContinuationInputStore(storage.inputsDir);
@@ -81886,8 +81899,8 @@ async function createDryRunStorage() {
 function retentionCutoff(now, retentionDays) {
   return new Date(Date.parse(now) - retentionDays * 24 * 60 * 60 * 1e3).toISOString();
 }
-async function runRetentionCleanup(repository, retainAfter, now, audit2) {
-  const results = await repository.purgeExpired(retainAfter, now);
+async function runRetentionCleanup(repository, retainAfter, now, audit2, deferBusy = false) {
+  const results = await repository.purgeExpired(retainAfter, now, { deferBusy });
   for (const cleanup of results) {
     const detail = cleanup.result === "cleaned" ? `automatic_retention status=${cleanup.status} completed_at=${cleanup.completedAt}` : `automatic_retention_failed status=${cleanup.status} completed_at=${cleanup.completedAt} error=${cleanup.errorSummary ?? "unknown"}`;
     await audit2.record({

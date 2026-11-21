@@ -42,6 +42,17 @@ interface InputManifest {
 }
 
 class InvalidManagedInputError extends Error {}
+class ContinuationCreationLockBusyError extends Error {}
+
+export async function withContinuationCleanupLock<T>(store: Pick<ContinuationInputStorePort, 'withCreationLock'>, jobId: string,
+  operation: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await store.withCreationLock(jobId, operation, { wait: false });
+  } catch (error) {
+    if (!(error instanceof ContinuationCreationLockBusyError)) throw error;
+    console.error(`[continuation] storage reconciliation deferred for locked job ${jobId}`);
+  }
+}
 
 const MANIFEST_FILE = '.manifest.json';
 const DEFAULT_ORPHAN_AGE_MS = 60 * 60 * 1_000;
@@ -51,7 +62,6 @@ const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
 const OWNERLESS_LOCK_GRACE_MS = 30_000;
 const ACTIVE_REDACTION_QUARANTINES = new Set<string>();
-const ACTIVE_CREATION_NONCES = new Set<string>();
 
 interface CreationLockOwner {
   pid: number;
@@ -82,12 +92,13 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     await fs.chmod(this.rootDir, 0o700);
   }
 
-  async withCreationLock<T>(jobId: string, operation: () => Promise<T>): Promise<T> {
+  async withCreationLock<T>(jobId: string, operation: () => Promise<T>, { wait = true }: { wait?: boolean } = {}): Promise<T> {
     assertJobId(jobId);
     await this.ensureRoot();
     const lockDirectory = path.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
     let ownerNonce: string | undefined;
+    let attemptedReclaim = false;
     while (true) {
       const nonce = randomBytes(16).toString('hex');
       const owner: CreationLockOwner = {
@@ -97,7 +108,6 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         nonce,
         createdAt: new Date().toISOString(),
       };
-      ACTIVE_CREATION_NONCES.add(nonce);
       try {
         await fs.writeFile(lockDirectory, `${JSON.stringify(owner)}\n`, {
           mode: 0o600,
@@ -107,6 +117,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         if (await hasCompetingCreationReclaim(this.rootDir, lockDirectory)) {
           await releaseCreationLock(lockDirectory, this.rootDir, ownerNonce);
           ownerNonce = undefined;
+          if (!wait) throw new ContinuationCreationLockBusyError();
           if (Date.now() >= deadline) {
             throw new Error('Continuation creation-lock reclaim did not finish before the wait deadline.');
           }
@@ -128,13 +139,15 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
           }
         }
         if (!isCreationLockContention(error)) throw error;
-        if (await tryReclaimCreationLock(lockDirectory, this.rootDir)) continue;
+        if ((wait || !attemptedReclaim) && await tryReclaimCreationLock(lockDirectory, this.rootDir)) {
+          attemptedReclaim = true;
+          continue;
+        }
+        if (!wait) throw new ContinuationCreationLockBusyError();
         if (Date.now() >= deadline) {
           throw new Error('Continuation creation is already in progress for this idempotency key.');
         }
         await new Promise((resolve) => setTimeout(resolve, 20));
-      } finally {
-        if (ownerNonce !== nonce) ACTIVE_CREATION_NONCES.delete(nonce);
       }
     }
     let operationError: unknown;
@@ -155,8 +168,6 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
             );
           }
           throw releaseError;
-        } finally {
-          ACTIVE_CREATION_NONCES.delete(ownerNonce);
         }
       }
     }
@@ -383,6 +394,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
     jobIds: ReadonlySet<string>,
     nowMs = Date.now(),
     isJobKnown?: (jobId: string) => boolean | Promise<boolean>,
+    withJobLock: (jobId: string, operation: () => Promise<void>) => Promise<void> = (jobId, operation) => this.withCreationLock(jobId, operation),
   ): Promise<void> {
     await this.ensureRoot();
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
@@ -412,7 +424,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
       const redactionQuarantine = parseRedactionQuarantine(entry.name);
       if (redactionQuarantine) {
         const candidate = path.join(this.rootDir, entry.name);
-        await this.withCreationLock(redactionQuarantine.jobId, async () => {
+        await withJobLock(redactionQuarantine.jobId, async () => {
           const shouldRestore = isJobKnown
             ? await isJobKnown(redactionQuarantine.jobId)
             : jobIds.has(redactionQuarantine.jobId);
@@ -457,7 +469,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
         entry.name.startsWith(`.staging-${jobId}-`))) continue;
       const candidate = path.join(this.rootDir, entry.name);
       if (!isStaging && isValidJobId(entry.name)) {
-        await this.withCreationLock(entry.name, async () => {
+        await withJobLock(entry.name, async () => {
           if (jobIds.has(entry.name) || await isJobKnown?.(entry.name)) return;
           await removeAgedOrphan(candidate, nowMs, this.orphanAgeMs);
         });
@@ -747,9 +759,6 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
   const owner = await readCreationOwner(lockDirectory);
   if (owner === null) {
     if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
-  } else if (owner.pid === process.pid) {
-    // A record naming this PID but not an active nonce belongs to an earlier lifetime or failed operation.
-    if (owner.nonce !== null && ACTIVE_CREATION_NONCES.has(owner.nonce)) return false;
   } else if (await isCleanupProcessInstanceAlive(owner.pid, owner.startedAt, owner.linuxBirthToken)) return false;
 
   const quarantine = path.join(

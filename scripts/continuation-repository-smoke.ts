@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import {
   chmod,
   copyFile,
@@ -3457,6 +3458,7 @@ await mkdir(reusedPidLockDirectory);
 await writeFile(join(reusedPidLockDirectory, 'owner.json'), JSON.stringify({
   pid: process.pid,
   startedAt: 1,
+  linuxBirthToken: '00000000-0000-0000-0000-000000000000:1',
   nonce: reusedPidNonce,
   createdAt: new Date().toISOString(),
 }), 'utf8');
@@ -3620,7 +3622,8 @@ const reusedLegacyJob = continuationJobId('live-cleanup-reused-legacy-pid');
 const reusedLegacyInput = join(concurrentCreateRoot, 'inputs', reusedLegacyJob);
 const reusedLegacyLock = join(concurrentCreateRoot, 'inputs', `.creating-${reusedLegacyJob}`);
 await mkdir(reusedLegacyInput);
-await writeFile(reusedLegacyLock, JSON.stringify({ pid: process.pid, createdAt: agedCreation.toISOString() }));
+await writeFile(reusedLegacyLock, JSON.stringify({ pid: process.pid, createdAt: agedCreation.toISOString(), startedAt: 1,
+  linuxBirthToken: '00000000-0000-0000-0000-000000000000:1' }));
 await utimes(reusedLegacyInput, agedCreation, agedCreation);
 await utimes(reusedLegacyLock, agedCreation, agedCreation);
 for (const stamp of ['native', 'legacy-estimate', 'legacy-pid-only']) {
@@ -3642,6 +3645,66 @@ for (const stamp of ['native', 'legacy-estimate', 'legacy-pid-only']) {
     if (liveCreateChild.exitCode === null && liveCreateChild.signalCode === null) liveCreateChild.kill();
     await liveCreateExit;
   }
+}
+
+const heldScanNow = new Date();
+const heldScanRepository = await SqliteContinuationRepository.open(concurrentCreateOptions);
+const { job: { jobId: threadJobId } } = await heldScanRepository.create(createRequest('live-cleanup-worker-thread', {
+  sourceInputs: [{ sourcePath: concurrentCreateSource, fileName: 'source.txt', kind: 'message_attachment' }],
+  createdAt: new Date(heldScanNow.getTime() - 2 * 60 * 60 * 1_000).toISOString(),
+  expiresAt: new Date(heldScanNow.getTime() - 60 * 60 * 1_000).toISOString(),
+}));
+const unrelated = await heldScanRepository.create(createRequest('first-scan-unrelated-job', {
+  createdAt: heldScanNow.toISOString(), expiresAt: new Date(heldScanNow.getTime() + 60 * 60 * 1_000).toISOString(),
+}));
+heldScanRepository.close();
+const { DatabaseSync: HeldScanDatabaseSync } = await import('node:sqlite');
+const heldScanDatabase = new HeldScanDatabaseSync(concurrentCreateOptions.databasePath);
+heldScanDatabase.prepare(`UPDATE durable_runs SET
+  input_json = json_set(input_json, '$.job.sourceFacts.unexpected', 'worker fixture'),
+  state_json = json_set(state_json, '$.job.sourceFacts.unexpected', 'worker fixture')
+  WHERE run_id = ? AND workload_kind = 'async_task'`).run(threadJobId);
+heldScanDatabase.close();
+const threadInput = join(concurrentCreateOptions.inputsDir, threadJobId);
+const threadQuarantines = [concurrentCreateOptions.inputsDir, concurrentCreateOptions.artifactsDir]
+  .map((dir) => join(dir, `.redacting-${threadJobId}-${process.pid}-${'f'.repeat(16)}`));
+const threadHolder = new Worker(new URL('./fixtures/continuation-hold-input.ts', import.meta.url), {
+  workerData: { inputsDir: concurrentCreateOptions.inputsDir, jobId: threadJobId },
+  execArgv: ['--import', 'tsx'],
+});
+const threadExit = once(threadHolder, 'exit');
+let reopening: Promise<SqliteContinuationRepository> | undefined;
+let opened: SqliteContinuationRepository | undefined;
+try {
+  assert.deepEqual(await once(threadHolder, 'message', { signal: AbortSignal.timeout(5_000) }), ['held']);
+  for (const dir of threadQuarantines) await mkdir(dir, { recursive: true });
+  reopening = (async () => {
+    const repository = await SqliteContinuationRepository.open(concurrentCreateOptions);
+    try {
+      const now = heldScanNow.toISOString();
+      await repository.expireOverdue(now, { deferBusy: true });
+      await repository.purgeExpired(now, now, { deferBusy: true });
+      const scan = kernelAdapter(repository);
+      await scan.recoverExpiredLeases(['async_task'], now);
+      const claim = await scan.claimDue(['async_task'], 'first-scan-worker', now, new Date(heldScanNow.getTime() + 60_000).toISOString());
+      assert.equal(claim?.run.runId, unrelated.job.jobId);
+      return repository;
+    } catch (error) {
+      repository.close();
+      throw error;
+    }
+  })();
+  const timeout = AbortSignal.timeout(3_000);
+  opened = await Promise.race([reopening, new Promise<never>((_, reject) => {
+    timeout.addEventListener('abort', () => reject(new Error('Startup or first scan waited for a live worker lock.')), { once: true });
+  })]);
+  await opened.healthCheck();
+  for (const dir of [threadInput, ...threadQuarantines]) assert.ok((await lstat(dir)).isDirectory());
+} finally {
+  threadHolder.postMessage('release');
+  assert.deepEqual(await threadExit, [0]);
+  opened ??= await reopening?.catch(() => undefined);
+  opened?.close();
 }
 
 const concurrentOrphan = join(concurrentCreateRoot, 'inputs', 'job_concurrent_orphan');

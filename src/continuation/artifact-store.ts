@@ -271,7 +271,7 @@ export class ContinuationArtifactStore {
     jobIds: ReadonlySet<string>,
     nowMs = Date.now(),
     isJobKnown?: (jobId: string) => boolean | Promise<boolean>,
-    withJobLock?: <T>(jobId: string, operation: () => Promise<T>) => Promise<T>,
+    withJobLock?: (jobId: string, operation: () => Promise<void>) => Promise<void>,
   ): Promise<void> {
     await this.ensureRoot();
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true });
