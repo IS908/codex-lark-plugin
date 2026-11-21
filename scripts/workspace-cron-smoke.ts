@@ -12,7 +12,9 @@ import { CronRunAdmission } from '../src/cron/run-admission.js';
 import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
 import { IdentitySession } from '../src/identity-session.js';
 import { createJob } from '../src/job-service.js';
-import { readJob } from '../src/job-store.js';
+import { mutateJob, readJob } from '../src/job-store.js';
+import { CronPromptWorkload } from '../src/cron/direct-exec-workload.js';
+import { materializeDurableRunWorkloadClaim, materializeDurableRunWorkloadContext } from '../src/ports/durable-run.js';
 import { MemoryStore } from '../src/memory/file.js';
 import { readManagedWorkspaceRoots } from '../src/managed-workspace-storage.js';
 
@@ -183,6 +185,43 @@ try {
     assert.deepEqual(results, [app, app, base, app], 'a saved run never opens a swapped project');
   } finally {
     second.close();
+  }
+
+  const failedDb = await SqliteDurableRunRepository.open({ databasePath: path.join(base, 'failed.sqlite') });
+  try {
+    assert.ok((await create('bad-storage')).ok);
+    const now = new Date();
+    const due = await mutateJob('bad-storage', (job) => { job.runtime.next_run_at = '2025-01-01T00:00:00.000Z'; });
+    assert.ok(due);
+    await configureStorage(scratch, scratch);
+    const admission = new CronRunAdmission({ runRepository: failedDb, resolveManagedWorkspaceRoots: (project) =>
+      readManagedWorkspaceRoots({ configPath: storagePath, authorizedRoots: [base], project }) });
+    const failedAdmission = await admission.admitScheduled(due, now);
+    assert.ok(failedAdmission.admitted);
+    const rawClaim = await failedDb.claimDue(['cron_prompt'], 'worker', now.toISOString(),
+      new Date(now.getTime() + 60_000).toISOString());
+    assert.ok(rawClaim);
+    let launches = 0;
+    const workload = new CronPromptWorkload({ executor: async () => { launches++; throw new Error('Unexpected launch.'); } });
+    const claim = materializeDurableRunWorkloadClaim(rawClaim, materializeDurableRunWorkloadContext(workload, rawClaim.run));
+    const preflight = await workload.preflight(claim.run);
+    assert.equal(launches, 0);
+    assert.equal(preflight.action, 'transition');
+    if (preflight.action !== 'transition') throw new Error('Expected admission to finalize without execution.');
+    const { transition } = preflight;
+    assert.match(transition.errorSummary ?? '', /must use disjoint directories/);
+    assert.equal(transition.status, 'failed');
+    assert.equal(transition.deliveries?.[0]?.kind, 'cron_terminal');
+    assert.equal(await failedDb.commitTransition(rawClaim, transition, now.toISOString()), 'committed');
+    assert.equal((await failedDb.get(failedAdmission.runId))?.status, 'failed');
+    assert.equal((await failedDb.getDeliverySnapshot(failedAdmission.runId, 'cron_terminal'))?.status, 'pending');
+    const interrupted = workload.recoverInterruptedAttempt({
+      claim: rawClaim, executionPhase: 'claimed', recoveredAt: now.toISOString(), operationRisk: 'pure',
+    });
+    assert.equal(interrupted.errorCode, 'cron_managed_workspace_admission_failed');
+    assert.equal(workload.terminalizeUnclaimable(rawClaim.run, 'expired').errorSummary, transition.errorSummary);
+  } finally {
+    failedDb.close();
   }
 
   await configure('path:does-not-exist');

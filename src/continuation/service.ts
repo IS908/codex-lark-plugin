@@ -13,7 +13,8 @@ import { CONTINUATION_LIMITS, isContinuationTerminal } from '../domain/continuat
 import type { WorkspaceProjectBinding } from '../domain/workspace.js';
 import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
-import { validateWorkspaceProject } from '../workspace-projects.js';
+import { pinWorkspacePath, validateWorkspaceProject } from '../workspace-projects.js';
+import { readManagedWorkspaceRoots, validateManagedWorkspaceRoots } from '../managed-workspace-storage.js';
 import {
   continuationCreateIdempotencyKey,
   continuationJobId,
@@ -29,6 +30,7 @@ export interface ContinuationServiceOptions {
   repository: ContinuationRepository;
   allowedWorkingRoot: string;
   foregroundWorkingRoot?: string;
+  managedWorkspaceConfigPath?: string;
   filesystemMode: ContinuationFilesystemMode;
   maxAttempts: number;
   maxRetries: number;
@@ -198,6 +200,10 @@ export class ContinuationService implements ContinuationTaskService {
     workspaceProject?: WorkspaceProjectBinding,
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     assertEligibleSource(message);
+    if (this.options.managedWorkspaceConfigPath) {
+      const existing = await this.findExistingFromMessage(message);
+      if (existing) return { job: existing, created: false };
+    }
     const now = this.options.clock.now();
     const {
       resolvedWorkingDirectory,
@@ -269,6 +275,18 @@ export class ContinuationService implements ContinuationTaskService {
       ], workspaceProject);
       resolvedWorkingDirectory.workingDirectory = bound.directory;
     }
+    const authorizedRoots = [
+      resolvedWorkingDirectory.root,
+      this.options.foregroundWorkingRoot ?? resolvedWorkingDirectory.root,
+    ] as const;
+    const managedWorkspaceRoots = this.options.managedWorkspaceConfigPath
+      ? await readManagedWorkspaceRoots({
+        configPath: this.options.managedWorkspaceConfigPath, authorizedRoots, project: workspaceProject,
+      }) : undefined;
+    if (managedWorkspaceRoots && !workspaceProject) {
+      workspaceProject = await pinWorkspacePath(resolvedWorkingDirectory.root, resolvedWorkingDirectory.workingDirectory);
+      await validateManagedWorkspaceRoots(managedWorkspaceRoots, { authorizedRoots, project: workspaceProject });
+    }
     const route = deriveRoute(message);
     const brief = sanitizeBrief(action);
     if (brief.title.length > CONTINUATION_LIMITS.titleChars) {
@@ -314,6 +332,7 @@ export class ContinuationService implements ContinuationTaskService {
         mode: this.options.filesystemMode,
         requestedPaths,
         ...(workspaceProject ? { workspaceProject } : {}),
+        ...(managedWorkspaceRoots ? { managedWorkspaceRoots } : {}),
       },
       hostTools: brief.requiredTools,
       network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',

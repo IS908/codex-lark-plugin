@@ -132,6 +132,7 @@ async function main() {
     artifactsDir: appConfig.continuationArtifactsDir,
     allowedWorkingRoot: appConfig.continuationWorkingRoot,
     foregroundWorkingRoot: appConfig.codexExecCwd,
+    managedWorkspaceConfigPath: appConfig.managedWorkspaceConfigPath,
     maxAttempts: appConfig.continuationMaxAttempts,
     maxRetries: appConfig.continuationMaxRetries,
     maxTotalMinutes: appConfig.continuationMaxTotalMinutes,

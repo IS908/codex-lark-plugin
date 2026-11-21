@@ -9,6 +9,7 @@ const diagnostic = {
   allocation_incomplete: 'The stored managed workspace allocation is incomplete.',
   allocation_transaction: 'Managed workspace provisioning requires a committed database context.',
   invalid_binding: 'The managed workspace allocation is invalid.',
+  artifact_invalid: 'The managed artifact is missing, outside its registered directory, oversized, or no longer matches its checksum.',
 } as const;
 
 export class ManagedWorkspaceStorageError extends Error {

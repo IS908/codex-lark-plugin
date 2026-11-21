@@ -11,6 +11,8 @@ import {
 import { computeLatestDueRun, computeNextRun, jobTimezone, mutateJob, readJob } from '../job-store.js';
 import type { JobFile } from '../job-contracts.js';
 import type { ManagedWorkspaceRoots } from '../domain/managed-workspace.js';
+import { ManagedWorkspaceStorageError } from '../managed-workspace-errors.js';
+import { WorkspaceProjectError } from '../workspace-projects.js';
 import type { DurableRunRepository } from '../ports/durable-run.js';
 import {
   parseCronRunInput,
@@ -262,10 +264,17 @@ export class CronRunAdmission {
   }
 
   private async createRequest(job: JobFile, idempotencyKey: string, runId: string, now: Date, occurrence?: string) {
-    const managedWorkspaceRoots = job.meta.type === 'prompt'
-      ? await this.options.resolveManagedWorkspaceRoots?.(job.meta.workspace_project)
-      : undefined;
-    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots);
+    let managedWorkspaceRoots: ManagedWorkspaceRoots | undefined;
+    let managedWorkspaceFailure: string | undefined;
+    try {
+      if (job.meta.type === 'prompt') {
+        managedWorkspaceRoots = await this.options.resolveManagedWorkspaceRoots?.(job.meta.workspace_project);
+      }
+    } catch (error) {
+      if (!(error instanceof ManagedWorkspaceStorageError || error instanceof WorkspaceProjectError)) throw error;
+      managedWorkspaceFailure = error.message;
+    }
+    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots, managedWorkspaceFailure);
   }
 
   async waitForExecution(
@@ -370,10 +379,12 @@ function cronRunCreateRequest(
   now: Date,
   scheduledOccurrence?: string,
   managedWorkspaceRoots?: ManagedWorkspaceRoots,
+  managedWorkspaceFailure?: string,
 ): DurableRunCreateRequest {
   const input: CronRunInput = {
     schemaVersion: 1,
     ...(managedWorkspaceRoots ? { managedWorkspace: { roots: managedWorkspaceRoots, createdAt: now.toISOString() } } : {}),
+    ...(managedWorkspaceFailure ? { managedWorkspaceFailure } : {}),
     job: {
       id: job.meta.id,
       createdAt: job.meta.created_at,

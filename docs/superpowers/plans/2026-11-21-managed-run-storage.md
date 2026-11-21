@@ -24,7 +24,11 @@
 - [x] Reject uncommitted allocation, authorize before the reservation, normalize last-use time, and reject overlapping owned/reserved directories under concurrent reservation.
 - [x] Gate runtime integration on creation relative to a verified, host-protected parent (not a second absolute lookup), and on alias/ancestor identity checks. Verify the allocated child's identity rather than trusting a post-create path lookup.
 - [x] Persist workspace admission for foreground and prompt Cron, keyed to authenticated message/session identity or durable Run ID. Verify binding restore across restart/config changes, per-run scratch isolation, and exact writable grants.
-- [ ] Before release, verify protected ancestry for writable launch paths, preserve the unmanaged decision on a foreground replay, and persist scheduled Cron admission failures through the normal result/outbox path.
-- [ ] Wire Async Task admission, retries and checkpoint/artifact paths. Connect stable owners and formal references to kernel leases, checkpoints and deliveries rather than duplicating status. Revalidate binding on every launch.
+- [x] Persist scheduled Cron admission failures through the normal result/outbox path without launching Codex.
+- [x] Wire Async Task admission, checkpoint verification and explicit retry to the persisted workspace snapshot. Retry creates a new allocation, copies verified artifacts independently of the source scratch, and keeps legacy jobs on the legacy artifact store.
+- [x] Add bounded formal artifact reads that return verified bytes, not a path to reopen later.
+- [x] Finalize Cron admission failures in preflight and preserve the reason during interruption and expiry. Keep Async Task storage blockers terminal without promoting unavailable checkpoint files, and refuse redaction while managed erasure is unsupported.
+- [ ] Anchor artifact reads to the verified parent directory through launch, and publish verified retry copies atomically without replacing existing files.
+- [ ] Before release, verify protected ancestry for writable launch paths, protect registered source projects from future overlapping allocations, and preserve the unmanaged decision on a foreground replay.
 - [ ] Expose verified artifact references through existing lookup/delivery paths and document opt-in operation. Cover delivery with the scratch directory unavailable and pre-upgrade records after config changes.
 - [ ] Run the full suite and marketplace checks, get independent review, merge, verify main CI, publish a tagged release, then close #393. Cache reuse and cleanup remain subsequent #387 milestones.

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import {
   CONTINUATION_LIMITS,
   isContinuationTerminal,
@@ -303,7 +304,11 @@ function buildContinuationStepTransition(input: ContinuationStepTransitionInput)
     });
   };
 
-  if (rawVerification.status === 'revision_required') {
+  const managedStorageBlocked = outcome.outcome === 'blocked'
+    && outcome.errorCode === 'continuation_working_directory_denied'
+    && !!current.permissions.filesystem.managedWorkspaceRoots
+    && !!current.checkpoint && isDeepStrictEqual(outcome.checkpoint, current.checkpoint);
+  if (rawVerification.status === 'revision_required' && !managedStorageBlocked) {
     return verificationRecovery(
       current.checkpoint ?? checkpointFromInitialContext(current.contextSnapshot),
       rawVerification.findings,
@@ -401,6 +406,7 @@ function buildContinuationStepTransition(input: ContinuationStepTransitionInput)
       checkpoint: outcome.checkpoint,
       stepCount: current.stepCount + 1,
       resultSummary: outcome.errorSummary,
+      ...(managedStorageBlocked ? { resultArtifacts: undefined } : {}),
       errorCode: outcome.errorCode,
       errorSummary: outcome.errorSummary,
       ...(terminalRecovery ? {

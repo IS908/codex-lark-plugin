@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { readManagedArtifact } from '../managed-workspace-artifact.js';
 import {
   CONTINUATION_LIMITS,
   type ContinuationCheckpointArtifact,
@@ -18,6 +19,7 @@ const LEGACY_QUARANTINE_GRACE_MS = 30_000;
 
 export class ContinuationArtifactStore {
   readonly rootDir: string;
+  private managedJob?: { jobId: string; directory: string; revalidate: () => Promise<string> };
 
   constructor(
     rootDir: string,
@@ -28,6 +30,12 @@ export class ContinuationArtifactStore {
     this.rootDir = path.resolve(rootDir);
   }
 
+  forManagedJob(jobId: string, directory: string, revalidate: () => Promise<string>): ContinuationArtifactStore {
+    const store = new ContinuationArtifactStore(path.dirname(directory), this.maxBytes, this.maxEntries, this.maxDepth);
+    store.managedJob = { jobId, directory, revalidate };
+    return store;
+  }
+
   async ensureRoot(): Promise<void> {
     await fs.mkdir(this.rootDir, { recursive: true, mode: 0o700 });
     await assertRealDirectory(this.rootDir);
@@ -35,6 +43,7 @@ export class ContinuationArtifactStore {
   }
 
   async ensure(jobId: string): Promise<string> {
+    if (this.managedJob) return this.checkDirectory(jobId);
     await this.ensureRoot();
     const directory = this.jobDirectory(jobId);
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -56,8 +65,7 @@ export class ContinuationArtifactStore {
   }
 
   async assertWithinLimit(jobId: string): Promise<void> {
-    const directory = this.jobDirectory(jobId);
-    await assertRealDirectory(directory);
+    const directory = await this.checkDirectory(jobId);
     let totalBytes = 0;
     let totalEntries = 0;
 
@@ -112,8 +120,7 @@ export class ContinuationArtifactStore {
     jobId: string,
     references: readonly string[],
   ): Promise<string[]> {
-    const directory = this.jobDirectory(jobId);
-    await assertRealDirectory(directory);
+    const directory = await this.checkDirectory(jobId);
     const canonical: string[] = [];
     const seen = new Set<string>();
     for (const reference of references) {
@@ -137,10 +144,20 @@ export class ContinuationArtifactStore {
     return canonical;
   }
 
+  async readArtifact(jobId: string, relativePath: string, expectedSha256?: string): Promise<Buffer> {
+    if (!this.managedJob) return fs.readFile(this.resolve(jobId, relativePath));
+    const { content } = await readManagedArtifact({
+      directory: this.jobDirectory(jobId), relativePath, expectedSha256, maxBytes: this.maxBytes,
+      revalidate: this.managedJob.revalidate,
+    });
+    return content;
+  }
+
   async copyVerified(
     sourceJobId: string,
     targetJobId: string,
     artifacts: readonly ContinuationCheckpointArtifact[],
+    targetStore: ContinuationArtifactStore = this,
   ): Promise<boolean> {
     if (artifacts.length === 0) return false;
     const canonical = await this.canonicalizeReferences(
@@ -150,27 +167,35 @@ export class ContinuationArtifactStore {
     if (canonical.length !== artifacts.length) {
       throw new Error('Continuation retry artifact references must be unique.');
     }
-    await this.ensure(targetJobId);
+    await targetStore.ensure(targetJobId);
+    if (targetStore.managedJob) await targetStore.assertWithinLimit(targetJobId);
     try {
       for (let index = 0; index < canonical.length; index += 1) {
         const reference = canonical[index];
-        const target = this.resolve(targetJobId, reference);
+        const expected = artifacts[index].sha256.toLowerCase();
+        const target = targetStore.resolve(targetJobId, reference);
         await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-        await fs.copyFile(
-          this.resolve(sourceJobId, reference),
-          target,
-          constants.COPYFILE_EXCL,
-        );
-        await fs.chmod(target, 0o600);
-        const sha256 = createHash('sha256').update(await fs.readFile(target)).digest('hex');
-        if (sha256 !== artifacts[index].sha256.toLowerCase()) {
+        try {
+          if (targetStore.managedJob) {
+            const content = await this.readArtifact(sourceJobId, reference, expected);
+            await fs.writeFile(target, content, { flag: 'wx', mode: 0o600 });
+          } else {
+            await fs.copyFile(this.resolve(sourceJobId, reference), target, constants.COPYFILE_EXCL);
+            await fs.chmod(target, 0o600);
+          }
+        } catch (error) {
+          if (!targetStore.managedJob || (error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+          await targetStore.canonicalizeReferences(targetJobId, [reference]);
+        }
+        const sha256 = createHash('sha256').update(await targetStore.readArtifact(targetJobId, reference, expected)).digest('hex');
+        if (sha256 !== expected) {
           throw new Error(`Continuation retry artifact checksum mismatch: ${reference}`);
         }
       }
-      await this.assertWithinLimit(targetJobId);
+      await targetStore.assertWithinLimit(targetJobId);
       return true;
     } catch (error) {
-      await this.remove(targetJobId).catch(() => {});
+      if (!targetStore.managedJob) await targetStore.remove(targetJobId).catch(() => {});
       throw error;
     }
   }
@@ -289,9 +314,22 @@ export class ContinuationArtifactStore {
     for (const jobId of jobIds) await this.remove(jobId);
   }
 
+  private async checkDirectory(jobId: string): Promise<string> {
+    const directory = this.jobDirectory(jobId);
+    if (this.managedJob && await this.managedJob.revalidate() !== directory) {
+      throw new Error('Managed continuation artifact directory has changed.');
+    }
+    await assertRealDirectory(directory);
+    return directory;
+  }
+
   private jobDirectory(jobId: string): string {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(jobId)) {
       throw new Error(`Invalid continuation job id for artifact storage: ${jobId}`);
+    }
+    if (this.managedJob) {
+      if (jobId !== this.managedJob.jobId) throw new Error('Managed artifact store belongs to a different run.');
+      return this.managedJob.directory;
     }
     const resolved = path.resolve(this.rootDir, jobId);
     if (!resolved.startsWith(`${this.rootDir}${path.sep}`)) {

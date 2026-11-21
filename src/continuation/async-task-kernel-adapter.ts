@@ -23,6 +23,7 @@ import type {
 } from '../domain/durable-run.js';
 import { serializeDurableRunJson } from '../domain/durable-run.js';
 import { workspaceProjectBindingSchema } from '../domain/workspace.js';
+import { managedWorkspaceRootsSchema } from '../domain/managed-workspace.js';
 import { formatContinuationDiagnosticMessage } from '../diagnostic-log-format.js';
 import type {
   ContinuationClaimMutationResult,
@@ -1053,6 +1054,9 @@ function isPermissionEnvelope(value: unknown): boolean {
     && isStringArray(value.filesystem.requestedPaths)
     && (value.filesystem.workspaceProject === undefined
       || workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success)
+    && (value.filesystem.managedWorkspaceRoots === undefined
+      || (workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success
+        && managedWorkspaceRootsSchema.safeParse(value.filesystem.managedWorkspaceRoots).success))
     && isStringArray(value.hostTools)
     && ['none', 'enabled'].includes(String(value.network))
     && ['denied', 'allowed'].includes(String(value.externalSideEffects))

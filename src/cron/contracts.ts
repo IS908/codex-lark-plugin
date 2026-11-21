@@ -29,6 +29,7 @@ export interface CronRunInput {
   schemaVersion: 1;
   job: CronRunJobSnapshot;
   managedWorkspace?: ManagedWorkspaceAdmission;
+  managedWorkspaceFailure?: string;
 }
 
 export interface CronPromptExecutionInput {
@@ -154,11 +155,14 @@ export function parseCronRunInput(
   };
   if (type === 'prompt' && !job.prompt?.trim()) throw new Error('Cron prompt must not be empty.');
   if (type === 'message' && !job.content?.trim()) throw new Error('Cron message content must not be empty.');
-  if (type === 'message' && root.managedWorkspace !== undefined) {
+  if ((type === 'message' && (root.managedWorkspace !== undefined || root.managedWorkspaceFailure !== undefined))
+    || (root.managedWorkspace !== undefined && root.managedWorkspaceFailure !== undefined)) {
     throw new Error('Only prompt Cron runs can use managed workspace roots.');
   }
   return { schemaVersion: 1, job, ...(root.managedWorkspace === undefined ? {} : {
     managedWorkspace: managedWorkspaceAdmissionSchema.parse(root.managedWorkspace),
+  }), ...(root.managedWorkspaceFailure === undefined ? {} : {
+    managedWorkspaceFailure: boundedString(root.managedWorkspaceFailure, 'managedWorkspaceFailure', 1_000),
   }) };
 }
 

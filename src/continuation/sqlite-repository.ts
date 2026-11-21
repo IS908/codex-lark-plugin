@@ -118,6 +118,7 @@ import {
   initializeContinuationDatabase,
   openContinuationDatabase,
 } from './sqlite-database.js';
+import { allocateContinuationWorkspace, continuationArtifactView, type ContinuationWorkspacePolicy } from './managed-workspace.js';
 
 interface SqliteContinuationRepositoryOptions {
   databasePath: string;
@@ -126,6 +127,7 @@ interface SqliteContinuationRepositoryOptions {
   inputsDir?: string;
   inputStore?: ContinuationInputStorePort;
   jitter?: () => number;
+  managedWorkspacePolicy?: ContinuationWorkspacePolicy;
 }
 
 type DueCandidateSelection =
@@ -146,9 +148,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     private readonly artifacts: ContinuationArtifactStore,
     private readonly inputs: ContinuationInputStorePort,
     private readonly jitter: () => number,
+    private readonly managedWorkspacePolicy?: ContinuationWorkspacePolicy,
   ) {
-    this.verifier = new ContinuationVerifier(artifacts);
     this.durableRuns = SqliteDurableRunRepository.attach(database);
+    this.verifier = new ContinuationVerifier(artifacts, (job) => this.artifactsForJob(job));
     this.cronMessageOrigins = SqliteCronMessageOriginStore.attach(database);
   }
 
@@ -169,6 +172,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         artifacts,
         inputs,
         options.jitter ?? Math.random,
+        options.managedWorkspacePolicy,
       );
       await repository.initialize();
       await repository.reconcileStorageOrphans();
@@ -185,6 +189,12 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
   async healthCheck(): Promise<void> {
     healthCheckContinuationDatabase(this.database);
+  }
+
+  private artifactsForJob(job: ContinuationJob): ContinuationArtifactStore {
+    return continuationArtifactView(this.artifacts, job,
+      job.permissions.filesystem.managedWorkspaceRoots ? this.durableRuns.getManagedWorkspaceStore() : undefined,
+      this.managedWorkspacePolicy);
   }
 
   async create(
@@ -221,16 +231,22 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         requestFingerprint,
       );
       const persisted = projectCreateRequest(request, installation.artifacts);
+      const initialJob = continuationJobForCreate(jobId, persisted);
       let artifactsInstalled = false;
       try {
         if (persisted.resumeCheckpoint) {
-          artifactsInstalled = await this.artifacts.copyVerified(
-            persisted.resumeArtifactSourceJobId!,
-            jobId,
-            persisted.resumeCheckpoint.artifacts,
-          );
+          if (initialJob.permissions.filesystem.managedWorkspaceRoots && persisted.resumeCheckpoint.artifacts.length > 0) {
+            const source = await this.get(persisted.resumeArtifactSourceJobId!);
+            if (!source || source.deletedAt) throw new Error('Continuation retry artifact source is unavailable.');
+            await allocateContinuationWorkspace(initialJob, this.durableRuns.getManagedWorkspaceStore(), this.managedWorkspacePolicy);
+            await this.artifactsForJob(source).copyVerified(source.jobId, jobId,
+              persisted.resumeCheckpoint.artifacts, this.artifactsForJob(initialJob));
+          } else {
+            artifactsInstalled = await this.artifacts.copyVerified(
+              persisted.resumeArtifactSourceJobId!, jobId, persisted.resumeCheckpoint.artifacts,
+            );
+          }
         }
-        const initialJob = continuationJobForCreate(jobId, persisted);
         const durable = await this.durableRuns.create(
           asyncTaskDurableCreateRequestFromJob(initialJob),
         );
@@ -974,6 +990,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       )
     ) {
       return false;
+    }
+    if (current.permissions.filesystem.managedWorkspaceRoots) {
+      throw new Error('Managed continuation data cannot be deleted until its artifact erasure is supported. The task and its files were retained.');
     }
     const quarantines: RedactionQuarantines = { artifact: null, input: null };
     let committed = false;
