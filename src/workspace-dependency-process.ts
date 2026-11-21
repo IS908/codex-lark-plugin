@@ -6,7 +6,7 @@ export class WorkspaceDependencyProcessError extends Error {
   }
 }
 
-export function runWorkspaceDependencyProcess(launch: { command: string; args: string[]; env: NodeJS.ProcessEnv },
+export function runWorkspaceDependencyProcess(launch: { command: string; args: string[]; env: NodeJS.ProcessEnv; isolatesDescendants?: true },
   args: string[], cwd: string, timeoutMs: number, outputLimit: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(launch.command, [...launch.args, ...args], { cwd, env: launch.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -41,8 +41,9 @@ export function runWorkspaceDependencyProcess(launch: { command: string; args: s
     child.once('close', (code) => {
       clearTimeout(timer);
       clearTimeout(grace);
-      if (!stopping && code === 0) resolve();
-      else reject(new WorkspaceDependencyProcessError(stopping ?? 'exit', true));
+      const quiescent = !stopping && code !== null && launch.isolatesDescendants === true;
+      if (quiescent && code === 0) resolve();
+      else reject(new WorkspaceDependencyProcessError(stopping ?? 'exit', quiescent));
     });
   });
 }

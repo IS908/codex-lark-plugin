@@ -13,7 +13,7 @@ import { readWorkspaceDependencyMountPolicy } from './workspace-dependency-mount
 import { runWorkspaceDependencyProcess, WorkspaceDependencyProcessError } from './workspace-dependency-process.js';
 import { loadWorkspaceDependencyWriteGuard } from './workspace-dependency-registry.js';
 import { prepareWorkspaceDependencySandbox } from './workspace-dependency-sandbox.js';
-import { inspectWorkspaceDependencyToolchain, workspaceDependencyPipBootstrap } from './workspace-dependency-toolchain.js';
+import { inspectWorkspaceDependencyToolchain, probeWorkspaceDependencyToolchain, workspaceDependencyPipBootstrap } from './workspace-dependency-toolchain.js';
 import { pinWorkspacePath, validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
 
 const pipInstall = workspaceDependencyPipBootstrap + `
@@ -25,6 +25,7 @@ const outputLimitBytes = 64 * 1024;
 const maxInstalledEntries = 200_000;
 const maxInstalledBytes = 4n * 1024n ** 3n;
 const maxInstalledDepth = 96;
+const filesystemUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 export class WorkspaceDependencyInstallError extends Error {
   constructor(readonly code: 'dependency_install_selection_mismatch' | 'dependency_install_storage_invalid'
@@ -72,7 +73,6 @@ export async function installWorkspaceDependencyInStaging(request: {
     return verified;
   };
   const verified = await verifyCache();
-  const inspected = await inspectWorkspaceDependencyToolchain(configured, selection.toolchainFingerprint);
   const mounts = await readWorkspaceDependencyMountPolicy();
   const guard = await loadWorkspaceDependencyWriteGuard(request.configPath);
   const parent = await validateWorkspaceProject(request.temporaryRoot.directory, request.temporaryRoot);
@@ -85,6 +85,14 @@ export async function installWorkspaceDependencyInStaging(request: {
     ancestors.has(`${root.device}:${root.inode}`) || mounts.aliases(root.directory).some((read) => aliases.some((write) =>
       mounts.contains(read, write) || mounts.contains(write, read))))) fail('dependency_install_storage_invalid');
   await guard?.assertNewDirectory(planned);
+  const inspected = await probeWorkspaceDependencyToolchain({ configured, codexCommand: request.codexCommand,
+    temporaryRoot: parent, configPath: request.configPath, expectedFingerprint: selection.toolchainFingerprint });
+  const current = inspected.toolchain;
+  const recorded = selection.identity.toolchain;
+  if (current.runtime !== recorded.runtime || current.installer !== recorded.installer || current.abi !== recorded.abi
+    || current.platform !== recorded.platform || current.arch !== recorded.arch || current.platformAbi !== recorded.platformAbi) {
+    fail('dependency_install_selection_mismatch');
+  }
   const staging = await mkdirTemporaryInsidePinnedRoot(parent, leaf);
   const cwd = staging.directory;
   try {
@@ -164,7 +172,7 @@ export async function measureWorkspaceDependencyOutput(output: WorkspaceProjectB
       const stamp = outputStamp(info);
       visited.push({ filename, stamp, acl: !info.isSymbolicLink() });
       if (info.isSymbolicLink()) {
-        const target = await fs.readlink(filename);
+        const target = decodeFilesystemUtf8(await fs.readlink(filename, { encoding: 'buffer' }));
         const physical = await fs.realpath(filename);
         if (ecosystem !== 'npm' || info.nlink !== 1n || path.isAbsolute(target) || !workspacePathContains(output.directory, path.resolve(path.dirname(filename), target))
           || physical === output.directory || !workspacePathContains(output.directory, physical)) fail('dependency_installed_output_invalid');
@@ -174,9 +182,10 @@ export async function measureWorkspaceDependencyOutput(output: WorkspaceProjectB
       if ((info.mode & 0o7022n) !== 0n) fail('dependency_installed_output_invalid');
       if (info.isDirectory()) {
         const children: string[] = [];
-        for await (const child of await fs.opendir(filename)) {
+        // Node accepts this runtime encoding for Dirent names, but the type only lists string encodings.
+        for await (const child of await fs.opendir(filename, { encoding: 'buffer' as BufferEncoding })) {
           if (entries + children.length + pending.length >= maxInstalledEntries) fail('dependency_installed_output_invalid');
-          children.push(path.join(relative, child.name));
+          children.push(path.join(relative, decodeFilesystemUtf8(child.name)));
         }
         for (const child of children.sort().reverse()) pending.push({ relative: child, depth: depth + 1 });
         hash.update(JSON.stringify([relative, 'directory', String(info.mode & 0o777n)]));
@@ -217,6 +226,13 @@ async function digestOutputFile(filename: string, info: BigIntStats, scratch: Bu
 
 function outputStamp(info: BigIntStats): string {
   return [info.dev, info.ino, info.mode, info.uid, info.gid, info.nlink, info.size, info.ctimeNs, info.mtimeNs].join(':');
+}
+
+function decodeFilesystemUtf8(value: unknown): string {
+  if (!Buffer.isBuffer(value)) fail('dependency_installed_output_invalid');
+  const name = filesystemUtf8.decode(value);
+  if (!Buffer.from(name, 'utf8').equals(value)) fail('dependency_installed_output_invalid');
+  return name;
 }
 
 function fail(code: WorkspaceDependencyInstallError['code']): never { throw new WorkspaceDependencyInstallError(code); }

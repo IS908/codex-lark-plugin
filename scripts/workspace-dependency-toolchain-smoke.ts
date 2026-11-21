@@ -73,12 +73,22 @@ try {
   await fs.symlink('index.js', entry);
   await measureWorkspaceDependencyOutput(outputBinding, 'npm');
   await assert.rejects(measureWorkspaceDependencyOutput(outputBinding, 'pip'), { code: 'dependency_installed_output_invalid' });
+  if (process.platform === 'linux') {
+    const validName = path.join(output, '\uFFFD');
+    await fs.writeFile(validName, 'valid Unicode filename');
+    const invalidName = Buffer.concat([Buffer.from(output + '/'), Buffer.from([0xff])]);
+    await fs.writeFile(invalidName, 'raw Linux filename');
+    try { await assert.rejects(measureWorkspaceDependencyOutput(outputBinding, 'npm'), { code: 'dependency_installed_output_invalid' }); }
+    finally { await fs.unlink(invalidName); }
+    await measureWorkspaceDependencyOutput(outputBinding, 'npm');
+    await fs.unlink(validName);
+  }
 
   const processFixture = { command: process.execPath, args: ['-e'], env: {} };
   await assert.rejects(runWorkspaceDependencyProcess(processFixture, ['setTimeout(() => {}, 5000)'], fixture, 100, 1024),
-    { reason: 'timeout', quiescent: true });
+    { reason: 'timeout', quiescent: false });
   await assert.rejects(runWorkspaceDependencyProcess(processFixture, ["process.stdout.write('x'.repeat(4096))"], fixture, 5000, 1024),
-    { reason: 'output', quiescent: true });
+    { reason: 'output', quiescent: false });
 
   const native = process.env.LARK_TEST_CODEX_NATIVE_BINARY;
   if (native) {
@@ -123,20 +133,27 @@ try {
       await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
       const address = server.address();
       assert.ok(address && typeof address !== 'string');
+      const hostPidNamespace = process.platform === 'linux' ? await fs.readlink('/proc/self/ns/pid') : '';
       await promisify(execFile)(launch.command, [...launch.args, '--no-global-search-paths', '-e', `
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
-const [allowed, sibling, denied, ambient, port] = process.argv.slice(1);
+const [allowed, sibling, denied, ambient, port, hostPidNamespace] = process.argv.slice(1);
 assert.equal(JSON.parse(fs.readFileSync(allowed, 'utf8')).name, 'npm');
 assert.throws(() => fs.readFileSync(sibling));
 assert.throws(() => fs.readFileSync(ambient));
 assert.throws(() => fs.writeFileSync(denied, 'not allowed'));
 assert.throws(() => fs.linkSync(allowed, 'hardlink'));
 assert.ok(require('node:os').release());
+if (process.platform === 'darwin') {
+  const child = require('node:child_process').spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+  assert.equal(child.status, null);
+  assert.equal(child.error?.code, 'EPERM');
+}
+if (process.platform === 'linux') assert.notEqual(fs.readlinkSync('/proc/self/ns/pid'), hostPidNamespace);
 const socket = require('node:net').createConnection(Number(port), '127.0.0.1');
 socket.on('connect', () => { socket.destroy(); process.exitCode = 1; });
 socket.on('error', () => fs.writeFileSync('allowed', 'private', { flag: 'wx' }));
-socket.setTimeout(2000, () => { socket.destroy(); process.exitCode = 1; });`, privateRead, sibling, blockedWrite, ambient, String(address.port)],
+socket.setTimeout(2000, () => { socket.destroy(); process.exitCode = 1; });`, privateRead, sibling, blockedWrite, ambient, String(address.port), hostPidNamespace],
       { cwd: staging, env: launch.env, timeout: 15_000, maxBuffer: 16 * 1024 });
     } finally {
       if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));

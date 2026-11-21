@@ -60,7 +60,8 @@ export async function prepareWorkspaceDependencySandbox(input: {
       for (const item of [seatbelt, darwinVersion, ...darwinSystem]) {
         if (!mounts.supportsSystemRead?.(item) || !(await protectedSystemPath(item, system.dev))) invalid();
       }
-      return { command: seatbelt, args: ['-p', darwinPolicy(executable, runtime.directory, readonly.map(({ directory }) => directory), cwd), executable], env };
+      return { command: seatbelt, args: ['-p', darwinPolicy(executable, runtime.directory, readonly.map(({ directory }) => directory), cwd), executable],
+        env, isolatesDescendants: true as const };
     }
     if (process.platform !== 'linux' || !path.isAbsolute(input.codexCommand)) invalid();
     env.CODEX_HOME = path.join(cwd, 'codex-home');
@@ -85,8 +86,10 @@ export async function prepareWorkspaceDependencySandbox(input: {
       // Select only the registered runtime's libraries, after Bubblewrap has entered the restricted filesystem.
       command = [system.loader, '--inhibit-cache', '--library-path', lib, '--argv0', executable, executable];
     }
+    // This pinned restricted Bubblewrap path owns a private PID namespace and does not fall back to Landlock.
     return { command: launcher.command, args: ['sandbox', ...namedCodexSandboxOverrides(profile, rules, false)
-      .flatMap((setting) => ['-c', setting]), '-P', profile, '-C', cwd, '--', ...command], env: launcher.env };
+      .flatMap((setting) => ['-c', setting]), '-P', profile, '-C', cwd, '--', ...command], env: launcher.env,
+      isolatesDescendants: true as const };
   } catch { return invalid(); }
 }
 
@@ -124,7 +127,7 @@ function darwinPolicy(executable: string, runtime: string, readonly: string[], c
   return [
     '(version 1)', '(deny default)',
     `(allow process-exec (literal ${q(executable)}))`,
-    '(allow process-fork)', '(allow process-info* (target same-sandbox))', '(allow signal (target same-sandbox))',
+    '(deny process-fork)', '(allow process-info* (target same-sandbox))', '(allow signal (target same-sandbox))',
     `(allow sysctl-read (sysctl-name-prefix "hw.") ${processSysctls.map((name) => `(sysctl-name ${q(name)})`).join(' ')})`,
     // dyld opens / as an anchor; this literal does not grant its descendants.
     '(allow file-read* (literal "/") (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',

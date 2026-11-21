@@ -36,6 +36,12 @@ export async function exerciseWorkspaceDependencyInstall(fixture: string, common
       toolchainBindingDigest: workspaceDependencyToolchainBindingDigest(tool.configured) };
     const request = { ...common, input, artifactManifest, selection, configured: tool.configured, authorizedRoots: scope };
     const before = (await fs.readdir(fixture)).sort();
+    const stale = { ...input, toolchain: { ...input.toolchain, platformAbi: input.toolchain.platformAbi + '.0' } };
+    const previous = await verifyWorkspaceDependencyCache({ input: stale, artifactManifest, cache, authorizedRoots: scope });
+    await assert.rejects(installWorkspaceDependencyInStaging({ ...request, input: stale, selection: {
+      ...selection, cacheFingerprint: previous.cacheFingerprint, identity: previous.identity,
+    } }), { code: 'dependency_install_selection_mismatch' });
+    assert.deepEqual((await fs.readdir(fixture)).sort(), before);
     const results = await Promise.allSettled([installWorkspaceDependencyInStaging(request), installWorkspaceDependencyInStaging(request)]);
     const complete = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     try {
@@ -44,6 +50,8 @@ export async function exerciseWorkspaceDependencyInstall(fixture: string, common
       assert.ok(a && b);
       assert.notEqual(a.staging.directory, b.staging.directory);
       assert.notEqual(a.output.inode, b.output.inode);
+      assert.match(a.measurement.digest, /^[a-f0-9]{64}$/);
+      assert.ok(a.measurement.entries >= 3 && a.measurement.bytes > 0);
       const one = path.join(a.output.directory, relative);
       const two = path.join(b.output.directory, relative);
       assert.notEqual((await fs.stat(one)).ino, (await fs.stat(two)).ino);
