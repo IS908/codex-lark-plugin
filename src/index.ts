@@ -132,6 +132,7 @@ async function main() {
     artifactsDir: appConfig.continuationArtifactsDir,
     allowedWorkingRoot: appConfig.continuationWorkingRoot,
     foregroundWorkingRoot: appConfig.codexExecCwd,
+    sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
     managedWorkspaceConfigPath: appConfig.managedWorkspaceConfigPath,
     maxAttempts: appConfig.continuationMaxAttempts,
     maxRetries: appConfig.continuationMaxRetries,
@@ -264,6 +265,7 @@ async function main() {
       resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
         configPath: appConfig.managedWorkspaceConfigPath,
         authorizedRoots: [appConfig.codexExecCwd],
+        sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
         ...(project ? { project } : {}),
       }),
     });

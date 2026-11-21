@@ -1,9 +1,10 @@
 const diagnostic = {
   invalid_config: 'The operator managed workspace configuration is invalid or unreadable.',
-  unprotected_root: 'Managed storage roots must be owned by the plugin account and not group- or world-writable.',
+  unprotected_root: 'The managed workspace path or its ancestors allow writes outside the trusted plugin account.',
   unisolated_source: 'Managed storage requires a separate source project for workspace-write and is not available with unrestricted filesystem access.',
   overlapping_roots: 'Managed scratch, artifacts, and the selected source project must use disjoint directories.',
   overlapping_runs: 'The managed workspace would overlap an existing or reserved run directory.',
+  overlapping_source: 'The managed storage location overlaps a registered source project.',
   allocation_conflict: 'The managed run directory already exists without a matching stored allocation.',
   allocation_failed: 'The managed run directories could not be allocated.',
   allocation_incomplete: 'The stored managed workspace allocation is incomplete.',

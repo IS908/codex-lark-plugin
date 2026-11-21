@@ -39,6 +39,7 @@ export interface ContinuationRuntimeOptions {
   artifactsDir: string;
   allowedWorkingRoot: string;
   foregroundWorkingRoot?: string;
+  sourceRegistryPath?: string;
   managedWorkspaceConfigPath?: string;
   maxAttempts: number;
   maxRetries: number;
@@ -107,7 +108,8 @@ export async function createContinuationRuntime(
       databasePath: storage.databasePath,
       artifactsDir: storage.artifactsDir,
       inputsDir: storage.inputsDir,
-      managedWorkspacePolicy: { currentWorkingRoot: options.allowedWorkingRoot, foregroundWorkingRoot: options.foregroundWorkingRoot },
+      managedWorkspacePolicy: { currentWorkingRoot: options.allowedWorkingRoot, foregroundWorkingRoot: options.foregroundWorkingRoot,
+        sourceRegistryPath: options.sourceRegistryPath },
     });
     await repository.healthCheck();
     if (!options.enabled) {
@@ -148,6 +150,7 @@ export async function createContinuationRuntime(
       repository,
       allowedWorkingRoot: options.allowedWorkingRoot,
       foregroundWorkingRoot: options.foregroundWorkingRoot,
+      sourceRegistryPath: options.sourceRegistryPath,
       managedWorkspaceConfigPath: options.dryRun ? undefined : options.managedWorkspaceConfigPath,
       filesystemMode: boundedContinuationSandbox(options.configuredSandbox),
       maxAttempts: options.maxAttempts,
@@ -170,6 +173,7 @@ export async function createContinuationRuntime(
       configuredSandbox: options.configuredSandbox,
       currentWorkingRoot: options.allowedWorkingRoot,
       foregroundWorkingRoot: options.foregroundWorkingRoot,
+      sourceRegistryPath: options.sourceRegistryPath,
       managedWorkspaceStore: () => repository?.durableRuns.getManagedWorkspaceStore?.(),
       canUseTrustedPersonalWorkspace: options.canUseTrustedPersonalWorkspace,
       ...(toolInvoker ? { toolInvoker } : {}),

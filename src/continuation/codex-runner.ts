@@ -52,6 +52,7 @@ export interface ContinuationCodexExecutorOptions {
   configuredSandbox: CodexExecSandbox;
   currentWorkingRoot: string;
   foregroundWorkingRoot?: string;
+  sourceRegistryPath?: string;
   managedWorkspaceStore?: () => ManagedWorkspaceStore | undefined;
   runCodexExec?: CodexExecRunner;
   command?: string;
@@ -421,7 +422,8 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     return {
       binding: workspaceProject,
       authorizedRoots: [root, this.options.currentWorkingRoot, this.options.foregroundWorkingRoot ?? this.options.currentWorkingRoot],
-      ...(managed ? { auxiliaryBindings: [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts] } : {}),
+      ...(managed ? { requireProtectedAncestry: true,
+        auxiliaryBindings: [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts] } : {}),
     };
   }
 

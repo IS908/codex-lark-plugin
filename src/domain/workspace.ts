@@ -13,6 +13,7 @@ export interface WorkspaceDirectoryGuard {
   binding: WorkspaceProjectBinding;
   authorizedRoots: readonly [string, ...string[]];
   auxiliaryBindings?: WorkspaceProjectBinding[];
+  requireProtectedAncestry?: boolean;
 }
 
 export function sameWorkspaceProject(

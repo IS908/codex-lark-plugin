@@ -520,6 +520,7 @@ export async function deliverMessageViaCodexExec(
   const managed = priorUnmanaged ? undefined : workspaceOwner ? await admitManagedForegroundRun({
     owner: workspaceOwner, sessionKey, store: managedStore, recorded: priorManaged,
     configPath: appConfig.managedWorkspaceConfigPath, authorizedRoot: workspaceOptions.authorizedRoot, project: workspace,
+    sourceRegistryPath: workspaceOptions.registryPath,
     sandbox: appConfig.codexExecSandbox,
   }) : opts.managedWorkspace;
   if (managed && !sameWorkspaceProject(managed.project, workspace)) {
@@ -641,6 +642,7 @@ export async function deliverMessageViaCodexExec(
     const guardedRequest: CodexExecRequest = {
       ...runRequest,
       workspaceDirectory: {
+        ...(managed ? { requireProtectedAncestry: true } : {}),
         binding: launchWorkspace, authorizedRoots: [authorizedRoot], auxiliaryBindings: [
           ...sideChannelBindings,
           ...(managed ? [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts] : []),

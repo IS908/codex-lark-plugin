@@ -8,6 +8,7 @@ import type { ContinuationArtifactStore } from './artifact-store.js';
 export interface ContinuationWorkspacePolicy {
   currentWorkingRoot: string;
   foregroundWorkingRoot?: string;
+  sourceRegistryPath?: string;
 }
 
 export function continuationWorkspaceRoots(job: ContinuationJob, policy: ContinuationWorkspacePolicy) {
@@ -27,6 +28,8 @@ export async function allocateContinuationWorkspace(
     roots: managedWorkspaceRoots, project: workspaceProject, owner: { kind: 'async_task', runId: job.jobId },
     createdAt: job.createdAt, usedAt: new Date().toISOString(),
     authorizedRoots: continuationWorkspaceRoots(job, policy),
+    sourceRegistryPath: policy.sourceRegistryPath,
+    sourceRegistryRoot: policy.foregroundWorkingRoot ?? policy.currentWorkingRoot,
   });
 }
 

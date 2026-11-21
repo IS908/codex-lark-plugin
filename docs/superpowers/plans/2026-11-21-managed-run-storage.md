@@ -29,7 +29,7 @@
 - [x] Add bounded formal artifact reads that return verified bytes, not a path to reopen later.
 - [x] Finalize Cron admission failures in preflight and preserve the reason during interruption and expiry. Keep Async Task storage blockers terminal without promoting unavailable checkpoint files, and refuse redaction while managed erasure is unsupported.
 - [x] Anchor artifact reads to the verified parent directory through launch, and publish verified retry copies atomically without replacing existing files.
-- [ ] Before release, verify protected ancestry for writable launch paths and protect registered source projects from future overlapping allocations.
+- [x] Verify protected ancestry, POSIX ownership and macOS extended ACLs for managed launch and artifact access. Protect configured and historically pinned source projects against overlapping new allocations and replays.
 - [x] Preserve the unmanaged decision on a foreground replay, including the prior pinned project or the unchanged legacy fallback root. Fence conflicting admissions in the allocation database.
 - [x] Expose committed Async Task artifacts through the authenticated status and artifact commands. Document opt-in operation and verify on-demand delivery after scratch is unavailable.
 - [x] Reconcile complete retry staging writes under the retry creation lock before applying the target quota. Cover interruption both before and after the exclusive link; do not adopt or remove unverified entries.

@@ -208,6 +208,14 @@ try {
       foregroundSessionKey: pinned.foregroundSessionKey, createdAt: new Date().toISOString(),
     }), { code: 'invalid_binding' });
     assert.equal(getStore().get(unmanagedOwner), null);
+    await fs.mkdir(path.join(roots.artifactRoot, 'new-source'));
+    await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify({ ...registry,
+      projects: [{ root: 'local', name: 'new-source', path: 'formal/new-source' }],
+    }));
+    const beforeRegistryEdit = requests.length;
+    await assert.rejects(dispatch({ messageId: 'om_managed_first', chatId: 'managed' }, getStore), { code: 'overlapping_source' });
+    assert.equal(requests.length, beforeRegistryEdit);
+    await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify(registry));
     appConfig.codexExecCwd = docs;
     const beforeChangedRoot = requests.length;
     await assert.rejects(dispatch({ messageId: 'om_legacy_fallback', chatId: 'managed' }, getStore), { code: 'invalid_binding' });

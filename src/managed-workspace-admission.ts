@@ -23,13 +23,14 @@ export async function admitManagedForegroundRun(options: {
   recorded?: ManagedWorkspaceRecord | null;
   configPath: string;
   authorizedRoot: string;
+  sourceRegistryPath?: string;
   sandbox: CodexExecSandbox;
   project?: WorkspaceProjectBinding;
 }): Promise<ManagedRunAllocation | undefined> {
   const { store, recorded, project, owner } = options;
   const authorizedRoots = [options.authorizedRoot] as const;
   const roots = recorded?.allocation.roots ?? await readManagedWorkspaceRoots({
-    configPath: options.configPath, authorizedRoots, project,
+    configPath: options.configPath, authorizedRoots, project, sourceRegistryPath: options.sourceRegistryPath,
   });
   if (!roots) {
     if (store) store.rememberUnmanagedForeground(owner.runId, {
@@ -42,7 +43,7 @@ export async function admitManagedForegroundRun(options: {
   if (!store) throw new ManagedWorkspaceStorageError('allocation_failed');
   const now = new Date().toISOString();
   return store.ensure({
-    owner, roots, authorizedRoots, project,
+    owner, roots, authorizedRoots, project, sourceRegistryPath: options.sourceRegistryPath,
     foregroundSessionKey: options.sessionKey,
     createdAt: recorded?.allocation.createdAt ?? now,
     usedAt: now,

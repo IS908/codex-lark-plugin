@@ -23,6 +23,13 @@ import {
 } from '../managed-workspace-storage.js';
 
 const timestamp = z.iso.datetime();
+const sourceRegistries = [
+  ['workspace_run_allocations', 'intent_json'],
+  ['workspace_unmanaged_foreground', 'admission_json'],
+] as const;
+const sourcePathExpr = (column: string) => `json_extract(${column}, '$.project.directory')`;
+const sourceIdentityExpr = (column: string) => `(json_extract(${column}, '$.project.device') || ':' || json_extract(${column}, '$.project.inode'))`;
+type RootAncestry = Awaited<ReturnType<typeof validateManagedWorkspaceRoots>>;
 
 export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
   constructor(private readonly database: DatabaseSync) {
@@ -47,6 +54,10 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
         run_id TEXT PRIMARY KEY,
         admission_json TEXT NOT NULL CHECK (json_valid(admission_json))
       ) STRICT;
+      ${sourceRegistries.map(([table, json]) => `
+        CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${sourcePathExpr(json)});
+        CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${sourceIdentityExpr(json)});
+      `).join('')}
     `);
   }
 
@@ -69,6 +80,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
           : 'fallbackCwd' in admission && prior.fallbackCwd === admission.fallbackCwd;
         if (prior.sessionKey !== admission.sessionKey || !matches) throw new ManagedWorkspaceStorageError('invalid_binding');
       } else {
+        if ('project' in admission) this.requireUnoccupied(admission.project.directory);
         this.database.prepare('INSERT INTO workspace_unmanaged_foreground (run_id, admission_json) VALUES (?, ?)')
           .run(runId, JSON.stringify(parsed.data));
       }
@@ -103,21 +115,22 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     return { allocation, lastUsedAt: lastUsedAt.data };
   }
 
-  async ensure({ authorizedRoots, usedAt, ...input }: Parameters<ManagedWorkspaceStore['ensure']>[0]): Promise<ManagedRunAllocation> {
+  async ensure({ authorizedRoots, usedAt, sourceRegistryPath, sourceRegistryRoot, ...input }: Parameters<ManagedWorkspaceStore['ensure']>[0]): Promise<ManagedRunAllocation> {
     const parsed = managedRunIntentSchema.safeParse({ version: 1, ...input });
     const lastUse = timestamp.safeParse(usedAt ?? input.createdAt);
     if (!parsed.success || !lastUse.success) throw new ManagedWorkspaceStorageError('invalid_binding');
     this.requireAutocommit();
     const { owner, ...snapshot } = parsed.data;
     const lastUsedAt = new Date(lastUse.data).toISOString();
+    const policy = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
     const existing = this.get(owner);
-    if (existing) return this.reuse(existing, snapshot, authorizedRoots, lastUsedAt);
-    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { authorizedRoots, project: snapshot.project });
+    if (existing) return this.reuse(existing, snapshot, policy, lastUsedAt);
+    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { ...policy, project: snapshot.project });
     const concurrent = this.reserve(parsed.data, lastUsedAt, ancestry);
-    if (concurrent) return this.reuse(concurrent, snapshot, authorizedRoots, lastUsedAt);
+    if (concurrent) return this.reuse(concurrent, snapshot, policy, lastUsedAt);
 
     // A reservation is not permission to adopt an existing folder after a crash.
-    const allocation = await allocateManagedRunDirectories({ ...snapshot, owner, authorizedRoots });
+    const allocation = await allocateManagedRunDirectories({ ...snapshot, owner, ...policy });
     this.requireAutocommit();
     const committed = this.database.prepare(`
       UPDATE workspace_run_allocations SET allocation_json = ?, scratch_identity = ?, artifact_identity = ?
@@ -136,22 +149,25 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
 
   private async reuse(
     { allocation }: ManagedWorkspaceRecord, snapshot: Omit<ManagedRunIntent, 'owner'>,
-    authorizedRoots: ManagedWorkspaceAuthorizedRoots, lastUsedAt: string,
+    policy: Pick<Parameters<ManagedWorkspaceStore['ensure']>[0], 'authorizedRoots' | 'sourceRegistryPath' | 'sourceRegistryRoot'>,
+    lastUsedAt: string,
   ): Promise<ManagedRunAllocation> {
     if (!sameWorkspaceProject(allocation.project, snapshot.project)
       || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey) {
       throw new ManagedWorkspaceStorageError('invalid_binding');
     }
-    await Promise.all([
-      validateManagedRunDirectory(allocation, 'scratch', authorizedRoots),
-      validateManagedRunDirectory(allocation, 'artifacts', authorizedRoots),
+    const [ancestry] = await Promise.all([
+      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project }),
+      validateManagedRunDirectory(allocation, 'scratch', policy.authorizedRoots),
+      validateManagedRunDirectory(allocation, 'artifacts', policy.authorizedRoots),
     ]);
     this.requireAutocommit();
+    this.requireSourceDisjoint(allocation.roots, ancestry.storage);
     this.touch(allocation.owner, lastUsedAt);
     return allocation;
   }
 
-  private reserve(intent: ManagedRunIntent, lastUsedAt: string, ancestry: Set<string>): ManagedWorkspaceRecord | null {
+  private reserve(intent: ManagedRunIntent, lastUsedAt: string, ancestry: RootAncestry): ManagedWorkspaceRecord | null {
     this.requireAutocommit();
     this.database.exec('BEGIN IMMEDIATE');
     try {
@@ -160,6 +176,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       }
       const existing = this.get(intent.owner);
       if (!existing) {
+        this.requireSourceDisjoint(intent.roots, ancestry.storage);
         const scratchPath = managedRunDirectoryPath(intent.roots.scratch, intent.owner);
         const artifactPath = managedRunDirectoryPath(intent.roots.artifacts, intent.owner);
         if (intent.project) this.requireUnoccupied(intent.project.directory);
@@ -168,7 +185,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
         const byIdentity = this.database.prepare(`
           SELECT 1 FROM workspace_run_allocations WHERE scratch_identity = ? OR artifact_identity = ? LIMIT 1
         `);
-        for (const identity of ancestry) {
+        for (const identity of ancestry.all) {
           if (byIdentity.get(identity, identity)) throw new ManagedWorkspaceStorageError('overlapping_runs');
         }
         this.database.prepare(`
@@ -182,6 +199,27 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     } catch (error) {
       this.database.exec('ROLLBACK');
       throw error;
+    }
+  }
+
+  private requireSourceDisjoint(roots: ManagedRunIntent['roots'], storageAncestry: Set<string>): void {
+    for (const [table, json] of sourceRegistries) {
+      const byIdentity = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${sourceIdentityExpr(json)} = ? LIMIT 1`);
+      for (const identity of storageAncestry) {
+        if (byIdentity.get(identity)) throw new ManagedWorkspaceStorageError('overlapping_source');
+      }
+      const expr = sourcePathExpr(json);
+      const exact = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} = ? LIMIT 1`);
+      const nested = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} >= ? AND ${expr} < ? LIMIT 1`);
+      for (const { directory } of [roots.scratch, roots.artifacts]) {
+        for (let current = directory; ; current = path.dirname(current)) {
+          if (exact.get(current)) throw new ManagedWorkspaceStorageError('overlapping_source');
+          if (path.dirname(current) === current) break;
+        }
+        const prefix = `${directory}${path.sep}`;
+        const upper = `${directory}${String.fromCharCode(path.sep.charCodeAt(0) + 1)}`;
+        if (nested.get(prefix, upper)) throw new ManagedWorkspaceStorageError('overlapping_source');
+      }
     }
   }
 

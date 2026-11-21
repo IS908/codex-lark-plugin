@@ -58,6 +58,7 @@ try {
   const open = (allowedWorkingRoot = base, foregroundWorkingRoot = base) => createContinuationRuntime({
     enabled: true, databasePath: path.join(base, 'runs.sqlite'), artifactsDir: path.join(base, 'artifacts'),
     managedWorkspaceConfigPath,
+    sourceRegistryPath: registryPath,
     allowedWorkingRoot, foregroundWorkingRoot, maxAttempts: 1, maxRetries: 0, maxTotalMinutes: 30, timeoutMs: 10_000,
     retentionDays: 7, maxConcurrency: 1, configuredSandbox: 'read-only',
     getTransport: () => ({

@@ -183,6 +183,7 @@ async function allocateWorkspace(input: CronPromptExecutionInput, store: Managed
   return store.ensure({
     ...input.managedWorkspace,
     authorizedRoots: [appConfig.codexExecCwd],
+    sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
     owner: { kind: 'cron_prompt', runId: input.runId },
     ...(input.job.workspaceProject ? { project: input.job.workspaceProject } : {}),
     usedAt: new Date().toISOString(),

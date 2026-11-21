@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock } from 'node:test';
+import { runCodexExecCommand } from '../src/codex-exec.js';
 import {
   allocateManagedRunDirectories,
   readManagedWorkspaceRoots,
@@ -40,10 +42,38 @@ try {
   await configure(scratch, artifacts);
   const roots = await readManagedWorkspaceRoots(opts);
   assert.ok(roots);
+  const registryPath = path.join(base, 'projects.json');
+  const another = path.join(scratch, 'registered-source');
+  await fs.mkdir(another);
+  await fs.writeFile(registryPath, JSON.stringify({ version: 1,
+    roots: [{ name: 'local', path: allowed }], projects: [{ name: 'other', root: 'local', path: 'runs/registered-source' }],
+  }));
+  await assert.rejects(readManagedWorkspaceRoots({ ...opts, sourceRegistryPath: registryPath }), { code: 'overlapping_source' });
+  await fs.writeFile(registryPath, JSON.stringify({ version: 1, roots: [], projects: [], default: 'path:runs/registered-source' }));
+  await assert.rejects(readManagedWorkspaceRoots({ ...opts, sourceRegistryPath: registryPath }), { code: 'overlapping_source' });
+  await fs.chmod(allowed, 0o777);
+  try {
+    await assert.rejects(readManagedWorkspaceRoots(opts), { code: 'unprotected_root' });
+    await assert.rejects(runCodexExecCommand({
+      command: process.execPath, prompt: 'Unused.', cwd: source, skipGitRepoCheck: true,
+      workspaceDirectory: { binding: opts.project, authorizedRoots: opts.authorizedRoots, requireProtectedAncestry: true },
+    }), { code: 'unprotected_root' });
+  } finally {
+    await fs.chmod(allowed, 0o755);
+  }
 
   await fs.chmod(scratch, 0o777);
   await assert.rejects(readManagedWorkspaceRoots(opts), { code: 'unprotected_root' });
   await fs.chmod(scratch, 0o700);
+  if (process.platform === 'darwin') {
+    const ace = 'everyone allow readattr';
+    execFileSync('/bin/chmod', ['+a', ace, scratch]);
+    try {
+      await assert.rejects(readManagedWorkspaceRoots(opts), { code: 'unprotected_root' });
+    } finally {
+      execFileSync('/bin/chmod', ['-a', ace, scratch]);
+    }
+  }
 
   const aliasedSource = path.join(allowed, 'source-mount');
   const aliasedChild = path.join(aliasedSource, 'nested');
@@ -82,6 +112,18 @@ try {
   await assert.rejects(allocate('cron_run_1'), { code: 'allocation_conflict' });
 
   const reopened = JSON.parse(JSON.stringify(first));
+  await fs.chmod(artifacts, 0o775);
+  try {
+    await assert.rejects(validateManagedRunDirectory(reopened, 'artifacts', opts.authorizedRoots), { code: 'unprotected_root' });
+  } finally {
+    await fs.chmod(artifacts, 0o755);
+  }
+  await fs.chmod(first.artifacts.directory, 0o775);
+  try {
+    await assert.rejects(validateManagedRunDirectory(reopened, 'artifacts', opts.authorizedRoots), { code: 'unprotected_root' });
+  } finally {
+    await fs.chmod(first.artifacts.directory, 0o700);
+  }
   await configure(artifacts, scratch);
   assert.equal(await validateManagedRunDirectory(reopened, 'scratch', opts.authorizedRoots), first.scratch.directory);
   await fs.writeFile(path.join(first.artifacts.directory, 'report.txt'), 'report');

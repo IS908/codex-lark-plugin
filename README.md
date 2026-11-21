@@ -271,7 +271,10 @@ To opt in, create `~/.codex/channels/lark/runtime-config/managed-workspace.json`
 
 Provision both POSIX directories first. They must be owned by the plugin account,
 not writable by other users, mutually disjoint, and within the workload's existing
-authorized roots. Storage must be separate from the selected source project.
+authorized roots. Storage must not overlap the selected project, projects in the
+current registry, or projects previously pinned by this workspace ledger. Managed
+paths and their ancestors must protect names from outside writes; on macOS, only
+deny entries in extended ACLs are accepted.
 For `workspace-write`, bind a source project; exact directory grants do not
 isolate runs from other processes that already have unrestricted access as the
 plugin account. Opt-in storage does not support `danger-full-access` foreground

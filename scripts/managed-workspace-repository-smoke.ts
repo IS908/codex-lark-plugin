@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mock } from 'node:test';
 import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
 import { allocateManagedRunDirectories, readManagedWorkspaceRoots } from '../src/managed-workspace-storage.js';
+import { pinWorkspacePath } from '../src/workspace-projects.js';
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-managed-ledger-'));
 try {
@@ -80,6 +81,9 @@ try {
     const originalScratch = await stat(allocation.scratch.directory, { bigint: true });
     const simulatedMount = mock.method(fs, 'stat', (...args: Parameters<typeof stat>) =>
       args[0] === alias ? Promise.resolve(originalScratch) : stat(...args));
+    const lstat = fs.lstat.bind(fs);
+    const simulatedMountLstat = mock.method(fs, 'lstat', (...args: Parameters<typeof lstat>) =>
+      args[0] === alias ? Promise.resolve(originalScratch) : lstat(...args));
     try {
       await configure(newScratchRoot, alias);
       const aliasedRoots = await readManagedWorkspaceRoots({ configPath, authorizedRoots });
@@ -90,6 +94,7 @@ try {
       assert.deepEqual(await fs.readdir(newScratchRoot), []);
     } finally {
       simulatedMount.mock.restore();
+      simulatedMountLstat.mock.restore();
     }
   } finally {
     db1.close();
@@ -109,6 +114,26 @@ try {
     await store.ensure({ ...request, usedAt: '2026-11-21T14:00:00Z' });
     await store.ensure({ ...request, usedAt: '2026-11-21T14:00:00.001Z' });
     assert.equal(store.get(owner)?.lastUsedAt, '2026-11-21T14:00:00.001Z');
+    const project = path.join(allowed, 'prior-project');
+    const insideProject = path.join(project, 'work');
+    await fs.mkdir(insideProject, { recursive: true });
+    await store.ensure({ ...request, owner: { ...owner, runId: 'uses-source' }, project: await pinWorkspacePath(allowed, project) });
+    await configure(insideProject, artifactRoot);
+    const colliding = await readManagedWorkspaceRoots({ configPath, authorizedRoots });
+    assert.ok(colliding);
+    await assert.rejects(store.ensure({ ...request, roots: colliding, owner: { ...owner, runId: 'other-project' } }),
+      { code: 'overlapping_source' });
+    assert.deepEqual(await fs.readdir(insideProject), []);
+    const legacySource = path.join(allowed, 'previous-legacy-project');
+    await fs.mkdir(legacySource);
+    const oldProject = await pinWorkspacePath(allowed, legacySource);
+    store.rememberUnmanagedForeground('earlier-foreground', { sessionKey: 'legacy-session', project: oldProject });
+    await configure(scratchRoot, legacySource);
+    const collidingLegacy = await readManagedWorkspaceRoots({ configPath, authorizedRoots });
+    assert.ok(collidingLegacy);
+    await assert.rejects(store.ensure({ ...request, roots: collidingLegacy, owner: { ...owner, runId: 'with-legacy-source' } }),
+      { code: 'overlapping_source' });
+    assert.deepEqual(await fs.readdir(legacySource), []);
 
     const missingOwner = { ...owner, runId: 'unowned' };
     assert.equal(store.get(missingOwner), null);

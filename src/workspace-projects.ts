@@ -79,7 +79,24 @@ export async function resolveWorkspaceProject({
     : project.name === requested) ?? [];
   if (!matches.length || !registry) throw new WorkspaceProjectError('unknown_project');
   if (matches.length > 1) throw new WorkspaceProjectError('ambiguous_project');
-  const project = matches[0];
+  const candidate = await readRegisteredProject(registry, matches[0]);
+  await requireAuthorized(authorizedRoot, candidate.directory);
+  return candidate;
+}
+
+export async function listWorkspaceSourceProjects(registryPath: string, authorizedRoot: string): Promise<WorkspaceProjectBinding[]> {
+  const registry = await readRegistry(registryPath);
+  if (!registry) return [];
+  const projects = await Promise.all(registry.projects.map((project) => readRegisteredProject(registry, project)));
+  if (registry.default?.startsWith('path:')) {
+    const directory = registry.default.slice('path:'.length).trim();
+    if (!directory) throw new WorkspaceProjectError('invalid_selector');
+    projects.push(await readDirectory(path.resolve(authorizedRoot, directory)));
+  }
+  return projects;
+}
+
+async function readRegisteredProject(registry: Registry, project: Registry['projects'][number]): Promise<WorkspaceProjectBinding> {
   const root = registry.roots.find((source) => source.name === project.root);
   if (!root) throw new WorkspaceProjectError('invalid_registry');
   const sourceRoot = await readDirectory(root.path);
@@ -87,7 +104,6 @@ export async function resolveWorkspaceProject({
   if (!workspacePathContains(sourceRoot.directory, projectPath)) throw new WorkspaceProjectError('outside_project_root');
   const candidate = await readDirectory(projectPath);
   if (!workspacePathContains(sourceRoot.directory, candidate.directory)) throw new WorkspaceProjectError('outside_project_root');
-  await requireAuthorized(authorizedRoot, candidate.directory);
   return candidate;
 }
 

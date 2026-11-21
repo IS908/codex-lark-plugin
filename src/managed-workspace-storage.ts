@@ -13,7 +13,8 @@ import {
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
 import { mkdirInsidePinnedRoot } from './managed-workspace-mkdir.js';
-import { pinWorkspacePath, validateWorkspaceProject, workspacePathContains, WorkspaceProjectError } from './workspace-projects.js';
+import { assertProtectedWorkspacePath } from './managed-workspace-ancestry.js';
+import { listWorkspaceSourceProjects, pinWorkspacePath, validateWorkspaceProject, workspacePathContains, WorkspaceProjectError } from './workspace-projects.js';
 
 const absolutePath = z.string().refine((value) => path.isAbsolute(value) && !value.includes('\0'));
 const configSchema = z.strictObject({ version: z.literal(1), scratchRoot: absolutePath, artifactRoot: absolutePath });
@@ -24,6 +25,8 @@ type AuthorizedRoots = readonly [string, ...string[]];
 interface WorkspaceAuthorization {
   authorizedRoots: AuthorizedRoots;
   project?: WorkspaceProjectBinding;
+  sourceRegistryPath?: string;
+  sourceRegistryRoot?: string;
 }
 
 export async function readManagedWorkspaceRoots({
@@ -87,12 +90,12 @@ export async function validateManagedRunDirectory(
     throw new ManagedWorkspaceStorageError('invalid_binding');
   }
   await validateWorkspaceProject(authorizedRoots, root);
-  await assertProtectedRoot(root);
   const binding = await validateWorkspaceProject(authorizedRoots, directory);
+  await Promise.all([assertProtectedWorkspacePath(root, true), assertProtectedWorkspacePath(binding, true)]);
   return binding.directory;
 }
 
-export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots, authorization: WorkspaceAuthorization): Promise<Set<string>> {
+export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots, authorization: WorkspaceAuthorization) {
   await Promise.all([
     validateWorkspaceProject(authorization.authorizedRoots, roots.scratch),
     validateWorkspaceProject(authorization.authorizedRoots, roots.artifacts),
@@ -106,8 +109,24 @@ export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots
       throw new ManagedWorkspaceStorageError('overlapping_roots');
     }
   }
-  await Promise.all([assertProtectedRoot(roots.scratch), assertProtectedRoot(roots.artifacts)]);
-  return new Set(ancestry.flatMap((ancestors) => [...ancestors]));
+  if (authorization.sourceRegistryPath) {
+    const knownSources = await listWorkspaceSourceProjects(authorization.sourceRegistryPath,
+      authorization.sourceRegistryRoot ?? authorization.authorizedRoots[0]);
+    for (const source of knownSources) {
+      const sourceAncestors = await readAncestors(source.directory);
+      if ([roots.scratch, roots.artifacts].some((root, index) => workspacePathContains(root.directory, source.directory)
+        || workspacePathContains(source.directory, root.directory) || ancestry[index].has(directoryIdentity(source))
+        || sourceAncestors.has(directoryIdentity(root)))) throw new ManagedWorkspaceStorageError('overlapping_source');
+    }
+  }
+  await Promise.all([
+    assertProtectedWorkspacePath(roots.scratch, true), assertProtectedWorkspacePath(roots.artifacts, true),
+    ...(authorization.project ? [assertProtectedWorkspacePath(authorization.project)] : []),
+  ]);
+  return {
+    all: new Set(ancestry.flatMap((ancestors) => [...ancestors])),
+    storage: new Set(ancestry.slice(0, 2).flatMap((ancestors) => [...ancestors])),
+  };
 }
 
 function assertDisjoint(roots: ManagedWorkspaceRoots, project?: WorkspaceProjectBinding): void {
@@ -134,20 +153,11 @@ async function readAncestors(directory: string): Promise<Set<string>> {
   }
 }
 
-async function assertProtectedRoot(root: WorkspaceProjectBinding): Promise<void> {
-  const info = await fs.stat(root.directory, { bigint: true }).catch(() => undefined);
-  if (!info?.isDirectory() || `${info.dev}:${info.ino}` !== directoryIdentity(root)) {
-    throw new WorkspaceProjectError('directory_changed');
-  }
-  if (!process.geteuid || info.uid !== BigInt(process.geteuid()) || (info.mode & 0o022n) !== 0n) {
-    throw new ManagedWorkspaceStorageError('unprotected_root');
-  }
-}
-
 async function allocateDirectory(
   root: WorkspaceProjectBinding, owner: ManagedRunOwner, authorizedRoots: AuthorizedRoots,
 ): Promise<WorkspaceProjectBinding> {
   await validateWorkspaceProject(authorizedRoots, root);
+  await assertProtectedWorkspacePath(root, true);
   const directory = managedRunDirectoryPath(root, owner);
   const binding = await mkdirInsidePinnedRoot(root, path.basename(directory));
   await validateWorkspaceProject(authorizedRoots, root);

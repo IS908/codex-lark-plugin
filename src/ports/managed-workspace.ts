@@ -14,6 +14,8 @@ export interface ManagedWorkspaceStore {
   ensure(request: Omit<ManagedRunIntent, 'version'> & {
     authorizedRoots: ManagedWorkspaceAuthorizedRoots;
     usedAt?: string;
+    sourceRegistryPath?: string;
+    sourceRegistryRoot?: string;
   }): Promise<ManagedRunAllocation>;
   openDirectory(owner: ManagedRunOwner, purpose: ManagedWorkspacePurpose, authorizedRoots: ManagedWorkspaceAuthorizedRoots): Promise<string>;
 }

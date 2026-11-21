@@ -32,6 +32,7 @@ export interface ContinuationServiceOptions {
   repository: ContinuationRepository;
   allowedWorkingRoot: string;
   foregroundWorkingRoot?: string;
+  sourceRegistryPath?: string;
   managedWorkspaceConfigPath?: string;
   filesystemMode: ContinuationFilesystemMode;
   maxAttempts: number;
@@ -287,6 +288,7 @@ export class ContinuationService implements ContinuationTaskService {
     const managedWorkspaceRoots = this.options.managedWorkspaceConfigPath
       ? await readManagedWorkspaceRoots({
         configPath: this.options.managedWorkspaceConfigPath, authorizedRoots, project: workspaceProject,
+        sourceRegistryPath: this.options.sourceRegistryPath, sourceRegistryRoot: authorizedRoots[1],
       }) : undefined;
     if (managedWorkspaceRoots && !workspaceProject) {
       workspaceProject = await pinWorkspacePath(resolvedWorkingDirectory.root, resolvedWorkingDirectory.workingDirectory);

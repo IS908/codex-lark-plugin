@@ -3260,8 +3260,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path35) {
-      let input2 = path35;
+    function removeDotSegments(path36) {
+      let input2 = path36;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3335,11 +3335,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path35) {
-      if (path35 === "" || path35[0] === "/") {
-        return removeDotSegments(path35);
+    function removeDotSegmentsRelative(path36) {
+      if (path36 === "" || path36[0] === "/") {
+        return removeDotSegments(path36);
       }
-      const segments = path35.split("/");
+      const segments = path36.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3702,8 +3702,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path35 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path35 && path35 !== "/" ? path35 : void 0;
+        const path36 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path36 && path36 !== "/" ? path36 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7240,12 +7240,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs24, exportName) {
+    function addFormats(ajv, list, fs25, exportName) {
       var _a3;
       var _b;
       (_a3 = (_b = ajv.opts.code).formats) !== null && _a3 !== void 0 ? _a3 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs24[f]);
+        ajv.addFormat(f, fs25[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -16861,8 +16861,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path35, errorMaps, issueData } = params;
-  const fullPath = [...path35, ...issueData.path || []];
+  const { data, path: path36, errorMaps, issueData } = params;
+  const fullPath = [...path36, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -16977,11 +16977,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path35, key) {
+  constructor(parent, value, path36, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path35;
+    this._path = path36;
     this._key = key;
   }
   get path() {
@@ -20936,10 +20936,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path35) {
-  if (!path35)
+function getElementAtPath(obj, path36) {
+  if (!path36)
     return obj;
-  return path35.reduce((acc, key) => acc?.[key], obj);
+  return path36.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -21279,11 +21279,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path35, issues) {
+function prefixIssues(path36, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path35);
+    iss.path.unshift(path36);
     return iss;
   });
 }
@@ -21745,16 +21745,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path35 = []) => {
+  const processError = (error63, path36 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path35, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path36, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path35, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path36, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path35, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path36, ...issue2.path]);
       } else {
-        const fullpath = [...path35, ...issue2.path];
+        const fullpath = [...path36, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -21793,17 +21793,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path35 = []) => {
+  const processError = (error63, path36 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path35, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path36, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path35, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path36, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path35, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path36, ...issue2.path]);
       } else {
-        const fullpath = [...path35, ...issue2.path];
+        const fullpath = [...path36, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -21842,8 +21842,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path35 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path35) {
+  const path36 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path36) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -37394,11 +37394,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path35) {
-  if (path35.length === 0) {
+function getDotPath(path36) {
+  if (path36.length === 0) {
     return "object root";
   }
-  return path35.reduce((acc, seg, index) => {
+  return path36.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -39625,13 +39625,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path35 = ref.slice(1).split("/").filter(Boolean);
-  if (path35.length === 0) {
+  const path36 = ref.slice(1).split("/").filter(Boolean);
+  if (path36.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path35[0] === defsKey) {
-    const key = path35[1] === void 0 ? void 0 : decodeJSONPointerSegment(path35[1]);
+  if (path36[0] === defsKey) {
+    const key = path36[1] === void 0 ? void 0 : decodeJSONPointerSegment(path36[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -51262,13 +51262,13 @@ function registerDocCommentTools(deps) {
 }
 
 // src/tools/reply.ts
-import fs7 from "node:fs/promises";
-import path9 from "node:path";
+import fs8 from "node:fs/promises";
+import path10 from "node:path";
 
 // src/reply-sender.ts
 import { createHash as createHash3 } from "node:crypto";
-import fs6 from "node:fs/promises";
-import path8 from "node:path";
+import fs7 from "node:fs/promises";
+import path9 from "node:path";
 
 // src/feishu-card.ts
 var CARD_MD_LIMIT = 4e3;
@@ -52107,9 +52107,9 @@ function formatCountMetricLogFields(name, metric) {
 
 // src/codex-exec.ts
 import { spawn as spawn3 } from "node:child_process";
-import fs5 from "node:fs/promises";
+import fs6 from "node:fs/promises";
 import os from "node:os";
-import path7 from "node:path";
+import path8 from "node:path";
 
 // src/workspace-projects.ts
 import fs4 from "node:fs/promises";
@@ -52187,10 +52187,25 @@ async function resolveWorkspaceProject({
     if (!directory) throw new WorkspaceProjectError("invalid_selector");
     return pinWorkspacePath(authorizedRoot, directory);
   }
-  const matches = registry2?.projects.filter((project2) => requested.includes("/") ? `${project2.root}/${project2.name}` === requested : project2.name === requested) ?? [];
+  const matches = registry2?.projects.filter((project) => requested.includes("/") ? `${project.root}/${project.name}` === requested : project.name === requested) ?? [];
   if (!matches.length || !registry2) throw new WorkspaceProjectError("unknown_project");
   if (matches.length > 1) throw new WorkspaceProjectError("ambiguous_project");
-  const project = matches[0];
+  const candidate = await readRegisteredProject(registry2, matches[0]);
+  await requireAuthorized(authorizedRoot, candidate.directory);
+  return candidate;
+}
+async function listWorkspaceSourceProjects(registryPath, authorizedRoot) {
+  const registry2 = await readRegistry(registryPath);
+  if (!registry2) return [];
+  const projects = await Promise.all(registry2.projects.map((project) => readRegisteredProject(registry2, project)));
+  if (registry2.default?.startsWith("path:")) {
+    const directory = registry2.default.slice("path:".length).trim();
+    if (!directory) throw new WorkspaceProjectError("invalid_selector");
+    projects.push(await readDirectory(path6.resolve(authorizedRoot, directory)));
+  }
+  return projects;
+}
+async function readRegisteredProject(registry2, project) {
   const root = registry2.roots.find((source) => source.name === project.root);
   if (!root) throw new WorkspaceProjectError("invalid_registry");
   const sourceRoot = await readDirectory(root.path);
@@ -52198,7 +52213,6 @@ async function resolveWorkspaceProject({
   if (!workspacePathContains(sourceRoot.directory, projectPath)) throw new WorkspaceProjectError("outside_project_root");
   const candidate = await readDirectory(projectPath);
   if (!workspacePathContains(sourceRoot.directory, candidate.directory)) throw new WorkspaceProjectError("outside_project_root");
-  await requireAuthorized(authorizedRoot, candidate.directory);
   return candidate;
 }
 async function pinWorkspacePath(authorizedRoot, directory) {
@@ -52259,6 +52273,85 @@ async function requireAuthorized(authorizedRoot, candidate) {
 function workspacePathContains(root, candidate) {
   const relative = path6.relative(root, candidate);
   return relative !== ".." && !relative.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relative);
+}
+
+// src/managed-workspace-ancestry.ts
+import { execFile } from "node:child_process";
+import fs5 from "node:fs/promises";
+import path7 from "node:path";
+import { promisify } from "node:util";
+
+// src/managed-workspace-errors.ts
+var diagnostic = {
+  invalid_config: "The operator managed workspace configuration is invalid or unreadable.",
+  unprotected_root: "The managed workspace path or its ancestors allow writes outside the trusted plugin account.",
+  unisolated_source: "Managed storage requires a separate source project for workspace-write and is not available with unrestricted filesystem access.",
+  overlapping_roots: "Managed scratch, artifacts, and the selected source project must use disjoint directories.",
+  overlapping_runs: "The managed workspace would overlap an existing or reserved run directory.",
+  overlapping_source: "The managed storage location overlaps a registered source project.",
+  allocation_conflict: "The managed run directory already exists without a matching stored allocation.",
+  allocation_failed: "The managed run directories could not be allocated.",
+  allocation_incomplete: "The stored managed workspace allocation is incomplete.",
+  allocation_transaction: "Managed workspace provisioning requires a committed database context.",
+  invalid_binding: "The managed workspace allocation is invalid.",
+  artifact_invalid: "The managed artifact is missing, outside its registered directory, oversized, or no longer matches its checksum."
+};
+var ManagedWorkspaceStorageError = class extends Error {
+  constructor(code) {
+    super(diagnostic[code]);
+    this.code = code;
+    this.name = "ManagedWorkspaceStorageError";
+  }
+  code;
+};
+
+// src/managed-workspace-ancestry.ts
+var exec = promisify(execFile);
+async function assertProtectedWorkspacePath(binding, owned = false) {
+  if (!process.geteuid) throw new ManagedWorkspaceStorageError("unprotected_root");
+  const uid = BigInt(process.geteuid());
+  const ancestry = [];
+  for (let current = binding.directory; ; current = path7.dirname(current)) {
+    const leaf = ancestry.length === 0;
+    const info = await fs5.lstat(current, { bigint: true }).catch(() => void 0);
+    if (!info?.isDirectory() || leaf && (String(info.dev) !== binding.device || String(info.ino) !== binding.inode)) {
+      throw new WorkspaceProjectError("directory_changed");
+    }
+    const trustedOwner = info.uid === uid || (!leaf || !owned) && info.uid === 0n;
+    const protectedNames = (info.mode & 0o022n) === 0n || !leaf && (info.mode & 0o1000n) !== 0n;
+    if (!trustedOwner || !protectedNames) throw new ManagedWorkspaceStorageError("unprotected_root");
+    ancestry.push(current);
+    if (path7.dirname(current) === current) break;
+  }
+  if (process.platform === "darwin") await requireDenyOnlyAcls(ancestry);
+}
+async function requireDenyOnlyAcls(directories) {
+  try {
+    const { stdout, stderr } = await exec("/bin/ls", ["-ldebn", "--", ...directories], {
+      encoding: "utf8",
+      env: { LC_ALL: "C" },
+      timeout: 5e3,
+      maxBuffer: 1e6
+    });
+    const lines = stdout.split("\n").filter(Boolean);
+    if (stderr) throw new Error("ACL inspection failed.");
+    let headers = 0;
+    let needsAcl = false;
+    for (const line of lines) {
+      const header = /^d[rwxstST-]{9}([+@]?)\s/.exec(line);
+      if (header && !needsAcl) {
+        headers++;
+        needsAcl = header[1] === "+";
+      } else if (headers && /^\s+\d+: .+ deny [a-z_,]+$/.test(line)) {
+        needsAcl = false;
+      } else {
+        throw new Error("Unsupported ACL.");
+      }
+    }
+    if (needsAcl || headers !== directories.length) throw new Error("Incomplete ACL data.");
+  } catch {
+    throw new ManagedWorkspaceStorageError("unprotected_root");
+  }
 }
 
 // src/codex-exec-trace.ts
@@ -52660,24 +52753,24 @@ function normalizeCodexExecResult(result) {
   return result;
 }
 async function runCodexExecCommand(request) {
-  const tmpDir = await fs5.mkdtemp(path7.join(os.tmpdir(), "lark-codex-exec-"));
-  const outputFile = path7.join(tmpDir, "last-message.txt");
-  const schemaFile = request.outputSchema ? path7.join(tmpDir, "outcome-schema.json") : void 0;
+  const tmpDir = await fs6.mkdtemp(path8.join(os.tmpdir(), "lark-codex-exec-"));
+  const outputFile = path8.join(tmpDir, "last-message.txt");
+  const schemaFile = request.outputSchema ? path8.join(tmpDir, "outcome-schema.json") : void 0;
   const command = request.command ?? "codex";
   const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const cwd = request.cwd ?? process.cwd();
   try {
     if (request.abortSignal?.aborted) throw new CodexExecAbortedError("", "");
     if (schemaFile) {
-      await fs5.writeFile(schemaFile, `${JSON.stringify(request.outputSchema)}
+      await fs6.writeFile(schemaFile, `${JSON.stringify(request.outputSchema)}
 `, {
         encoding: "utf-8",
         mode: 384
       });
-      await fs5.chmod(schemaFile, 384);
+      await fs6.chmod(schemaFile, 384);
     }
   } catch (error62) {
-    await fs5.rm(tmpDir, { recursive: true, force: true }).catch(() => {
+    await fs6.rm(tmpDir, { recursive: true, force: true }).catch(() => {
     });
     throw error62;
   }
@@ -52705,14 +52798,18 @@ async function runCodexExecCommand(request) {
   }
   try {
     if (request.workspaceDirectory) {
-      const { authorizedRoots, auxiliaryBindings, binding: savedBinding } = request.workspaceDirectory;
+      const { authorizedRoots, auxiliaryBindings, binding: savedBinding, requireProtectedAncestry } = request.workspaceDirectory;
       for (const auxiliary of auxiliaryBindings ?? []) {
         await validateWorkspaceProject(authorizedRoots, auxiliary);
       }
       const binding = await validateWorkspaceProject(authorizedRoots, savedBinding);
       if (binding.directory !== cwd) throw new WorkspaceProjectError("directory_changed");
+      if (requireProtectedAncestry) await Promise.all([
+        assertProtectedWorkspacePath(binding),
+        ...(auxiliaryBindings ?? []).map((auxiliary) => assertProtectedWorkspacePath(auxiliary, true))
+      ]);
     } else {
-      await fs5.mkdir(cwd, { recursive: true });
+      await fs6.mkdir(cwd, { recursive: true });
     }
     await new Promise((resolve, reject) => {
       const usePosixProcessGroup = process.platform !== "win32";
@@ -52867,7 +52964,7 @@ async function runCodexExecCommand(request) {
     const metrics = runtimeMetrics.finish();
     usage = mergeCodexExecUsage(usage, metrics.usage ?? null);
     await logCodexExecRuntimeMetrics(metrics, { logId: request.traceLogId });
-    const answer = await fs5.readFile(outputFile, "utf8");
+    const answer = await fs6.readFile(outputFile, "utf8");
     return {
       text: answer.trim(),
       sessionId,
@@ -52895,7 +52992,7 @@ async function runCodexExecCommand(request) {
       }
     }
     await toolTrace?.flush();
-    await fs5.rm(tmpDir, { recursive: true, force: true }).catch(() => {
+    await fs6.rm(tmpDir, { recursive: true, force: true }).catch(() => {
     });
   }
 }
@@ -53338,7 +53435,7 @@ async function sendFeishuReply(deps, request) {
           }
           continue;
         }
-        const fileData = await fs6.readFile(part.path);
+        const fileData = await fs7.readFile(part.path);
         const imageKey = await transport.uploadImage(fileData);
         if (!imageKey) throw new Error(`Image upload returned no image_key for ${part.path}`);
         const resp = await sendTransportMessage({
@@ -53391,7 +53488,7 @@ async function sendFeishuReply(deps, request) {
           uploadedParts.push(part);
           continue;
         }
-        const fileData = await fs6.readFile(part.path);
+        const fileData = await fs7.readFile(part.path);
         const imageKey = await transport.uploadImage(fileData);
         if (!imageKey) throw new Error(`Image upload returned no image_key for ${part.path}`);
         uploadedParts.push({ type: "image", imageKey, alt: part.alt });
@@ -53564,7 +53661,7 @@ async function sendFeishuReply(deps, request) {
   if (files?.length) {
     for (const file2 of files) {
       try {
-        const fileData = await fs6.readFile(file2.path);
+        const fileData = await fs7.readFile(file2.path);
         if (file2.type === "image") {
           const imageKey = await transport.uploadImage(fileData);
           if (imageKey) {
@@ -53576,7 +53673,7 @@ async function sendFeishuReply(deps, request) {
             recordAndRevokeAck(text || "[image]", sent?.messageId);
           }
         } else {
-          const fileName = path8.basename(file2.path);
+          const fileName = path9.basename(file2.path);
           const fileKey = await transport.uploadFile(fileData, fileName);
           if (fileKey) {
             const sent = await sendFollowup({ fileKey, fileName });
@@ -53655,7 +53752,7 @@ function capUtf8Text3(text, maxBytes) {
 
 // src/tools/reply.ts
 function capSanitizedFilename(raw, maxLen) {
-  const sanitized = path9.basename(raw).replace(/[^\w.\-]/g, "_");
+  const sanitized = path10.basename(raw).replace(/[^\w.\-]/g, "_");
   if (sanitized.length <= maxLen) return sanitized;
   const dotIdx = sanitized.lastIndexOf(".");
   if (dotIdx <= 0 || dotIdx === sanitized.length - 1) {
@@ -53756,11 +53853,11 @@ function registerReplyTools(ctx) {
     },
     async ({ message_id, file_key, file_name }) => {
       const inboxDir = appConfig.inboxDir;
-      await fs7.mkdir(inboxDir, { recursive: true });
+      await fs8.mkdir(inboxDir, { recursive: true });
       const resourceType = file_key.startsWith("img_") ? "image" : "file";
       const sanitizedName = file_name ? capSanitizedFilename(file_name, 200) : "";
       const savedName = sanitizedName ? `${file_key}-${sanitizedName}` : file_key;
-      const filePath = path9.join(inboxDir, savedName);
+      const filePath = path10.join(inboxDir, savedName);
       try {
         const data = await transport.downloadResource(message_id, file_key, resourceType);
         if (!data) {
@@ -54007,9 +54104,9 @@ function registerMessageMutationTools(ctx) {
 }
 
 // src/memory/file.ts
-import fs8 from "node:fs/promises";
+import fs9 from "node:fs/promises";
 import { existsSync } from "node:fs";
-import path10 from "node:path";
+import path11 from "node:path";
 
 // src/memory/profile-policy.ts
 import { createHash as createHash4 } from "node:crypto";
@@ -54121,13 +54218,13 @@ var MemoryStore = class {
   }
   // ── User Profile (tiered, v0.10.0+) ──
   profileDir(userId) {
-    return path10.join(this.baseDir, "profiles", userId);
+    return path11.join(this.baseDir, "profiles", userId);
   }
   profileTierPath(userId, tier) {
-    return path10.join(this.profileDir(userId), `${tier}.md`);
+    return path11.join(this.profileDir(userId), `${tier}.md`);
   }
   legacyProfilePath(userId) {
-    return path10.join(this.baseDir, "profiles", `${userId}.md`);
+    return path11.join(this.baseDir, "profiles", `${userId}.md`);
   }
   async loadL2PrivatePhrases() {
     return extractL2PrivatePhrases(await loadL2Rules()).map((p) => p.toLowerCase());
@@ -54170,23 +54267,23 @@ var MemoryStore = class {
     if (!existsSync(legacy)) return;
     if (existsSync(dir)) {
       try {
-        await fs8.unlink(legacy);
+        await fs9.unlink(legacy);
       } catch {
       }
       return;
     }
-    const content = await fs8.readFile(legacy, "utf-8");
+    const content = await fs9.readFile(legacy, "utf-8");
     const l2Phrases = await this.loadL2PrivatePhrases();
     const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
     const publicCount = publicContent.split("\n").filter((line) => line.trim()).length;
     const privateCount = privateContent.split("\n").filter((line) => line.trim()).length;
-    await fs8.mkdir(dir, { recursive: true });
-    await fs8.writeFile(this.profileTierPath(userId, "public"), publicContent, "utf-8");
+    await fs9.mkdir(dir, { recursive: true });
+    await fs9.writeFile(this.profileTierPath(userId, "public"), publicContent, "utf-8");
     if (privateContent.trim()) {
-      await fs8.writeFile(this.profileTierPath(userId, "private"), privateContent, "utf-8");
+      await fs9.writeFile(this.profileTierPath(userId, "private"), privateContent, "utf-8");
     }
     try {
-      await fs8.unlink(legacy);
+      await fs9.unlink(legacy);
     } catch {
     }
     console.error(
@@ -54213,7 +54310,7 @@ var MemoryStore = class {
       const readOpt = async (p) => {
         if (!existsSync(p)) return "";
         try {
-          return await fs8.readFile(p, "utf-8");
+          return await fs9.readFile(p, "utf-8");
         } catch {
           return "";
         }
@@ -54253,7 +54350,7 @@ var MemoryStore = class {
     await this.withProfileLock(userId, async () => {
       await this.migrateIfNeededUnlocked(userId);
       const dir = this.profileDir(userId);
-      await fs8.mkdir(dir, { recursive: true });
+      await fs9.mkdir(dir, { recursive: true });
       if (tier === "public") {
         const l2Phrases = await this.loadL2PrivatePhrases();
         const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
@@ -54270,19 +54367,19 @@ var MemoryStore = class {
     const filePath = this.profileTierPath(userId, tier);
     if (mode === "replace") {
       if (tier !== "private" || !existsSync(filePath)) {
-        await fs8.writeFile(filePath, content, "utf-8");
+        await fs9.writeFile(filePath, content, "utf-8");
         return;
       }
-      const existing2 = await fs8.readFile(filePath, "utf-8");
+      const existing2 = await fs9.readFile(filePath, "utf-8");
       const deterministicExisting = existing2.split("\n").filter((line) => line.trim() && isDeterministicPrivate(line, l2PrivatePhrases)).join("\n");
       const next = deterministicExisting ? mergeProfileLines(content, deterministicExisting, { userId, tier }) : content;
-      await fs8.writeFile(filePath, next, "utf-8");
+      await fs9.writeFile(filePath, next, "utf-8");
       return;
     }
-    const existing = existsSync(filePath) ? await fs8.readFile(filePath, "utf-8") : "";
+    const existing = existsSync(filePath) ? await fs9.readFile(filePath, "utf-8") : "";
     const merged = mergeProfileLines(existing, content, { userId, tier });
     if (merged === existing) return;
-    await fs8.writeFile(filePath, merged, "utf-8");
+    await fs9.writeFile(filePath, merged, "utf-8");
   }
   /**
    * Return the lines of a profile tier as addressable items. Each line carries
@@ -54305,7 +54402,7 @@ var MemoryStore = class {
   async listProfileLinesUnlocked(ownerId, tier) {
     const p = this.profileTierPath(ownerId, tier);
     if (!existsSync(p)) return [];
-    const content = filterCredentialMaterial(await fs8.readFile(p, "utf-8")).content;
+    const content = filterCredentialMaterial(await fs9.readFile(p, "utf-8")).content;
     return content.split("\n").map((raw) => raw.trim().replace(/^[-*]\s+/, "")).filter(Boolean).map((text, index) => ({ index, hash: lineHash(text), text }));
   }
   /**
@@ -54325,26 +54422,26 @@ var MemoryStore = class {
       const kept = lines.filter((l) => l.hash !== hash2);
       if (kept.length === lines.length) return false;
       const next = kept.map((l) => `- ${l.text}`).join("\n") + (kept.length > 0 ? "\n" : "");
-      await fs8.writeFile(this.profileTierPath(ownerId, tier), next, "utf-8");
+      await fs9.writeFile(this.profileTierPath(ownerId, tier), next, "utf-8");
       return true;
     });
   }
   // ── Episodes ──
   async searchEpisodes(query, scope) {
     if (!scope?.chatId) return [];
-    const dir = scope.threadId ? path10.join(this.baseDir, "episodes", scope.chatId, "threads", scope.threadId) : path10.join(this.baseDir, "episodes", scope.chatId);
+    const dir = scope.threadId ? path11.join(this.baseDir, "episodes", scope.chatId, "threads", scope.threadId) : path11.join(this.baseDir, "episodes", scope.chatId);
     try {
-      const files = await fs8.readdir(dir);
+      const files = await fs9.readdir(dir);
       const mdFiles = files.filter((f) => f.endsWith(".md") && !f.startsWith("archive-"));
       const keywords = this.extractKeywords(query);
       const scored = [];
       for (const file2 of mdFiles) {
-        const filePath = path10.join(dir, file2);
+        const filePath = path11.join(dir, file2);
         const content = filterCredentialMaterial(
-          await fs8.readFile(filePath, "utf-8")
+          await fs9.readFile(filePath, "utf-8")
         ).content;
         if (!content.trim()) continue;
-        const stat2 = await fs8.stat(filePath);
+        const stat2 = await fs9.stat(filePath);
         const firstLines = content.split("\n").slice(0, 3).join(" ").toLowerCase();
         const filenameLower = file2.toLowerCase();
         let keywordScore = 0;
@@ -54379,31 +54476,31 @@ var MemoryStore = class {
   }
   async saveEpisode(type, content, meta3) {
     assertNoCredentialMaterial(content);
-    const dir = type === "thread" && meta3.threadId ? path10.join(this.baseDir, "episodes", meta3.chatId, "threads", meta3.threadId) : path10.join(this.baseDir, "episodes", meta3.chatId);
-    await fs8.mkdir(dir, { recursive: true });
+    const dir = type === "thread" && meta3.threadId ? path11.join(this.baseDir, "episodes", meta3.chatId, "threads", meta3.threadId) : path11.join(this.baseDir, "episodes", meta3.chatId);
+    await fs9.mkdir(dir, { recursive: true });
     const timestamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
     let fileName = `${timestamp2}.md`;
-    for (let i = 1; existsSync(path10.join(dir, fileName)); i++) {
+    for (let i = 1; existsSync(path11.join(dir, fileName)); i++) {
       fileName = `${timestamp2}-${i}.md`;
     }
-    await fs8.writeFile(path10.join(dir, fileName), capEpisodeContent(content), "utf-8");
+    await fs9.writeFile(path11.join(dir, fileName), capEpisodeContent(content), "utf-8");
     await this.pruneEpisodeDir(dir, {
       maxFilesPerScope: appConfig.maxEpisodeFilesPerScope,
       maxBytesPerScope: appConfig.maxEpisodeScopeBytes
     });
   }
   async listEpisodes(chatId, threadId) {
-    const dir = threadId ? path10.join(this.baseDir, "episodes", chatId, "threads", threadId) : path10.join(this.baseDir, "episodes", chatId);
+    const dir = threadId ? path11.join(this.baseDir, "episodes", chatId, "threads", threadId) : path11.join(this.baseDir, "episodes", chatId);
     try {
-      const files = await fs8.readdir(dir);
+      const files = await fs9.readdir(dir);
       const episodes = [];
       for (const file2 of files.filter((f) => f.endsWith(".md"))) {
-        const filePath = path10.join(dir, file2);
+        const filePath = path11.join(dir, file2);
         const content = filterCredentialMaterial(
-          await fs8.readFile(filePath, "utf-8")
+          await fs9.readFile(filePath, "utf-8")
         ).content;
         if (!content.trim()) continue;
-        const stat2 = await fs8.stat(filePath);
+        const stat2 = await fs9.stat(filePath);
         episodes.push({
           id: file2,
           content,
@@ -54419,16 +54516,16 @@ var MemoryStore = class {
     }
   }
   async deleteEpisodes(chatId, ids) {
-    const dir = path10.join(this.baseDir, "episodes", chatId);
+    const dir = path11.join(this.baseDir, "episodes", chatId);
     for (const id of ids) {
       try {
-        await fs8.unlink(path10.join(dir, id));
+        await fs9.unlink(path11.join(dir, id));
       } catch {
       }
     }
   }
   async pruneEpisodes(options = {}) {
-    const episodesDir = path10.join(this.baseDir, "episodes");
+    const episodesDir = path11.join(this.baseDir, "episodes");
     const totals = { removedFiles: 0, removedBytes: 0 };
     await this.walkEpisodeDirs(episodesDir, async (dir) => {
       const result = await this.pruneEpisodeDir(dir, {
@@ -54443,7 +54540,7 @@ var MemoryStore = class {
   async walkEpisodeDirs(dir, visit3) {
     let entries;
     try {
-      entries = await fs8.readdir(dir, { withFileTypes: true });
+      entries = await fs9.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -54451,20 +54548,20 @@ var MemoryStore = class {
       await visit3(dir);
     }
     for (const entry of entries) {
-      if (entry.isDirectory()) await this.walkEpisodeDirs(path10.join(dir, entry.name), visit3);
+      if (entry.isDirectory()) await this.walkEpisodeDirs(path11.join(dir, entry.name), visit3);
     }
   }
   async pruneEpisodeDir(dir, options) {
     const maxFiles = Number.isFinite(options.maxFilesPerScope) ? Math.max(0, Math.floor(options.maxFilesPerScope)) : 0;
     const maxBytes = Number.isFinite(options.maxBytesPerScope) ? Math.max(0, Math.floor(options.maxBytesPerScope)) : 0;
     if (maxFiles <= 0 && maxBytes <= 0) return { removedFiles: 0, removedBytes: 0 };
-    const entries = await fs8.readdir(dir, { withFileTypes: true }).catch(() => []);
+    const entries = await fs9.readdir(dir, { withFileTypes: true }).catch(() => []);
     const files = [];
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      const filePath = path10.join(dir, entry.name);
+      const filePath = path11.join(dir, entry.name);
       try {
-        const s = await fs8.stat(filePath);
+        const s = await fs9.stat(filePath);
         files.push({ path: filePath, mtimeMs: s.mtimeMs, size: s.size });
       } catch {
       }
@@ -54487,7 +54584,7 @@ var MemoryStore = class {
     let removedBytes = 0;
     for (const file2 of remove) {
       try {
-        await fs8.unlink(file2.path);
+        await fs9.unlink(file2.path);
         removedFiles++;
         removedBytes += file2.size;
       } catch {
@@ -54497,14 +54594,14 @@ var MemoryStore = class {
   }
   // ── Skills ──
   async searchSkills(query) {
-    const dir = path10.join(this.baseDir, "skills");
+    const dir = path11.join(this.baseDir, "skills");
     try {
-      const files = await fs8.readdir(dir);
+      const files = await fs9.readdir(dir);
       const keywords = this.extractKeywords(query);
       const results = [];
       for (const file2 of files.filter((f) => f.endsWith(".md"))) {
-        const filePath = path10.join(dir, file2);
-        const filtered = filterCredentialMaterial(await fs8.readFile(filePath, "utf-8"));
+        const filePath = path11.join(dir, file2);
+        const filtered = filterCredentialMaterial(await fs9.readFile(filePath, "utf-8"));
         if (filtered.blockedClasses.length > 0) continue;
         const content = filtered.content;
         const lines = content.split("\n");
@@ -54532,14 +54629,14 @@ var MemoryStore = class {
     assertNoCredentialMaterial(`${name}
 ${description}
 ${content}`);
-    const dir = path10.join(this.baseDir, "skills");
-    await fs8.mkdir(dir, { recursive: true });
+    const dir = path11.join(this.baseDir, "skills");
+    await fs9.mkdir(dir, { recursive: true });
     const fileName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".md";
     const fileContent = `# ${name}
 ${description}
 
 ${content}`;
-    await fs8.writeFile(path10.join(dir, fileName), fileContent, "utf-8");
+    await fs9.writeFile(path11.join(dir, fileName), fileContent, "utf-8");
   }
   // ── Helpers ──
   extractKeywords(query) {
@@ -54788,8 +54885,8 @@ function registerMemoryTools(ctx) {
 
 // src/job-store.ts
 var import_cron_parser = __toESM(require_dist2(), 1);
-import fs9 from "node:fs/promises";
-import path11 from "node:path";
+import fs10 from "node:fs/promises";
+import path12 from "node:path";
 
 // src/job-timezone.ts
 function normalizeJobTimezone(input2) {
@@ -54956,14 +55053,14 @@ function formatCronDateTime(isoTimestamp2, timezone = appConfig.cronTimezone, em
 }
 async function ensureJobsDir() {
   const dir = appConfig.jobsDir;
-  await fs9.mkdir(dir, { recursive: true });
+  await fs10.mkdir(dir, { recursive: true });
   return dir;
 }
 function jobPath(id) {
-  return path11.join(appConfig.jobsDir, `${id}.json`);
+  return path12.join(appConfig.jobsDir, `${id}.json`);
 }
 function canonicalJobIdFromFile(file2) {
-  return path11.basename(file2, ".json");
+  return path12.basename(file2, ".json");
 }
 var jobWriteQueues = /* @__PURE__ */ new Map();
 async function withJobWriteQueue(id, fn) {
@@ -55026,7 +55123,7 @@ async function readJob(id) {
 }
 async function readJobUnlocked(id) {
   try {
-    const data = await fs9.readFile(jobPath(id), "utf-8");
+    const data = await fs10.readFile(jobPath(id), "utf-8");
     return applyCanonicalJobId(backfillJob(JSON.parse(data)), id, `${id}.json`);
   } catch {
     return null;
@@ -55038,7 +55135,7 @@ async function writeJob(job) {
 async function writeJobUnlocked(job) {
   await ensureJobsDir();
   if (!Number.isSafeInteger(job.meta.revision) || job.meta.revision < 1) job.meta.revision = 1;
-  await fs9.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), "utf-8");
+  await fs10.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), "utf-8");
 }
 async function mutateJob(id, mutate) {
   return withJobWriteQueue(id, async () => {
@@ -55077,7 +55174,7 @@ function jobDefinitionSnapshot(meta3) {
 async function deleteJob(id) {
   return withJobWriteQueue(id, async () => {
     try {
-      await fs9.unlink(jobPath(id));
+      await fs10.unlink(jobPath(id));
       return true;
     } catch {
       return false;
@@ -55088,7 +55185,7 @@ async function listAllJobs() {
   const dir = appConfig.jobsDir;
   let files;
   try {
-    files = await fs9.readdir(dir);
+    files = await fs10.readdir(dir);
   } catch {
     return [];
   }
@@ -55096,7 +55193,7 @@ async function listAllJobs() {
   const results = await Promise.all(
     jsonFiles.map(async (file2) => {
       try {
-        const data = await fs9.readFile(path11.join(dir, file2), "utf-8");
+        const data = await fs10.readFile(path12.join(dir, file2), "utf-8");
         const id = canonicalJobIdFromFile(file2);
         return applyCanonicalJobId(backfillJob(JSON.parse(data)), id, file2);
       } catch (err) {
@@ -55114,7 +55211,7 @@ async function listAllJobs() {
 }
 async function jobExists(id) {
   try {
-    await fs9.access(jobPath(id));
+    await fs10.access(jobPath(id));
     return true;
   } catch {
     return false;
@@ -55937,8 +56034,8 @@ function registerTools(server, client, memoryStore, identitySession, channel, co
 }
 
 // src/memory/buffer.ts
-import fs10 from "node:fs/promises";
-import path12 from "node:path";
+import fs11 from "node:fs/promises";
+import path13 from "node:path";
 var ConversationBuffer = class {
   buffers = /* @__PURE__ */ new Map();
   timers = /* @__PURE__ */ new Map();
@@ -56001,21 +56098,21 @@ var ConversationBuffer = class {
    * If a chat's most recent episode is older than LARK_INACTIVITY_HOURS, trigger flush.
    */
   async rearmFromDisk() {
-    const episodesDir = path12.join(appConfig.memoriesDir, "episodes");
+    const episodesDir = path13.join(appConfig.memoriesDir, "episodes");
     try {
-      const chatDirs = await fs10.readdir(episodesDir);
+      const chatDirs = await fs11.readdir(episodesDir);
       const thresholdMs = appConfig.inactivityHours * 60 * 60 * 1e3;
       const now = Date.now();
       for (const chatId of chatDirs) {
-        const chatDir = path12.join(episodesDir, chatId);
-        const stat2 = await fs10.stat(chatDir);
+        const chatDir = path13.join(episodesDir, chatId);
+        const stat2 = await fs11.stat(chatDir);
         if (!stat2.isDirectory()) continue;
-        const files = await fs10.readdir(chatDir);
+        const files = await fs11.readdir(chatDir);
         const mdFiles = files.filter((f) => f.endsWith(".md"));
         if (mdFiles.length === 0) continue;
         let latestMs = 0;
         for (const f of mdFiles) {
-          const fStat = await fs10.stat(path12.join(chatDir, f));
+          const fStat = await fs11.stat(path13.join(chatDir, f));
           if (fStat.mtimeMs > latestMs) latestMs = fStat.mtimeMs;
         }
         if (now - latestMs < thresholdMs * 2) {
@@ -56263,12 +56360,12 @@ var packageName = typeof pkg.name === "string" && pkg.name ? pkg.name : "codex-l
 var packageVersion = pkg.version;
 
 // src/codex-exec-config.ts
-import fs11 from "node:fs/promises";
+import fs12 from "node:fs/promises";
 import os2 from "node:os";
-import path13 from "node:path";
+import path14 from "node:path";
 async function readTextIfExists(filePath) {
   try {
-    return await fs11.readFile(filePath, "utf-8");
+    return await fs12.readFile(filePath, "utf-8");
   } catch (err) {
     if (err?.code === "ENOENT" || err?.code === "ENOTDIR") return null;
     throw err;
@@ -56328,7 +56425,7 @@ ${section.body}`.toLowerCase();
 }
 async function collectCodexExecConfigDiagnostics(input2) {
   const diagnostics = [];
-  const mcpJsonPath = path13.join(input2.codexExecCwd, ".mcp.json");
+  const mcpJsonPath = path14.join(input2.codexExecCwd, ".mcp.json");
   const projectMcp = await readTextIfExists(mcpJsonPath);
   if (projectMcp && projectMcpHasLarkServer(projectMcp)) {
     diagnostics.push({
@@ -56345,13 +56442,13 @@ async function collectCodexExecConfigDiagnostics(input2) {
     });
   }
   if (input2.codexExecProfile) {
-    const codexHome = input2.codexHome ?? process.env.CODEX_HOME ?? path13.join(os2.homedir(), ".codex");
-    const codexConfig = await readTextIfExists(path13.join(codexHome, "config.toml"));
+    const codexHome = input2.codexHome ?? process.env.CODEX_HOME ?? path14.join(os2.homedir(), ".codex");
+    const codexConfig = await readTextIfExists(path14.join(codexHome, "config.toml"));
     if (codexConfig && codexProfileHasLarkMcpServer(codexConfig, input2.codexExecProfile)) {
       diagnostics.push({
         code: "codex_exec_profile_lark_mcp",
         severity: "warning",
-        message: `LARK_CODEX_EXEC_PROFILE=${input2.codexExecProfile} appears to include a Lark MCP server in ${path13.join(codexHome, "config.toml")}. This profile can recursively start the current plugin from child codex exec turns; choose a profile without the Lark MCP server.`
+        message: `LARK_CODEX_EXEC_PROFILE=${input2.codexExecProfile} appears to include a Lark MCP server in ${path14.join(codexHome, "config.toml")}. This profile can recursively start the current plugin from child codex exec turns; choose a profile without the Lark MCP server.`
       });
     }
   }
@@ -56369,13 +56466,13 @@ async function emitCodexExecConfigDiagnostics(config2) {
 }
 
 // src/codex-exec-actions.ts
-import fs15 from "node:fs/promises";
-import path19 from "node:path";
+import fs16 from "node:fs/promises";
+import path20 from "node:path";
 import { createHash as createHash8 } from "node:crypto";
 
 // src/continuation/artifact-delivery.ts
 import { createHash as createHash5 } from "node:crypto";
-import path14 from "node:path";
+import path15 from "node:path";
 var artifactDeliverySchema = external_exports.strictObject({
   version: external_exports.literal(1),
   chatType: external_exports.enum(["p2p", "group"]),
@@ -56400,7 +56497,7 @@ function isImArtifactSize(bytes) {
   return bytes > 0 && bytes <= IM_ARTIFACT_MAX_BYTES;
 }
 function artifactDeliveryFileName(relativePath) {
-  return path14.posix.basename(relativePath).replace(/[\u0000-\u001f\u007f]/g, "_");
+  return path15.posix.basename(relativePath).replace(/[\u0000-\u001f\u007f]/g, "_");
 }
 
 // src/domain/continuation.ts
@@ -56503,8 +56600,8 @@ function retryDelayMs(failureCount, jitterUnit) {
 
 // src/managed-workspace-storage.ts
 import { createHash as createHash6 } from "node:crypto";
-import fs12 from "node:fs/promises";
-import path16 from "node:path";
+import fs13 from "node:fs/promises";
+import path17 from "node:path";
 
 // src/domain/managed-workspace.ts
 var MANAGED_DELIVERY_MAX_BYTES = 3e7;
@@ -56546,34 +56643,11 @@ var managedRunAllocationSchema = managedRunIntentSchema.extend({
   artifacts: workspaceProjectBindingSchema
 });
 
-// src/managed-workspace-errors.ts
-var diagnostic = {
-  invalid_config: "The operator managed workspace configuration is invalid or unreadable.",
-  unprotected_root: "Managed storage roots must be owned by the plugin account and not group- or world-writable.",
-  unisolated_source: "Managed storage requires a separate source project for workspace-write and is not available with unrestricted filesystem access.",
-  overlapping_roots: "Managed scratch, artifacts, and the selected source project must use disjoint directories.",
-  overlapping_runs: "The managed workspace would overlap an existing or reserved run directory.",
-  allocation_conflict: "The managed run directory already exists without a matching stored allocation.",
-  allocation_failed: "The managed run directories could not be allocated.",
-  allocation_incomplete: "The stored managed workspace allocation is incomplete.",
-  allocation_transaction: "Managed workspace provisioning requires a committed database context.",
-  invalid_binding: "The managed workspace allocation is invalid.",
-  artifact_invalid: "The managed artifact is missing, outside its registered directory, oversized, or no longer matches its checksum."
-};
-var ManagedWorkspaceStorageError = class extends Error {
-  constructor(code) {
-    super(diagnostic[code]);
-    this.code = code;
-    this.name = "ManagedWorkspaceStorageError";
-  }
-  code;
-};
-
 // src/managed-workspace-mkdir.ts
-import { execFile } from "node:child_process";
-import path15 from "node:path";
-import { promisify } from "node:util";
-var exec = promisify(execFile);
+import { execFile as execFile2 } from "node:child_process";
+import path16 from "node:path";
+import { promisify as promisify2 } from "node:util";
+var exec2 = promisify2(execFile2);
 var managedLeaf = /^(?:foreground|cron_prompt|async_task)-[a-f0-9]{64}$/;
 var mkdirProgram = String.raw`
   const fs = require('node:fs');
@@ -56608,7 +56682,7 @@ async function mkdirInsidePinnedRoot(root, leaf) {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError("unprotected_root");
   let response;
   try {
-    const { stdout } = await exec(
+    const { stdout } = await exec2(
       process.execPath,
       ["--input-type=commonjs", "-e", mkdirProgram, "--", leaf, root.directory, root.device, root.inode],
       {
@@ -56626,13 +56700,13 @@ async function mkdirInsidePinnedRoot(root, leaf) {
   if (response?.error === "unprotected_root" || response?.error === "allocation_conflict") {
     throw new ManagedWorkspaceStorageError(response.error);
   }
-  const binding = workspaceProjectBindingSchema.safeParse({ ...response, directory: path15.join(root.directory, leaf) });
+  const binding = workspaceProjectBindingSchema.safeParse({ ...response, directory: path16.join(root.directory, leaf) });
   if (!binding.success) throw new ManagedWorkspaceStorageError("allocation_failed");
   return binding.data;
 }
 
 // src/managed-workspace-storage.ts
-var absolutePath = external_exports.string().refine((value) => path16.isAbsolute(value) && !value.includes("\0"));
+var absolutePath = external_exports.string().refine((value) => path17.isAbsolute(value) && !value.includes("\0"));
 var configSchema = external_exports.strictObject({ version: external_exports.literal(1), scratchRoot: absolutePath, artifactRoot: absolutePath });
 async function readManagedWorkspaceRoots({
   configPath,
@@ -56640,7 +56714,7 @@ async function readManagedWorkspaceRoots({
 }) {
   let contents;
   try {
-    contents = await fs12.readFile(configPath, "utf8");
+    contents = await fs13.readFile(configPath, "utf8");
   } catch (error62) {
     if (error62.code === "ENOENT") return void 0;
     throw new ManagedWorkspaceStorageError("invalid_config");
@@ -56694,8 +56768,8 @@ async function validateManagedRunDirectory(value, purpose, authorizedRoots) {
     throw new ManagedWorkspaceStorageError("invalid_binding");
   }
   await validateWorkspaceProject(authorizedRoots, root);
-  await assertProtectedRoot(root);
   const binding = await validateWorkspaceProject(authorizedRoots, directory);
+  await Promise.all([assertProtectedWorkspacePath(root, true), assertProtectedWorkspacePath(binding, true)]);
   return binding.directory;
 }
 async function validateManagedWorkspaceRoots(roots, authorization) {
@@ -56712,8 +56786,25 @@ async function validateManagedWorkspaceRoots(roots, authorization) {
       throw new ManagedWorkspaceStorageError("overlapping_roots");
     }
   }
-  await Promise.all([assertProtectedRoot(roots.scratch), assertProtectedRoot(roots.artifacts)]);
-  return new Set(ancestry.flatMap((ancestors) => [...ancestors]));
+  if (authorization.sourceRegistryPath) {
+    const knownSources = await listWorkspaceSourceProjects(
+      authorization.sourceRegistryPath,
+      authorization.sourceRegistryRoot ?? authorization.authorizedRoots[0]
+    );
+    for (const source of knownSources) {
+      const sourceAncestors = await readAncestors(source.directory);
+      if ([roots.scratch, roots.artifacts].some((root, index) => workspacePathContains(root.directory, source.directory) || workspacePathContains(source.directory, root.directory) || ancestry[index].has(directoryIdentity(source)) || sourceAncestors.has(directoryIdentity(root)))) throw new ManagedWorkspaceStorageError("overlapping_source");
+    }
+  }
+  await Promise.all([
+    assertProtectedWorkspacePath(roots.scratch, true),
+    assertProtectedWorkspacePath(roots.artifacts, true),
+    ...authorization.project ? [assertProtectedWorkspacePath(authorization.project)] : []
+  ]);
+  return {
+    all: new Set(ancestry.flatMap((ancestors) => [...ancestors])),
+    storage: new Set(ancestry.slice(0, 2).flatMap((ancestors) => [...ancestors]))
+  };
 }
 function assertDisjoint(roots, project) {
   const bindings = [roots.scratch, roots.artifacts, ...project ? [project] : []];
@@ -56728,32 +56819,24 @@ function directoryIdentity(binding) {
 }
 async function readAncestors(directory) {
   const identities = /* @__PURE__ */ new Set();
-  for (let current = directory; ; current = path16.dirname(current)) {
-    const info = await fs12.stat(current, { bigint: true }).catch(() => void 0);
+  for (let current = directory; ; current = path17.dirname(current)) {
+    const info = await fs13.stat(current, { bigint: true }).catch(() => void 0);
     if (!info?.isDirectory()) throw new WorkspaceProjectError("unavailable_directory");
     identities.add(`${info.dev}:${info.ino}`);
-    if (path16.dirname(current) === current) return identities;
-  }
-}
-async function assertProtectedRoot(root) {
-  const info = await fs12.stat(root.directory, { bigint: true }).catch(() => void 0);
-  if (!info?.isDirectory() || `${info.dev}:${info.ino}` !== directoryIdentity(root)) {
-    throw new WorkspaceProjectError("directory_changed");
-  }
-  if (!process.geteuid || info.uid !== BigInt(process.geteuid()) || (info.mode & 0o022n) !== 0n) {
-    throw new ManagedWorkspaceStorageError("unprotected_root");
+    if (path17.dirname(current) === current) return identities;
   }
 }
 async function allocateDirectory(root, owner, authorizedRoots) {
   await validateWorkspaceProject(authorizedRoots, root);
+  await assertProtectedWorkspacePath(root, true);
   const directory = managedRunDirectoryPath(root, owner);
-  const binding = await mkdirInsidePinnedRoot(root, path16.basename(directory));
+  const binding = await mkdirInsidePinnedRoot(root, path17.basename(directory));
   await validateWorkspaceProject(authorizedRoots, root);
   return validateWorkspaceProject(authorizedRoots, binding);
 }
 function managedRunDirectoryPath(root, owner) {
   const key = createHash6("sha256").update(owner.runId).digest("hex");
-  return path16.join(root.directory, `${owner.kind}-${key}`);
+  return path17.join(root.directory, `${owner.kind}-${key}`);
 }
 
 // src/continuation/idempotency.ts
@@ -56783,8 +56866,8 @@ function redactContinuationText(value) {
 }
 
 // src/continuation/working-directory.ts
-import fs13 from "node:fs/promises";
-import path17 from "node:path";
+import fs14 from "node:fs/promises";
+import path18 from "node:path";
 var RELATIVE_PATH_ERROR = "Continuation working directory must be relative and remain within LARK_CONTINUATION_WORKING_ROOT.";
 var EXISTING_DIRECTORY_ERROR = "Continuation working directory must be an existing directory, and configured roots must exist.";
 var OUTSIDE_ROOT_ERROR = "Continuation working directory resolves outside the configured continuation working root.";
@@ -56796,18 +56879,18 @@ var ContinuationWorkingDirectoryError = class extends Error {
   }
 };
 async function resolveContinuationWorkingDirectory(configuredRoot, relativeDirectory) {
-  if (!relativeDirectory || path17.isAbsolute(relativeDirectory) || /^[A-Za-z]:[\\/]/.test(relativeDirectory) || relativeDirectory.startsWith("\\\\") || relativeDirectory.split(/[\\/]+/).includes("..")) {
+  if (!relativeDirectory || path18.isAbsolute(relativeDirectory) || /^[A-Za-z]:[\\/]/.test(relativeDirectory) || relativeDirectory.startsWith("\\\\") || relativeDirectory.split(/[\\/]+/).includes("..")) {
     throw new ContinuationWorkingDirectoryError(RELATIVE_PATH_ERROR);
   }
   const root = requireAbsoluteRoot(configuredRoot);
-  const candidate = path17.resolve(root, relativeDirectory);
+  const candidate = path18.resolve(root, relativeDirectory);
   assertLexicallyContained(root, candidate);
   const [realRoot, realCandidate] = await canonicalDirectories(root, candidate);
   assertLexicallyContained(realRoot, realCandidate);
   return { root: realRoot, workingDirectory: realCandidate };
 }
 async function validateContinuationWorkingDirectory(configuredRoots, candidate) {
-  if (!path17.isAbsolute(candidate) || configuredRoots.length === 0) {
+  if (!path18.isAbsolute(candidate) || configuredRoots.length === 0) {
     throw new ContinuationWorkingDirectoryError(RELATIVE_PATH_ERROR);
   }
   const roots = configuredRoots.map(requireAbsoluteRoot);
@@ -56833,11 +56916,11 @@ async function resolveContinuationRequestedPaths(configuredRoot, requestedPaths)
     if (!value || value.includes("\0")) {
       throw new ContinuationWorkingDirectoryError(REQUESTED_PATH_ERROR);
     }
-    const candidate = path17.isAbsolute(value) ? path17.resolve(value) : path17.resolve(root, value);
+    const candidate = path18.isAbsolute(value) ? path18.resolve(value) : path18.resolve(root, value);
     let canonical;
     try {
-      canonical = await fs13.realpath(candidate);
-      await fs13.stat(canonical);
+      canonical = await fs14.realpath(candidate);
+      await fs14.stat(canonical);
     } catch {
       throw new ContinuationWorkingDirectoryError(
         `Continuation requested path does not exist or is not accessible: ${value}`
@@ -56851,15 +56934,15 @@ async function resolveContinuationRequestedPaths(configuredRoot, requestedPaths)
   return resolved;
 }
 function requireAbsoluteRoot(root) {
-  if (!path17.isAbsolute(root)) {
+  if (!path18.isAbsolute(root)) {
     throw new ContinuationWorkingDirectoryError(
       "LARK_CONTINUATION_WORKING_ROOT must be an absolute path to an existing directory."
     );
   }
-  return path17.resolve(root);
+  return path18.resolve(root);
 }
 function assertLexicallyContained(root, candidate) {
-  if (candidate !== root && !candidate.startsWith(`${root}${path17.sep}`)) {
+  if (candidate !== root && !candidate.startsWith(`${root}${path18.sep}`)) {
     throw new ContinuationWorkingDirectoryError(OUTSIDE_ROOT_ERROR);
   }
 }
@@ -56871,8 +56954,8 @@ async function canonicalDirectories(root, candidate) {
   }
 }
 async function canonicalDirectory(directory) {
-  const canonical = await fs13.realpath(directory);
-  const metadata = await fs13.stat(canonical);
+  const canonical = await fs14.realpath(directory);
+  const metadata = await fs14.stat(canonical);
   if (!metadata.isDirectory()) throw new Error("not a directory");
   return canonical;
 }
@@ -56995,7 +57078,9 @@ var ContinuationService = class {
     const managedWorkspaceRoots = this.options.managedWorkspaceConfigPath ? await readManagedWorkspaceRoots({
       configPath: this.options.managedWorkspaceConfigPath,
       authorizedRoots,
-      project: workspaceProject
+      project: workspaceProject,
+      sourceRegistryPath: this.options.sourceRegistryPath,
+      sourceRegistryRoot: authorizedRoots[1]
     }) : void 0;
     if (managedWorkspaceRoots && !workspaceProject) {
       workspaceProject = await pinWorkspacePath(resolvedWorkingDirectory.root, resolvedWorkingDirectory.workingDirectory);
@@ -57482,7 +57567,7 @@ function boundedFactText(value) {
 }
 
 // src/run-trace-query.ts
-import fs14 from "node:fs/promises";
+import fs15 from "node:fs/promises";
 var DEFAULT_WITHIN_HOURS = 12;
 var MAX_WITHIN_HOURS = 168;
 var DEFAULT_MAX_TOOL_CALLS = 50;
@@ -57543,7 +57628,7 @@ async function readTraceLines(options) {
   const files = traceLogFiles(options.logPath, options.maxFiles);
   const out = [];
   for (const file2 of files) {
-    const text = await fs14.readFile(file2, "utf-8").catch((err) => {
+    const text = await fs15.readFile(file2, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -57702,7 +57787,7 @@ async function dispatchRegisteredAction(registry2, action, message) {
 }
 
 // src/codex-exec-action-schemas.ts
-import path18 from "node:path";
+import path19 from "node:path";
 var SaveMemoryActionSchema = external_exports.object({
   type: external_exports.literal("save_memory"),
   memory_type: external_exports.enum(["profile", "chat", "thread"]),
@@ -57844,7 +57929,7 @@ var ContinuationCheckpointActionSchema = external_exports.object({
   references: external_exports.array(external_exports.string().max(CONTINUATION_LIMITS.objectiveBytes)).max(CONTINUATION_LIMITS.acceptanceCriteriaCount)
 }).strict();
 var RelativeContinuationDirectorySchema = external_exports.string().min(1).refine((value) => {
-  if (path18.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\")) {
+  if (path19.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\")) {
     return false;
   }
   return !value.split(/[\\/]+/).includes("..");
@@ -58438,7 +58523,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
   } = plan;
   let totalBytes = 0;
   for (const imagePath of imagePaths) {
-    const sizeBytes = (await fs15.stat(imagePath)).size;
+    const sizeBytes = (await fs16.stat(imagePath)).size;
     if (sizeBytes > CONTINUATION_LIMITS.inputBytesPerFile) {
       throw new Error("A continuation input exceeds the per-file byte limit.");
     }
@@ -58450,7 +58535,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
   if (descriptors.length === 0) {
     return {
       inputs: imagePaths.map((imagePath, imageIndex) => ({
-        sourcePath: path19.resolve(imagePath),
+        sourcePath: path20.resolve(imagePath),
         fileName: plannedImageFileNames[imageIndex],
         kind: "message_image"
       })),
@@ -58460,7 +58545,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
   }
   for (const [imageIndex, imagePath] of imagePaths.entries()) {
     inputs.push({
-      sourcePath: path19.resolve(imagePath),
+      sourcePath: path20.resolve(imagePath),
       fileName: plannedImageFileNames[imageIndex],
       kind: "message_image"
     });
@@ -58488,12 +58573,12 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
         throw new Error("One or more continuation attachments could not be downloaded.");
       }
       temporaryPaths.push(downloaded);
-      totalBytes += (await fs15.stat(downloaded)).size;
+      totalBytes += (await fs16.stat(downloaded)).size;
       if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
         throw new Error("Continuation inputs exceed the total byte limit.");
       }
       inputs.push({
-        sourcePath: path19.resolve(downloaded),
+        sourcePath: path20.resolve(downloaded),
         fileName,
         kind: resourceType === "image" ? "message_image" : "message_attachment"
       });
@@ -58524,7 +58609,7 @@ function planContinuationSourceInputs(message) {
   const matchedImageDescriptors = /* @__PURE__ */ new Set();
   const matchedDescriptorByImageIndex = imagePaths.map((imagePath, imageIndex) => {
     const explicitFileKey = downloadedImageFileKeys?.[imageIndex];
-    const candidateIndexes = descriptors.flatMap((attachment, index) => !matchedImageDescriptors.has(index) && attachment.fileType === "image" && path19.basename(imagePath).includes(`-${attachment.fileKey}-`) ? [index] : []);
+    const candidateIndexes = descriptors.flatMap((attachment, index) => !matchedImageDescriptors.has(index) && attachment.fileType === "image" && path20.basename(imagePath).includes(`-${attachment.fileKey}-`) ? [index] : []);
     const descriptorIndex = explicitFileKey === void 0 ? candidateIndexes.length === 1 ? candidateIndexes[0] : -1 : descriptors.findIndex((attachment, index) => !matchedImageDescriptors.has(index) && attachment.fileType === "image" && attachment.fileKey === explicitFileKey);
     if (explicitFileKey !== void 0 && descriptorIndex < 0) {
       throw new Error("Continuation downloaded image mapping is invalid.");
@@ -58540,7 +58625,7 @@ function planContinuationSourceInputs(message) {
   });
   const plannedImageFileNames = imagePaths.map((imagePath, imageIndex) => {
     const descriptorIndex = matchedDescriptorByImageIndex[imageIndex];
-    return descriptorIndex === null ? safeContinuationInputName(path19.basename(imagePath)) : descriptorFileNames[descriptorIndex];
+    return descriptorIndex === null ? safeContinuationInputName(path20.basename(imagePath)) : descriptorFileNames[descriptorIndex];
   });
   const inputCount = imagePaths.length + descriptors.length - matchedImageDescriptors.size;
   if (inputCount > CONTINUATION_LIMITS.inputFileCount) {
@@ -58556,10 +58641,10 @@ function planContinuationSourceInputs(message) {
   };
 }
 async function cleanupContinuationTemporaryInputs(temporaryPaths) {
-  await Promise.allSettled(temporaryPaths.map((filePath) => fs15.rm(filePath, { force: true })));
+  await Promise.allSettled(temporaryPaths.map((filePath) => fs16.rm(filePath, { force: true })));
 }
 function safeContinuationInputName(value) {
-  if (!value || value.length > 120 || value === "." || value === ".." || value === ".manifest.json" || value.includes("/") || value.includes("\\") || value.includes("\0") || path19.basename(value) !== value) {
+  if (!value || value.length > 120 || value === "." || value === ".." || value === ".manifest.json" || value.includes("/") || value.includes("\\") || value.includes("\0") || path20.basename(value) !== value) {
     throw new Error("Continuation attachment file name is invalid.");
   }
   return value;
@@ -59054,7 +59139,7 @@ function resolveActionTransport(transport) {
   return typeof transport === "function" ? transport() : transport;
 }
 function resolveSendMessageLocalPath(rawPath) {
-  return path19.isAbsolute(rawPath) ? rawPath : path19.resolve(appConfig.codexExecCwd, rawPath);
+  return path20.isAbsolute(rawPath) ? rawPath : path20.resolve(appConfig.codexExecCwd, rawPath);
 }
 function firstCurrentMessageImagePath(message) {
   return message.imagePath ?? message.imagePaths?.[0] ?? null;
@@ -59154,7 +59239,7 @@ async function resolveSendMessageImagePath(source, rawPath, message, deps) {
     filePath = resolveSendMessageLocalPath(rawPath);
   }
   try {
-    await fs15.access(filePath);
+    await fs16.access(filePath);
   } catch {
     return {
       ok: false,
@@ -59251,7 +59336,7 @@ async function executeSendMessage(action, message, deps) {
   } else {
     filePath = resolveSendMessageLocalPath(action.message.path);
     try {
-      await fs15.access(filePath);
+      await fs16.access(filePath);
     } catch {
       return {
         ok: false,
@@ -59955,10 +60040,10 @@ function omit2(obj, ...keys) {
 // node_modules/@larksuite/channel/dist/index.mjs
 import { createHash as createHash9, randomUUID as randomUUID3 } from "node:crypto";
 import { inspect } from "node:util";
-import fs16 from "fs";
+import fs17 from "fs";
 import http2 from "http";
 import https from "https";
-import path20 from "path";
+import path21 from "path";
 import { promises } from "dns";
 import { isIP as isIP2 } from "net";
 var AMBIGUOUS = /* @__PURE__ */ Symbol("ambiguous");
@@ -62969,20 +63054,20 @@ var MediaUploader = class {
     if (!/^https?:\/\//i.test(source)) {
       const allowedDirs = this.config?.allowedFileDirs;
       if (!allowedDirs || allowedDirs.length === 0) throw new LarkChannelError("upload_failed", "local file source requires `outbound.allowedFileDirs` to be configured");
-      const resolved = path20.resolve(source);
+      const resolved = path21.resolve(source);
       this.assertNotOnPosixBlocklist(resolved);
       try {
-        const realPath = await fs16.promises.realpath(resolved);
+        const realPath = await fs17.promises.realpath(resolved);
         this.assertNotOnPosixBlocklist(realPath);
         if (!(await Promise.all(allowedDirs.map(async (d) => {
-          const r = path20.resolve(d);
+          const r = path21.resolve(d);
           try {
-            return await fs16.promises.realpath(r);
+            return await fs17.promises.realpath(r);
           } catch {
             return r;
           }
-        }))).some((d) => realPath === d || realPath.startsWith(d + path20.sep))) throw new LarkChannelError("upload_failed", `file path is outside allowed directories: ${realPath}`);
-        const fh = await fs16.promises.open(realPath, "r");
+        }))).some((d) => realPath === d || realPath.startsWith(d + path21.sep))) throw new LarkChannelError("upload_failed", `file path is outside allowed directories: ${realPath}`);
+        const fh = await fs17.promises.open(realPath, "r");
         try {
           if (!(await fh.stat()).isFile()) throw new LarkChannelError("upload_failed", `not a regular file: ${realPath}`);
           return await fh.readFile();
@@ -65620,12 +65705,12 @@ function startSdkChannelRuntimeWithRetry(channel, options = {}) {
 }
 
 // src/codex-exec-delivery.ts
-import path25 from "node:path";
+import path26 from "node:path";
 
 // src/codex-exec-progress.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import fs17 from "node:fs/promises";
-import path21 from "node:path";
+import fs18 from "node:fs/promises";
+import path22 from "node:path";
 var IDENTITY_FIELDS = /* @__PURE__ */ new Set([
   "chat_id",
   "chatId",
@@ -65648,13 +65733,13 @@ var LOW_SIGNAL_PATTERNS = [
 var CODEX_EXEC_PROGRESS_RETENTION_MS = 12 * 60 * 60 * 1e3;
 var CODEX_EXEC_PROGRESS_CLEANUP_INTERVAL_MS = 60 * 60 * 1e3;
 function progressParentDir(baseDir) {
-  return path21.join(baseDir, ".lark-progress");
+  return path22.join(baseDir, ".lark-progress");
 }
 var CodexExecProgressSink = class {
   constructor(dir, options) {
     this.dir = dir;
     this.options = options;
-    this.filePath = path21.join(dir, "progress.jsonl");
+    this.filePath = path22.join(dir, "progress.jsonl");
     this.token = randomUUID4();
   }
   dir;
@@ -65684,10 +65769,10 @@ var CodexExecProgressSink = class {
     };
   }
   async prepare() {
-    await fs17.mkdir(this.dir, { recursive: true, mode: 448 });
-    await fs17.chmod(this.dir, 448);
-    await fs17.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs17.chmod(this.filePath, 384);
+    await fs18.mkdir(this.dir, { recursive: true, mode: 448 });
+    await fs18.chmod(this.dir, 448);
+    await fs18.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs18.chmod(this.filePath, 384);
   }
   start() {
     if (!this.options.limits.enabled || this.timer) return;
@@ -65704,7 +65789,7 @@ var CodexExecProgressSink = class {
     }
     await this.drain();
     await this.processPendingLine();
-    await fs17.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
+    await fs18.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
   }
   async drain() {
     if (this.draining) {
@@ -65721,7 +65806,7 @@ var CodexExecProgressSink = class {
     }
   }
   async drainOnce() {
-    const text = await fs17.readFile(this.filePath, "utf-8").catch((err) => {
+    const text = await fs18.readFile(this.filePath, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -65836,13 +65921,13 @@ async function createCodexExecProgressSink(options) {
   if (!options.limits.enabled) return null;
   try {
     const parentDir = progressParentDir(options.baseDir);
-    await fs17.mkdir(parentDir, { recursive: true, mode: 448 });
-    await fs17.chmod(parentDir, 448);
+    await fs18.mkdir(parentDir, { recursive: true, mode: 448 });
+    await fs18.chmod(parentDir, 448);
     await cleanupCodexExecProgressFiles(options.baseDir).catch((err) => {
       logSafeError("[codex-exec-progress] cleanup before setup failed:", err);
     });
-    const dir = await fs17.mkdtemp(path21.join(parentDir, "turn-"));
-    await fs17.chmod(dir, 448);
+    const dir = await fs18.mkdtemp(path22.join(parentDir, "turn-"));
+    await fs18.chmod(dir, 448);
     const sink = new CodexExecProgressSink(dir, options);
     await sink.prepare();
     return sink;
@@ -65858,7 +65943,7 @@ async function cleanupCodexExecProgressFiles(baseDir, options = {}) {
   const result = { progressDir, removed: 0, kept: 0, errors: 0 };
   let entries;
   try {
-    entries = await fs17.readdir(progressDir, { withFileTypes: true });
+    entries = await fs18.readdir(progressDir, { withFileTypes: true });
   } catch (err) {
     if (err?.code === "ENOENT") return result;
     result.errors += 1;
@@ -65867,14 +65952,14 @@ async function cleanupCodexExecProgressFiles(baseDir, options = {}) {
   }
   for (const entry of entries) {
     if (!entry.name.startsWith("turn-")) continue;
-    const entryPath = path21.join(progressDir, entry.name);
+    const entryPath = path22.join(progressDir, entry.name);
     try {
-      const entryStat = await fs17.lstat(entryPath);
+      const entryStat = await fs18.lstat(entryPath);
       if (nowMs - entryStat.mtimeMs <= maxAgeMs) {
         result.kept += 1;
         continue;
       }
-      await fs17.rm(entryPath, { recursive: true, force: true });
+      await fs18.rm(entryPath, { recursive: true, force: true });
       result.removed += 1;
     } catch (err) {
       result.errors += 1;
@@ -65925,8 +66010,8 @@ function isLowSignalProgress(text) {
 
 // src/codex-exec-action-channel.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
-import fs18 from "node:fs/promises";
-import path22 from "node:path";
+import fs19 from "node:fs/promises";
+import path23 from "node:path";
 var IDENTITY_FIELDS2 = /* @__PURE__ */ new Set([
   "chat_id",
   "chatId",
@@ -65945,7 +66030,7 @@ var DEFAULT_MAX_ACTIONS = 5;
 var CODEX_EXEC_ACTION_CHANNEL_RETENTION_MS = 12 * 60 * 60 * 1e3;
 var CODEX_EXEC_ACTION_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 60 * 1e3;
 function actionParentDir(baseDir) {
-  return path22.join(baseDir, ".lark-actions");
+  return path23.join(baseDir, ".lark-actions");
 }
 var CodexExecActionChannelError = class extends Error {
   reason;
@@ -65960,7 +66045,7 @@ var CodexExecActionChannel = class {
   constructor(dir, options) {
     this.dir = dir;
     this.options = options;
-    this.filePath = path22.join(dir, "actions.jsonl");
+    this.filePath = path23.join(dir, "actions.jsonl");
     this.token = randomUUID5();
     this.maxActions = options.maxActions ?? DEFAULT_MAX_ACTIONS;
   }
@@ -65984,17 +66069,17 @@ var CodexExecActionChannel = class {
     };
   }
   async prepare() {
-    await fs18.mkdir(this.dir, { recursive: true, mode: 448 });
-    await fs18.chmod(this.dir, 448);
-    await fs18.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs18.chmod(this.filePath, 384);
+    await fs19.mkdir(this.dir, { recursive: true, mode: 448 });
+    await fs19.chmod(this.dir, 448);
+    await fs19.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs19.chmod(this.filePath, 384);
   }
   async reset() {
-    await fs18.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs18.chmod(this.filePath, 384).catch(() => void 0);
+    await fs19.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs19.chmod(this.filePath, 384).catch(() => void 0);
   }
   async read() {
-    const text = await fs18.readFile(this.filePath, "utf-8").catch((err) => {
+    const text = await fs19.readFile(this.filePath, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -66027,7 +66112,7 @@ var CodexExecActionChannel = class {
     return { actions, requestCount };
   }
   async cleanup() {
-    await fs18.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
+    await fs19.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
   }
   parseLine(line) {
     let parsed;
@@ -66078,13 +66163,13 @@ var CodexExecActionChannel = class {
 async function createCodexExecActionChannel(options) {
   try {
     const parentDir = actionParentDir(options.baseDir);
-    await fs18.mkdir(parentDir, { recursive: true, mode: 448 });
-    await fs18.chmod(parentDir, 448);
+    await fs19.mkdir(parentDir, { recursive: true, mode: 448 });
+    await fs19.chmod(parentDir, 448);
     await cleanupCodexExecActionChannels(options.baseDir).catch((err) => {
       logSafeError("[codex-exec-actions] cleanup before setup failed:", err);
     });
-    const dir = await fs18.mkdtemp(path22.join(parentDir, "turn-"));
-    await fs18.chmod(dir, 448);
+    const dir = await fs19.mkdtemp(path23.join(parentDir, "turn-"));
+    await fs19.chmod(dir, 448);
     const channel = new CodexExecActionChannel(dir, options);
     await channel.prepare();
     return channel;
@@ -66100,7 +66185,7 @@ async function cleanupCodexExecActionChannels(baseDir, options = {}) {
   const result = { actionDir, removed: 0, kept: 0, errors: 0 };
   let entries;
   try {
-    entries = await fs18.readdir(actionDir, { withFileTypes: true });
+    entries = await fs19.readdir(actionDir, { withFileTypes: true });
   } catch (err) {
     if (err?.code === "ENOENT") return result;
     result.errors += 1;
@@ -66109,14 +66194,14 @@ async function cleanupCodexExecActionChannels(baseDir, options = {}) {
   }
   for (const entry of entries) {
     if (!entry.name.startsWith("turn-")) continue;
-    const entryPath = path22.join(actionDir, entry.name);
+    const entryPath = path23.join(actionDir, entry.name);
     try {
-      const entryStat = await fs18.lstat(entryPath);
+      const entryStat = await fs19.lstat(entryPath);
       if (nowMs - entryStat.mtimeMs <= maxAgeMs) {
         result.kept += 1;
         continue;
       }
-      await fs18.rm(entryPath, { recursive: true, force: true });
+      await fs19.rm(entryPath, { recursive: true, force: true });
       result.removed += 1;
     } catch (err) {
       result.errors += 1;
@@ -66268,7 +66353,7 @@ ${[
 
 // src/managed-workspace-admission.ts
 import { createHash as createHash10 } from "node:crypto";
-import path23 from "node:path";
+import path24 from "node:path";
 function managedForegroundRunOwner(message, sessionKey2) {
   const identity = JSON.stringify([
     sessionKey2,
@@ -66285,12 +66370,13 @@ async function admitManagedForegroundRun(options) {
   const roots = recorded?.allocation.roots ?? await readManagedWorkspaceRoots({
     configPath: options.configPath,
     authorizedRoots,
-    project
+    project,
+    sourceRegistryPath: options.sourceRegistryPath
   });
   if (!roots) {
     if (store) store.rememberUnmanagedForeground(owner.runId, {
       sessionKey: options.sessionKey,
-      ...project ? { project } : { fallbackCwd: path23.resolve(options.authorizedRoot) }
+      ...project ? { project } : { fallbackCwd: path24.resolve(options.authorizedRoot) }
     });
     return void 0;
   }
@@ -66302,6 +66388,7 @@ async function admitManagedForegroundRun(options) {
     roots,
     authorizedRoots,
     project,
+    sourceRegistryPath: options.sourceRegistryPath,
     foregroundSessionKey: options.sessionKey,
     createdAt: recorded?.allocation.createdAt ?? now,
     usedAt: now
@@ -66309,11 +66396,11 @@ async function admitManagedForegroundRun(options) {
 }
 
 // src/managed-workspace-artifact.ts
-import { execFile as execFile2 } from "node:child_process";
+import { execFile as execFile3 } from "node:child_process";
 import { createHash as createHash11 } from "node:crypto";
-import path24 from "node:path";
-import { promisify as promisify2 } from "node:util";
-var exec2 = promisify2(execFile2);
+import path25 from "node:path";
+import { promisify as promisify3 } from "node:util";
+var exec3 = promisify3(execFile3);
 var HARD_BYTE_LIMIT = 100 * 1024 * 1024;
 var artifactProgram = String.raw`
   const fs = require('node:fs');
@@ -66452,10 +66539,10 @@ async function reconcileManagedArtifact(options) {
 async function runArtifactOperation(options, sha2562, input2, operation = input2 ? "publish" : "read") {
   const { binding, relativePath, maxBytes, revalidate } = options;
   const safePath = isManagedArtifactRelativePath(relativePath);
-  if (!safePath || path24.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
+  if (!safePath || path25.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
   try {
     if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
-    const running = exec2(process.execPath, [
+    const running = exec3(process.execPath, [
       "--input-type=commonjs",
       "-e",
       artifactProgram,
@@ -66763,7 +66850,7 @@ async function deliverMessageViaCodexExec(opts) {
   if (priorUnmanaged) {
     if ("project" in priorUnmanaged) {
       workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, priorUnmanaged.project);
-    } else if (priorUnmanaged.fallbackCwd !== path25.resolve(workspaceOptions.authorizedRoot)) {
+    } else if (priorUnmanaged.fallbackCwd !== path26.resolve(workspaceOptions.authorizedRoot)) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
   } else if (priorManaged) {
@@ -66782,6 +66869,7 @@ async function deliverMessageViaCodexExec(opts) {
     configPath: appConfig.managedWorkspaceConfigPath,
     authorizedRoot: workspaceOptions.authorizedRoot,
     project: workspace,
+    sourceRegistryPath: workspaceOptions.registryPath,
     sandbox: appConfig.codexExecSandbox
   }) : opts.managedWorkspace;
   if (managed && !sameWorkspaceProject(managed.project, workspace)) {
@@ -66789,13 +66877,13 @@ async function deliverMessageViaCodexExec(opts) {
   }
   const launchWorkspace = workspace ?? (managed ? await pinWorkspacePath(
     workspaceOptions.authorizedRoot,
-    path25.resolve(workspaceOptions.authorizedRoot)
+    path26.resolve(workspaceOptions.authorizedRoot)
   ) : void 0);
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace) && (workspace === void 0 || compatibleSession?.workspaceProjectSenderId === message.senderId) ? compatibleSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
-  const progressBaseDir = path25.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
-  const actionBaseDir = path25.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
+  const progressBaseDir = path26.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
+  const actionBaseDir = path26.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
   const actionChannel = await createCodexExecActionChannel({
     baseDir: actionBaseDir,
     caller: message.senderId,
@@ -66872,7 +66960,7 @@ async function deliverMessageViaCodexExec(opts) {
     if (!launchWorkspace) return runCodexExec(runRequest);
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...progressSink ? [progressSink.filePath] : []];
-    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path25.dirname(file2)))) : [];
+    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path26.dirname(file2)))) : [];
     if (managed) {
       await Promise.all([
         validateManagedRunDirectory(managed, "scratch", [authorizedRoot]),
@@ -66883,6 +66971,7 @@ async function deliverMessageViaCodexExec(opts) {
     const guardedRequest = {
       ...runRequest,
       workspaceDirectory: {
+        ...managed ? { requireProtectedAncestry: true } : {},
         binding: launchWorkspace,
         authorizedRoots: [authorizedRoot],
         auxiliaryBindings: [
@@ -68714,15 +68803,15 @@ async function startChannelServices(options) {
 }
 
 // src/continuation/runtime.ts
-import fs23 from "node:fs/promises";
+import fs24 from "node:fs/promises";
 import os3 from "node:os";
-import path33 from "node:path";
+import path34 from "node:path";
 
 // src/continuation/artifact-store.ts
 import { createHash as createHash12, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import fs19 from "node:fs/promises";
-import path26 from "node:path";
+import fs20 from "node:fs/promises";
+import path27 from "node:path";
 var REDACTION_QUARANTINE_PREFIX = ".redacting-";
 var ACTIVE_REDACTION_QUARANTINES = /* @__PURE__ */ new Set();
 var LEGACY_QUARANTINE_GRACE_MS = 3e4;
@@ -68731,7 +68820,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     this.maxBytes = maxBytes;
     this.maxEntries = maxEntries;
     this.maxDepth = maxDepth;
-    this.rootDir = path26.resolve(rootDir);
+    this.rootDir = path27.resolve(rootDir);
   }
   maxBytes;
   maxEntries;
@@ -68739,31 +68828,31 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
   rootDir;
   managedJob;
   forManagedJob(jobId, binding, revalidate) {
-    const store = new _ContinuationArtifactStore(path26.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
+    const store = new _ContinuationArtifactStore(path27.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
     store.managedJob = { jobId, binding, revalidate };
     return store;
   }
   async ensureRoot() {
-    await fs19.mkdir(this.rootDir, { recursive: true, mode: 448 });
+    await fs20.mkdir(this.rootDir, { recursive: true, mode: 448 });
     await assertRealDirectory(this.rootDir);
-    await fs19.chmod(this.rootDir, 448);
+    await fs20.chmod(this.rootDir, 448);
   }
   async ensure(jobId) {
     if (this.managedJob) return this.checkDirectory(jobId);
     await this.ensureRoot();
     const directory = this.jobDirectory(jobId);
-    await fs19.mkdir(directory, { recursive: true, mode: 448 });
+    await fs20.mkdir(directory, { recursive: true, mode: 448 });
     await assertRealDirectory(directory);
-    await fs19.chmod(directory, 448);
+    await fs20.chmod(directory, 448);
     return directory;
   }
   resolve(jobId, relativePath) {
-    if (!relativePath || path26.isAbsolute(relativePath)) {
+    if (!relativePath || path27.isAbsolute(relativePath)) {
       throw new Error("Continuation artifact path must be relative.");
     }
     const directory = this.jobDirectory(jobId);
-    const resolved = path26.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path26.sep}`)) {
+    const resolved = path27.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path27.sep}`)) {
       throw new Error("Continuation artifact path resolves outside job directory.");
     }
     return resolved;
@@ -68780,7 +68869,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       }
       let handle;
       try {
-        handle = await fs19.opendir(current);
+        handle = await fs20.opendir(current);
       } catch (err) {
         if (err?.code === "ENOENT") return;
         throw err;
@@ -68792,8 +68881,8 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
             `Continuation artifact entry limit exceeded for ${jobId}: ${totalEntries} > ${this.maxEntries}.`
           );
         }
-        const entryPath = path26.join(current, entry.name);
-        const metadata = await fs19.lstat(entryPath).catch((error62) => {
+        const entryPath = path27.join(current, entry.name);
+        const metadata = await fs20.lstat(entryPath).catch((error62) => {
           if (error62.code === "ENOENT") return null;
           throw error62;
         });
@@ -68823,7 +68912,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     const seen = /* @__PURE__ */ new Set();
     for (const reference of references) {
       const resolved = this.resolve(jobId, reference);
-      const metadata = await fs19.lstat(resolved).catch((error62) => {
+      const metadata = await fs20.lstat(resolved).catch((error62) => {
         if (error62.code === "ENOENT") {
           throw new Error(`Continuation artifact does not exist: ${reference}`);
         }
@@ -68832,7 +68921,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (metadata.isSymbolicLink() || !metadata.isFile()) {
         throw new Error(`Continuation artifact is not a regular file: ${reference}`);
       }
-      const normalized = path26.relative(directory, resolved).split(path26.sep).join("/");
+      const normalized = path27.relative(directory, resolved).split(path27.sep).join("/");
       if (!seen.has(normalized)) {
         seen.add(normalized);
         canonical.push(normalized);
@@ -68842,7 +68931,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     return canonical;
   }
   async readArtifact(jobId, relativePath, expectedSha256) {
-    if (!this.managedJob) return fs19.readFile(this.resolve(jobId, relativePath));
+    if (!this.managedJob) return fs20.readFile(this.resolve(jobId, relativePath));
     this.jobDirectory(jobId);
     const { content } = await readManagedArtifact({
       binding: this.managedJob.binding,
@@ -68890,9 +68979,9 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
           });
         } else {
           const target = targetStore.resolve(targetJobId, reference);
-          await fs19.mkdir(path26.dirname(target), { recursive: true, mode: 448 });
-          await fs19.copyFile(this.resolve(sourceJobId, reference), target, constants.COPYFILE_EXCL);
-          await fs19.chmod(target, 384);
+          await fs20.mkdir(path27.dirname(target), { recursive: true, mode: 448 });
+          await fs20.copyFile(this.resolve(sourceJobId, reference), target, constants.COPYFILE_EXCL);
+          await fs20.chmod(target, 384);
         }
         const sha2562 = createHash12("sha256").update(await targetStore.readArtifact(targetJobId, reference, expected)).digest("hex");
         if (sha2562 !== expected) {
@@ -68908,7 +68997,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     }
   }
   async remove(jobId) {
-    await fs19.rm(this.jobDirectory(jobId), { recursive: true, force: true });
+    await fs20.rm(this.jobDirectory(jobId), { recursive: true, force: true });
   }
   async quarantine(jobId) {
     await this.ensureRoot();
@@ -68917,7 +69006,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     const destination = this.quarantineDirectory(jobId, token);
     let sourceMetadata;
     try {
-      sourceMetadata = await fs19.lstat(source);
+      sourceMetadata = await fs20.lstat(source);
     } catch (error62) {
       if (error62?.code === "ENOENT") return null;
       throw error62;
@@ -68925,13 +69014,13 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     if (sourceMetadata.isSymbolicLink() || !sourceMetadata.isDirectory()) {
       throw new Error("Continuation artifact quarantine source is not a real directory.");
     }
-    const quarantineName = path26.basename(destination);
+    const quarantineName = path27.basename(destination);
     ACTIVE_REDACTION_QUARANTINES.add(quarantineName);
     try {
-      await fs19.rename(source, destination);
-      const moved = await fs19.lstat(destination);
+      await fs20.rename(source, destination);
+      const moved = await fs20.lstat(destination);
       if (moved.dev !== sourceMetadata.dev || moved.ino !== sourceMetadata.ino) {
-        await fs19.rename(destination, source).catch(() => {
+        await fs20.rename(destination, source).catch(() => {
         });
         throw new Error("Continuation artifact quarantine identity changed during rename.");
       }
@@ -68944,9 +69033,9 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
   async restoreQuarantine(jobId, token) {
     const source = this.quarantineDirectory(jobId, token);
     try {
-      await fs19.rename(source, this.jobDirectory(jobId));
+      await fs20.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path26.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path27.basename(source));
     }
   }
   async discardQuarantine(jobId, token) {
@@ -68954,24 +69043,24 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     try {
       await removeArtifactTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path26.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path27.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown, withJobLock) {
     await this.ensureRoot();
-    const entries = await fs19.readdir(this.rootDir, { withFileTypes: true });
+    const entries = await fs20.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const quarantine = parseRedactionQuarantine(entry.name);
       if (!quarantine) continue;
-      const candidate = path26.join(this.rootDir, entry.name);
+      const candidate = path27.join(this.rootDir, entry.name);
       const reconcile = async () => {
         const shouldRestore = isJobKnown ? await isJobKnown(quarantine.jobId) : jobIds.has(quarantine.jobId);
         if (!shouldRestore) {
           await removeArtifactTree(candidate);
           return;
         }
-        const candidateMetadata = await fs19.lstat(candidate).catch((error62) => {
+        const candidateMetadata = await fs20.lstat(candidate).catch((error62) => {
           if (error62?.code === "ENOENT") return null;
           throw error62;
         });
@@ -68985,7 +69074,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
         );
         if (ownerIsActive && (quarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES.has(entry.name))) return;
         try {
-          await fs19.rename(candidate, this.jobDirectory(quarantine.jobId));
+          await fs20.rename(candidate, this.jobDirectory(quarantine.jobId));
         } catch (error62) {
           const code = error62?.code;
           if (!["EEXIST", "ENOENT", "EACCES"].includes(code ?? "") || await pathExists(candidate) || !await isRestoredDirectory(this.jobDirectory(quarantine.jobId))) throw error62;
@@ -69014,8 +69103,8 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (jobId !== this.managedJob.jobId) throw new Error("Managed artifact store belongs to a different run.");
       return this.managedJob.binding.directory;
     }
-    const resolved = path26.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path26.sep}`)) {
+    const resolved = path27.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path27.sep}`)) {
       throw new Error("Continuation artifact job directory escapes the artifact root.");
     }
     return resolved;
@@ -69025,7 +69114,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error("Continuation artifact quarantine token is invalid.");
     }
-    return path26.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
+    return path27.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
   }
 };
 function parseRedactionQuarantine(name) {
@@ -69041,7 +69130,7 @@ function parseRedactionQuarantine(name) {
   return { jobId: match[1], ownerPid, ownerStartedAt, createdAt };
 }
 async function removeArtifactTree(directory) {
-  const metadata = await fs19.lstat(directory).catch((error62) => {
+  const metadata = await fs20.lstat(directory).catch((error62) => {
     if (error62.code === "ENOENT") return null;
     throw error62;
   });
@@ -69049,17 +69138,17 @@ async function removeArtifactTree(directory) {
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Refusing to remove non-directory continuation artifact tree: ${directory}`);
   }
-  await fs19.rm(directory, { recursive: true });
+  await fs20.rm(directory, { recursive: true });
 }
 async function assertRealDirectory(directory) {
-  const metadata = await fs19.lstat(directory);
+  const metadata = await fs20.lstat(directory);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Continuation artifact path is not a real directory: ${directory}`);
   }
 }
 async function isRestoredDirectory(directory) {
   try {
-    const metadata = await fs19.lstat(directory);
+    const metadata = await fs20.lstat(directory);
     return metadata.isDirectory() && !metadata.isSymbolicLink();
   } catch {
     return false;
@@ -69067,7 +69156,7 @@ async function isRestoredDirectory(directory) {
 }
 async function pathExists(target) {
   try {
-    await fs19.lstat(target);
+    await fs20.lstat(target);
     return true;
   } catch (error62) {
     if (error62?.code === "ENOENT") return false;
@@ -69078,8 +69167,8 @@ async function pathExists(target) {
 // src/continuation/input-store.ts
 import { createHash as createHash13, randomBytes as randomBytes2 } from "node:crypto";
 import { constants as constants2, createWriteStream as createWriteStream3 } from "node:fs";
-import fs20 from "node:fs/promises";
-import path27 from "node:path";
+import fs21 from "node:fs/promises";
+import path28 from "node:path";
 import { Transform } from "node:stream";
 import { pipeline as pipeline2 } from "node:stream/promises";
 var InvalidManagedInputError = class extends Error {
@@ -69100,21 +69189,21 @@ var ContinuationInputStore = class {
   maxTotalBytes;
   orphanAgeMs;
   constructor(rootDir, options = {}) {
-    this.rootDir = path27.resolve(rootDir);
+    this.rootDir = path28.resolve(rootDir);
     this.maxFiles = options.maxFiles ?? CONTINUATION_LIMITS.inputFileCount;
     this.maxFileBytes = options.maxFileBytes ?? CONTINUATION_LIMITS.inputBytesPerFile;
     this.maxTotalBytes = options.maxTotalBytes ?? CONTINUATION_LIMITS.managedInputBytesPerJob;
     this.orphanAgeMs = options.orphanAgeMs ?? DEFAULT_ORPHAN_AGE_MS;
   }
   async ensureRoot() {
-    await fs20.mkdir(this.rootDir, { recursive: true, mode: 448 });
+    await fs21.mkdir(this.rootDir, { recursive: true, mode: 448 });
     await assertDirectory(this.rootDir);
-    await fs20.chmod(this.rootDir, 448);
+    await fs21.chmod(this.rootDir, 448);
   }
   async withCreationLock(jobId, operation) {
     assertJobId(jobId);
     await this.ensureRoot();
-    const lockDirectory = path27.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
+    const lockDirectory = path28.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
     let ownerNonce;
     while (true) {
@@ -69126,7 +69215,7 @@ var ContinuationInputStore = class {
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       try {
-        await fs20.writeFile(lockDirectory, `${JSON.stringify(owner)}
+        await fs21.writeFile(lockDirectory, `${JSON.stringify(owner)}
 `, {
           mode: 384,
           flag: "wx"
@@ -69190,11 +69279,11 @@ var ContinuationInputStore = class {
     this.validateSources(sources);
     await this.ensureRoot();
     const finalDirectory = this.jobDirectory(jobId);
-    const stagingDirectory = path27.join(
+    const stagingDirectory = path28.join(
       this.rootDir,
       `.staging-${jobId}-${process.pid}-${randomBytes2(8).toString("hex")}`
     );
-    await fs20.mkdir(stagingDirectory, { mode: 448 });
+    await fs21.mkdir(stagingDirectory, { mode: 448 });
     let installed = false;
     try {
       const artifacts = [];
@@ -69205,7 +69294,7 @@ var ContinuationInputStore = class {
         const relativePath = neutralInputFileName(id, source.fileName);
         const copied = await copyRegularFile(
           source.sourcePath,
-          path27.join(stagingDirectory, relativePath),
+          path28.join(stagingDirectory, relativePath),
           this.maxFileBytes
         );
         if (source.expectedSizeBytes !== void 0 && copied.sizeBytes !== source.expectedSizeBytes) {
@@ -69228,14 +69317,14 @@ var ContinuationInputStore = class {
         });
       }
       const manifest = { version: 1, jobId, requestFingerprint, inputs: artifacts };
-      const manifestPath = path27.join(stagingDirectory, MANIFEST_FILE);
-      await fs20.writeFile(manifestPath, `${JSON.stringify(manifest)}
+      const manifestPath = path28.join(stagingDirectory, MANIFEST_FILE);
+      await fs21.writeFile(manifestPath, `${JSON.stringify(manifest)}
 `, { mode: 384, flag: "wx" });
       for (const artifact of artifacts) {
-        await fs20.chmod(path27.join(stagingDirectory, artifact.relativePath), 256);
+        await fs21.chmod(path28.join(stagingDirectory, artifact.relativePath), 256);
       }
-      await fs20.chmod(manifestPath, 256);
-      await fs20.chmod(stagingDirectory, 320);
+      await fs21.chmod(manifestPath, 256);
+      await fs21.chmod(stagingDirectory, 320);
       const existing = await this.readManifestIfPresent(finalDirectory, jobId);
       if (existing) {
         assertEquivalentManifest(existing, manifest);
@@ -69243,7 +69332,7 @@ var ContinuationInputStore = class {
         return { artifacts: existing.inputs, installed: false };
       }
       try {
-        await fs20.rename(stagingDirectory, finalDirectory);
+        await fs21.rename(stagingDirectory, finalDirectory);
         installed = true;
         return { artifacts, installed: true };
       } catch (error62) {
@@ -69315,11 +69404,11 @@ var ContinuationInputStore = class {
   }
   resolve(jobId, relativePath) {
     const directory = this.jobDirectory(jobId);
-    if (!relativePath || path27.isAbsolute(relativePath)) {
+    if (!relativePath || path28.isAbsolute(relativePath)) {
       throw new Error("Continuation input path must be relative.");
     }
-    const resolved = path27.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path27.sep}`)) {
+    const resolved = path28.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path28.sep}`)) {
       throw new Error("Continuation input path resolves outside its managed directory.");
     }
     return resolved;
@@ -69333,7 +69422,7 @@ var ContinuationInputStore = class {
     const destination = this.quarantineDirectory(jobId, token);
     let metadata;
     try {
-      metadata = await fs20.lstat(source);
+      metadata = await fs21.lstat(source);
     } catch (error62) {
       if (error62?.code === "ENOENT") return null;
       throw error62;
@@ -69341,19 +69430,19 @@ var ContinuationInputStore = class {
     if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
       throw new Error("Continuation input path is not a real directory.");
     }
-    const quarantineName = path27.basename(destination);
+    const quarantineName = path28.basename(destination);
     ACTIVE_REDACTION_QUARANTINES2.add(quarantineName);
     try {
-      await fs20.rename(source, destination);
+      await fs21.rename(source, destination);
     } catch (error62) {
       ACTIVE_REDACTION_QUARANTINES2.delete(quarantineName);
       if (error62?.code === "ENOENT") return null;
       throw error62;
     }
     try {
-      const moved = await fs20.lstat(destination);
+      const moved = await fs21.lstat(destination);
       if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
-        await fs20.rename(destination, source).catch(() => {
+        await fs21.rename(destination, source).catch(() => {
         });
         throw new Error("Continuation input quarantine identity changed during rename.");
       }
@@ -69366,9 +69455,9 @@ var ContinuationInputStore = class {
   async restoreQuarantine(jobId, token) {
     const source = this.quarantineDirectory(jobId, token);
     try {
-      await fs20.rename(source, this.jobDirectory(jobId));
+      await fs21.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path27.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path28.basename(source));
     }
   }
   async discardQuarantine(jobId, token) {
@@ -69376,18 +69465,18 @@ var ContinuationInputStore = class {
     try {
       await removeManagedTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path27.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path28.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown) {
     await this.ensureRoot();
-    const entries = await fs20.readdir(this.rootDir, { withFileTypes: true });
+    const entries = await fs21.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isFile() && !entry.isDirectory() || entry.isSymbolicLink()) continue;
       const reclaim = parseCreationReclaim(entry.name);
       if (!reclaim) continue;
-      const candidate = path27.join(this.rootDir, entry.name);
-      const metadata = await fs20.lstat(candidate).catch((error62) => {
+      const candidate = path28.join(this.rootDir, entry.name);
+      const metadata = await fs21.lstat(candidate).catch((error62) => {
         if (error62.code === "ENOENT") return null;
         throw error62;
       });
@@ -69397,7 +69486,7 @@ var ContinuationInputStore = class {
     const liveCreationJobs = /* @__PURE__ */ new Set();
     for (const entry of entries) {
       if (!entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
-      const lockDirectory = path27.join(this.rootDir, entry.name);
+      const lockDirectory = path28.join(this.rootDir, entry.name);
       const jobId = entry.name.slice(CREATION_LOCK_PREFIX.length);
       if (!await tryReclaimCreationLock(lockDirectory, this.rootDir)) {
         liveCreationJobs.add(jobId);
@@ -69407,14 +69496,14 @@ var ContinuationInputStore = class {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const redactionQuarantine = parseRedactionQuarantine2(entry.name);
       if (redactionQuarantine) {
-        const candidate2 = path27.join(this.rootDir, entry.name);
+        const candidate2 = path28.join(this.rootDir, entry.name);
         await this.withCreationLock(redactionQuarantine.jobId, async () => {
           const shouldRestore = isJobKnown ? await isJobKnown(redactionQuarantine.jobId) : jobIds.has(redactionQuarantine.jobId);
           if (!shouldRestore) {
             await removeManagedTree(candidate2);
             return;
           }
-          const candidateMetadata = await fs20.lstat(candidate2).catch((error62) => {
+          const candidateMetadata = await fs21.lstat(candidate2).catch((error62) => {
             if (error62?.code === "ENOENT") return null;
             throw error62;
           });
@@ -69428,7 +69517,7 @@ var ContinuationInputStore = class {
           );
           if (ownerIsActive && (redactionQuarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES2.has(entry.name))) return;
           try {
-            await fs20.rename(candidate2, this.jobDirectory(redactionQuarantine.jobId));
+            await fs21.rename(candidate2, this.jobDirectory(redactionQuarantine.jobId));
           } catch (error62) {
             const code = error62?.code;
             if (!["EEXIST", "ENOENT", "EACCES"].includes(code ?? "") || await pathExists2(candidate2) || !await isRestoredDirectory2(this.jobDirectory(redactionQuarantine.jobId))) throw error62;
@@ -69441,7 +69530,7 @@ var ContinuationInputStore = class {
       if (!isStaging && jobIds.has(entry.name)) continue;
       if (!isStaging && liveCreationJobs.has(entry.name)) continue;
       if (isStaging && [...liveCreationJobs].some((jobId) => entry.name.startsWith(`.staging-${jobId}-`))) continue;
-      const candidate = path27.join(this.rootDir, entry.name);
+      const candidate = path28.join(this.rootDir, entry.name);
       if (!isStaging && isValidJobId(entry.name)) {
         await this.withCreationLock(entry.name, async () => {
           if (jobIds.has(entry.name) || await isJobKnown?.(entry.name)) return;
@@ -69461,7 +69550,7 @@ var ContinuationInputStore = class {
         throw new Error("Continuation input kind is invalid.");
       }
       validateFileName(source.fileName);
-      if (!path27.isAbsolute(source.sourcePath)) {
+      if (!path28.isAbsolute(source.sourcePath)) {
         throw new Error("Continuation input source path must be absolute and server-admitted.");
       }
       if (source.expectedSha256 !== void 0 && !/^[a-f0-9]{64}$/.test(source.expectedSha256)) {
@@ -69474,8 +69563,8 @@ var ContinuationInputStore = class {
   }
   jobDirectory(jobId) {
     assertJobId(jobId);
-    const resolved = path27.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path27.sep}`)) {
+    const resolved = path28.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path28.sep}`)) {
       throw new Error("Continuation input job directory escapes the input root.");
     }
     return resolved;
@@ -69485,12 +69574,12 @@ var ContinuationInputStore = class {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error("Continuation input quarantine token is invalid.");
     }
-    return path27.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token}`);
+    return path28.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token}`);
   }
   async readManifestIfPresent(directory, jobId) {
     try {
       await assertDirectory(directory);
-      const parsed = JSON.parse(await fs20.readFile(path27.join(directory, MANIFEST_FILE), "utf8"));
+      const parsed = JSON.parse(await fs21.readFile(path28.join(directory, MANIFEST_FILE), "utf8"));
       if (parsed.version !== 1 || parsed.jobId !== jobId || typeof parsed.requestFingerprint !== "string" || !Array.isArray(parsed.inputs)) {
         throw new Error("Continuation input manifest is invalid.");
       }
@@ -69511,11 +69600,11 @@ var ContinuationInputStore = class {
   }
 };
 async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
-  const pathMetadata = await fs20.lstat(sourcePath);
+  const pathMetadata = await fs21.lstat(sourcePath);
   if (pathMetadata.isSymbolicLink() || !pathMetadata.isFile()) {
     throw new Error("Continuation input source must be a regular file.");
   }
-  const source = await fs20.open(
+  const source = await fs21.open(
     sourcePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
   );
@@ -69554,7 +69643,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
 }
 async function lstatForVerification(filePath) {
   try {
-    return await fs20.lstat(filePath);
+    return await fs21.lstat(filePath);
   } catch (error62) {
     if (error62?.code === "ENOENT") return null;
     throw error62;
@@ -69562,7 +69651,7 @@ async function lstatForVerification(filePath) {
 }
 async function sha256File(filePath) {
   const digest = createHash13("sha256");
-  const file2 = await fs20.open(
+  const file2 = await fs21.open(
     filePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
   );
@@ -69577,12 +69666,12 @@ async function sha256File(filePath) {
   }
 }
 function validateFileName(fileName) {
-  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path27.basename(fileName) !== fileName) {
+  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path28.basename(fileName) !== fileName) {
     throw new Error("Continuation input file name is invalid.");
   }
 }
 function neutralInputFileName(id, originalFileName) {
-  const extension = path27.extname(originalFileName).toLowerCase();
+  const extension = path28.extname(originalFileName).toLowerCase();
   return /^\.[a-z0-9]{1,8}$/.test(extension) ? `${id}${extension}` : id;
 }
 function validateArtifact(artifact) {
@@ -69590,7 +69679,7 @@ function validateArtifact(artifact) {
     throw new Error("Continuation input artifact id is invalid.");
   }
   validateFileName(artifact.fileName);
-  if (!artifact.relativePath || path27.isAbsolute(artifact.relativePath)) {
+  if (!artifact.relativePath || path28.isAbsolute(artifact.relativePath)) {
     throw new Error("Continuation input artifact path is invalid.");
   }
   if (!/^[a-f0-9]{64}$/.test(artifact.sha256)) {
@@ -69601,7 +69690,7 @@ function validateArtifact(artifact) {
   }
 }
 async function assertDirectory(directory) {
-  const metadata = await fs20.lstat(directory);
+  const metadata = await fs21.lstat(directory);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Continuation input path is not a real directory: ${directory}`);
   }
@@ -69640,9 +69729,9 @@ function safeAdmissionError(error62) {
 }
 async function readCreationOwner(lockDirectory) {
   try {
-    const metadata = await fs20.lstat(lockDirectory);
-    const ownerPath = metadata.isDirectory() ? path27.join(lockDirectory, "owner.json") : lockDirectory;
-    const parsed = JSON.parse(await fs20.readFile(ownerPath, "utf8"));
+    const metadata = await fs21.lstat(lockDirectory);
+    const ownerPath = metadata.isDirectory() ? path28.join(lockDirectory, "owner.json") : lockDirectory;
+    const parsed = JSON.parse(await fs21.readFile(ownerPath, "utf8"));
     if (!Number.isInteger(parsed.pid) || Number(parsed.pid) <= 0 || typeof parsed.createdAt !== "string") return null;
     const nonce = typeof parsed.nonce === "string" && /^[a-f0-9]{32}$/.test(parsed.nonce) ? parsed.nonce : null;
     const startedAt = Number(parsed.startedAt);
@@ -69659,7 +69748,7 @@ async function readCreationOwner(lockDirectory) {
 async function tryReclaimCreationLock(lockDirectory, rootDir) {
   let metadata;
   try {
-    metadata = await fs20.lstat(lockDirectory);
+    metadata = await fs21.lstat(lockDirectory);
   } catch (error62) {
     if (error62?.code === "ENOENT") return true;
     throw error62;
@@ -69680,20 +69769,20 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
     Date.now() - metadata.mtimeMs,
     UNKNOWN_CREATION_OWNER_GRACE_MS
   )) return false;
-  const quarantine = path27.join(
+  const quarantine = path28.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}${path27.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`
+    `${CREATION_RECLAIM_PREFIX}${path28.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`
   );
   try {
-    await fs20.rename(lockDirectory, quarantine);
+    await fs21.rename(lockDirectory, quarantine);
   } catch (error62) {
     if (error62?.code === "ENOENT") return true;
     throw error62;
   }
-  const moved = await fs20.lstat(quarantine);
+  const moved = await fs21.lstat(quarantine);
   if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
     try {
-      await fs20.rename(quarantine, lockDirectory);
+      await fs21.rename(quarantine, lockDirectory);
     } catch (error62) {
       throw new Error("Continuation creation lock changed during reclaim and could not be restored.", {
         cause: error62
@@ -69705,11 +69794,11 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
   return true;
 }
 async function hasCompetingCreationReclaim(rootDir, lockDirectory) {
-  const prefix = `${CREATION_RECLAIM_PREFIX}${path27.basename(lockDirectory)}-`;
-  for (const entry of await fs20.readdir(rootDir)) {
+  const prefix = `${CREATION_RECLAIM_PREFIX}${path28.basename(lockDirectory)}-`;
+  for (const entry of await fs21.readdir(rootDir)) {
     if (!entry.startsWith(prefix)) continue;
-    const candidate = path27.join(rootDir, entry);
-    const metadata = await fs20.lstat(candidate).catch((error62) => {
+    const candidate = path28.join(rootDir, entry);
+    const metadata = await fs21.lstat(candidate).catch((error62) => {
       if (error62.code === "ENOENT") return null;
       throw error62;
     });
@@ -69747,12 +69836,12 @@ async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   if (owner?.nonce !== nonce) {
     throw new Error("Continuation creation lock ownership changed before release.");
   }
-  const releaseDirectory = path27.join(
+  const releaseDirectory = path28.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}release-${path27.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
+    `${CREATION_RECLAIM_PREFIX}release-${path28.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
   );
   try {
-    await fs20.rename(lockDirectory, releaseDirectory);
+    await fs21.rename(lockDirectory, releaseDirectory);
   } catch (error62) {
     if (error62?.code === "ENOENT") {
       throw new Error("Continuation creation lock disappeared before release.", { cause: error62 });
@@ -69762,7 +69851,7 @@ async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   const movedOwner = await readCreationOwner(releaseDirectory);
   if (movedOwner?.nonce !== nonce) {
     try {
-      await fs20.rename(releaseDirectory, lockDirectory);
+      await fs21.rename(releaseDirectory, lockDirectory);
     } catch (error62) {
       throw new Error("Continuation creation lock changed during release and could not be restored.", {
         cause: error62
@@ -69797,33 +69886,33 @@ function parseRedactionQuarantine2(name) {
 async function removeManagedTree(target) {
   let metadata;
   try {
-    metadata = await fs20.lstat(target);
+    metadata = await fs21.lstat(target);
   } catch (error62) {
     if (error62?.code === "ENOENT") return;
     throw error62;
   }
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    await fs20.rm(target, { force: true });
+    await fs21.rm(target, { force: true });
     return;
   }
   try {
-    await fs20.chmod(target, 448);
+    await fs21.chmod(target, 448);
   } catch (error62) {
     if (error62?.code === "ENOENT") return;
     throw error62;
   }
   let entries;
   try {
-    entries = await fs20.readdir(target);
+    entries = await fs21.readdir(target);
   } catch (error62) {
     if (error62?.code === "ENOENT") return;
     throw error62;
   }
   for (const entry of entries) {
-    const child = path27.join(target, entry);
+    const child = path28.join(target, entry);
     let childMetadata;
     try {
-      childMetadata = await fs20.lstat(child);
+      childMetadata = await fs21.lstat(child);
     } catch (error62) {
       if (error62?.code === "ENOENT") continue;
       throw error62;
@@ -69833,24 +69922,24 @@ async function removeManagedTree(target) {
     } else {
       if (!childMetadata.isSymbolicLink()) {
         try {
-          await fs20.chmod(child, 384);
+          await fs21.chmod(child, 384);
         } catch (error62) {
           if (error62?.code === "ENOENT") continue;
           throw error62;
         }
       }
-      await fs20.rm(child, { force: true });
+      await fs21.rm(child, { force: true });
     }
   }
   try {
-    await fs20.rmdir(target);
+    await fs21.rmdir(target);
   } catch (error62) {
     if (error62?.code !== "ENOENT") throw error62;
   }
 }
 async function isRestoredDirectory2(directory) {
   try {
-    const metadata = await fs20.lstat(directory);
+    const metadata = await fs21.lstat(directory);
     return metadata.isDirectory() && !metadata.isSymbolicLink();
   } catch {
     return false;
@@ -69858,7 +69947,7 @@ async function isRestoredDirectory2(directory) {
 }
 async function pathExists2(target) {
   try {
-    await fs20.lstat(target);
+    await fs21.lstat(target);
     return true;
   } catch (error62) {
     if (error62?.code === "ENOENT") return false;
@@ -69866,7 +69955,7 @@ async function pathExists2(target) {
   }
 }
 async function removeAgedOrphan(candidate, nowMs, orphanAgeMs) {
-  const metadata = await fs20.stat(candidate).catch((error62) => {
+  const metadata = await fs21.stat(candidate).catch((error62) => {
     if (error62?.code === "ENOENT") return null;
     throw error62;
   });
@@ -69894,7 +69983,9 @@ async function allocateContinuationWorkspace(job, store, policy) {
     owner: { kind: "async_task", runId: job.jobId },
     createdAt: job.createdAt,
     usedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    authorizedRoots: continuationWorkspaceRoots(job, policy)
+    authorizedRoots: continuationWorkspaceRoots(job, policy),
+    sourceRegistryPath: policy.sourceRegistryPath,
+    sourceRegistryRoot: policy.foregroundWorkingRoot ?? policy.currentWorkingRoot
   });
 }
 function continuationArtifactView(legacy, job, store, policy) {
@@ -70321,7 +70412,10 @@ var ContinuationCodexExecutor = class {
     return {
       binding: workspaceProject,
       authorizedRoots: [root, this.options.currentWorkingRoot, this.options.foregroundWorkingRoot ?? this.options.currentWorkingRoot],
-      ...managed ? { auxiliaryBindings: [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts] } : {}
+      ...managed ? {
+        requireProtectedAncestry: true,
+        auxiliaryBindings: [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts]
+      } : {}
     };
   }
   async executeGuardedStep(claim2, workingDirectory, artifactDir, artifactStore, managed, parentSignal) {
@@ -71519,7 +71613,7 @@ function stringArray(value) {
 }
 
 // src/continuation/sqlite-repository.ts
-import path32 from "node:path";
+import path33 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
 
 // src/continuation/progress-policy.ts
@@ -71604,7 +71698,7 @@ function materialProjection(checkpoint2) {
     completedStepIds: sorted(checkpoint2.completedStepIds),
     completedCriterionIds: sorted(checkpoint2.completedCriterionIds),
     completedDeliverableIds: sorted(checkpoint2.completedDeliverableIds),
-    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path35, sha256: sha2562 }) => ({ id, deliverableId, path: path35, sha256: sha2562 })).sort(compareId),
+    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path36, sha256: sha2562 }) => ({ id, deliverableId, path: path36, sha256: sha2562 })).sort(compareId),
     evidence: [...checkpoint2.evidence].map((entry) => ({
       id: entry.id,
       requirementId: entry.requirementId,
@@ -71841,12 +71935,18 @@ function requireEntitiesUnchanged(name, previous, candidate, add) {
 
 // src/durable-run/sqlite-repository.ts
 import { createHash as createHash18, randomBytes as randomBytes3 } from "node:crypto";
-import fs21 from "node:fs/promises";
-import path29 from "node:path";
+import fs22 from "node:fs/promises";
+import path30 from "node:path";
 
 // src/durable-run/sqlite-managed-workspace.ts
-import path28 from "node:path";
+import path29 from "node:path";
 var timestamp = external_exports.iso.datetime();
+var sourceRegistries = [
+  ["workspace_run_allocations", "intent_json"],
+  ["workspace_unmanaged_foreground", "admission_json"]
+];
+var sourcePathExpr = (column) => `json_extract(${column}, '$.project.directory')`;
+var sourceIdentityExpr = (column) => `(json_extract(${column}, '$.project.device') || ':' || json_extract(${column}, '$.project.inode'))`;
 var SqliteManagedWorkspaceStore = class {
   constructor(database) {
     this.database = database;
@@ -71871,6 +71971,10 @@ var SqliteManagedWorkspaceStore = class {
         run_id TEXT PRIMARY KEY,
         admission_json TEXT NOT NULL CHECK (json_valid(admission_json))
       ) STRICT;
+      ${sourceRegistries.map(([table, json2]) => `
+        CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${sourcePathExpr(json2)});
+        CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${sourceIdentityExpr(json2)});
+      `).join("")}
     `);
   }
   database;
@@ -71890,6 +71994,7 @@ var SqliteManagedWorkspaceStore = class {
         const matches = "project" in prior ? "project" in admission && sameWorkspaceProject(prior.project, admission.project) : "fallbackCwd" in admission && prior.fallbackCwd === admission.fallbackCwd;
         if (prior.sessionKey !== admission.sessionKey || !matches) throw new ManagedWorkspaceStorageError("invalid_binding");
       } else {
+        if ("project" in admission) this.requireUnoccupied(admission.project.directory);
         this.database.prepare("INSERT INTO workspace_unmanaged_foreground (run_id, admission_json) VALUES (?, ?)").run(runId, JSON.stringify(parsed.data));
       }
       this.database.exec("COMMIT");
@@ -71913,19 +72018,20 @@ var SqliteManagedWorkspaceStore = class {
     }
     return { allocation, lastUsedAt: lastUsedAt.data };
   }
-  async ensure({ authorizedRoots, usedAt, ...input2 }) {
+  async ensure({ authorizedRoots, usedAt, sourceRegistryPath, sourceRegistryRoot, ...input2 }) {
     const parsed = managedRunIntentSchema.safeParse({ version: 1, ...input2 });
     const lastUse = timestamp.safeParse(usedAt ?? input2.createdAt);
     if (!parsed.success || !lastUse.success) throw new ManagedWorkspaceStorageError("invalid_binding");
     this.requireAutocommit();
     const { owner, ...snapshot } = parsed.data;
     const lastUsedAt = new Date(lastUse.data).toISOString();
+    const policy = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
     const existing = this.get(owner);
-    if (existing) return this.reuse(existing, snapshot, authorizedRoots, lastUsedAt);
-    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { authorizedRoots, project: snapshot.project });
+    if (existing) return this.reuse(existing, snapshot, policy, lastUsedAt);
+    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { ...policy, project: snapshot.project });
     const concurrent = this.reserve(parsed.data, lastUsedAt, ancestry);
-    if (concurrent) return this.reuse(concurrent, snapshot, authorizedRoots, lastUsedAt);
-    const allocation = await allocateManagedRunDirectories({ ...snapshot, owner, authorizedRoots });
+    if (concurrent) return this.reuse(concurrent, snapshot, policy, lastUsedAt);
+    const allocation = await allocateManagedRunDirectories({ ...snapshot, owner, ...policy });
     this.requireAutocommit();
     const committed = this.database.prepare(`
       UPDATE workspace_run_allocations SET allocation_json = ?, scratch_identity = ?, artifact_identity = ?
@@ -71946,15 +72052,17 @@ var SqliteManagedWorkspaceStore = class {
     if (!stored) throw new ManagedWorkspaceStorageError("invalid_binding");
     return validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
   }
-  async reuse({ allocation }, snapshot, authorizedRoots, lastUsedAt) {
+  async reuse({ allocation }, snapshot, policy, lastUsedAt) {
     if (!sameWorkspaceProject(allocation.project, snapshot.project) || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
-    await Promise.all([
-      validateManagedRunDirectory(allocation, "scratch", authorizedRoots),
-      validateManagedRunDirectory(allocation, "artifacts", authorizedRoots)
+    const [ancestry] = await Promise.all([
+      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project }),
+      validateManagedRunDirectory(allocation, "scratch", policy.authorizedRoots),
+      validateManagedRunDirectory(allocation, "artifacts", policy.authorizedRoots)
     ]);
     this.requireAutocommit();
+    this.requireSourceDisjoint(allocation.roots, ancestry.storage);
     this.touch(allocation.owner, lastUsedAt);
     return allocation;
   }
@@ -71967,6 +72075,7 @@ var SqliteManagedWorkspaceStore = class {
       }
       const existing = this.get(intent.owner);
       if (!existing) {
+        this.requireSourceDisjoint(intent.roots, ancestry.storage);
         const scratchPath = managedRunDirectoryPath(intent.roots.scratch, intent.owner);
         const artifactPath = managedRunDirectoryPath(intent.roots.artifacts, intent.owner);
         if (intent.project) this.requireUnoccupied(intent.project.directory);
@@ -71975,7 +72084,7 @@ var SqliteManagedWorkspaceStore = class {
         const byIdentity = this.database.prepare(`
           SELECT 1 FROM workspace_run_allocations WHERE scratch_identity = ? OR artifact_identity = ? LIMIT 1
         `);
-        for (const identity of ancestry) {
+        for (const identity of ancestry.all) {
           if (byIdentity.get(identity, identity)) throw new ManagedWorkspaceStorageError("overlapping_runs");
         }
         this.database.prepare(`
@@ -71991,16 +72100,36 @@ var SqliteManagedWorkspaceStore = class {
       throw error62;
     }
   }
+  requireSourceDisjoint(roots, storageAncestry) {
+    for (const [table, json2] of sourceRegistries) {
+      const byIdentity = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${sourceIdentityExpr(json2)} = ? LIMIT 1`);
+      for (const identity of storageAncestry) {
+        if (byIdentity.get(identity)) throw new ManagedWorkspaceStorageError("overlapping_source");
+      }
+      const expr = sourcePathExpr(json2);
+      const exact = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} = ? LIMIT 1`);
+      const nested = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} >= ? AND ${expr} < ? LIMIT 1`);
+      for (const { directory } of [roots.scratch, roots.artifacts]) {
+        for (let current = directory; ; current = path29.dirname(current)) {
+          if (exact.get(current)) throw new ManagedWorkspaceStorageError("overlapping_source");
+          if (path29.dirname(current) === current) break;
+        }
+        const prefix = `${directory}${path29.sep}`;
+        const upper = `${directory}${String.fromCharCode(path29.sep.charCodeAt(0) + 1)}`;
+        if (nested.get(prefix, upper)) throw new ManagedWorkspaceStorageError("overlapping_source");
+      }
+    }
+  }
   requireUnoccupied(candidate) {
     const exact = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations WHERE scratch_path = ? OR artifact_path = ? LIMIT 1
     `);
-    for (let current = candidate; ; current = path28.dirname(current)) {
+    for (let current = candidate; ; current = path29.dirname(current)) {
       if (exact.get(current, current)) throw new ManagedWorkspaceStorageError("overlapping_runs");
-      if (path28.dirname(current) === current) break;
+      if (path29.dirname(current) === current) break;
     }
-    const prefix = `${candidate}${path28.sep}`;
-    const upper = `${candidate}${String.fromCharCode(path28.sep.charCodeAt(0) + 1)}`;
+    const prefix = `${candidate}${path29.sep}`;
+    const upper = `${candidate}${String.fromCharCode(path29.sep.charCodeAt(0) + 1)}`;
     const nested = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations
       WHERE (scratch_path >= ? AND scratch_path < ?) OR (artifact_path >= ? AND artifact_path < ?)
@@ -73754,16 +73883,16 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
     return new _SqliteDurableRunRepository(database, DEFAULT_DELIVERY_LEASE_MS, false);
   }
   static async open(options) {
-    const databasePath = path29.resolve(options.databasePath);
-    await fs21.mkdir(path29.dirname(databasePath), { recursive: true, mode: 448 });
-    await fs21.chmod(path29.dirname(databasePath), 448);
+    const databasePath = path30.resolve(options.databasePath);
+    await fs22.mkdir(path30.dirname(databasePath), { recursive: true, mode: 448 });
+    await fs22.chmod(path30.dirname(databasePath), 448);
     const { DatabaseSync } = await import("node:sqlite");
     const database = new DatabaseSync(databasePath, {
       timeout: 5e3,
       enableForeignKeyConstraints: true
     });
     try {
-      await fs21.chmod(databasePath, 384);
+      await fs22.chmod(databasePath, 384);
       database.exec(`
         PRAGMA busy_timeout = 5000;
         PRAGMA foreign_keys = ON;
@@ -75914,7 +76043,7 @@ function hasOnlyKeys(value, allowed) {
 
 // src/continuation/sqlite-codec.ts
 import { createHash as createHash19, randomBytes as randomBytes4 } from "node:crypto";
-import path30 from "node:path";
+import path31 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var PROGRESS_PAYLOAD_MAX_CHARS = 4e3;
 var MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT = 2;
@@ -76680,7 +76809,7 @@ function validatePermissionEnvelope(value, requireAbsoluteRoot2) {
     "requestedPaths",
     "workspaceProject",
     "managedWorkspaceRoots"
-  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path30.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path30.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
+  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path31.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path31.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
     throw new Error("Continuation permission envelope is invalid.");
   }
   if (envelope.profile === "bounded" && (envelope.network !== "none" || envelope.externalSideEffects !== "denied") || envelope.profile === "trusted_personal_workspace" && (requestedPaths.length === 0 || envelope.network !== "enabled" || envelope.externalSideEffects !== "allowed")) {
@@ -77574,20 +77703,20 @@ function staleClaimError(jobId) {
 }
 
 // src/continuation/sqlite-database.ts
-import fs22 from "node:fs/promises";
-import path31 from "node:path";
+import fs23 from "node:fs/promises";
+import path32 from "node:path";
 var ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
 async function openContinuationDatabase(databasePath) {
-  const resolvedPath = path31.resolve(databasePath);
-  await fs22.mkdir(path31.dirname(resolvedPath), { recursive: true, mode: 448 });
-  await fs22.chmod(path31.dirname(resolvedPath), 448);
+  const resolvedPath = path32.resolve(databasePath);
+  await fs23.mkdir(path32.dirname(resolvedPath), { recursive: true, mode: 448 });
+  await fs23.chmod(path32.dirname(resolvedPath), 448);
   const { DatabaseSync } = await import("node:sqlite");
   const database = new DatabaseSync(resolvedPath, {
     timeout: 5e3,
     enableForeignKeyConstraints: true
   });
   try {
-    await fs22.chmod(resolvedPath, 384);
+    await fs23.chmod(resolvedPath, 384);
     return database;
   } catch (error62) {
     database.close();
@@ -77668,13 +77797,13 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
   durableRuns;
   cronMessageOrigins;
   static async open(options) {
-    const databasePath = path32.resolve(options.databasePath);
+    const databasePath = path33.resolve(options.databasePath);
     const database = await openContinuationDatabase(databasePath);
     try {
       const artifacts = options.artifactStore ?? new ContinuationArtifactStore(options.artifactsDir);
       await artifacts.ensureRoot();
       const inputs = options.inputStore ?? new ContinuationInputStore(
-        options.inputsDir ?? path32.join(path32.dirname(path32.resolve(options.artifactsDir)), "inputs")
+        options.inputsDir ?? path33.join(path33.dirname(path33.resolve(options.artifactsDir)), "inputs")
       );
       await inputs.ensureRoot();
       const repository = new _SqliteContinuationRepository(
@@ -80040,14 +80169,18 @@ async function createContinuationRuntime(options) {
     const storage = options.dryRun ? await createDryRunStorage() : {
       databasePath: options.databasePath,
       artifactsDir: options.artifactsDir,
-      inputsDir: path33.join(path33.dirname(options.artifactsDir), "inputs")
+      inputsDir: path34.join(path34.dirname(options.artifactsDir), "inputs")
     };
     temporaryRoot = "root" in storage ? storage.root : void 0;
     repository = await (options.openRepository ?? defaultOpenRepository)({
       databasePath: storage.databasePath,
       artifactsDir: storage.artifactsDir,
       inputsDir: storage.inputsDir,
-      managedWorkspacePolicy: { currentWorkingRoot: options.allowedWorkingRoot, foregroundWorkingRoot: options.foregroundWorkingRoot }
+      managedWorkspacePolicy: {
+        currentWorkingRoot: options.allowedWorkingRoot,
+        foregroundWorkingRoot: options.foregroundWorkingRoot,
+        sourceRegistryPath: options.sourceRegistryPath
+      }
     });
     await repository.healthCheck();
     if (!options.enabled) {
@@ -80065,7 +80198,7 @@ async function createContinuationRuntime(options) {
             try {
               repository.close();
             } finally {
-              if (temporaryRoot) await fs23.rm(temporaryRoot, { recursive: true, force: true });
+              if (temporaryRoot) await fs24.rm(temporaryRoot, { recursive: true, force: true });
             }
           })();
           return closePromise2;
@@ -80087,6 +80220,7 @@ async function createContinuationRuntime(options) {
       repository,
       allowedWorkingRoot: options.allowedWorkingRoot,
       foregroundWorkingRoot: options.foregroundWorkingRoot,
+      sourceRegistryPath: options.sourceRegistryPath,
       managedWorkspaceConfigPath: options.dryRun ? void 0 : options.managedWorkspaceConfigPath,
       filesystemMode: boundedContinuationSandbox(options.configuredSandbox),
       maxAttempts: options.maxAttempts,
@@ -80107,6 +80241,7 @@ async function createContinuationRuntime(options) {
       configuredSandbox: options.configuredSandbox,
       currentWorkingRoot: options.allowedWorkingRoot,
       foregroundWorkingRoot: options.foregroundWorkingRoot,
+      sourceRegistryPath: options.sourceRegistryPath,
       managedWorkspaceStore: () => repository?.durableRuns.getManagedWorkspaceStore?.(),
       canUseTrustedPersonalWorkspace: options.canUseTrustedPersonalWorkspace,
       ...toolInvoker ? { toolInvoker } : {},
@@ -80169,7 +80304,7 @@ async function createContinuationRuntime(options) {
           try {
             repository.close();
           } finally {
-            if (temporaryRoot) await fs23.rm(temporaryRoot, { recursive: true, force: true });
+            if (temporaryRoot) await fs24.rm(temporaryRoot, { recursive: true, force: true });
           }
         })();
         return closePromise;
@@ -80180,7 +80315,7 @@ async function createContinuationRuntime(options) {
       repository?.close();
     } catch {
     }
-    if (temporaryRoot) await fs23.rm(temporaryRoot, { recursive: true, force: true }).catch(() => {
+    if (temporaryRoot) await fs24.rm(temporaryRoot, { recursive: true, force: true }).catch(() => {
     });
     safeReportError(options, error62);
     safeDebug(options, "[continuation] event=runtime_unavailable job_id=- attempt_id=- state=initialization_failed");
@@ -80207,12 +80342,12 @@ async function defaultOpenRepository(options) {
   return SqliteContinuationRepository.open(options);
 }
 async function createDryRunStorage() {
-  const root = await fs23.mkdtemp(path33.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
+  const root = await fs24.mkdtemp(path34.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
   return {
     root,
-    databasePath: path33.join(root, "jobs.sqlite"),
-    artifactsDir: path33.join(root, "artifacts"),
-    inputsDir: path33.join(root, "inputs")
+    databasePath: path34.join(root, "jobs.sqlite"),
+    artifactsDir: path34.join(root, "artifacts"),
+    inputsDir: path34.join(root, "inputs")
   };
 }
 function retentionCutoff(now, retentionDays) {
@@ -80692,7 +80827,7 @@ function literal2(value, values, label) {
 }
 
 // src/cron/delivery.ts
-import path34 from "node:path";
+import path35 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual6 } from "node:util";
 
 // src/scheduler-policy.ts
@@ -81159,7 +81294,7 @@ async function deliverCronArtifact(options, claim2, now, context) {
   }
   try {
     if (context && !await context.markExternalSendStarted()) return { status: "superseded" };
-    const key = await artifacts.uploadFile(content, path34.posix.basename(payload.artifact.relativePath));
+    const key = await artifacts.uploadFile(content, path35.posix.basename(payload.artifact.relativePath));
     if (!key) throw new Error("Lark returned no attachment key.");
     const response = await options.sendReply({
       chat_id: route.targetChatId,
@@ -82463,6 +82598,7 @@ async function allocateWorkspace(input2, store) {
   return store.ensure({
     ...input2.managedWorkspace,
     authorizedRoots: [appConfig.codexExecCwd],
+    sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
     owner: { kind: "cron_prompt", runId: input2.runId },
     ...input2.job.workspaceProject ? { project: input2.job.workspaceProject } : {},
     usedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -82785,6 +82921,7 @@ async function main() {
     artifactsDir: appConfig.continuationArtifactsDir,
     allowedWorkingRoot: appConfig.continuationWorkingRoot,
     foregroundWorkingRoot: appConfig.codexExecCwd,
+    sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
     managedWorkspaceConfigPath: appConfig.managedWorkspaceConfigPath,
     maxAttempts: appConfig.continuationMaxAttempts,
     maxRetries: appConfig.continuationMaxRetries,
@@ -82911,6 +83048,7 @@ async function main() {
       resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
         configPath: appConfig.managedWorkspaceConfigPath,
         authorizedRoots: [appConfig.codexExecCwd],
+        sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
         ...project ? { project } : {}
       })
     });
