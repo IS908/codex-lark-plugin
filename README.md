@@ -349,9 +349,12 @@ or share its physical path with a different key or scope.
 Git reuse requires a native Codex CLI with named permission profiles (verified
 with `0.171.0` on macOS), plus system Git at `/usr/bin/git`. Set
 `LARK_CODEX_EXEC_COMMAND` to the native binary rather than a shell or npm
-wrapper. Install the binary and its bundled helpers together in an
-operator-controlled directory outside all plugin-writable roots. The launcher
-uses a system-only `PATH` for child tools. Group-writable launch paths,
+wrapper. On Linux use the official `0.171.0` package and keep `bin/codex`,
+`codex-package.json`, and `codex-resources/bwrap` in their packaged layout.
+Install the binary and helpers in an operator-controlled directory outside all
+plugin-writable roots. Stop the service before first enabling the registry so
+no previous sandboxed commands remain active. While enabled, the launcher uses
+a system-only `PATH` for child tools. Group-writable launch paths,
 incompatible configuration or command rules, and
 unsupported mount layouts are rejected. The run owns its checkout and index;
 the source and shared object store remain read-only, and unsandboxed host CLI

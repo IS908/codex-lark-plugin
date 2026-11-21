@@ -27,21 +27,34 @@ export function managedGitCheckoutSessionScope(allocation?: ManagedRunAllocation
 
 type GitRegistryPolicy = Pick<Parameters<typeof resolveManagedGitSelection>[0], 'configPath' | 'sourceRegistryPath' | 'sourceRegistryRoot'>;
 
+function pluginExecutionRoots(...roots: string[]): string[] {
+  return [...roots, appConfig.codexExecCwd, appConfig.continuationWorkingRoot, appConfig.continuationArtifactsDir];
+}
+
 export async function protectProfileDistillation(request: CodexExecRequest, configPath: string): Promise<CodexExecRequest> {
   if (!await hasManagedGitRegistry(configPath)) return request;
   const cwd = await fs.realpath(request.cwd ?? process.cwd());
   await assertCompatibleCodexLayers(process.env, [cwd]);
   return { ...request, cwd, sandbox: 'read-only', profile: undefined, ignoreUserConfig: true, strictConfig: true,
-    configOverrides: ['approval_policy="never"'] };
+    configOverrides: ['approval_policy="never"'],
+    validateManagedGitLaunch: (command, env) => resolveManagedGitLauncher(command, env, [], pluginExecutionRoots(cwd)) };
 }
 
 export async function protectLegacyGitWorkspace(request: CodexExecRequest, configPath?: string): Promise<CodexExecRequest> {
-  if (!await hasManagedGitRegistry(configPath) || request.sandbox === 'read-only') return request;
-  if (request.sandbox !== 'workspace-write' || request.profile || request.ignoreUserConfig === false) {
+  if (!await hasManagedGitRegistry(configPath)) return request;
+  if ((request.sandbox !== 'read-only' && request.sandbox !== 'workspace-write') || request.profile || request.ignoreUserConfig === false) {
     throw new ManagedWorkspaceStorageError('git_sandbox_layers_unsupported');
   }
+  const cwd = await fs.realpath(request.cwd ?? process.cwd());
+  const protectedRequest = { ...request, cwd, ignoreUserConfig: true,
+    validateManagedGitLaunch: async (command: string, env: NodeJS.ProcessEnv) => {
+      const writable = request.additionalWritableDirs ?? [];
+      await assertCompatibleCodexLayers(env, [cwd, ...writable]);
+      return resolveManagedGitLauncher(command, env, [], pluginExecutionRoots(cwd, ...writable));
+    } };
+  if (request.sandbox === 'read-only') return protectedRequest;
   // An active cache registry must not inherit Codex's implicit temp-directory grants.
-  return { ...request, configOverrides: [...(request.configOverrides ?? []),
+  return { ...protectedRequest, configOverrides: [...(request.configOverrides ?? []),
     'sandbox_workspace_write.exclude_tmpdir_env_var=true', 'sandbox_workspace_write.exclude_slash_tmp=true'] };
 }
 
@@ -128,7 +141,7 @@ async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecReq
         throw new ManagedWorkspaceStorageError('git_sandbox_invalid');
       }
       return resolveManagedGitLauncher(command, env, [project, git.cache, allocation.roots.scratch, allocation.roots.artifacts, ...extra],
-        [...guard.authorizedRoots, appConfig.codexExecCwd, appConfig.continuationWorkingRoot, appConfig.continuationArtifactsDir]);
+        pluginExecutionRoots(...guard.authorizedRoots));
     },
     prompt: `${enriched.prompt}\n\n[Isolated Git checkout]\nWork in the current checkout. It started at ${git.commit}. Do not use the original source as a working directory.`,
   };

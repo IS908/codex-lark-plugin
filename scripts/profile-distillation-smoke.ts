@@ -200,6 +200,7 @@ let passed = 0;
     assert.equal((await manager.maybeDispatch(trigger)).status, 'dispatched');
     assert.equal(calls[0].sandbox, 'workspace-write');
     assert.equal(calls[0].profile, 'fixture');
+    assert.equal(calls[0].validateManagedGitLaunch, undefined);
     writeFileSync(registry, JSON.stringify({ version: 1, projects: [{ source: join(root, 'source'), cache: join(root, 'cache'),
       repositoryId: 'a'.repeat(64), scope: 'fixture', commit: 'b'.repeat(40) }] }), { mode: 0o600 });
     assert.equal((await manager.maybeDispatch(trigger)).status, 'dispatched');
@@ -207,6 +208,10 @@ let passed = 0;
     assert.equal(calls[1].profile, undefined);
     assert.equal(calls[1].ignoreUserConfig, true);
     assert.ok(calls[1].configOverrides?.includes('approval_policy="never"'));
+    assert.ok(calls[1].validateManagedGitLaunch);
+    const untrusted = join(root, 'codex');
+    writeFileSync(untrusted, '#!/usr/bin/env node\n', { mode: 0o700 });
+    await assert.rejects(calls[1].validateManagedGitLaunch(untrusted, { PATH: root }), { code: 'git_launcher_untrusted' });
     assert.match(await memoryStore.getProfile(userId, userId) ?? '', /A fixture fact/);
     writeFileSync(registry, '{}');
     assert.equal((await manager.maybeDispatch(trigger)).status, 'error');

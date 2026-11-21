@@ -101,6 +101,8 @@ try {
     assert.deepEqual(store.get(request.owner)?.allocation, first);
     assert.deepEqual(first.git, request.git);
     assert.ok(first.gitCheckout);
+    assert.equal(await fs.readFile(path.join(first.gitCheckout.gitDirectory.directory, 'commondir'), 'utf8'), '.\n');
+    assert.equal(await fs.readFile(path.join(first.gitCheckout.gitDirectory.directory, 'config.worktree'), 'utf8'), '');
     const competing = await store.ensure({ ...request, owner: { kind: 'cron_prompt', runId: 'concurrent-cron' } });
     assert.deepEqual(competing.git, first.git);
     assert.notEqual(competing.gitCheckout?.checkout.inode, first.gitCheckout.checkout.inode);
@@ -143,8 +145,10 @@ try {
   const writeRegistry = () => fs.writeFile(registryFile, JSON.stringify({ version: 1, projects: [{ source, cache,
     repositoryId: request.git.repositoryId, scope: request.git.scope, commit }] }), { mode: 0o600 });
   await writeRegistry();
-  const legacy = { prompt: 'Fixture.', sandbox: 'workspace-write' as const };
-  assert.deepEqual((await protectLegacyGitWorkspace(legacy, gitRegistry.configPath)).configOverrides, [
+  const legacy = { cwd: source, prompt: 'Fixture.', sandbox: 'workspace-write' as const };
+  const protectedLegacy = await protectLegacyGitWorkspace(legacy, gitRegistry.configPath);
+  assert.equal(typeof protectedLegacy.validateManagedGitLaunch, 'function');
+  assert.deepEqual(protectedLegacy.configOverrides, [
     'sandbox_workspace_write.exclude_tmpdir_env_var=true', 'sandbox_workspace_write.exclude_slash_tmp=true',
   ]);
   await assert.rejects(protectLegacyGitWorkspace({ ...legacy, sandbox: 'danger-full-access' }, gitRegistry.configPath),
@@ -180,8 +184,10 @@ try {
     Object.assign(appConfig, { continuationWorkingRoot: originalAsyncRoot });
   }
   assert.equal(await resolveSystemGit(), await fs.realpath('/usr/bin/git'));
-  const launcher = await resolveManagedGitLauncher('/usr/bin/true', { PATH: legacyTools }, [first.scratch]);
-  assert.equal(launcher.env.PATH, '/usr/bin:/bin');
+  if (process.platform !== 'linux') {
+    const launcher = await resolveManagedGitLauncher('/usr/bin/true', { PATH: legacyTools }, [first.scratch]);
+    assert.equal(launcher.env.PATH, '/usr/bin:/bin');
+  }
   const wrapper = path.join(operator, 'codex-wrapper');
   await fs.writeFile(wrapper, '#!/usr/bin/env node\n', { mode: 0o700 });
   await assert.rejects(resolveManagedGitLauncher(wrapper, { PATH: '/usr/bin:/bin' }, [first.scratch]),
@@ -229,6 +235,8 @@ try {
       "/usr/bin/git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm 'launcher fixture'",
       `if /usr/bin/touch ${quote(path.join(cache, 'denied-from-launcher'))} 2>/dev/null; then exit 1; fi`,
       `if /usr/bin/touch ${quote(path.join(source, 'denied-from-launcher'))} 2>/dev/null; then exit 2; fi`,
+      'if /usr/bin/touch .git/commondir 2>/dev/null; then exit 3; fi',
+      'if /usr/bin/touch .git/config.worktree 2>/dev/null; then exit 4; fi',
       `printf '%s\\n' ${quote(marker)}`,
     ].join('\n'), launch: async (transport) => (await runCodexExecCommand({ ...launch, timeoutMs: 40_000,
       configOverrides: [...launch.configOverrides ?? [], ...transport] })).text });
@@ -261,6 +269,10 @@ try {
     await fs.writeFile(alternate, '');
     await assert.rejects(store.ensure(request), { code: 'git_checkout_changed' });
     await fs.writeFile(alternate, original);
+    const common = path.join(localGit, 'commondir');
+    await fs.unlink(common);
+    await assert.rejects(store.ensure(request), { code: 'git_checkout_changed' });
+    await fs.writeFile(common, '.\n', { mode: 0o600 });
     await fs.rename(cache, path.join(base, 'displaced-cache'));
     await assert.rejects(store.ensure(request), { code: 'unavailable_directory' });
     await fs.rename(path.join(base, 'displaced-cache'), cache);

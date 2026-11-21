@@ -87,16 +87,37 @@ export async function resolveManagedGitLauncher(command: string, env: NodeJS.Pro
   await resolveSystemGit().catch(() => { throw invalid(); });
   const file = path.isAbsolute(command) ? await executable(command).catch(() => { throw invalid(); }) : await find(command);
   if (process.platform === 'linux') {
-    const bundled = path.resolve(path.dirname(file), '..', 'codex-resources', 'bwrap');
-    const present = await fs.lstat(bundled).then(() => true, (error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return false;
-      throw invalid();
-    });
-    if (present && await executable(bundled).catch(() => { throw invalid(); }) !== bundled) throw invalid();
+    try {
+      const bin = path.dirname(file);
+      const packageDir = path.dirname(bin);
+      const manifest = path.join(packageDir, 'codex-package.json');
+      const meta = await fs.lstat(manifest, { bigint: true });
+      if (path.basename(bin) !== 'bin' || path.basename(file) !== 'codex' || !await trustedDirectory(packageDir)
+        || !meta.isFile() || ![0n, uid].includes(meta.uid) || meta.nlink !== 1n || (meta.mode & 0o022n) !== 0n
+        || meta.size > 16_384n) throw invalid();
+      const metadata = JSON.parse(await fs.readFile(manifest, 'utf8'));
+      if (metadata?.layoutVersion !== 1 || metadata.version !== '0.171.0' || metadata.variant !== 'codex'
+        || metadata.entrypoint !== 'bin/codex' || metadata.resourcesDir !== 'codex-resources' || metadata.pathDir !== 'codex-path') throw invalid();
+      // Require the preferred helper so Codex never needs to search legacy or build-tree locations.
+      const resources = path.join(packageDir, 'codex-resources');
+      const bundled = path.join(resources, 'bwrap');
+      if (await executable(bundled) !== bundled) throw invalid();
+      for (const candidate of systemPath.split(':').map((directory) => path.join(directory, 'bwrap'))) {
+        const system = await fs.realpath(candidate).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return undefined;
+          throw error;
+        });
+        if (!system) continue;
+        const helper = await fs.lstat(system, { bigint: true });
+        if (helper.uid !== 0n || !helper.isFile() || (helper.mode & 0o022n) !== 0n
+          || !workspaceMountLayoutSupported([system], mounts)) throw invalid();
+        await assertSystemDirectory(path.dirname(system));
+      }
+    } catch { throw invalid(); }
   }
-  const subprocessEnv: NodeJS.ProcessEnv = { ...env, PATH: systemPath };
+  const subprocessEnv: NodeJS.ProcessEnv = { ...env, PATH: systemPath, SHELL: '/bin/sh' };
   for (const key of Object.keys(subprocessEnv)) {
-    if (/^(?:NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV|ZDOTDIR|DYLD_.*|LD_.*)$/.test(key)) delete subprocessEnv[key];
+    if (/^(?:NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV|ZDOTDIR|DYLD_.*|LD_.*|CODEX_BWRAP_.*|RUNFILES.*|TEST_SRCDIR)$/.test(key)) delete subprocessEnv[key];
   }
   return { command: file, prefix: [], env: subprocessEnv };
 }

@@ -57046,18 +57046,34 @@ async function resolveManagedGitLauncher(command, env, excluded, executionRoots 
     throw invalid();
   }) : await find(command);
   if (process.platform === "linux") {
-    const bundled = path18.resolve(path18.dirname(file2), "..", "codex-resources", "bwrap");
-    const present = await fs14.lstat(bundled).then(() => true, (error62) => {
-      if (error62.code === "ENOENT") return false;
+    try {
+      const bin = path18.dirname(file2);
+      const packageDir = path18.dirname(bin);
+      const manifest = path18.join(packageDir, "codex-package.json");
+      const meta3 = await fs14.lstat(manifest, { bigint: true });
+      if (path18.basename(bin) !== "bin" || path18.basename(file2) !== "codex" || !await trustedDirectory(packageDir) || !meta3.isFile() || ![0n, uid].includes(meta3.uid) || meta3.nlink !== 1n || (meta3.mode & 0o022n) !== 0n || meta3.size > 16384n) throw invalid();
+      const metadata = JSON.parse(await fs14.readFile(manifest, "utf8"));
+      if (metadata?.layoutVersion !== 1 || metadata.version !== "0.171.0" || metadata.variant !== "codex" || metadata.entrypoint !== "bin/codex" || metadata.resourcesDir !== "codex-resources" || metadata.pathDir !== "codex-path") throw invalid();
+      const resources = path18.join(packageDir, "codex-resources");
+      const bundled = path18.join(resources, "bwrap");
+      if (await executable(bundled) !== bundled) throw invalid();
+      for (const candidate of systemPath.split(":").map((directory) => path18.join(directory, "bwrap"))) {
+        const system = await fs14.realpath(candidate).catch((error62) => {
+          if (error62.code === "ENOENT") return void 0;
+          throw error62;
+        });
+        if (!system) continue;
+        const helper = await fs14.lstat(system, { bigint: true });
+        if (helper.uid !== 0n || !helper.isFile() || (helper.mode & 0o022n) !== 0n || !workspaceMountLayoutSupported([system], mounts)) throw invalid();
+        await assertSystemDirectory(path18.dirname(system));
+      }
+    } catch {
       throw invalid();
-    });
-    if (present && await executable(bundled).catch(() => {
-      throw invalid();
-    }) !== bundled) throw invalid();
+    }
   }
-  const subprocessEnv = { ...env, PATH: systemPath };
+  const subprocessEnv = { ...env, PATH: systemPath, SHELL: "/bin/sh" };
   for (const key of Object.keys(subprocessEnv)) {
-    if (/^(?:NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV|ZDOTDIR|DYLD_.*|LD_.*)$/.test(key)) delete subprocessEnv[key];
+    if (/^(?:NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV|ZDOTDIR|DYLD_.*|LD_.*|CODEX_BWRAP_.*|RUNFILES.*|TEST_SRCDIR)$/.test(key)) delete subprocessEnv[key];
   }
   return { command: file2, prefix: [], env: subprocessEnv };
 }
@@ -57066,6 +57082,7 @@ async function resolveManagedGitLauncher(command, env, excluded, executionRoots 
 var exec3 = promisify3(execFile3);
 var bareGit = ["--bare", "--git-dir=.", "-c", "core.warnAmbiguousRefs=false", "-c", "core.multiPackIndex=false"];
 var cacheGit = [...bareGit, "-c", "core.deltaBaseCacheLimit=16m", "-c", "core.packedGitLimit=64m"];
+var readonlyCheckoutFiles = [["commondir", ".\n"], ["config.worktree", ""]];
 var maxCachePackBytes = 256n * 1024n * 1024n;
 var maxCacheIndexBytes = 32n * 1024n * 1024n;
 var maxCacheObjects = 25e4;
@@ -57225,6 +57242,9 @@ async function createWorkspaceGitCheckout(selection) {
     await assertProtectedWorkspacePath(localInfo, true);
     await fs15.writeFile(path19.join(localInfo.directory, "alternates"), `${objectsPath}
 `, { flag: "wx", mode: 384 });
+    for (const [file2, contents] of readonlyCheckoutFiles) {
+      await fs15.writeFile(path19.join(localGit.directory, file2), contents, { flag: "wx", mode: 384 });
+    }
     if (tree.hasAttributes) await assertCheckoutConversionsWithinBounds(executable, checkout.directory, checkoutGit, snapshot.commit, tree);
     await reserveCheckoutNames(checkout.directory, tree.names);
     await boundedGit(
@@ -57254,20 +57274,20 @@ async function validateWorkspaceGitCheckout(selection, allocation) {
     const info = await pinWorkspacePath(gitDirectory.directory, "objects/info");
     if (info.directory !== path19.join(gitDirectory.directory, "objects", "info")) throw new Error("Displaced object metadata.");
     await assertProtectedWorkspacePath(info, true);
-    for (const indirect of ["commondir", "config.worktree", "objects/info/http-alternates"]) {
-      const exists = await fs15.lstat(path19.join(gitDirectory.directory, indirect)).then(() => true, (error62) => {
-        if (error62.code !== "ENOENT") throw error62;
-        return false;
-      });
-      if (exists) throw new Error("Unexpected Git metadata indirection.");
+    const hasHttpAlternates = await fs15.lstat(path19.join(info.directory, "http-alternates")).then(() => true, (error62) => {
+      if (error62.code !== "ENOENT") throw error62;
+      return false;
+    });
+    if (hasHttpAlternates) throw new Error("Unexpected Git metadata indirection.");
+    for (const [name, contents] of [...readonlyCheckoutFiles, ["objects/info/alternates", `${objectsPath}
+`]]) {
+      const file2 = path19.join(gitDirectory.directory, name);
+      const stat2 = await fs15.lstat(file2, { bigint: true });
+      const payload = Buffer.from(contents);
+      if (!stat2.isFile() || stat2.nlink !== 1n || stat2.size !== BigInt(payload.length) || stat2.uid !== BigInt(process.geteuid()) || (stat2.mode & 0o022n) !== 0n) throw new Error("Invalid fixed Git metadata.");
+      await assertDenyOnlyWorkspaceAcls([file2]);
+      if (!(await readPinnedCachePrefix(file2, stat2, payload.length)).equals(payload)) throw new Error("Changed fixed Git metadata.");
     }
-    const file2 = path19.join(info.directory, "alternates");
-    const stat2 = await fs15.lstat(file2, { bigint: true });
-    const payload = Buffer.from(`${objectsPath}
-`);
-    if (!stat2.isFile() || stat2.nlink !== 1n || stat2.size !== BigInt(payload.length) || stat2.uid !== BigInt(process.geteuid()) || (stat2.mode & 0o022n) !== 0n) throw new Error("Invalid object reference.");
-    await assertDenyOnlyWorkspaceAcls([file2]);
-    if (!(await readPinnedCachePrefix(file2, stat2, payload.length)).equals(payload)) throw new Error("Changed object reference.");
     const { gitDirectory: cache } = selection.cache;
     if ((await fingerprintCache(cache, snapshot.commit, snapshot.objectFormat)).storeFingerprint !== snapshot.storeFingerprint) {
       throw new WorkspaceGitSnapshotError("git_cache_mismatch");
@@ -60330,6 +60350,9 @@ function managedGitCheckoutSessionScope(allocation) {
     inode
   ])).digest("hex");
 }
+function pluginExecutionRoots(...roots) {
+  return [...roots, appConfig.codexExecCwd, appConfig.continuationWorkingRoot, appConfig.continuationArtifactsDir];
+}
 async function protectProfileDistillation(request, configPath) {
   if (!await hasManagedGitRegistry(configPath)) return request;
   const cwd = await fs20.realpath(request.cwd ?? process.cwd());
@@ -60341,15 +60364,28 @@ async function protectProfileDistillation(request, configPath) {
     profile: void 0,
     ignoreUserConfig: true,
     strictConfig: true,
-    configOverrides: ['approval_policy="never"']
+    configOverrides: ['approval_policy="never"'],
+    validateManagedGitLaunch: (command, env) => resolveManagedGitLauncher(command, env, [], pluginExecutionRoots(cwd))
   };
 }
 async function protectLegacyGitWorkspace(request, configPath) {
-  if (!await hasManagedGitRegistry(configPath) || request.sandbox === "read-only") return request;
-  if (request.sandbox !== "workspace-write" || request.profile || request.ignoreUserConfig === false) {
+  if (!await hasManagedGitRegistry(configPath)) return request;
+  if (request.sandbox !== "read-only" && request.sandbox !== "workspace-write" || request.profile || request.ignoreUserConfig === false) {
     throw new ManagedWorkspaceStorageError("git_sandbox_layers_unsupported");
   }
-  return { ...request, configOverrides: [
+  const cwd = await fs20.realpath(request.cwd ?? process.cwd());
+  const protectedRequest = {
+    ...request,
+    cwd,
+    ignoreUserConfig: true,
+    validateManagedGitLaunch: async (command, env) => {
+      const writable = request.additionalWritableDirs ?? [];
+      await assertCompatibleCodexLayers(env, [cwd, ...writable]);
+      return resolveManagedGitLauncher(command, env, [], pluginExecutionRoots(cwd, ...writable));
+    }
+  };
+  if (request.sandbox === "read-only") return protectedRequest;
+  return { ...protectedRequest, configOverrides: [
     ...request.configOverrides ?? [],
     "sandbox_workspace_write.exclude_tmpdir_env_var=true",
     "sandbox_workspace_write.exclude_slash_tmp=true"
@@ -60470,7 +60506,7 @@ async function withGitCheckout(request, enriched, allocation, gitRegistry) {
         command,
         env,
         [project, git2.cache, allocation.roots.scratch, allocation.roots.artifacts, ...extra],
-        [...guard.authorizedRoots, appConfig.codexExecCwd, appConfig.continuationWorkingRoot, appConfig.continuationArtifactsDir]
+        pluginExecutionRoots(...guard.authorizedRoots)
       );
     },
     prompt: `${enriched.prompt}

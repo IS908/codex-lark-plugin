@@ -15,6 +15,8 @@ import { pinWorkspacePath, validateWorkspaceProject, workspacePathContains } fro
 const exec = promisify(execFile);
 const bareGit = ['--bare', '--git-dir=.', '-c', 'core.warnAmbiguousRefs=false', '-c', 'core.multiPackIndex=false'];
 const cacheGit = [...bareGit, '-c', 'core.deltaBaseCacheLimit=16m', '-c', 'core.packedGitLimit=64m'];
+// Linux mounts read-only paths as directories when absent. Keep Git's protected file paths explicit.
+const readonlyCheckoutFiles = [['commondir', '.\n'], ['config.worktree', '']] as const;
 const maxCachePackBytes = 256n * 1024n * 1024n;
 const maxCacheIndexBytes = 32n * 1024n * 1024n;
 const maxCacheObjects = 250_000;
@@ -232,6 +234,9 @@ export async function createWorkspaceGitCheckout(selection: CheckoutSelection) {
     if (localInfo.directory !== path.join(localGit.directory, 'objects', 'info')) throw new WorkspaceGitSnapshotError('git_checkout_failed');
     await assertProtectedWorkspacePath(localInfo, true);
     await fs.writeFile(path.join(localInfo.directory, 'alternates'), `${objectsPath}\n`, { flag: 'wx', mode: 0o600 });
+    for (const [file, contents] of readonlyCheckoutFiles) {
+      await fs.writeFile(path.join(localGit.directory, file), contents, { flag: 'wx', mode: 0o600 });
+    }
     if (tree.hasAttributes) await assertCheckoutConversionsWithinBounds(executable, checkout.directory, checkoutGit, snapshot.commit, tree);
     await reserveCheckoutNames(checkout.directory, tree.names);
     await boundedGit(executable, checkout.directory,
@@ -265,20 +270,20 @@ export async function validateWorkspaceGitCheckout(selection: CheckoutSelection,
     const info = await pinWorkspacePath(gitDirectory.directory, 'objects/info');
     if (info.directory !== path.join(gitDirectory.directory, 'objects', 'info')) throw new Error('Displaced object metadata.');
     await assertProtectedWorkspacePath(info, true);
-    for (const indirect of ['commondir', 'config.worktree', 'objects/info/http-alternates']) {
-      const exists = await fs.lstat(path.join(gitDirectory.directory, indirect)).then(() => true, (error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') throw error;
-        return false;
-      });
-      if (exists) throw new Error('Unexpected Git metadata indirection.');
+    const hasHttpAlternates = await fs.lstat(path.join(info.directory, 'http-alternates')).then(() => true, (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      return false;
+    });
+    if (hasHttpAlternates) throw new Error('Unexpected Git metadata indirection.');
+    for (const [name, contents] of [...readonlyCheckoutFiles, ['objects/info/alternates', `${objectsPath}\n`]]) {
+      const file = path.join(gitDirectory.directory, name);
+      const stat = await fs.lstat(file, { bigint: true });
+      const payload = Buffer.from(contents);
+      if (!stat.isFile() || stat.nlink !== 1n || stat.size !== BigInt(payload.length)
+        || stat.uid !== BigInt(process.geteuid!()) || (stat.mode & 0o022n) !== 0n) throw new Error('Invalid fixed Git metadata.');
+      await assertDenyOnlyWorkspaceAcls([file]);
+      if (!(await readPinnedCachePrefix(file, stat, payload.length)).equals(payload)) throw new Error('Changed fixed Git metadata.');
     }
-    const file = path.join(info.directory, 'alternates');
-    const stat = await fs.lstat(file, { bigint: true });
-    const payload = Buffer.from(`${objectsPath}\n`);
-    if (!stat.isFile() || stat.nlink !== 1n || stat.size !== BigInt(payload.length)
-      || stat.uid !== BigInt(process.geteuid!()) || (stat.mode & 0o022n) !== 0n) throw new Error('Invalid object reference.');
-    await assertDenyOnlyWorkspaceAcls([file]);
-    if (!(await readPinnedCachePrefix(file, stat, payload.length)).equals(payload)) throw new Error('Changed object reference.');
     const { gitDirectory: cache } = selection.cache;
     if ((await fingerprintCache(cache, snapshot.commit, snapshot.objectFormat)).storeFingerprint !== snapshot.storeFingerprint) {
       throw new WorkspaceGitSnapshotError('git_cache_mismatch');
