@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-11-22
+
+### Added
+- Let operators opt pinned projects into sharing preseeded Git objects across foreground runs, prompt Cron runs, and Async Tasks. Each run has its own writable checkout and index; the original source and shared cache stay read-only (#395).
+- Verify exact cache and checkout identities on replay. Stale, revoked, or incompatible selections fail explicitly, without falling back to the original source, fetching remotely, or changing existing files.
+
 ## [2.17.0] - 2026-11-22
 
 ### Added

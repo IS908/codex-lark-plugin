@@ -73,7 +73,7 @@ jobs:
           test "$digest" = "$CODEX_NPM_SHA512"
           platform=package/vendor/x86_64-unknown-linux-musl
           binary="$platform/bin/codex"
-          tar -xzf "$archive" -C "$bundle_dir" "$binary" "$platform/codex-resources/bwrap" "$platform/codex-package.json"
+          tar -xzf "$archive" -C "$bundle_dir" "$binary" "$platform/codex-resources/bwrap" "$platform/codex-package.json" "$platform/codex-path/rg"
           test -x "$bundle_dir/$platform/codex-resources/bwrap"
           test "$("$bundle_dir/$binary" --version)" = 'codex-cli 0.171.0'
           LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX=1 \

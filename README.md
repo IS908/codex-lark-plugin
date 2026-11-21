@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.17.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.18.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -347,10 +347,10 @@ Leave `refs/` empty. Do not run maintenance in the cache, replace it in place,
 or share its physical path with a different key or scope.
 
 Git reuse requires a native Codex CLI with named permission profiles (verified
-with `0.171.0` on macOS), plus system Git at `/usr/bin/git`. Set
+with `0.171.0` on macOS and Linux), plus system Git at `/usr/bin/git`. Set
 `LARK_CODEX_EXEC_COMMAND` to the native binary rather than a shell or npm
 wrapper. On Linux use the official `0.171.0` package and keep `bin/codex`,
-`codex-package.json`, and `codex-resources/bwrap` in their packaged layout.
+`codex-package.json`, `codex-resources/bwrap`, and `codex-path/rg` in their packaged layout.
 Install the binary and helpers in an operator-controlled directory outside all
 plugin-writable roots. Stop the service before first enabling the registry so
 no previous sandboxed commands remain active. While enabled, the launcher uses

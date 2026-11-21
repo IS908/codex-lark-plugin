@@ -86,10 +86,25 @@ export async function resolveManagedGitLauncher(command: string, env: NodeJS.Pro
   }
   await resolveSystemGit().catch(() => { throw invalid(); });
   const file = path.isAbsolute(command) ? await executable(command).catch(() => { throw invalid(); }) : await find(command);
+  const bin = path.dirname(file);
+  const packageDir = path.dirname(bin);
+  const bundledPath = path.join(packageDir, 'codex-path');
+  try {
+    const present = await fs.lstat(bundledPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (!present && process.platform === 'linux') throw invalid();
+    if (present) {
+      if (!present.isDirectory() || await fs.realpath(bundledPath) !== bundledPath || !await trustedDirectory(bundledPath)) throw invalid();
+      const rg = path.join(bundledPath, 'rg');
+      const files = await fs.readdir(bundledPath);
+      // Codex prepends its package's PATH directory. Only the shipped ripgrep is expected there.
+      if (files.length !== 1 || files[0] !== 'rg' || await executable(rg) !== rg) throw invalid();
+    }
+  } catch { throw invalid(); }
   if (process.platform === 'linux') {
     try {
-      const bin = path.dirname(file);
-      const packageDir = path.dirname(bin);
       const manifest = path.join(packageDir, 'codex-package.json');
       const meta = await fs.lstat(manifest, { bigint: true });
       if (path.basename(bin) !== 'bin' || path.basename(file) !== 'codex' || !await trustedDirectory(packageDir)

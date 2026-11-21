@@ -192,6 +192,16 @@ try {
   await fs.writeFile(wrapper, '#!/usr/bin/env node\n', { mode: 0o700 });
   await assert.rejects(resolveManagedGitLauncher(wrapper, { PATH: '/usr/bin:/bin' }, [first.scratch]),
     { code: 'git_launcher_untrusted' });
+  const packageDir = path.join(operator, 'package-fixture');
+  await Promise.all(['bin', 'codex-path', 'codex-resources'].map((directory) => fs.mkdir(path.join(packageDir, directory), { recursive: true })));
+  const candidate = path.join(packageDir, 'bin', 'codex');
+  await Promise.all([candidate, path.join(packageDir, 'codex-path', 'rg'), path.join(packageDir, 'codex-resources', 'bwrap')]
+    .map((destination) => fs.copyFile('/usr/bin/true', destination)));
+  await fs.writeFile(path.join(packageDir, 'codex-package.json'), JSON.stringify({ layoutVersion: 1, version: '0.171.0', variant: 'codex',
+    entrypoint: 'bin/codex', resourcesDir: 'codex-resources', pathDir: 'codex-path' }), { mode: 0o600 });
+  assert.equal((await resolveManagedGitLauncher(candidate, { PATH: '/usr/bin:/bin' }, [first.scratch])).command, candidate);
+  await fs.writeFile(path.join(packageDir, 'codex-path', 'unexpected'), 'fixture');
+  await assert.rejects(resolveManagedGitLauncher(candidate, { PATH: '/usr/bin:/bin' }, [first.scratch]), { code: 'git_launcher_untrusted' });
   await assert.rejects(resolveManagedGitLauncher('codex', { PATH: '.' }, [request.project, first.scratch]), { code: 'git_launcher_untrusted' });
   await assert.rejects(resolveManagedGitLauncher('./codex', { PATH: '/usr/bin' }, [first.scratch]), { code: 'git_launcher_untrusted' });
   await assert.rejects(resolveManagedGitLauncher('codex', { PATH: '' }, [first.scratch]), { code: 'git_launcher_untrusted' });

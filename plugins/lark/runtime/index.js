@@ -57045,10 +57045,26 @@ async function resolveManagedGitLauncher(command, env, excluded, executionRoots 
   const file2 = path18.isAbsolute(command) ? await executable(command).catch(() => {
     throw invalid();
   }) : await find(command);
+  const bin = path18.dirname(file2);
+  const packageDir = path18.dirname(bin);
+  const bundledPath = path18.join(packageDir, "codex-path");
+  try {
+    const present = await fs14.lstat(bundledPath).catch((error62) => {
+      if (error62.code === "ENOENT") return void 0;
+      throw error62;
+    });
+    if (!present && process.platform === "linux") throw invalid();
+    if (present) {
+      if (!present.isDirectory() || await fs14.realpath(bundledPath) !== bundledPath || !await trustedDirectory(bundledPath)) throw invalid();
+      const rg = path18.join(bundledPath, "rg");
+      const files = await fs14.readdir(bundledPath);
+      if (files.length !== 1 || files[0] !== "rg" || await executable(rg) !== rg) throw invalid();
+    }
+  } catch {
+    throw invalid();
+  }
   if (process.platform === "linux") {
     try {
-      const bin = path18.dirname(file2);
-      const packageDir = path18.dirname(bin);
       const manifest = path18.join(packageDir, "codex-package.json");
       const meta3 = await fs14.lstat(manifest, { bigint: true });
       if (path18.basename(bin) !== "bin" || path18.basename(file2) !== "codex" || !await trustedDirectory(packageDir) || !meta3.isFile() || ![0n, uid].includes(meta3.uid) || meta3.nlink !== 1n || (meta3.mode & 0o022n) !== 0n || meta3.size > 16384n) throw invalid();
