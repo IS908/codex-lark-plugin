@@ -21,7 +21,8 @@ const installerVersion = /^\d+\.\d+(?:\.\d+)?(?:[-+][a-zA-Z0-9.]+)?$/;
 type Entry = { info: BigIntStats; digest?: string; target?: string; header?: string; content?: Buffer };
 
 export class WorkspaceDependencyToolchainError extends Error {
-  constructor(readonly code: 'dependency_toolchain_invalid' | 'dependency_toolchain_changed' | 'dependency_toolchain_probe_failed') {
+  constructor(readonly code: 'dependency_toolchain_invalid' | 'dependency_toolchain_changed' | 'dependency_toolchain_probe_failed',
+    readonly probeStage?: 'private_home' | 'configuration' | 'launcher' | 'runtime' | 'protocol') {
     super({ dependency_toolchain_invalid: 'The configured dependency toolchain or its protected paths are invalid.',
       dependency_toolchain_changed: 'The configured dependency toolchain changed after it was selected.',
       dependency_toolchain_probe_failed: 'The dependency toolchain could not be verified in the private offline sandbox.' }[code]);
@@ -163,23 +164,31 @@ export async function probeWorkspaceDependencyToolchain(input: {
       .some((protectedPath) => mounts.contains(protectedPath, candidate) || mounts.contains(candidate, protectedPath))))) invalid();
   if (guard) await guard.assertNewDirectory(planned);
   const home = await mkdirTemporaryInsidePinnedRoot(parent, leaf);
+  let stage: WorkspaceDependencyToolchainError['probeStage'] = 'private_home';
   try {
     await assertProtectedWorkspacePath(home, true);
     const cwd = home.directory;
     const env = { HOME: cwd, CODEX_HOME: cwd, CODEX_SQLITE_HOME: cwd, TMPDIR: cwd, TMP: cwd, TEMP: cwd, PATH: '/usr/bin:/bin',
       LC_ALL: 'C', PIP_CONFIG_FILE: '/dev/null' };
+    stage = 'configuration';
     await assertCompatibleCodexLayers(env, [cwd]);
+    stage = 'launcher';
     const launcher = await resolveManagedGitLauncher(input.codexCommand, env, [home, runtime, installer, ...(guard?.protectedBindings ?? [])]);
     const profileArgs = ['sandbox', ...dependencyGuardSandboxOverrides([cwd], false).flatMap((setting) => ['-c', setting]),
       '-P', DEPENDENCY_GUARD_PROFILE, '-C', cwd, '--', executable];
-    const run = (args: string[]) => probeOutput(launcher.command, [...profileArgs, ...args], cwd, launcher.env);
+    const run = async (args: string[]) => {
+      stage = 'runtime';
+      const raw = await probeOutput(launcher.command, [...profileArgs, ...args], cwd, launcher.env);
+      stage = 'protocol';
+      return JSON.parse(raw);
+    };
     let output: unknown;
     if (ecosystem === 'npm') {
-      const measured = JSON.parse(await run(['--no-global-search-paths', '-e', nodeProbe]));
+      const measured = await run(['--no-global-search-paths', '-e', nodeProbe]);
       // Do not resolve npm's executable module graph merely to identify its measured package version.
       output = { ...measured, installer: selected.npmVersion };
     } else {
-      output = JSON.parse(await run(['-I', '-S', '-B', '-c', pipProbe, runtime.directory, installer.directory]));
+      output = await run(['-I', '-S', '-B', '-c', pipProbe, runtime.directory, installer.directory]);
     }
     const toolchain = dependencyToolchainSchema.safeParse(output);
     if (!toolchain.success || toolchain.data.platform !== process.platform || toolchain.data.arch !== process.arch
@@ -190,7 +199,7 @@ export async function probeWorkspaceDependencyToolchain(input: {
     return { ...selected, toolchain: toolchain.data };
   } catch (error) {
     if (error instanceof WorkspaceDependencyToolchainError) throw error;
-    throw new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed');
+    throw new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed', stage);
   } finally {
     await assertProtectedWorkspacePath(home, true);
     await fs.rm(home.directory, { recursive: true, force: true });
@@ -211,7 +220,7 @@ function probeOutput(command: string, args: string[], cwd: string, env: NodeJS.P
       child.stdout.destroy();
       child.stderr.destroy();
       child.unref();
-      reject(new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed'));
+      reject(new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed', 'runtime'));
     };
     const timer = setTimeout(stop, 15_000);
     for (const stream of [child.stdout, child.stderr]) stream.on('data', (chunk: Buffer) => {
@@ -226,7 +235,7 @@ function probeOutput(command: string, args: string[], cwd: string, env: NodeJS.P
       done = true;
       clearTimeout(timer);
       if (code === 0) resolve(Buffer.concat(output).toString('utf8'));
-      else reject(new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed'));
+      else reject(new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed', 'runtime'));
     });
   });
 }
