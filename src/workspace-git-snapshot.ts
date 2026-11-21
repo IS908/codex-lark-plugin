@@ -6,6 +6,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
+import { resolveSystemGit } from './managed-git-launcher.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities,
   readWorkspaceMountTable, workspaceMountLayoutSupported } from './managed-workspace-ancestry.js';
 import { MANAGED_GIT_CHECKOUT_LEAF, mkdirGitCheckoutInsidePinnedRun } from './managed-workspace-mkdir.js';
@@ -73,7 +74,7 @@ export async function inspectWorkspaceGitSnapshot(input: SnapshotRequest): Promi
   const binding = await validateWorkspaceProject(input.authorizedRoots, input.gitDirectory);
   await assertProtectedWorkspacePath(binding);
   await requireSelfContainedObjectStore(binding.directory, commit);
-  const executable = await trustedGitExecutable(binding.directory);
+  const executable = await trustedGitExecutable();
 
   let objectFormat: string;
   try {
@@ -145,7 +146,7 @@ export async function assertWorkspaceGitCacheIdentity(input: {
 }
 
 export async function assertWorkspaceGitCheckoutMounts(bindings: WorkspaceProjectBinding[]): Promise<void> {
-  await linuxCheckoutMountAliases(bindings.map(({ directory }) => directory));
+  assertLinuxCheckoutMounts(bindings.map(({ directory }) => directory));
 }
 
 async function verifyCache(input: SnapshotRequest, trustedExecutable?: string): Promise<VerifiedGitCache> {
@@ -153,7 +154,7 @@ async function verifyCache(input: SnapshotRequest, trustedExecutable?: string): 
     throw new WorkspaceGitSnapshotError('invalid_snapshot');
   }
   const binding = await validateWorkspaceProject(input.authorizedRoots, input.gitDirectory);
-  const executable = trustedExecutable ?? await trustedGitExecutable(binding.directory);
+  const executable = trustedExecutable ?? await trustedGitExecutable();
   const objectFormat = input.commit.length === 40 ? 'sha1' : 'sha256';
   try {
     const { storeFingerprint, packPath } = await fingerprintCache(binding, input.commit, objectFormat);
@@ -191,10 +192,10 @@ async function inspectCheckoutSelection({ cache, expected, source, scratch, prot
     throw new WorkspaceGitSnapshotError('git_checkout_overlap');
   }
   const exclusions = [...bindings, ...await Promise.all(protectedRoots.map((binding) => validateWorkspaceProject(authorizedRoots, binding)))];
-  const mountAliases = await linuxCheckoutMountAliases(exclusions.map(({ directory }) => directory));
+  assertLinuxCheckoutMounts(exclusions.map(({ directory }) => directory));
   const objectsPath = path.join(gitDirectory.directory, 'objects');
   if (/[\u0000-\u001f\u007f]/.test(objectsPath)) throw new WorkspaceGitSnapshotError('git_checkout_failed');
-  const executable = await trustedGitExecutable(gitDirectory.directory, exclusions, mountAliases);
+  const executable = await trustedGitExecutable();
   const snapshot = await verifyCache(cache, executable);
   if (snapshot.key !== expected.key || snapshot.storeFingerprint !== expected.storeFingerprint) {
     throw new WorkspaceGitSnapshotError('git_cache_mismatch');
@@ -353,11 +354,10 @@ async function reserveCheckoutNames(root: string, names: CheckoutTree['names']):
   }
 }
 
-async function linuxCheckoutMountAliases(workspaces: string[]): Promise<string[]> {
+function assertLinuxCheckoutMounts(workspaces: string[]): void {
   try {
     const mounts = readWorkspaceMountTable();
     if (!workspaceMountLayoutSupported(workspaces, mounts)) throw new Error('Unsupported workspace mount.');
-    return mounts.filter(({ root }) => root !== '/').map(({ directory }) => directory);
   } catch {
     throw new WorkspaceGitSnapshotError('git_checkout_mount_unsupported');
   }
@@ -556,31 +556,8 @@ async function requireSelfContainedObjectStore(directory: string, commit: string
   if (!await requireStore().catch(() => false)) throw new WorkspaceGitSnapshotError('git_directory_not_self_contained');
 }
 
-async function trustedGitExecutable(gitDirectory: string, protectedWorkspaces: WorkspaceProjectBinding[] = [], mountAliases: string[] = []): Promise<string> {
-  const repository = path.basename(gitDirectory) === '.git' ? path.dirname(gitDirectory) : gitDirectory;
-  const excludedPaths = [repository, ...protectedWorkspaces.map(({ directory }) => directory), ...mountAliases];
-  const excludedIdentities = protectedWorkspaces.map(({ device, inode }) => `${device}:${inode}`);
-  const uid = process.geteuid?.();
-  for (const directory of new Set([...(process.env.PATH ?? '').split(path.delimiter).filter(path.isAbsolute), '/usr/bin', '/bin'])) {
-    try {
-      const candidate = await fs.realpath(path.join(directory, 'git'));
-      if (excludedPaths.some((workspace) => workspacePathContains(workspace, candidate))) continue;
-      const stat = await fs.lstat(candidate);
-      if (!stat.isFile() || (stat.uid !== 0 && stat.uid !== uid) || (stat.mode & 0o022) !== 0 || (stat.mode & 0o111) === 0) continue;
-      const parent = path.dirname(candidate);
-      const meta = await fs.lstat(parent, { bigint: true });
-      await assertProtectedWorkspacePath({ directory: parent, device: String(meta.dev), inode: String(meta.ino) });
-      if (excludedIdentities.length) {
-        const ancestry = await readWorkspaceAncestorIdentities(parent);
-        if (excludedIdentities.some((identity) => ancestry.has(identity))) continue;
-      }
-      await assertDenyOnlyWorkspaceAcls([candidate]);
-      return candidate;
-    } catch {
-      // Relative entries and unprotected executables are not eligible.
-    }
-  }
-  throw new WorkspaceGitSnapshotError('git_unavailable');
+async function trustedGitExecutable(): Promise<string> {
+  return resolveSystemGit().catch(() => { throw new WorkspaceGitSnapshotError('git_unavailable'); });
 }
 
 function verifyCacheGit(executable: string, cwd: string, args: string[]): Promise<Buffer> {

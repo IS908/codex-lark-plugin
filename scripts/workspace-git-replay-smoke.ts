@@ -7,7 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { mock } from 'node:test';
 import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
 import { buildCodexExecArgs, CodexExecAbortedError, runCodexExecCommand } from '../src/codex-exec.js';
-import { resolveManagedGitLauncher } from '../src/managed-git-launcher.js';
+import { appConfig } from '../src/config.js';
+import { resolveManagedGitLauncher, resolveSystemGit } from '../src/managed-git-launcher.js';
 import { protectLegacyGitWorkspace, withManagedWorkspace } from '../src/managed-workspace-exec.js';
 import { parseWorkspaceMountTable, workspaceBackingAliases, workspaceMountLayoutSupported } from '../src/managed-workspace-ancestry.js';
 import { gitSnapshotKey, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
@@ -160,21 +161,46 @@ try {
   assert.ok(argv.includes('--strict-config'));
   assert.ok(argv.includes('default_permissions="lark-managed-git"'));
   assert.ok(!argv.includes('--sandbox') && !argv.includes('--add-dir') && !argv.includes('--ignore-rules'));
+  const legacyTools = path.join(base, 'other-workspace-tools');
+  await fs.mkdir(legacyTools, { mode: 0o700 });
+  const otherExecutable = path.join(legacyTools, 'native-fixture');
+  await fs.copyFile('/usr/bin/true', otherExecutable);
+  await fs.chmod(otherExecutable, 0o700);
+  assert.ok(prepared.validateManagedGitLaunch);
+  await assert.rejects(prepared.validateManagedGitLaunch(otherExecutable, { PATH: '/usr/bin' }), { code: 'git_launcher_untrusted' });
+  const asyncOnlyRoot = path.join(path.dirname(base), 'other-async-root');
+  await fs.mkdir(asyncOnlyRoot, { mode: 0o700 });
+  const asyncExecutable = path.join(asyncOnlyRoot, 'native-fixture');
+  await fs.copyFile(otherExecutable, asyncExecutable);
+  const originalAsyncRoot = appConfig.continuationWorkingRoot;
+  try {
+    Object.assign(appConfig, { continuationWorkingRoot: asyncOnlyRoot });
+    await assert.rejects(prepared.validateManagedGitLaunch(asyncExecutable, { PATH: '/usr/bin' }), { code: 'git_launcher_untrusted' });
+  } finally {
+    Object.assign(appConfig, { continuationWorkingRoot: originalAsyncRoot });
+  }
+  assert.equal(await resolveSystemGit(), await fs.realpath('/usr/bin/git'));
+  const launcher = await resolveManagedGitLauncher('/usr/bin/true', { PATH: legacyTools }, [first.scratch]);
+  assert.equal(launcher.env.PATH, '/usr/bin:/bin');
+  const wrapper = path.join(operator, 'codex-wrapper');
+  await fs.writeFile(wrapper, '#!/usr/bin/env node\n', { mode: 0o700 });
+  await assert.rejects(resolveManagedGitLauncher(wrapper, { PATH: '/usr/bin:/bin' }, [first.scratch]),
+    { code: 'git_launcher_untrusted' });
   await assert.rejects(resolveManagedGitLauncher('codex', { PATH: '.' }, [request.project, first.scratch]), { code: 'git_launcher_untrusted' });
   await assert.rejects(resolveManagedGitLauncher('./codex', { PATH: '/usr/bin' }, [first.scratch]), { code: 'git_launcher_untrusted' });
-  await assert.rejects(resolveManagedGitLauncher('/usr/bin/true', { PATH: '' }, [first.scratch]), { code: 'git_launcher_untrusted' });
+  await assert.rejects(resolveManagedGitLauncher('codex', { PATH: '' }, [first.scratch]), { code: 'git_launcher_untrusted' });
   const directoryWithDelimiter = path.join(base, 'path:segment');
   const launcherAlias = path.join(base, 'launcher-alias');
   await fs.mkdir(directoryWithDelimiter);
   await fs.symlink(directoryWithDelimiter, launcherAlias, 'dir');
-  await assert.rejects(resolveManagedGitLauncher('/usr/bin/true', { PATH: launcherAlias }, [first.scratch]), { code: 'git_launcher_untrusted' });
+  await assert.rejects(resolveManagedGitLauncher('codex', { PATH: launcherAlias }, [first.scratch]), { code: 'git_launcher_untrusted' });
   if (process.geteuid?.() !== 0) {
     const nonExecutable = path.join(base, 'non-executable-tools');
     await fs.mkdir(nonExecutable);
-    const gitStub = path.join(nonExecutable, 'git');
-    await fs.writeFile(gitStub, 'fixture');
-    await fs.chmod(gitStub, 0o010);
-    await assert.rejects(resolveManagedGitLauncher('/usr/bin/true', { PATH: nonExecutable }, [first.scratch]), { code: 'git_launcher_untrusted' });
+    const commandStub = path.join(nonExecutable, 'codex');
+    await fs.writeFile(commandStub, 'fixture');
+    await fs.chmod(commandStub, 0o010);
+    await assert.rejects(resolveManagedGitLauncher('codex', { PATH: nonExecutable }, [first.scratch]), { code: 'git_launcher_untrusted' });
   }
   const abort = new AbortController();
   await assert.rejects(runCodexExecCommand({ prompt: 'Cancel before launch.', cwd: checkout, command: '/does-not-exist',
@@ -190,16 +216,8 @@ try {
   await assert.rejects(runCodexExecCommand({ ...prepared, command: '/does-not-exist' }), { code: 'git_sandbox_layers_unsupported' });
   await fs.unlink(path.join(codexHome, 'rules', 'operator.rules'));
   if (process.env.LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX === '1') {
-    let command: string | undefined;
-    const nativeBinary = process.env.LARK_TEST_CODEX_NATIVE_BINARY;
-    if (nativeBinary) {
-      assert.ok(path.isAbsolute(nativeBinary));
-      const launcherDir = path.join(base, 'protected-launcher');
-      await fs.mkdir(launcherDir, { mode: 0o700 });
-      command = path.join(launcherDir, 'codex');
-      await fs.copyFile(nativeBinary, command, fs.constants.COPYFILE_FICLONE);
-      await fs.chmod(command, 0o700);
-    }
+    const command = process.env.LARK_TEST_CODEX_NATIVE_BINARY;
+    if (command) assert.ok(path.isAbsolute(command));
     const env = { ...Object.fromEntries(Object.keys(process.env).map((name) => [name, undefined])),
       CODEX_HOME: codexHome, HOME: base, PATH: process.env.PATH };
     const launch = await withManagedWorkspace({ ...execRequest, extraEnv: env, command }, first, gitRegistry);

@@ -346,9 +346,13 @@ For SHA-256 use `repositoryformatversion = 1` and append
 Leave `refs/` empty. Do not run maintenance in the cache, replace it in place,
 or share its physical path with a different key or scope.
 
-Git reuse requires a Codex CLI with named permission profiles (verified with
-`0.171.0` on macOS) and a trusted executable path with protected ancestors.
-Group-writable launch paths, incompatible configuration or command rules, and
+Git reuse requires a native Codex CLI with named permission profiles (verified
+with `0.171.0` on macOS), plus system Git at `/usr/bin/git`. Set
+`LARK_CODEX_EXEC_COMMAND` to the native binary rather than a shell or npm
+wrapper. Install the binary and its bundled helpers together in an
+operator-controlled directory outside all plugin-writable roots. The launcher
+uses a system-only `PATH` for child tools. Group-writable launch paths,
+incompatible configuration or command rules, and
 unsupported mount layouts are rejected. The run owns its checkout and index;
 the source and shared object store remain read-only, and unsandboxed host CLI
 tools are unavailable for that run. Removing or changing a registry entry

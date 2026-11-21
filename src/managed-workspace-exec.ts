@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { CodexExecRequest, CodexExecSandbox } from './codex-exec.js';
+import { appConfig } from './config.js';
 import type { ManagedRunAllocation } from './domain/managed-workspace.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { createManagedGitSandboxOptions } from './managed-git-sandbox.js';
@@ -126,7 +127,8 @@ async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecReq
       if (current.overrides.some((override, index) => override !== options.overrides[index])) {
         throw new ManagedWorkspaceStorageError('git_sandbox_invalid');
       }
-      return resolveManagedGitLauncher(command, env, [project, git.cache, allocation.roots.scratch, allocation.roots.artifacts, ...extra]);
+      return resolveManagedGitLauncher(command, env, [project, git.cache, allocation.roots.scratch, allocation.roots.artifacts, ...extra],
+        [...guard.authorizedRoots, appConfig.codexExecCwd, appConfig.continuationWorkingRoot, appConfig.continuationArtifactsDir]);
     },
     prompt: `${enriched.prompt}\n\n[Isolated Git checkout]\nWork in the current checkout. It started at ${git.commit}. Do not use the original source as a working directory.`,
   };
