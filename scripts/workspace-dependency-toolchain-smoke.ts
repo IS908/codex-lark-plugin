@@ -41,15 +41,33 @@ try {
   if (native) {
     const npmCommand = process.env.LARK_TEST_NPM || execFileSync('/bin/sh', ['-c', 'command -v npm'], { encoding: 'utf8' }).trim();
     const nodeBinary = await fs.realpath(process.execPath);
-    const npmInstaller = path.dirname(path.dirname(await fs.realpath(npmCommand)));
     const nodePrefix = path.dirname(path.dirname(nodeBinary));
+    const npmCli = await fs.realpath(process.platform === 'linux' && !process.env.LARK_TEST_NPM
+      ? path.join(nodePrefix, 'lib/node_modules/npm/bin/npm-cli.js') : npmCommand);
+    assert.equal(path.basename(npmCli), 'npm-cli.js', 'Use an npm CLI entrypoint, not a wrapper or shim.');
+    const npmInstaller = path.dirname(path.dirname(npmCli));
     const nodeRuntime = path.join(fixture, 'node-runtime');
     const npmRoot = path.join(fixture, 'npm-installer');
-    await fs.cp(nodePrefix, nodeRuntime, { recursive: true, verbatimSymlinks: true, filter: async (source) => {
-      const relative = path.relative(nodePrefix, source);
-      return relative !== 'bin/npm' && relative !== 'bin/npx';
-    } });
+    const nodeExecutable = path.join(nodeRuntime, 'bin', 'node');
+    if (process.platform === 'linux') {
+      // The CI Node executable needs only system libraries; do not copy unrelated tools in its install prefix.
+      await fs.mkdir(path.dirname(nodeExecutable), { recursive: true, mode: 0o700 });
+      await fs.copyFile(nodeBinary, nodeExecutable);
+    } else {
+      // The Homebrew executable also needs its private libnode dylib relative to bin/.
+      await fs.cp(nodePrefix, nodeRuntime, { recursive: true, verbatimSymlinks: true, filter: (source) => {
+        const relative = path.relative(nodePrefix, source);
+        return relative !== 'bin/npm' && relative !== 'bin/npx';
+      } });
+    }
     await fs.cp(npmInstaller, npmRoot, { recursive: true, verbatimSymlinks: true });
+    const common = { codexCommand: native, temporaryRoot: await pin(fixture) };
+    const npmProbe = await probeWorkspaceDependencyToolchain({ ...common,
+      configured: { ecosystem: 'npm', executable: nodeExecutable, runtime: await pin(nodeRuntime), installer: await pin(npmRoot) } });
+    assert.equal(npmProbe.toolchain.runtime, process.versions.node);
+    assert.equal(npmProbe.toolchain.abi, process.versions.modules);
+    assert.match(npmProbe.toolchain.installer, /^\d+\.\d+\.\d+/);
+    console.log(`workspace dependency native Node/npm: ${npmProbe.toolchain.runtime}/${npmProbe.toolchain.installer}`);
     const pythonPath = process.env.LARK_TEST_PYTHON_PATH;
     assert.ok(pythonPath, 'Set the exact Python binary for the native toolchain probe.');
     const python = await fs.realpath(pythonPath);
@@ -62,13 +80,6 @@ try {
     await fs.cp(pythonMetadata[0], pythonRuntime, { recursive: true, verbatimSymlinks: true,
       filter: (source) => !/^lib\/python[0-9.]+\/site-packages$/.test(path.relative(pythonMetadata[0], source)) });
     await fs.cp(pythonMetadata[1], pipRoot, { recursive: true, verbatimSymlinks: true });
-    const common = { codexCommand: native, temporaryRoot: await pin(fixture) };
-    const npmProbe = await probeWorkspaceDependencyToolchain({ ...common,
-      configured: { ecosystem: 'npm', executable: path.join(nodeRuntime, path.relative(nodePrefix, nodeBinary)),
-        runtime: await pin(nodeRuntime), installer: await pin(npmRoot) } });
-    assert.equal(npmProbe.toolchain.runtime, process.versions.node);
-    assert.equal(npmProbe.toolchain.abi, process.versions.modules);
-    assert.match(npmProbe.toolchain.installer, /^\d+\.\d+\.\d+/);
     const pipProbe = await probeWorkspaceDependencyToolchain({ ...common,
       configured: { ecosystem: 'pip', executable: pythonExecutable, runtime: await pin(pythonRuntime), installer: await pin(pipRoot) } });
     assert.equal(pipProbe.toolchain.abi, pythonMetadata[2]);
