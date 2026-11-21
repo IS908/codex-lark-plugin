@@ -57308,7 +57308,9 @@ async function hasWorkspaceDependencyRegistry(configPath) {
 async function readRegistry3(configPath, allowMissingCachesForStorage = false) {
   if (!configPath) return void 0;
   const directory = path15.dirname(path15.resolve(configPath));
-  const raw = await readProtectedJson(path15.join(directory, REGISTRY), REGISTRY_BYTES, "dependency_registry_invalid");
+  const filename = path15.join(directory, REGISTRY);
+  const readPolicy = () => readProtectedJson(filename, REGISTRY_BYTES, "dependency_registry_invalid");
+  const raw = await readPolicy();
   if (raw === void 0) return void 0;
   try {
     const registry2 = registrySchema3.parse(raw);
@@ -57341,6 +57343,7 @@ async function readRegistry3(configPath, allowMissingCachesForStorage = false) {
       if (protectedLocations.some((other) => overlap2(location, other, mounts.contains))) fail("dependency_registry_invalid");
       protectedLocations.push(location);
     }
+    if (JSON.stringify(await readPolicy()) !== JSON.stringify(raw)) fail("dependency_registry_invalid");
     return { ...registry2, directory, mounts, protected: protectedLocations };
   } catch {
     return fail("dependency_registry_invalid");
@@ -64134,6 +64137,7 @@ async function installWorkspaceDependencyInStaging(request) {
   }
 }
 async function ensureManagedWorkspaceDependencyOutput(store, owner, ecosystem2, material) {
+  material?.signal?.throwIfAborted();
   const allocation = store.get(owner)?.allocation;
   const selection = allocation?.dependencySelections?.find(({ identity }) => identity.ecosystem === ecosystem2);
   if (!allocation?.gitCheckout || !selection) {
@@ -64144,6 +64148,7 @@ async function ensureManagedWorkspaceDependencyOutput(store, owner, ecosystem2, 
   if (recorded) {
     if (!recorded.receipt) throw new ManagedWorkspaceStorageError("dependency_install_incomplete");
     await validatePublishedWorkspaceDependencyOutput({ ...locations, nonce: recorded.nonce, receipt: recorded.receipt });
+    material?.signal?.throwIfAborted();
     return recorded.receipt;
   }
   if (!material || material.input.ecosystem !== ecosystem2) fail2("dependency_install_selection_mismatch");
@@ -64184,8 +64189,15 @@ async function publishWorkspaceDependencyOutput(request, policy2) {
       checkout.device,
       checkout.inode,
       path28.relative(checkout.directory, receipt.output.directory)
-    ], { cwd: checkout.directory, env: {}, timeout: 1e4, maxBuffer: 1024 });
+    ], {
+      cwd: checkout.directory,
+      env: {},
+      timeout: 1e4,
+      maxBuffer: 1024,
+      signal: policy2?.signal
+    });
   } catch (error62) {
+    policy2?.signal?.throwIfAborted();
     return fail2(error62.code === 2 ? "dependency_install_output_conflict" : "dependency_installed_output_invalid");
   }
   await validateNpmAttachment(request);

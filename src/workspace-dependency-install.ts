@@ -213,6 +213,7 @@ interface Publication {
 
 export async function ensureManagedWorkspaceDependencyOutput(store: ManagedWorkspaceStore, owner: ManagedRunOwner,
   ecosystem: WorkspaceDependencyEcosystem, material?: WorkspaceDependencyInstallMaterial): Promise<WorkspaceDependencyInstallReceipt> {
+  material?.signal?.throwIfAborted();
   const allocation = store.get(owner)?.allocation;
   const selection = allocation?.dependencySelections?.find(({ identity }) => identity.ecosystem === ecosystem);
   if (!allocation?.gitCheckout || !selection) {
@@ -223,6 +224,7 @@ export async function ensureManagedWorkspaceDependencyOutput(store: ManagedWorks
   if (recorded) {
     if (!recorded.receipt) throw new ManagedWorkspaceStorageError('dependency_install_incomplete');
     await validatePublishedWorkspaceDependencyOutput({ ...locations, nonce: recorded.nonce, receipt: recorded.receipt });
+    material?.signal?.throwIfAborted();
     return recorded.receipt;
   }
   if (!material || material.input.ecosystem !== ecosystem) fail('dependency_install_selection_mismatch');
@@ -262,8 +264,11 @@ export async function publishWorkspaceDependencyOutput(request: Publication,
   const { checkout, receipt } = request;
   try {
     await exec(process.execPath, ['--input-type=commonjs', '-e', attachNpmOutput, '--', checkout.directory, checkout.device,
-      checkout.inode, path.relative(checkout.directory, receipt.output.directory)], { cwd: checkout.directory, env: {}, timeout: 10_000, maxBuffer: 1024 });
+      checkout.inode, path.relative(checkout.directory, receipt.output.directory)], {
+      cwd: checkout.directory, env: {}, timeout: 10_000, maxBuffer: 1024, signal: policy?.signal,
+    });
   } catch (error) {
+    policy?.signal?.throwIfAborted();
     return fail((error as { code?: unknown }).code === 2 ? 'dependency_install_output_conflict' : 'dependency_installed_output_invalid');
   }
   await validateNpmAttachment(request);

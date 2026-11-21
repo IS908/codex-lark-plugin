@@ -186,6 +186,20 @@ try {
     assert.throws(() => store.get(optOut.owner), { code: 'invalid_binding' });
   } finally { reopenedLedger.close(); }
   assert.deepEqual(await resolveWorkspaceDependencySelections({ ...request, expected }), prepared);
+  const lstat = fs.lstat.bind(fs);
+  let changedDuringApproval = false;
+  const changeWhileCheckingBindings = mock.method(fs, 'lstat', async (...args: Parameters<typeof lstat>) => {
+    if (args[0] === wheelhouse.directory && !changedDuringApproval) {
+      changedDuringApproval = true;
+      await writeRegistry({ ...policy, projects: [] });
+    }
+    return lstat(...args);
+  });
+  try {
+    await assert.rejects(assertWorkspaceDependencySelectionAuthorized(configPath, selected, pinned, expected),
+      { code: 'dependency_registry_invalid' });
+    assert.ok(changedDuringApproval);
+  } finally { changeWhileCheckingBindings.mock.restore(); await writeRegistry(policy); }
   assert.deepEqual(await resolveWorkspaceDependencySelections({ ...request, expected: [] }), []);
   await assert.rejects(resolveWorkspaceDependencySelections({ ...request, git: undefined }), { code: 'dependency_project_unavailable' });
   await assert.rejects(resolveWorkspaceDependencySelections({ ...request, git: { cache: gitCache, ...otherScope } }),

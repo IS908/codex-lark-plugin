@@ -229,7 +229,9 @@ export async function hasWorkspaceDependencyRegistry(configPath: string): Promis
 async function readRegistry(configPath?: string, allowMissingCachesForStorage = false) {
   if (!configPath) return undefined;
   const directory = path.dirname(path.resolve(configPath));
-  const raw = await readProtectedJson(path.join(directory, REGISTRY), REGISTRY_BYTES, 'dependency_registry_invalid');
+  const filename = path.join(directory, REGISTRY);
+  const readPolicy = () => readProtectedJson(filename, REGISTRY_BYTES, 'dependency_registry_invalid');
+  const raw = await readPolicy();
   if (raw === undefined) return undefined;
   try {
     const registry = registrySchema.parse(raw);
@@ -262,6 +264,8 @@ async function readRegistry(configPath?: string, allowMissingCachesForStorage = 
       if (protectedLocations.some((other) => overlap(location, other, mounts.contains))) fail('dependency_registry_invalid');
       protectedLocations.push(location);
     }
+    // Binding checks can take time; never return approval read before a concurrent policy change.
+    if (JSON.stringify(await readPolicy()) !== JSON.stringify(raw)) fail('dependency_registry_invalid');
     return { ...registry, directory, mounts, protected: protectedLocations };
   } catch { return fail('dependency_registry_invalid'); }
 }
