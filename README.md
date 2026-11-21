@@ -257,6 +257,33 @@ directory must already be inside `LARK_CODEX_EXEC_CWD` and, for an Async Task,
 inside `LARK_CONTINUATION_WORKING_ROOT`. A registry entry does not grant access,
 change the sandbox, create a checkout, or move any files.
 
+#### Managed run storage
+
+To opt in, create `~/.codex/channels/lark/runtime-config/managed-workspace.json`:
+
+```json
+{
+  "version": 1,
+  "scratchRoot": "/Users/you/workspace/run-scratch",
+  "artifactRoot": "/Users/you/workspace/run-artifacts"
+}
+```
+
+Provision both POSIX directories first. They must be owned by the plugin account,
+not writable by other users, mutually disjoint, and within the workload's existing
+authorized roots. Storage must be separate from the selected source project.
+For `workspace-write`, bind a source project; exact directory grants do not
+isolate runs from other processes that already have unrestricted access as the
+plugin account. Opt-in storage does not support `danger-full-access` foreground
+or Cron runs.
+
+Each admitted run records its roots and uses separate scratch and formal artifact
+directories. Retries do not select new roots from edited configuration. For a
+managed Async Task, `/task status ID` lists committed checkpoint artifact IDs.
+`/task artifact ID ARTIFACT_ID` verifies and sends a file from the formal artifact
+directory, even if scratch is unavailable. Request it in a private chat or the
+original task chat/thread. These settings do not move or clean up existing files.
+
 ### 4. Start
 
 If installed via the plugin marketplace, the plugin starts automatically when Codex launches. Dependencies are installed on first run.

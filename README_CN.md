@@ -226,6 +226,28 @@ npm run --silent doctor -- --workspace-storage --json
 `LARK_CODEX_EXEC_CWD` 授权范围内，Async Task 还必须在 `LARK_CONTINUATION_WORKING_ROOT` 内。
 注册表不会扩大权限、改变沙箱、创建 checkout 或移动文件。
 
+#### 托管运行目录
+
+可通过创建 `~/.codex/channels/lark/runtime-config/managed-workspace.json` 启用：
+
+```json
+{
+  "version": 1,
+  "scratchRoot": "/Users/you/workspace/run-scratch",
+  "artifactRoot": "/Users/you/workspace/run-artifacts"
+}
+```
+
+请先创建两个 POSIX 目录。目录必须由插件账号拥有、不能由其他用户写入、互不嵌套，且都在
+工作负载原有授权范围内。托管目录与选定的源码项目分开；`workspace-write` 模式需绑定源码项目。
+目录授权不能隔离已作为插件账号拥有无限制访问的其它进程。`danger-full-access` 的前台和
+Cron 不支持启用托管目录。
+
+每次运行登记各自的临时目录和正式产物目录，重试不会从修改后的配置重新选择根目录。
+托管 Async Task 的 `/task status ID` 会显示已提交 checkpoint 的产物 ID；即使临时目录不可用，
+也可以在私聊或任务原群原话题用 `/task artifact ID ARTIFACT_ID` 校验并取回文件。
+配置不会迁移或清理现有文件。
+
 ### 第 4 步：启动
 
 通过插件市场安装时，插件会随 Codex 自动启动，首次运行时会自动安装依赖。

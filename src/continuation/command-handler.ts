@@ -9,18 +9,22 @@ import {
   type ContinuationJob,
 } from '../domain/continuation.js';
 import type { LarkMessage } from '../lark-message.js';
+import type { LarkTransport } from '../lark-transport-contracts.js';
 import { extractMessageText } from '../message-content.js';
 import type { ReplyRequest, ReplySendResult } from '../reply-sender.js';
 import {
   CONTINUATION_RUNTIME_UNAVAILABLE,
   ContinuationServiceError,
+  type ContinuationArtifactReply,
   type ContinuationListStatus,
   type ContinuationTaskService,
 } from './service.js';
 
+const MAX_IM_ARTIFACT_BYTES = 30_000_000;
+
 export const CONTINUATION_COMMAND_DEFINITION = {
   name: 'task' as const,
-  usage: '/task <list|status|cancel|retry|resume|retain|delete>',
+  usage: '/task <list|status|artifact|cancel|retry|resume|retain|delete>',
   description: 'List and manage durable background tasks.',
   scope: 'user' as const,
 };
@@ -29,6 +33,7 @@ const TASK_USAGE = [
   'Usage:',
   '- /task list [--status pending,running,waiting_user,completed,partial,blocked,failed,cancelled]',
   '- /task status <job_id>',
+  '- /task artifact <job_id> <artifact_id>',
   '- /task cancel <job_id>',
   '- /task retry <job_id>',
   '- /task resume <job_id> <input>',
@@ -41,6 +46,7 @@ type TaskCommand =
   | { action: 'status' | 'cancel' | 'retry' | 'delete'; jobId: string }
   | { action: 'resume'; jobId: string; input: string }
   | { action: 'retain'; jobId: string; retained: boolean }
+  | { action: 'artifact'; jobId: string; artifactId: string }
   | { action: 'invalid' };
 
 const LIST_STATUSES = new Set<ContinuationListStatus>([
@@ -61,6 +67,7 @@ export interface ContinuationCommandHandlerOptions {
   service: ContinuationTaskService | null;
   ownerOpenId?: string | null;
   sendReply: (request: ReplyRequest) => Promise<ReplySendResult>;
+  sendArtifactReply?: (artifact: ContinuationArtifactReply) => Promise<void>;
   sendDocCommentReply?: (request: {
     doc_token: string;
     comment_id: string;
@@ -120,6 +127,14 @@ export async function handleContinuationCommand(
     } else if (!options.service) {
       auditResult = 'error';
       text = CONTINUATION_RUNTIME_UNAVAILABLE;
+    } else if (command.action === 'artifact') {
+      if (!options.service.getArtifactForActor || !options.sendArtifactReply) {
+        throw new Error('Managed artifact delivery is unavailable.');
+      }
+      const artifact = await options.service.getArtifactForActor(command.jobId, command.artifactId, options.message, options.ownerOpenId);
+      await options.sendArtifactReply(artifact);
+      await auditCommand('lark_task_command', actorOpenId, auditArgs, 'ok');
+      return true;
     } else {
       text = await executeTaskCommand(
         command,
@@ -151,6 +166,9 @@ function parseTaskCommand(message: LarkMessage): TaskCommand | null {
   if (message.messageType === 'reaction' || message.reaction) return null;
   const text = taskCommandText(message);
   const normalized = stripLeadingMentions(text.replace(/\u00a0/g, ' ').trim());
+  const authenticated = stripLeadingMentions((message.workspaceDirectiveText ?? '').replace(/\u00a0/g, ' ').trim());
+  const artifact = authenticated.match(/^\/task\s+artifact\s+(job_[A-Za-z0-9_-]{8,128})\s+([A-Za-z0-9_.-]{1,80})$/i);
+  if (artifact) return { action: 'artifact', jobId: artifact[1], artifactId: artifact[2] };
   if (!/^\/task(?:\s|$)/i.test(normalized)) return null;
   const listMatch = normalized.match(/^\/task\s+list(?:\s+--status\s+(.+?))?\s*$/i);
   if (listMatch) {
@@ -205,7 +223,7 @@ function stripLeadingMentions(text: string): string {
 }
 
 async function executeTaskCommand(
-  command: Exclude<TaskCommand, { action: 'invalid' }>,
+  command: Exclude<TaskCommand, { action: 'invalid' | 'artifact' }>,
   service: ContinuationTaskService,
   actorOpenId: string,
   ownerOpenId: string | null | undefined,
@@ -320,6 +338,9 @@ function formatTaskStatus(job: ContinuationJob): string {
     ...(job.resultArtifacts.length > 0
       ? [`Artifacts:\n${job.resultArtifacts.map((artifact) => `- ${artifact}`).join('\n')}`]
       : []),
+    ...(job.permissions.filesystem.managedWorkspaceRoots && job.checkpoint?.artifacts.length
+      ? [`Checkpoint artifact IDs: ${job.checkpoint.artifacts.map((artifact) => artifact.id).join(', ')}\nIM delivery requires a nonempty file no larger than 30 MB.`]
+      : []),
   ].join('\n');
 }
 
@@ -383,4 +404,28 @@ async function sendCommandReply(
       : {}),
     thread_id: options.message.threadId,
   });
+}
+
+export async function sendContinuationArtifactReply(
+  transport: Pick<LarkTransport, 'uploadFile'>,
+  sendReply: ContinuationCommandHandlerOptions['sendReply'],
+  message: LarkMessage,
+  artifact: ContinuationArtifactReply,
+): Promise<void> {
+  if ((message.chatType !== 'p2p' && message.chatType !== 'group') || !isFeishuOpenMessageId(message.messageId)) {
+    throw new Error('Managed artifacts require an authenticated IM reply.');
+  }
+  if (artifact.content.length === 0 || artifact.content.length > MAX_IM_ARTIFACT_BYTES) {
+    throw new ContinuationServiceError('invalid_state', 'Managed artifact retained locally: IM delivery requires a nonempty file no larger than 30 MB.');
+  }
+  const fileKey = await transport.uploadFile(artifact.content, artifact.fileName);
+  if (!fileKey) throw new Error('Lark did not return a file key for the managed artifact.');
+  const result = await sendReply({
+    chat_id: message.chatId, text: `Artifact: ${artifact.fileName}`,
+    reply_to: message.messageId, thread_id: message.threadId,
+    routing: 'standalone',
+    idempotencyKey: `task-artifact:${message.messageId}`,
+    rawMessage: { msgType: 'file', content: JSON.stringify({ file_key: fileKey }) },
+  });
+  if (result.isError || !result.messageIds?.length) throw new Error('Lark did not confirm delivery of the managed artifact.');
 }

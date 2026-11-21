@@ -28,7 +28,9 @@
 - [x] Wire Async Task admission, checkpoint verification and explicit retry to the persisted workspace snapshot. Retry creates a new allocation, copies verified artifacts independently of the source scratch, and keeps legacy jobs on the legacy artifact store.
 - [x] Add bounded formal artifact reads that return verified bytes, not a path to reopen later.
 - [x] Finalize Cron admission failures in preflight and preserve the reason during interruption and expiry. Keep Async Task storage blockers terminal without promoting unavailable checkpoint files, and refuse redaction while managed erasure is unsupported.
-- [ ] Anchor artifact reads to the verified parent directory through launch, and publish verified retry copies atomically without replacing existing files.
+- [x] Anchor artifact reads to the verified parent directory through launch, and publish verified retry copies atomically without replacing existing files.
 - [ ] Before release, verify protected ancestry for writable launch paths, protect registered source projects from future overlapping allocations, and preserve the unmanaged decision on a foreground replay.
-- [ ] Expose verified artifact references through existing lookup/delivery paths and document opt-in operation. Cover delivery with the scratch directory unavailable and pre-upgrade records after config changes.
+- [x] Expose committed Async Task artifacts through the authenticated status and artifact commands. Document opt-in operation and verify on-demand delivery after scratch is unavailable.
+- [ ] Reconcile interrupted retry publication under the retry creation lock before applying the target quota. Cover interruption both before and after the exclusive link; do not adopt or remove unverified entries.
+- [ ] Connect formal references to pending deliveries and the remaining foreground/Cron artifact paths. Test durable delivery with scratch unavailable and legacy delivery after config changes.
 - [ ] Run the full suite and marketplace checks, get independent review, merge, verify main CI, publish a tagged release, then close #393. Cache reuse and cleanup remain subsequent #387 milestones.

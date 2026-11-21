@@ -197,6 +197,11 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       this.managedWorkspacePolicy);
   }
 
+  async readManagedArtifact(job: ContinuationJob, relativePath: string, sha256: string): Promise<Buffer> {
+    if (!job.permissions.filesystem.managedWorkspaceRoots) throw new Error('Managed artifacts are not available for this task.');
+    return this.artifactsForJob(job).readArtifact(job.jobId, relativePath, sha256);
+  }
+
   async create(
     request: ContinuationCreateRequest,
   ): Promise<{ job: ContinuationJob; created: boolean }> {

@@ -8,7 +8,7 @@ import { formatCodexExecFailureReply, shouldSendCodexExecFailureReply } from './
 import { handleCodexModelCommand } from './codex-model-command.js';
 import type { CodexExecSessionHealthRecorder } from './codex-exec-delivery.js';
 import type { CodexExecSessionStore } from './codex-session-store.js';
-import { handleContinuationCommand } from './continuation/command-handler.js';
+import { handleContinuationCommand, sendContinuationArtifactReply } from './continuation/command-handler.js';
 import type { ContinuationTaskService } from './continuation/service.js';
 import { handleCronInboundCommand } from './cron/inbound-command.js';
 import type { CronControlService } from './cron/control-service.js';
@@ -132,6 +132,7 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
       service: continuationService ?? null,
       ownerOpenId: appConfig.ownerOpenId,
       sendReply: sendReplyViaFeishu,
+      sendArtifactReply: (artifact) => sendContinuationArtifactReply(channel.getLarkTransport(), sendReplyViaFeishu, message, artifact),
       sendDocCommentReply: async (request) => {
         const response = await channel.getLarkTransport().replyDocComment({
           docToken: request.doc_token,

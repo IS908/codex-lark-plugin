@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type {
   AsyncTaskContract,
   AsyncTaskFactSnapshot,
@@ -64,6 +65,11 @@ export interface ContinuationActionInput {
   requested_paths?: string[];
 }
 
+export interface ContinuationArtifactReply {
+  fileName: string;
+  content: Buffer;
+}
+
 export interface ContinuationTaskService {
   findExistingFromMessage(message: LarkMessage): Promise<ContinuationJob | null>;
   preflightFromMessage(
@@ -89,6 +95,9 @@ export interface ContinuationTaskService {
     limit?: number,
   ): Promise<ContinuationJob[]>;
   getForActor(jobId: string, actorOpenId: string, ownerOpenId?: string | null): Promise<ContinuationJob>;
+  getArtifactForActor?(
+    jobId: string, artifactId: string, message: LarkMessage, ownerOpenId?: string | null,
+  ): Promise<ContinuationArtifactReply>;
   cancelForActor(
     jobId: string,
     actorOpenId: string,
@@ -401,6 +410,27 @@ export class ContinuationService implements ContinuationTaskService {
     ownerOpenId?: string | null,
   ): Promise<ContinuationJob> {
     return this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+  }
+
+  async getArtifactForActor(
+    jobId: string, artifactId: string, message: LarkMessage, ownerOpenId?: string | null,
+  ): Promise<ContinuationArtifactReply> {
+    if (message.chatType !== 'p2p' && message.chatType !== 'group') throw notAccessibleError();
+    const inspect = async () => {
+      const job = await this.requireAuthorizedJob(jobId, message.senderId, ownerOpenId);
+      if (message.chatType === 'group' && (job.route.kind !== 'message_thread'
+        || job.route.conversationId !== message.chatId || job.route.threadId !== message.threadId)) {
+        throw notAccessibleError();
+      }
+      const reference = job.checkpoint?.artifacts.find((artifact) => artifact.id === artifactId);
+      if (!job.permissions.filesystem.managedWorkspaceRoots || !reference) throw notAccessibleError();
+      return { job, reference };
+    };
+    const { job, reference } = await inspect();
+    const content = await this.options.repository.readManagedArtifact?.(job, reference.path, reference.sha256);
+    const current = (await inspect()).reference;
+    if (!content || current.path !== reference.path || current.sha256 !== reference.sha256) throw notAccessibleError();
+    return { content, fileName: path.posix.basename(reference.path).replace(/[\u0000-\u001f\u007f]/g, '_') };
   }
 
   async cancelForActor(

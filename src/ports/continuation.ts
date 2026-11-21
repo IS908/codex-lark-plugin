@@ -74,6 +74,7 @@ export interface ContinuationRepository {
   healthCheck(): Promise<void>;
   create(request: ContinuationCreateRequest): Promise<{ job: ContinuationJob; created: boolean }>;
   get(jobId: string): Promise<ContinuationJob | null>;
+  readManagedArtifact?(job: ContinuationJob, relativePath: string, sha256: string): Promise<Buffer>;
   listByCreator(
     creatorOpenId: string,
     limit: number,

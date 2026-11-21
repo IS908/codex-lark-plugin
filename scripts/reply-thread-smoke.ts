@@ -112,7 +112,7 @@ async function setup(opts: { client?: ReturnType<typeof mockClient> } = {}) {
 
   const reply = handlers.get('reply');
   if (!reply) fail('reply handler not registered');
-  return { reply };
+  return { reply, client };
 }
 
 // A fixture image on disk for attachment tests
@@ -341,6 +341,23 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
   passed++;
 }
 
+{
+  const { client } = await setup();
+  await sendFeishuReply({ client: client as any }, {
+    chat_id: 'chat_grp',
+    text: '',
+    reply_to: 'om_user3',
+    thread_id: 'thread_abc',
+    routing: 'standalone',
+    rawMessage: { msgType: 'file', content: JSON.stringify({ file_key: 'file_fixture' }) },
+  });
+  const rawFile = apiCalls.find((call) => call.method === 'message.reply' && call.args.data.msg_type === 'file');
+  if (rawFile?.args.path.message_id !== 'om_user3' || rawFile.args.data.reply_in_thread !== true) {
+    fail('raw file: attachment did not stay in the requested thread');
+  }
+  passed++;
+}
+
 // ── 6. Thread + multi-card (format=card): cards 2..N use reply_in_thread ──
 {
   const { reply } = await setup();
@@ -447,4 +464,4 @@ writeFileSync(imgPath, Buffer.from('fake-png-bytes'));
 }
 
 rmSync(fixDir, { recursive: true, force: true });
-console.log(`reply-thread smoke: ${passed}/10 PASS`);
+console.log(`reply-thread smoke: ${passed}/11 PASS`);
