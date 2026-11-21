@@ -6,6 +6,8 @@ on:
       - '.github/workflows/workspace-git-sandbox.yml'
       - 'src/**'
       - 'scripts/workspace-git-*-smoke.ts'
+      - 'scripts/workspace-dependency-sandbox-smoke.mjs'
+      - 'scripts/workspace-dependency-*-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
       - 'package-lock.json'
@@ -15,6 +17,8 @@ on:
       - '.github/workflows/workspace-git-sandbox.yml'
       - 'src/**'
       - 'scripts/workspace-git-*-smoke.ts'
+      - 'scripts/workspace-dependency-sandbox-smoke.mjs'
+      - 'scripts/workspace-dependency-*-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
       - 'package-lock.json'
@@ -36,7 +40,12 @@ jobs:
         with:
           node-version: '24.15.0'
           cache: npm
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
       - run: npm ci
+      - run: node --import tsx scripts/workspace-dependency-input-smoke.ts
+      - run: node --import tsx scripts/workspace-dependency-cache-smoke.ts
       - name: Run production launcher with an offline model fixture
         shell: bash
         env:
@@ -76,6 +85,10 @@ jobs:
           tar -xzf "$archive" -C "$bundle_dir" "$binary" "$platform/codex-resources/bwrap" "$platform/codex-package.json" "$platform/codex-path/rg"
           test -x "$bundle_dir/$platform/codex-resources/bwrap"
           test "$("$bundle_dir/$binary" --version)" = 'codex-cli 0.171.0'
+          node --import tsx scripts/workspace-git-snapshot-smoke.ts
+          node --import tsx scripts/workspace-dependency-registry-smoke.ts
           LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX=1 \
           LARK_TEST_CODEX_NATIVE_BINARY="$bundle_dir/$binary" \
             node --import tsx scripts/workspace-git-replay-smoke.ts
+          LARK_TEST_CODEX_NATIVE_BINARY="$bundle_dir/$binary" LARK_TEST_PYTHON=python \
+            node scripts/workspace-dependency-sandbox-smoke.mjs

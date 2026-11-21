@@ -57107,6 +57107,7 @@ var maxCacheIndexBytes = 32n * 1024n * 1024n;
 var maxCacheObjects = 25e4;
 var maxCheckoutEntries = 25e3;
 var maxCheckoutBytes = 256n * 1024n * 1024n;
+var maxDependencyInputBytes = 8 * 1024 * 1024;
 var repositoryIdentity = external_exports.strictObject({
   // Digest of a trusted repository identity, not a credential-bearing remote URL.
   repositoryId: external_exports.string().regex(/^[a-f0-9]{64}$/),
@@ -57125,7 +57126,8 @@ var WorkspaceGitSnapshotError = class extends Error {
       git_checkout_overlap: "The run scratch, source, and Git cache must be separate directories.",
       git_checkout_mount_unsupported: "The Git checkout does not support nested mounts or mounted subtrees in the selected paths.",
       git_checkout_failed: "The isolated Git checkout could not be prepared within the supported bounds.",
-      git_checkout_changed: "The isolated Git checkout metadata no longer matches the selected object store."
+      git_checkout_changed: "The isolated Git checkout metadata no longer matches the selected object store.",
+      git_dependency_input_unavailable: "A selected dependency input is not an available, bounded, regular file at the exact Git commit."
     };
     super(messages[code]);
     this.code = code;

@@ -22,6 +22,7 @@ const maxCacheIndexBytes = 32n * 1024n * 1024n;
 const maxCacheObjects = 250_000;
 const maxCheckoutEntries = 25_000;
 const maxCheckoutBytes = 256n * 1024n * 1024n;
+const maxDependencyInputBytes = 8 * 1024 * 1024;
 const repositoryIdentity = z.strictObject({
   // Digest of a trusted repository identity, not a credential-bearing remote URL.
   repositoryId: z.string().regex(/^[a-f0-9]{64}$/),
@@ -39,7 +40,7 @@ type SnapshotRequest = RepositoryIdentity & {
 export class WorkspaceGitSnapshotError extends Error {
   constructor(readonly code: 'invalid_snapshot' | 'git_directory_not_self_contained' | 'git_commit_unavailable' | 'git_unavailable'
     | 'git_cache_invalid' | 'git_cache_mismatch' | 'git_checkout_overlap' | 'git_checkout_mount_unsupported' | 'git_checkout_failed'
-    | 'git_checkout_changed') {
+    | 'git_checkout_changed' | 'git_dependency_input_unavailable') {
     const messages = {
       invalid_snapshot: 'A Git snapshot requires a full commit ID and a valid repository scope.',
       git_directory_not_self_contained: 'The pinned Git directory is not a supported self-contained object store.',
@@ -51,6 +52,7 @@ export class WorkspaceGitSnapshotError extends Error {
       git_checkout_mount_unsupported: 'The Git checkout does not support nested mounts or mounted subtrees in the selected paths.',
       git_checkout_failed: 'The isolated Git checkout could not be prepared within the supported bounds.',
       git_checkout_changed: 'The isolated Git checkout metadata no longer matches the selected object store.',
+      git_dependency_input_unavailable: 'A selected dependency input is not an available, bounded, regular file at the exact Git commit.',
     };
     super(messages[code]);
     this.name = 'WorkspaceGitSnapshotError';
@@ -145,6 +147,37 @@ export async function assertWorkspaceGitCacheIdentity(input: {
     throw new WorkspaceGitSnapshotError('git_cache_invalid');
   });
   if (measured.storeFingerprint !== input.storeFingerprint) throw new WorkspaceGitSnapshotError('git_cache_mismatch');
+}
+
+export async function readWorkspaceGitDependencyInputs(request: SnapshotRequest,
+  expected: Pick<VerifiedGitCache, 'key' | 'storeFingerprint'>, files: readonly string[]): Promise<ReadonlyMap<string, Buffer>> {
+  const unavailable = () => new WorkspaceGitSnapshotError('git_dependency_input_unavailable');
+  if (files.length < 1 || files.length > 3 || new Set(files).size !== files.length || files.some((file) => file.length > 240
+    || !file.split('/').every((part) => /^[a-zA-Z0-9_.-]+$/.test(part) && !['.', '..'].includes(part)))) throw unavailable();
+  const { gitDirectory, authorizedRoots, commit } = request;
+  await assertWorkspaceGitCheckoutMounts([gitDirectory]);
+  const executable = await trustedGitExecutable();
+  // The admission footprint alone does not prove that a tree and blob belong to the pinned commit.
+  const measured = await verifyCache(request, executable);
+  if (measured.key !== expected.key || measured.storeFingerprint !== expected.storeFingerprint) throw new WorkspaceGitSnapshotError('git_cache_mismatch');
+  const selected = new Map<string, Buffer>();
+  for (const file of files) {
+    try {
+      const entry = await verifyCacheGit(executable, gitDirectory.directory, ['--literal-pathspecs', 'ls-tree', '-z', '-l', '--full-tree', commit, '--', file]);
+      const separator = entry.indexOf(9);
+      if (separator < 0 || entry.at(-1) !== 0 || !entry.subarray(separator + 1, -1).equals(Buffer.from(file))) throw unavailable();
+      const fields = /^100(?:644|755) blob ([a-f0-9]+) +([0-9]+)$/.exec(entry.subarray(0, separator).toString('ascii'));
+      if (!fields || fields[1].length !== commit.length) throw unavailable();
+      const size = Number(fields[2]);
+      if (!Number.isSafeInteger(size) || size > maxDependencyInputBytes) throw unavailable();
+      const content = await boundedGit(executable, gitDirectory.directory, [...cacheGit, 'cat-file', 'blob', fields[1]], maxDependencyInputBytes);
+      if (content.length !== size || createHash(measured.objectFormat).update(`blob ${size}\0`).update(content).digest('hex') !== fields[1]) throw unavailable();
+      selected.set(file, content);
+    } catch { throw unavailable(); }
+  }
+  await assertWorkspaceGitCacheIdentity({ cache: gitDirectory, commit, objectFormat: measured.objectFormat,
+    storeFingerprint: expected.storeFingerprint }, authorizedRoots);
+  return selected;
 }
 
 export async function assertWorkspaceGitCheckoutMounts(bindings: WorkspaceProjectBinding[]): Promise<void> {

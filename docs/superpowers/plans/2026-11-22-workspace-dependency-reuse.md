@@ -1,0 +1,29 @@
+# Isolated Dependency Reuse Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Close #397 after releasing opt-in reuse of local Node and Python dependency artifacts for foreground, prompt Cron, and Async Task runs.
+
+**Architecture:** Treat committed input, compatibility identity, approved artifact bytes, and per-run installed output as different records. A protected operator registry opts in an isolated Git project and selects an exact cache. The parent runs a fixed offline installer in a dedicated native sandbox before the first launch of that run, never in the original source directory.
+
+**Tech Stack:** TypeScript, Zod, Node SQLite, system Git, native Codex sandbox, npm and pip.
+
+**Spec:** [#397 acceptance criteria](https://github.com/IS908/codex-lark-plugin/issues/397).
+
+## Global Constraints
+
+- Preserve the existing authorization roots, opt-outs, restart behavior, and committed-delivery replay. No fetch, credential inheritance, source writes, cache writes from any model/installer process, migration, cleanup, or implicit fallback.
+- Cache identity is authorization scope plus exact lock bytes, manifest where applicable, toolchain/platform ABI, and fixed installer policy. Keep the run's Git snapshot and filesystem binding separate so compatible commits can share artifacts without sharing writable outputs.
+- Require a protected cache with exactly the accepted content-addressed npm SHA-512 blobs or hash-pinned wheels. The filesystem inspection proves bytes and identity, not immutability during execution: the authorization and sandbox policies must independently deny writes/replacement through every effective writable grant and mount alias.
+- Keep cache selection separate from write protection: protect every registered artifact cache and its policy metadata from all launch paths, including opt-outs and parent-owned subprocesses. Revoking project selection must not remove that protection. Quiesce preexisting processes before enabling a new cache registry or changing its protected locations.
+
+## Implementation Gates
+
+- [x] **Installer feasibility:** disposable real npm/pip tests for independent install outputs, missing or incomplete locks, no network, and rejected shared writes in macOS and Linux native Codex. Keep this as an independent CI gate.
+- [x] **Exact inputs and bytes:** `workspace-dependency-input.ts` validates compatibility and manifest coverage; `workspace-dependency-cache.ts` checks hashes and a pinned cache tree. Test malformed/missing records, changed files, links, ACLs, extra entries and allowed npm exact-blob layout. `workspace-git-snapshot.ts` reads up to three bounded files after full verification of the exact commit closure, never from a mutable checkout. Reject path escapes, non-regular Git objects and changed cache bindings.
+- [ ] **Operator authorization:** parse a protected versioned project-to-policy and key-to-cache registry. Select only authorized compatible cache/key/scope tuples. Test revoked and stale entries, overlaps via filesystem identity and bind aliases, same physical cache claimed by incompatible scopes, malformed registry, and no extra write grants even for non-selected launches.
+  - [x] Implement bounded v1 registry/manifest reads, exact Git project and cache selection, saved-selection revalidation, and the independent write-root check. The manifest is a protected sidecar identified by the compatibility key, not an extra file inside the artifact cache.
+  - [ ] Bind the independent write-root check to each effective native launch profile, including opt-outs, profile distillation, resume fallback, and parent-owned host CLI actions. Resolve implicit write grants and reject unsupported configuration or launch paths with an active registry. Prove isolation at the actual launch boundary before enabling selection.
+- [ ] **Durable selection:** extend the managed intent/ownership schema and persistence before allocation. Foreground admission must preserve an existing admission decision; Cron persists it in the run input for scheduled and manual runs; Async Task persists it in the filesystem permission envelope. Test SQLite reopen, versioned old records, repeated admission, cross-run separation, retry, and previously committed delivery independent of dependency availability.
+- [ ] **Prepare and publish:** a separately validated native launcher uses a private Codex home and allowlisted environment; passes only fixed offline npm/pip arguments, installer permissions and time/output/resource bounds. Reject unsupported package sources or install settings. Install first into new per-run staging, validate the output, then publish private `node_modules` and a run-scoped Python dependency directory using a durable ready receipt. A missing, interrupted or changed receipt is never adopted or silently replaced. Prove guarded cache writes and network access are denied in the actual installer path, and an unrelated or existing unowned target is never overwritten.
+- [ ] **Release:** prove the real entrypoint protocol on macOS/Linux, including two compatible runs with separate outputs, revision/toolchain mismatch, revocation, missing blobs and no fallback. Document operator provisioning and usage. Run the full suite, bundled marketplace parity and both audits, obtain independent review, merge with the exact verified head, check merged CI, publish and verify the next minor release, then close #397. Keep #387 open until the separate preview and cleanup stages ship.
