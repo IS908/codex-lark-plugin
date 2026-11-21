@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import type { BigIntStats } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -9,6 +8,7 @@ import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
 import { mkdirTemporaryInsidePinnedRoot } from './managed-workspace-mkdir.js';
 import { readWorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
+import { runWorkspaceDependencyProcess, WorkspaceDependencyProcessError } from './workspace-dependency-process.js';
 import { loadWorkspaceDependencyWriteGuard } from './workspace-dependency-registry.js';
 import { prepareWorkspaceDependencySandbox } from './workspace-dependency-sandbox.js';
 import { validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
@@ -37,9 +37,9 @@ require('node:fs').writeFileSync('${probeResultFile}', JSON.stringify({ runtime:
   abi: process.versions.modules, platform: process.platform, arch: process.arch, platformAbi }), { flag: 'wx', mode: 0o600 });`;
 
 // -S skips .pth startup. Check paths using built-in and frozen modules before loading pip or filesystem-backed probe imports.
-const pipProbe = `
+export const workspaceDependencyPipBootstrap = `
 import _imp, sys
-runtime, package = sys.argv[1:]
+runtime, package = sys.argv[1:3]
 assert all(entry.startswith(runtime + '/') and '..' not in entry.split('/') for entry in sys.path)
 assert _imp.is_frozen('os')
 import os
@@ -53,6 +53,9 @@ spec = importlib.util.spec_from_file_location('pip', init, submodule_search_loca
 pip = importlib.util.module_from_spec(spec)
 sys.modules['pip'] = pip
 spec.loader.exec_module(pip)
+`;
+
+const pipProbe = workspaceDependencyPipBootstrap + `
 platformAbi = ('darwin-' + os.uname().release if sys.platform == 'darwin'
     else (os.confstr('CS_GNU_LIBC_VERSION') or 'unsupported').replace(' ', '-'))
 os.umask(0o077)
@@ -168,6 +171,7 @@ export async function probeWorkspaceDependencyToolchain(input: {
   if (guard) await guard.assertNewDirectory(planned);
   const home = await mkdirTemporaryInsidePinnedRoot(parent, leaf);
   let stage: WorkspaceDependencyToolchainError['probeStage'] = 'private_home';
+  let cleanup = true;
   try {
     await assertProtectedWorkspacePath(home, true);
     stage = 'sandbox';
@@ -176,7 +180,7 @@ export async function probeWorkspaceDependencyToolchain(input: {
       staging: home, protectedBindings: guard?.protectedBindings });
     const run = async (args: string[]) => {
       stage = 'runtime';
-      await runBoundedProbe(launcher.command, [...launcher.args, ...args], cwd, launcher.env);
+      await runWorkspaceDependencyProcess(launcher, args, cwd, 15_000, 16 * 1024);
       stage = 'protocol';
       await assertProtectedWorkspacePath(home, true);
       return readProbeResult(path.join(cwd, probeResultFile));
@@ -197,11 +201,14 @@ export async function probeWorkspaceDependencyToolchain(input: {
     await inspectWorkspaceDependencyToolchain(selected.configured, selected.fingerprint);
     return { ...selected, toolchain: toolchain.data };
   } catch (error) {
+    if (error instanceof WorkspaceDependencyProcessError) cleanup = error.quiescent;
     if (error instanceof WorkspaceDependencyToolchainError) throw error;
     throw new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed', stage);
   } finally {
-    await assertProtectedWorkspacePath(home, true);
-    await fs.rm(home.directory, { recursive: true, force: true });
+    if (cleanup) {
+      await assertProtectedWorkspacePath(home, true);
+      await fs.rm(home.directory, { recursive: true, force: true });
+    }
   }
 }
 
@@ -217,38 +224,6 @@ async function readProbeResult(filename: string): Promise<unknown> {
       || stamp(info) !== stamp(await fs.lstat(filename, { bigint: true }))) throw new Error('Changed probe result file.');
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   } finally { await fd.close(); }
-}
-
-function runBoundedProbe(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    let size = 0;
-    let done = false;
-    const stop = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      if (child.pid) try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* Exited. */ } }
-      child.stdout.destroy();
-      child.stderr.destroy();
-      child.unref();
-      reject(new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed', 'runtime'));
-    };
-    const timer = setTimeout(stop, 15_000);
-    for (const stream of [child.stdout, child.stderr]) stream.on('data', (chunk: Buffer) => {
-      if (done) return;
-      size += chunk.length;
-      if (size > 16 * 1024) stop();
-    });
-    child.once('error', stop);
-    child.once('close', (code) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed', 'runtime'));
-    });
-  });
 }
 
 async function measureFile(file: string, expected: BigIntStats, capture: boolean) {

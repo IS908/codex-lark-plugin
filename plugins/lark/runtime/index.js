@@ -51081,7 +51081,9 @@ function mkdirGitCheckoutInsidePinnedRun(runRoot) {
   return mkdirInsideRoot(runRoot, MANAGED_GIT_CHECKOUT_LEAF);
 }
 async function mkdirTemporaryInsidePinnedRoot(root, leaf) {
-  if (!/^(?:lark-codex-exec|lark-dependency-probe|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) throw new ManagedWorkspaceStorageError("invalid_binding");
+  if (!/^(?:lark-codex-exec|lark-dependency-probe|lark-dependency-install|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
   return mkdirInsideRoot(root, leaf, true);
 }
 async function mkdirInsideRoot(root, leaf, temporary = false) {

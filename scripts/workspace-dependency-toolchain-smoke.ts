@@ -6,8 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { prepareWorkspaceDependencySandbox } from '../src/workspace-dependency-sandbox.js';
+import { measureWorkspaceDependencyOutput } from '../src/workspace-dependency-install.js';
+import { runWorkspaceDependencyProcess } from '../src/workspace-dependency-process.js';
 import { inspectWorkspaceDependencyToolchain, probeWorkspaceDependencyToolchain } from '../src/workspace-dependency-toolchain.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
+import { exerciseWorkspaceDependencyInstall } from './workspace-dependency-install-fixture.js';
 
 const fixture = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lark-dependency-toolchain-')));
 const pin = async (directory: string) => pinWorkspacePath(directory, '.');
@@ -50,6 +53,32 @@ try {
   await assert.rejects(inspectWorkspaceDependencyToolchain({ ...configured, executable: '/usr/bin/true' }), { code: 'dependency_toolchain_invalid' });
   await fs.writeFile(path.join(npm, 'package.json'), '{"name":"different-package","version":"12.0.0"}\n');
   await assert.rejects(inspectWorkspaceDependencyToolchain(configured), { code: 'dependency_toolchain_invalid' });
+
+  const output = path.join(fixture, 'output-measurement');
+  const outputFile = path.join(output, 'index.js');
+  await fs.mkdir(output, { mode: 0o700 });
+  await fs.writeFile(outputFile, 'first version');
+  const outputBinding = await pin(output);
+  const firstOutput = await measureWorkspaceDependencyOutput(outputBinding, 'npm');
+  assert.deepEqual(await measureWorkspaceDependencyOutput(outputBinding, 'npm'), firstOutput);
+  await fs.writeFile(outputFile, 'second version');
+  assert.notEqual((await measureWorkspaceDependencyOutput(outputBinding, 'npm')).digest, firstOutput.digest);
+  const entry = path.join(output, 'link');
+  await fs.symlink('../outside.js', entry);
+  await assert.rejects(measureWorkspaceDependencyOutput(outputBinding, 'npm'), { code: 'dependency_installed_output_invalid' });
+  await fs.unlink(entry);
+  await fs.link(outputFile, entry);
+  await assert.rejects(measureWorkspaceDependencyOutput(outputBinding, 'npm'), { code: 'dependency_installed_output_invalid' });
+  await fs.unlink(entry);
+  await fs.symlink('index.js', entry);
+  await measureWorkspaceDependencyOutput(outputBinding, 'npm');
+  await assert.rejects(measureWorkspaceDependencyOutput(outputBinding, 'pip'), { code: 'dependency_installed_output_invalid' });
+
+  const processFixture = { command: process.execPath, args: ['-e'], env: {} };
+  await assert.rejects(runWorkspaceDependencyProcess(processFixture, ['setTimeout(() => {}, 5000)'], fixture, 100, 1024),
+    { reason: 'timeout', quiescent: true });
+  await assert.rejects(runWorkspaceDependencyProcess(processFixture, ["process.stdout.write('x'.repeat(4096))"], fixture, 5000, 1024),
+    { reason: 'output', quiescent: true });
 
   const native = process.env.LARK_TEST_CODEX_NATIVE_BINARY;
   if (native) {
@@ -173,6 +202,7 @@ print(json.dumps(dict(prefix=os.path.realpath(sys.prefix), installer=os.path.dir
     assert.match(pipProbe.toolchain.installer, /^\d+\.\d+/);
     assert.equal(pipProbe.toolchain.platformAbi, npmProbe.toolchain.platformAbi);
     console.log(`workspace dependency native toolchains: Node ${npmProbe.toolchain.runtime}/npm ${npmProbe.toolchain.installer}; CPython ${pipProbe.toolchain.runtime}/pip ${pipProbe.toolchain.installer}; ${pipProbe.toolchain.platformAbi}`);
+    await exerciseWorkspaceDependencyInstall(fixture, common, npmProbe, pipProbe);
   }
   console.log('workspace dependency toolchain smoke: PASS');
 } finally { await fs.rm(fixture, { recursive: true, force: true }); }

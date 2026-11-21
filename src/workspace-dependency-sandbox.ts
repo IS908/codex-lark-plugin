@@ -11,6 +11,7 @@ import { validateWorkspaceProject, workspacePathContains } from './workspace-pro
 const profile = 'lark-dependency-installer';
 const seatbelt = '/usr/bin/sandbox-exec';
 const darwinSystem = ['/usr/lib', '/System/Library/Frameworks', '/System/Library/PrivateFrameworks', '/System/Library/SubFrameworks'];
+const darwinVersion = '/System/Library/CoreServices/SystemVersion.plist';
 const processSysctls = ['kern.ostype', 'kern.osrelease', 'kern.osversion', 'kern.osproductversion', 'kern.version', 'kern.argmax', 'kern.hostname',
   'kern.osvariant_status', 'machdep.cpu.brand_string', 'machdep.ptrauth_enabled', 'security.mac.lockdown_mode_state', 'sysctl.proc_cputype'];
 
@@ -56,7 +57,7 @@ export async function prepareWorkspaceDependencySandbox(input: {
       PATH: '/usr/bin:/bin', LC_ALL: 'C', PIP_CONFIG_FILE: '/dev/null', OPENSSL_CONF: '/dev/null' };
     if (process.platform === 'darwin') {
       const system = await fs.stat('/', { bigint: true });
-      for (const item of [seatbelt, ...darwinSystem]) {
+      for (const item of [seatbelt, darwinVersion, ...darwinSystem]) {
         if (!mounts.supportsSystemRead?.(item) || !(await protectedSystemPath(item, system.dev))) invalid();
       }
       return { command: seatbelt, args: ['-p', darwinPolicy(executable, runtime.directory, readonly.map(({ directory }) => directory), cwd), executable], env };
@@ -127,6 +128,7 @@ function darwinPolicy(executable: string, runtime: string, readonly: string[], c
     `(allow sysctl-read (sysctl-name-prefix "hw.") ${processSysctls.map((name) => `(sysctl-name ${q(name)})`).join(' ')})`,
     // dyld opens / as an anchor; this literal does not grant its descendants.
     '(allow file-read* (literal "/") (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
+    `(allow file-read* (literal ${q(darwinVersion)}))`,
     `(allow file-read* ${subpaths([...darwinSystem, ...readonly, cwd])})`,
     `(allow file-map-executable ${subpaths([...darwinSystem, runtime])})`,
     `(allow file-read-metadata (path-ancestors ${q(cwd)}))`,
