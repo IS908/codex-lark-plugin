@@ -161,6 +161,36 @@ socket.setTimeout(2000, () => { socket.destroy(); process.exitCode = 1; });`, pr
     }
     assert.equal(await fs.readFile(path.join(staging, 'allowed'), 'utf8'), 'private');
     await assert.rejects(fs.stat(blockedWrite), { code: 'ENOENT' });
+    if (process.platform === 'linux') {
+      assert.equal(launch.command, '/usr/bin/unshare');
+      const fifo = path.join(staging, 'teardown.fifo');
+      execFileSync('/usr/bin/mkfifo', ['-m', '600', fifo]);
+      const reader = await fs.open(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      try {
+        await promisify(execFile)(launch.command, [...launch.args, '-e', `
+const fs = require('node:fs');
+const { spawn } = require('node:child_process');
+const [fifo] = process.argv.slice(1);
+const child = spawn(process.execPath, ['-e', ${JSON.stringify(`
+  const fs = require('node:fs');
+  const fd = fs.openSync(process.argv[1], 'w');
+  fs.writeSync(fd, 'x');
+  fs.writeFileSync('teardown-live', '');
+  setTimeout(() => {}, 30000);
+`)}, fifo], { detached: true, stdio: 'ignore' });
+child.unref();
+const deadline = Date.now() + 5000;
+const wait = setInterval(() => {
+  if (fs.existsSync('teardown-live')) { clearInterval(wait); process.exit(0); }
+  if (Date.now() > deadline) process.exit(2);
+}, 10);`, fifo], { cwd: staging, env: launch.env, timeout: 15_000, maxBuffer: 16 * 1024 });
+        const byte = Buffer.alloc(1);
+        assert.equal((await reader.read(byte, 0, 1, null)).bytesRead, 1, 'the detached test process opened the pipe');
+        assert.equal(byte.toString(), 'x');
+        assert.equal((await reader.read(byte, 0, 1, null)).bytesRead, 0, 'launcher return means its detached descendant is gone');
+      } finally { await reader.close(); }
+      console.log('workspace dependency Linux launcher: detached namespace writer stopped before return');
+    }
     const npmProbe = await probeWorkspaceDependencyToolchain({ ...common,
       configured: nodeConfig });
     const nodeVersions = JSON.parse(execFileSync(nodeExecutable, ['-p', 'JSON.stringify(process.versions)'], { encoding: 'utf8' }));

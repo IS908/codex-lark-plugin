@@ -64,15 +64,15 @@ export async function installWorkspaceDependencyInStaging(request: {
   const input = request.input.ecosystem === 'npm' ? { ...request.input, lock: Buffer.from(request.input.lock), manifest: Buffer.from(request.input.manifest) }
     : { ...request.input, lock: Buffer.from(request.input.lock) };
   const artifactManifest = structuredClone(request.artifactManifest);
-  const verifyCache = async () => {
+  const verifyCache = async (inspectExpansion = false) => {
     const verified = await verifyWorkspaceDependencyCache({ input, artifactManifest, cache: selection.cache,
-      authorizedRoots: request.authorizedRoots, expectedFingerprint: selection.cacheFingerprint });
+      authorizedRoots: request.authorizedRoots, expectedFingerprint: selection.cacheFingerprint, inspectExpansion });
     if (verified.identity.key !== selection.identity.key || verified.artifactManifestSha256 !== selection.artifactManifestSha256) {
       fail('dependency_install_selection_mismatch');
     }
     return verified;
   };
-  const verified = await verifyCache();
+  const verified = await verifyCache(true);
   const mounts = await readWorkspaceDependencyMountPolicy();
   const guard = await loadWorkspaceDependencyWriteGuard(request.configPath);
   const parent = await validateWorkspaceProject(request.temporaryRoot.directory, request.temporaryRoot);

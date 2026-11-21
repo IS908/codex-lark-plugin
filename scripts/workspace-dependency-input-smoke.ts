@@ -62,6 +62,13 @@ assert.equal(prepared.identity.key, describeWorkspaceDependencies(sparse).key);
 assert.deepEqual(JSON.parse(prepared.lock).packages['node_modules/@fixture/a'], defaultArtifact);
 assert.equal(JSON.parse(sparse.lock.toString()).packages['node_modules/@fixture/a'].integrity, undefined);
 assert.equal(prepared.artifactManifestSha256, prepareWorkspaceNpmLock(npm, catalog).artifactManifestSha256);
+const repeated = prepareWorkspaceNpmLock({ ...npm, lock: bytes({ lockfileVersion: 3, packages: {
+  '': manifest,
+  'node_modules/@fixture/a': defaultArtifact,
+  'node_modules/parent/node_modules/@fixture/a': defaultArtifact,
+} }) }, catalog);
+assert.equal(repeated.artifacts.length, 1);
+assert.equal(repeated.copiesByIntegrity.get(integrity), 2, 'expansion is charged per lockfile placement');
 throwsInput(() => describeWorkspaceDependencies(withArtifact({}, 'node_modules/../outside')));
 throwsInput(() => describeWorkspaceDependencies(withArtifact({}, `${'node_modules/long/'.repeat(33)}node_modules/@fixture/a`)));
 const peers = { name: 'fixture', version: '1.0.0', peerDependencies: { missing: '^1' } };

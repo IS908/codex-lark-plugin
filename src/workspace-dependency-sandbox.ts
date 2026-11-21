@@ -10,6 +10,7 @@ import { validateWorkspaceProject, workspacePathContains } from './workspace-pro
 
 const profile = 'lark-dependency-installer';
 const seatbelt = '/usr/bin/sandbox-exec';
+const unshare = '/usr/bin/unshare';
 const darwinSystem = ['/usr/lib', '/System/Library/Frameworks', '/System/Library/PrivateFrameworks', '/System/Library/SubFrameworks'];
 const darwinVersion = '/System/Library/CoreServices/SystemVersion.plist';
 const processSysctls = ['kern.ostype', 'kern.osrelease', 'kern.osversion', 'kern.osproductversion', 'kern.version', 'kern.argmax', 'kern.hostname',
@@ -64,6 +65,7 @@ export async function prepareWorkspaceDependencySandbox(input: {
         env, isolatesDescendants: true as const };
     }
     if (process.platform !== 'linux' || !path.isAbsolute(input.codexCommand)) invalid();
+    if (await protectedSystemPath(unshare) !== unshare || !mounts.supports(unshare)) invalid();
     env.CODEX_HOME = path.join(cwd, 'codex-home');
     env.TMPDIR = env.TMP = env.TEMP = path.join(cwd, 'tmp');
     for (const directory of [env.CODEX_HOME, env.TMPDIR]) await fs.mkdir(directory, { mode: 0o700 });
@@ -86,9 +88,10 @@ export async function prepareWorkspaceDependencySandbox(input: {
       // Select only the registered runtime's libraries, after Bubblewrap has entered the restricted filesystem.
       command = [system.loader, '--inhibit-cache', '--library-path', lib, '--argv0', executable, executable];
     }
-    // This pinned restricted Bubblewrap path owns a private PID namespace and does not fall back to Landlock.
-    return { command: launcher.command, args: ['sandbox', ...namedCodexSandboxOverrides(profile, rules, false)
-      .flatMap((setting) => ['-c', setting]), '-P', profile, '-C', cwd, '--', ...command], env: launcher.env,
+    // Bubblewrap can report payload exit before its reaper exits. Wait for the enclosing namespace's PID 1 instead.
+    return { command: unshare, args: ['--user', '--map-current-user', '--pid', '--fork', '--kill-child', '--mount-proc',
+      '--', launcher.command, 'sandbox', ...namedCodexSandboxOverrides(profile, rules, false)
+        .flatMap((setting) => ['-c', setting]), '-P', profile, '-C', cwd, '--', ...command], env: launcher.env,
       isolatesDescendants: true as const };
   } catch { return invalid(); }
 }

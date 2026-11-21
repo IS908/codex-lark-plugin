@@ -20,6 +20,7 @@ node --import tsx scripts/workspace-projects-smoke.ts
 node --import tsx scripts/workspace-git-snapshot-smoke.ts
 node --import tsx scripts/workspace-dependency-input-smoke.ts
 node --import tsx scripts/workspace-dependency-cache-smoke.ts
+node --import tsx scripts/workspace-dependency-archive-smoke.ts
 node --import tsx scripts/workspace-dependency-registry-smoke.ts
 node --import tsx scripts/workspace-dependency-toolchain-smoke.ts
 node --import tsx scripts/workspace-dependency-mount-policy-smoke.ts

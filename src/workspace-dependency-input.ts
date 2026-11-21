@@ -39,18 +39,20 @@ export function prepareWorkspaceNpmLock(input: Extract<WorkspaceDependencyInput,
   const packages = jsonRecord.parse(lock.packages);
   const { artifacts, ...identity } = plan;
   const used = new Set<string>();
+  const copiesByIntegrity = new Map<string, number>();
   for (const { path, resolved, integrity } of artifacts) {
     const expected = accepted.get(resolved);
     if (!expected) throw new WorkspaceDependencyInputError('dependency_artifact_missing');
     if (integrity !== null && expected !== integrity) throw new WorkspaceDependencyInputError('dependency_artifact_conflict');
     used.add(resolved);
+    copiesByIntegrity.set(expected, (copiesByIntegrity.get(expected) ?? 0) + 1);
     packages[path] = { ...jsonRecord.parse(packages[path]), resolved, integrity: expected };
   }
   if (used.size !== accepted.size) throw new WorkspaceDependencyInputError('dependency_artifact_conflict');
   const sorted = [...accepted.entries()].sort(([a], [b]) => lexical(a, b));
   const staged = JSON.stringify({ ...lock, packages }) + '\n';
   if (Buffer.byteLength(staged) > MAX_INPUT_BYTES) invalid();
-  return { identity, lock: staged, artifacts: sorted.map(([resolved, integrity]) => ({ resolved, integrity })),
+  return { identity, lock: staged, copiesByIntegrity, artifacts: sorted.map(([resolved, integrity]) => ({ resolved, integrity })),
     artifactManifestSha256: digest(JSON.stringify(['npm-artifacts-v1', sorted])) };
 }
 

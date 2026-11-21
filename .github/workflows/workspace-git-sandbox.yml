@@ -48,6 +48,7 @@ jobs:
       - run: npm ci
       - run: node --import tsx scripts/workspace-dependency-input-smoke.ts
       - run: node --import tsx scripts/workspace-dependency-cache-smoke.ts
+      - run: node --import tsx scripts/workspace-dependency-archive-smoke.ts
       - name: Run production launcher with an offline model fixture
         shell: bash
         env:

@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceMountTable,
   workspaceMountLayoutSupported } from './managed-workspace-ancestry.js';
+import { createWorkspaceDependencyExpansionBudget, WorkspaceDependencyArchiveError } from './workspace-dependency-archive.js';
 import { prepareWorkspaceNpmLock, prepareWorkspacePipLock, type WorkspaceDependencyInput } from './workspace-dependency-input.js';
 import { validateWorkspaceProject } from './workspace-projects.js';
 
@@ -21,7 +22,7 @@ export class WorkspaceDependencyCacheError extends Error {
   }
 }
 
-type ExpectedFile = { algorithm: 'sha512' | 'sha256'; digest: string };
+type ExpectedFile = { algorithm: 'sha512' | 'sha256'; digest: string; copies: number };
 type Tree = Map<string, Tree | ExpectedFile>;
 type Entry = [relative: string, expected: Tree | ExpectedFile];
 
@@ -32,17 +33,22 @@ export async function verifyWorkspaceDependencyCache(request: {
   cache: WorkspaceProjectBinding;
   authorizedRoots: readonly [string, ...string[]];
   expectedFingerprint?: string;
+  inspectExpansion?: boolean;
 }) {
   const prepared = request.input.ecosystem === 'npm' ? prepareWorkspaceNpmLock(request.input, request.artifactManifest)
     : prepareWorkspacePipLock(request.input, request.artifactManifest);
   if (request.expectedFingerprint !== undefined && !/^[0-9a-f]{64}$/.test(request.expectedFingerprint)) invalid();
+  const budget = request.inspectExpansion ? createWorkspaceDependencyExpansionBudget() : undefined;
+  const copiesByIntegrity = 'copiesByIntegrity' in prepared ? prepared.copiesByIntegrity : undefined;
   const tree: Tree = new Map();
   for (const artifact of prepared.artifacts) {
     if ('integrity' in artifact) {
       const digest = Buffer.from(artifact.integrity.slice(7), 'base64').toString('hex');
-      put(tree, ['_cacache', 'content-v2', 'sha512', digest.slice(0, 2), digest.slice(2, 4), digest.slice(4)], { algorithm: 'sha512', digest });
+      const copies = copiesByIntegrity?.get(artifact.integrity);
+      if (!copies) invalid();
+      put(tree, ['_cacache', 'content-v2', 'sha512', digest.slice(0, 2), digest.slice(2, 4), digest.slice(4)], { algorithm: 'sha512', digest, copies });
     } else {
-      put(tree, [artifact.filename], { algorithm: 'sha256', digest: artifact.sha256 });
+      put(tree, [artifact.filename], { algorithm: 'sha256', digest: artifact.sha256, copies: 1 });
     }
   }
 
@@ -112,11 +118,13 @@ export async function verifyWorkspaceDependencyCache(request: {
         }
         if (!sameIdentity(info, await fd.stat({ bigint: true }))) changed();
         if (hash.digest('hex') !== expected.digest) throw new WorkspaceDependencyCacheError('dependency_artifact_conflict');
+        await budget?.inspect(fd, Number(info.size), request.input.ecosystem, expected.copies);
+        if (!sameIdentity(info, await fd.stat({ bigint: true }))) changed();
         measured.set(relative, info);
       } finally { await fd.close(); }
     }
   } catch (error) {
-    if (error instanceof WorkspaceDependencyCacheError) throw error;
+    if (error instanceof WorkspaceDependencyCacheError || error instanceof WorkspaceDependencyArchiveError) throw error;
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new WorkspaceDependencyCacheError('dependency_artifact_missing');
     return invalid();
   }

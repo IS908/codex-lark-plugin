@@ -82,7 +82,7 @@ async function npmFixture(fixture: string, cache: string, toolchain: Probed['too
   await fs.writeFile(path.join(packageDir, 'package.json'), json(leaf));
   await fs.writeFile(path.join(packageDir, 'index.js'), "#!/usr/bin/env node\nmodule.exports = 'lark fixture';\n");
   const tar = path.join(source, 'packed.tgz');
-  execFileSync('/usr/bin/tar', ['-czf', tar, '-C', source, 'package'], { env: { PATH: '/usr/bin:/bin', COPYFILE_DISABLE: '1' } });
+  execFileSync('/usr/bin/tar', ['--format=ustar', '-czf', tar, '-C', source, 'package'], { env: { PATH: '/usr/bin:/bin', COPYFILE_DISABLE: '1' } });
   const bytes = await fs.readFile(tar);
   const integrity = `sha512-${hash(bytes, 'sha512', 'base64')}`;
   const hex = hash(bytes, 'sha512');

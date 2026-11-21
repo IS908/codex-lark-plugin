@@ -35,12 +35,14 @@ try {
   assert.equal(first.bytes, archive.length);
   assert.match(first.cacheFingerprint, /^[0-9a-f]{64}$/);
   assert.equal((await verifyWorkspaceDependencyCache({ ...npmSelection, expectedFingerprint: first.cacheFingerprint })).cacheFingerprint, first.cacheFingerprint);
+  await assert.rejects(verifyWorkspaceDependencyCache({ ...npmSelection, inspectExpansion: true }), { code: 'dependency_archive_invalid' });
   const extra = path.join(npmCache, '_cacache', 'index-v5');
   await fs.mkdir(extra);
   await assert.rejects(verifyWorkspaceDependencyCache(npmSelection), { code: 'dependency_cache_invalid' });
   await fs.rmdir(extra);
   await fs.writeFile(blob, Buffer.alloc(archive.length));
   await assert.rejects(verifyWorkspaceDependencyCache(npmSelection), { code: 'dependency_artifact_conflict' });
+  await assert.rejects(verifyWorkspaceDependencyCache({ ...npmSelection, inspectExpansion: true }), { code: 'dependency_artifact_conflict' });
   await fs.unlink(blob);
   await assert.rejects(verifyWorkspaceDependencyCache(npmSelection), { code: 'dependency_artifact_missing' });
   await fs.writeFile(blob, archive, { mode: 0o600 });
