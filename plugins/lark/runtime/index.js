@@ -52195,9 +52195,9 @@ async function resolveWorkspaceProject({
   if (!root) throw new WorkspaceProjectError("invalid_registry");
   const sourceRoot = await readDirectory(root.path);
   const projectPath = path6.resolve(sourceRoot.directory, project.path);
-  if (!contains(sourceRoot.directory, projectPath)) throw new WorkspaceProjectError("outside_project_root");
+  if (!workspacePathContains(sourceRoot.directory, projectPath)) throw new WorkspaceProjectError("outside_project_root");
   const candidate = await readDirectory(projectPath);
-  if (!contains(sourceRoot.directory, candidate.directory)) throw new WorkspaceProjectError("outside_project_root");
+  if (!workspacePathContains(sourceRoot.directory, candidate.directory)) throw new WorkspaceProjectError("outside_project_root");
   await requireAuthorized(authorizedRoot, candidate.directory);
   return candidate;
 }
@@ -52254,9 +52254,9 @@ async function readDirectory(candidate) {
 }
 async function requireAuthorized(authorizedRoot, candidate) {
   const root = await readDirectory(authorizedRoot);
-  if (!contains(root.directory, candidate)) throw new WorkspaceProjectError("outside_authorized_root");
+  if (!workspacePathContains(root.directory, candidate)) throw new WorkspaceProjectError("outside_authorized_root");
 }
-function contains(root, candidate) {
+function workspacePathContains(root, candidate) {
   const relative = path6.relative(root, candidate);
   return relative !== ".." && !relative.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relative);
 }
