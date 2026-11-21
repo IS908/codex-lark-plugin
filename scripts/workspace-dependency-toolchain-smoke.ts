@@ -72,17 +72,38 @@ try {
     assert.ok(pythonPath, 'Set the exact Python binary for the native toolchain probe.');
     const python = await fs.realpath(pythonPath);
     const pythonMetadata = JSON.parse(execFileSync(python, ['-I', '-B', '-c',
-      'import json, os, pip, sys, sysconfig; print(json.dumps([os.path.realpath(sys.prefix), os.path.dirname(os.path.realpath(pip.__file__)), sysconfig.get_config_var("SOABI")]))'],
-    { encoding: 'utf8' }));
+      `import json, os, pip, sys, sysconfig
+print(json.dumps(dict(prefix=os.path.realpath(sys.prefix), installer=os.path.dirname(os.path.realpath(pip.__file__)),
+    abi=sysconfig.get_config_var("SOABI"), stdlib=sysconfig.get_path("stdlib"),
+    libdir=sysconfig.get_config_var("LIBDIR"), libname=sysconfig.get_config_var("INSTSONAME"))))`],
+    { encoding: 'utf8' })) as { prefix: string; installer: string; abi: string; stdlib: string; libdir: string; libname: string | null };
     const pythonRuntime = path.join(fixture, 'python-runtime');
     const pipRoot = path.join(fixture, 'pip-installer');
-    const pythonExecutable = path.join(pythonRuntime, path.relative(pythonMetadata[0], python));
-    await fs.cp(pythonMetadata[0], pythonRuntime, { recursive: true, verbatimSymlinks: true,
-      filter: (source) => !/^lib\/python[0-9.]+\/site-packages$/.test(path.relative(pythonMetadata[0], source)) });
-    await fs.cp(pythonMetadata[1], pipRoot, { recursive: true, verbatimSymlinks: true });
+    const pythonExecutable = path.join(pythonRuntime, path.relative(pythonMetadata.prefix, python));
+    if (process.platform === 'linux') {
+      // A relocated fixture needs the real binary and stdlib, not the toolcache's install aliases.
+      assert.equal(path.dirname(pythonExecutable), path.join(pythonRuntime, 'bin'));
+      await fs.mkdir(path.dirname(pythonExecutable), { recursive: true, mode: 0o700 });
+      await fs.copyFile(python, pythonExecutable);
+      const lib = path.join(pythonRuntime, 'lib');
+      const version = path.basename(pythonMetadata.stdlib);
+      assert.match(version, /^python3\.\d+$/);
+      await fs.mkdir(lib, { mode: 0o700 });
+      if (pythonMetadata.libname) {
+        assert.match(pythonMetadata.libname, /^libpython3\.\d+\.so(?:\.\d+)*$/);
+        await fs.copyFile(path.join(pythonMetadata.libdir, pythonMetadata.libname), path.join(lib, pythonMetadata.libname));
+      }
+      await fs.cp(pythonMetadata.stdlib, path.join(lib, version), { recursive: true, verbatimSymlinks: true,
+        filter: (source) => !/^(?:site-packages|test|config-[^/]+)$/.test(path.relative(pythonMetadata.stdlib, source))
+          && path.basename(source) !== '__pycache__' });
+    } else {
+      await fs.cp(pythonMetadata.prefix, pythonRuntime, { recursive: true, verbatimSymlinks: true,
+        filter: (source) => !/^lib\/python[0-9.]+\/site-packages$/.test(path.relative(pythonMetadata.prefix, source)) });
+    }
+    await fs.cp(pythonMetadata.installer, pipRoot, { recursive: true, verbatimSymlinks: true });
     const pipProbe = await probeWorkspaceDependencyToolchain({ ...common,
       configured: { ecosystem: 'pip', executable: pythonExecutable, runtime: await pin(pythonRuntime), installer: await pin(pipRoot) } });
-    assert.equal(pipProbe.toolchain.abi, pythonMetadata[2]);
+    assert.equal(pipProbe.toolchain.abi, pythonMetadata.abi);
     assert.match(pipProbe.toolchain.installer, /^\d+\.\d+/);
     assert.equal(pipProbe.toolchain.platformAbi, npmProbe.toolchain.platformAbi);
     console.log(`workspace dependency native toolchains: Node ${npmProbe.toolchain.runtime}/npm ${npmProbe.toolchain.installer}; CPython ${pipProbe.toolchain.runtime}/pip ${pipProbe.toolchain.installer}; ${pipProbe.toolchain.platformAbi}`);
