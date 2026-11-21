@@ -218,7 +218,8 @@ npm run --silent doctor -- --workspace-cleanup-preview --json
 一致，包括跟踪文件、未跟踪文件和本地 Git 元数据。空目录也必须符合初始元数据基线。
 扩展属性有变化或无法验证、存在挂载别名（已验证的 macOS Data 系统映射除外），
 或安装器、运行留下额外内容时，都会保留。Linux 由 `attr` 软件包提供的系统
-`/usr/bin/getfattr` 核验扩展属性；缺失时保留受影响的目录。
+`/usr/bin/getfattr` 核验扩展属性；缺失时保留受影响的目录。在 Linux 上运行完整的
+`npm test` 前，请安装 `attr`；测试还需要其中的 `setfattr`。
 
 #### 选择工作项目
 

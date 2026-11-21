@@ -444,6 +444,7 @@ The repository intentionally tracks `.env.example`, `.mcp.json`, `.codex-plugin/
 
 Release version checklist:
 
+- Install the system `attr` package before running `npm test` on Linux; the native cleanup fixtures need both `getfattr` and `setfattr`. CI installs it for the native workspace job.
 - Bump `package.json`, `package-lock.json`, `plugins/lark/package.json`, and `plugins/lark/package-lock.json`.
 - Bump `.codex-plugin/plugin.json` and `plugins/lark/.codex-plugin/plugin.json`; Codex uses manifest versions when selecting plugin cache directories, so stale manifest versions can leave a new package running from an old runtime cache.
 - Update the README badges and `CHANGELOG.md` release heading.
