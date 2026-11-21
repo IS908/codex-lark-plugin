@@ -76,7 +76,7 @@ export async function readWorkspaceAncestorIdentities(directory: string): Promis
   }
 }
 
-export async function assertProtectedWorkspacePath(binding: WorkspaceProjectBinding, owned = false): Promise<void> {
+export async function assertProtectedWorkspacePath(binding: WorkspaceProjectBinding, owned = false, allowStickyLeaf = false): Promise<void> {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError('unprotected_root');
   const uid = BigInt(process.geteuid());
   const ancestry: string[] = [];
@@ -88,7 +88,7 @@ export async function assertProtectedWorkspacePath(binding: WorkspaceProjectBind
     }
     const trustedOwner = info.uid === uid || ((!leaf || !owned) && info.uid === 0n);
     // A trusted sticky ancestor (e.g. /tmp) protects names owned by that ancestor's owner or by this account.
-    const protectedNames = (info.mode & 0o022n) === 0n || (!leaf && (info.mode & 0o1000n) !== 0n);
+    const protectedNames = (info.mode & 0o022n) === 0n || ((!leaf || allowStickyLeaf) && (info.mode & 0o1000n) !== 0n);
     if (!trustedOwner || !protectedNames) throw new ManagedWorkspaceStorageError('unprotected_root');
     ancestry.push(current);
     if (path.dirname(current) === current) break;

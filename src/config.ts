@@ -3,14 +3,13 @@ import path from 'node:path';
 import os from 'node:os';
 import { assertSupportedNodeVersion } from './runtime-version.js';
 import { readConfigValues } from './config-schema.js';
+import { channelHome, managedWorkspaceConfigPath, runtimeConfigDir } from './runtime-paths.js';
 
 assertSupportedNodeVersion();
 
-const envPath = path.join(os.homedir(), '.codex', 'channels', 'lark', '.env');
+const envPath = path.join(channelHome, '.env');
 config({ path: envPath, quiet: true });
 
-const channelHome = path.join(os.homedir(), '.codex', 'channels', 'lark');
-const runtimeConfigDir = path.join(channelHome, 'runtime-config');
 const continuationRuntimeDir = path.join(channelHome, 'runtime', 'continuations');
 const isDryRun = process.argv.includes('--dry-run');
 
@@ -141,7 +140,7 @@ export const appConfig = {
   continuationArtifactsDir: path.join(continuationRuntimeDir, 'artifacts'),
   runtimeConfigDir,
   workspaceProjectsConfigPath: path.join(runtimeConfigDir, 'workspace-projects.json'),
-  managedWorkspaceConfigPath: path.join(runtimeConfigDir, 'managed-workspace.json'),
+  managedWorkspaceConfigPath,
   accessControlConfigPath: path.join(runtimeConfigDir, 'access-control.json'),
   localCliToolsConfigPath: path.join(runtimeConfigDir, 'local-cli-tools.json'),
   privacyRulesPath: path.join(runtimeConfigDir, 'privacy-rules.md'),

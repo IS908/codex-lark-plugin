@@ -1,10 +1,16 @@
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { WorkspaceDirectoryGuard } from './domain/workspace.js';
+import { sameWorkspaceProject, type WorkspaceDirectoryGuard } from './domain/workspace.js';
 import { validateWorkspaceProject, WorkspaceProjectError } from './workspace-projects.js';
 import { assertProtectedWorkspacePath } from './managed-workspace-ancestry.js';
+import { assertCompatibleCodexLayers, resolveManagedGitLauncher } from './managed-git-launcher.js';
+import { dependencyGuardSandboxOverrides, isGeneratedManagedGitSandbox, type ManagedGitSandboxOptions } from './managed-git-sandbox.js';
+import { mkdirTemporaryInsidePinnedRoot } from './managed-workspace-mkdir.js';
+import { managedWorkspaceConfigPath } from './runtime-paths.js';
+import { loadWorkspaceDependencyWriteGuard, WorkspaceDependencyPolicyError } from './workspace-dependency-registry.js';
 import { createCodexExecToolTraceWriter } from './codex-exec-trace.js';
 import {
   createCodexExecRuntimeMetricsCollector,
@@ -33,6 +39,7 @@ export interface CodexExecRequest {
   ignoreUserConfig?: boolean;
   strictConfig?: boolean;
   validateManagedGitLaunch?: (command: string, env: NodeJS.ProcessEnv) => Promise<{ command: string; prefix: string[]; env: NodeJS.ProcessEnv }>;
+  managedGitSandbox?: ManagedGitSandboxOptions;
   skipGitRepoCheck?: boolean;
   resumeSessionId?: string | null;
   extraEnv?: Record<string, string | undefined>;
@@ -266,8 +273,69 @@ export function normalizeCodexExecResult(result: string | CodexExecResult): Code
   return result;
 }
 
+async function prepareDependencyLaunch(request: CodexExecRequest, cwd: string, tmpDir: string, env: NodeJS.ProcessEnv,
+  guard: NonNullable<Awaited<ReturnType<typeof loadWorkspaceDependencyWriteGuard>>>) {
+  const unsupported = () => new WorkspaceDependencyPolicyError('dependency_launch_unsupported');
+  const managed = request.managedGitSandbox;
+  const extra = request.additionalWritableDirs ?? [];
+  const configOverrides = new Set(request.configOverrides ?? []);
+  if (request.profile || request.ignoreUserConfig === false) throw unsupported();
+  let writable: readonly string[];
+  if (managed) {
+    if (!isGeneratedManagedGitSandbox(managed) || !request.validateManagedGitLaunch || request.sandbox !== undefined || !request.strictConfig || extra.length
+      || request.configOverrides?.length !== managed.overrides.length
+      || managed.overrides.some((value, index) => request.configOverrides?.[index] !== value)) throw unsupported();
+    writable = managed.writableDirectories;
+  } else {
+    const supported = new Set(['approval_policy="never"', 'sandbox_permissions=["disk-full-read-access"]',
+      'sandbox_workspace_write.network_access=true', 'sandbox_workspace_write.network_access=false',
+      'sandbox_workspace_write.exclude_tmpdir_env_var=true', 'sandbox_workspace_write.exclude_slash_tmp=true']);
+    if ((request.sandbox !== 'read-only' && request.sandbox !== 'workspace-write')
+      || (request.sandbox === 'read-only' && extra.length)
+      || [...configOverrides].some((entry) => !supported.has(entry))
+      || (configOverrides.has('sandbox_workspace_write.network_access=true') && configOverrides.has('sandbox_workspace_write.network_access=false'))) {
+      throw unsupported();
+    }
+    writable = request.sandbox === 'workspace-write' ? [cwd, ...extra] : [];
+  }
+
+  const home = env.CODEX_HOME?.trim();
+  const homeRequired = () => new WorkspaceDependencyPolicyError('dependency_runtime_home_required');
+  if (!home || !path.isAbsolute(home)) throw homeRequired();
+  if (![cwd, ...writable].every(path.isAbsolute)) throw unsupported();
+  const realCwd = await fs.realpath(cwd);
+  const codexHome = await fs.realpath(home).catch(() => { throw homeRequired(); });
+  const realWritable = await Promise.all(writable.map((directory) => fs.realpath(directory)));
+  if (managed && realWritable.some((value, index) => value !== writable[index])) throw unsupported();
+  await guard.assertWrites([codexHome]);
+  await guard.assertWrites([tmpDir], [codexHome]);
+  await guard.assertWrites(realWritable, [codexHome, tmpDir]);
+  const scratch = request.extraEnv?.LARK_MANAGED_SCRATCH_DIR;
+  const childTmp = scratch && realWritable.includes(scratch) && env.TMPDIR === scratch ? scratch : tmpDir;
+  const sqliteHome = env.CODEX_SQLITE_HOME?.trim();
+  if (sqliteHome && (!path.isAbsolute(sqliteHome) || await fs.realpath(sqliteHome) !== codexHome)) throw unsupported();
+  const childEnv: NodeJS.ProcessEnv = { ...env, CODEX_HOME: codexHome, CODEX_SQLITE_HOME: codexHome,
+    TMPDIR: childTmp, TMP: childTmp, TEMP: childTmp };
+  await assertCompatibleCodexLayers(childEnv, [realCwd, ...realWritable]);
+  const overrides = managed ? [...managed.overrides] : dependencyGuardSandboxOverrides(realWritable,
+    configOverrides.has('sandbox_workspace_write.network_access=true'));
+  return { cwd: realCwd, writable: realWritable, env: childEnv, request: { ...request, sandbox: undefined,
+    additionalWritableDirs: undefined, ignoreUserConfig: true, strictConfig: true, configOverrides: overrides } };
+}
+
 export async function runCodexExecCommand(request: CodexExecRequest): Promise<CodexExecResult> {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-codex-exec-'));
+  const initialGuard = await loadWorkspaceDependencyWriteGuard(managedWorkspaceConfigPath);
+  const tempLeaf = `lark-codex-exec-${randomBytes(12).toString('hex')}`;
+  const pinnedTemporary = initialGuard && await mkdirTemporaryInsidePinnedRoot(
+    await initialGuard.assertNewDirectory(path.join(os.tmpdir(), tempLeaf)), tempLeaf);
+  const tmpDir = pinnedTemporary?.directory ?? await fs.mkdtemp(path.join(os.tmpdir(), 'lark-codex-exec-'));
+  const validateTemporary = async () => {
+    if (pinnedTemporary) await assertProtectedWorkspacePath(pinnedTemporary, true);
+  };
+  const removeTemporary = async () => {
+    await validateTemporary();
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  };
   const outputFile = path.join(tmpDir, 'last-message.txt');
   const schemaFile = request.outputSchema
     ? path.join(tmpDir, 'outcome-schema.json')
@@ -278,17 +346,18 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   try {
     if (request.abortSignal?.aborted) throw new CodexExecAbortedError('', '');
     if (schemaFile) {
+      await validateTemporary();
       await fs.writeFile(schemaFile, `${JSON.stringify(request.outputSchema)}\n`, {
         encoding: 'utf-8',
         mode: 0o600,
+        ...(pinnedTemporary ? { flag: 'wx' } : {}),
       });
-      await fs.chmod(schemaFile, 0o600);
+      if (!pinnedTemporary) await fs.chmod(schemaFile, 0o600);
     }
   } catch (error) {
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    await removeTemporary().catch(() => {});
     throw error;
   }
-  const args = buildCodexExecArgs(request, outputFile, schemaFile);
 
   let stdout = '';
   let stderr = '';
@@ -316,8 +385,29 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   }
 
   try {
+    const guard = await loadWorkspaceDependencyWriteGuard(managedWorkspaceConfigPath);
+    if (Boolean(initialGuard) !== Boolean(guard)) throw new WorkspaceDependencyPolicyError('dependency_selection_revoked');
     const childEnv = { ...process.env, NO_COLOR: '1', ...request.extraEnv };
-    const launcher = await request.validateManagedGitLaunch?.(command, childEnv);
+    const guarded = guard ? await prepareDependencyLaunch(request, cwd, tmpDir, childEnv, guard) : undefined;
+    const effectiveEnv: NodeJS.ProcessEnv = guarded?.env ?? childEnv;
+    const validated = await request.validateManagedGitLaunch?.(command, guarded ? { ...effectiveEnv } : effectiveEnv);
+    const statePathsChanged = (env: NodeJS.ProcessEnv) => ['HOME', 'CODEX_HOME', 'CODEX_SQLITE_HOME', 'TMPDIR', 'TMP', 'TEMP']
+      .some((key) => env[key] !== effectiveEnv[key]);
+    if (guarded && validated && (validated.prefix.length || statePathsChanged(validated.env))) {
+      throw new WorkspaceDependencyPolicyError('dependency_launch_unsupported');
+    }
+    const launcher = guard && guarded
+      ? await resolveManagedGitLauncher(validated?.command ?? command, validated?.env ?? effectiveEnv, guard.protectedBindings,
+        [cwd, ...guarded.writable, guarded.env.CODEX_HOME!])
+      : validated;
+    const finalEnv = launcher?.env ?? effectiveEnv;
+    if (guarded) {
+      if (statePathsChanged(finalEnv)) {
+        throw new WorkspaceDependencyPolicyError('dependency_launch_unsupported');
+      }
+      await assertCompatibleCodexLayers(finalEnv, [guarded.cwd, ...guarded.writable]);
+    }
+    const args = buildCodexExecArgs(guarded?.request ?? request, outputFile, schemaFile);
     if (request.workspaceDirectory) {
       const { authorizedRoots, auxiliaryBindings, readOnlyBindings, binding: savedBinding, requireProtectedAncestry } = request.workspaceDirectory;
       for (const auxiliary of [...(auxiliaryBindings ?? []), ...(readOnlyBindings ?? [])]) {
@@ -330,17 +420,28 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
         ...(auxiliaryBindings ?? []).map((auxiliary) => assertProtectedWorkspacePath(auxiliary, true)),
         ...(readOnlyBindings ?? []).map((auxiliary) => assertProtectedWorkspacePath(auxiliary)),
       ]);
-    } else {
+    } else if (!guard) {
       await fs.mkdir(cwd, { recursive: true });
+    }
+    if (guarded && guard) {
+      const currentGuard = await loadWorkspaceDependencyWriteGuard(managedWorkspaceConfigPath);
+      if (!currentGuard || currentGuard.protectedBindings.length !== guard.protectedBindings.length
+        || currentGuard.protectedBindings.some((binding) => !guard.protectedBindings.some((original) => sameWorkspaceProject(binding, original)))) {
+        throw new WorkspaceDependencyPolicyError('dependency_selection_revoked');
+      }
+      await currentGuard.assertWrites([finalEnv.CODEX_HOME!]);
+      await currentGuard.assertWrites([tmpDir], [finalEnv.CODEX_HOME!]);
+      await currentGuard.assertWrites(guarded.writable, [finalEnv.CODEX_HOME!, tmpDir]);
+      await validateTemporary();
     }
     if (request.abortSignal?.aborted) throw new CodexExecAbortedError('', '');
     await new Promise<void>((resolve, reject) => {
       const usePosixProcessGroup = process.platform !== 'win32';
       const child = spawn(launcher?.command ?? command, launcher ? [...launcher.prefix, ...args] : args, {
-        cwd,
+        cwd: guarded?.cwd ?? cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: usePosixProcessGroup,
-        env: launcher?.env ?? childEnv,
+        env: finalEnv,
       });
       let childSpawned = false;
       child.once('spawn', () => { childSpawned = true; });
@@ -490,6 +591,7 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
     const metrics = runtimeMetrics.finish();
     usage = mergeCodexExecUsage(usage, metrics.usage ?? null);
     await logCodexExecRuntimeMetrics(metrics, { logId: request.traceLogId });
+    await validateTemporary();
     const answer = await fs.readFile(outputFile, 'utf8');
     return {
       text: answer.trim(),
@@ -518,6 +620,6 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
       }
     }
     await toolTrace?.flush();
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    await removeTemporary().catch(() => {});
   }
 }

@@ -6,6 +6,7 @@ import { appConfig } from './config.js';
 import { audit } from './audit-log.js';
 import { SYSTEM_FLUSH_CALLER, type IdentitySession } from './identity-session.js';
 import { accessControlStore } from './runtime-access-control.js';
+import { hasWorkspaceDependencyRegistry } from './workspace-dependency-registry.js';
 
 type CallerMode = 'owners' | 'lark_allowed_user_ids' | 'public' | string[];
 type ParamMode = 'allowlist' | 'blocklist';
@@ -466,6 +467,13 @@ export async function runConfiguredLocalCliToolAsCaller(
     return structuredFailure('permission', 'System flush identity is not authorized for local CLI execution.');
   }
 
+  const dependencyGuardActive = async () => hasWorkspaceDependencyRegistry(appConfig.managedWorkspaceConfigPath).catch(() => true);
+  const guardedHostFailure = async () => {
+    await audit('run_local_cli_tool', caller, auditArgs, 'denied');
+    return structuredFailure('permission', 'Host CLI tools are unavailable while dependency caches require protected launches.', 'dependency_host_cli_unavailable');
+  };
+  if (await dependencyGuardActive()) return guardedHostFailure();
+
   let loaded: LoadedConfig;
   try {
     loaded = await loadConfig(configPath);
@@ -494,6 +502,7 @@ export async function runConfiguredLocalCliToolAsCaller(
   }
 
   const finalArgs = [...config.fixedArgs, ...requestedArgs];
+  if (await dependencyGuardActive()) return guardedHostFailure();
   let result: ProcessResult;
   try {
     result = await runProcess(

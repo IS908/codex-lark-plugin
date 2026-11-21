@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import type { CodexExecRequest, CodexExecSandbox } from './codex-exec.js';
 import { appConfig } from './config.js';
 import type { ManagedRunAllocation } from './domain/managed-workspace.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { createManagedGitSandboxOptions } from './managed-git-sandbox.js';
-import { resolveManagedGitLauncher } from './managed-git-launcher.js';
+import { assertCompatibleCodexLayers, resolveManagedGitLauncher } from './managed-git-launcher.js';
 import { hasManagedGitRegistry, resolveManagedGitSelection } from './managed-git-registry.js';
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
 import { validateWorkspaceGitCheckout, WorkspaceGitSnapshotError } from './workspace-git-snapshot.js';
+import { hasWorkspaceDependencyRegistry } from './workspace-dependency-registry.js';
 
 export function assertManagedWorkspaceSandbox(sandbox: CodexExecSandbox | undefined, project?: WorkspaceProjectBinding): void {
   if (sandbox !== 'read-only' && (sandbox !== 'workspace-write' || !project)) {
@@ -32,7 +32,7 @@ function pluginExecutionRoots(...roots: string[]): string[] {
 }
 
 export async function protectProfileDistillation(request: CodexExecRequest, configPath: string): Promise<CodexExecRequest> {
-  if (!await hasManagedGitRegistry(configPath)) return request;
+  if (!await hasManagedGitRegistry(configPath) && !await hasWorkspaceDependencyRegistry(configPath)) return request;
   const cwd = await fs.realpath(request.cwd ?? process.cwd());
   await assertCompatibleCodexLayers(process.env, [cwd]);
   return { ...request, cwd, sandbox: 'read-only', profile: undefined, ignoreUserConfig: true, strictConfig: true,
@@ -131,13 +131,14 @@ async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecReq
   const options = await validate();
   return {
     ...enriched, cwd: gitCheckout.checkout.directory, sandbox: undefined, additionalWritableDirs: undefined,
-    ignoreUserConfig: true, strictConfig: true, configOverrides: options.overrides, extraEnv,
+    ignoreUserConfig: true, strictConfig: true, configOverrides: [...options.overrides], extraEnv,
+    managedGitSandbox: options,
     workspaceDirectory: { ...guard, binding: gitCheckout.checkout, requireProtectedAncestry: true,
       auxiliaryBindings: [...guard.auxiliaryBindings ?? [], scratch, artifacts, gitCheckout.gitDirectory],
       readOnlyBindings: [...guard.readOnlyBindings ?? [], project, git.cache] },
     validateManagedGitLaunch: async (command, env) => {
       const current = await validate();
-      if (current.overrides.some((override, index) => override !== options.overrides[index])) {
+      if (current.overrides.length !== options.overrides.length || current.overrides.some((override, index) => override !== options.overrides[index])) {
         throw new ManagedWorkspaceStorageError('git_sandbox_invalid');
       }
       return resolveManagedGitLauncher(command, env, [project, git.cache, allocation.roots.scratch, allocation.roots.artifacts, ...extra],
@@ -145,36 +146,4 @@ async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecReq
     },
     prompt: `${enriched.prompt}\n\n[Isolated Git checkout]\nWork in the current checkout. It started at ${git.commit}. Do not use the original source as a working directory.`,
   };
-}
-
-async function assertCompatibleCodexLayers(env: NodeJS.ProcessEnv, workspaces: string[]): Promise<void> {
-  const unsupported = () => new ManagedWorkspaceStorageError('git_sandbox_layers_unsupported');
-  const exists = async (target: string) => fs.lstat(target).then(() => true, (error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return false;
-    throw unsupported();
-  });
-  const rejectRules = async (root: string) => {
-    const folder = path.join(root, 'rules');
-    if (!await exists(folder)) return;
-    try {
-      for await (const entry of await fs.opendir(folder)) if (entry.name.endsWith('.rules')) throw unsupported();
-    } catch { throw unsupported(); }
-  };
-  const home = env.CODEX_HOME?.trim() || path.join(env.HOME || os.homedir(), '.codex');
-  if (!path.isAbsolute(home)) throw unsupported();
-  await rejectRules(home);
-  if (await exists(path.join(home, 'hooks.json'))) throw unsupported();
-  for (const name of ['config.toml', 'managed_config.toml', 'requirements.toml', 'hooks.json']) {
-    if (await exists(path.join('/etc/codex', name))) throw unsupported();
-  }
-  await rejectRules('/etc/codex');
-  const inspected = new Set<string>();
-  for (const workspace of workspaces) {
-    for (let directory = workspace; !inspected.has(directory); directory = path.dirname(directory)) {
-      inspected.add(directory);
-      const local = path.join(directory, '.codex');
-      if (await exists(path.join(local, 'config.toml')) || await exists(path.join(local, 'hooks.json'))) throw unsupported();
-      await rejectRules(local);
-    }
-  }
 }

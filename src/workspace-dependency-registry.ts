@@ -5,13 +5,13 @@ import { z } from 'zod';
 import type { ManagedGitSelection, ManagedWorkspaceRoots } from './domain/managed-workspace.js';
 import { sameWorkspaceProject, workspaceProjectBindingSchema, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { resolveManagedGitSelection } from './managed-git-registry.js';
-import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities, readWorkspaceMountTable,
-  workspaceBackingAliases, workspaceMountLayoutSupported, type WorkspaceMount } from './managed-workspace-ancestry.js';
+import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
 import { verifyWorkspaceDependencyCache } from './workspace-dependency-cache.js';
 import { describeWorkspaceDependencies, workspaceDependencyNpmRegistrySchema, type WorkspaceDependencyIdentity,
   type WorkspaceDependencyInput } from './workspace-dependency-input.js';
 import { readWorkspaceGitDependencyInputs } from './workspace-git-snapshot.js';
-import { pinWorkspacePath, validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
+import { readWorkspaceDependencyMountPolicy, type WorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
+import { pinWorkspacePath, validateWorkspaceProject } from './workspace-projects.js';
 
 const REGISTRY = 'workspace-dependencies.json';
 const MANIFESTS = 'workspace-dependency-manifests';
@@ -36,6 +36,8 @@ const messages = {
   dependency_registry_invalid: 'The operator dependency cache registry is invalid or unreadable.',
   dependency_write_overlap: 'An effective write directory overlaps the registered dependency caches or their policy directory.',
   dependency_write_layout_unsupported: 'The effective writable directory has an unsupported mount layout.',
+  dependency_launch_unsupported: 'This Codex launch configuration cannot enforce the dependency cache write boundary.',
+  dependency_runtime_home_required: 'Dependency cache protection requires a pre-existing, dedicated absolute CODEX_HOME outside the policy and cache locations.',
   dependency_project_unavailable: 'Dependency reuse requires the registered project and its authorized isolated Git commit.',
   dependency_toolchain_unavailable: 'A selected dependency installer toolchain is unavailable.',
   dependency_cache_unavailable: 'No operator-approved cache matches the dependency compatibility key.',
@@ -131,13 +133,46 @@ export async function resolveWorkspaceDependencySelections(request: {
 
 // Call with actual effective write roots, regardless of whether the run opted in to dependency reuse.
 export async function assertWorkspaceDependencyWriteIsolation(configPath: string | undefined, writableRoots: readonly string[]): Promise<void> {
+  await (await loadWorkspaceDependencyWriteGuard(configPath))?.assertWrites(writableRoots);
+}
+
+export async function loadWorkspaceDependencyWriteGuard(configPath?: string) {
   const registry = await readRegistry(configPath);
-  if (!registry) return;
-  for (const directory of new Set(writableRoots)) {
-    const binding = await pinWorkspacePath(directory, '.');
-    const writable = await describeLocation(binding, registry.mounts);
-    if (registry.protected.some((protectedLocation) => overlap(writable, protectedLocation))) fail('dependency_write_overlap');
-    if (!workspaceMountLayoutSupported([binding.directory], registry.mounts)) fail('dependency_write_layout_unsupported');
+  if (!registry) return undefined;
+  const check = (directory: string, writable: Location, protectedLocations: Location[]) => {
+    if (protectedLocations.some((protectedLocation) => overlap(writable, protectedLocation, registry.mounts.contains))) fail('dependency_write_overlap');
+    if (!registry.mounts.supports(directory)) fail('dependency_write_layout_unsupported');
+  };
+  return {
+    protectedBindings: registry.protected.map(({ binding }) => binding),
+    async assertWrites(writableRoots: readonly string[], additionalProtected: readonly string[] = []) {
+      const protectedLocations = [...registry.protected];
+      for (const directory of additionalProtected) {
+        protectedLocations.push(await describeLocation(await pinWorkspacePath(directory, '.'), registry.mounts));
+      }
+      for (const directory of new Set(writableRoots)) {
+        const binding = await pinWorkspacePath(directory, '.');
+        check(binding.directory, await describeLocation(binding, registry.mounts), protectedLocations);
+      }
+    },
+    async assertNewDirectory(directory: string) {
+      const parent = await pinWorkspacePath(path.dirname(directory), '.');
+      const canonical = path.join(parent.directory, path.basename(directory));
+      check(canonical, { id: '', ancestors: await readWorkspaceAncestorIdentities(parent.directory),
+        aliases: registry.mounts.aliases(canonical) }, registry.protected);
+      await assertProtectedWorkspacePath(parent, false, true);
+      return parent;
+    },
+  };
+}
+
+export async function hasWorkspaceDependencyRegistry(configPath: string): Promise<boolean> {
+  try {
+    await fs.lstat(path.join(path.dirname(path.resolve(configPath)), REGISTRY));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    return fail('dependency_registry_invalid');
   }
 }
 
@@ -151,8 +186,8 @@ async function readRegistry(configPath?: string) {
     const projectIds = new Set<string>();
     const projectPaths = new Set<string>();
     const keys = new Set<string>();
-    const mounts = readWorkspaceMountTable();
-    if (!workspaceMountLayoutSupported([directory], mounts)) fail('dependency_registry_invalid');
+    const mounts = await readWorkspaceDependencyMountPolicy();
+    if (!mounts.supports(directory)) fail('dependency_registry_invalid');
     const protectedLocations = [await describeLocation(await pinWorkspacePath(directory, '.'), mounts)];
     for (const { source } of registry.projects) {
       const id = `${source.device}:${source.inode}`;
@@ -165,9 +200,9 @@ async function readRegistry(configPath?: string) {
       keys.add(key);
       const current = await validateWorkspaceProject(cache.directory, cache);
       await assertProtectedWorkspacePath(current);
-      if (!workspaceMountLayoutSupported([current.directory], mounts)) fail('dependency_registry_invalid');
+      if (!mounts.supports(current.directory)) fail('dependency_registry_invalid');
       const location = await describeLocation(current, mounts);
-      if (protectedLocations.some((other) => overlap(location, other))) fail('dependency_registry_invalid');
+      if (protectedLocations.some((other) => overlap(location, other, mounts.contains))) fail('dependency_registry_invalid');
       protectedLocations.push(location);
     }
     return { ...registry, directory, mounts, protected: protectedLocations };
@@ -206,14 +241,16 @@ function sameFile(a: BigIntStats, b: BigIntStats): boolean {
     && a.gid === b.gid && a.nlink === b.nlink && a.ctimeNs === b.ctimeNs && a.mtimeNs === b.mtimeNs;
 }
 
-async function describeLocation(binding: WorkspaceProjectBinding, mounts: WorkspaceMount[]) {
-  return { id: `${binding.device}:${binding.inode}`, ancestors: await readWorkspaceAncestorIdentities(binding.directory),
-    aliases: workspaceBackingAliases(binding.directory, mounts) };
+async function describeLocation(binding: WorkspaceProjectBinding, mounts: WorkspaceDependencyMountPolicy) {
+  return { binding, id: `${binding.device}:${binding.inode}`, ancestors: await readWorkspaceAncestorIdentities(binding.directory),
+    aliases: mounts.aliases(binding.directory) };
 }
 
-function overlap(a: Awaited<ReturnType<typeof describeLocation>>, b: Awaited<ReturnType<typeof describeLocation>>): boolean {
+type Location = Omit<Awaited<ReturnType<typeof describeLocation>>, 'binding'>;
+
+function overlap(a: Location, b: Location, contains: WorkspaceDependencyMountPolicy['contains']): boolean {
   return a.ancestors.has(b.id) || b.ancestors.has(a.id) || a.aliases.some((left) => b.aliases.some((right) =>
-    workspacePathContains(left, right) || workspacePathContains(right, left)));
+    contains(left, right) || contains(right, left)));
 }
 
 function fail(code: keyof typeof messages): never { throw new WorkspaceDependencyPolicyError(code); }
