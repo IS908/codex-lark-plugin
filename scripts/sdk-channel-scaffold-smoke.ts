@@ -40,6 +40,8 @@ function runOptions(extraEnv: Record<string, string>) {
           console.log(JSON.stringify({
             transport: options.transport,
             requireMention: options.policy?.requireMention,
+            maxBatchMessages: options.safety?.batch?.text?.maxMessages,
+            chatQueue: options.safety?.chatQueue,
             includeRawEvent: options.includeRawEvent,
             source: options.source
           }));
@@ -70,6 +72,8 @@ assert.equal(parsedOptions.transport, 'websocket');
 assert.equal(parsedOptions.requireMention, false);
 assert.equal(parsedOptions.includeRawEvent, true);
 assert.equal(parsedOptions.source, 'codex-lark-plugin');
+assert.equal(parsedOptions.maxBatchMessages, 1);
+assert.deepEqual(parsedOptions.chatQueue, { enabled: true, mergeWhileBusy: false });
 
 const sdkDryRun = runStart({});
 assert.equal(sdkDryRun.status, 0, sdkDryRun.stderr + sdkDryRun.stdout);

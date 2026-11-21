@@ -147,6 +147,7 @@ function currentCaller(
   identitySession: IdentitySession,
   message: LarkMessage,
   action: CodexExecAction['type'],
+  expectedCaller?: string,
 ): { caller: string } | { error: CodexExecActionExecutionResult } {
   const caller = identitySession.getCaller(message.chatId, message.threadId);
   if (!caller) {
@@ -158,6 +159,10 @@ function currentCaller(
         message: `No active identity session for chat ${message.chatId}.`,
       },
     };
+  }
+  if (expectedCaller !== undefined && caller !== expectedCaller) {
+    void audit(action, null, { chat_id: message.chatId, thread_id: message.threadId }, 'denied');
+    return { error: { ok: false, action, message: 'The active caller does not match the authenticated message sender.' } };
   }
   return { caller };
 }
@@ -289,7 +294,7 @@ async function executeCreateJob(
   { message, workspaceProject }: CodexExecActionContext,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'create_job');
+  const auth = currentCaller(deps.identitySession, message, 'create_job', workspaceProject ? message.senderId : undefined);
   if ('error' in auth) return auth.error;
   const { caller } = auth;
   const targetChatId = action.target_chat_id ?? message.chatId;
@@ -933,7 +938,7 @@ async function executeUpsertJob(
   { message, workspaceProject, explicitWorkspaceProject }: CodexExecActionContext,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'upsert_job');
+  const auth = currentCaller(deps.identitySession, message, 'upsert_job', workspaceProject ? message.senderId : undefined);
   const targetChatId = action.target_chat_id ?? message.chatId;
   const auditArgs = {
     name: action.name,

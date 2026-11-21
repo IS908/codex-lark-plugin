@@ -496,8 +496,8 @@ export async function deliverMessageViaCodexExec(
     : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
-  const progressBaseDir = opts.progressBaseDir ?? appConfig.codexExecCwd;
-  const actionBaseDir = opts.actionBaseDir ?? appConfig.codexExecCwd;
+  const progressBaseDir = path.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
+  const actionBaseDir = path.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
   const actionChannel = await createCodexExecActionChannel({
     baseDir: actionBaseDir,
     caller: message.senderId,

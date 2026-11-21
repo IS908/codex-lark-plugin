@@ -249,7 +249,6 @@ export class LarkChannel {
     sdkChannel?: Pick<SdkLarkChannel, 'downloadResource' | 'fetchMessage' | 'addReaction'>,
   ): Promise<void> {
     const result = await processSdkMessage(sdkMessage, {
-      identitySession: this.identitySession!,
       accessControl: accessControlStore,
       botOpenId: this.botOpenId,
       handleMessage: async (message) => {
@@ -290,7 +289,7 @@ export class LarkChannel {
     }
 
     try {
-      const message = bindSdkCommentIdentity(comment, this.identitySession!);
+      const message = bindSdkCommentIdentity(comment);
       message.currentUserText = message.text;
       await this.addSdkCommentContext(message, comment, sdkChannel);
       message.sourceContextText = message.text;

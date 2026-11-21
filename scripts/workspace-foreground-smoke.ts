@@ -106,7 +106,9 @@ try {
 
   const vanished = path.join(base, 'vanished');
   await fs.mkdir(vanished);
+  Object.assign(appConfig, { codexExecCwd: path.relative(process.cwd(), base) });
   await dispatch({ workspaceDirectiveText: '/project path:vanished\nCheck status.' });
+  assert.ok(path.isAbsolute(requests.at(-1)!.actions!.filePath));
   const snapshot = (await store.get(key))?.workspaceProject;
   assert.ok(snapshot);
   await fs.rmdir(vanished);

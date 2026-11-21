@@ -69,7 +69,7 @@ try {
     identitySession: identity, memoryStore: new MemoryStore(path.join(base, 'memory')),
   });
   identity.setCaller('oc_target', undefined, 'ou_owner');
-  const throughForeground = (type: 'create_job' | 'upsert_job', text: string) => deliverMessageViaCodexExec({
+  const throughForeground = (type: 'create_job' | 'upsert_job', text: string, expected = true) => deliverMessageViaCodexExec({
     message: {
       messageId: 'om_workspace_select', chatId: 'oc_target', chatType: 'p2p', senderId: 'ou_owner',
       text, currentUserText: text, workspaceDirectiveText: text, messageType: 'text', rawContent: '',
@@ -86,9 +86,13 @@ try {
       })}\n`);
       return { text: 'OK' };
     },
-    onActionResults: (results) => assert.equal(results[0]?.ok, true, results[0]?.message),
+    onActionResults: (results) => assert.equal(results[0]?.ok, expected, results[0]?.message),
     deliverySink: async () => {},
   });
+  identity.setCaller('oc_target', undefined, 'ou_other');
+  await throughForeground('create_job', '/project path:app\nCreate a Cron job.', false);
+  assert.equal(await readJob('action-job'), null, 'the project choice must not be attributed to a different caller');
+  identity.setCaller('oc_target', undefined, 'ou_owner');
   await throughForeground('create_job', '/project path:app\nCreate a Cron job.');
   const original = await readJob('action-job');
   assert.equal(original?.meta.workspace_project?.directory, app, 'Cron uses the parent selection, not the registry default');

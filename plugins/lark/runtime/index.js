@@ -48116,7 +48116,7 @@ function bindSdkMessageIdentity(sdkMessage, identitySession) {
     throw new Error("SDK message used reserved terminal chat id");
   }
   const threadId = sdkMessage.threadId ?? sdkMessage.rootId;
-  identitySession.setCaller(chatId, threadId, senderId);
+  identitySession?.setCaller(chatId, threadId, senderId);
   return {
     messageId,
     chatId,
@@ -48269,7 +48269,7 @@ function bindSdkCommentIdentity(comment, identitySession) {
   if (!comment.operator.openId) throw new Error("SDK comment event missing operator.openId");
   const chatId = `${DOC_CHAT_ID_PREFIX}${comment.fileToken}`;
   const threadId = comment.commentId;
-  identitySession.setCaller(chatId, threadId, comment.operator.openId);
+  identitySession?.setCaller(chatId, threadId, comment.operator.openId);
   const text = `<doc_comment doc_token="${comment.fileToken}" comment_id="${comment.commentId}" file_type="${comment.fileType}" is_mentioned="true">SDK comment mention</doc_comment>`;
   return {
     messageId: comment.replyId ?? comment.commentId,
@@ -50277,7 +50277,6 @@ var LarkChannel = class {
   }
   async handleSdkMessageEvent(sdkMessage, sdkChannel) {
     const result = await processSdkMessage(sdkMessage, {
-      identitySession: this.identitySession,
       accessControl: accessControlStore,
       botOpenId: this.botOpenId,
       handleMessage: async (message) => {
@@ -50306,7 +50305,7 @@ var LarkChannel = class {
       return;
     }
     try {
-      const message = bindSdkCommentIdentity(comment, this.identitySession);
+      const message = bindSdkCommentIdentity(comment);
       message.currentUserText = message.text;
       await this.addSdkCommentContext(message, comment, sdkChannel);
       message.sourceContextText = message.text;
@@ -52143,6 +52142,8 @@ var registrySchema = external_exports.strictObject({
 var explanations = {
   invalid_selector: "Specify a project as `/project root/name` or `/project path:<directory>`.",
   invalid_registry: "The operator workspace project registry is invalid or unreadable.",
+  duplicate_root: "The workspace registry repeats a source root name. Root names must be unique.",
+  duplicate_project: "The workspace registry repeats a project name within the same source root.",
   ambiguous_project: "The project name is ambiguous. Use `root/name` to select a project.",
   unknown_project: "The workspace project is not configured.",
   outside_project_root: "The workspace project resolves outside its configured source root.",
@@ -52225,22 +52226,22 @@ async function readRegistry(registryPath) {
     if (error62.code === "ENOENT") return void 0;
     throw new WorkspaceProjectError("invalid_registry");
   }
+  let registry2;
   try {
-    const registry2 = registrySchema.parse(JSON.parse(value));
-    const rootNames = new Set(registry2.roots.map((root) => root.name));
-    if (rootNames.size !== registry2.roots.length) throw new WorkspaceProjectError("invalid_registry");
-    const aliases = /* @__PURE__ */ new Set();
-    for (const project of registry2.projects) {
-      const alias = `${project.root}/${project.name}`;
-      if (!rootNames.has(project.root) || aliases.has(alias)) {
-        throw new WorkspaceProjectError("invalid_registry");
-      }
-      aliases.add(alias);
-    }
-    return registry2;
+    registry2 = registrySchema.parse(JSON.parse(value));
   } catch {
     throw new WorkspaceProjectError("invalid_registry");
   }
+  const rootNames = new Set(registry2.roots.map((root) => root.name));
+  if (rootNames.size !== registry2.roots.length) throw new WorkspaceProjectError("duplicate_root");
+  const aliases = /* @__PURE__ */ new Set();
+  for (const project of registry2.projects) {
+    const alias = `${project.root}/${project.name}`;
+    if (!rootNames.has(project.root)) throw new WorkspaceProjectError("invalid_registry");
+    if (aliases.has(alias)) throw new WorkspaceProjectError("duplicate_project");
+    aliases.add(alias);
+  }
+  return registry2;
 }
 async function readDirectory(candidate) {
   try {
@@ -57811,7 +57812,7 @@ function parseCodexExecActionEnvelope(parsed) {
 }
 
 // src/codex-exec-actions.ts
-function currentCaller(identitySession, message, action) {
+function currentCaller(identitySession, message, action, expectedCaller) {
   const caller = identitySession.getCaller(message.chatId, message.threadId);
   if (!caller) {
     void audit(action, null, { chat_id: message.chatId, thread_id: message.threadId }, "denied");
@@ -57822,6 +57823,10 @@ function currentCaller(identitySession, message, action) {
         message: `No active identity session for chat ${message.chatId}.`
       }
     };
+  }
+  if (expectedCaller !== void 0 && caller !== expectedCaller) {
+    void audit(action, null, { chat_id: message.chatId, thread_id: message.threadId }, "denied");
+    return { error: { ok: false, action, message: "The active caller does not match the authenticated message sender." } };
   }
   return { caller };
 }
@@ -57927,7 +57932,7 @@ async function executeSaveMemory(action, message, deps) {
   return { ok: true, action: "save_memory", message: `Saved ${action.memory_type} episode for chat ${message.chatId}.` };
 }
 async function executeCreateJob(action, { message, workspaceProject }, deps) {
-  const auth = currentCaller(deps.identitySession, message, "create_job");
+  const auth = currentCaller(deps.identitySession, message, "create_job", workspaceProject ? message.senderId : void 0);
   if ("error" in auth) return auth.error;
   const { caller } = auth;
   const targetChatId = action.target_chat_id ?? message.chatId;
@@ -58463,7 +58468,7 @@ async function executeDeleteJob(action, message, deps) {
   return { ok: true, action: "delete_job", message: `Deleted job "${deleted.jobId}".` };
 }
 async function executeUpsertJob(action, { message, workspaceProject, explicitWorkspaceProject }, deps) {
-  const auth = currentCaller(deps.identitySession, message, "upsert_job");
+  const auth = currentCaller(deps.identitySession, message, "upsert_job", workspaceProject ? message.senderId : void 0);
   const targetChatId = action.target_chat_id ?? message.chatId;
   const auditArgs = {
     name: action.name,
@@ -65148,6 +65153,11 @@ function buildSdkChannelOptions() {
     policy: {
       requireMention: false
     },
+    // Exec commands must stay paired with their own event and authenticated sender.
+    safety: {
+      chatQueue: { enabled: true, mergeWhileBusy: false },
+      batch: { text: { maxMessages: 1 } }
+    },
     logger: makeSdkChannelLogger("lark-channel-sdk"),
     loggerLevel: import_node_sdk2.LoggerLevel.info,
     includeRawEvent: true,
@@ -66167,8 +66177,8 @@ async function deliverMessageViaCodexExec(opts) {
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace) && (workspace === void 0 || compatibleSession?.workspaceProjectSenderId === message.senderId) ? compatibleSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
-  const progressBaseDir = opts.progressBaseDir ?? appConfig.codexExecCwd;
-  const actionBaseDir = opts.actionBaseDir ?? appConfig.codexExecCwd;
+  const progressBaseDir = path20.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
+  const actionBaseDir = path20.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
   const actionChannel = await createCodexExecActionChannel({
     baseDir: actionBaseDir,
     caller: message.senderId,

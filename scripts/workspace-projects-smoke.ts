@@ -60,9 +60,9 @@ try {
   await configure({ ...registry, projects: [...registry.projects, { root: 'first', name: 'escape', path: 'escape' }] });
   await rejects({ ...opts, selector: 'first/escape' }, 'outside_project_root');
   await configure({ ...registry, projects: [...registry.projects, registry.projects[0]] });
-  await rejects(opts, 'invalid_registry');
+  await rejects(opts, 'duplicate_project');
   await configure({ ...registry, roots: [...registry.roots, registry.roots[0]] });
-  await rejects(opts, 'invalid_registry');
+  await rejects(opts, 'duplicate_root');
 
   await configure({ ...registry, projects: [{ root: 'second', name: 'app', path: 'app' }] });
   assert.deepEqual(await resolveWorkspaceProject({ ...opts, persisted: JSON.parse(JSON.stringify(selected)) }), selected);

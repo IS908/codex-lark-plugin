@@ -20,6 +20,8 @@ type Registry = z.infer<typeof registrySchema>;
 const explanations = {
   invalid_selector: 'Specify a project as `/project root/name` or `/project path:<directory>`.',
   invalid_registry: 'The operator workspace project registry is invalid or unreadable.',
+  duplicate_root: 'The workspace registry repeats a source root name. Root names must be unique.',
+  duplicate_project: 'The workspace registry repeats a project name within the same source root.',
   ambiguous_project: 'The project name is ambiguous. Use `root/name` to select a project.',
   unknown_project: 'The workspace project is not configured.',
   outside_project_root: 'The workspace project resolves outside its configured source root.',
@@ -119,22 +121,22 @@ async function readRegistry(registryPath: string): Promise<Registry | undefined>
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw new WorkspaceProjectError('invalid_registry');
   }
+  let registry: Registry;
   try {
-    const registry = registrySchema.parse(JSON.parse(value));
-    const rootNames = new Set(registry.roots.map((root) => root.name));
-    if (rootNames.size !== registry.roots.length) throw new WorkspaceProjectError('invalid_registry');
-    const aliases = new Set<string>();
-    for (const project of registry.projects) {
-      const alias = `${project.root}/${project.name}`;
-      if (!rootNames.has(project.root) || aliases.has(alias)) {
-        throw new WorkspaceProjectError('invalid_registry');
-      }
-      aliases.add(alias);
-    }
-    return registry;
+    registry = registrySchema.parse(JSON.parse(value));
   } catch {
     throw new WorkspaceProjectError('invalid_registry');
   }
+  const rootNames = new Set(registry.roots.map((root) => root.name));
+  if (rootNames.size !== registry.roots.length) throw new WorkspaceProjectError('duplicate_root');
+  const aliases = new Set<string>();
+  for (const project of registry.projects) {
+    const alias = `${project.root}/${project.name}`;
+    if (!rootNames.has(project.root)) throw new WorkspaceProjectError('invalid_registry');
+    if (aliases.has(alias)) throw new WorkspaceProjectError('duplicate_project');
+    aliases.add(alias);
+  }
+  return registry;
 }
 
 async function readDirectory(candidate: string): Promise<WorkspaceProjectBinding> {

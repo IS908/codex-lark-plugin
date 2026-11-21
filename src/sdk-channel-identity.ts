@@ -39,7 +39,7 @@ function normalizeMentions(
 
 export function bindSdkMessageIdentity(
   sdkMessage: SdkIdentityMessage,
-  identitySession: IdentitySession,
+  identitySession?: IdentitySession,
 ): LarkMessage {
   const messageId = requireNonEmpty(sdkMessage.messageId, 'messageId');
   const chatId = requireNonEmpty(sdkMessage.chatId, 'chatId');
@@ -52,7 +52,7 @@ export function bindSdkMessageIdentity(
   }
 
   const threadId = sdkMessage.threadId ?? sdkMessage.rootId;
-  identitySession.setCaller(chatId, threadId, senderId);
+  identitySession?.setCaller(chatId, threadId, senderId);
 
   return {
     messageId,

@@ -57,7 +57,7 @@ export type SdkMessageResult =
   | { status: 'dropped'; reason: SdkMessageDropReason; diagnostic?: SdkMessageDropDiagnostic };
 
 export interface SdkMessageDeps {
-  identitySession: IdentitySession;
+  identitySession?: IdentitySession;
   accessControl: AccessControlReader;
   botOpenId?: string | null;
   handleMessage: (message: LarkMessage) => Promise<void>;
@@ -196,14 +196,14 @@ export async function processSdkMessage(
 
 export function bindSdkCommentIdentity(
   comment: CommentEvent,
-  identitySession: IdentitySession,
+  identitySession?: IdentitySession,
 ): LarkMessage {
   if (!comment.mentionedBot) throw new Error('SDK comment event did not mention the bot');
   if (!comment.operator.openId) throw new Error('SDK comment event missing operator.openId');
 
   const chatId = `${DOC_CHAT_ID_PREFIX}${comment.fileToken}`;
   const threadId = comment.commentId;
-  identitySession.setCaller(chatId, threadId, comment.operator.openId);
+  identitySession?.setCaller(chatId, threadId, comment.operator.openId);
 
   const text =
     `<doc_comment doc_token="${comment.fileToken}" comment_id="${comment.commentId}" ` +
