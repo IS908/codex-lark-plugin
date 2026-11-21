@@ -163,6 +163,24 @@ try {
   assert.ok(finding(cleanGit, await previewWorkspaceCleanup(bootOptions))?.reasons.includes('git_baseline_unverified_or_changed'));
   await fs.writeFile(tracked, 'original');
   const missingCache = `${bare}-unavailable`;
+  const open = fs.open.bind(fs);
+  let trackedReads = 0;
+  let cacheMovedDuringScan = false;
+  const moveCache = mock.method(fs, 'open', async (...args: Parameters<typeof open>) => {
+    if (args[0] === tracked && ++trackedReads === 2) {
+      await fs.rename(bare, missingCache);
+      cacheMovedDuringScan = true;
+    }
+    return open(...args);
+  });
+  try {
+    const racedCache = await previewWorkspaceCleanup(bootOptions);
+    assert.ok(cacheMovedDuringScan);
+    assert.ok(finding(cleanGit, racedCache)?.reasons.includes('git_backing_unverified'));
+  } finally {
+    moveCache.mock.restore();
+    if (cacheMovedDuringScan) await fs.rename(missingCache, bare);
+  }
   await fs.rename(bare, missingCache);
   try { assert.ok(finding(cleanGit, await previewWorkspaceCleanup(bootOptions))?.reasons.includes('git_backing_unverified')); }
   finally { await fs.rename(missingCache, bare); }

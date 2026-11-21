@@ -118,6 +118,12 @@ export async function previewWorkspaceCleanup(request: PreviewRequest) {
           demote(entry, 'git_baseline_unverified_or_changed');
         }
       }
+      // Full object verification can precede other candidates' scans. Recheck each surviving pin at the reporting boundary.
+      for (const [entry, { git }] of candidates) {
+        if (entry.disposition !== 'candidate' || !git) continue;
+        try { await assertWorkspaceGitCacheIdentity(git, request.authorizedRoots); }
+        catch { demote(entry, 'git_backing_unverified'); }
+      }
     }
     if (!await verifyWorkspaceCleanupLedger(request.databasePath, snapshot.stamp)) report.observations.push('ledger_changed');
     if (report.observations.some((reason) => reason !== 'unregistered_entries_retained')) {

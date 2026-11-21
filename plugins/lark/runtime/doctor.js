@@ -828,6 +828,14 @@ async function previewWorkspaceCleanup(request) {
           demote(entry, "git_baseline_unverified_or_changed");
         }
       }
+      for (const [entry, { git }] of candidates) {
+        if (entry.disposition !== "candidate" || !git) continue;
+        try {
+          await assertWorkspaceGitCacheIdentity(git, request.authorizedRoots);
+        } catch {
+          demote(entry, "git_backing_unverified");
+        }
+      }
     }
     if (!await verifyWorkspaceCleanupLedger(request.databasePath, snapshot.stamp)) report.observations.push("ledger_changed");
     if (report.observations.some((reason) => reason !== "unregistered_entries_retained")) {
