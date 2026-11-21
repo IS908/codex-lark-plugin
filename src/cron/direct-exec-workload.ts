@@ -26,6 +26,8 @@ import {
   parseCronRunInput,
   parseCronRunState,
   type CronPromptExecution,
+  parseCronArtifacts,
+  type CronArtifactPayload,
   type CronPromptExecutor,
   type CronRunInput,
   type CronRunState,
@@ -135,6 +137,7 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
       reportType,
       failureReason: normalized.failureReason,
       diagnostics: normalized.diagnostics,
+      ...(normalized.artifacts ? { artifacts: normalized.artifacts } : {}),
     };
     const failed = normalized.runStatus === 'failed';
     return {
@@ -157,7 +160,17 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
             }
           : {}),
       },
-      deliveries: [promptDelivery(claim, claim.run.input, normalized, reportType)],
+      deliveries: [
+        promptDelivery(claim, claim.run.input, normalized, reportType),
+        ...(normalized.artifacts ?? []).map((artifact, index): DurableRunDeliveryRequest => ({
+          kind: 'cron_artifact', eventKey: `cron_artifact:${index}`, attemptId: claim.attempt.attemptId,
+          idempotencyKey: `cron:${claim.run.runId}:artifact:${index}`, route: claim.run.route,
+          payload: {
+            schemaVersion: 1, jobId: claim.run.input.job.id, jobCreatedAt: claim.run.input.job.createdAt,
+            jobRevision: claim.run.input.job.revision, index, artifact,
+          } satisfies CronArtifactPayload,
+        })),
+      ],
     };
   }
 
@@ -331,6 +344,14 @@ function normalizeExecution(
   runId: string,
   execution: CronPromptExecution,
 ): CronPromptExecution {
+  if (execution.artifacts !== undefined) {
+    try {
+      if (!input.managedWorkspace || execution.runStatus !== 'success') throw new Error('Invalid artifact admission.');
+      parseCronArtifacts(execution.artifacts);
+    } catch {
+      return failedExecution(promptJob(input), runId, new Error('Cron artifact registration was invalid.'));
+    }
+  }
   if (execution.runStatus === 'success' && !execution.report.trim()) {
     return failedExecution(promptJob(input), runId, new Error('CronJob prompt produced no visible report.'));
   }

@@ -3260,8 +3260,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path34) {
-      let input2 = path34;
+    function removeDotSegments(path35) {
+      let input2 = path35;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3335,11 +3335,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path34) {
-      if (path34 === "" || path34[0] === "/") {
-        return removeDotSegments(path34);
+    function removeDotSegmentsRelative(path35) {
+      if (path35 === "" || path35[0] === "/") {
+        return removeDotSegments(path35);
       }
-      const segments = path34.split("/");
+      const segments = path35.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3702,8 +3702,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path34 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path34 && path34 !== "/" ? path34 : void 0;
+        const path35 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path35 && path35 !== "/" ? path35 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -16861,8 +16861,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path34, errorMaps, issueData } = params;
-  const fullPath = [...path34, ...issueData.path || []];
+  const { data, path: path35, errorMaps, issueData } = params;
+  const fullPath = [...path35, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -16977,11 +16977,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path34, key) {
+  constructor(parent, value, path35, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path34;
+    this._path = path35;
     this._key = key;
   }
   get path() {
@@ -20936,10 +20936,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path34) {
-  if (!path34)
+function getElementAtPath(obj, path35) {
+  if (!path35)
     return obj;
-  return path34.reduce((acc, key) => acc?.[key], obj);
+  return path35.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -21279,11 +21279,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path34, issues) {
+function prefixIssues(path35, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path34);
+    iss.path.unshift(path35);
     return iss;
   });
 }
@@ -21745,16 +21745,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path34 = []) => {
+  const processError = (error63, path35 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path34, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path35, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path34, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path35, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path34, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path35, ...issue2.path]);
       } else {
-        const fullpath = [...path34, ...issue2.path];
+        const fullpath = [...path35, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -21793,17 +21793,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path34 = []) => {
+  const processError = (error63, path35 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path34, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path35, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path34, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path35, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path34, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path35, ...issue2.path]);
       } else {
-        const fullpath = [...path34, ...issue2.path];
+        const fullpath = [...path35, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -21842,8 +21842,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path34 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path34) {
+  const path35 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path35) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -37394,11 +37394,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path34) {
-  if (path34.length === 0) {
+function getDotPath(path35) {
+  if (path35.length === 0) {
     return "object root";
   }
-  return path34.reduce((acc, seg, index) => {
+  return path35.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -39625,13 +39625,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path34 = ref.slice(1).split("/").filter(Boolean);
-  if (path34.length === 0) {
+  const path35 = ref.slice(1).split("/").filter(Boolean);
+  if (path35.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path34[0] === defsKey) {
-    const key = path34[1] === void 0 ? void 0 : decodeJSONPointerSegment(path34[1]);
+  if (path35[0] === defsKey) {
+    const key = path35[1] === void 0 ? void 0 : decodeJSONPointerSegment(path35[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -56507,6 +56507,15 @@ import fs12 from "node:fs/promises";
 import path16 from "node:path";
 
 // src/domain/managed-workspace.ts
+var MANAGED_DELIVERY_MAX_BYTES = 3e7;
+var MANAGED_DELIVERY_MAX_FILES = 5;
+function isManagedArtifactRelativePath(value) {
+  return value.length <= 2048 && value.split("/").every((part) => part && part !== "." && part !== ".." && !part.startsWith(".lark-retry-") && !/[\\\u0000-\u001f\u007f]/.test(part));
+}
+var managedArtifactReferenceSchema = external_exports.strictObject({
+  relativePath: external_exports.string().refine(isManagedArtifactRelativePath),
+  sha256: external_exports.string().regex(/^[a-f0-9]{64}$/)
+});
 var managedRunOwnerSchema = external_exports.strictObject({
   kind: external_exports.enum(["foreground", "cron_prompt", "async_task"]),
   runId: external_exports.string().min(1).max(512)
@@ -58001,6 +58010,7 @@ var CodexExecActionSchema = external_exports.discriminatedUnion("type", [
   ManageAccessControlActionSchema,
   GetRunTraceActionSchema,
   SendMessageActionSchema,
+  external_exports.strictObject({ type: external_exports.literal("register_artifact"), relative_path: external_exports.string().min(1).max(2048) }),
   RecallMessageActionSchema,
   CreateContinuationActionBaseSchema
 ]).superRefine((action, ctx) => {
@@ -59359,6 +59369,7 @@ function createCodexExecActionHandlerRegistry(deps) {
     manage_access_control: (action, context) => executeManageAccessControl(action, context.message, deps),
     get_run_trace: (action, context) => executeGetRunTrace(action, context.message, deps),
     send_message: (action, context) => executeSendMessage(action, context.message, deps),
+    register_artifact: async () => ({ ok: false, action: "register_artifact", message: "Managed artifact registration requires a bound turn." }),
     recall_message: (action, context) => executeRecallMessage(action, context.message, deps),
     create_continuation_job: (action, context) => executeCreateContinuation(action, context, deps)
   };
@@ -65609,7 +65620,7 @@ function startSdkChannelRuntimeWithRetry(channel, options = {}) {
 }
 
 // src/codex-exec-delivery.ts
-import path24 from "node:path";
+import path25 from "node:path";
 
 // src/codex-exec-progress.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
@@ -66173,6 +66184,10 @@ function buildCodexExecActionChannelPrompt(info) {
     "- Do not include chat_id, thread_id, open_id, user_id, caller, or created_by; the parent Lark bridge derives identity.",
     '- JSONL schema: {"version":1,"token":"<token>","type":"lark_action_request","actions":[{"type":"<supported_action>","...":"..."}]}',
     "- Supported action payloads inside actions[]:",
+    ...info.managedArtifactRegistration ? actionLines("register_artifact", [
+      '  - {"type":"register_artifact","relative_path":"report.csv"}',
+      "    Register only requested deliverables already written under LARK_MANAGED_ARTIFACTS_DIR. The host verifies and delivers them separately. Do not claim they were sent."
+    ]) : [],
     ...actionLines("save_memory", [
       '  - {"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"public|private","mode":"append|replace"}'
     ]),
@@ -66293,6 +66308,183 @@ async function admitManagedForegroundRun(options) {
   });
 }
 
+// src/managed-workspace-artifact.ts
+import { execFile as execFile2 } from "node:child_process";
+import { createHash as createHash11 } from "node:crypto";
+import path24 from "node:path";
+import { promisify as promisify2 } from "node:util";
+var exec2 = promisify2(execFile2);
+var HARD_BYTE_LIMIT = 100 * 1024 * 1024;
+var artifactProgram = String.raw`
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { createHash, randomBytes } = require('node:crypto');
+  const [operation, root, dev, ino, relative, limitText, expected] = process.argv.slice(1);
+  const limit = Number(limitText);
+  const mode = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+  const same = (a, b) => a.dev === b.dev && a.ino === b.ino;
+  const stable = (a, b) => same(a, b) && a.size === b.size && a.ctimeNs === b.ctimeNs && a.mtimeNs === b.mtimeNs;
+  const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+  const stat = (name) => fs.lstatSync(name, { bigint: true });
+  const guard = (ok) => { if (!ok) throw new Error('Invalid artifact'); };
+  let current = root;
+  let identity;
+  function guardParent() {
+    const named = stat(current);
+    guard(named.isDirectory() && same(identity, named) && same(identity, stat('.')));
+    guard(named.uid === BigInt(process.geteuid()) && (named.mode & 0o022n) === 0n);
+  }
+  function read(leaf, allowedLinks) {
+    const fd = fs.openSync(leaf, mode);
+    try {
+      const before = fs.fstatSync(fd, { bigint: true });
+      guard(before.isFile() && before.nlink === allowedLinks && before.size <= BigInt(limit) && stable(before, stat(leaf)));
+      const content = Buffer.alloc(Number(before.size));
+      for (let offset = 0; offset < content.length;) {
+        const received = fs.readSync(fd, content, offset, content.length - offset, offset);
+        guard(received > 0);
+        offset += received;
+      }
+      guardParent();
+      guard(stable(before, fs.fstatSync(fd, { bigint: true })) && stable(before, stat(leaf)));
+      guard(!expected || sha(content) === expected);
+      return content;
+    } finally { fs.closeSync(fd); }
+  }
+  const prefix = '.lark-retry-' + sha(relative + '\0' + expected) + '-';
+  function reconcile(leaf) {
+    let existing;
+    try { existing = stat(leaf); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const stages = fs.readdirSync('.').filter((name) => name.startsWith(prefix)
+      && /^[a-f0-9]{32}\.tmp$/.test(name.slice(prefix.length)));
+    if (stages.length === 0) return !!existing;
+    guard(stages.length === 1);
+    const [stage] = stages;
+    const staged = stat(stage);
+    guard(staged.isFile() && staged.uid === BigInt(process.geteuid()) && (staged.mode & 0o077n) === 0n);
+    if (existing) {
+      guard(same(existing, staged));
+      read(leaf, 2n);
+    } else {
+      read(stage, 1n);
+      guardParent();
+      guard(stable(staged, stat(stage)));
+      fs.linkSync(stage, leaf);
+    }
+    guardParent();
+    guard(same(staged, stat(stage)) && same(staged, stat(leaf)));
+    fs.unlinkSync(stage);
+    read(leaf, 1n);
+    return true;
+  }
+  function publish(leaf) {
+    const content = fs.readFileSync(0);
+    guard(content.length <= limit && sha(content) === expected);
+    if (reconcile(leaf)) {
+      read(leaf, 1n);
+      return;
+    }
+    const staged = prefix + randomBytes(16).toString('hex') + '.tmp';
+    const fd = fs.openSync(staged, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    try {
+      fs.writeFileSync(fd, content);
+      fs.fsyncSync(fd);
+      guardParent();
+      guard(same(fs.fstatSync(fd, { bigint: true }), stat(staged)));
+      fs.linkSync(staged, leaf);
+    } finally {
+      const created = fs.fstatSync(fd, { bigint: true });
+      fs.closeSync(fd);
+      if (same(created, stat(staged))) fs.unlinkSync(staged);
+    }
+  }
+  function main() {
+    const start = stat('.');
+    guard(process.geteuid && String(start.dev) === dev && String(start.ino) === ino);
+    identity = start;
+    guardParent();
+    const names = relative.split('/');
+    const leaf = names.pop();
+    for (const name of names) {
+      if (operation === 'publish') {
+        try { fs.mkdirSync(name, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+      }
+      let fd;
+      try { fd = fs.openSync(name, mode | fs.constants.O_DIRECTORY); }
+      catch (error) {
+        if (operation === 'reconcile' && error.code === 'ENOENT') return;
+        throw error;
+      }
+      try {
+        const child = fs.fstatSync(fd, { bigint: true });
+        guard(child.isDirectory() && child.uid === start.uid && (child.mode & 0o022n) === 0n);
+        process.chdir(name);
+        current = path.join(current, name);
+        identity = child;
+        guardParent();
+      } finally { fs.closeSync(fd); }
+    }
+    if (operation === 'publish') {
+      publish(leaf);
+      guardParent();
+    } else if (operation === 'reconcile') {
+      reconcile(leaf);
+    } else {
+      const result = read(leaf, 1n);
+      process.stdout.write(result);
+    }
+  }
+  try { main(); } catch {
+    process.exitCode = 1;
+  }
+`;
+async function readManagedArtifact(options) {
+  const content = await runArtifactOperation(options, options.expectedSha256?.toLowerCase() ?? "");
+  return { content, sha256: createHash11("sha256").update(content).digest("hex") };
+}
+async function publishManagedArtifact(options) {
+  const sha2562 = createHash11("sha256").update(options.content).digest("hex");
+  await runArtifactOperation(options, sha2562, options.content);
+}
+async function reconcileManagedArtifact(options) {
+  await runArtifactOperation(options, options.expectedSha256.toLowerCase(), void 0, "reconcile");
+}
+async function runArtifactOperation(options, sha2562, input2, operation = input2 ? "publish" : "read") {
+  const { binding, relativePath, maxBytes, revalidate } = options;
+  const safePath = isManagedArtifactRelativePath(relativePath);
+  if (!safePath || path24.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
+  try {
+    if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
+    const running = exec2(process.execPath, [
+      "--input-type=commonjs",
+      "-e",
+      artifactProgram,
+      "--",
+      operation,
+      binding.directory,
+      binding.device,
+      binding.inode,
+      relativePath,
+      String(maxBytes),
+      sha2562
+    ], {
+      cwd: binding.directory,
+      env: {},
+      maxBuffer: maxBytes + 1024,
+      timeout: 3e4,
+      encoding: "buffer"
+    });
+    running.child.stdin?.on("error", () => {
+    });
+    running.child.stdin?.end(input2);
+    const { stdout } = await running;
+    if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
+    return stdout;
+  } catch {
+    throw new ManagedWorkspaceStorageError("artifact_invalid");
+  }
+}
+
 // src/codex-exec-delivery.ts
 var VISIBLE_SUCCESS_ACTIONS = /* @__PURE__ */ new Set([
   "create_job",
@@ -66325,7 +66517,7 @@ function resolveProgressLimits(overrides = {}) {
     pollIntervalMs: overrides.pollIntervalMs ?? appConfig.codexExecProgressPollIntervalMs
   };
 }
-async function enrichCodexExecActionPromptInfo(info, message, continuationAvailable, continuationPermitted, blockedActionTypes = []) {
+async function enrichCodexExecActionPromptInfo(info, message, continuationAvailable, continuationPermitted, blockedActionTypes = [], managedArtifactRegistration = false) {
   if (!info?.enabled) return info;
   const baseInfo = {
     ...info,
@@ -66333,7 +66525,8 @@ async function enrichCodexExecActionPromptInfo(info, message, continuationAvaila
     continuationEnabled: appConfig.continuationEnabled && continuationAvailable && continuationPermitted && message.messageType !== "reaction" && ["p2p", "group", "doc_comment"].includes(message.chatType),
     continuationWorkingRoot: appConfig.continuationWorkingRoot,
     continuationTrustedPersonalWorkspaceEligible: message.senderId === appConfig.ownerOpenId || accessControlStore.isAllowedUserId(message.senderId),
-    ...blockedActionTypes.length > 0 ? { blockedActionTypes } : {}
+    ...blockedActionTypes.length > 0 ? { blockedActionTypes } : {},
+    managedArtifactRegistration
   };
   const exposeForegroundHostTools = appConfig.codexExecSandbox !== "danger-full-access";
   if (!exposeForegroundHostTools && !baseInfo.continuationEnabled) return baseInfo;
@@ -66570,7 +66763,7 @@ async function deliverMessageViaCodexExec(opts) {
   if (priorUnmanaged) {
     if ("project" in priorUnmanaged) {
       workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, priorUnmanaged.project);
-    } else if (priorUnmanaged.fallbackCwd !== path24.resolve(workspaceOptions.authorizedRoot)) {
+    } else if (priorUnmanaged.fallbackCwd !== path25.resolve(workspaceOptions.authorizedRoot)) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
   } else if (priorManaged) {
@@ -66596,13 +66789,13 @@ async function deliverMessageViaCodexExec(opts) {
   }
   const launchWorkspace = workspace ?? (managed ? await pinWorkspacePath(
     workspaceOptions.authorizedRoot,
-    path24.resolve(workspaceOptions.authorizedRoot)
+    path25.resolve(workspaceOptions.authorizedRoot)
   ) : void 0);
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace) && (workspace === void 0 || compatibleSession?.workspaceProjectSenderId === message.senderId) ? compatibleSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
-  const progressBaseDir = path24.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
-  const actionBaseDir = path24.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
+  const progressBaseDir = path25.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
+  const actionBaseDir = path25.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
   const actionChannel = await createCodexExecActionChannel({
     baseDir: actionBaseDir,
     caller: message.senderId,
@@ -66637,7 +66830,8 @@ async function deliverMessageViaCodexExec(opts) {
         message,
         opts.continuationAvailable ?? true,
         continuationPermitted,
-        opts.actionPolicy?.blockedActionTypes
+        opts.actionPolicy?.blockedActionTypes,
+        Boolean(managed && opts.onManagedArtifact)
       )
     ),
     imagePaths: collectImagePaths(message),
@@ -66678,7 +66872,7 @@ async function deliverMessageViaCodexExec(opts) {
     if (!launchWorkspace) return runCodexExec(runRequest);
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...progressSink ? [progressSink.filePath] : []];
-    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path24.dirname(file2)))) : [];
+    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path25.dirname(file2)))) : [];
     if (managed) {
       await Promise.all([
         validateManagedRunDirectory(managed, "scratch", [authorizedRoot]),
@@ -66761,7 +66955,8 @@ async function deliverMessageViaCodexExec(opts) {
       workspaceProject: workspace,
       explicitWorkspaceProject: selector !== void 0,
       model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
-      continuationPermitted
+      continuationPermitted,
+      managed
     });
     opts.onActionResults?.(actionResults);
     const continuation = actionResults.find(
@@ -66881,7 +67076,7 @@ ${continuationFailure.message}`;
 }
 async function dispatchCodexExecActions(input2) {
   const blocked2 = new Set(input2.opts.actionPolicy?.blockedActionTypes ?? []);
-  const allowedActions = input2.actions.filter((action) => !blocked2.has(action.type));
+  const allowedActions = input2.actions.filter((action) => action.type !== "register_artifact" && !blocked2.has(action.type));
   const allowedResults = input2.opts.actionDispatcher && allowedActions.length > 0 ? await input2.opts.actionDispatcher.execute({
     message: input2.message,
     actions: allowedActions,
@@ -66892,28 +67087,47 @@ async function dispatchCodexExecActions(input2) {
     explicitWorkspaceProject: input2.explicitWorkspaceProject
   }) : [];
   let allowedIndex = 0;
-  return input2.actions.map((action) => {
+  const registered = /* @__PURE__ */ new Set();
+  const results = [];
+  for (const action of input2.actions) {
     if (blocked2.has(action.type)) {
-      return {
+      results.push({
         ok: false,
         action: action.type,
         message: input2.opts.actionPolicy?.reason ?? `${action.type} is unavailable for this turn.`
-      };
-    }
-    if (!input2.opts.actionDispatcher) {
-      return {
+      });
+    } else if (action.type === "register_artifact") {
+      const { managed, opts } = input2;
+      let ok = false;
+      try {
+        if (!managed || !opts.onManagedArtifact) throw new Error("Managed registration unavailable.");
+        if (!registered.has(action.relative_path)) {
+          if (registered.size >= MANAGED_DELIVERY_MAX_FILES) throw new Error("Too many managed artifacts.");
+          opts.abortSignal?.throwIfAborted();
+          const { content, sha256: sha2562 } = await readManagedArtifact({
+            binding: managed.artifacts,
+            relativePath: action.relative_path,
+            maxBytes: MANAGED_DELIVERY_MAX_BYTES,
+            revalidate: () => validateManagedRunDirectory(managed, "artifacts", [appConfig.codexExecCwd])
+          });
+          if (!content.length) throw new Error("Empty managed artifact.");
+          opts.abortSignal?.throwIfAborted();
+          opts.onManagedArtifact({ relativePath: action.relative_path, sha256: sha2562 });
+          registered.add(action.relative_path);
+        }
+        ok = true;
+      } catch {
+      }
+      results.push({ action: action.type, ok, message: ok ? "Registered managed artifact." : "Managed artifact registration failed." });
+    } else {
+      results.push(allowedResults[allowedIndex++] ?? {
         ok: false,
         action: "action_channel",
-        message: "Lark exec action dispatcher is not configured."
-      };
+        message: input2.opts.actionDispatcher ? `Lark exec action dispatcher returned no result for ${action.type}.` : "Lark exec action dispatcher is not configured."
+      });
     }
-    const actionResult = allowedResults[allowedIndex++];
-    return actionResult ?? {
-      ok: false,
-      action: "action_channel",
-      message: `Lark exec action dispatcher returned no result for ${action.type}.`
-    };
-  });
+  }
+  return results;
 }
 async function sendCodexExecProgressMessage(opts, message, content) {
   if (message.chatType === "doc_comment") {
@@ -68509,185 +68723,6 @@ import { createHash as createHash12, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import fs19 from "node:fs/promises";
 import path26 from "node:path";
-
-// src/managed-workspace-artifact.ts
-import { execFile as execFile2 } from "node:child_process";
-import { createHash as createHash11 } from "node:crypto";
-import path25 from "node:path";
-import { promisify as promisify2 } from "node:util";
-var exec2 = promisify2(execFile2);
-var HARD_BYTE_LIMIT = 100 * 1024 * 1024;
-var artifactProgram = String.raw`
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const { createHash, randomBytes } = require('node:crypto');
-  const [operation, root, dev, ino, relative, limitText, expected] = process.argv.slice(1);
-  const limit = Number(limitText);
-  const mode = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
-  const same = (a, b) => a.dev === b.dev && a.ino === b.ino;
-  const stable = (a, b) => same(a, b) && a.size === b.size && a.ctimeNs === b.ctimeNs && a.mtimeNs === b.mtimeNs;
-  const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
-  const stat = (name) => fs.lstatSync(name, { bigint: true });
-  const guard = (ok) => { if (!ok) throw new Error('Invalid artifact'); };
-  let current = root;
-  let identity;
-  function guardParent() {
-    const named = stat(current);
-    guard(named.isDirectory() && same(identity, named) && same(identity, stat('.')));
-    guard(named.uid === BigInt(process.geteuid()) && (named.mode & 0o022n) === 0n);
-  }
-  function read(leaf, allowedLinks) {
-    const fd = fs.openSync(leaf, mode);
-    try {
-      const before = fs.fstatSync(fd, { bigint: true });
-      guard(before.isFile() && before.nlink === allowedLinks && before.size <= BigInt(limit) && stable(before, stat(leaf)));
-      const content = Buffer.alloc(Number(before.size));
-      for (let offset = 0; offset < content.length;) {
-        const received = fs.readSync(fd, content, offset, content.length - offset, offset);
-        guard(received > 0);
-        offset += received;
-      }
-      guardParent();
-      guard(stable(before, fs.fstatSync(fd, { bigint: true })) && stable(before, stat(leaf)));
-      guard(!expected || sha(content) === expected);
-      return content;
-    } finally { fs.closeSync(fd); }
-  }
-  const prefix = '.lark-retry-' + sha(relative + '\0' + expected) + '-';
-  function reconcile(leaf) {
-    let existing;
-    try { existing = stat(leaf); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    const stages = fs.readdirSync('.').filter((name) => name.startsWith(prefix)
-      && /^[a-f0-9]{32}\.tmp$/.test(name.slice(prefix.length)));
-    if (stages.length === 0) return !!existing;
-    guard(stages.length === 1);
-    const [stage] = stages;
-    const staged = stat(stage);
-    guard(staged.isFile() && staged.uid === BigInt(process.geteuid()) && (staged.mode & 0o077n) === 0n);
-    if (existing) {
-      guard(same(existing, staged));
-      read(leaf, 2n);
-    } else {
-      read(stage, 1n);
-      guardParent();
-      guard(stable(staged, stat(stage)));
-      fs.linkSync(stage, leaf);
-    }
-    guardParent();
-    guard(same(staged, stat(stage)) && same(staged, stat(leaf)));
-    fs.unlinkSync(stage);
-    read(leaf, 1n);
-    return true;
-  }
-  function publish(leaf) {
-    const content = fs.readFileSync(0);
-    guard(content.length <= limit && sha(content) === expected);
-    if (reconcile(leaf)) {
-      read(leaf, 1n);
-      return;
-    }
-    const staged = prefix + randomBytes(16).toString('hex') + '.tmp';
-    const fd = fs.openSync(staged, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
-    try {
-      fs.writeFileSync(fd, content);
-      fs.fsyncSync(fd);
-      guardParent();
-      guard(same(fs.fstatSync(fd, { bigint: true }), stat(staged)));
-      fs.linkSync(staged, leaf);
-    } finally {
-      const created = fs.fstatSync(fd, { bigint: true });
-      fs.closeSync(fd);
-      if (same(created, stat(staged))) fs.unlinkSync(staged);
-    }
-  }
-  function main() {
-    const start = stat('.');
-    guard(process.geteuid && String(start.dev) === dev && String(start.ino) === ino);
-    identity = start;
-    guardParent();
-    const names = relative.split('/');
-    const leaf = names.pop();
-    for (const name of names) {
-      if (operation === 'publish') {
-        try { fs.mkdirSync(name, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
-      }
-      let fd;
-      try { fd = fs.openSync(name, mode | fs.constants.O_DIRECTORY); }
-      catch (error) {
-        if (operation === 'reconcile' && error.code === 'ENOENT') return;
-        throw error;
-      }
-      try {
-        const child = fs.fstatSync(fd, { bigint: true });
-        guard(child.isDirectory() && child.uid === start.uid && (child.mode & 0o022n) === 0n);
-        process.chdir(name);
-        current = path.join(current, name);
-        identity = child;
-        guardParent();
-      } finally { fs.closeSync(fd); }
-    }
-    if (operation === 'publish') {
-      publish(leaf);
-      guardParent();
-    } else if (operation === 'reconcile') {
-      reconcile(leaf);
-    } else {
-      const result = read(leaf, 1n);
-      process.stdout.write(result);
-    }
-  }
-  try { main(); } catch {
-    process.exitCode = 1;
-  }
-`;
-async function readManagedArtifact(options) {
-  const content = await runArtifactOperation(options, options.expectedSha256?.toLowerCase() ?? "");
-  return { content, sha256: createHash11("sha256").update(content).digest("hex") };
-}
-async function publishManagedArtifact(options) {
-  const sha2562 = createHash11("sha256").update(options.content).digest("hex");
-  await runArtifactOperation(options, sha2562, options.content);
-}
-async function reconcileManagedArtifact(options) {
-  await runArtifactOperation(options, options.expectedSha256.toLowerCase(), void 0, "reconcile");
-}
-async function runArtifactOperation(options, sha2562, input2, operation = input2 ? "publish" : "read") {
-  const { binding, relativePath, maxBytes, revalidate } = options;
-  const safePath = relativePath.split("/").every((part) => part && part !== "." && part !== ".." && !part.startsWith(".lark-retry-") && !/[\\\0]/.test(part));
-  if (!safePath || path25.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
-  try {
-    if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
-    const running = exec2(process.execPath, [
-      "--input-type=commonjs",
-      "-e",
-      artifactProgram,
-      "--",
-      operation,
-      binding.directory,
-      binding.device,
-      binding.inode,
-      relativePath,
-      String(maxBytes),
-      sha2562
-    ], {
-      cwd: binding.directory,
-      env: {},
-      maxBuffer: maxBytes + 1024,
-      timeout: 3e4,
-      encoding: "buffer"
-    });
-    running.child.stdin?.on("error", () => {
-    });
-    running.child.stdin?.end(input2);
-    const { stdout } = await running;
-    if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
-    return stdout;
-  } catch {
-    throw new ManagedWorkspaceStorageError("artifact_invalid");
-  }
-}
-
-// src/continuation/artifact-store.ts
 var REDACTION_QUARANTINE_PREFIX = ".redacting-";
 var ACTIVE_REDACTION_QUARANTINES = /* @__PURE__ */ new Set();
 var LEGACY_QUARANTINE_GRACE_MS = 3e4;
@@ -71569,7 +71604,7 @@ function materialProjection(checkpoint2) {
     completedStepIds: sorted(checkpoint2.completedStepIds),
     completedCriterionIds: sorted(checkpoint2.completedCriterionIds),
     completedDeliverableIds: sorted(checkpoint2.completedDeliverableIds),
-    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path34, sha256: sha2562 }) => ({ id, deliverableId, path: path34, sha256: sha2562 })).sort(compareId),
+    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path35, sha256: sha2562 }) => ({ id, deliverableId, path: path35, sha256: sha2562 })).sort(compareId),
     evidence: [...checkpoint2.evidence].map((entry) => ({
       id: entry.id,
       requirementId: entry.requirementId,
@@ -80427,6 +80462,18 @@ import { createHash as createHash21 } from "node:crypto";
 // src/cron/contracts.ts
 var CRON_RUN_INPUT_VERSION = 1;
 var CRON_RUN_STATE_VERSION = 1;
+var cronArtifactPayloadSchema = external_exports.strictObject({
+  schemaVersion: external_exports.literal(1),
+  jobId: external_exports.string().min(1),
+  jobCreatedAt: external_exports.iso.datetime(),
+  jobRevision: external_exports.number().int().positive(),
+  index: external_exports.number().int().min(0).max(MANAGED_DELIVERY_MAX_FILES - 1),
+  artifact: managedArtifactReferenceSchema
+});
+var registeredArtifacts = external_exports.array(managedArtifactReferenceSchema).min(1).max(MANAGED_DELIVERY_MAX_FILES).refine((entries) => new Set(entries.map((entry) => entry.relativePath)).size === entries.length);
+function parseCronArtifacts(value) {
+  return value === void 0 ? void 0 : registeredArtifacts.parse(value);
+}
 function parseCronRunInput(value, version2, expectedType) {
   if (version2 !== CRON_RUN_INPUT_VERSION) {
     throw new Error(`Unsupported Cron Run input version: ${version2}`);
@@ -80517,6 +80564,8 @@ function parseCronRunState(value, version2) {
   if (diagnostics.status !== runStatus) {
     throw new Error("Cron Run commit status and diagnostics status are inconsistent.");
   }
+  const artifacts = parseCronArtifacts(rawCommit.artifacts);
+  if (artifacts && runStatus !== "success") throw new Error("Failed Cron Run cannot publish artifacts.");
   return {
     schemaVersion: 1,
     phase,
@@ -80526,7 +80575,8 @@ function parseCronRunState(value, version2) {
       runStatus,
       reportType,
       failureReason,
-      diagnostics
+      diagnostics,
+      ...artifacts ? { artifacts } : {}
     }
   };
 }
@@ -80640,6 +80690,10 @@ function literal2(value, values, label) {
   }
   return value;
 }
+
+// src/cron/delivery.ts
+import path34 from "node:path";
+import { isDeepStrictEqual as isDeepStrictEqual6 } from "node:util";
 
 // src/scheduler-policy.ts
 var RETRYABLE_NETWORK_ERRORS2 = /* @__PURE__ */ new Set([
@@ -80877,6 +80931,35 @@ function formatCronJobDiagnostics(snapshot) {
   return lines.join("\n");
 }
 
+// src/cron/managed-artifacts.ts
+import { isDeepStrictEqual as isDeepStrictEqual5 } from "node:util";
+async function loadCommittedCronArtifact(repository, authorizedRoot, claim2, payload) {
+  const run = await repository.get(claim2.runId);
+  if (!run || run.workloadKind !== "cron_prompt" || run.status !== "completed" || !isDeepStrictEqual5(run.route, claim2.route)) {
+    throw new Error("Cron artifact run is unavailable.");
+  }
+  const { job, managedWorkspace } = parseCronRunInput(run.input, run.inputVersion, "prompt");
+  const { commit } = parseCronRunState(run.state, run.stateVersion);
+  if (!managedWorkspace || job.id !== payload.jobId || job.createdAt !== payload.jobCreatedAt || job.revision !== payload.jobRevision || commit?.kind !== "prompt" || commit.runStatus !== "success" || !isDeepStrictEqual5(commit.artifacts?.[payload.index], payload.artifact)) {
+    throw new Error("Cron artifact does not match its committed reference.");
+  }
+  const store = repository.getManagedWorkspaceStore?.();
+  const owner = { kind: "cron_prompt", runId: run.runId };
+  const recorded = store?.get(owner)?.allocation;
+  if (!store || !recorded || recorded.createdAt !== managedWorkspace.createdAt || !sameWorkspaceProject(recorded.project, job.workspaceProject) || !sameWorkspaceProject(recorded.roots.scratch, managedWorkspace.roots.scratch) || !sameWorkspaceProject(recorded.roots.artifacts, managedWorkspace.roots.artifacts)) {
+    throw new Error("Cron artifact workspace binding is unavailable.");
+  }
+  const { content } = await readManagedArtifact({
+    binding: recorded.artifacts,
+    relativePath: payload.artifact.relativePath,
+    expectedSha256: payload.artifact.sha256,
+    maxBytes: MANAGED_DELIVERY_MAX_BYTES,
+    revalidate: () => store.openDirectory(owner, "artifacts", [authorizedRoot])
+  });
+  if (!content.length) throw new Error("Cron artifact is empty.");
+  return content;
+}
+
 // src/cron/runtime-projection.ts
 async function projectCronDeliveryPending(claim2, route, payload, now, repository = { mutateJob }) {
   let applied = false;
@@ -80952,6 +81035,7 @@ function createCronDelivery(options) {
         errorCode: "cron_delivery_interrupted_unknown",
         errorSummary: "Delivery was interrupted after sending may have started; it was not replayed."
       };
+      if (claim2.kind === "cron_artifact") return result;
       try {
         const route = parseCronDeliveryRoute(claim2.route);
         const payload = parseCronTerminalPayload(claim2.payload);
@@ -80969,6 +81053,7 @@ function createCronDelivery(options) {
     },
     async deliver(claim2, context) {
       const now = (options.now ?? (() => /* @__PURE__ */ new Date()))().toISOString();
+      if (claim2.kind === "cron_artifact") return deliverCronArtifact(options, claim2, now, context);
       let route;
       let payload;
       try {
@@ -81031,6 +81116,66 @@ function createCronDelivery(options) {
       return result;
     }
   };
+}
+async function deliverCronArtifact(options, claim2, now, context) {
+  if (claim2.recoveredFromExpiredLease) return {
+    status: "unknown",
+    errorCode: "cron_delivery_interrupted_unknown",
+    errorSummary: "An interrupted attachment send was not replayed."
+  };
+  const { artifacts } = options;
+  let route;
+  let payload;
+  let reportId;
+  let content;
+  try {
+    route = parseCronDeliveryRoute(claim2.route);
+    payload = cronArtifactPayloadSchema.parse(claim2.payload);
+    if (!artifacts || claim2.workloadKind !== "cron_prompt" || claim2.eventKey !== `cron_artifact:${payload.index}` || claim2.idempotencyKey !== `cron:${claim2.runId}:artifact:${payload.index}` || route.jobId !== payload.jobId || route.createdAt !== payload.jobCreatedAt || route.revision !== payload.jobRevision) {
+      throw new Error("Mismatched Cron artifact delivery identity.");
+    }
+    const report = await artifacts.repository.getDeliverySnapshot?.(claim2.runId, "cron_terminal");
+    if (!report || !isDeepStrictEqual6(report.route, claim2.route)) throw new Error("Missing original report.");
+    if (report.status === "pending" || report.status === "sending") return {
+      status: "retry",
+      errorCode: "cron_artifact_report_pending",
+      errorSummary: "Waiting for the original Cron report receipt.",
+      retryAt: new Date(Date.parse(now) + 1e3).toISOString(),
+      resetAttemptCount: true
+    };
+    if (report.status !== "sent" || !report.messageId || !isFeishuOpenMessageId(report.messageId)) return {
+      status: "failed",
+      errorCode: "cron_artifact_report_unconfirmed",
+      errorSummary: "The original report was not confirmed sent."
+    };
+    reportId = report.messageId;
+    content = await loadCommittedCronArtifact(artifacts.repository, artifacts.authorizedRoot(), claim2, payload);
+  } catch {
+    return {
+      status: "failed",
+      errorCode: "cron_artifact_reference_invalid",
+      errorSummary: "The committed Cron attachment or report reference is unavailable or no longer matches."
+    };
+  }
+  try {
+    if (context && !await context.markExternalSendStarted()) return { status: "superseded" };
+    const key = await artifacts.uploadFile(content, path34.posix.basename(payload.artifact.relativePath));
+    if (!key) throw new Error("Lark returned no attachment key.");
+    const response = await options.sendReply({
+      chat_id: route.targetChatId,
+      reply_to: reportId,
+      text: "",
+      routing: "standalone",
+      rawMessage: { msgType: "file", content: JSON.stringify({ file_key: key }) },
+      idempotencyKey: claim2.idempotencyKey,
+      retry: { attempts: 1, retryTimeout: false }
+    });
+    const result = classifyReplyResult(response);
+    if (result.status === "sent") await recordMessageOriginsSafely(options.originRecorder, response, claim2, route, now);
+    return result;
+  } catch (error62) {
+    return classifyDeliveryError2(error62, claim2, now);
+  }
 }
 function deliveryErrorSummary(error62, fallback) {
   return sanitizeDiagnosticText(error62 instanceof Error ? error62.message : String(error62), 1e3) || fallback;
@@ -81754,7 +81899,8 @@ var CronPromptWorkload = class {
       runStatus: normalized.runStatus,
       reportType,
       failureReason: normalized.failureReason,
-      diagnostics: normalized.diagnostics
+      diagnostics: normalized.diagnostics,
+      ...normalized.artifacts ? { artifacts: normalized.artifacts } : {}
     };
     const failed = normalized.runStatus === "failed";
     return {
@@ -81773,7 +81919,24 @@ var CronPromptWorkload = class {
           errorSummary: sanitizeDiagnosticText(normalized.failureReason ?? "CronJob prompt failed.", 1e3)
         } : {}
       },
-      deliveries: [promptDelivery(claim2, claim2.run.input, normalized, reportType)]
+      deliveries: [
+        promptDelivery(claim2, claim2.run.input, normalized, reportType),
+        ...(normalized.artifacts ?? []).map((artifact, index) => ({
+          kind: "cron_artifact",
+          eventKey: `cron_artifact:${index}`,
+          attemptId: claim2.attempt.attemptId,
+          idempotencyKey: `cron:${claim2.run.runId}:artifact:${index}`,
+          route: claim2.run.route,
+          payload: {
+            schemaVersion: 1,
+            jobId: claim2.run.input.job.id,
+            jobCreatedAt: claim2.run.input.job.createdAt,
+            jobRevision: claim2.run.input.job.revision,
+            index,
+            artifact
+          }
+        }))
+      ]
     };
   }
   recoverInterruptedAttempt(context) {
@@ -81920,6 +82083,14 @@ function interruptedPromptTransition(claim2, input2) {
   };
 }
 function normalizeExecution(input2, runId, execution) {
+  if (execution.artifacts !== void 0) {
+    try {
+      if (!input2.managedWorkspace || execution.runStatus !== "success") throw new Error("Invalid artifact admission.");
+      parseCronArtifacts(execution.artifacts);
+    } catch {
+      return failedExecution(promptJob(input2), runId, new Error("Cron artifact registration was invalid."));
+    }
+  }
   if (execution.runStatus === "success" && !execution.report.trim()) {
     return failedExecution(promptJob(input2), runId, new Error("CronJob prompt produced no visible report."));
   }
@@ -82205,6 +82376,7 @@ function createCronPromptExecutor(options) {
         threadId
       };
       let report = "";
+      const artifacts = [];
       let lifecycleGuardReason = null;
       let actionFailureReason = null;
       diagnostics.startStage("codex_exec");
@@ -82214,6 +82386,9 @@ function createCronPromptExecutor(options) {
         modelOverride: input2.job.model,
         cronWorkspaceProject: input2.job.workspaceProject,
         ...managedWorkspace ? { managedWorkspace } : {},
+        ...managedWorkspace ? { onManagedArtifact: (reference) => {
+          artifacts.push(reference);
+        } } : {},
         sessionStore: options.sessionStore,
         sessionHealth: options.sessionHealth,
         actionDispatcher: options.actionDispatcher,
@@ -82259,7 +82434,8 @@ function createCronPromptExecutor(options) {
         report,
         runStatus: "success",
         failureReason: null,
-        diagnostics: diagnostics.finish("success")
+        diagnostics: diagnostics.finish("success"),
+        ...artifacts.length ? { artifacts } : {}
       };
     } catch (error62) {
       if (signal.aborted) throw error62;
@@ -82684,7 +82860,12 @@ async function main() {
   if (continuationRuntime.durableRepository) {
     const cronDelivery = createCronDelivery({
       sendReply: sendReplyViaFeishu,
-      originRecorder: continuationRuntime.cronMessageOrigins ?? void 0
+      originRecorder: continuationRuntime.cronMessageOrigins ?? void 0,
+      artifacts: {
+        repository: continuationRuntime.durableRepository,
+        authorizedRoot: () => appConfig.codexExecCwd,
+        uploadFile: (data, name) => channel.getLarkTransport().uploadFile(data, name)
+      }
     });
     const promptExecutor = createCronPromptExecutor({
       identitySession,

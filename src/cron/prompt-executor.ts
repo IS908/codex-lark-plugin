@@ -15,6 +15,7 @@ import type { IdentitySession } from '../identity-session.js';
 import type { JobFile } from '../job-contracts.js';
 import { JOB_THREAD_PREFIX, jobCreatedAtHash } from '../job-thread.js';
 import type { LarkMessage } from '../lark-message.js';
+import type { ManagedArtifactReference } from '../domain/managed-workspace.js';
 import { ManagedWorkspaceStorageError } from '../managed-workspace-errors.js';
 import { assertManagedWorkspaceSandbox } from '../managed-workspace-exec.js';
 import type { ManagedWorkspaceStore } from '../ports/managed-workspace.js';
@@ -93,6 +94,7 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
         threadId,
       };
       let report = '';
+      const artifacts: ManagedArtifactReference[] = [];
       let lifecycleGuardReason: string | null = null;
       let actionFailureReason: string | null = null;
       diagnostics.startStage('codex_exec');
@@ -102,6 +104,7 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
         modelOverride: input.job.model,
         cronWorkspaceProject: input.job.workspaceProject,
         ...(managedWorkspace ? { managedWorkspace } : {}),
+        ...(managedWorkspace ? { onManagedArtifact: (reference: ManagedArtifactReference) => { artifacts.push(reference); } } : {}),
         sessionStore: options.sessionStore,
         sessionHealth: options.sessionHealth,
         actionDispatcher: options.actionDispatcher,
@@ -150,6 +153,7 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
         runStatus: 'success',
         failureReason: null,
         diagnostics: diagnostics.finish('success'),
+        ...(artifacts.length ? { artifacts } : {}),
       };
     } catch (error) {
       if (signal.aborted) throw error;

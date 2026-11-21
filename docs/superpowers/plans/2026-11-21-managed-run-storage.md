@@ -35,5 +35,6 @@
 - [x] Reconcile complete retry staging writes under the retry creation lock before applying the target quota. Cover interruption both before and after the exclusive link; do not adopt or remove unverified entries.
 - [ ] Track ownership of incomplete retry writes so their interruption can be recovered without discarding unknown files.
 - [x] Persist requested Async Task artifact deliveries in the existing durable outbox and revalidate the commitment and bytes before sending. Verify restart with missing scratch and isolation from the terminal notification.
-- [ ] Connect formal references to the remaining foreground/Cron publishing and delivery paths. Verify legacy delivery after configuration changes.
+- [x] Register requested prompt Cron files through the parent action channel and commit independent attachment outbox entries. Verify restart, unavailable scratch, report receipt ordering, changed file rejection, and legacy generation after config changes.
+- [ ] Connect formal references to the foreground publishing and delivery path without changing legacy file sends.
 - [ ] Run the full suite and marketplace checks, get independent review, merge, verify main CI, publish a tagged release, then close #393. Cache reuse and cleanup remain subsequent #387 milestones.

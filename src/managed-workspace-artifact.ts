@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
+import { isManagedArtifactRelativePath } from './domain/managed-workspace.js';
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
 
 const exec = promisify(execFile);
@@ -158,8 +159,7 @@ async function runArtifactOperation(
   options: FileOptions, sha256: string, input?: Buffer, operation: 'read' | 'publish' | 'reconcile' = input ? 'publish' : 'read',
 ): Promise<Buffer> {
   const { binding, relativePath, maxBytes, revalidate } = options;
-  const safePath = relativePath.split('/').every((part) => part && part !== '.' && part !== '..'
-    && !part.startsWith('.lark-retry-') && !/[\\\0]/.test(part));
+  const safePath = isManagedArtifactRelativePath(relativePath);
   if (!safePath || path.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0
     || (operation !== 'read' && !/^[a-f0-9]{64}$/.test(sha256))
     || maxBytes > HARD_BYTE_LIMIT || (input && input.length > maxBytes)) throw new ManagedWorkspaceStorageError('artifact_invalid');

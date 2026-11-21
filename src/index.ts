@@ -214,6 +214,11 @@ async function main() {
     const cronDelivery = createCronDelivery({
       sendReply: sendReplyViaFeishu,
       originRecorder: continuationRuntime.cronMessageOrigins ?? undefined,
+      artifacts: {
+        repository: continuationRuntime.durableRepository,
+        authorizedRoot: () => appConfig.codexExecCwd,
+        uploadFile: (data, name) => channel.getLarkTransport().uploadFile(data, name),
+      },
     });
     const promptExecutor = createCronPromptExecutor({
       identitySession,

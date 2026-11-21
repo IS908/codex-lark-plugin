@@ -1,6 +1,20 @@
 import { z } from 'zod';
 import { workspaceProjectBindingSchema } from './workspace.js';
 
+export const MANAGED_DELIVERY_MAX_BYTES = 30_000_000;
+export const MANAGED_DELIVERY_MAX_FILES = 5;
+
+export function isManagedArtifactRelativePath(value: string): boolean {
+  return value.length <= 2048 && value.split('/').every((part) => part && part !== '.' && part !== '..'
+    && !part.startsWith('.lark-retry-') && !/[\\\u0000-\u001f\u007f]/.test(part));
+}
+
+export const managedArtifactReferenceSchema = z.strictObject({
+  relativePath: z.string().refine(isManagedArtifactRelativePath),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type ManagedArtifactReference = z.infer<typeof managedArtifactReferenceSchema>;
+
 export const managedRunOwnerSchema = z.strictObject({
   kind: z.enum(['foreground', 'cron_prompt', 'async_task']),
   runId: z.string().min(1).max(512),

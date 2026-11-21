@@ -1631,6 +1631,7 @@ function createCodexExecActionHandlerRegistry(
     manage_access_control: (action, context) => executeManageAccessControl(action, context.message, deps),
     get_run_trace: (action, context) => executeGetRunTrace(action, context.message, deps),
     send_message: (action, context) => executeSendMessage(action, context.message, deps),
+    register_artifact: async () => ({ ok: false, action: 'register_artifact', message: 'Managed artifact registration requires a bound turn.' }),
     recall_message: (action, context) => executeRecallMessage(action, context.message, deps),
     create_continuation_job: (action, context) => executeCreateContinuation(action, context, deps),
   };

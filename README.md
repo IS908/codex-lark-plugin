@@ -285,6 +285,11 @@ directory, even if scratch is unavailable. The delivery survives restarts and
 verifies the file again before upload. Request it in a private chat or the
 original task chat/thread. These settings do not move or clean up existing files.
 
+For prompt Cron jobs, request file deliverables in the job prompt. A managed run
+can register up to five nonempty files of at most 30 MB each from its formal
+artifact directory. The outbox verifies and sends the files as replies to the
+confirmed report. A failed attachment does not resend the report.
+
 ### 4. Start
 
 If installed via the plugin marketplace, the plugin starts automatically when Codex launches. Dependencies are installed on first run.

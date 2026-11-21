@@ -1,8 +1,11 @@
+import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { isFeishuOpenMessageId } from '../codex-exec-error.js';
 import type {
   DurableRunDeliveryClaim,
   DurableRunDeliveryResult,
 } from '../domain/durable-run.js';
-import type { DurableRunDelivery } from '../ports/durable-run.js';
+import type { DurableRunDelivery, DurableRunDeliveryContext, DurableRunRepository } from '../ports/durable-run.js';
 import type { ReplyRequest, ReplySendResult } from '../reply-sender.js';
 import {
   getFeishuApiCode,
@@ -11,7 +14,8 @@ import {
 } from '../feishu-retry.js';
 import { isPermanentTargetError } from '../scheduler-policy.js';
 import { sanitizeDiagnosticText } from '../cronjob-diagnostics.js';
-import { parseCronRunState, type CronTerminalPayload } from './contracts.js';
+import { cronArtifactPayloadSchema, parseCronRunState, type CronArtifactPayload, type CronTerminalPayload } from './contracts.js';
+import { loadCommittedCronArtifact } from './managed-artifacts.js';
 import {
   autoPauseCronJobForDeliveryFailure,
   projectCronDeliveryPending,
@@ -26,6 +30,11 @@ export interface CronDeliveryOptions {
   projectionRepository?: CronRuntimeProjectionRepository;
   originRecorder?: CronMessageOriginRecorder;
   now?: () => Date;
+  artifacts?: {
+    repository: DurableRunRepository;
+    authorizedRoot: () => string;
+    uploadFile: (data: Buffer, fileName: string) => Promise<string | undefined>;
+  };
 }
 
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
@@ -44,6 +53,7 @@ export function createCronDelivery(options: CronDeliveryOptions): DurableRunDeli
         errorCode: 'cron_delivery_interrupted_unknown',
         errorSummary: 'Delivery was interrupted after sending may have started; it was not replayed.',
       };
+      if (claim.kind === 'cron_artifact') return result;
       try {
         const route = parseCronDeliveryRoute(claim.route);
         const payload = parseCronTerminalPayload(claim.payload);
@@ -62,6 +72,7 @@ export function createCronDelivery(options: CronDeliveryOptions): DurableRunDeli
     },
     async deliver(claim, context): Promise<DurableRunDeliveryResult> {
       const now = (options.now ?? (() => new Date()))().toISOString();
+      if (claim.kind === 'cron_artifact') return deliverCronArtifact(options, claim, now, context);
       let route: CronDeliveryRoute;
       let payload: CronTerminalPayload;
       try {
@@ -134,6 +145,60 @@ export function createCronDelivery(options: CronDeliveryOptions): DurableRunDeli
       return result;
     },
   };
+}
+
+async function deliverCronArtifact(
+  options: CronDeliveryOptions, claim: DurableRunDeliveryClaim, now: string, context?: DurableRunDeliveryContext,
+): Promise<DurableRunDeliveryResult> {
+  if (claim.recoveredFromExpiredLease) return {
+    status: 'unknown', errorCode: 'cron_delivery_interrupted_unknown',
+    errorSummary: 'An interrupted attachment send was not replayed.',
+  };
+  const { artifacts } = options;
+  let route: CronDeliveryRoute;
+  let payload: CronArtifactPayload;
+  let reportId: string;
+  let content: Buffer;
+  try {
+    route = parseCronDeliveryRoute(claim.route);
+    payload = cronArtifactPayloadSchema.parse(claim.payload);
+    if (!artifacts || claim.workloadKind !== 'cron_prompt' || claim.eventKey !== `cron_artifact:${payload.index}`
+      || claim.idempotencyKey !== `cron:${claim.runId}:artifact:${payload.index}`
+      || route.jobId !== payload.jobId || route.createdAt !== payload.jobCreatedAt || route.revision !== payload.jobRevision) {
+      throw new Error('Mismatched Cron artifact delivery identity.');
+    }
+    const report = await artifacts.repository.getDeliverySnapshot?.(claim.runId, 'cron_terminal');
+    if (!report || !isDeepStrictEqual(report.route, claim.route)) throw new Error('Missing original report.');
+    if (report.status === 'pending' || report.status === 'sending') return {
+      status: 'retry', errorCode: 'cron_artifact_report_pending', errorSummary: 'Waiting for the original Cron report receipt.',
+      retryAt: new Date(Date.parse(now) + 1000).toISOString(), resetAttemptCount: true,
+    };
+    if (report.status !== 'sent' || !report.messageId || !isFeishuOpenMessageId(report.messageId)) return {
+      status: 'failed', errorCode: 'cron_artifact_report_unconfirmed', errorSummary: 'The original report was not confirmed sent.',
+    };
+    reportId = report.messageId;
+    content = await loadCommittedCronArtifact(artifacts.repository, artifacts.authorizedRoot(), claim, payload);
+  } catch {
+    return {
+      status: 'failed', errorCode: 'cron_artifact_reference_invalid',
+      errorSummary: 'The committed Cron attachment or report reference is unavailable or no longer matches.',
+    };
+  }
+  try {
+    if (context && !await context.markExternalSendStarted()) return { status: 'superseded' };
+    const key = await artifacts.uploadFile(content, path.posix.basename(payload.artifact.relativePath));
+    if (!key) throw new Error('Lark returned no attachment key.');
+    const response = await options.sendReply({
+      chat_id: route.targetChatId, reply_to: reportId, text: '', routing: 'standalone',
+      rawMessage: { msgType: 'file', content: JSON.stringify({ file_key: key }) },
+      idempotencyKey: claim.idempotencyKey, retry: { attempts: 1, retryTimeout: false },
+    });
+    const result = classifyReplyResult(response);
+    if (result.status === 'sent') await recordMessageOriginsSafely(options.originRecorder, response, claim, route, now);
+    return result;
+  } catch (error) {
+    return classifyDeliveryError(error, claim, now);
+  }
 }
 
 function deliveryErrorSummary(error: unknown, fallback: string): string {

@@ -1,5 +1,7 @@
 import type { CronJobDiagnosticSnapshot } from '../cronjob-diagnostic-contracts.js';
-import { managedWorkspaceAdmissionSchema, type ManagedWorkspaceAdmission } from '../domain/managed-workspace.js';
+import { MANAGED_DELIVERY_MAX_FILES, managedArtifactReferenceSchema, managedWorkspaceAdmissionSchema,
+  type ManagedArtifactReference, type ManagedWorkspaceAdmission } from '../domain/managed-workspace.js';
+import { z } from 'zod';
 import { workspaceProjectBindingSchema, type WorkspaceProjectBinding } from '../domain/workspace.js';
 
 export const CRON_RUN_INPUT_VERSION = 1;
@@ -43,6 +45,7 @@ export interface CronPromptExecution {
   runStatus: 'success' | 'failed';
   failureReason: string | null;
   diagnostics: CronJobDiagnosticSnapshot;
+  artifacts?: ManagedArtifactReference[];
   /** Set only when the executor guarantees that external execution never started. */
   retrySafe?: boolean;
 }
@@ -71,6 +74,7 @@ export type CronRunCommit =
       reportType: 'job_result' | 'error_report';
       failureReason: string | null;
       diagnostics: CronJobDiagnosticSnapshot;
+      artifacts?: ManagedArtifactReference[];
     }
   | {
       kind: 'message';
@@ -110,6 +114,23 @@ export type CronTerminalPayload =
       runStatus: 'success' | 'failed';
       failureReason: string | null;
     };
+
+export const cronArtifactPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  jobId: z.string().min(1),
+  jobCreatedAt: z.iso.datetime(),
+  jobRevision: z.number().int().positive(),
+  index: z.number().int().min(0).max(MANAGED_DELIVERY_MAX_FILES - 1),
+  artifact: managedArtifactReferenceSchema,
+});
+export type CronArtifactPayload = z.infer<typeof cronArtifactPayloadSchema>;
+
+const registeredArtifacts = z.array(managedArtifactReferenceSchema).min(1).max(MANAGED_DELIVERY_MAX_FILES)
+  .refine((entries) => new Set(entries.map((entry) => entry.relativePath)).size === entries.length);
+
+export function parseCronArtifacts(value: unknown): ManagedArtifactReference[] | undefined {
+  return value === undefined ? undefined : registeredArtifacts.parse(value);
+}
 
 export function parseCronRunInput(
   value: unknown,
@@ -220,6 +241,8 @@ export function parseCronRunState(value: unknown, version: number): CronRunState
   if (diagnostics.status !== runStatus) {
     throw new Error('Cron Run commit status and diagnostics status are inconsistent.');
   }
+  const artifacts = parseCronArtifacts(rawCommit.artifacts);
+  if (artifacts && runStatus !== 'success') throw new Error('Failed Cron Run cannot publish artifacts.');
   return {
     schemaVersion: 1,
     phase,
@@ -230,6 +253,7 @@ export function parseCronRunState(value: unknown, version: number): CronRunState
       reportType,
       failureReason,
       diagnostics,
+      ...(artifacts ? { artifacts } : {}),
     },
   };
 }

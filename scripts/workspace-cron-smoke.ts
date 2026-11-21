@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import { createCodexExecActionDispatcher } from '../src/codex-exec-actions.js';
 import { deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
 import { FileCodexExecSessionStore } from '../src/codex-session-store.js';
 import { parseCronRunInput } from '../src/cron/contracts.js';
+import { createCronDelivery } from '../src/cron/delivery.js';
 import { createCronPromptExecutor } from '../src/cron/prompt-executor.js';
 import { CronRunAdmission } from '../src/cron/run-admission.js';
 import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
@@ -132,6 +134,7 @@ try {
   assert.ok(rebound!.meta.revision > original!.meta.revision);
 
   const second = await SqliteDurableRunRepository.open({ databasePath });
+  let formalDirectory: string;
   try {
     const results: string[] = [];
     const managedLaunches: Array<{ scratch?: string; artifact?: string; mounts?: string[] }> = [];
@@ -140,10 +143,23 @@ try {
       sessionStore: new FileCodexExecSessionStore(path.join(base, 'sessions')),
       useCodexSessions: false,
       managedWorkspaceStore: () => second.getManagedWorkspaceStore(),
-      runCodexExec: async ({ cwd, extraEnv, additionalWritableDirs }) => {
+      runCodexExec: async ({ cwd, extraEnv, additionalWritableDirs, actions }) => {
         results.push(cwd);
         managedLaunches.push({ scratch: extraEnv?.LARK_MANAGED_SCRATCH_DIR, artifact: extraEnv?.LARK_MANAGED_ARTIFACTS_DIR,
           mounts: additionalWritableDirs });
+        if (extraEnv?.LARK_MANAGED_ARTIFACTS_DIR) {
+          await fs.writeFile(path.join(extraEnv.LARK_MANAGED_ARTIFACTS_DIR, 'report.csv'), 'header\n42\n');
+          await fs.writeFile(path.join(extraEnv.LARK_MANAGED_ARTIFACTS_DIR, 'manifest.txt'), 'original manifest');
+          assert.ok(actions);
+          await fs.appendFile(actions.filePath, `${JSON.stringify({
+            version: 1, type: 'lark_action_request', token: actions.token,
+            actions: [
+              { type: 'register_artifact', relative_path: 'report.csv' },
+              { type: 'register_artifact', relative_path: 'manifest.txt' },
+              { type: 'register_artifact', relative_path: 'report.csv' },
+            ],
+          })}\n`);
+        }
         return { text: 'Report' };
       },
     });
@@ -166,8 +182,14 @@ try {
     assert.deepEqual(await fs.readdir(scratch), []);
     const firstExecution = await execute(bound, signal);
     assert.equal(firstExecution.runStatus, 'success', firstExecution.failureReason ?? undefined);
+    assert.deepEqual(firstExecution.artifacts, [
+      { relativePath: 'report.csv', sha256: createHash('sha256').update('header\n42\n').digest('hex') },
+      { relativePath: 'manifest.txt', sha256: createHash('sha256').update('original manifest').digest('hex') },
+    ]);
     assert.equal((await execute(actionRun, signal)).runStatus, 'success');
-    assert.equal((await execute(await read(legacyRun), signal)).runStatus, 'success');
+    const legacyExecution = await execute(await read(legacyRun), signal);
+    assert.equal(legacyExecution.runStatus, 'success');
+    assert.equal(legacyExecution.artifacts, undefined);
     assert.deepEqual(results, [app, app, base]);
     const [managed, oldAction, classic] = managedLaunches;
     assert.equal(path.dirname(managed.scratch!), scratch);
@@ -179,12 +201,71 @@ try {
     assert.equal((await execute(bound, signal)).runStatus, 'success');
     assert.equal(managedLaunches.at(-1)?.scratch, managed.scratch, 'retry must reuse the exact scratch directory');
 
+    const workload = new CronPromptWorkload({ executor: execute });
+    const now = new Date();
+    let committed = false;
+    for (let i = 0; i < 3; i++) {
+      const rawClaim = await second.claimDue(['cron_prompt'], 'artifact-execution', now.toISOString(), new Date(now.getTime() + 60_000).toISOString());
+      assert.ok(rawClaim);
+      if (rawClaim.run.runId !== pinnedRun) continue;
+      const claim = materializeDurableRunWorkloadClaim(rawClaim, materializeDurableRunWorkloadContext(workload, rawClaim.run));
+      assert.equal(await second.markExecutionStarted(rawClaim, now.toISOString()), 'committed');
+      assert.equal(await second.commitTransition(rawClaim, workload.reduce(claim, firstExecution), now.toISOString()), 'committed');
+      committed = true;
+      break;
+    }
+    assert.ok(committed);
+    formalDirectory = managed.artifact!;
+
     await fs.rename(app, path.join(base, 'old-app'));
     await fs.symlink(docs, app, 'dir');
     assert.equal((await execute(bound, signal)).runStatus, 'failed');
     assert.deepEqual(results, [app, app, base, app], 'a saved run never opens a swapped project');
+    await fs.rename(managed.scratch!, `${managed.scratch!}.unavailable`);
   } finally {
     second.close();
+  }
+
+  const deliveryRestart = await SqliteDurableRunRepository.open({ databasePath });
+  try {
+    await fs.writeFile(path.join(formalDirectory, 'manifest.txt'), 'changed after commit');
+    const uploads: string[] = [];
+    const messages: import('../src/reply-sender.js').ReplyRequest[] = [];
+    const outcomes: string[] = [];
+    const epoch = Date.now();
+    let now = new Date(epoch);
+    const delivery = createCronDelivery({
+      now: () => now,
+      artifacts: {
+        repository: deliveryRestart, authorizedRoot: () => base,
+        uploadFile: async (bytes, name) => { uploads.push(`${name}:${bytes.toString()}`); return 'file_csv'; },
+      },
+      sendReply: async (reply) => {
+        messages.push(reply);
+        return { statusText: 'sent', sentCount: 1, messageIds: [reply.rawMessage ? 'om_cron_file' : 'om_cron_report'] };
+      },
+    });
+    for (let attempt = 0; attempt < 7; attempt++) {
+      now = new Date(epoch + attempt * 2000);
+      const claim = await deliveryRestart.claimDelivery(['cron_prompt'], 'artifact-delivery', now.toISOString());
+      if (!claim) continue;
+      const result = await delivery.deliver(claim, {
+        markExternalSendStarted: async () => (await deliveryRestart.markDeliveryStarted(claim, now.toISOString())) === 'committed',
+      });
+      outcomes.push(`${claim.kind}:${result.status}`);
+      assert.equal(await deliveryRestart.commitDelivery(claim, result, now.toISOString()), 'committed');
+    }
+    assert.equal(outcomes.filter((outcome) => outcome === 'cron_terminal:sent').length, 1);
+    assert.equal(outcomes.filter((outcome) => outcome === 'cron_artifact:sent').length, 1);
+    assert.equal(outcomes.filter((outcome) => outcome === 'cron_artifact:failed').length, 1);
+    assert.deepEqual(uploads, ['report.csv:header\n42\n']);
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0].text, 'Report');
+    assert.equal(messages[1].chat_id, 'oc_target');
+    assert.equal(messages[1].reply_to, 'om_cron_report');
+    assert.deepEqual(messages[1].rawMessage, { msgType: 'file', content: JSON.stringify({ file_key: 'file_csv' }) });
+  } finally {
+    deliveryRestart.close();
   }
 
   const failedDb = await SqliteDurableRunRepository.open({ databasePath: path.join(base, 'failed.sqlite') });

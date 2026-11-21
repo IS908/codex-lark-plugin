@@ -40,10 +40,11 @@ import { listConfiguredLocalCliToolNames } from './local-cli-tools.js';
 import { logSafeError } from './safe-log.js';
 import { accessControlStore } from './runtime-access-control.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
-import type { ManagedRunAllocation } from './domain/managed-workspace.js';
+import { MANAGED_DELIVERY_MAX_BYTES, MANAGED_DELIVERY_MAX_FILES, type ManagedArtifactReference, type ManagedRunAllocation } from './domain/managed-workspace.js';
 import { withManagedWorkspace } from './managed-workspace-exec.js';
 import { admitManagedForegroundRun, managedForegroundRunOwner } from './managed-workspace-admission.js';
 import { ManagedWorkspaceStorageError, validateManagedRunDirectory } from './managed-workspace-storage.js';
+import { readManagedArtifact } from './managed-workspace-artifact.js';
 import type { ManagedWorkspaceStore } from './ports/managed-workspace.js';
 import {
   pinWorkspacePath,
@@ -75,6 +76,7 @@ export interface CodexExecDeliveryBaseOptions {
   onFinalText?: (text: string) => void;
   onLifecycleGuard?: (reason: string) => void;
   onActionResults?: (results: CodexExecActionExecutionResult[]) => void;
+  onManagedArtifact?: (reference: ManagedArtifactReference) => void;
   continuationAvailable?: boolean;
   modelOverride?: string;
   actionBaseDir?: string;
@@ -175,6 +177,7 @@ async function enrichCodexExecActionPromptInfo(
   continuationAvailable: boolean,
   continuationPermitted: boolean,
   blockedActionTypes: readonly CodexExecAction['type'][] = [],
+  managedArtifactRegistration = false,
 ): Promise<CodexExecActionChannelPromptInfo | null> {
   if (!info?.enabled) return info;
   const baseInfo = {
@@ -191,6 +194,7 @@ async function enrichCodexExecActionPromptInfo(
       message.senderId === appConfig.ownerOpenId
       || accessControlStore.isAllowedUserId(message.senderId),
     ...(blockedActionTypes.length > 0 ? { blockedActionTypes } : {}),
+    managedArtifactRegistration,
   };
   const exposeForegroundHostTools = appConfig.codexExecSandbox !== 'danger-full-access';
   if (!exposeForegroundHostTools && !baseInfo.continuationEnabled) return baseInfo;
@@ -575,6 +579,7 @@ export async function deliverMessageViaCodexExec(
         opts.continuationAvailable ?? true,
         continuationPermitted,
         opts.actionPolicy?.blockedActionTypes,
+        Boolean(managed && opts.onManagedArtifact),
       ),
     ),
     imagePaths: collectImagePaths(message),
@@ -713,6 +718,7 @@ export async function deliverMessageViaCodexExec(
       explicitWorkspaceProject: selector !== undefined,
       model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
       continuationPermitted,
+      managed,
     });
     opts.onActionResults?.(actionResults);
     const continuation = actionResults.find(
@@ -845,9 +851,10 @@ async function dispatchCodexExecActions(input: {
   continuationPermitted: boolean;
   workspaceProject?: WorkspaceProjectBinding;
   explicitWorkspaceProject: boolean;
+  managed?: ManagedRunAllocation;
 }): Promise<CodexExecActionExecutionResult[]> {
   const blocked = new Set(input.opts.actionPolicy?.blockedActionTypes ?? []);
-  const allowedActions = input.actions.filter((action) => !blocked.has(action.type));
+  const allowedActions = input.actions.filter((action) => action.type !== 'register_artifact' && !blocked.has(action.type));
   const allowedResults = input.opts.actionDispatcher && allowedActions.length > 0
     ? await input.opts.actionDispatcher.execute({
         message: input.message,
@@ -860,28 +867,48 @@ async function dispatchCodexExecActions(input: {
       })
     : [];
   let allowedIndex = 0;
-  return input.actions.map((action) => {
+  const registered = new Set<string>();
+  const results: CodexExecActionExecutionResult[] = [];
+  for (const action of input.actions) {
     if (blocked.has(action.type)) {
-      return {
+      results.push({
         ok: false,
         action: action.type,
         message: input.opts.actionPolicy?.reason ?? `${action.type} is unavailable for this turn.`,
-      };
-    }
-    if (!input.opts.actionDispatcher) {
-      return {
+      });
+    } else if (action.type === 'register_artifact') {
+      const { managed, opts } = input;
+      let ok = false;
+      try {
+        if (!managed || !opts.onManagedArtifact) throw new Error('Managed registration unavailable.');
+        if (!registered.has(action.relative_path)) {
+          if (registered.size >= MANAGED_DELIVERY_MAX_FILES) throw new Error('Too many managed artifacts.');
+          opts.abortSignal?.throwIfAborted();
+          const { content, sha256 } = await readManagedArtifact({
+            binding: managed.artifacts, relativePath: action.relative_path, maxBytes: MANAGED_DELIVERY_MAX_BYTES,
+            revalidate: () => validateManagedRunDirectory(managed, 'artifacts', [appConfig.codexExecCwd]),
+          });
+          if (!content.length) throw new Error('Empty managed artifact.');
+          opts.abortSignal?.throwIfAborted();
+          opts.onManagedArtifact({ relativePath: action.relative_path, sha256 });
+          registered.add(action.relative_path);
+        }
+        ok = true;
+      } catch {
+        // Do not expose a host path or unverified artifact name.
+      }
+      results.push({ action: action.type, ok, message: ok ? 'Registered managed artifact.' : 'Managed artifact registration failed.' });
+    } else {
+      results.push(allowedResults[allowedIndex++] ?? {
         ok: false,
-        action: 'action_channel' as const,
-        message: 'Lark exec action dispatcher is not configured.',
-      };
+        action: 'action_channel',
+        message: input.opts.actionDispatcher
+          ? `Lark exec action dispatcher returned no result for ${action.type}.`
+          : 'Lark exec action dispatcher is not configured.',
+      });
     }
-    const actionResult = allowedResults[allowedIndex++];
-    return actionResult ?? {
-      ok: false,
-      action: 'action_channel' as const,
-      message: `Lark exec action dispatcher returned no result for ${action.type}.`,
-    };
-  });
+  }
+  return results;
 }
 
 async function sendCodexExecProgressMessage(
