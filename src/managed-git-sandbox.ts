@@ -22,7 +22,7 @@ interface ManagedGitSandboxInput {
   networkEnabled?: boolean;
 }
 
-// The launcher must omit legacy --sandbox/profile flags and ignore user config and exec rules.
+// The launcher must omit legacy --sandbox/profile flags and reject incompatible config and rule layers.
 export async function createManagedGitSandboxOptions(input: ManagedGitSandboxInput): Promise<{ profile: string; overrides: string[] }> {
   const { source, cache, scratch, artifacts, checkout: { checkout, gitDirectory }, authorizedRoots } = input;
   if (checkout.directory !== path.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF)

@@ -450,7 +450,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         };
       });
       const baseRequest: CodexExecRequest = {
-        prompt: buildContinuationPrompt(claim, artifactDir, managedInputs),
+        prompt: buildContinuationPrompt(claim, artifactDir, managedInputs, managed?.gitCheckout?.checkout.directory ?? workingDirectory),
         ...(this.options.command ? { command: this.options.command } : {}),
         cwd: workingDirectory,
         workspaceDirectory: this.workspaceDirectoryGuard(claim, managed),
@@ -480,9 +480,9 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           ? { forceToolTrace: true }
           : {}),
       };
-      const request = managed ? withManagedWorkspace(baseRequest, managed) : baseRequest;
+      const request = managed ? await withManagedWorkspace(baseRequest, managed) : baseRequest;
 
-      const recovery = await this.options.toolInvoker?.recover(claim);
+      const recovery = managed?.git ? undefined : await this.options.toolInvoker?.recover(claim);
       if (recovery?.status === 'failed') {
         return {
           outcome: recoveryOutcome(claim, recovery.failure, recovery.tool),
@@ -604,6 +604,10 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     artifactStore: ContinuationArtifactStore,
   ): Promise<ContinuationExecutionResult> {
     const firstSessionPatch = executionSessionPatch(firstSessionId, firstReplacedSession);
+    if (baseRequest.validateManagedGitLaunch) {
+      return { ...firstSessionPatch, outcome: blockedToolOutcome(claim, 'continuation_git_host_tool_unavailable',
+        'A host tool cannot run inside the isolated Git checkout sandbox.', toolRequest.tool) };
+    }
     if (
       !claim.job.requiredTools.includes(toolRequest.tool)
       || !claim.job.permissions.hostTools.includes(toolRequest.tool)
@@ -1023,6 +1027,7 @@ function buildContinuationPrompt(
     sha256: string;
     sizeBytes: number;
   }>,
+  workingDirectory: string,
 ): string {
   const { job } = claim;
   const brief = {
@@ -1070,7 +1075,7 @@ function buildContinuationPrompt(
     'If a required capability is unavailable, return a blocked outcome instead of weakening the execution boundary.',
     `Attempt ${claim.attempt.ordinal} of ${job.maxAttempts}.`,
     convergenceInstruction(claim),
-    `Workspace: ${job.workingDirectory}`,
+    `Workspace: ${workingDirectory}`,
     `Requested paths: ${job.permissions.filesystem.requestedPaths.join(', ') || '(none)'}`,
     `Network access: ${job.permissions.network}`,
     `External side effects: ${job.permissions.externalSideEffects}`,

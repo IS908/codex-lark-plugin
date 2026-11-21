@@ -31,6 +31,8 @@ export interface CodexExecRequest {
   model?: string | null;
   profile?: string | null;
   ignoreUserConfig?: boolean;
+  strictConfig?: boolean;
+  validateManagedGitLaunch?: (command: string, env: NodeJS.ProcessEnv) => Promise<{ command: string; prefix: string[]; env: NodeJS.ProcessEnv }>;
   skipGitRepoCheck?: boolean;
   resumeSessionId?: string | null;
   extraEnv?: Record<string, string | undefined>;
@@ -234,6 +236,7 @@ export function buildCodexExecArgs(
   ];
 
   if (request.ignoreUserConfig ?? true) args.push('--ignore-user-config');
+  if (request.strictConfig) args.push('--strict-config');
   if (request.skipGitRepoCheck ?? true) args.push('--skip-git-repo-check');
   if (request.sandbox) args.push('--sandbox', request.sandbox);
   if (request.model) args.push('--model', request.model);
@@ -313,9 +316,11 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   }
 
   try {
+    const childEnv = { ...process.env, NO_COLOR: '1', ...request.extraEnv };
+    const launcher = await request.validateManagedGitLaunch?.(command, childEnv);
     if (request.workspaceDirectory) {
-      const { authorizedRoots, auxiliaryBindings, binding: savedBinding, requireProtectedAncestry } = request.workspaceDirectory;
-      for (const auxiliary of auxiliaryBindings ?? []) {
+      const { authorizedRoots, auxiliaryBindings, readOnlyBindings, binding: savedBinding, requireProtectedAncestry } = request.workspaceDirectory;
+      for (const auxiliary of [...(auxiliaryBindings ?? []), ...(readOnlyBindings ?? [])]) {
         await validateWorkspaceProject(authorizedRoots, auxiliary);
       }
       const binding = await validateWorkspaceProject(authorizedRoots, savedBinding);
@@ -323,21 +328,19 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
       if (requireProtectedAncestry) await Promise.all([
         assertProtectedWorkspacePath(binding),
         ...(auxiliaryBindings ?? []).map((auxiliary) => assertProtectedWorkspacePath(auxiliary, true)),
+        ...(readOnlyBindings ?? []).map((auxiliary) => assertProtectedWorkspacePath(auxiliary)),
       ]);
     } else {
       await fs.mkdir(cwd, { recursive: true });
     }
+    if (request.abortSignal?.aborted) throw new CodexExecAbortedError('', '');
     await new Promise<void>((resolve, reject) => {
       const usePosixProcessGroup = process.platform !== 'win32';
-      const child = spawn(command, args, {
+      const child = spawn(launcher?.command ?? command, launcher ? [...launcher.prefix, ...args] : args, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: usePosixProcessGroup,
-        env: {
-          ...process.env,
-          NO_COLOR: '1',
-          ...request.extraEnv,
-        },
+        env: launcher?.env ?? childEnv,
       });
       let childSpawned = false;
       child.once('spawn', () => { childSpawned = true; });

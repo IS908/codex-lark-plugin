@@ -6,9 +6,14 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { mock } from 'node:test';
 import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
+import { buildCodexExecArgs, CodexExecAbortedError, runCodexExecCommand } from '../src/codex-exec.js';
+import { resolveManagedGitLauncher } from '../src/managed-git-launcher.js';
+import { withManagedWorkspace } from '../src/managed-workspace-exec.js';
 import { parseWorkspaceMountTable, workspaceBackingAliases } from '../src/managed-workspace-ancestry.js';
 import { gitSnapshotKey, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
 import { pinWorkspacePath, workspacePathContains } from '../src/workspace-projects.js';
+import { checkManagedGitEntrypoints } from './fixtures/managed-git-entrypoints.js';
+import { probeCodexExecWithLoopback } from './fixtures/codex-loopback-exec.js';
 
 const mounts = parseWorkspaceMountTable('1 0 8:1 / / rw - ext4 /dev/fixture rw\n'
   + '2 1 8:1 /workspace/cache/objects /prior-run/bind\\040objects rw - ext4 /dev/fixture rw\n'
@@ -116,6 +121,76 @@ try {
   }
   const checkout = first.gitCheckout.checkout.directory;
   const localGit = first.gitCheckout.gitDirectory.directory;
+  const codexHome = path.join(base, 'isolated-codex-home');
+  await fs.mkdir(codexHome);
+  const execRequest = { cwd: source, prompt: 'Fixture.', sandbox: 'workspace-write' as const,
+    extraEnv: { CODEX_HOME: codexHome, GIT_DIR: path.join(source, '.git') },
+    workspaceDirectory: { binding: request.project, authorizedRoots } };
+  const prepared = await withManagedWorkspace(execRequest, first);
+  assert.equal(prepared.cwd, checkout);
+  assert.equal(prepared.workspaceDirectory?.binding.directory, checkout);
+  assert.equal(prepared.extraEnv?.GIT_DIR, undefined);
+  const argv = buildCodexExecArgs(prepared, path.join(base, 'out'));
+  assert.ok(argv.includes('--strict-config'));
+  assert.ok(argv.includes('default_permissions="lark-managed-git"'));
+  assert.ok(!argv.includes('--sandbox') && !argv.includes('--add-dir') && !argv.includes('--ignore-rules'));
+  await assert.rejects(resolveManagedGitLauncher('codex', { PATH: '.' }, [request.project, first.scratch]), { code: 'git_launcher_untrusted' });
+  await assert.rejects(resolveManagedGitLauncher('./codex', { PATH: '/usr/bin' }, [first.scratch]), { code: 'git_launcher_untrusted' });
+  await assert.rejects(resolveManagedGitLauncher('/usr/bin/true', { PATH: '' }, [first.scratch]), { code: 'git_launcher_untrusted' });
+  const directoryWithDelimiter = path.join(base, 'path:segment');
+  const launcherAlias = path.join(base, 'launcher-alias');
+  await fs.mkdir(directoryWithDelimiter);
+  await fs.symlink(directoryWithDelimiter, launcherAlias, 'dir');
+  await assert.rejects(resolveManagedGitLauncher('/usr/bin/true', { PATH: launcherAlias }, [first.scratch]), { code: 'git_launcher_untrusted' });
+  if (process.geteuid?.() !== 0) {
+    const nonExecutable = path.join(base, 'non-executable-tools');
+    await fs.mkdir(nonExecutable);
+    const gitStub = path.join(nonExecutable, 'git');
+    await fs.writeFile(gitStub, 'fixture');
+    await fs.chmod(gitStub, 0o010);
+    await assert.rejects(resolveManagedGitLauncher('/usr/bin/true', { PATH: nonExecutable }, [first.scratch]), { code: 'git_launcher_untrusted' });
+  }
+  const abort = new AbortController();
+  await assert.rejects(runCodexExecCommand({ prompt: 'Cancel before launch.', cwd: checkout, command: '/does-not-exist',
+    abortSignal: abort.signal, validateManagedGitLaunch: async (command, env) => {
+      abort.abort();
+      return { command, env, prefix: [] };
+    } }), CodexExecAbortedError);
+  await assert.rejects(withManagedWorkspace({ ...execRequest, profile: 'existing-profile' }, first), { code: 'git_sandbox_invalid' });
+  await assert.rejects(withManagedWorkspace({ ...execRequest, additionalWritableDirs: [source] }, first), { code: 'git_sandbox_invalid' });
+  await fs.mkdir(path.join(codexHome, 'rules'));
+  await fs.writeFile(path.join(codexHome, 'rules', 'operator.rules'), '# fixture operator policy\n');
+  await assert.rejects(withManagedWorkspace(execRequest, first), { code: 'git_sandbox_layers_unsupported' });
+  await assert.rejects(runCodexExecCommand({ ...prepared, command: '/does-not-exist' }), { code: 'git_sandbox_layers_unsupported' });
+  await fs.unlink(path.join(codexHome, 'rules', 'operator.rules'));
+  if (process.env.LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX === '1') {
+    let command: string | undefined;
+    const nativeBinary = process.env.LARK_TEST_CODEX_NATIVE_BINARY;
+    if (nativeBinary) {
+      assert.ok(path.isAbsolute(nativeBinary));
+      const launcherDir = path.join(base, 'protected-launcher');
+      await fs.mkdir(launcherDir, { mode: 0o700 });
+      command = path.join(launcherDir, 'codex');
+      await fs.copyFile(nativeBinary, command, fs.constants.COPYFILE_FICLONE);
+      await fs.chmod(command, 0o700);
+    }
+    const env = { ...Object.fromEntries(Object.keys(process.env).map((name) => [name, undefined])),
+      CODEX_HOME: codexHome, HOME: base, PATH: process.env.PATH };
+    const launch = await withManagedWorkspace({ ...execRequest, extraEnv: env, command }, first);
+    const marker = 'LARK_SHARED_LAUNCH_SUCCESS';
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    await fs.writeFile(path.join(checkout, 'launcher-proof.txt'), 'shared launcher');
+    await probeCodexExecWithLoopback({ cwd: checkout, env, overrides: [], marker, command: [
+      'set -eu', '/usr/bin/git add launcher-proof.txt',
+      "/usr/bin/git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm 'launcher fixture'",
+      `if /usr/bin/touch ${quote(path.join(cache, 'denied-from-launcher'))} 2>/dev/null; then exit 1; fi`,
+      `if /usr/bin/touch ${quote(path.join(source, 'denied-from-launcher'))} 2>/dev/null; then exit 2; fi`,
+      `printf '%s\\n' ${quote(marker)}`,
+    ].join('\n'), launch: async (transport) => (await runCodexExecCommand({ ...launch, timeoutMs: 40_000,
+      configOverrides: [...launch.configOverrides ?? [], ...transport] })).text });
+    assert.equal(git(['-C', checkout, 'show', 'HEAD:launcher-proof.txt']), 'shared launcher');
+    console.log('workspace Git production launcher loopback probe: PASS');
+  }
   await fs.writeFile(path.join(checkout, 'fixture.txt'), 'local edits');
   await fs.writeFile(path.join(checkout, 'draft.txt'), 'local draft');
   git(['-C', checkout, 'add', 'fixture.txt']);
@@ -127,6 +202,7 @@ try {
   const restarted = new DatabaseSync(databasePath);
   try {
     const store = new SqliteManagedWorkspaceStore(restarted);
+    await checkManagedGitEntrypoints({ base, project: request.project, roots: request.roots, git: request.git, codexHome, store });
     const later = '2026-11-21T13:00:00.000Z';
     assert.deepEqual(await store.ensure({ ...request, usedAt: later }), first);
     assert.equal(git(['-C', checkout, 'rev-parse', 'HEAD']), localCommit);

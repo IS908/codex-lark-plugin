@@ -8,6 +8,8 @@ const diagnostic = {
   overlapping_git_cache: 'The managed storage location overlaps a recorded Git object cache.',
   git_cache_conflict: 'The Git cache key or physical directory already belongs to a different cache identity.',
   git_sandbox_invalid: 'The isolated Git checkout cannot be assigned disjoint sandbox paths.',
+  git_sandbox_layers_unsupported: 'Isolated Git execution cannot compose with active Codex project or system configuration or command rules.',
+  git_launcher_untrusted: 'A trusted absolute Codex launcher is unavailable for the isolated Git checkout.',
   allocation_conflict: 'The managed run directory already exists without a matching stored allocation.',
   allocation_failed: 'The managed run directories could not be allocated.',
   allocation_incomplete: 'The stored managed workspace allocation is incomplete.',

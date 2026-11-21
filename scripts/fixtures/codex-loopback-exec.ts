@@ -12,6 +12,7 @@ export async function probeCodexExecWithLoopback(input: {
   overrides: string[];
   command: string;
   marker: string;
+  launch?: (transportOverrides: string[]) => Promise<string>;
 }): Promise<void> {
   const callId = 'call_managed_git_fixture';
   let requests = 0;
@@ -67,17 +68,22 @@ export async function probeCodexExecWithLoopback(input: {
   });
   try {
     const { port } = server.address() as AddressInfo;
-    const overrides = [...input.overrides, 'model="gpt-5.4"', 'model_provider="lark-fixture"', 'web_search="disabled"',
+    const transport = ['model="gpt-5.4"', 'model_provider="lark-fixture"', 'web_search="disabled"',
       `model_providers.lark-fixture={name="Loopback fixture",base_url="http://127.0.0.1:${port}/v1",wire_api="responses",request_max_retries=0,stream_max_retries=0}`];
-    const running = exec('codex', ['exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules',
-      '--skip-git-repo-check', ...overrides.flatMap((entry) => ['--config', entry]), '-'], {
-      cwd: input.cwd, env: input.env, maxBuffer: 1024 * 1024, timeout: 40_000, killSignal: 'SIGKILL',
-    });
-    running.child.stdin?.on('error', () => {});
-    running.child.stdin?.end('Run the single scripted fixture operation.');
-    const run = await running;
+    let output: string;
+    if (input.launch) output = await input.launch(transport);
+    else {
+      const overrides = [...input.overrides, ...transport];
+      const running = exec('codex', ['exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules',
+        '--skip-git-repo-check', ...overrides.flatMap((entry) => ['--config', entry]), '-'], {
+        cwd: input.cwd, env: input.env, maxBuffer: 1024 * 1024, timeout: 40_000, killSignal: 'SIGKILL',
+      });
+      running.child.stdin?.on('error', () => {});
+      running.child.stdin?.end('Run the single scripted fixture operation.');
+      output = (await running).stdout;
+    }
     assert.equal(requests, 2);
-    assert.ok(run.stdout.includes('fixture finished'));
+    assert.ok(output.includes('fixture finished'));
   } catch (error) {
     throw handlerFailure ?? error;
   } finally {

@@ -370,6 +370,7 @@ async function executeCodexModelCommand(
         : {}),
       workspaceProject: existing.workspaceProject,
       workspaceProjectSenderId: existing.workspaceProjectSenderId,
+      managedGitCheckoutScope: existing.managedGitCheckoutScope,
     });
     return appConfig.codexExecModel
       ? `Chat/thread model override cleared. Effective Codex model now falls back to LARK_CODEX_EXEC_MODEL: ${appConfig.codexExecModel}.`
@@ -391,6 +392,7 @@ async function executeCodexModelCommand(
       : {}),
     workspaceProject: existing?.workspaceProject,
     workspaceProjectSenderId: existing?.workspaceProjectSenderId,
+    managedGitCheckoutScope: existing?.managedGitCheckoutScope,
     model: command.model,
   });
   return `Chat/thread Codex model override set to ${command.model}. Subsequent realtime turns in this chat/thread will use it.`;
