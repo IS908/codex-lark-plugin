@@ -24,6 +24,7 @@ export async function loadCommittedCronArtifact(
   const recorded = store?.get(owner)?.allocation;
   if (!store || !recorded || recorded.createdAt !== managedWorkspace.createdAt
     || !sameWorkspaceProject(recorded.project, job.workspaceProject)
+    || !sameWorkspaceProject(recorded.fallbackWorkspace, managedWorkspace.fallbackWorkspace)
     || !sameWorkspaceProject(recorded.roots.scratch, managedWorkspace.roots.scratch)
     || !sameWorkspaceProject(recorded.roots.artifacts, managedWorkspace.roots.artifacts)) {
     throw new Error('Cron artifact workspace binding is unavailable.');

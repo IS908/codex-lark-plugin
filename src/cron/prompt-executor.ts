@@ -180,6 +180,7 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
 async function allocateWorkspace(input: CronPromptExecutionInput, store: ManagedWorkspaceStore | undefined) {
   if (!input.managedWorkspace || !store) throw new ManagedWorkspaceStorageError('allocation_failed');
   assertManagedWorkspaceSandbox(appConfig.codexExecSandbox, input.job.workspaceProject);
+  if (!input.job.workspaceProject && !input.managedWorkspace.fallbackWorkspace) throw new ManagedWorkspaceStorageError('invalid_binding');
   return store.ensure({
     ...input.managedWorkspace,
     authorizedRoots: [appConfig.codexExecCwd],

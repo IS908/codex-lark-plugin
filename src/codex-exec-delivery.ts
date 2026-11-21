@@ -80,6 +80,7 @@ export interface CodexExecDeliveryBaseOptions {
   onActionResults?: (results: CodexExecActionExecutionResult[]) => void;
   onManagedArtifact?: (reference: ManagedArtifactReference) => void;
   uploadManagedArtifact?: ForegroundArtifactDeliveryOptions['upload'];
+  authorizeForegroundArtifactRoute?: ForegroundArtifactDeliveryOptions['allowsRoute'];
   continuationAvailable?: boolean;
   modelOverride?: string;
   actionBaseDir?: string;
@@ -500,14 +501,16 @@ export async function deliverMessageViaCodexExec(
   const artifactIO = !opts.deliverySink && opts.uploadManagedArtifact
     && (message.chatType === 'p2p' || message.chatType === 'group') && message.messageType !== 'reaction'
     && isFeishuOpenMessageId(message.messageId) && shouldSendFeishuReplyForMessage(message)
-    ? { sendReply: opts.sendReply, upload: opts.uploadManagedArtifact, abortSignal: opts.abortSignal }
+    ? { sendReply: opts.sendReply, upload: opts.uploadManagedArtifact, abortSignal: opts.abortSignal,
+      allowsRoute: opts.authorizeForegroundArtifactRoute }
     : undefined;
   if (priorManaged && managedStore && workspaceOwner && artifactIO) {
     const batch = managedStore.getForegroundArtifacts(workspaceOwner.runId);
     if (batch) {
-      await deliverForegroundArtifacts(managedStore, priorManaged.allocation, batch,
-        message, sessionKey, workspaceOptions.authorizedRoot, artifactIO);
-      turnObligations?.markSatisfied(message.messageId, 'reply');
+      const confirmed = await deliverForegroundArtifacts(managedStore, priorManaged.allocation, batch,
+        workspaceOptions.authorizedRoot, artifactIO);
+      if (confirmed) turnObligations?.markSatisfied(message.messageId, 'reply');
+      else turnObligations?.markDeferred(message.messageId, 'exec_assistant_text', 'LARK_DEFER', 'Managed delivery not confirmed.');
       return;
     }
   }
@@ -547,8 +550,8 @@ export async function deliverMessageViaCodexExec(
   const onManagedArtifact = managedStore && artifactIO
     ? (reference: ManagedArtifactReference) => { foregroundArtifacts.push(reference); }
     : opts.onManagedArtifact;
-  const launchWorkspace = workspace ?? (managed ? await pinWorkspacePath(
-    workspaceOptions.authorizedRoot, path.resolve(workspaceOptions.authorizedRoot),
+  const launchWorkspace = workspace ?? (managed ? await validateWorkspaceProject(
+    workspaceOptions.authorizedRoot, managed.fallbackWorkspace,
   ) : undefined);
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace)
     && (workspace === undefined || compatibleSession?.workspaceProjectSenderId === message.senderId)
@@ -857,23 +860,27 @@ export async function deliverMessageViaCodexExec(
     return;
   }
 
-  const response = await opts.sendReply!({
+  if (managed && managedStore && artifactIO && foregroundArtifacts.length) {
+    const batch: ForegroundArtifactBatch = {
+      version: 2, chatId: message.chatId, sourceMessageId: message.messageId, sessionKey,
+      actorId: message.senderId, messageType: message.messageType,
+      ...(message.threadId ? { threadId: message.threadId } : {}),
+      reply: { text, ...(runtimeFooter ? { runtimeFooter } : {}), status: 'pending' },
+      files: foregroundArtifacts.map((reference) => ({ reference, status: 'pending' })),
+    };
+    managedStore.rememberForegroundArtifacts(managed.owner.runId, batch);
+    const confirmed = await deliverForegroundArtifacts(managedStore, managed, batch, workspaceOptions.authorizedRoot, artifactIO);
+    if (confirmed) turnObligations?.markSatisfied(message.messageId, 'reply');
+    else turnObligations?.markDeferred(message.messageId, 'exec_assistant_text', 'LARK_DEFER', 'Managed delivery not confirmed.');
+    return;
+  }
+  await opts.sendReply!({
     chat_id: message.chatId,
     text,
     ...(isFeishuOpenMessageId(message.messageId) ? { reply_to: message.messageId } : {}),
     thread_id: message.threadId,
     ...(runtimeFooter ? { runtimeFooter } : {}),
   });
-  if (managed && managedStore && artifactIO && foregroundArtifacts.length
-    && !response.isError && response.sentCount > 0 && response.messageIds?.some(isFeishuOpenMessageId)) {
-    const batch: ForegroundArtifactBatch = {
-      version: 1, chatId: message.chatId, sourceMessageId: message.messageId, sessionKey,
-      ...(message.threadId ? { threadId: message.threadId } : {}),
-      files: foregroundArtifacts.map((reference) => ({ reference, status: 'pending' })),
-    };
-    managedStore.rememberForegroundArtifacts(managed.owner.runId, batch);
-    await deliverForegroundArtifacts(managedStore, managed, batch, message, sessionKey, workspaceOptions.authorizedRoot, artifactIO);
-  }
 }
 
 async function dispatchCodexExecActions(input: {

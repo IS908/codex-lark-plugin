@@ -11,6 +11,7 @@ import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository
 import type { LarkMessage } from '../src/lark-message.js';
 import type { ManagedWorkspaceStore } from '../src/ports/managed-workspace.js';
 import { managedForegroundRunOwner } from '../src/managed-workspace-admission.js';
+import { drainForegroundArtifacts } from '../src/foreground-artifact-delivery.js';
 import { WorkspaceProjectError } from '../src/workspace-projects.js';
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-workspace-foreground-'));
@@ -231,13 +232,19 @@ try {
   const sent: import('../src/reply-sender.js').ReplyRequest[] = [];
   const uploaded: string[] = [];
   let runCount = 0;
+  const deliverySession = buildCodexExecSessionKey(artifactMessage.chatId, artifactMessage.threadId);
+  const deliveryOwner = managedForegroundRunOwner(artifactMessage, deliverySession);
   const deliverArtifactTurn = (repo: SqliteDurableRunRepository, stop?: AbortController) => deliverMessageViaCodexExec({
     message: artifactMessage, displayLabel: 'Foreground attachment', useCodexSessions: false,
     managedWorkspaceStore: () => repo.getManagedWorkspaceStore(), progressLimits: { enabled: false }, abortSignal: stop?.signal,
     uploadManagedArtifact: async (content, name) => { uploaded.push(`${name}:${content.toString()}`); return 'file_ticket'; },
     sendReply: async (reply) => {
       sent.push(reply);
-      if (!reply.rawMessage) stop?.abort();
+      if (!reply.rawMessage) {
+        assert.equal(reply.routing, 'auto', 'the pinned text reply still satisfies the inbound obligation');
+        assert.equal(repo.getManagedWorkspaceStore().getForegroundArtifacts(deliveryOwner.runId)?.reply.status, 'sending');
+        stop?.abort();
+      }
       return { sentCount: 1, statusText: 'sent', messageIds: [reply.rawMessage ? 'om_attachment' : 'om_summary'] };
     },
     runCodexExec: async ({ actions, extraEnv, prompt }) => {
@@ -256,8 +263,6 @@ try {
       return { text: 'Report ready.' };
     },
   });
-  const deliverySession = buildCodexExecSessionKey(artifactMessage.chatId, artifactMessage.threadId);
-  const deliveryOwner = managedForegroundRunOwner(artifactMessage, deliverySession);
   const beforeDelivery = await SqliteDurableRunRepository.open({ databasePath });
   try {
     await deliverArtifactTurn(beforeDelivery, new AbortController());
@@ -274,6 +279,29 @@ try {
   await fs.unlink(appConfig.managedWorkspaceConfigPath);
   const resumedDelivery = await SqliteDurableRunRepository.open({ databasePath });
   try {
+    const ledger = resumedDelivery.getManagedWorkspaceStore();
+    const drain = (allowed: boolean) => drainForegroundArtifacts(ledger, base, {
+      allowsRoute: (actorId, chatId) => {
+        assert.equal(actorId, artifactMessage.senderId);
+        assert.equal(chatId, artifactMessage.chatId);
+        return allowed;
+      },
+      sendReply: async (reply) => { sent.push(reply); return { sentCount: 1, statusText: 'sent', messageIds: ['om_attachment'] }; },
+      upload: async (content, name) => { uploaded.push(`${name}:${content.toString()}`); return 'file_ticket'; },
+    }, (error) => { throw error; });
+    await drain(false);
+    assert.deepEqual(uploaded, [], 'revoked routes are not eligible during startup');
+    let stillAllowed = true;
+    let revokedUploads = 0;
+    await drainForegroundArtifacts(ledger, base, {
+      allowsRoute: () => stillAllowed,
+      upload: async () => { revokedUploads++; stillAllowed = false; return 'file_revoked'; },
+      sendReply: async () => assert.fail('A route revoked during upload must not receive a reply.'),
+    }, (error) => { throw error; });
+    assert.equal(revokedUploads, 1);
+    assert.equal(ledger.getForegroundArtifacts(deliveryOwner.runId)?.files[0].status, 'pending');
+    await drain(true);
+    assert.deepEqual(uploaded, ['report.csv:foreground content'], 'startup delivers without another inbound event');
     await deliverArtifactTurn(resumedDelivery);
     await deliverArtifactTurn(resumedDelivery);
     assert.equal(runCount, 1);
@@ -283,10 +311,53 @@ try {
     assert.equal(sent[1].thread_id, artifactMessage.threadId);
     assert.equal(sent[1].reply_to, artifactMessage.messageId);
     assert.deepEqual(sent[1].rawMessage, { msgType: 'file', content: JSON.stringify({ file_key: 'file_ticket' }) });
-    assert.deepEqual(resumedDelivery.getManagedWorkspaceStore().getForegroundArtifacts(deliveryOwner.runId)
-      ?.files.map((file) => file.status), ['sent', 'sending']);
+    assert.deepEqual(ledger.getForegroundArtifacts(deliveryOwner.runId)?.files.map((file) => file.status), ['sent', 'sending']);
+    const confirmed = ledger.getForegroundArtifacts(deliveryOwner.runId)!;
+    const unconfirmedMessage = { ...artifactMessage, messageId: 'om_uncertain_reply' };
+    const uncertainOwner = managedForegroundRunOwner(unconfirmedMessage, deliverySession);
+    const original = ledger.get(deliveryOwner)!.allocation;
+    await ledger.ensure({ owner: uncertainOwner, authorizedRoots: [base], roots: original.roots,
+      project: original.project, foregroundSessionKey: deliverySession, createdAt: original.createdAt });
+    ledger.rememberForegroundArtifacts(uncertainOwner.runId, {
+      ...confirmed, sourceMessageId: unconfirmedMessage.messageId,
+      reply: { text: 'Another report.', status: 'pending' },
+      files: confirmed.files.map(({ reference }) => ({ reference, status: 'pending' })),
+    });
+    let textAttempts = 0;
+    const uncertainDrain = () => drainForegroundArtifacts(ledger, base, {
+      sendReply: async () => { textAttempts++; return { sentCount: 1, statusText: 'no receipt' }; },
+      upload: async () => assert.fail('An unconfirmed text reply cannot release files.'),
+    }, (error) => { throw error; });
+    await uncertainDrain();
+    await uncertainDrain();
+    assert.equal(textAttempts, 1);
+    assert.equal(ledger.getForegroundArtifacts(uncertainOwner.runId)?.reply.status, 'unknown');
   } finally {
     resumedDelivery.close();
+  }
+  const originalCwd = path.join(base, 'read-only-fallback');
+  const unboundRoots = { version: 1, scratchRoot: path.join(originalCwd, 'runs'), artifactRoot: path.join(originalCwd, 'formal') };
+  await fs.mkdir(unboundRoots.scratchRoot, { recursive: true });
+  await fs.mkdir(unboundRoots.artifactRoot);
+  await fs.writeFile(appConfig.managedWorkspaceConfigPath, JSON.stringify(unboundRoots));
+  await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify({ version: 1, roots: [], projects: [] }));
+  appConfig.codexExecSandbox = 'read-only';
+  appConfig.codexExecCwd = originalCwd;
+  const fallbackTurn = { messageId: 'om_read_only_fallback', chatId: 'oc_read_only_fallback' };
+  const firstFallback = await SqliteDurableRunRepository.open({ databasePath });
+  try {
+    await dispatch(fallbackTurn, () => firstFallback.getManagedWorkspaceStore());
+    assert.equal(requests.at(-1)?.cwd, originalCwd);
+  } finally {
+    firstFallback.close();
+  }
+  appConfig.codexExecCwd = base;
+  const replayedFallback = await SqliteDurableRunRepository.open({ databasePath });
+  try {
+    await dispatch(fallbackTurn, () => replayedFallback.getManagedWorkspaceStore());
+    assert.equal(requests.at(-1)?.cwd, originalCwd, 'widening authorization does not retarget a persisted read-only run');
+  } finally {
+    replayedFallback.close();
   }
 } finally {
   await fs.rm(fixture, { recursive: true, force: true });

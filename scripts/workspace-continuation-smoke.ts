@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { appConfig } from '../src/config.js';
 import { ContinuationInputStore } from '../src/continuation/input-store.js';
+import { continuationRetryJobId } from '../src/continuation/idempotency.js';
 import { createContinuationRuntime } from '../src/continuation/runtime.js';
 import type { ContinuationActionInput } from '../src/continuation/service.js';
 import type { LarkMessage } from '../src/lark-message.js';
@@ -185,7 +186,15 @@ try {
     await fs.writeFile(path.join(formal, 'result.txt'), 'changed');
     await assert.rejects(readArtifact('result.txt'), { code: 'artifact_invalid' });
     await fs.writeFile(path.join(formal, 'result.txt'), 'checkpoint evidence');
+    const firstRetryAt = new Date(Date.now() - 1_000).toISOString();
+    const allocatedRetryId = continuationRetryJobId(validJobId, 'explicit-retry');
+    await store.ensure({ owner: { kind: 'async_task', runId: allocatedRetryId }, authorizedRoots: [base],
+      roots: failed.permissions.filesystem.managedWorkspaceRoots!, project: failed.permissions.filesystem.workspaceProject,
+      createdAt: firstRetryAt });
     const retry = await restarted.service.retryForActor(validJobId, source.senderId, undefined, 'explicit-retry');
+    assert.equal(retry.jobId, allocatedRetryId);
+    assert.equal(retry.createdAt, firstRetryAt);
+    assert.equal(Date.parse(retry.expiresAt) - Date.parse(retry.createdAt), Date.parse(failed.expiresAt) - Date.parse(failed.createdAt));
     assert.equal(retry.retryOfJobId, validJobId);
     assert.equal(retry.checkpoint?.artifacts[0]?.sha256, failed.checkpoint?.artifacts[0]?.sha256);
     const child = store.get({ kind: 'async_task', runId: retry.jobId })!.allocation;

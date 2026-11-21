@@ -293,10 +293,11 @@ can register up to five nonempty files of at most 30 MB each from its formal
 artifact directory. The outbox verifies and sends the files as replies to the
 confirmed report. A failed attachment does not resend the report.
 
-For managed foreground IM turns, requested files in the formal artifact directory
-are registered after the text reply is confirmed. Replaying the same turn can
-deliver pending files without rerunning Codex or needing scratch. The plugin
-does not replay an attachment whose prior send may have started.
+For managed foreground IM turns, the plugin records the text reply and requested
+formal files before sending. After the text is confirmed, pending files can be
+sent on reconnect or on replay of the same event without rerunning Codex or
+needing scratch. The plugin rechecks the route and does not repeat a send whose
+outcome is unknown.
 
 ### 4. Start
 

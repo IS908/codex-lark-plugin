@@ -57,6 +57,7 @@ const artifactProgram = String.raw`
       : entry.size === 0n && entry.nlink === 1n);
   }
   function recoverOwned(leaf) {
+    guard(stageDev && stageIno);
     const staged = optionalStat(ownedStage);
     if (!staged) return;
     guard(verifiedStage(staged));
@@ -203,10 +204,13 @@ export async function publishManagedArtifact(options: FileOptions & { content: B
 export async function reconcileManagedArtifact(options: FileOptions & { expectedSha256: string }): Promise<void> {
   const sha256 = options.expectedSha256.toLowerCase();
   const { stageJournal, relativePath } = options;
-  const stage = stageJournal?.get(relativePath);
-  if (stage) {
-    await runArtifactOperation(options, sha256, undefined, 'recover', stage);
-    stageJournal!.release(relativePath, stage.nonce);
+  if (stageJournal) {
+    const stage = stageJournal.get(relativePath);
+    if (stage) {
+      if (stage.identity) await runArtifactOperation(options, sha256, undefined, 'recover', stage);
+      stageJournal.release(relativePath, stage.nonce);
+    }
+    return;
   }
   await runArtifactOperation(options, sha256, undefined, 'reconcile');
 }

@@ -255,13 +255,23 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       ) {
         throw new Error('Continuation retry source does not exist.');
       }
-      const requestFingerprint = createRequestFingerprint(request);
+      let admittedRequest = request;
+      if (request.retryOfJobId && request.permissions.filesystem.managedWorkspaceRoots && request.resumeCheckpoint?.artifacts.length) {
+        // The retry may have provisioned its storage before it could commit a Job.
+        const prior = this.durableRuns.getManagedWorkspaceStore().get({ kind: 'async_task', runId: jobId });
+        if (prior) {
+          const { createdAt } = prior.allocation;
+          const lifetime = Date.parse(request.expiresAt) - Date.parse(request.createdAt);
+          admittedRequest = { ...request, createdAt, expiresAt: new Date(Date.parse(createdAt) + lifetime).toISOString() };
+        }
+      }
+      const requestFingerprint = createRequestFingerprint(admittedRequest);
       const installation = await this.inputs.install(
         jobId,
-        request.sourceInputs,
+        admittedRequest.sourceInputs,
         requestFingerprint,
       );
-      const persisted = projectCreateRequest(request, installation.artifacts);
+      const persisted = projectCreateRequest(admittedRequest, installation.artifacts);
       const initialJob = continuationJobForCreate(jobId, persisted);
       let artifactsInstalled = false;
       try {

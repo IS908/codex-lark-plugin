@@ -25,6 +25,7 @@ type AuthorizedRoots = readonly [string, ...string[]];
 interface WorkspaceAuthorization {
   authorizedRoots: AuthorizedRoots;
   project?: WorkspaceProjectBinding;
+  fallbackWorkspace?: WorkspaceProjectBinding;
   sourceRegistryPath?: string;
   sourceRegistryRoot?: string;
 }
@@ -72,6 +73,7 @@ export async function allocateManagedRunDirectories({
     version: 1, owner, roots, scratch, artifacts, createdAt,
     ...(foregroundSessionKey ? { foregroundSessionKey } : {}),
     ...(authorization.project ? { project: authorization.project } : {}),
+    ...(authorization.fallbackWorkspace ? { fallbackWorkspace: authorization.fallbackWorkspace } : {}),
   };
 }
 
@@ -96,10 +98,12 @@ export async function validateManagedRunDirectory(
 }
 
 export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots, authorization: WorkspaceAuthorization) {
+  if (authorization.fallbackWorkspace && authorization.project) throw new ManagedWorkspaceStorageError('invalid_binding');
   await Promise.all([
     validateWorkspaceProject(authorization.authorizedRoots, roots.scratch),
     validateWorkspaceProject(authorization.authorizedRoots, roots.artifacts),
     ...(authorization.project ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.project)] : []),
+    ...(authorization.fallbackWorkspace ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.fallbackWorkspace)] : []),
   ]);
   assertDisjoint(roots, authorization.project);
   const bindings = [roots.scratch, roots.artifacts, ...(authorization.project ? [authorization.project] : [])];
@@ -122,6 +126,7 @@ export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots
   await Promise.all([
     assertProtectedWorkspacePath(roots.scratch, true), assertProtectedWorkspacePath(roots.artifacts, true),
     ...(authorization.project ? [assertProtectedWorkspacePath(authorization.project)] : []),
+    ...(authorization.fallbackWorkspace ? [assertProtectedWorkspacePath(authorization.fallbackWorkspace)] : []),
   ]);
   return {
     all: new Set(ancestry.flatMap((ancestors) => [...ancestors])),

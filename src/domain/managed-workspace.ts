@@ -36,20 +36,28 @@ export const managedWorkspaceRootsSchema = z.strictObject({
 export const managedWorkspaceAdmissionSchema = z.strictObject({
   roots: managedWorkspaceRootsSchema,
   createdAt: z.iso.datetime(),
+  fallbackWorkspace: workspaceProjectBindingSchema.optional(),
 });
 
 const foregroundSessionKey = z.string().min(1).max(1024);
+const foregroundDeliveryReceipt = {
+  status: z.enum(['pending', 'sending', 'sent', 'failed', 'unknown']),
+  messageId: z.string().regex(/^om_/).max(512).optional(),
+};
 
 export const foregroundArtifactBatchSchema = z.strictObject({
-  version: z.literal(1),
+  version: z.literal(2),
   sessionKey: foregroundSessionKey,
+  actorId: z.string().min(1).max(512),
+  messageType: z.string().min(1).max(128).refine((type) => type !== 'reaction'),
   chatId: z.string().min(1).max(512),
   sourceMessageId: z.string().regex(/^om_/).max(512),
   threadId: z.string().min(1).max(512).optional(),
+  reply: z.strictObject({ text: z.string().min(1), runtimeFooter: z.string().optional(), ...foregroundDeliveryReceipt })
+    .refine(({ status, messageId }) => (status === 'sent') === Boolean(messageId)),
   files: z.array(z.strictObject({
     reference: managedArtifactReferenceSchema,
-    status: z.enum(['pending', 'sending', 'sent', 'failed', 'unknown']),
-    messageId: z.string().regex(/^om_/).max(512).optional(),
+    ...foregroundDeliveryReceipt,
   })).min(1).max(MANAGED_DELIVERY_MAX_FILES).refine((files) =>
     new Set(files.map(({ reference }) => reference.relativePath)).size === files.length
     && files.every(({ status, messageId }) => (status === 'sent') === Boolean(messageId))),
@@ -66,6 +74,7 @@ export const managedRunIntentSchema = z.strictObject({
   owner: managedRunOwnerSchema,
   roots: managedWorkspaceRootsSchema,
   project: workspaceProjectBindingSchema.optional(),
+  fallbackWorkspace: workspaceProjectBindingSchema.optional(),
   foregroundSessionKey: foregroundSessionKey.optional(),
   createdAt: z.iso.datetime(),
 });

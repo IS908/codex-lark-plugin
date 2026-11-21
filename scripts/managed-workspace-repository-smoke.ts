@@ -109,7 +109,9 @@ try {
     const store = new SqliteManagedWorkspaceStore(db3);
     await assert.rejects(store.ensure({ ...conflicted, roots: changed }), { code: 'allocation_incomplete' });
     const later = '2026-11-21T13:00:00.000Z';
-    assert.deepEqual(await store.ensure({ ...request, roots: changed, usedAt: later }), allocation);
+    await assert.rejects(store.ensure({ ...request, roots: changed, usedAt: later }), { code: 'invalid_binding' });
+    await assert.rejects(store.ensure({ ...request, createdAt: later }), { code: 'invalid_binding' });
+    assert.deepEqual(await store.ensure({ ...request, usedAt: later }), allocation);
     assert.deepEqual(store.get(owner), { allocation, lastUsedAt: later });
     await store.ensure({ ...request, usedAt: '2026-11-21T14:00:00Z' });
     await store.ensure({ ...request, usedAt: '2026-11-21T14:00:00.001Z' });
@@ -139,7 +141,7 @@ try {
     assert.equal(store.get(missingOwner), null);
     await fs.writeFile(path.join(allocation.artifacts.directory, 'result.txt'), 'result');
     await fs.rename(allocation.scratch.directory, path.join(scratchRoot, 'unavailable'));
-    await assert.rejects(store.ensure({ ...request, roots: changed, usedAt: later }), { code: 'unavailable_directory' });
+    await assert.rejects(store.ensure({ ...request, usedAt: later }), { code: 'unavailable_directory' });
     const formal = await store.openDirectory(owner, 'artifacts', authorizedRoots);
     assert.equal(await fs.readFile(path.join(formal, 'result.txt'), 'utf8'), 'result');
   } finally {

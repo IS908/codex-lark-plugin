@@ -56629,19 +56629,26 @@ var managedWorkspaceRootsSchema = external_exports.strictObject({
 });
 var managedWorkspaceAdmissionSchema = external_exports.strictObject({
   roots: managedWorkspaceRootsSchema,
-  createdAt: external_exports.iso.datetime()
+  createdAt: external_exports.iso.datetime(),
+  fallbackWorkspace: workspaceProjectBindingSchema.optional()
 });
 var foregroundSessionKey = external_exports.string().min(1).max(1024);
+var foregroundDeliveryReceipt = {
+  status: external_exports.enum(["pending", "sending", "sent", "failed", "unknown"]),
+  messageId: external_exports.string().regex(/^om_/).max(512).optional()
+};
 var foregroundArtifactBatchSchema = external_exports.strictObject({
-  version: external_exports.literal(1),
+  version: external_exports.literal(2),
   sessionKey: foregroundSessionKey,
+  actorId: external_exports.string().min(1).max(512),
+  messageType: external_exports.string().min(1).max(128).refine((type) => type !== "reaction"),
   chatId: external_exports.string().min(1).max(512),
   sourceMessageId: external_exports.string().regex(/^om_/).max(512),
   threadId: external_exports.string().min(1).max(512).optional(),
+  reply: external_exports.strictObject({ text: external_exports.string().min(1), runtimeFooter: external_exports.string().optional(), ...foregroundDeliveryReceipt }).refine(({ status, messageId }) => status === "sent" === Boolean(messageId)),
   files: external_exports.array(external_exports.strictObject({
     reference: managedArtifactReferenceSchema,
-    status: external_exports.enum(["pending", "sending", "sent", "failed", "unknown"]),
-    messageId: external_exports.string().regex(/^om_/).max(512).optional()
+    ...foregroundDeliveryReceipt
   })).min(1).max(MANAGED_DELIVERY_MAX_FILES).refine((files) => new Set(files.map(({ reference }) => reference.relativePath)).size === files.length && files.every(({ status, messageId }) => status === "sent" === Boolean(messageId)))
 });
 var unmanagedForegroundAdmissionSchema = external_exports.union([
@@ -56653,6 +56660,7 @@ var managedRunIntentSchema = external_exports.strictObject({
   owner: managedRunOwnerSchema,
   roots: managedWorkspaceRootsSchema,
   project: workspaceProjectBindingSchema.optional(),
+  fallbackWorkspace: workspaceProjectBindingSchema.optional(),
   foregroundSessionKey: foregroundSessionKey.optional(),
   createdAt: external_exports.iso.datetime()
 });
@@ -56772,7 +56780,8 @@ async function allocateManagedRunDirectories({
     artifacts,
     createdAt,
     ...foregroundSessionKey2 ? { foregroundSessionKey: foregroundSessionKey2 } : {},
-    ...authorization.project ? { project: authorization.project } : {}
+    ...authorization.project ? { project: authorization.project } : {},
+    ...authorization.fallbackWorkspace ? { fallbackWorkspace: authorization.fallbackWorkspace } : {}
   };
 }
 async function validateManagedRunDirectory(value, purpose, authorizedRoots) {
@@ -56791,10 +56800,12 @@ async function validateManagedRunDirectory(value, purpose, authorizedRoots) {
   return binding.directory;
 }
 async function validateManagedWorkspaceRoots(roots, authorization) {
+  if (authorization.fallbackWorkspace && authorization.project) throw new ManagedWorkspaceStorageError("invalid_binding");
   await Promise.all([
     validateWorkspaceProject(authorization.authorizedRoots, roots.scratch),
     validateWorkspaceProject(authorization.authorizedRoots, roots.artifacts),
-    ...authorization.project ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.project)] : []
+    ...authorization.project ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.project)] : [],
+    ...authorization.fallbackWorkspace ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.fallbackWorkspace)] : []
   ]);
   assertDisjoint(roots, authorization.project);
   const bindings = [roots.scratch, roots.artifacts, ...authorization.project ? [authorization.project] : []];
@@ -56817,7 +56828,8 @@ async function validateManagedWorkspaceRoots(roots, authorization) {
   await Promise.all([
     assertProtectedWorkspacePath(roots.scratch, true),
     assertProtectedWorkspacePath(roots.artifacts, true),
-    ...authorization.project ? [assertProtectedWorkspacePath(authorization.project)] : []
+    ...authorization.project ? [assertProtectedWorkspacePath(authorization.project)] : [],
+    ...authorization.fallbackWorkspace ? [assertProtectedWorkspacePath(authorization.fallbackWorkspace)] : []
   ]);
   return {
     all: new Set(ancestry.flatMap((ancestors) => [...ancestors])),
@@ -66400,6 +66412,8 @@ async function admitManagedForegroundRun(options) {
   }
   assertManagedWorkspaceSandbox(options.sandbox, project);
   if (!store) throw new ManagedWorkspaceStorageError("allocation_failed");
+  const fallbackWorkspace = project ? void 0 : recorded ? recorded.allocation.fallbackWorkspace : await pinWorkspacePath(options.authorizedRoot, ".");
+  if (!project && !fallbackWorkspace) throw new ManagedWorkspaceStorageError("invalid_binding");
   const now = (/* @__PURE__ */ new Date()).toISOString();
   return store.ensure({
     owner,
@@ -66407,6 +66421,7 @@ async function admitManagedForegroundRun(options) {
     authorizedRoots,
     project,
     sourceRegistryPath: options.sourceRegistryPath,
+    fallbackWorkspace,
     foregroundSessionKey: options.sessionKey,
     createdAt: recorded?.allocation.createdAt ?? now,
     usedAt: now
@@ -66466,6 +66481,7 @@ var artifactProgram = String.raw`
       : entry.size === 0n && entry.nlink === 1n);
   }
   function recoverOwned(leaf) {
+    guard(stageDev && stageIno);
     const staged = optionalStat(ownedStage);
     if (!staged) return;
     guard(verifiedStage(staged));
@@ -66601,10 +66617,13 @@ async function publishManagedArtifact(options) {
 async function reconcileManagedArtifact(options) {
   const sha2562 = options.expectedSha256.toLowerCase();
   const { stageJournal, relativePath } = options;
-  const stage = stageJournal?.get(relativePath);
-  if (stage) {
-    await runArtifactOperation(options, sha2562, void 0, "recover", stage);
-    stageJournal.release(relativePath, stage.nonce);
+  if (stageJournal) {
+    const stage = stageJournal.get(relativePath);
+    if (stage) {
+      if (stage.identity) await runArtifactOperation(options, sha2562, void 0, "recover", stage);
+      stageJournal.release(relativePath, stage.nonce);
+    }
+    return;
   }
   await runArtifactOperation(options, sha2562, void 0, "reconcile");
 }
@@ -66647,13 +66666,41 @@ async function runArtifactOperation(options, sha2562, input2, operation = input2
 
 // src/foreground-artifact-delivery.ts
 import path26 from "node:path";
-async function deliverForegroundArtifacts(store, allocation, batch, message, sessionKey2, authorizedRoot, options) {
-  if (allocation.owner.kind !== "foreground" || allocation.foregroundSessionKey !== sessionKey2 || batch.sessionKey !== sessionKey2 || batch.chatId !== message.chatId || batch.threadId !== message.threadId || batch.sourceMessageId !== message.messageId) {
+async function deliverForegroundArtifacts(store, allocation, batch, authorizedRoot, options) {
+  const sessionKey2 = buildCodexExecSessionKey(batch.chatId, batch.threadId);
+  const owner = managedForegroundRunOwner({
+    messageId: batch.sourceMessageId,
+    senderId: batch.actorId,
+    messageType: batch.messageType
+  }, sessionKey2);
+  if (allocation.owner.kind !== "foreground" || allocation.foregroundSessionKey !== sessionKey2 || batch.sessionKey !== sessionKey2 || allocation.owner.runId !== owner.runId) {
     throw new ManagedWorkspaceStorageError("invalid_binding");
   }
   const { runId } = allocation.owner;
+  const maySend = () => !options.abortSignal?.aborted && options.allowsRoute?.(batch.actorId, batch.chatId) !== false;
+  const route = { chat_id: batch.chatId, reply_to: batch.sourceMessageId, thread_id: batch.threadId, routing: "standalone" };
+  if (batch.reply.status === "pending") {
+    if (!maySend()) return false;
+    await store.openDirectory(allocation.owner, "artifacts", [authorizedRoot]);
+    if (!maySend() || !store.transitionForegroundArtifact(runId, "reply", "pending", "sending")) return false;
+    let receipt;
+    try {
+      receipt = confirmedReceipt(await options.sendReply({
+        ...route,
+        routing: "auto",
+        text: batch.reply.text,
+        runtimeFooter: batch.reply.runtimeFooter,
+        idempotencyKey: `foreground:${runId}:reply`,
+        retry: { attempts: 1, retryTimeout: false }
+      }));
+    } catch {
+    }
+    if (!store.transitionForegroundArtifact(runId, "reply", "sending", receipt ? "sent" : "unknown", receipt) || !receipt) return false;
+  } else if (batch.reply.status !== "sent") {
+    return false;
+  }
   for (const [index, { status, reference }] of batch.files.entries()) {
-    if (options.abortSignal?.aborted) return;
+    if (!maySend()) return true;
     if (status !== "pending") continue;
     let bytes;
     try {
@@ -66669,27 +66716,49 @@ async function deliverForegroundArtifacts(store, allocation, batch, message, ses
       store.transitionForegroundArtifact(runId, index, "pending", "failed");
       continue;
     }
-    if (options.abortSignal?.aborted) return;
+    if (!maySend()) return true;
+    let fileKey;
+    try {
+      fileKey = await options.upload(bytes, path26.posix.basename(reference.relativePath));
+    } catch {
+    }
+    if (!fileKey) continue;
+    if (!maySend()) return true;
     if (!store.transitionForegroundArtifact(runId, index, "pending", "sending")) continue;
     let receipt;
     try {
-      const fileKey = await options.upload(bytes, path26.posix.basename(reference.relativePath));
-      if (fileKey) {
-        const response = await options.sendReply({
-          chat_id: batch.chatId,
-          reply_to: batch.sourceMessageId,
-          thread_id: batch.threadId,
-          text: "",
-          routing: "standalone",
-          idempotencyKey: `foreground:${runId}:artifact:${index}`,
-          retry: { attempts: 1, retryTimeout: false },
-          rawMessage: { msgType: "file", content: JSON.stringify({ file_key: fileKey }) }
-        });
-        if (!response.isError && response.sentCount > 0) receipt = response.messageIds?.find(isFeishuOpenMessageId);
-      }
+      receipt = confirmedReceipt(await options.sendReply({
+        ...route,
+        text: "",
+        idempotencyKey: `foreground:${runId}:artifact:${index}`,
+        retry: { attempts: 1, retryTimeout: false },
+        rawMessage: { msgType: "file", content: JSON.stringify({ file_key: fileKey }) }
+      }));
     } catch {
     }
     store.transitionForegroundArtifact(runId, index, "sending", receipt ? "sent" : "unknown", receipt);
+  }
+  return true;
+}
+function confirmedReceipt(response) {
+  return !response.isError && response.sentCount > 0 ? response.messageIds?.find(isFeishuOpenMessageId) : void 0;
+}
+async function drainForegroundArtifacts(store, authorizedRoot, options, onError) {
+  let after = "";
+  while (!options.abortSignal?.aborted) {
+    const ids = store.listPendingForegroundRuns(after);
+    if (!ids.length) return;
+    for (const runId of ids) {
+      if (options.abortSignal?.aborted) return;
+      after = runId;
+      try {
+        const run = store.get({ kind: "foreground", runId });
+        const batch = store.getForegroundArtifacts(runId);
+        if (run && batch) await deliverForegroundArtifacts(store, run.allocation, batch, authorizedRoot, options);
+      } catch (error62) {
+        onError(error62);
+      }
+    }
   }
 }
 
@@ -66963,20 +67032,24 @@ async function deliverMessageViaCodexExec(opts) {
   if (priorUnmanaged && (priorManaged || priorUnmanaged.sessionKey !== sessionKey2)) {
     throw new ManagedWorkspaceStorageError("invalid_binding");
   }
-  const artifactIO = !opts.deliverySink && opts.uploadManagedArtifact && (message.chatType === "p2p" || message.chatType === "group") && message.messageType !== "reaction" && isFeishuOpenMessageId(message.messageId) && shouldSendFeishuReplyForMessage(message) ? { sendReply: opts.sendReply, upload: opts.uploadManagedArtifact, abortSignal: opts.abortSignal } : void 0;
+  const artifactIO = !opts.deliverySink && opts.uploadManagedArtifact && (message.chatType === "p2p" || message.chatType === "group") && message.messageType !== "reaction" && isFeishuOpenMessageId(message.messageId) && shouldSendFeishuReplyForMessage(message) ? {
+    sendReply: opts.sendReply,
+    upload: opts.uploadManagedArtifact,
+    abortSignal: opts.abortSignal,
+    allowsRoute: opts.authorizeForegroundArtifactRoute
+  } : void 0;
   if (priorManaged && managedStore && workspaceOwner && artifactIO) {
     const batch = managedStore.getForegroundArtifacts(workspaceOwner.runId);
     if (batch) {
-      await deliverForegroundArtifacts(
+      const confirmed = await deliverForegroundArtifacts(
         managedStore,
         priorManaged.allocation,
         batch,
-        message,
-        sessionKey2,
         workspaceOptions.authorizedRoot,
         artifactIO
       );
-      turnObligations?.markSatisfied(message.messageId, "reply");
+      if (confirmed) turnObligations?.markSatisfied(message.messageId, "reply");
+      else turnObligations?.markDeferred(message.messageId, "exec_assistant_text", "LARK_DEFER", "Managed delivery not confirmed.");
       return;
     }
   }
@@ -67017,9 +67090,9 @@ async function deliverMessageViaCodexExec(opts) {
   const onManagedArtifact = managedStore && artifactIO ? (reference) => {
     foregroundArtifacts.push(reference);
   } : opts.onManagedArtifact;
-  const launchWorkspace = workspace ?? (managed ? await pinWorkspacePath(
+  const launchWorkspace = workspace ?? (managed ? await validateWorkspaceProject(
     workspaceOptions.authorizedRoot,
-    path27.resolve(workspaceOptions.authorizedRoot)
+    managed.fallbackWorkspace
   ) : void 0);
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace) && (workspace === void 0 || compatibleSession?.workspaceProjectSenderId === message.senderId) ? compatibleSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
@@ -67298,25 +67371,31 @@ ${continuationFailure.message}`;
     );
     return;
   }
-  const response = await opts.sendReply({
+  if (managed && managedStore && artifactIO && foregroundArtifacts.length) {
+    const batch = {
+      version: 2,
+      chatId: message.chatId,
+      sourceMessageId: message.messageId,
+      sessionKey: sessionKey2,
+      actorId: message.senderId,
+      messageType: message.messageType,
+      ...message.threadId ? { threadId: message.threadId } : {},
+      reply: { text, ...runtimeFooter ? { runtimeFooter } : {}, status: "pending" },
+      files: foregroundArtifacts.map((reference) => ({ reference, status: "pending" }))
+    };
+    managedStore.rememberForegroundArtifacts(managed.owner.runId, batch);
+    const confirmed = await deliverForegroundArtifacts(managedStore, managed, batch, workspaceOptions.authorizedRoot, artifactIO);
+    if (confirmed) turnObligations?.markSatisfied(message.messageId, "reply");
+    else turnObligations?.markDeferred(message.messageId, "exec_assistant_text", "LARK_DEFER", "Managed delivery not confirmed.");
+    return;
+  }
+  await opts.sendReply({
     chat_id: message.chatId,
     text,
     ...isFeishuOpenMessageId(message.messageId) ? { reply_to: message.messageId } : {},
     thread_id: message.threadId,
     ...runtimeFooter ? { runtimeFooter } : {}
   });
-  if (managed && managedStore && artifactIO && foregroundArtifacts.length && !response.isError && response.sentCount > 0 && response.messageIds?.some(isFeishuOpenMessageId)) {
-    const batch = {
-      version: 1,
-      chatId: message.chatId,
-      sourceMessageId: message.messageId,
-      sessionKey: sessionKey2,
-      ...message.threadId ? { threadId: message.threadId } : {},
-      files: foregroundArtifacts.map((reference) => ({ reference, status: "pending" }))
-    };
-    managedStore.rememberForegroundArtifacts(managed.owner.runId, batch);
-    await deliverForegroundArtifacts(managedStore, managed, batch, message, sessionKey2, workspaceOptions.authorizedRoot, artifactIO);
-  }
 }
 async function dispatchCodexExecActions(input2) {
   const blocked2 = new Set(input2.opts.actionPolicy?.blockedActionTypes ?? []);
@@ -68714,7 +68793,8 @@ function registerCodexDeliveryHandlers(options) {
         actionDispatcher: actionDispatcher ?? void 0,
         continuationAvailable,
         managedWorkspaceStore,
-        uploadManagedArtifact: (data, name) => channel.getLarkTransport().uploadFile(data, name)
+        uploadManagedArtifact: (data, name) => channel.getLarkTransport().uploadFile(data, name),
+        authorizeForegroundArtifactRoute: (actorId, chatId) => accessControlStore.allowsMessage(actorId, chatId)
       });
       if (hasReplyObligation) {
         turnObligations.requireSatisfiedOrDeferred(message.messageId);
@@ -72162,6 +72242,15 @@ var SqliteManagedWorkspaceStore = class {
     }
     return batch;
   }
+  listPendingForegroundRuns(afterRunId) {
+    return this.database.prepare(`SELECT run_id FROM workspace_foreground_artifacts
+      WHERE run_id > ? AND json_extract(batch_json, '$.version') = 2
+        AND (json_extract(batch_json, '$.reply.status') = 'pending' OR (
+          json_extract(batch_json, '$.reply.status') = 'sent' AND EXISTS (
+            SELECT 1 FROM json_each(batch_json, '$.files') WHERE json_extract(value, '$.status') = 'pending'
+          )
+        )) ORDER BY run_id LIMIT 50`).all(afterRunId).map((row) => external_exports.string().parse(row.run_id));
+  }
   retryArtifactStages(owner) {
     if (owner.kind !== "async_task" || !this.get(owner)) throw new ManagedWorkspaceStorageError("invalid_binding");
     const runId = owner.runId;
@@ -72201,21 +72290,22 @@ var SqliteManagedWorkspaceStore = class {
   rememberForegroundArtifacts(runId, batch) {
     this.requireAutocommit();
     const parsed = foregroundArtifactBatchSchema.safeParse(batch);
-    if (!parsed.success || parsed.data.files.some((file2) => file2.status !== "pending") || this.get({ kind: "foreground", runId })?.allocation.foregroundSessionKey !== parsed.data.sessionKey) {
+    if (!parsed.success || parsed.data.reply.status !== "pending" || parsed.data.files.some((file2) => file2.status !== "pending") || this.get({ kind: "foreground", runId })?.allocation.foregroundSessionKey !== parsed.data.sessionKey) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
     const result = this.database.prepare(`INSERT INTO workspace_foreground_artifacts (run_id, batch_json)
       VALUES (?, ?) ON CONFLICT(run_id) DO NOTHING`).run(runId, JSON.stringify(parsed.data));
     if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
   }
-  transitionForegroundArtifact(runId, index, expected, status, messageId) {
+  transitionForegroundArtifact(runId, part, expected, status, messageId) {
     this.requireAutocommit();
-    if (!Number.isSafeInteger(index) || index < 0 || expected === "pending" && status !== "sending" && status !== "failed" || expected === "sending" && status === "sending" || status === "sent" !== Boolean(messageId) || messageId !== void 0 && !/^om_/.test(messageId)) throw new ManagedWorkspaceStorageError("invalid_binding");
-    const file2 = `$.files[${index}]`;
-    const values = messageId ? [file2 + ".messageId", messageId] : [];
+    if (part !== "reply" && (!Number.isSafeInteger(part) || part < 0) || expected === "pending" && status !== "sending" && status !== "failed" || expected === "sending" && status === "sending" || status === "sent" !== Boolean(messageId) || messageId !== void 0 && !/^om_/.test(messageId)) throw new ManagedWorkspaceStorageError("invalid_binding");
+    const entry = part === "reply" ? "$.reply" : `$.files[${part}]`;
+    const values = messageId ? [entry + ".messageId", messageId] : [];
     return Number(this.database.prepare(`UPDATE workspace_foreground_artifacts
       SET batch_json = json_set(batch_json, ?, ?${messageId ? ", ?, ?" : ""})
-      WHERE run_id = ? AND json_extract(batch_json, ?) = ?`).run(file2 + ".status", status, ...values, runId, file2 + ".status", expected).changes) === 1;
+      WHERE run_id = ? AND json_extract(batch_json, ?) = ?
+        ${part === "reply" ? "" : "AND json_extract(batch_json, '$.reply.status') = 'sent'"}`).run(entry + ".status", status, ...values, runId, entry + ".status", expected).changes) === 1;
   }
   rememberUnmanagedForeground(runId, admission) {
     this.requireAutocommit();
@@ -72248,7 +72338,7 @@ var SqliteManagedWorkspaceStore = class {
     const intent = parseStored(managedRunIntentSchema, row.intent_json);
     const allocation = parseStored(managedRunAllocationSchema, row.allocation_json);
     const lastUsedAt = timestamp.safeParse(row.last_used_at);
-    if (!lastUsedAt.success || intent.owner.kind !== owner.kind || intent.owner.runId !== owner.runId || allocation.owner.kind !== owner.kind || allocation.owner.runId !== owner.runId || row.scratch_path !== allocation.scratch.directory || row.artifact_path !== allocation.artifacts.directory || row.scratch_identity !== directoryIdentity(allocation.scratch) || row.artifact_identity !== directoryIdentity(allocation.artifacts) || intent.createdAt !== allocation.createdAt || intent.foregroundSessionKey !== allocation.foregroundSessionKey || !sameWorkspaceProject(intent.project, allocation.project) || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch) || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
+    if (!lastUsedAt.success || intent.owner.kind !== owner.kind || intent.owner.runId !== owner.runId || allocation.owner.kind !== owner.kind || allocation.owner.runId !== owner.runId || row.scratch_path !== allocation.scratch.directory || row.artifact_path !== allocation.artifacts.directory || row.scratch_identity !== directoryIdentity(allocation.scratch) || row.artifact_identity !== directoryIdentity(allocation.artifacts) || intent.createdAt !== allocation.createdAt || intent.foregroundSessionKey !== allocation.foregroundSessionKey || !sameWorkspaceProject(intent.project, allocation.project) || !sameWorkspaceProject(intent.fallbackWorkspace, allocation.fallbackWorkspace) || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch) || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
     return { allocation, lastUsedAt: lastUsedAt.data };
@@ -72263,7 +72353,7 @@ var SqliteManagedWorkspaceStore = class {
     const policy = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
     const existing = this.get(owner);
     if (existing) return this.reuse(existing, snapshot, policy, lastUsedAt);
-    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { ...policy, project: snapshot.project });
+    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { ...policy, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace });
     const concurrent = this.reserve(parsed.data, lastUsedAt, ancestry);
     if (concurrent) return this.reuse(concurrent, snapshot, policy, lastUsedAt);
     const allocation = await allocateManagedRunDirectories({ ...snapshot, owner, ...policy });
@@ -72288,11 +72378,11 @@ var SqliteManagedWorkspaceStore = class {
     return validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
   }
   async reuse({ allocation }, snapshot, policy, lastUsedAt) {
-    if (!sameWorkspaceProject(allocation.project, snapshot.project) || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey) {
+    if (!sameWorkspaceProject(allocation.project, snapshot.project) || !sameWorkspaceProject(allocation.fallbackWorkspace, snapshot.fallbackWorkspace) || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey || allocation.createdAt !== snapshot.createdAt || !sameWorkspaceProject(allocation.roots.scratch, snapshot.roots.scratch) || !sameWorkspaceProject(allocation.roots.artifacts, snapshot.roots.artifacts)) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
     const [ancestry] = await Promise.all([
-      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project }),
+      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project, fallbackWorkspace: allocation.fallbackWorkspace }),
       validateManagedRunDirectory(allocation, "scratch", policy.authorizedRoots),
       validateManagedRunDirectory(allocation, "artifacts", policy.authorizedRoots)
     ]);
@@ -78118,13 +78208,22 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
         `).get(request.retryOfJobId)) {
         throw new Error("Continuation retry source does not exist.");
       }
-      const requestFingerprint = createRequestFingerprint(request);
+      let admittedRequest = request;
+      if (request.retryOfJobId && request.permissions.filesystem.managedWorkspaceRoots && request.resumeCheckpoint?.artifacts.length) {
+        const prior = this.durableRuns.getManagedWorkspaceStore().get({ kind: "async_task", runId: jobId });
+        if (prior) {
+          const { createdAt } = prior.allocation;
+          const lifetime = Date.parse(request.expiresAt) - Date.parse(request.createdAt);
+          admittedRequest = { ...request, createdAt, expiresAt: new Date(Date.parse(createdAt) + lifetime).toISOString() };
+        }
+      }
+      const requestFingerprint = createRequestFingerprint(admittedRequest);
       const installation = await this.inputs.install(
         jobId,
-        request.sourceInputs,
+        admittedRequest.sourceInputs,
         requestFingerprint
       );
-      const persisted = projectCreateRequest(request, installation.artifacts);
+      const persisted = projectCreateRequest(admittedRequest, installation.artifacts);
       const initialJob = continuationJobForCreate(jobId, persisted);
       let artifactsInstalled = false;
       try {
@@ -81316,7 +81415,7 @@ async function loadCommittedCronArtifact(repository, authorizedRoot, claim2, pay
   const store = repository.getManagedWorkspaceStore?.();
   const owner = { kind: "cron_prompt", runId: run.runId };
   const recorded = store?.get(owner)?.allocation;
-  if (!store || !recorded || recorded.createdAt !== managedWorkspace.createdAt || !sameWorkspaceProject(recorded.project, job.workspaceProject) || !sameWorkspaceProject(recorded.roots.scratch, managedWorkspace.roots.scratch) || !sameWorkspaceProject(recorded.roots.artifacts, managedWorkspace.roots.artifacts)) {
+  if (!store || !recorded || recorded.createdAt !== managedWorkspace.createdAt || !sameWorkspaceProject(recorded.project, job.workspaceProject) || !sameWorkspaceProject(recorded.fallbackWorkspace, managedWorkspace.fallbackWorkspace) || !sameWorkspaceProject(recorded.roots.scratch, managedWorkspace.roots.scratch) || !sameWorkspaceProject(recorded.roots.artifacts, managedWorkspace.roots.artifacts)) {
     throw new Error("Cron artifact workspace binding is unavailable.");
   }
   const { content } = await readManagedArtifact({
@@ -81992,15 +82091,21 @@ var CronRunAdmission = class {
   async createRequest(job, idempotencyKey, runId, now, occurrence) {
     let managedWorkspaceRoots;
     let managedWorkspaceFailure;
+    let fallbackWorkspace;
     try {
       if (job.meta.type === "prompt") {
         managedWorkspaceRoots = await this.options.resolveManagedWorkspaceRoots?.(job.meta.workspace_project);
+        if (managedWorkspaceRoots && !job.meta.workspace_project) {
+          fallbackWorkspace = await this.options.pinManagedFallbackWorkspace?.();
+          if (!fallbackWorkspace) throw new ManagedWorkspaceStorageError("invalid_binding");
+        }
       }
     } catch (error62) {
       if (!(error62 instanceof ManagedWorkspaceStorageError || error62 instanceof WorkspaceProjectError)) throw error62;
       managedWorkspaceFailure = error62.message;
+      managedWorkspaceRoots = void 0;
     }
-    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots, managedWorkspaceFailure);
+    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace);
   }
   async waitForExecution(runId, signal) {
     let pollMs = this.waitPollMs;
@@ -82064,10 +82169,14 @@ var CronRunAdmission = class {
     }
   }
 };
-function cronRunCreateRequest(job, idempotencyKey, runId, now, scheduledOccurrence, managedWorkspaceRoots, managedWorkspaceFailure) {
+function cronRunCreateRequest(job, idempotencyKey, runId, now, scheduledOccurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace) {
   const input2 = {
     schemaVersion: 1,
-    ...managedWorkspaceRoots ? { managedWorkspace: { roots: managedWorkspaceRoots, createdAt: now.toISOString() } } : {},
+    ...managedWorkspaceRoots ? { managedWorkspace: {
+      roots: managedWorkspaceRoots,
+      createdAt: now.toISOString(),
+      ...fallbackWorkspace ? { fallbackWorkspace } : {}
+    } } : {},
     ...managedWorkspaceFailure ? { managedWorkspaceFailure } : {},
     job: {
       id: job.meta.id,
@@ -82830,6 +82939,7 @@ function createCronPromptExecutor(options) {
 async function allocateWorkspace(input2, store) {
   if (!input2.managedWorkspace || !store) throw new ManagedWorkspaceStorageError("allocation_failed");
   assertManagedWorkspaceSandbox(appConfig.codexExecSandbox, input2.job.workspaceProject);
+  if (!input2.job.workspaceProject && !input2.managedWorkspace.fallbackWorkspace) throw new ManagedWorkspaceStorageError("invalid_binding");
   return store.ensure({
     ...input2.managedWorkspace,
     authorizedRoots: [appConfig.codexExecCwd],
@@ -83280,6 +83390,7 @@ async function main() {
     });
     cronAdmission = new CronRunAdmission({
       runRepository: continuationRuntime.durableRepository,
+      pinManagedFallbackWorkspace: () => pinWorkspacePath(appConfig.codexExecCwd, "."),
       resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
         configPath: appConfig.managedWorkspaceConfigPath,
         authorizedRoots: [appConfig.codexExecCwd],
@@ -83346,9 +83457,29 @@ async function main() {
       startJobNow = scheduler.startJobNow.bind(scheduler);
     }
   });
-  stopChannelServices = startChannelServices2.stop;
+  const foregroundDrainAbort = new AbortController();
+  let foregroundDrain = null;
+  stopChannelServices = async () => {
+    foregroundDrainAbort.abort();
+    await startChannelServices2.stop();
+    await foregroundDrain;
+  };
   startSdkChannelRuntimeWithRetry(channel, {
-    onConnected: startChannelServices2,
+    onConnected: async () => {
+      await startChannelServices2();
+      if (foregroundDrain || foregroundDrainAbort.signal.aborted) return;
+      foregroundDrain = Promise.resolve().then(async () => {
+        const store = continuationRuntime.durableRepository?.getManagedWorkspaceStore?.();
+        if (store) await drainForegroundArtifacts(store, appConfig.codexExecCwd, {
+          sendReply: sendReplyViaFeishu,
+          upload: (data, name) => channel.getLarkTransport().uploadFile(data, name),
+          allowsRoute: (actorId, chatId) => accessControlStore.allowsMessage(actorId, chatId),
+          abortSignal: foregroundDrainAbort.signal
+        }, (error62) => logSafeError("[foreground] Managed delivery recovery failed:", error62));
+      }).catch((error62) => logSafeError("[foreground] Managed delivery scan failed:", error62)).finally(() => {
+        foregroundDrain = null;
+      });
+    },
     onStopped: (err) => logSafeError("[index] Lark channel services stopped:", err)
   });
   console.error("[index] codex-lark-plugin MCP server started; Lark runtime connecting");

@@ -93,6 +93,16 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     return batch;
   }
 
+  listPendingForegroundRuns(afterRunId: string): string[] {
+    return this.database.prepare(`SELECT run_id FROM workspace_foreground_artifacts
+      WHERE run_id > ? AND json_extract(batch_json, '$.version') = 2
+        AND (json_extract(batch_json, '$.reply.status') = 'pending' OR (
+          json_extract(batch_json, '$.reply.status') = 'sent' AND EXISTS (
+            SELECT 1 FROM json_each(batch_json, '$.files') WHERE json_extract(value, '$.status') = 'pending'
+          )
+        )) ORDER BY run_id LIMIT 50`).all(afterRunId).map((row) => z.string().parse(row.run_id));
+  }
+
   retryArtifactStages(owner: ManagedRunOwner): ManagedArtifactStageJournal {
     if (owner.kind !== 'async_task' || !this.get(owner)) throw new ManagedWorkspaceStorageError('invalid_binding');
     const runId = owner.runId;
@@ -132,7 +142,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
   rememberForegroundArtifacts(runId: string, batch: ForegroundArtifactBatch): void {
     this.requireAutocommit();
     const parsed = foregroundArtifactBatchSchema.safeParse(batch);
-    if (!parsed.success || parsed.data.files.some((file) => file.status !== 'pending')
+    if (!parsed.success || parsed.data.reply.status !== 'pending' || parsed.data.files.some((file) => file.status !== 'pending')
       || this.get({ kind: 'foreground', runId })?.allocation.foregroundSessionKey !== parsed.data.sessionKey) {
       throw new ManagedWorkspaceStorageError('invalid_binding');
     }
@@ -142,19 +152,21 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
   }
 
   transitionForegroundArtifact(
-    runId: string, index: number, expected: 'pending' | 'sending',
+    runId: string, part: number | 'reply', expected: 'pending' | 'sending',
     status: Exclude<ForegroundArtifactBatch['files'][number]['status'], 'pending'>, messageId?: string,
   ): boolean {
     this.requireAutocommit();
-    if (!Number.isSafeInteger(index) || index < 0 || (expected === 'pending' && status !== 'sending' && status !== 'failed')
+    if ((part !== 'reply' && (!Number.isSafeInteger(part) || part < 0))
+      || (expected === 'pending' && status !== 'sending' && status !== 'failed')
       || (expected === 'sending' && status === 'sending') || (status === 'sent') !== Boolean(messageId)
       || (messageId !== undefined && !/^om_/.test(messageId))) throw new ManagedWorkspaceStorageError('invalid_binding');
-    const file = `$.files[${index}]`;
-    const values = messageId ? [file + '.messageId', messageId] : [];
+    const entry = part === 'reply' ? '$.reply' : `$.files[${part}]`;
+    const values = messageId ? [entry + '.messageId', messageId] : [];
     return Number(this.database.prepare(`UPDATE workspace_foreground_artifacts
       SET batch_json = json_set(batch_json, ?, ?${messageId ? ', ?, ?' : ''})
-      WHERE run_id = ? AND json_extract(batch_json, ?) = ?`)
-      .run(file + '.status', status, ...values, runId, file + '.status', expected).changes) === 1;
+      WHERE run_id = ? AND json_extract(batch_json, ?) = ?
+        ${part === 'reply' ? '' : "AND json_extract(batch_json, '$.reply.status') = 'sent'"}`)
+      .run(entry + '.status', status, ...values, runId, entry + '.status', expected).changes) === 1;
   }
 
   rememberUnmanagedForeground(runId: string, admission: UnmanagedForegroundAdmission): void {
@@ -199,6 +211,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       || intent.createdAt !== allocation.createdAt
       || intent.foregroundSessionKey !== allocation.foregroundSessionKey
       || !sameWorkspaceProject(intent.project, allocation.project)
+      || !sameWorkspaceProject(intent.fallbackWorkspace, allocation.fallbackWorkspace)
       || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch)
       || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
       throw new ManagedWorkspaceStorageError('invalid_binding');
@@ -216,7 +229,7 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     const policy = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
     const existing = this.get(owner);
     if (existing) return this.reuse(existing, snapshot, policy, lastUsedAt);
-    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { ...policy, project: snapshot.project });
+    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { ...policy, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace });
     const concurrent = this.reserve(parsed.data, lastUsedAt, ancestry);
     if (concurrent) return this.reuse(concurrent, snapshot, policy, lastUsedAt);
 
@@ -244,11 +257,14 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     lastUsedAt: string,
   ): Promise<ManagedRunAllocation> {
     if (!sameWorkspaceProject(allocation.project, snapshot.project)
-      || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey) {
+      || !sameWorkspaceProject(allocation.fallbackWorkspace, snapshot.fallbackWorkspace)
+      || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey || allocation.createdAt !== snapshot.createdAt
+      || !sameWorkspaceProject(allocation.roots.scratch, snapshot.roots.scratch)
+      || !sameWorkspaceProject(allocation.roots.artifacts, snapshot.roots.artifacts)) {
       throw new ManagedWorkspaceStorageError('invalid_binding');
     }
     const [ancestry] = await Promise.all([
-      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project }),
+      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project, fallbackWorkspace: allocation.fallbackWorkspace }),
       validateManagedRunDirectory(allocation, 'scratch', policy.authorizedRoots),
       validateManagedRunDirectory(allocation, 'artifacts', policy.authorizedRoots),
     ]);

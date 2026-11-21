@@ -54,6 +54,8 @@ import { CronMessageWorkload } from './cron/message-workload.js';
 import { createCronPromptExecutor } from './cron/prompt-executor.js';
 import { readManagedWorkspaceRoots } from './managed-workspace-storage.js';
 import { createCronDelivery } from './cron/delivery.js';
+import { drainForegroundArtifacts } from './foreground-artifact-delivery.js';
+import { pinWorkspacePath } from './workspace-projects.js';
 import { createCronControlService } from './cron/control-service.js';
 import { createCronCardActionHandler } from './cron/card-actions.js';
 
@@ -262,6 +264,7 @@ async function main() {
     });
     cronAdmission = new CronRunAdmission({
       runRepository: continuationRuntime.durableRepository,
+      pinManagedFallbackWorkspace: () => pinWorkspacePath(appConfig.codexExecCwd, '.'),
       resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
         configPath: appConfig.managedWorkspaceConfigPath,
         authorizedRoots: [appConfig.codexExecCwd],
@@ -338,10 +341,29 @@ async function main() {
       startJobNow = scheduler.startJobNow.bind(scheduler);
     },
   });
-  stopChannelServices = startChannelServices.stop;
+  const foregroundDrainAbort = new AbortController();
+  let foregroundDrain: Promise<void> | null = null;
+  stopChannelServices = async () => {
+    foregroundDrainAbort.abort();
+    await startChannelServices.stop();
+    await foregroundDrain;
+  };
 
   startSdkChannelRuntimeWithRetry(channel, {
-    onConnected: startChannelServices,
+    onConnected: async () => {
+      await startChannelServices();
+      if (foregroundDrain || foregroundDrainAbort.signal.aborted) return;
+      foregroundDrain = Promise.resolve().then(async () => {
+        const store = continuationRuntime.durableRepository?.getManagedWorkspaceStore?.();
+        if (store) await drainForegroundArtifacts(store, appConfig.codexExecCwd, {
+          sendReply: sendReplyViaFeishu,
+          upload: (data, name) => channel.getLarkTransport().uploadFile(data, name),
+          allowsRoute: (actorId, chatId) => accessControlStore.allowsMessage(actorId, chatId),
+          abortSignal: foregroundDrainAbort.signal,
+        }, (error) => logSafeError('[foreground] Managed delivery recovery failed:', error));
+      }).catch((error) => logSafeError('[foreground] Managed delivery scan failed:', error))
+        .finally(() => { foregroundDrain = null; });
+    },
     onStopped: (err) => logSafeError('[index] Lark channel services stopped:', err),
   });
 

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js';
 import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
-import { publishManagedArtifact, readManagedArtifact } from '../src/managed-workspace-artifact.js';
+import { publishManagedArtifact, readManagedArtifact, reconcileManagedArtifact } from '../src/managed-workspace-artifact.js';
 import { pinWorkspacePath, validateWorkspaceProject } from '../src/workspace-projects.js';
 
 const home = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-artifact-anchor-'));
@@ -112,6 +112,14 @@ try {
     assert.equal(journal.get(filename), null);
     assert.deepEqual(await fs.readdir(ownedBinding.directory), [filename]);
     assert.deepEqual(await fs.readFile(path.join(ownedBinding.directory, filename)), content);
+    const unownedName = 'unowned.txt';
+    const token = createHash('sha256').update(`${unownedName}\0${sha256}`).digest('hex');
+    const stray = path.join(ownedBinding.directory, `.lark-retry-${token}-${'f'.repeat(32)}.tmp`);
+    await fs.writeFile(stray, content, { flag: 'wx', mode: 0o600 });
+    await reconcileManagedArtifact({ binding: ownedBinding, relativePath: unownedName, maxBytes: content.length,
+      expectedSha256: sha256, stageJournal: journal, revalidate: () => ledger.openDirectory(owner, 'artifacts', [base]) });
+    assert.deepEqual(await fs.readFile(stray), content, 'only a journaled inode may be recovered');
+    await assert.rejects(fs.stat(path.join(ownedBinding.directory, unownedName)), { code: 'ENOENT' });
   } finally {
     restartedDb.close();
   }

@@ -21,9 +21,10 @@ export interface ManagedWorkspaceStore {
   getUnmanagedForeground(runId: string): UnmanagedForegroundAdmission | null;
   rememberUnmanagedForeground(runId: string, admission: UnmanagedForegroundAdmission): void;
   getForegroundArtifacts(runId: string): ForegroundArtifactBatch | null;
+  listPendingForegroundRuns(afterRunId: string): string[];
   rememberForegroundArtifacts(runId: string, batch: ForegroundArtifactBatch): void;
   retryArtifactStages(owner: ManagedRunOwner): ManagedArtifactStageJournal;
-  transitionForegroundArtifact(runId: string, index: number, expected: 'pending' | 'sending',
+  transitionForegroundArtifact(runId: string, part: number | 'reply', expected: 'pending' | 'sending',
     status: Exclude<ForegroundArtifactBatch['files'][number]['status'], 'pending'>, messageId?: string): boolean;
   ensure(request: Omit<ManagedRunIntent, 'version'> & {
     authorizedRoots: ManagedWorkspaceAuthorizedRoots;

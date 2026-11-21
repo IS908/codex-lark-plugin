@@ -7,8 +7,11 @@ import type { LarkMessage } from './lark-message.js';
 import type { ManagedWorkspaceRecord, ManagedWorkspaceStore } from './ports/managed-workspace.js';
 import { ManagedWorkspaceStorageError, readManagedWorkspaceRoots } from './managed-workspace-storage.js';
 import { assertManagedWorkspaceSandbox } from './managed-workspace-exec.js';
+import { pinWorkspacePath } from './workspace-projects.js';
 
-export function managedForegroundRunOwner(message: LarkMessage, sessionKey: string): ManagedRunOwner {
+export function managedForegroundRunOwner(
+  message: Pick<LarkMessage, 'messageId' | 'senderId' | 'messageType' | 'reaction' | 'timestampMs'>, sessionKey: string,
+): ManagedRunOwner {
   const identity = JSON.stringify([
     sessionKey, message.messageId, message.senderId, message.messageType,
     ...(message.reaction ? [message.reaction.emojiType, message.timestampMs] : []),
@@ -41,9 +44,14 @@ export async function admitManagedForegroundRun(options: {
   }
   assertManagedWorkspaceSandbox(options.sandbox, project);
   if (!store) throw new ManagedWorkspaceStorageError('allocation_failed');
+  const fallbackWorkspace = project ? undefined : recorded
+    ? recorded.allocation.fallbackWorkspace
+    : await pinWorkspacePath(options.authorizedRoot, '.');
+  if (!project && !fallbackWorkspace) throw new ManagedWorkspaceStorageError('invalid_binding');
   const now = new Date().toISOString();
   return store.ensure({
     owner, roots, authorizedRoots, project, sourceRegistryPath: options.sourceRegistryPath,
+    fallbackWorkspace,
     foregroundSessionKey: options.sessionKey,
     createdAt: recorded?.allocation.createdAt ?? now,
     usedAt: now,
