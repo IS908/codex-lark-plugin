@@ -116,24 +116,33 @@ try {
   assert.equal(await files.location(claim), 'missing');
   assert.equal(await files.flush(claim, 'missing', () => true), true);
   assert.equal(await fs.readFile(artifact, 'utf8'), 'preserved');
+  await checkInterruptedPurge();
 
-  async function checkOrphanedWriteLock() {
+  function launchMutation(identity: typeof claim, operation: 'move' | 'purge') {
     const module = (relative: string) => JSON.stringify(new URL(relative, import.meta.url).href);
     const program = `
-      import { createWorkspaceCleanupFiles } from ${module('../src/workspace-cleanup-files.ts')};
+      import { createWorkspaceCleanupFiles, workspaceCleanupQuarantinePath } from ${module('../src/workspace-cleanup-files.ts')};
       import { observeWorkspaceCleanupTree } from ${module('../src/workspace-cleanup-evidence.ts')};
       import { writeSync } from 'node:fs';
-      const { root, database, claim } = JSON.parse(process.argv[1]);
+      const { root, database, claim, operation } = JSON.parse(process.argv[1]);
       const files = await createWorkspaceCleanupFiles(root, database);
-      const tree = await observeWorkspaceCleanupTree(claim.scratch);
-      await files.move(claim, tree, (pid) => {
+      const binding = operation === 'move' ? claim.scratch : { ...claim.scratch, directory: workspaceCleanupQuarantinePath(root, claim) };
+      const tree = await observeWorkspaceCleanupTree(binding, undefined, false, claim.scratch.directory);
+      await files[operation](claim, tree, (pid) => {
         writeSync(1, String(pid) + '\\n');
-        // Stop at the authorization handshake until the test terminates this process.
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 8000);
-        return false;
+        if (operation === 'move') {
+          // Stop at the authorization handshake until the test terminates this process.
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 8000);
+          return false;
+        }
+        return true;
       });`;
-    const launcher = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', program,
-      JSON.stringify({ root, database, claim })], { stdio: ['ignore', 'pipe', 'inherit'] });
+    return spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', program,
+      JSON.stringify({ root, database, claim: identity, operation })], { stdio: ['ignore', 'pipe', 'inherit'] });
+  }
+
+  async function checkOrphanedWriteLock() {
+    const launcher = launchMutation(claim, 'move');
     const closed = once(launcher, 'close');
     let orphan: number | undefined;
     try {
@@ -147,13 +156,7 @@ try {
       assert.equal(await files.location(claim), 'source');
       process.kill(orphan, 'SIGCONT');
       orphan = undefined;
-      for (let attempt = 0; ; attempt++) {
-        try { ledger.exec('BEGIN IMMEDIATE; ROLLBACK;'); break; }
-        catch (error) {
-          if (attempt === 99) throw error;
-          await new Promise<void>((resolve) => setTimeout(resolve, 25));
-        }
-      }
+      await waitForWriter();
       assert.equal(await files.location(claim), 'source', 'without GO the helper did not move the tree');
     } finally {
       launcher.kill('SIGKILL');
@@ -161,6 +164,67 @@ try {
         try { process.kill(orphan, 'SIGCONT'); } catch {}
       }
       await closed;
+    }
+  }
+
+  async function checkInterruptedPurge() {
+    const otherOwner = { ...owner, runId: 'interrupt-purge' };
+    const otherSource = managedRunDirectoryPath(root, otherOwner);
+    await fs.mkdir(otherSource, { mode: 0o700 });
+    await fs.writeFile(path.join(otherSource, '000-first.txt'), 'purge began');
+    for (let index = 0; index < 1800; index++) await fs.mkdir(path.join(otherSource, `rest-${index}`), { mode: 0o700 });
+    const otherClaim = { owner: otherOwner, scratch: await pinWorkspacePath(root.directory, otherSource), nonce: 'c'.repeat(32) };
+    const before = await observeWorkspaceCleanupTree(otherClaim.scratch);
+    assert.ok(before);
+    assert.equal(await files.move(otherClaim, before, () => true), true);
+    const isolated = workspaceCleanupQuarantinePath(root, otherClaim);
+    const first = path.join(isolated, '000-first.txt');
+    const launcher = launchMutation(otherClaim, 'purge');
+    const closed = once(launcher, 'close');
+    let stopped: number | undefined;
+    try {
+      const started = await Promise.race([once(launcher.stdout, 'data').then(([data]) => String(data)), closed.then(() => 'closed')]);
+      assert.match(started, /^[1-9]\d+\n$/);
+      for (let attempt = 0; ; attempt++) {
+        const exists = await fs.lstat(first).then(() => true, (error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+          return false;
+        });
+        if (!exists) break;
+        assert.ok(attempt < 5000, 'the active purge did not remove its first entry');
+        await new Promise<void>((resolve) => setTimeout(resolve, 1));
+      }
+      stopped = Number(started);
+      process.kill(stopped, 'SIGSTOP');
+      launcher.kill('SIGKILL');
+      await closed;
+      assert.throws(() => ledger.exec('BEGIN IMMEDIATE'), /locked/, 'active purge retains its writer reservation after parent death');
+      process.kill(stopped, 'SIGCONT');
+      stopped = undefined;
+      await waitForWriter();
+      assert.equal(await files.location(otherClaim), 'quarantine');
+      const remainder = await observeWorkspaceCleanupTree({ ...otherClaim.scratch, directory: isolated }, undefined, false, otherSource);
+      assert.ok(remainder);
+      assert.notEqual(remainder.digest, before.digest, 'a partial purge cannot be mistaken for the original tree');
+      assert.ok((await fs.readdir(isolated)).length > 0);
+      assert.equal(await fs.readFile(artifact, 'utf8'), 'preserved');
+    } finally {
+      launcher.kill('SIGKILL');
+      if (stopped) {
+        try { process.kill(stopped, 'SIGCONT'); } catch {}
+      }
+      await closed;
+      await waitForWriter();
+    }
+  }
+
+  async function waitForWriter() {
+    for (let attempt = 0; ; attempt++) {
+      try { ledger.exec('BEGIN IMMEDIATE; ROLLBACK;'); return; }
+      catch (error) {
+        if (attempt === 99) throw error;
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      }
     }
   }
 } finally {

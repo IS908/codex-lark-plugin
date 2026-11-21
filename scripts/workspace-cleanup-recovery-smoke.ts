@@ -146,6 +146,27 @@ try {
   assert.equal(await fs.readFile(checkout.report, 'utf8'), 'kept');
   assert.equal(await fs.readFile(tracked, 'utf8'), 'original');
   assert.equal(command(['--git-dir', bare, 'show', `${commit}:tracked.txt`]), 'original');
+
+  const partial = await fixture('partial-checkout', git);
+  const partialOptions = options();
+  const partialTree = await observeWorkspaceCleanupTree(partial.claim.scratch);
+  assert.ok(partialTree);
+  assert.equal(await files.move(partial.claim, partialTree, () => true), true);
+  const partialAuth = () => {
+    const observation = partialOptions.claims.observe(roots.scratch, partial.owner);
+    assert.ok(observation);
+    return { roots, observation, minimumAgeDays: 30, now: current };
+  };
+  const partialIsolated = partialOptions.claims.perform(partial.claim, partialAuth(), 'isolated', () => true);
+  assert.ok(partialIsolated);
+  const partialPurging = partialOptions.claims.perform(partialIsolated, partialAuth(), 'purging');
+  assert.ok(partialPurging);
+  const partialPath = workspaceCleanupQuarantinePath(roots.scratch, partial.claim);
+  await fs.unlink(path.join(partialPath, 'git-checkout', 'tracked.txt'));
+  assert.equal(await recoverWorkspaceCleanupClaim(partialOptions, partialPurging), 'held');
+  assert.equal(partialOptions.claims.get(partial.owner)?.reason, 'purge_incomplete');
+  assert.equal((await fs.stat(path.join(partialPath, 'git-checkout', '.git'))).isDirectory(), true);
+  assert.equal(await fs.readFile(partial.report, 'utf8'), 'kept');
 } finally {
   db.close();
   repository.close();
