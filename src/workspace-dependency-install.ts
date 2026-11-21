@@ -7,7 +7,8 @@ import { workspaceDependencySelectionSchema, workspaceDependencyToolchainBinding
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
 import { mkdirTemporaryInsidePinnedRoot } from './managed-workspace-mkdir.js';
-import { verifyWorkspaceDependencyCache } from './workspace-dependency-cache.js';
+import type { WorkspaceDependencyExpansionLimits } from './workspace-dependency-archive.js';
+import { MAX_WORKSPACE_DEPENDENCY_SNAPSHOT_BYTES, verifyWorkspaceDependencyCache, WorkspaceDependencyCacheError } from './workspace-dependency-cache.js';
 import type { WorkspaceDependencyInput } from './workspace-dependency-input.js';
 import { readWorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
 import { runWorkspaceDependencyProcess, WorkspaceDependencyProcessError } from './workspace-dependency-process.js';
@@ -51,6 +52,7 @@ export async function installWorkspaceDependencyInStaging(request: {
   artifactManifest: unknown;
   selection: WorkspaceDependencySelection;
   configured: WorkspaceDependencyToolchainConfig;
+  expansionLimits?: WorkspaceDependencyExpansionLimits;
 }) {
   const selected = workspaceDependencySelectionSchema.safeParse(request.selection);
   const tool = workspaceDependencyToolchainConfigSchema.safeParse(request.configured);
@@ -64,20 +66,24 @@ export async function installWorkspaceDependencyInStaging(request: {
   const input = request.input.ecosystem === 'npm' ? { ...request.input, lock: Buffer.from(request.input.lock), manifest: Buffer.from(request.input.manifest) }
     : { ...request.input, lock: Buffer.from(request.input.lock) };
   const artifactManifest = structuredClone(request.artifactManifest);
-  const verifyCache = async (inspectExpansion = false) => {
+  const verifyCache = async (inspectExpansion = false, snapshot?: WorkspaceProjectBinding) => {
     const verified = await verifyWorkspaceDependencyCache({ input, artifactManifest, cache: selection.cache,
-      authorizedRoots: request.authorizedRoots, expectedFingerprint: selection.cacheFingerprint, inspectExpansion });
+      authorizedRoots: request.authorizedRoots, expectedFingerprint: selection.cacheFingerprint, inspectExpansion,
+      expansionLimits: request.expansionLimits, snapshot });
     if (verified.identity.key !== selection.identity.key || verified.artifactManifestSha256 !== selection.artifactManifestSha256) {
       fail('dependency_install_selection_mismatch');
     }
     return verified;
   };
   const verified = await verifyCache(true);
+  if (verified.bytes > MAX_WORKSPACE_DEPENDENCY_SNAPSHOT_BYTES) throw new WorkspaceDependencyCacheError('dependency_snapshot_limit');
   const mounts = await readWorkspaceDependencyMountPolicy();
   const guard = await loadWorkspaceDependencyWriteGuard(request.configPath);
   const parent = await validateWorkspaceProject(request.temporaryRoot.directory, request.temporaryRoot);
   await assertProtectedWorkspacePath(parent, false, true);
-  const leaf = `lark-dependency-install-${randomBytes(12).toString('hex')}`;
+  const nonce = randomBytes(12).toString('hex');
+  const leaf = `lark-dependency-install-${nonce}`;
+  const snapshotLeaf = `lark-dependency-snapshot-${nonce}`;
   const planned = path.join(parent.directory, leaf);
   const aliases = mounts.aliases(planned);
   const ancestors = await readWorkspaceAncestorIdentities(parent.directory);
@@ -85,6 +91,9 @@ export async function installWorkspaceDependencyInStaging(request: {
     ancestors.has(`${root.device}:${root.inode}`) || mounts.aliases(root.directory).some((read) => aliases.some((write) =>
       mounts.contains(read, write) || mounts.contains(write, read))))) fail('dependency_install_storage_invalid');
   await guard?.assertNewDirectory(planned);
+  const snapshotPath = path.join(parent.directory, snapshotLeaf);
+  if (!mounts.supports(snapshotPath)) fail('dependency_install_storage_invalid');
+  await guard?.assertNewDirectory(snapshotPath);
   const inspected = await probeWorkspaceDependencyToolchain({ configured, codexCommand: request.codexCommand,
     temporaryRoot: parent, configPath: request.configPath, expectedFingerprint: selection.toolchainFingerprint });
   const current = inspected.toolchain;
@@ -93,11 +102,16 @@ export async function installWorkspaceDependencyInStaging(request: {
     || current.platform !== recorded.platform || current.arch !== recorded.arch || current.platformAbi !== recorded.platformAbi) {
     fail('dependency_install_selection_mismatch');
   }
-  const staging = await mkdirTemporaryInsidePinnedRoot(parent, leaf);
-  const cwd = staging.directory;
+  let staging: WorkspaceProjectBinding | undefined;
+  const snapshot = await mkdirTemporaryInsidePinnedRoot(parent, snapshotLeaf);
+  let safeToRemove = true;
   try {
+    // Copy from the same descriptors used to authenticate every byte. The installer sees only the admitted snapshot.
+    await verifyCache(false, snapshot);
+    staging = await mkdirTemporaryInsidePinnedRoot(parent, leaf);
+    const cwd = staging.directory;
     const launch = await prepareWorkspaceDependencySandbox({ codexCommand: request.codexCommand, configured, staging,
-      artifacts: selection.cache, protectedBindings: guard?.protectedBindings });
+      artifacts: snapshot, protectedBindings: guard?.protectedBindings });
     const write = (name: string, bytes: string | Uint8Array) => fs.writeFile(path.join(cwd, name), bytes, { flag: 'wx', mode: 0o600 });
     let args: string[];
     let outputName: string;
@@ -111,13 +125,13 @@ export async function installWorkspaceDependencyInStaging(request: {
       args = ['--no-global-search-paths', inspected.entrypoint, 'ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund',
         '--no-progress', '--no-update-notifier', '--logs-max=0', '--fetch-retries=0', '--include=dev', '--include=optional', '--include=peer',
         `--userconfig=${path.join(cwd, 'installer-user.npmrc')}`, `--globalconfig=${path.join(cwd, 'installer-global.npmrc')}`,
-        `--registry=${selection.identity.registry}`, `--cache=${selection.cache.directory}`];
+        `--registry=${selection.identity.registry}`, `--cache=${snapshot.directory}`];
     } else {
       outputName = 'python-deps';
       await write('requirements.lock', verified.stagedLock);
       args = ['-I', '-S', '-B', '-c', pipInstall, configured.runtime.directory, configured.installer.directory,
         '--isolated', '--disable-pip-version-check', '--no-cache-dir', 'install', '--no-index',
-        `--find-links=${selection.cache.directory}`, '--only-binary=:all:', '--require-hashes', '--ignore-installed', '--no-compile',
+        `--find-links=${snapshot.directory}`, '--only-binary=:all:', '--require-hashes', '--ignore-installed', '--no-compile',
         `--target=${path.join(cwd, outputName)}`, `--requirement=${path.join(cwd, 'requirements.lock')}`];
     }
     await assertProtectedWorkspacePath(staging, true);
@@ -138,15 +152,21 @@ export async function installWorkspaceDependencyInStaging(request: {
     const measurement = await measureWorkspaceDependencyOutput(output, input.ecosystem);
     return { staging, output, measurement };
   } catch (error) {
-    if (!(error instanceof WorkspaceDependencyProcessError) || error.quiescent) {
+    safeToRemove = !(error instanceof WorkspaceDependencyProcessError) || error.quiescent;
+    if (staging && safeToRemove) {
       await assertProtectedWorkspacePath(staging, true);
-      await fs.rm(cwd, { recursive: true, force: true });
+      await fs.rm(staging.directory, { recursive: true, force: true });
     }
     if (error instanceof WorkspaceDependencyProcessError) {
       fail(error.reason === 'timeout' ? 'dependency_install_timeout' : error.reason === 'output'
         ? 'dependency_install_output_limit' : 'dependency_install_failed');
     }
     throw error;
+  } finally {
+    if (safeToRemove) {
+      await assertProtectedWorkspacePath(snapshot, true);
+      await fs.rm(snapshot.directory, { recursive: true, force: true });
+    }
   }
 }
 

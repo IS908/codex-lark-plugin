@@ -36,6 +36,19 @@ export async function exerciseWorkspaceDependencyInstall(fixture: string, common
       toolchainBindingDigest: workspaceDependencyToolchainBindingDigest(tool.configured) };
     const request = { ...common, input, artifactManifest, selection, configured: tool.configured, authorizedRoots: scope };
     const before = (await fs.readdir(fixture)).sort();
+    if (input.ecosystem === 'npm') {
+      const lock = JSON.parse(Buffer.from(input.lock).toString('utf8'));
+      lock.packages['node_modules/lark-fixture/node_modules/lark-fixture'] = lock.packages['node_modules/lark-fixture'];
+      const repeated = { ...input, lock: json(lock) };
+      const measuredCopies = await verifyWorkspaceDependencyCache({ input: repeated, artifactManifest, cache, authorizedRoots: scope });
+      for (const expansionLimits of [{ bytes: 48 * 1024, entries: 100 }, { bytes: 256 * 1024, entries: 8 }]) {
+        await assert.rejects(installWorkspaceDependencyInStaging({
+          ...request, input: repeated, codexCommand: path.join(fixture, 'must-not-launch'), expansionLimits,
+          selection: { ...selection, identity: measuredCopies.identity, cacheFingerprint: measuredCopies.cacheFingerprint },
+        }), { code: 'dependency_archive_budget_exceeded' });
+        assert.deepEqual((await fs.readdir(fixture)).sort(), before, 'an over-budget lockfile never allocates staging');
+      }
+    }
     const stale = { ...input, toolchain: { ...input.toolchain, platformAbi: input.toolchain.platformAbi + '.0' } };
     const previous = await verifyWorkspaceDependencyCache({ input: stale, artifactManifest, cache, authorizedRoots: scope });
     await assert.rejects(installWorkspaceDependencyInStaging({ ...request, input: stale, selection: {

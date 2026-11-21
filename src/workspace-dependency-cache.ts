@@ -5,20 +5,25 @@ import path from 'node:path';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceMountTable,
   workspaceMountLayoutSupported } from './managed-workspace-ancestry.js';
-import { createWorkspaceDependencyExpansionBudget, WorkspaceDependencyArchiveError } from './workspace-dependency-archive.js';
+import { createWorkspaceDependencyExpansionBudget, WorkspaceDependencyArchiveError,
+  type WorkspaceDependencyExpansionLimits } from './workspace-dependency-archive.js';
 import { prepareWorkspaceNpmLock, prepareWorkspacePipLock, type WorkspaceDependencyInput } from './workspace-dependency-input.js';
+import { readWorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
 import { validateWorkspaceProject } from './workspace-projects.js';
 
 const MAX_ARTIFACT_BYTES = 1024n ** 3n;
 const MAX_CACHE_BYTES = 4n * MAX_ARTIFACT_BYTES;
+export const MAX_WORKSPACE_DEPENDENCY_SNAPSHOT_BYTES = Number(MAX_ARTIFACT_BYTES);
 const READ_BYTES = 256 * 1024;
 
 export class WorkspaceDependencyCacheError extends Error {
-  constructor(readonly code: 'dependency_cache_invalid' | 'dependency_artifact_missing' | 'dependency_artifact_conflict' | 'dependency_cache_changed') {
+  constructor(readonly code: 'dependency_cache_invalid' | 'dependency_artifact_missing' | 'dependency_artifact_conflict' | 'dependency_cache_changed'
+    | 'dependency_snapshot_limit') {
     super({ dependency_cache_invalid: 'Dependency cache layout or permissions are invalid.',
       dependency_artifact_missing: 'The cache does not contain a selected dependency artifact.',
       dependency_artifact_conflict: 'A dependency artifact does not match its selected hash.',
-      dependency_cache_changed: 'The dependency cache changed since it was verified.' }[code]);
+      dependency_cache_changed: 'The dependency cache changed since it was verified.',
+      dependency_snapshot_limit: 'The verified artifact snapshot exceeds the compressed-byte budget.' }[code]);
   }
 }
 
@@ -34,11 +39,13 @@ export async function verifyWorkspaceDependencyCache(request: {
   authorizedRoots: readonly [string, ...string[]];
   expectedFingerprint?: string;
   inspectExpansion?: boolean;
+  expansionLimits?: WorkspaceDependencyExpansionLimits;
+  snapshot?: WorkspaceProjectBinding;
 }) {
   const prepared = request.input.ecosystem === 'npm' ? prepareWorkspaceNpmLock(request.input, request.artifactManifest)
     : prepareWorkspacePipLock(request.input, request.artifactManifest);
   if (request.expectedFingerprint !== undefined && !/^[0-9a-f]{64}$/.test(request.expectedFingerprint)) invalid();
-  const budget = request.inspectExpansion ? createWorkspaceDependencyExpansionBudget() : undefined;
+  const budget = request.inspectExpansion ? createWorkspaceDependencyExpansionBudget(request.expansionLimits) : undefined;
   const copiesByIntegrity = 'copiesByIntegrity' in prepared ? prepared.copiesByIntegrity : undefined;
   const tree: Tree = new Map();
   for (const artifact of prepared.artifacts) {
@@ -56,6 +63,18 @@ export async function verifyWorkspaceDependencyCache(request: {
     const cache = await validateWorkspaceProject(request.authorizedRoots, request.cache);
     await assertProtectedWorkspacePath(cache);
     if (!workspaceMountLayoutSupported([cache.directory], readWorkspaceMountTable()) || !process.geteuid) invalid();
+    const snapshot = request.snapshot && await validateWorkspaceProject(request.snapshot.directory, request.snapshot);
+    if (snapshot) {
+      const mounts = await readWorkspaceDependencyMountPolicy();
+      await assertProtectedWorkspacePath(snapshot, true);
+      if ((await fs.lstat(snapshot.directory)).mode & 0o077) invalid();
+      const folder = await fs.opendir(snapshot.directory);
+      try {
+        if (await folder.read() || !mounts.supports(snapshot.directory)
+          || mounts.aliases(snapshot.directory).some((write) => mounts.aliases(cache.directory)
+            .some((read) => mounts.contains(read, write) || mounts.contains(write, read)))) invalid();
+      } finally { await folder.close(); }
+    }
     const uid = BigInt(process.geteuid());
     const measured = new Map<string, BigIntStats>();
     const scratch = Buffer.alloc(READ_BYTES);
@@ -80,6 +99,7 @@ export async function verifyWorkspaceDependencyCache(request: {
     const cacheFingerprint = createHash('sha256').update(JSON.stringify(['workspace-dependency-cache-v1',
       prepared.identity.key, prepared.artifactManifestSha256, stamps])).digest('hex');
     if (request.expectedFingerprint !== undefined && cacheFingerprint !== request.expectedFingerprint) changed();
+    if (snapshot) await assertProtectedWorkspacePath(snapshot, true);
     return { cache, identity: prepared.identity, stagedLock: prepared.lock, artifactManifestSha256: prepared.artifactManifestSha256,
       cacheFingerprint, bytes: Number(bytes) };
 
@@ -87,6 +107,7 @@ export async function verifyWorkspaceDependencyCache(request: {
       const directory = path.join(cache.directory, relative);
       const before = await fs.lstat(directory, { bigint: true });
       if (!before.isDirectory() || !trusted(before, uid, cache.device) || (!relative && String(before.ino) !== cache.inode)) invalid();
+      if (snapshot && relative) await fs.mkdir(path.join(snapshot.directory, relative), { mode: 0o700 });
       measured.set(relative, before);
       const found = new Set<string>();
       for await (const entry of await fs.opendir(directory)) {
@@ -105,17 +126,23 @@ export async function verifyWorkspaceDependencyCache(request: {
       if (!info.isFile() || info.nlink !== 1n || !trusted(info, uid, cache.device) || info.size < 1n || info.size > MAX_ARTIFACT_BYTES) invalid();
       bytes += info.size;
       if (bytes > MAX_CACHE_BYTES) invalid();
+      if (snapshot && bytes > MAX_ARTIFACT_BYTES) throw new WorkspaceDependencyCacheError('dependency_snapshot_limit');
       const fd = await fs.open(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
       try {
         if (!sameIdentity(info, await fd.stat({ bigint: true }))) changed();
         const hash = createHash(expected.algorithm);
         let remaining = Number(info.size);
-        while (remaining) {
-          const { bytesRead } = await fd.read(scratch, 0, Math.min(remaining, scratch.length), null);
-          if (!bytesRead) changed();
-          hash.update(scratch.subarray(0, bytesRead));
-          remaining -= bytesRead;
-        }
+        const copy = snapshot && await fs.open(path.join(snapshot.directory, relative), 'wx', 0o400);
+        try {
+          while (remaining) {
+            const { bytesRead } = await fd.read(scratch, 0, Math.min(remaining, scratch.length), null);
+            if (!bytesRead) changed();
+            const chunk = scratch.subarray(0, bytesRead);
+            hash.update(chunk);
+            await copy?.writeFile(chunk);
+            remaining -= bytesRead;
+          }
+        } finally { await copy?.close(); }
         if (!sameIdentity(info, await fd.stat({ bigint: true }))) changed();
         if (hash.digest('hex') !== expected.digest) throw new WorkspaceDependencyCacheError('dependency_artifact_conflict');
         await budget?.inspect(fd, Number(info.size), request.input.ecosystem, expected.copies);

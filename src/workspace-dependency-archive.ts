@@ -9,6 +9,7 @@ const defaultLimits = { bytes: 2 * 1024 ** 3, entries: 150_000 };
 const block = 4096;
 const readSize = 64 * 1024;
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+export type WorkspaceDependencyExpansionLimits = { bytes: number; entries: number };
 
 export class WorkspaceDependencyArchiveError extends Error {
   constructor(readonly code: 'dependency_archive_invalid' | 'dependency_archive_budget_exceeded') {
@@ -19,7 +20,11 @@ export class WorkspaceDependencyArchiveError extends Error {
 }
 
 /** Read-only inspection. Charge every install occurrence, not just each cache blob. */
-export function createWorkspaceDependencyExpansionBudget(limits = defaultLimits) {
+export function createWorkspaceDependencyExpansionBudget(limits: WorkspaceDependencyExpansionLimits = defaultLimits) {
+  if (!Number.isSafeInteger(limits.bytes) || limits.bytes < 1 || limits.bytes > defaultLimits.bytes
+    || !Number.isSafeInteger(limits.entries) || limits.entries < 1 || limits.entries > defaultLimits.entries) invalid();
+  const maxBytes = limits.bytes;
+  const maxEntries = limits.entries;
   let bytes = 0;
   let entries = 0;
   let tarStreamBytes = 0;
@@ -28,7 +33,7 @@ export function createWorkspaceDependencyExpansionBudget(limits = defaultLimits)
   const charge = (extra: number, slots: number, copies: number) => {
     bytes += extra * copies;
     entries += slots * copies;
-    if (!Number.isSafeInteger(bytes) || !Number.isSafeInteger(entries) || bytes > limits.bytes || entries > limits.entries) exceeds();
+    if (!Number.isSafeInteger(bytes) || !Number.isSafeInteger(entries) || bytes > maxBytes || entries > maxEntries) exceeds();
   };
   return {
     async inspect(file: FileHandle, size: number, ecosystem: 'npm' | 'pip', copies = 1) {
@@ -48,7 +53,7 @@ export function createWorkspaceDependencyExpansionBudget(limits = defaultLimits)
         if (ecosystem === 'npm') {
           await inspectTar(file, size, entry, (length) => {
             tarStreamBytes += length * copies;
-            if (tarStreamBytes > limits.bytes) exceeds();
+            if (tarStreamBytes > maxBytes) exceeds();
           });
         } else await inspectWheel(file, size, entry);
         if (!seen.size) invalid();

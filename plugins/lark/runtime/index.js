@@ -52424,7 +52424,7 @@ function mkdirGitCheckoutInsidePinnedRun(runRoot) {
   return mkdirInsideRoot(runRoot, MANAGED_GIT_CHECKOUT_LEAF);
 }
 async function mkdirTemporaryInsidePinnedRoot(root, leaf) {
-  if (!/^(?:lark-codex-exec|lark-dependency-probe|lark-dependency-install|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) {
+  if (!/^(?:lark-codex-exec|lark-dependency-(?:probe|install|snapshot)|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) {
     throw new ManagedWorkspaceStorageError("invalid_binding");
   }
   return mkdirInsideRoot(root, leaf, true);
@@ -56318,11 +56318,6 @@ var npmArtifactManifestSchema = external_exports.array(external_exports.strictOb
 var pythonArtifactManifestSchema = external_exports.array(external_exports.strictObject({ filename: external_exports.string().max(255), sha256: dependencyDigestSchema })).max(MAX_PACKAGES);
 var jsonRecord = external_exports.record(external_exports.string(), external_exports.unknown());
 
-// src/workspace-dependency-cache.ts
-var MAX_ARTIFACT_BYTES = 1024n ** 3n;
-var MAX_CACHE_BYTES = 4n * MAX_ARTIFACT_BYTES;
-var READ_BYTES = 256 * 1024;
-
 // src/workspace-dependency-mounts.ts
 import { execFile as execFile4 } from "node:child_process";
 import fs10 from "node:fs/promises";
@@ -56424,6 +56419,12 @@ function contains(root, entry) {
 function unsupported() {
   throw new Error("Unsupported dependency workspace mount layout.");
 }
+
+// src/workspace-dependency-cache.ts
+var MAX_ARTIFACT_BYTES = 1024n ** 3n;
+var MAX_CACHE_BYTES = 4n * MAX_ARTIFACT_BYTES;
+var MAX_WORKSPACE_DEPENDENCY_SNAPSHOT_BYTES = Number(MAX_ARTIFACT_BYTES);
+var READ_BYTES = 256 * 1024;
 
 // src/workspace-dependency-registry.ts
 var REGISTRY = "workspace-dependencies.json";

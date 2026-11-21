@@ -11,7 +11,7 @@ import { pinWorkspacePath } from '../src/workspace-projects.js';
 const fixture = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lark-dependency-cache-')));
 try {
   const authorizedRoots = [fixture] as const;
-  const archive = Buffer.from('npm archive fixture');
+  const archive = Buffer.concat([Buffer.alloc(270_000, 1), Buffer.alloc(280_000, 2), Buffer.from('npm archive fixture')]);
   const sha512 = createHash('sha512').update(archive).digest();
   const integrity = `sha512-${sha512.toString('base64')}`;
   const hex = sha512.toString('hex');
@@ -35,6 +35,16 @@ try {
   assert.equal(first.bytes, archive.length);
   assert.match(first.cacheFingerprint, /^[0-9a-f]{64}$/);
   assert.equal((await verifyWorkspaceDependencyCache({ ...npmSelection, expectedFingerprint: first.cacheFingerprint })).cacheFingerprint, first.cacheFingerprint);
+  const copyRoot = path.join(fixture, 'cache-snapshot');
+  await fs.mkdir(copyRoot, { mode: 0o700 });
+  const snapshot = await pinWorkspacePath(fixture, copyRoot);
+  await verifyWorkspaceDependencyCache({ ...npmSelection, expectedFingerprint: first.cacheFingerprint, snapshot });
+  const copy = path.join(copyRoot, relative);
+  assert.deepEqual(await fs.readFile(copy), archive, 'each authenticated chunk is copied in order');
+  assert.notEqual((await fs.stat(copy)).ino, (await fs.stat(blob)).ino, 'snapshot never hard-links a mutable source');
+  assert.equal((await fs.stat(copy)).mode & 0o777, 0o400);
+  await assert.rejects(verifyWorkspaceDependencyCache({ ...npmSelection, snapshot }), { code: 'dependency_cache_invalid' });
+  await assert.rejects(verifyWorkspaceDependencyCache({ ...npmSelection, snapshot: npmSelection.cache }), { code: 'dependency_cache_invalid' });
   await assert.rejects(verifyWorkspaceDependencyCache({ ...npmSelection, inspectExpansion: true }), { code: 'dependency_archive_invalid' });
   const extra = path.join(npmCache, '_cacache', 'index-v5');
   await fs.mkdir(extra);
