@@ -35,6 +35,7 @@ import type {
   ContinuationClaimMutationResult,
   ContinuationInputStorePort,
   ContinuationInputVerification,
+  ContinuationMaintenanceOptions,
   ContinuationPreparedTransition,
   ContinuationRepository,
 } from '../ports/continuation.js';
@@ -45,7 +46,7 @@ import {
   continuationRetryIdempotencyKey,
   continuationRetryJobId,
 } from './idempotency.js';
-import { ContinuationInputStore } from './input-store.js';
+import { ContinuationInputStore, withContinuationCleanupLock } from './input-store.js';
 import { redactContinuationText } from './redaction.js';
 import type {
   DurableRunDeliveryResult,
@@ -178,7 +179,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         options.managedWorkspacePolicy,
       );
       await repository.initialize();
-      await repository.reconcileStorageOrphans();
+      await repository.reconcileStorageOrphans(true);
       return repository;
     } catch (error) {
       database.close();
@@ -829,7 +830,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     return committed;
   }
 
-  async expireOverdue(now: string): Promise<number> {
+  async expireOverdue(now: string, { deferBusy = false }: ContinuationMaintenanceOptions = {}): Promise<number> {
     const corruptJobIds: string[] = [];
     let expiredCount = this.transaction(() => {
       const rows = this.database.prepare(`
@@ -896,7 +897,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       return expired;
     });
     for (const jobId of corruptJobIds) {
-      if (await this.recoverCorruptJobStorage(jobId, now, false)) expiredCount += 1;
+      if (await this.recoverCorruptStorageForMaintenance(jobId, now, deferBusy)) expiredCount += 1;
     }
     return expiredCount;
   }
@@ -1411,8 +1412,8 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     });
   }
 
-  async purgeExpired(retainAfter: string, now: string): Promise<ContinuationCleanupResult[]> {
-    await this.reconcileStorageOrphans();
+  async purgeExpired(retainAfter: string, now: string, { deferBusy = false }: ContinuationMaintenanceOptions = {}): Promise<ContinuationCleanupResult[]> {
+    await this.reconcileStorageOrphans(deferBusy);
     const rows = this.database.prepare(`
       SELECT j.job_id, j.creator_open_id, j.status, j.completed_at
       FROM continuation_jobs j
@@ -1448,12 +1449,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         completedAt: stringField(row, 'completed_at'),
       };
       try {
+        const operation = () => this.redactTerminalInternal(jobId, now, retainAfter);
         if (await this.serializeJobMutation(
           jobId,
-          () => this.inputs.withCreationLock(
-            jobId,
-            () => this.redactTerminalInternal(jobId, now, retainAfter),
-          ),
+          () => deferBusy ? withContinuationCleanupLock(this.inputs, jobId, operation) : this.inputs.withCreationLock(jobId, operation),
         )) {
           results.push({ ...base, result: 'cleaned' });
         }
@@ -1515,7 +1514,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     }
   }
 
-  private async reconcileStorageOrphans(): Promise<void> {
+  private async reconcileStorageOrphans(deferBusy = false): Promise<void> {
     const rows = this.database.prepare(`
       SELECT job_id, error_code
       FROM continuation_jobs
@@ -1531,22 +1530,27 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         AND (error_code IS NULL OR error_code <> 'continuation_persisted_state_invalid')
     `).get(jobId));
     const nowMs = Date.now();
+    const withJobLock = deferBusy ? (jobId: string, operation: () => Promise<void>) => withContinuationCleanupLock(this.inputs, jobId, operation)
+      : (jobId: string, operation: () => Promise<void>) => this.inputs.withCreationLock(jobId, operation);
     for (const jobId of corruptJobIds) {
-      await this.recoverCorruptJobStorage(jobId, new Date(nowMs).toISOString(), false);
+      await this.recoverCorruptStorageForMaintenance(jobId, new Date(nowMs).toISOString(), deferBusy);
     }
-    const results = await Promise.allSettled([
-      this.artifacts.cleanupOrphans(
-        knownJobs,
-        nowMs,
-        isJobKnown,
-        (jobId, operation) => this.inputs.withCreationLock(jobId, operation),
-      ),
-      this.inputs.cleanupOrphans(knownJobs, nowMs, isJobKnown),
-    ]);
-    const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+    const cleanups = [() => this.artifacts.cleanupOrphans(knownJobs, nowMs, isJobKnown, withJobLock),
+      () => this.inputs.cleanupOrphans(knownJobs, nowMs, isJobKnown, withJobLock)];
+    const errors: unknown[] = [];
+    const run = (cleanup: () => Promise<void>) => cleanup().catch((error: unknown) => { errors.push(error); });
+    // Opportunistic startup cleanup must not contend with another pass from this instance.
+    if (deferBusy) {
+      for (const cleanup of cleanups) await run(cleanup);
+    } else await Promise.all(cleanups.map(run));
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Continuation storage reconciliation failed.');
     }
+  }
+
+  private async recoverCorruptStorageForMaintenance(jobId: string, now: string, deferBusy: boolean): Promise<boolean> {
+    if (!deferBusy) return this.recoverCorruptJobStorage(jobId, now, false);
+    return await withContinuationCleanupLock(this.inputs, jobId, () => this.recoverCorruptJobStorage(jobId, now, false, true)) ?? false;
   }
 
   private async cleanupCorruptStorageLocked(jobId: string): Promise<void> {

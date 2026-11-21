@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import {
   chmod,
   copyFile,
@@ -44,9 +45,9 @@ import {
 import { currentProcessStartedAt } from '../src/process-identity.js';
 
 if (process.argv[2] === '--hold-managed-input-create') {
-  const [childRoot, childJobId, childSource] = process.argv.slice(3);
+  const [childRoot, childJobId, childSource, stamp] = process.argv.slice(3);
   if (!childRoot || !childJobId || !childSource) throw new Error('Missing managed-input child arguments.');
-  await holdManagedInputCreate(childRoot, childJobId, childSource);
+  await holdManagedInputCreate(childRoot, childJobId, childSource, stamp);
   process.exit(0);
 }
 if (process.argv[2] === '--reclaim-dead-creation-lock') {
@@ -100,7 +101,7 @@ if (process.argv[2] === '--open-continuation-repository') {
   process.exit(0);
 }
 
-async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath: string): Promise<void> {
+async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath: string, stamp?: string): Promise<void> {
   const store = new ContinuationInputStore(join(rootDir, 'inputs'));
   await store.withCreationLock(jobId, async () => {
     await store.install(jobId, [{
@@ -110,6 +111,14 @@ async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath
     }], 'cross-process-live-create');
     const aged = new Date(Date.now() - 2 * 60 * 60 * 1_000);
     await utimes(join(rootDir, 'inputs', jobId), aged, aged);
+    if (stamp === 'legacy-estimate' || stamp === 'legacy-pid-only') {
+      const lock = join(rootDir, 'inputs', `.creating-${jobId}`);
+      const owner = JSON.parse(await readFile(lock, 'utf8'));
+      owner.startedAt = stamp === 'legacy-estimate' ? currentProcessStartedAt() + 1_040 : null;
+      delete owner.linuxBirthToken;
+      await writeFile(lock, `${JSON.stringify(owner)}\n`, 'utf8');
+      await utimes(lock, aged, aged);
+    }
     process.stdout.write('MANAGED_INPUT_INSTALLED\n');
     const releasePath = join(rootDir, `.release-${jobId}`);
     while (true) {
@@ -3449,6 +3458,7 @@ await mkdir(reusedPidLockDirectory);
 await writeFile(join(reusedPidLockDirectory, 'owner.json'), JSON.stringify({
   pid: process.pid,
   startedAt: 1,
+  linuxBirthToken: '00000000-0000-0000-0000-000000000000:1',
   nonce: reusedPidNonce,
   createdAt: new Date().toISOString(),
 }), 'utf8');
@@ -3598,22 +3608,104 @@ assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', concurrentResultA
 concurrentCreateA.close();
 concurrentCreateB.close();
 
-const liveCleanupJobId = continuationJobId('live-cleanup-create');
-const liveCreateChild = spawn(process.execPath, [
-  '--import',
-  'tsx',
-  new URL(import.meta.url).pathname,
-  '--hold-managed-input-create',
-  concurrentCreateRoot,
-  liveCleanupJobId,
-  concurrentCreateSource,
-], { stdio: ['ignore', 'pipe', 'pipe'] });
-const liveCreateStderr = await waitForChildMarker(liveCreateChild, 'MANAGED_INPUT_INSTALLED');
-await concurrentStore.cleanupOrphans(new Set(), Date.now());
-assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', liveCleanupJobId))).isDirectory(), true);
-const liveCreateExit = new Promise<number | null>((resolve) => liveCreateChild.once('close', resolve));
-await writeFile(join(concurrentCreateRoot, `.release-${liveCleanupJobId}`), 'release', 'utf8');
-assert.equal(await liveCreateExit, 0, liveCreateStderr);
+const agedCreation = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+const localLiveJob = continuationJobId('live-cleanup-current-process');
+await concurrentStore.withCreationLock(localLiveJob, async () => {
+  await concurrentStore.install(localLiveJob, [{ sourcePath: concurrentCreateSource, fileName: 'source.txt', kind: 'message_attachment' }]);
+  const localLive = join(concurrentCreateRoot, 'inputs', localLiveJob);
+  await utimes(localLive, agedCreation, agedCreation);
+  await concurrentStore.cleanupOrphans(new Set());
+  assert.ok((await lstat(localLive)).isDirectory());
+});
+
+const reusedLegacyJob = continuationJobId('live-cleanup-reused-legacy-pid');
+const reusedLegacyInput = join(concurrentCreateRoot, 'inputs', reusedLegacyJob);
+const reusedLegacyLock = join(concurrentCreateRoot, 'inputs', `.creating-${reusedLegacyJob}`);
+await mkdir(reusedLegacyInput);
+await writeFile(reusedLegacyLock, JSON.stringify({ pid: process.pid, createdAt: agedCreation.toISOString(), startedAt: 1,
+  linuxBirthToken: '00000000-0000-0000-0000-000000000000:1' }));
+await utimes(reusedLegacyInput, agedCreation, agedCreation);
+await utimes(reusedLegacyLock, agedCreation, agedCreation);
+for (const stamp of ['native', 'legacy-estimate', 'legacy-pid-only']) {
+  const liveCleanupJobId = continuationJobId(`live-cleanup-create-${stamp}`);
+  const liveCreateChild = spawn(process.execPath, [
+    '--import', 'tsx', new URL(import.meta.url).pathname, '--hold-managed-input-create',
+    concurrentCreateRoot, liveCleanupJobId, concurrentCreateSource, stamp,
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const liveCreateExit = new Promise<number | null>((resolve) => liveCreateChild.once('close', resolve));
+  try {
+    const liveCreateStderr = await waitForChildMarker(liveCreateChild, 'MANAGED_INPUT_INSTALLED');
+    await concurrentStore.cleanupOrphans(new Set(), Date.now());
+    assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', liveCleanupJobId))).isDirectory(), true, stamp);
+    await assert.rejects(lstat(reusedLegacyInput), { code: 'ENOENT' });
+    await assert.rejects(lstat(reusedLegacyLock), { code: 'ENOENT' });
+    await writeFile(join(concurrentCreateRoot, `.release-${liveCleanupJobId}`), 'release', 'utf8');
+    assert.equal(await liveCreateExit, 0, liveCreateStderr);
+  } finally {
+    if (liveCreateChild.exitCode === null && liveCreateChild.signalCode === null) liveCreateChild.kill();
+    await liveCreateExit;
+  }
+}
+
+const heldScanNow = new Date();
+const heldScanRepository = await SqliteContinuationRepository.open(concurrentCreateOptions);
+const { job: { jobId: threadJobId } } = await heldScanRepository.create(createRequest('live-cleanup-worker-thread', {
+  sourceInputs: [{ sourcePath: concurrentCreateSource, fileName: 'source.txt', kind: 'message_attachment' }],
+  createdAt: new Date(heldScanNow.getTime() - 2 * 60 * 60 * 1_000).toISOString(),
+  expiresAt: new Date(heldScanNow.getTime() - 60 * 60 * 1_000).toISOString(),
+}));
+const unrelated = await heldScanRepository.create(createRequest('first-scan-unrelated-job', {
+  createdAt: heldScanNow.toISOString(), expiresAt: new Date(heldScanNow.getTime() + 60 * 60 * 1_000).toISOString(),
+}));
+heldScanRepository.close();
+const { DatabaseSync: HeldScanDatabaseSync } = await import('node:sqlite');
+const heldScanDatabase = new HeldScanDatabaseSync(concurrentCreateOptions.databasePath);
+heldScanDatabase.prepare(`UPDATE durable_runs SET
+  input_json = json_set(input_json, '$.job.sourceFacts.unexpected', 'worker fixture'),
+  state_json = json_set(state_json, '$.job.sourceFacts.unexpected', 'worker fixture')
+  WHERE run_id = ? AND workload_kind = 'async_task'`).run(threadJobId);
+heldScanDatabase.close();
+const threadInput = join(concurrentCreateOptions.inputsDir, threadJobId);
+const threadQuarantines = [concurrentCreateOptions.inputsDir, concurrentCreateOptions.artifactsDir]
+  .map((dir) => join(dir, `.redacting-${threadJobId}-${process.pid}-${'f'.repeat(16)}`));
+const threadHolder = new Worker(new URL('./fixtures/continuation-hold-input.ts', import.meta.url), {
+  workerData: { inputsDir: concurrentCreateOptions.inputsDir, jobId: threadJobId },
+  execArgv: ['--import', 'tsx'],
+});
+const threadExit = once(threadHolder, 'exit');
+let reopening: Promise<SqliteContinuationRepository> | undefined;
+let opened: SqliteContinuationRepository | undefined;
+try {
+  assert.deepEqual(await once(threadHolder, 'message', { signal: AbortSignal.timeout(5_000) }), ['held']);
+  for (const dir of threadQuarantines) await mkdir(dir, { recursive: true });
+  reopening = (async () => {
+    const repository = await SqliteContinuationRepository.open(concurrentCreateOptions);
+    try {
+      const now = heldScanNow.toISOString();
+      await repository.expireOverdue(now, { deferBusy: true });
+      await repository.purgeExpired(now, now, { deferBusy: true });
+      const scan = kernelAdapter(repository);
+      await scan.recoverExpiredLeases(['async_task'], now);
+      const claim = await scan.claimDue(['async_task'], 'first-scan-worker', now, new Date(heldScanNow.getTime() + 60_000).toISOString());
+      assert.equal(claim?.run.runId, unrelated.job.jobId);
+      return repository;
+    } catch (error) {
+      repository.close();
+      throw error;
+    }
+  })();
+  const timeout = AbortSignal.timeout(3_000);
+  opened = await Promise.race([reopening, new Promise<never>((_, reject) => {
+    timeout.addEventListener('abort', () => reject(new Error('Startup or first scan waited for a live worker lock.')), { once: true });
+  })]);
+  await opened.healthCheck();
+  for (const dir of [threadInput, ...threadQuarantines]) assert.ok((await lstat(dir)).isDirectory());
+} finally {
+  threadHolder.postMessage('release');
+  assert.deepEqual(await threadExit, [0]);
+  opened ??= await reopening?.catch(() => undefined);
+  opened?.close();
+}
 
 const concurrentOrphan = join(concurrentCreateRoot, 'inputs', 'job_concurrent_orphan');
 await mkdir(join(concurrentOrphan, 'nested'), { recursive: true });
