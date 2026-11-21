@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
+import { prepareWorkspaceDependencySandbox } from '../src/workspace-dependency-sandbox.js';
 import { inspectWorkspaceDependencyToolchain, probeWorkspaceDependencyToolchain } from '../src/workspace-dependency-toolchain.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
 
@@ -51,7 +54,7 @@ try {
   const native = process.env.LARK_TEST_CODEX_NATIVE_BINARY;
   if (native) {
     const npmCommand = process.env.LARK_TEST_NPM || execFileSync('/bin/sh', ['-c', 'command -v npm'], { encoding: 'utf8' }).trim();
-    const nodeBinary = await fs.realpath(process.execPath);
+    const nodeBinary = await fs.realpath(process.env.LARK_TEST_NODE_PATH || process.execPath);
     const nodePrefix = path.dirname(path.dirname(nodeBinary));
     const npmCli = await fs.realpath(process.platform === 'linux' && !process.env.LARK_TEST_NPM
       ? path.join(nodePrefix, 'lib/node_modules/npm/bin/npm-cli.js') : npmCommand);
@@ -60,23 +63,63 @@ try {
     const nodeRuntime = path.join(fixture, 'node-runtime');
     const npmRoot = path.join(fixture, 'npm-installer');
     const nodeExecutable = path.join(nodeRuntime, 'bin', 'node');
-    if (process.platform === 'linux') {
-      // The CI Node executable needs only system libraries; do not copy unrelated tools in its install prefix.
-      await fs.mkdir(path.dirname(nodeExecutable), { recursive: true, mode: 0o700 });
-      await fs.copyFile(nodeBinary, nodeExecutable);
-    } else {
-      // The Homebrew executable also needs its private libnode dylib relative to bin/.
-      await fs.cp(nodePrefix, nodeRuntime, { recursive: true, verbatimSymlinks: true, filter: (source) => {
-        const relative = path.relative(nodePrefix, source);
-        return relative !== 'bin/npm' && relative !== 'bin/npx';
-      } });
-    }
+    // Use a standalone Node executable with no dependencies in ambient package-manager prefixes.
+    await fs.mkdir(path.dirname(nodeExecutable), { recursive: true, mode: 0o700 });
+    await fs.copyFile(nodeBinary, nodeExecutable);
     await fs.cp(npmInstaller, npmRoot, { recursive: true, verbatimSymlinks: true });
     const common = { codexCommand: native, temporaryRoot: await pin(fixture) };
+    const nodeConfig = { ecosystem: 'npm', executable: nodeExecutable, runtime: await pin(nodeRuntime), installer: await pin(npmRoot) } as const;
+    const staging = path.join(fixture, 'sandbox-boundary');
+    const sibling = path.join(fixture, 'outside-readable.txt');
+    const privateRead = path.join(npmRoot, 'package.json');
+    const blockedWrite = path.join(npmRoot, 'blocked-write');
+    await fs.mkdir(staging, { mode: 0o700 });
+    await fs.writeFile(sibling, 'outside fixture');
+    assert.equal(await fs.readFile(sibling, 'utf8'), 'outside fixture');
+    await fs.writeFile(blockedWrite, 'outside sandbox write check');
+    await fs.unlink(blockedWrite);
+    await assert.rejects(prepareWorkspaceDependencySandbox({ codexCommand: native, configured: nodeConfig, staging: nodeConfig.installer }),
+      { code: 'dependency_installer_sandbox_invalid' });
+    const stagingBinding = await pin(staging);
+    await fs.chmod(staging, 0o755);
+    await assert.rejects(prepareWorkspaceDependencySandbox({ codexCommand: native, configured: nodeConfig, staging: stagingBinding }),
+      { code: 'dependency_installer_sandbox_invalid' });
+    await fs.chmod(staging, 0o700);
+    const launch = await prepareWorkspaceDependencySandbox({ codexCommand: native, configured: nodeConfig, staging: stagingBinding });
+    const shared = await fs.realpath(await fs.mkdtemp('/tmp/lark-dependency-read-guard-'));
+    const server = createServer((socket) => socket.end());
+    try {
+      const ambient = path.join(shared, 'ambient.txt');
+      await fs.writeFile(ambient, 'ambient fixture');
+      await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      await promisify(execFile)(launch.command, [...launch.args, '--no-global-search-paths', '-e', `
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const [allowed, sibling, denied, ambient, port] = process.argv.slice(1);
+assert.equal(JSON.parse(fs.readFileSync(allowed, 'utf8')).name, 'npm');
+assert.throws(() => fs.readFileSync(sibling));
+assert.throws(() => fs.readFileSync(ambient));
+assert.throws(() => fs.writeFileSync(denied, 'not allowed'));
+assert.throws(() => fs.linkSync(allowed, 'hardlink'));
+assert.ok(require('node:os').release());
+const socket = require('node:net').createConnection(Number(port), '127.0.0.1');
+socket.on('connect', () => { socket.destroy(); process.exitCode = 1; });
+socket.on('error', () => fs.writeFileSync('allowed', 'private', { flag: 'wx' }));
+socket.setTimeout(2000, () => { socket.destroy(); process.exitCode = 1; });`, privateRead, sibling, blockedWrite, ambient, String(address.port)],
+      { cwd: staging, env: launch.env, timeout: 15_000, maxBuffer: 16 * 1024 });
+    } finally {
+      if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+      await fs.rm(shared, { recursive: true, force: true });
+    }
+    assert.equal(await fs.readFile(path.join(staging, 'allowed'), 'utf8'), 'private');
+    await assert.rejects(fs.stat(blockedWrite), { code: 'ENOENT' });
     const npmProbe = await probeWorkspaceDependencyToolchain({ ...common,
-      configured: { ecosystem: 'npm', executable: nodeExecutable, runtime: await pin(nodeRuntime), installer: await pin(npmRoot) } });
-    assert.equal(npmProbe.toolchain.runtime, process.versions.node);
-    assert.equal(npmProbe.toolchain.abi, process.versions.modules);
+      configured: nodeConfig });
+    const nodeVersions = JSON.parse(execFileSync(nodeExecutable, ['-p', 'JSON.stringify(process.versions)'], { encoding: 'utf8' }));
+    assert.equal(npmProbe.toolchain.runtime, nodeVersions.node);
+    assert.equal(npmProbe.toolchain.abi, nodeVersions.modules);
     assert.match(npmProbe.toolchain.installer, /^\d+\.\d+\.\d+/);
     console.log(`workspace dependency native Node/npm: ${npmProbe.toolchain.runtime}/${npmProbe.toolchain.installer}`);
     const pythonPath = process.env.LARK_TEST_PYTHON_PATH;

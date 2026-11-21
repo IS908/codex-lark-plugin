@@ -6,12 +6,11 @@ import path from 'node:path';
 import { dependencyDigestSchema, dependencyToolchainSchema, workspaceDependencyToolchainConfigSchema,
   type WorkspaceDependencyToolchainConfig } from './domain/workspace-dependency.js';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
-import { assertCompatibleCodexLayers, resolveManagedGitLauncher } from './managed-git-launcher.js';
-import { dependencyGuardSandboxOverrides, DEPENDENCY_GUARD_PROFILE } from './managed-git-sandbox.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
 import { mkdirTemporaryInsidePinnedRoot } from './managed-workspace-mkdir.js';
 import { readWorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
 import { loadWorkspaceDependencyWriteGuard } from './workspace-dependency-registry.js';
+import { prepareWorkspaceDependencySandbox } from './workspace-dependency-sandbox.js';
 import { validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
 
 const maxFiles = 20_000;
@@ -24,7 +23,7 @@ type Entry = { info: BigIntStats; digest?: string; target?: string; header?: str
 
 export class WorkspaceDependencyToolchainError extends Error {
   constructor(readonly code: 'dependency_toolchain_invalid' | 'dependency_toolchain_changed' | 'dependency_toolchain_probe_failed',
-    readonly probeStage?: 'private_home' | 'configuration' | 'launcher' | 'runtime' | 'protocol') {
+    readonly probeStage?: 'private_home' | 'sandbox' | 'runtime' | 'protocol') {
     super({ dependency_toolchain_invalid: 'The configured dependency toolchain or its protected paths are invalid.',
       dependency_toolchain_changed: 'The configured dependency toolchain changed after it was selected.',
       dependency_toolchain_probe_failed: 'The dependency toolchain could not be verified in the private offline sandbox.' }[code]);
@@ -155,7 +154,7 @@ export async function probeWorkspaceDependencyToolchain(input: {
   expectedFingerprint?: string;
 }) {
   const selected = await inspectWorkspaceDependencyToolchain(input.configured, input.expectedFingerprint);
-  const { ecosystem, executable, runtime, installer } = selected.configured;
+  const { ecosystem, runtime, installer } = selected.configured;
   const mounts = await readWorkspaceDependencyMountPolicy().catch(invalid);
   const guard = await loadWorkspaceDependencyWriteGuard(input.configPath);
   const parent = await validateWorkspaceProject(input.temporaryRoot.directory, input.temporaryRoot);
@@ -171,18 +170,13 @@ export async function probeWorkspaceDependencyToolchain(input: {
   let stage: WorkspaceDependencyToolchainError['probeStage'] = 'private_home';
   try {
     await assertProtectedWorkspacePath(home, true);
+    stage = 'sandbox';
     const cwd = home.directory;
-    const env = { HOME: cwd, CODEX_HOME: cwd, CODEX_SQLITE_HOME: cwd, TMPDIR: cwd, TMP: cwd, TEMP: cwd, PATH: '/usr/bin:/bin',
-      LC_ALL: 'C', PIP_CONFIG_FILE: '/dev/null' };
-    stage = 'configuration';
-    await assertCompatibleCodexLayers(env, [cwd]);
-    stage = 'launcher';
-    const launcher = await resolveManagedGitLauncher(input.codexCommand, env, [home, runtime, installer, ...(guard?.protectedBindings ?? [])]);
-    const profileArgs = ['sandbox', ...dependencyGuardSandboxOverrides([cwd], false).flatMap((setting) => ['-c', setting]),
-      '-P', DEPENDENCY_GUARD_PROFILE, '-C', cwd, '--', executable];
+    const launcher = await prepareWorkspaceDependencySandbox({ codexCommand: input.codexCommand, configured: selected.configured,
+      staging: home, protectedBindings: guard?.protectedBindings });
     const run = async (args: string[]) => {
       stage = 'runtime';
-      await runBoundedProbe(launcher.command, [...profileArgs, ...args], cwd, launcher.env);
+      await runBoundedProbe(launcher.command, [...launcher.args, ...args], cwd, launcher.env);
       stage = 'protocol';
       await assertProtectedWorkspacePath(home, true);
       return readProbeResult(path.join(cwd, probeResultFile));
