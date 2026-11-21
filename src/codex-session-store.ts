@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { WorkspaceProjectBinding } from './domain/workspace.js';
 
 export interface CodexExecSessionRecord {
   key: string;
@@ -16,6 +17,8 @@ export interface CodexExecSessionRecord {
   boundaryUpdatedAt?: string;
   memoryVisibilityPolicy?: string;
   memoryContextSenderId?: string;
+  workspaceProject?: WorkspaceProjectBinding;
+  workspaceProjectSenderId?: string;
 }
 
 export interface CodexExecSessionStore {

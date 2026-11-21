@@ -227,6 +227,7 @@ export interface ContinuationPermissionEnvelope {
     root: string;
     mode: ContinuationFilesystemMode;
     requestedPaths: string[];
+    workspaceProject?: import('./workspace.js').WorkspaceProjectBinding;
   };
   hostTools: string[];
   network: 'none' | 'enabled';

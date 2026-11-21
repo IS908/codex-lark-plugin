@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.15.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.16.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -226,6 +226,36 @@ Git categories describe contents, not ownership or eligibility for deletion.
 Symlink targets and different filesystems are not scanned; incomplete or
 unavailable scans are reported and return a nonzero status. The inventory never
 deletes or moves anything.
+
+#### Select a workspace project
+
+Optionally create `~/.codex/channels/lark/runtime-config/workspace-projects.json`
+with the operator's project locations (adjust the paths for your installation):
+
+```json
+{
+  "version": 1,
+  "roots": [{ "name": "apps", "path": "/Users/you/workspace/apps" }],
+  "projects": [{ "root": "apps", "name": "demo", "path": "demo" }],
+  "default": "apps/demo"
+}
+```
+
+In an exec-mode message, put `/project apps/demo` or `/project path:apps/demo`
+on the first line (after `@bot` in a group), then put the request on the next line.
+An unqualified name must be unique across roots; `path:` accepts an absolute
+path or one relative to `LARK_CODEX_EXEC_CWD`. Invalid selections fail without
+falling back. A saved selection wins over the optional `default`; existing
+sessions and Cron jobs without a binding keep their previous behavior.
+
+Switching projects starts a new Codex session. New prompt Cron jobs and Async
+Tasks inherit the selection; an explicit project on an existing Cron upsert
+updates future runs only. Bindings pin the canonical directory and its filesystem
+identity: registry edits do not retarget saved sessions or runs, and a moved or
+replaced directory must be explicitly selected again for new work. Every bound
+directory must already be inside `LARK_CODEX_EXEC_CWD` and, for an Async Task,
+inside `LARK_CONTINUATION_WORKING_ROOT`. A registry entry does not grant access,
+change the sandbox, create a checkout, or move any files.
 
 ### 4. Start
 

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { appConfig } from './config.js';
+import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { audit } from './audit-log.js';
 import type { LarkMessage } from './lark-message.js';
 import type { ReplyRequest, ReplyRichPart, ReplySendResult } from './reply-sender.js';
@@ -104,6 +105,8 @@ export interface CodexExecActionDispatchRequest {
   parentSessionId?: string | null;
   model?: string | null;
   continuationPermitted?: boolean;
+  workspaceProject?: WorkspaceProjectBinding;
+  explicitWorkspaceProject?: boolean;
 }
 
 export interface CodexExecActionDispatcher {
@@ -132,12 +135,7 @@ export interface CreateCodexExecActionDispatcherOptions {
   }>;
 }
 
-interface CodexExecActionContext {
-  message: LarkMessage;
-  parentSessionId?: string | null;
-  model?: string | null;
-  continuationPermitted?: boolean;
-}
+type CodexExecActionContext = Omit<CodexExecActionDispatchRequest, 'actions'>;
 
 type CodexExecActionHandlerRegistry = ActionHandlerRegistry<
   CodexExecAction,
@@ -149,6 +147,7 @@ function currentCaller(
   identitySession: IdentitySession,
   message: LarkMessage,
   action: CodexExecAction['type'],
+  expectedCaller?: string,
 ): { caller: string } | { error: CodexExecActionExecutionResult } {
   const caller = identitySession.getCaller(message.chatId, message.threadId);
   if (!caller) {
@@ -160,6 +159,10 @@ function currentCaller(
         message: `No active identity session for chat ${message.chatId}.`,
       },
     };
+  }
+  if (expectedCaller !== undefined && caller !== expectedCaller) {
+    void audit(action, null, { chat_id: message.chatId, thread_id: message.threadId }, 'denied');
+    return { error: { ok: false, action, message: 'The active caller does not match the authenticated message sender.' } };
   }
   return { caller };
 }
@@ -288,10 +291,10 @@ async function executeSaveMemory(
 
 async function executeCreateJob(
   action: CreateJobAction,
-  message: LarkMessage,
+  { message, workspaceProject }: CodexExecActionContext,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'create_job');
+  const auth = currentCaller(deps.identitySession, message, 'create_job', workspaceProject ? message.senderId : undefined);
   if ('error' in auth) return auth.error;
   const { caller } = auth;
   const targetChatId = action.target_chat_id ?? message.chatId;
@@ -315,6 +318,7 @@ async function executeCreateJob(
     content: action.content,
     targetChatId,
     model: action.model,
+    workspaceProject,
     originChatId: message.chatId,
     caller,
     auditAction: 'create_job',
@@ -416,6 +420,7 @@ async function executeCreateContinuation(
       context.parentSessionId,
       context.model,
       sourceInputPlan.inputCount,
+      context.workspaceProject,
     );
     const resolvedInputs = await resolveContinuationSourceInputs(
       context.message,
@@ -430,6 +435,7 @@ async function executeCreateContinuation(
         context.parentSessionId,
         context.model,
         resolvedInputs.inputs,
+        context.workspaceProject,
       ));
     } finally {
       await resolvedInputs.cleanup();
@@ -929,10 +935,10 @@ async function executeDeleteJob(
 
 async function executeUpsertJob(
   action: UpsertJobAction,
-  message: LarkMessage,
+  { message, workspaceProject, explicitWorkspaceProject }: CodexExecActionContext,
   deps: CreateCodexExecActionDispatcherOptions,
 ): Promise<CodexExecActionExecutionResult> {
-  const auth = currentCaller(deps.identitySession, message, 'upsert_job');
+  const auth = currentCaller(deps.identitySession, message, 'upsert_job', workspaceProject ? message.senderId : undefined);
   const targetChatId = action.target_chat_id ?? message.chatId;
   const auditArgs = {
     name: action.name,
@@ -958,6 +964,8 @@ async function executeUpsertJob(
     targetChatId,
     model: action.model,
     status: action.status,
+    workspaceProject,
+    rebindWorkspaceProject: explicitWorkspaceProject,
     originChatId: message.chatId,
     caller,
     auditArgs,
@@ -1596,19 +1604,9 @@ export function createCodexExecActionDispatcher(
 ): CodexExecActionDispatcher {
   const registry = createCodexExecActionHandlerRegistry(deps);
   return {
-    async execute(request) {
+    async execute({ actions, ...context }) {
       const results: CodexExecActionExecutionResult[] = [];
-      const context: CodexExecActionContext = {
-        message: request.message,
-        ...(request.parentSessionId !== undefined
-          ? { parentSessionId: request.parentSessionId }
-          : {}),
-        ...(request.model !== undefined ? { model: request.model } : {}),
-        ...(request.continuationPermitted !== undefined
-          ? { continuationPermitted: request.continuationPermitted }
-          : {}),
-      };
-      for (const action of request.actions) {
+      for (const action of actions) {
         results.push(await dispatchRegisteredAction(registry, action, context));
       }
       return results;
@@ -1621,14 +1619,14 @@ function createCodexExecActionHandlerRegistry(
 ): CodexExecActionHandlerRegistry {
   return {
     save_memory: (action, context) => executeSaveMemory(action, context.message, deps),
-    create_job: (action, context) => executeCreateJob(action, context.message, deps),
+    create_job: (action, context) => executeCreateJob(action, context, deps),
     list_jobs: (action, context) => executeListJobs(action, context.message, deps),
     get_job: (action, context) => executeGetJob(action, context.message, deps),
     run_job: (action, context) => executeRunJob(action, context.message, deps),
     update_job: (action, context) => executeUpdateJob(action, context.message, deps),
     disable_job: (action, context) => executeDisableJob(action, context.message, deps),
     delete_job: (action, context) => executeDeleteJob(action, context.message, deps),
-    upsert_job: (action, context) => executeUpsertJob(action, context.message, deps),
+    upsert_job: (action, context) => executeUpsertJob(action, context, deps),
     run_local_cli_tool: (action, context) => executeRunLocalCliTool(action, context.message, deps),
     manage_access_control: (action, context) => executeManageAccessControl(action, context.message, deps),
     get_run_trace: (action, context) => executeGetRunTrace(action, context.message, deps),

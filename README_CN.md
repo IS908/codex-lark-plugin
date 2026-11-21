@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.15.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.16.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -200,6 +200,31 @@ npm run --silent doctor -- --workspace-storage --json
 列出占用最大的 20 个顶层条目。分配大小来自文件系统块计数，逻辑大小来自文件和链接长度；
 嵌套根目录的结果不可相加。依赖和 Git 分类仅描述内容，不表明归属或可删性。不会扫描符号链接
 目标或不同文件系统；扫描不完整或根目录不可用时会报告并返回非零退出码。不会删除或迁移任何文件。
+
+#### 选择工作项目
+
+管理员可选建 `~/.codex/channels/lark/runtime-config/workspace-projects.json`，
+将示例路径替换为实际目录：
+
+```json
+{
+  "version": 1,
+  "roots": [{ "name": "apps", "path": "/Users/you/workspace/apps" }],
+  "projects": [{ "root": "apps", "name": "demo", "path": "demo" }],
+  "default": "apps/demo"
+}
+```
+
+在 exec 模式下，消息首行写 `/project apps/demo` 或 `/project path:apps/demo`（群里可先
+`@机器人`），下一行写请求。仅写项目名时，必须在所有根中唯一；`path:` 支持绝对路径或相对
+`LARK_CODEX_EXEC_CWD` 的路径。显式选择无效时不会回退。已保存的选择优先于可选的 `default`；
+未绑定项目的旧会话和旧 Cron 保持原行为。
+
+切换项目会开启新的 Codex 会话。新建的提示词型 Cron 和 Async Task 继承选择；显式选择项目并
+更新（upsert）已有 Cron 只影响之后入队的运行。绑定记录真实路径和文件系统身份，改注册表不会
+让已保存的会话或运行换目录，目录被移动或替换时需为新工作重新显式选择。绑定目录必须已在
+`LARK_CODEX_EXEC_CWD` 授权范围内，Async Task 还必须在 `LARK_CONTINUATION_WORKING_ROOT` 内。
+注册表不会扩大权限、改变沙箱、创建 checkout 或移动文件。
 
 ### 第 4 步：启动
 

@@ -21,6 +21,11 @@ export function buildSdkChannelOptions(): LarkChannelOptions {
     policy: {
       requireMention: false,
     },
+    // Exec commands must stay paired with their own event and authenticated sender.
+    safety: {
+      chatQueue: { enabled: true, mergeWhileBusy: false },
+      batch: { text: { maxMessages: 1 } },
+    },
     logger: makeSdkChannelLogger('lark-channel-sdk'),
     loggerLevel: LoggerLevel.info,
     includeRawEvent: true,

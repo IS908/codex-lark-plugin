@@ -377,6 +377,9 @@ function cronRunCreateRequest(
       ...(job.meta.content !== undefined ? { content: job.meta.content } : {}),
       ...(job.meta.msg_type !== undefined ? { messageType: job.meta.msg_type } : {}),
       ...(job.meta.model !== undefined ? { model: job.meta.model } : {}),
+      ...(job.meta.type === 'prompt' && job.meta.workspace_project !== undefined
+        ? { workspaceProject: job.meta.workspace_project }
+        : {}),
       targetChatId: job.meta.target_chat_id,
       originChatId: job.meta.origin_chat_id,
       createdBy: job.meta.created_by,

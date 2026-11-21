@@ -1,4 +1,6 @@
 import { audit } from './audit-log.js';
+import { appConfig } from './config.js';
+import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { assertSafeChatId } from './prompts.js';
 import {
   computeNextRun,
@@ -17,6 +19,7 @@ import {
   type JobFile,
   type JobMeta,
 } from './job-store.js';
+import { resolveWorkspaceProject, WorkspaceProjectError } from './workspace-projects.js';
 
 export type JobLifecycleAction =
   | 'create_job'
@@ -38,6 +41,7 @@ export type JobServiceErrorCode =
   | 'invalid_target_chat_id'
   | 'invalid_timezone'
   | 'invalid_schedule'
+  | 'invalid_workspace'
   | 'job_exists'
   | 'job_not_found'
   | 'ambiguous_reference'
@@ -80,6 +84,7 @@ type NewJobFileInput = JobDefinitionInput & {
   caller: string;
   originChatId: string;
   status?: JobMeta['status'];
+  workspaceProject?: WorkspaceProjectBinding;
 };
 
 export type CreateJobInput = NewJobFileInput & {
@@ -118,10 +123,8 @@ export type DeleteJobInput = {
   auditArgs?: AuditArgs;
 };
 
-export type UpsertJobInput = JobDefinitionInput & {
-  caller: string;
-  originChatId: string;
-  status?: JobMeta['status'];
+export type UpsertJobInput = NewJobFileInput & {
+  rebindWorkspaceProject?: boolean;
   auditArgs?: AuditArgs;
 };
 
@@ -183,6 +186,7 @@ function validateJobDefinition(input: JobDefinitionInput): JobServiceResult<Norm
 function buildJobFile(
   input: NewJobFileInput,
   normalized: NormalizedJobDefinition,
+  workspaceProject?: WorkspaceProjectBinding,
 ): JobFile {
   return {
     meta: {
@@ -196,6 +200,7 @@ function buildJobFile(
       ...(input.type === 'prompt' ? { prompt: input.prompt } : { content: input.content, msg_type: 'text' }),
       target_chat_id: input.targetChatId,
       ...(input.model ? { model: input.model } : {}),
+      ...(workspaceProject ? { workspace_project: workspaceProject } : {}),
       origin_chat_id: input.originChatId,
       status: input.status ?? 'active',
       created_by: input.caller,
@@ -203,6 +208,23 @@ function buildJobFile(
     },
     runtime: createInitialJobRuntime(normalized.nextRunAt),
   };
+}
+
+async function resolveNewJobWorkspace(input: NewJobFileInput): Promise<JobServiceResult<{
+  workspaceProject?: WorkspaceProjectBinding;
+}>> {
+  if (input.type !== 'prompt') return { ok: true };
+  try {
+    const workspaceProject = await resolveWorkspaceProject({
+      authorizedRoot: appConfig.codexExecCwd,
+      registryPath: appConfig.workspaceProjectsConfigPath,
+      persisted: input.workspaceProject,
+    });
+    return { ok: true, workspaceProject };
+  } catch (error) {
+    if (!(error instanceof WorkspaceProjectError)) throw error;
+    return serviceError('invalid_workspace', error.message);
+  }
 }
 
 export async function createJob(input: CreateJobInput): Promise<JobServiceResult<{
@@ -218,7 +240,9 @@ export async function createJob(input: CreateJobInput): Promise<JobServiceResult
     return serviceError('job_exists', `Job "${normalized.id}" already exists.`, { jobId: normalized.id });
   }
 
-  const job = buildJobFile(input, normalized);
+  const workspace = await resolveNewJobWorkspace(input);
+  if (!workspace.ok) return workspace;
+  const job = buildJobFile(input, normalized, workspace.workspaceProject);
   await writeJob(job);
   if (input.auditAction) {
     void audit(input.auditAction, input.caller, input.auditArgs ?? {}, 'ok');
@@ -451,6 +475,11 @@ export async function upsertJob(input: UpsertJobInput): Promise<JobServiceResult
     const ownerError = ownerMismatchError('upsert_job', existing.job, input.caller, input.auditArgs);
     if (ownerError) return ownerError;
 
+    const workspace = input.rebindWorkspaceProject && input.workspaceProject
+      ? await resolveNewJobWorkspace(input)
+      : undefined;
+    if (workspace && !workspace.ok) return workspace;
+
     let ownerMismatch: string | null = null;
     const updated = await mutateJob(existing.job.meta.id, (latest) => {
       if (latest.meta.created_by !== input.caller) {
@@ -467,12 +496,14 @@ export async function upsertJob(input: UpsertJobInput): Promise<JobServiceResult
       latest.meta.status = input.status ?? 'active';
       if (input.type === 'prompt') {
         latest.meta.prompt = input.prompt;
+        if (workspace?.workspaceProject) latest.meta.workspace_project = workspace.workspaceProject;
         delete latest.meta.content;
         delete latest.meta.msg_type;
       } else {
         latest.meta.content = input.content;
         latest.meta.msg_type = 'text';
         delete latest.meta.prompt;
+        delete latest.meta.workspace_project;
       }
       latest.runtime.next_run_at = computeNextRun(normalized.cron, normalized.timezone);
       latest.runtime.last_error = null;
@@ -505,7 +536,9 @@ export async function upsertJob(input: UpsertJobInput): Promise<JobServiceResult
 
   if (existing.code !== 'job_not_found') return existing;
 
-  const job = buildJobFile({ ...input, status: input.status ?? 'active' }, normalized);
+  const workspace = await resolveNewJobWorkspace(input);
+  if (!workspace.ok) return workspace;
+  const job = buildJobFile(input, normalized, workspace.workspaceProject);
   await writeJob(job);
   void audit('upsert_job', input.caller, input.auditArgs ?? {}, 'ok');
   return {

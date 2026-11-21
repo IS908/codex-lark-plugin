@@ -140,6 +140,7 @@ export const appConfig = {
   continuationDbPath: path.join(continuationRuntimeDir, 'jobs.sqlite'),
   continuationArtifactsDir: path.join(continuationRuntimeDir, 'artifacts'),
   runtimeConfigDir,
+  workspaceProjectsConfigPath: path.join(runtimeConfigDir, 'workspace-projects.json'),
   accessControlConfigPath: path.join(runtimeConfigDir, 'access-control.json'),
   localCliToolsConfigPath: path.join(runtimeConfigDir, 'local-cli-tools.json'),
   privacyRulesPath: path.join(runtimeConfigDir, 'privacy-rules.md'),

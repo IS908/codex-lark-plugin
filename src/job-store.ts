@@ -388,6 +388,7 @@ function jobDefinitionSnapshot(meta: JobMeta): string {
     targetChatId: meta.target_chat_id,
     originChatId: meta.origin_chat_id,
     model: meta.model ?? null,
+    workspaceProject: meta.workspace_project ?? null,
     status: meta.status,
   });
 }

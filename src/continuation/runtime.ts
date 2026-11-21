@@ -36,6 +36,7 @@ export interface ContinuationRuntimeOptions {
   databasePath: string;
   artifactsDir: string;
   allowedWorkingRoot: string;
+  foregroundWorkingRoot?: string;
   maxAttempts: number;
   maxRetries: number;
   maxTotalMinutes: number;
@@ -141,6 +142,7 @@ export async function createContinuationRuntime(
     const service = new ContinuationService({
       repository,
       allowedWorkingRoot: options.allowedWorkingRoot,
+      foregroundWorkingRoot: options.foregroundWorkingRoot,
       filesystemMode: boundedContinuationSandbox(options.configuredSandbox),
       maxAttempts: options.maxAttempts,
       maxRetries: options.maxRetries,
@@ -161,6 +163,7 @@ export async function createContinuationRuntime(
       inputStore,
       configuredSandbox: options.configuredSandbox,
       currentWorkingRoot: options.allowedWorkingRoot,
+      foregroundWorkingRoot: options.foregroundWorkingRoot,
       canUseTrustedPersonalWorkspace: options.canUseTrustedPersonalWorkspace,
       ...(toolInvoker ? { toolInvoker } : {}),
       ...(options.command ? { command: options.command } : {}),

@@ -1,5 +1,6 @@
 import type { LarkMessage } from './lark-message.js';
 import { isCodexExecTimeoutError } from './codex-exec.js';
+import { WorkspaceProjectError } from './workspace-projects.js';
 
 export const CODEX_EXEC_TIMEOUT_REPLY =
   'Task timed out and this turn was stopped. Please narrow the task scope or try again later.';
@@ -22,6 +23,7 @@ export function shouldSendFeishuReplyForMessage(
 export const shouldSendCodexExecFailureReply = shouldSendFeishuReplyForMessage;
 
 export function formatCodexExecFailureReply(err: unknown): string {
+  if (err instanceof WorkspaceProjectError) return err.message;
   if (isCodexExecTimeoutError(err)) return CODEX_EXEC_TIMEOUT_REPLY;
 
   const errText = err instanceof Error ? err.message : String(err);

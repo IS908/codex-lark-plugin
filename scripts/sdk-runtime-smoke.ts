@@ -155,4 +155,30 @@ await handlers.get('reaction')!({
 await new Promise((resolve) => setTimeout(resolve, 10));
 assert.equal(handled.length, 3, 'bot self-reaction echoes should remain filtered');
 
+const entered = Promise.withResolvers<void>();
+const releaseFirst = Promise.withResolvers<void>();
+const secondHandled = Promise.withResolvers<void>();
+channel.setMessageHandler(async (message) => {
+  if (message.messageId === 'om_workspace_first') {
+    entered.resolve();
+    await releaseFirst.promise;
+  } else {
+    secondHandled.resolve();
+  }
+});
+const receive = (messageId: string, senderId: string, content: string) => handlers.get('message')!({
+  messageId, chatId: 'oc_workspace_queue', chatType: 'group', senderId, content, rawContentType: 'text',
+  mentionedBot: true, mentionAll: false, mentions: [], resources: [], createTime: Date.now(),
+});
+await receive('om_workspace_first', 'ou_first', '/project path:app\nCreate a Cron job.');
+await entered.promise;
+try {
+  await receive('om_workspace_second', 'ou_second', 'Next request.');
+  assert.equal(identitySession.getCaller('oc_workspace_queue'), 'ou_first', 'a queued message must not replace the live caller');
+} finally {
+  releaseFirst.resolve();
+}
+await secondHandled.promise;
+assert.equal(identitySession.getCaller('oc_workspace_queue'), 'ou_second');
+
 console.log('sdk-runtime smoke: PASS');

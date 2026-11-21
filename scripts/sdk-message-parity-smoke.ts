@@ -43,6 +43,33 @@ function accessControl(options: {
 
 {
   const identitySession = new IdentitySession(() => null);
+  const message = {
+    messageId: 'om_latest', chatId: 'oc_group', chatType: 'group' as const, senderId: 'ou_last',
+    content: '/project path:earlier\n\nCheck status.', rawContentType: 'text',
+    mentionedBot: true, mentionAll: false, mentions: [], resources: [], createTime: 1,
+  };
+  const deps = { identitySession, accessControl: accessControl(), handleMessage: async () => {} };
+  const handle = async (sender: string, messageId: string) => processSdkMessage({ ...message, raw: {
+    message: {
+      message_id: messageId, chat_id: message.chatId, message_type: 'text',
+      content: JSON.stringify({ text: 'Check status.' }),
+    },
+    sender: { sender_id: { open_id: sender } },
+  } }, deps);
+  const merged = await handle(message.senderId, message.messageId);
+  assert.equal(merged.status, 'processed');
+  if (merged.status === 'processed') {
+    assert.equal(merged.message.workspaceDirectiveText, 'Check status.');
+    assert.match(merged.message.text, /path:earlier/);
+  }
+  const wrongSender = await handle('ou_earlier', message.messageId);
+  assert.equal(wrongSender.status === 'processed' && wrongSender.message.workspaceDirectiveText, undefined);
+  const wrongId = await handle(message.senderId, 'om_earlier');
+  assert.equal(wrongId.status === 'processed' && wrongId.message.workspaceDirectiveText, undefined);
+}
+
+{
+  const identitySession = new IdentitySession(() => null);
   const handled: any[] = [];
   const result = await processSdkMessage(
     {
