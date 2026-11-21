@@ -134,13 +134,17 @@ try {
     await fs.mkdir(uncommittedOutput, { recursive: true, mode: 0o700 });
     await fs.writeFile(path.join(uncommittedOutput, 'ready.py'), '# present but not committed');
     const lifecycle = await store.ensure(preparedRun);
-    const makeOutput = async (nonce: string) => {
-      const output = path.join(lifecycle.scratch.directory, `lark-dependency-install-${nonce}`, 'python-deps');
-      await fs.mkdir(output, { recursive: true, mode: 0o700 });
-      const binding = await pinWorkspacePath(lifecycle.scratch.directory, output);
-      return { output: binding, measurement: await dependencyInstall.measureWorkspaceDependencyOutput(binding, 'pip') };
-    };
-    const readyOutput = await dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, preparedRun.owner, 'pip', makeOutput);
+    await assert.rejects(dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, preparedRun.owner, 'pip'),
+      { code: 'dependency_install_selection_mismatch' });
+    assert.equal(store.getDependencyInstall(preparedRun.owner, 'pip'), null);
+    store.reserveDependencyInstall(preparedRun.owner, 'pip', installNonce);
+    const issuedPath = path.join(lifecycle.scratch.directory, `lark-dependency-install-${installNonce}`, 'python-deps');
+    await fs.mkdir(issuedPath, { recursive: true, mode: 0o700 });
+    const issued = await pinWorkspacePath(lifecycle.scratch.directory, issuedPath);
+    const readyOutput = { output: issued, measurement: await dependencyInstall.measureWorkspaceDependencyOutput(issued, 'pip') };
+    await dependencyInstall.publishWorkspaceDependencyOutput({ scratch: lifecycle.scratch, ...lifecycle.gitCheckout!, ecosystem: 'pip',
+      nonce: installNonce, receipt: readyOutput });
+    store.completeDependencyInstall(preparedRun.owner, 'pip', installNonce, readyOutput);
     assert.deepEqual(store.getDependencyInstall(preparedRun.owner, 'pip')?.receipt, readyOutput);
     const output = path.join(selectedRun.scratch.directory, `lark-dependency-install-${installNonce}`, 'python-deps');
     await fs.mkdir(output, { recursive: true, mode: 0o700 });
@@ -160,16 +164,15 @@ try {
     assert.deepEqual(store.getDependencyInstall(firstRun.owner, 'pip'), { nonce: installNonce, receipt: installed });
     assert.deepEqual(store.getDependencyInstall(interrupted.owner, 'pip'), { nonce: installNonce });
     assert.throws(() => store.reserveDependencyInstall(interrupted.owner, 'pip', 'c'.repeat(24)), { code: 'dependency_install_incomplete' });
-    const noReinstall = async () => assert.fail('restart must never reinstall');
-    await assert.rejects(dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, interrupted.owner, 'pip', noReinstall),
+    await assert.rejects(dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, interrupted.owner, 'pip'),
       { code: 'dependency_install_incomplete' });
     const uncommittedOutput = path.join(store.get(interrupted.owner)!.allocation.scratch.directory,
       `lark-dependency-install-${installNonce}`, 'python-deps', 'ready.py');
     assert.equal(await fs.readFile(uncommittedOutput, 'utf8'), '# present but not committed');
-    const resumedOutput = await dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, preparedRun.owner, 'pip', noReinstall);
+    const resumedOutput = await dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, preparedRun.owner, 'pip');
     assert.deepEqual(resumedOutput, store.getDependencyInstall(preparedRun.owner, 'pip')?.receipt);
     await fs.writeFile(path.join(resumedOutput.output.directory, 'new.py'), '# changed');
-    await assert.rejects(dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, preparedRun.owner, 'pip', noReinstall),
+    await assert.rejects(dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, preparedRun.owner, 'pip'),
       { code: 'dependency_installed_output_invalid' });
     assert.deepEqual(store.get(optOut.owner)?.allocation.dependencySelections, []);
     assert.equal(store.get(legacy.owner)?.allocation.dependencySelections, undefined);
@@ -245,6 +248,28 @@ try {
   assert.equal(both[0].stagedLock, npmPrepared.lock);
   assert.equal(both[1].npmManifest, undefined);
   const shared = both.map(({ selection }) => selection);
+  const npmOwner = { kind: 'cron_prompt', runId: 'dependency-npm-linked-before-commit' } as const;
+  const npmLedger = new DatabaseSync(ledgerPath);
+  let npmPublication;
+  try {
+    const store = new SqliteManagedWorkspaceStore(npmLedger);
+    const run = await store.ensure({ ...firstRun, owner: npmOwner, dependencySelections: shared });
+    store.reserveDependencyInstall(npmOwner, 'npm', installNonce);
+    const outputPath = path.join(run.scratch.directory, `lark-dependency-install-${installNonce}`, 'node_modules');
+    await fs.mkdir(outputPath, { recursive: true, mode: 0o700 });
+    const output = await pinWorkspacePath(run.scratch.directory, outputPath);
+    npmPublication = { scratch: run.scratch, ...run.gitCheckout!, ecosystem: 'npm' as const, nonce: installNonce,
+      receipt: { output, measurement: await dependencyInstall.measureWorkspaceDependencyOutput(output, 'npm') } };
+    await dependencyInstall.publishWorkspaceDependencyOutput(npmPublication);
+  } finally { npmLedger.close(); }
+  const afterNpmCrash = new DatabaseSync(ledgerPath);
+  try {
+    const store = new SqliteManagedWorkspaceStore(afterNpmCrash);
+    assert.deepEqual(store.getDependencyInstall(npmOwner, 'npm'), { nonce: installNonce });
+    await assert.rejects(dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, npmOwner, 'npm'),
+      { code: 'dependency_install_incomplete' });
+    await dependencyInstall.validatePublishedWorkspaceDependencyOutput(npmPublication);
+  } finally { afterNpmCrash.close(); }
   assert.ok(sameWorkspaceDependencySelections(shared, [...shared].reverse()));
   assert.ok(!workspaceDependencySelectionsSchema.safeParse([shared[0], { ...shared[1], cache: shared[0].cache }]).success);
   assert.ok(!workspaceDependencySelectionsSchema.safeParse([{ ...shared[0], cache: { ...shared[0].cache,
@@ -269,6 +294,19 @@ try {
   assert.equal(measured[0].selection.identity.key, key, 'the same ABI can reuse the cache across protected installations');
   assert.equal(measured[0].selection.toolchainFingerprint, fingerprint);
   const toolchainSelections = measured.map(({ selection }) => selection);
+  const driftLedger = new DatabaseSync(ledgerPath);
+  try {
+    const owner = { kind: 'async_task', runId: 'dependency-wrong-lock' } as const;
+    const store = new SqliteManagedWorkspaceStore(driftLedger);
+    const run = await store.ensure({ ...firstRun, owner, dependencySelections: toolchainSelections });
+    const before = await fs.readdir(run.scratch.directory);
+    await assert.rejects(dependencyInstall.ensureManagedWorkspaceDependencyOutput(store, owner, 'pip', {
+      input: { ...input, lock: Buffer.concat([input.lock, Buffer.from('\n')]) }, configured: declared, artifactManifest: manifest,
+      authorizedRoots, configPath, codexCommand: '/must-not-launch',
+    }), { code: 'dependency_install_selection_mismatch' });
+    assert.equal(store.getDependencyInstall(owner, 'pip'), null, 'wrong raw lock never reserves a run install');
+    assert.deepEqual(await fs.readdir(run.scratch.directory), before);
+  } finally { driftLedger.close(); }
   await assertWorkspaceDependencySelectionAuthorized(configPath, request.project, request.git, toolchainSelections);
   await assert.rejects(assertWorkspaceDependencyWriteIsolation(configPath, [runtimePath]), { code: 'dependency_write_overlap' });
   await assert.rejects(assertWorkspaceDependencyWriteIsolation(configPath, [installerPath]), { code: 'dependency_write_overlap' });

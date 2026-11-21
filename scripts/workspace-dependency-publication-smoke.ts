@@ -13,7 +13,10 @@ try {
   const checkoutPath = path.join(fixture, 'git-checkout');
   const existing = path.join(checkoutPath, 'node_modules');
   await fs.mkdir(existing, { recursive: true, mode: 0o700 });
+  const gitPath = path.join(checkoutPath, '.git');
+  await fs.mkdir(gitPath, { mode: 0o700 });
   const checkout = await pinWorkspacePath(fixture, checkoutPath);
+  const gitDirectory = await pinWorkspacePath(fixture, gitPath);
   const staging = path.join(fixture, `lark-dependency-install-${nonce}`);
   const proposed = path.join(staging, 'node_modules');
   const leaf = path.join(proposed, 'lark-publish', 'index.js');
@@ -21,7 +24,7 @@ try {
   await fs.writeFile(leaf, 'module.exports = 42;');
   const output = await pinWorkspacePath(fixture, proposed);
   const receipt = { output, measurement: await installer.measureWorkspaceDependencyOutput(output, 'npm') };
-  const request = { scratch, checkout, ecosystem: 'npm', nonce, receipt } as const;
+  const request = { scratch, checkout, gitDirectory, ecosystem: 'npm', nonce, receipt } as const;
   const unowned = await fs.stat(existing, { bigint: true });
   await assert.rejects(installer.publishWorkspaceDependencyOutput(request), { code: 'dependency_install_output_conflict' });
   assert.equal((await fs.stat(existing, { bigint: true })).ino, unowned.ino, 'even an empty unowned directory is not replaced');
@@ -30,6 +33,11 @@ try {
   assert.equal(await fs.realpath(existing), output.directory);
   assert.equal(execFileSync(process.execPath, ['-p', "require('lark-publish')"], { cwd: checkoutPath, env: {}, encoding: 'utf8' }).trim(), '42');
   await installer.validatePublishedWorkspaceDependencyOutput(request);
+  await fs.rename(gitPath, `${gitPath}-recorded`);
+  await fs.mkdir(gitPath, { mode: 0o700 });
+  await assert.rejects(installer.validatePublishedWorkspaceDependencyOutput(request), { code: 'dependency_installed_output_invalid' });
+  await fs.rmdir(gitPath);
+  await fs.rename(`${gitPath}-recorded`, gitPath);
   await assert.rejects(installer.publishWorkspaceDependencyOutput(request), { code: 'dependency_install_output_conflict' });
   await fs.writeFile(leaf, 'module.exports = 44;');
   await assert.rejects(installer.validatePublishedWorkspaceDependencyOutput(request), { code: 'dependency_installed_output_invalid' });
@@ -47,7 +55,7 @@ try {
   const pipDir = path.join(fixture, `lark-dependency-install-${pipNonce}`, 'python-deps');
   await fs.mkdir(pipDir, { recursive: true, mode: 0o700 });
   const pipOutput = await pinWorkspacePath(fixture, pipDir);
-  const pip = { scratch, checkout, ecosystem: 'pip', nonce: pipNonce, receipt: {
+  const pip = { scratch, checkout, gitDirectory, ecosystem: 'pip', nonce: pipNonce, receipt: {
     output: pipOutput, measurement: await installer.measureWorkspaceDependencyOutput(pipOutput, 'pip'),
   } } as const;
   await installer.publishWorkspaceDependencyOutput(pip);

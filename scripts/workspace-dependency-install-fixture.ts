@@ -94,9 +94,11 @@ export async function exerciseWorkspaceDependencyInstall(fixture: string, common
       await fs.mkdir(checkoutPath, { mode: 0o700 });
       madeCheckout = true;
       const checkout = await pinWorkspacePath(common.temporaryRoot.directory, checkoutPath);
+      await fs.mkdir(path.join(checkoutPath, '.git'), { mode: 0o700 });
+      const gitDirectory = await pinWorkspacePath(common.temporaryRoot.directory, path.join(checkoutPath, '.git'));
       const { output, measurement } = b;
       const nonce = path.basename(b.staging.directory).slice('lark-dependency-install-'.length);
-      const publication = { scratch: common.temporaryRoot, checkout, ecosystem: input.ecosystem, nonce, receipt: { output, measurement } };
+      const publication = { scratch: common.temporaryRoot, checkout, gitDirectory, ecosystem: input.ecosystem, nonce, receipt: { output, measurement } };
       await publishWorkspaceDependencyOutput(publication);
       const args = input.ecosystem === 'npm' ? ['-p', "require('lark-fixture')"]
         : ['-ISB', '-c', 'import sys; sys.path.insert(0,sys.argv[1]); import lark_fixture; print(lark_fixture.VALUE)', output.directory];

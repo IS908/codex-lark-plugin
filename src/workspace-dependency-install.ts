@@ -16,7 +16,7 @@ import { MANAGED_GIT_CHECKOUT_LEAF, mkdirTemporaryInsidePinnedRoot } from './man
 import type { ManagedWorkspaceStore } from './ports/managed-workspace.js';
 import type { WorkspaceDependencyExpansionLimits } from './workspace-dependency-archive.js';
 import { MAX_WORKSPACE_DEPENDENCY_SNAPSHOT_BYTES, verifyWorkspaceDependencyCache, WorkspaceDependencyCacheError } from './workspace-dependency-cache.js';
-import type { WorkspaceDependencyInput } from './workspace-dependency-input.js';
+import { describeWorkspaceDependencies, type WorkspaceDependencyInput } from './workspace-dependency-input.js';
 import { readWorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
 import { runWorkspaceDependencyProcess, WorkspaceDependencyProcessError } from './workspace-dependency-process.js';
 import { loadWorkspaceDependencyWriteGuard } from './workspace-dependency-registry.js';
@@ -52,17 +52,20 @@ export class WorkspaceDependencyInstallError extends Error {
   }
 }
 
-/** Produces an owned private candidate only; publication and restart validation are separate. */
-export async function installWorkspaceDependencyInStaging(request: {
+interface WorkspaceDependencyInstallMaterial {
   codexCommand: string;
-  temporaryRoot: WorkspaceProjectBinding;
   authorizedRoots: readonly [string, ...string[]];
   configPath?: string;
   input: WorkspaceDependencyInput;
   artifactManifest: unknown;
-  selection: WorkspaceDependencySelection;
   configured: WorkspaceDependencyToolchainConfig;
   expansionLimits?: WorkspaceDependencyExpansionLimits;
+}
+
+/** Produces an owned private candidate only; publication and restart validation are separate. */
+export async function installWorkspaceDependencyInStaging(request: WorkspaceDependencyInstallMaterial & {
+  temporaryRoot: WorkspaceProjectBinding;
+  selection: WorkspaceDependencySelection;
   reservedNonce?: string;
 }) {
   const selected = workspaceDependencySelectionSchema.safeParse(request.selection);
@@ -189,28 +192,36 @@ export async function installWorkspaceDependencyInStaging(request: {
 interface Publication {
   scratch: WorkspaceProjectBinding;
   checkout: WorkspaceProjectBinding;
+  gitDirectory: WorkspaceProjectBinding;
   ecosystem: WorkspaceDependencyEcosystem;
   nonce: string;
   receipt: WorkspaceDependencyInstallReceipt;
 }
 
 export async function ensureManagedWorkspaceDependencyOutput(store: ManagedWorkspaceStore, owner: ManagedRunOwner,
-  ecosystem: WorkspaceDependencyEcosystem, install: (nonce: string) => Promise<WorkspaceDependencyInstallReceipt>): Promise<WorkspaceDependencyInstallReceipt> {
+  ecosystem: WorkspaceDependencyEcosystem, material?: WorkspaceDependencyInstallMaterial): Promise<WorkspaceDependencyInstallReceipt> {
   const allocation = store.get(owner)?.allocation;
-  if (!allocation?.gitCheckout || !allocation.dependencySelections?.some(({ identity }) => identity.ecosystem === ecosystem)) {
+  const selection = allocation?.dependencySelections?.find(({ identity }) => identity.ecosystem === ecosystem);
+  if (!allocation?.gitCheckout || !selection) {
     throw new ManagedWorkspaceStorageError('invalid_binding');
   }
-  const locations = { scratch: allocation.scratch, checkout: allocation.gitCheckout.checkout, ecosystem };
+  const locations = { scratch: allocation.scratch, ...allocation.gitCheckout, ecosystem };
   const recorded = store.getDependencyInstall(owner, ecosystem);
   if (recorded) {
     if (!recorded.receipt) throw new ManagedWorkspaceStorageError('dependency_install_incomplete');
     await validatePublishedWorkspaceDependencyOutput({ ...locations, nonce: recorded.nonce, receipt: recorded.receipt });
     return recorded.receipt;
   }
+  if (!material || material.input.ecosystem !== ecosystem) fail('dependency_install_selection_mismatch');
+  const configured = workspaceDependencyToolchainConfigSchema.safeParse(material.configured);
+  if (!configured.success || !selection.toolchainFingerprint
+    || workspaceDependencyToolchainBindingDigest(configured.data) !== selection.toolchainBindingDigest
+    || describeWorkspaceDependencies(material.input).key !== selection.identity.key) fail('dependency_install_selection_mismatch');
+  await validatePublicationCheckout(locations);
   const nonce = randomBytes(12).toString('hex');
   store.reserveDependencyInstall(owner, ecosystem, nonce);
   // A failed or interrupted publication must never adopt an uncommitted filesystem result on replay.
-  const { output, measurement } = await install(nonce);
+  const { output, measurement } = await installWorkspaceDependencyInStaging({ ...material, selection, temporaryRoot: allocation.scratch, reservedNonce: nonce });
   const receipt = { output, measurement };
   await publishWorkspaceDependencyOutput({ ...locations, nonce, receipt });
   store.completeDependencyInstall(owner, ecosystem, nonce, receipt);
@@ -246,25 +257,36 @@ export async function validatePublishedWorkspaceDependencyOutput(request: Public
   if (request.ecosystem === 'npm') await validateNpmAttachment(request);
 }
 
-async function validateReceiptTree({ scratch, checkout, ecosystem, receipt, nonce }: Publication): Promise<void> {
+async function validateReceiptTree(request: Publication): Promise<void> {
+  const { scratch, ecosystem, receipt, nonce } = request;
   try {
     workspaceDependencyInstallReceiptSchema.parse(receipt);
-    if (checkout.directory !== path.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF)
-      || checkout.device !== scratch.device || receipt.output.device !== scratch.device
+    if (receipt.output.device !== scratch.device
       || receipt.output.directory !== path.join(scratch.directory, workspaceDependencyInstallLeaf(nonce), workspaceDependencyOutputName(ecosystem))) {
       fail('dependency_installed_output_invalid');
     }
-    await assertProtectedWorkspacePath(scratch, true);
-    await assertProtectedWorkspacePath(checkout, true);
-    if (ecosystem === 'npm' && !(await readWorkspaceDependencyMountPolicy()).supports(checkout.directory)) fail('dependency_installed_output_invalid');
     const actual = await measureWorkspaceDependencyOutput(receipt.output, ecosystem);
     if (actual.digest !== receipt.measurement.digest || actual.entries !== receipt.measurement.entries || actual.bytes !== receipt.measurement.bytes) {
       fail('dependency_installed_output_invalid');
     }
+    await validatePublicationCheckout(request);
   } catch { return fail('dependency_installed_output_invalid'); }
 }
 
-async function validateNpmAttachment({ checkout, receipt }: Publication): Promise<void> {
+async function validatePublicationCheckout({ scratch, checkout, gitDirectory }: Pick<Publication, 'scratch' | 'checkout' | 'gitDirectory'>): Promise<void> {
+  try {
+    if (checkout.directory !== path.join(scratch.directory, MANAGED_GIT_CHECKOUT_LEAF) || checkout.device !== scratch.device
+      || gitDirectory.directory !== path.join(checkout.directory, '.git') || gitDirectory.device !== checkout.device) fail('dependency_installed_output_invalid');
+    await assertProtectedWorkspacePath(scratch, true);
+    await assertProtectedWorkspacePath(checkout, true);
+    await assertProtectedWorkspacePath(gitDirectory, true);
+    const mounts = await readWorkspaceDependencyMountPolicy();
+    if (!mounts.supports(checkout.directory) || !mounts.supports(gitDirectory.directory)) fail('dependency_installed_output_invalid');
+  } catch { return fail('dependency_installed_output_invalid'); }
+}
+
+async function validateNpmAttachment(request: Publication): Promise<void> {
+  const { checkout, receipt } = request;
   try {
     const dependencyLink = path.join(checkout.directory, workspaceDependencyOutputName('npm'));
     const link = await fs.lstat(dependencyLink, { bigint: true });
@@ -272,7 +294,7 @@ async function validateNpmAttachment({ checkout, receipt }: Publication): Promis
       || await fs.readlink(dependencyLink) !== path.relative(checkout.directory, receipt.output.directory)
       || await fs.realpath(dependencyLink) !== receipt.output.directory
       || outputStamp(link) !== outputStamp(await fs.lstat(dependencyLink, { bigint: true }))) fail('dependency_installed_output_invalid');
-    await assertProtectedWorkspacePath(checkout, true);
+    await validatePublicationCheckout(request);
     await assertProtectedWorkspacePath(receipt.output, true);
   } catch { return fail('dependency_installed_output_invalid'); }
 }
