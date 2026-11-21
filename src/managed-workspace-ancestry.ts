@@ -1,12 +1,80 @@
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
-import { WorkspaceProjectError } from './workspace-projects.js';
+import { WorkspaceProjectError, workspacePathContains } from './workspace-projects.js';
 
 const exec = promisify(execFile);
+
+export interface WorkspaceMount {
+  device: string;
+  root: string | null;
+  directory: string;
+}
+
+export function readWorkspaceMountTable(): WorkspaceMount[] {
+  if (process.platform !== 'linux') return [];
+  return parseWorkspaceMountTable(readFileSync('/proc/self/mountinfo', 'utf8'));
+}
+
+export function parseWorkspaceMountTable(value: string): WorkspaceMount[] {
+  if (!value.endsWith('\n') || value.length > 1_048_576) throw new Error('Unsupported mount table.');
+  const decode = (field: string) => field.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
+  return value.trimEnd().split('\n').map((entry) => {
+    const fields = entry.split(' ');
+    const [, , device, root, mount] = fields;
+    const separator = fields.indexOf('-', 6);
+    const fsType = separator === -1 ? undefined : fields[separator + 1];
+    // Namespace mounts expose opaque kernel objects, not paths in a filesystem tree.
+    const namespace = fsType === 'nsfs' && /^[a-z][a-z0-9_]*:\[\d+\]$/.test(root ?? '');
+    if (!/^\d+:\d+$/.test(device ?? '') || !fsType || !mount?.startsWith('/') || (!root?.startsWith('/') && !namespace)) {
+      throw new Error('Unsupported mount table.');
+    }
+    return { device, root: namespace ? null : decode(root), directory: decode(mount) };
+  });
+}
+
+export function workspaceMountLayoutSupported(workspaces: readonly string[], mounts: readonly WorkspaceMount[]): boolean {
+  return !mounts.some(({ directory: mount, root }) => workspaces.some((workspace) =>
+    (root !== '/' && workspacePathContains(mount, workspace))
+    || (mount !== workspace && workspacePathContains(workspace, mount))));
+}
+
+// Include mounts of strict subtrees: their visible ancestors also grant access through the mountpoint.
+export function workspaceBackingAliases(directory: string, mounts: WorkspaceMount[]): string[] {
+  const aliases = new Set([directory]);
+  const paths = new Set([directory, ...mounts.filter((mount) => workspacePathContains(directory, mount.directory)).map((mount) => mount.directory)]);
+  for (const visible of paths) {
+    const covering = mounts.filter((mount) => workspacePathContains(mount.directory, visible));
+    const longest = Math.max(0, ...covering.map((mount) => mount.directory.length));
+    for (const origin of covering.filter((mount) => mount.directory.length === longest)) {
+      if (origin.root === null) continue;
+      const backing = path.join(origin.root, path.relative(origin.directory, visible));
+      for (const target of mounts) {
+        if (target.device !== origin.device || target.root === null) continue;
+        if (workspacePathContains(target.root, backing)) {
+          aliases.add(path.join(target.directory, path.relative(target.root, backing)));
+        } else if (workspacePathContains(backing, target.root)) {
+          aliases.add(target.directory);
+        }
+      }
+    }
+  }
+  return [...aliases];
+}
+
+export async function readWorkspaceAncestorIdentities(directory: string): Promise<Set<string>> {
+  const identities = new Set<string>();
+  for (let current = directory; ; current = path.dirname(current)) {
+    const info = await fs.stat(current, { bigint: true }).catch(() => undefined);
+    if (!info?.isDirectory()) throw new WorkspaceProjectError('unavailable_directory');
+    identities.add(`${info.dev}:${info.ino}`);
+    if (path.dirname(current) === current) return identities;
+  }
+}
 
 export async function assertProtectedWorkspacePath(binding: WorkspaceProjectBinding, owned = false): Promise<void> {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError('unprotected_root');
@@ -25,13 +93,14 @@ export async function assertProtectedWorkspacePath(binding: WorkspaceProjectBind
     ancestry.push(current);
     if (path.dirname(current) === current) break;
   }
-  if (process.platform === 'darwin') await requireDenyOnlyAcls(ancestry);
+  await assertDenyOnlyWorkspaceAcls(ancestry);
 }
 
 // macOS extended ACLs can grant writes that are not reflected in st_mode.
-async function requireDenyOnlyAcls(directories: string[]): Promise<void> {
+export async function assertDenyOnlyWorkspaceAcls(entries: string[]): Promise<void> {
+  if (process.platform !== 'darwin' || !entries.length) return;
   try {
-    const { stdout, stderr } = await exec('/bin/ls', ['-ldebn', '--', ...directories], {
+    const { stdout, stderr } = await exec('/bin/ls', ['-ldebn', '--', ...entries], {
       encoding: 'utf8', env: { LC_ALL: 'C' }, timeout: 5000, maxBuffer: 1_000_000,
     });
     const lines = stdout.split('\n').filter(Boolean);
@@ -39,7 +108,7 @@ async function requireDenyOnlyAcls(directories: string[]): Promise<void> {
     let headers = 0;
     let needsAcl = false;
     for (const line of lines) {
-      const header = /^d[rwxstST-]{9}([+@]?)\s/.exec(line);
+      const header = /^[-d][rwxstST-]{9}([+@]?)\s/.exec(line);
       if (header && !needsAcl) {
         headers++;
         needsAcl = header[1] === '+';
@@ -49,7 +118,7 @@ async function requireDenyOnlyAcls(directories: string[]): Promise<void> {
         throw new Error('Unsupported ACL.');
       }
     }
-    if (needsAcl || headers !== directories.length) throw new Error('Incomplete ACL data.');
+    if (needsAcl || headers !== entries.length) throw new Error('Incomplete ACL data.');
   } catch {
     throw new ManagedWorkspaceStorageError('unprotected_root');
   }

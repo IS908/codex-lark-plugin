@@ -1,0 +1,81 @@
+name: Workspace Git sandbox
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/workspace-git-sandbox.yml'
+      - 'src/**'
+      - 'scripts/workspace-git-*-smoke.ts'
+      - 'scripts/fixtures/codex-loopback-exec.ts'
+      - 'scripts/fixtures/managed-git-entrypoints.ts'
+      - 'package-lock.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workspace-git-sandbox.yml'
+      - 'src/**'
+      - 'scripts/workspace-git-*-smoke.ts'
+      - 'scripts/fixtures/codex-loopback-exec.ts'
+      - 'scripts/fixtures/managed-git-entrypoints.ts'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Verify native Linux Git isolation
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      - name: Run production launcher with an offline model fixture
+        shell: bash
+        env:
+          CODEX_NPM_PACKAGE: '@openai/codex@0.171.0-linux-x64'
+          CODEX_NPM_SHA512: 'l66NZkQgdk2C3pbcfULDz42yEUB581MVA6I+Y43Wp4OIqEy73HCdmZ0GTjeAHY2ycuH4N00d9VsLrwT1jxshTw=='
+          LARK_APP_ID: cli_test_app_id
+          LARK_APP_SECRET: test_app_secret
+        run: |
+          unshare --user --map-root-user /usr/bin/true
+          bundle_dir=$(mktemp -d "$HOME/codex-git-ci.XXXXXX")
+          trap 'rm -rf -- "$bundle_dir"' EXIT
+          export TMPDIR="$bundle_dir"
+          node --import tsx --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { readWorkspaceMountTable, workspaceMountLayoutSupported } from "./src/managed-workspace-ancestry.ts";
+            import { workspacePathContains } from "./src/workspace-projects.ts";
+            const directory = process.env.TMPDIR;
+            const rootKinds = new Set();
+            for (const line of readFileSync("/proc/self/mountinfo", "utf8").trimEnd().split("\n")) {
+              const root = line.split(" ")[3] ?? "";
+              if (root.startsWith("/")) continue;
+              const fsType = line.split(" - ")[1]?.split(" ")[0];
+              rootKinds.add(`${fsType === "nsfs" ? "nsfs" : "other"}:${/^[a-z][a-z0-9_]*:\[\d+\]$/.test(root) ? "namespace-id" : "unknown"}`);
+            }
+            console.log("Non-path mount roots:", [...rootKinds]);
+            const mounts = readWorkspaceMountTable();
+            const relevant = mounts.filter((mount) => workspacePathContains(mount.directory, directory)
+              || workspacePathContains(directory, mount.directory));
+            console.log("Fixture mount coverage:", relevant.map(({ root }) => ({ filesystemRoot: root === "/" })));
+            if (!workspaceMountLayoutSupported([directory], mounts)) process.exitCode = 1;
+          '
+          archive="$bundle_dir/$(npm pack "$CODEX_NPM_PACKAGE" --ignore-scripts --pack-destination "$bundle_dir" --registry=https://registry.npmjs.org)"
+          digest=$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)
+          test "$digest" = "$CODEX_NPM_SHA512"
+          platform=package/vendor/x86_64-unknown-linux-musl
+          binary="$platform/bin/codex"
+          tar -xzf "$archive" -C "$bundle_dir" "$binary" "$platform/codex-resources/bwrap" "$platform/codex-package.json" "$platform/codex-path/rg"
+          test -x "$bundle_dir/$platform/codex-resources/bwrap"
+          test "$("$bundle_dir/$binary" --version)" = 'codex-cli 0.171.0'
+          LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX=1 \
+          LARK_TEST_CODEX_NATIVE_BINARY="$bundle_dir/$binary" \
+            node --import tsx scripts/workspace-git-replay-smoke.ts

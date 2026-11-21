@@ -2,6 +2,7 @@ import { audit as defaultAudit, type AuditOutcome } from './audit-log.js';
 import { appConfig } from './config.js';
 import { normalizeCodexExecResult, runCodexExecCommand, type CodexExecRunner } from './codex-exec.js';
 import { SYSTEM_FLUSH_CALLER, TERMINAL_CHAT_ID } from './identity-session.js';
+import { protectProfileDistillation } from './managed-workspace-exec.js';
 import type { MemoryStore } from './memory/file.js';
 import { buildProfileDistillationPrompt, parseTieredProfile } from './memory/distiller.js';
 import { loadL2Rules } from './privacy-rules.js';
@@ -137,7 +138,7 @@ export class ProfileDistillationManager implements ProfileDistillationDispatcher
         chatType: input.chatType,
         l2Rules: await loadL2Rules(),
       });
-      const result = normalizeCodexExecResult(await this.runCodexExec({
+      const request = await protectProfileDistillation({
         prompt,
         command: appConfig.codexExecCommand,
         cwd: appConfig.codexExecCwd,
@@ -148,7 +149,8 @@ export class ProfileDistillationManager implements ProfileDistillationDispatcher
         ignoreUserConfig: appConfig.codexExecIgnoreUserConfig,
         skipGitRepoCheck: true,
         resumeSessionId: null,
-      }));
+      }, appConfig.managedWorkspaceConfigPath);
+      const result = normalizeCodexExecResult(await this.runCodexExec(request));
       const tiered = parseTieredProfile(result.text);
       const publicContent = markdownList(tiered.public);
       const privateContent = markdownList(tiered.private);

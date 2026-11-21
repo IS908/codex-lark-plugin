@@ -7,6 +7,7 @@ import { WorkspaceProjectError } from './workspace-projects.js';
 
 const exec = promisify(execFile);
 const managedLeaf = /^(?:foreground|cron_prompt|async_task)-[a-f0-9]{64}$/;
+export const MANAGED_GIT_CHECKOUT_LEAF = 'git-checkout';
 
 // Node has no mkdirat API. The child uses its kernel-held cwd as the directory handle.
 const mkdirProgram = String.raw`
@@ -40,6 +41,14 @@ const mkdirProgram = String.raw`
 
 export async function mkdirInsidePinnedRoot(root: WorkspaceProjectBinding, leaf: string): Promise<WorkspaceProjectBinding> {
   if (!managedLeaf.test(leaf)) throw new ManagedWorkspaceStorageError('invalid_binding');
+  return mkdirInsideRoot(root, leaf);
+}
+
+export function mkdirGitCheckoutInsidePinnedRun(runRoot: WorkspaceProjectBinding): Promise<WorkspaceProjectBinding> {
+  return mkdirInsideRoot(runRoot, MANAGED_GIT_CHECKOUT_LEAF);
+}
+
+async function mkdirInsideRoot(root: WorkspaceProjectBinding, leaf: string): Promise<WorkspaceProjectBinding> {
   if (!process.geteuid) throw new ManagedWorkspaceStorageError('unprotected_root');
   let response;
   try {

@@ -10,7 +10,7 @@ import {
 } from '../domain/durable-run.js';
 import { computeLatestDueRun, computeNextRun, jobTimezone, mutateJob, readJob } from '../job-store.js';
 import type { JobFile } from '../job-contracts.js';
-import type { ManagedWorkspaceRoots } from '../domain/managed-workspace.js';
+import type { ManagedGitSelection, ManagedWorkspaceRoots } from '../domain/managed-workspace.js';
 import type { WorkspaceProjectBinding } from '../domain/workspace.js';
 import { ManagedWorkspaceStorageError } from '../managed-workspace-errors.js';
 import { WorkspaceProjectError } from '../workspace-projects.js';
@@ -56,6 +56,7 @@ export interface CronRunAdmissionOptions {
   jobRepository?: CronAdmissionJobRepository;
   waitPollMs?: number;
   resolveManagedWorkspaceRoots?: (project?: JobFile['meta']['workspace_project']) => Promise<ManagedWorkspaceRoots | undefined>;
+  resolveManagedGitSelection?: (project: WorkspaceProjectBinding | undefined, roots: ManagedWorkspaceRoots) => Promise<ManagedGitSelection | undefined>;
   pinManagedFallbackWorkspace?: () => Promise<WorkspaceProjectBinding>;
 }
 
@@ -269,9 +270,13 @@ export class CronRunAdmission {
     let managedWorkspaceRoots: ManagedWorkspaceRoots | undefined;
     let managedWorkspaceFailure: string | undefined;
     let fallbackWorkspace: WorkspaceProjectBinding | undefined;
+    let git: ManagedGitSelection | undefined;
     try {
       if (job.meta.type === 'prompt') {
         managedWorkspaceRoots = await this.options.resolveManagedWorkspaceRoots?.(job.meta.workspace_project);
+        if (managedWorkspaceRoots) {
+          git = await this.options.resolveManagedGitSelection?.(job.meta.workspace_project, managedWorkspaceRoots);
+        }
         if (managedWorkspaceRoots && !job.meta.workspace_project) {
           fallbackWorkspace = await this.options.pinManagedFallbackWorkspace?.();
           if (!fallbackWorkspace) throw new ManagedWorkspaceStorageError('invalid_binding');
@@ -282,7 +287,7 @@ export class CronRunAdmission {
       managedWorkspaceFailure = error.message;
       managedWorkspaceRoots = undefined;
     }
-    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace);
+    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace, git);
   }
 
   async waitForExecution(
@@ -389,11 +394,13 @@ function cronRunCreateRequest(
   managedWorkspaceRoots?: ManagedWorkspaceRoots,
   managedWorkspaceFailure?: string,
   fallbackWorkspace?: WorkspaceProjectBinding,
+  git?: ManagedGitSelection,
 ): DurableRunCreateRequest {
   const input: CronRunInput = {
     schemaVersion: 1,
     ...(managedWorkspaceRoots ? { managedWorkspace: { roots: managedWorkspaceRoots, createdAt: now.toISOString(),
       ...(fallbackWorkspace ? { fallbackWorkspace } : {}),
+      ...(git ? { git } : {}),
     } } : {}),
     ...(managedWorkspaceFailure ? { managedWorkspaceFailure } : {}),
     job: {

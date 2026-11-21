@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.17.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.18.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -298,6 +298,69 @@ formal files before sending. After the text is confirmed, pending files can be
 sent on reconnect or on replay of the same event without rerunning Codex or
 needing scratch. The plugin rechecks the route and does not repeat a send whose
 outcome is unknown.
+
+#### Optional local Git object reuse
+
+With managed storage enabled, an operator can opt a pinned project into Git
+reuse by adding `workspace-git-sources.json` beside `managed-workspace.json`:
+
+```json
+{
+  "version": 1,
+  "projects": [{
+    "source": "/Users/you/workspace/app",
+    "cache": "/Users/you/workspace/git-cache/app-snapshot",
+    "repositoryId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "scope": "local-app",
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }]
+}
+```
+
+Use canonical absolute paths, a stable 64-hex repository identifier (not a URL
+or secret), and a full commit ID. The registry and its ancestors must be
+operator-protected, and the registry must be outside all execution roots. The
+cache must already exist inside the authorized roots, separate from sources,
+scratch and artifacts. Only new runs with the exact registered project opt in;
+existing overlapping runs are blocked rather than switched to a different directory.
+
+Provision each cache once from an approved local repository. In a **new** cache
+directory, prepare the following layout (`source`, `commit`, and `cache` are
+operator-selected variables; this example uses SHA-1):
+
+```bash
+(
+  set -eu
+  umask 077
+  mkdir -m 700 "$cache"
+  mkdir -p "$cache/objects/pack" "$cache/refs"
+  printf '%s\n' "$commit" > "$cache/HEAD"
+  printf '[core]\n\trepositoryformatversion = 0\n\tbare = true\n' > "$cache/config"
+  printf '%s\n' "$commit" | GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL='' \
+    git -C "$source" -c pack.writeReverseIndex=false pack-objects --no-write-bitmap-index --revs "$cache/objects/pack/pack"
+)
+```
+
+For SHA-256 use `repositoryformatversion = 1` and append
+`[extensions]\n\tobjectformat = sha256\n` to the `printf` format for `config`.
+Leave `refs/` empty. Do not run maintenance in the cache, replace it in place,
+or share its physical path with a different key or scope.
+
+Git reuse requires a native Codex CLI with named permission profiles (verified
+with `0.171.0` on macOS and Linux), plus system Git at `/usr/bin/git`. Set
+`LARK_CODEX_EXEC_COMMAND` to the native binary rather than a shell or npm
+wrapper. On Linux use the official `0.171.0` package and keep `bin/codex`,
+`codex-package.json`, `codex-resources/bwrap`, and `codex-path/rg` in their packaged layout.
+Install the binary and helpers in an operator-controlled directory outside all
+plugin-writable roots. Stop the service before first enabling the registry so
+no previous sandboxed commands remain active. While enabled, the launcher uses
+a system-only `PATH` for child tools. Group-writable launch paths,
+incompatible configuration or command rules, and
+unsupported mount layouts are rejected. The run owns its checkout and index;
+the source and shared object store remain read-only, and unsandboxed host CLI
+tools are unavailable for that run. Removing or changing a registry entry
+blocks previously admitted runs that no longer match, including after restart.
+Nothing fetches, deletes, migrates, or silently falls back to the source.
 
 ### 4. Start
 

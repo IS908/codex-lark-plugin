@@ -180,9 +180,9 @@ export function parseCronRunInput(
     || (root.managedWorkspace !== undefined && root.managedWorkspaceFailure !== undefined)) {
     throw new Error('Only prompt Cron runs can use managed workspace roots.');
   }
-  return { schemaVersion: 1, job, ...(root.managedWorkspace === undefined ? {} : {
-    managedWorkspace: managedWorkspaceAdmissionSchema.parse(root.managedWorkspace),
-  }), ...(root.managedWorkspaceFailure === undefined ? {} : {
+  const managedWorkspace = root.managedWorkspace === undefined ? undefined : managedWorkspaceAdmissionSchema.parse(root.managedWorkspace);
+  if (managedWorkspace?.git && !job.workspaceProject) throw new Error('A Git cache selection requires a pinned Cron source project.');
+  return { schemaVersion: 1, job, ...(managedWorkspace ? { managedWorkspace } : {}), ...(root.managedWorkspaceFailure === undefined ? {} : {
     managedWorkspaceFailure: boundedString(root.managedWorkspaceFailure, 'managedWorkspaceFailure', 1_000),
   }) };
 }

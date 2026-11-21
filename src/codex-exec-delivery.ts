@@ -2,7 +2,7 @@ import path from 'node:path';
 import { appConfig } from './config.js';
 import type { LarkMessage } from './lark-message.js';
 import type { CodexExecRequest, CodexExecRunner } from './codex-exec.js';
-import { isCodexExecTimeoutError, normalizeCodexExecResult, runCodexExecCommand } from './codex-exec.js';
+import { CodexExecAbortedError, isCodexExecTimeoutError, normalizeCodexExecResult, runCodexExecCommand } from './codex-exec.js';
 import {
   buildCodexExecSessionKey,
   FileCodexExecSessionStore,
@@ -41,8 +41,9 @@ import { logSafeError } from './safe-log.js';
 import { accessControlStore } from './runtime-access-control.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { MANAGED_DELIVERY_MAX_BYTES, MANAGED_DELIVERY_MAX_FILES, type ManagedArtifactReference, type ManagedRunAllocation } from './domain/managed-workspace.js';
-import { withManagedWorkspace } from './managed-workspace-exec.js';
+import { managedGitCheckoutSessionScope, protectLegacyGitWorkspace, withManagedWorkspace } from './managed-workspace-exec.js';
 import { admitManagedForegroundRun, managedForegroundRunOwner } from './managed-workspace-admission.js';
+import { resolveManagedGitSelection } from './managed-git-registry.js';
 import { ManagedWorkspaceStorageError, validateManagedRunDirectory } from './managed-workspace-storage.js';
 import { readManagedArtifact } from './managed-workspace-artifact.js';
 import type { ManagedWorkspaceStore } from './ports/managed-workspace.js';
@@ -200,6 +201,7 @@ async function enrichCodexExecActionPromptInfo(
     ...(blockedActionTypes.length > 0 ? { blockedActionTypes } : {}),
     managedArtifactRegistration,
   };
+  if (blockedActionTypes.includes('run_local_cli_tool')) return baseInfo;
   const exposeForegroundHostTools = appConfig.codexExecSandbox !== 'danger-full-access';
   if (!exposeForegroundHostTools && !baseInfo.continuationEnabled) return baseInfo;
 
@@ -546,6 +548,10 @@ export async function deliverMessageViaCodexExec(
   if (managed && !sameWorkspaceProject(managed.project, workspace)) {
     throw new ManagedWorkspaceStorageError('invalid_binding');
   }
+  if (!managed) await resolveManagedGitSelection({ configPath: appConfig.managedWorkspaceConfigPath,
+    authorizedRoots: [workspaceOptions.authorizedRoot], project: workspace, preserveOptOut: true,
+    ...(appConfig.codexExecSandbox !== 'read-only' ? { fallbackDirectory: path.resolve(workspaceOptions.authorizedRoot) } : {}),
+  });
   const foregroundArtifacts: ManagedArtifactReference[] = [];
   const onManagedArtifact = managedStore && artifactIO
     ? (reference: ManagedArtifactReference) => { foregroundArtifacts.push(reference); }
@@ -553,7 +559,9 @@ export async function deliverMessageViaCodexExec(
   const launchWorkspace = workspace ?? (managed ? await validateWorkspaceProject(
     workspaceOptions.authorizedRoot, managed.fallbackWorkspace,
   ) : undefined);
-  const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace)
+  const gitCheckoutScope = managedGitCheckoutSessionScope(managed);
+  const existingSession = compatibleSession?.managedGitCheckoutScope === gitCheckoutScope
+    && sameWorkspaceProject(compatibleSession?.workspaceProject, workspace)
     && (workspace === undefined || compatibleSession?.workspaceProjectSenderId === message.senderId)
     ? compatibleSession
     : null;
@@ -603,7 +611,7 @@ export async function deliverMessageViaCodexExec(
         message,
         opts.continuationAvailable ?? true,
         continuationPermitted,
-        opts.actionPolicy?.blockedActionTypes,
+        managed?.git ? [...(opts.actionPolicy?.blockedActionTypes ?? []), 'run_local_cli_tool'] : opts.actionPolicy?.blockedActionTypes,
         Boolean(managed && onManagedArtifact),
       ),
     ),
@@ -649,7 +657,7 @@ export async function deliverMessageViaCodexExec(
   let result;
   let usedResumeSessionId = request.resumeSessionId;
   const runInWorkspace: CodexExecRunner = async (runRequest) => {
-    if (!launchWorkspace) return runCodexExec(runRequest);
+    if (!launchWorkspace) return runCodexExec(await protectLegacyGitWorkspace(runRequest, appConfig.managedWorkspaceConfigPath));
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...(progressSink ? [progressSink.filePath] : [])];
     // A narrower CWD still needs its one-turn IPC directories, not the entire old working root.
@@ -674,14 +682,17 @@ export async function deliverMessageViaCodexExec(
       },
       ...(sideChannelBindings.length ? { additionalWritableDirs: sideChannelBindings.map((binding) => binding.directory) } : {}),
     };
-    return runCodexExec(managed ? withManagedWorkspace(guardedRequest, managed) : guardedRequest);
+    return runCodexExec(managed ? await withManagedWorkspace(guardedRequest, managed, {
+      configPath: appConfig.managedWorkspaceConfigPath, sourceRegistryPath: workspaceOptions.registryPath,
+    }) : await protectLegacyGitWorkspace(guardedRequest, appConfig.managedWorkspaceConfigPath));
   };
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
   try {
     progressSink?.start();
     result = normalizeCodexExecResult(await runInWorkspace(request));
   } catch (err) {
-    if (!request.resumeSessionId || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError
+    if (!request.resumeSessionId || opts.abortSignal?.aborted || err instanceof CodexExecAbortedError
+      || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError
       || err instanceof ManagedWorkspaceStorageError) {
       await actionChannel.cleanup();
       throw err;
@@ -717,6 +728,7 @@ export async function deliverMessageViaCodexExec(
       ...(sessionModel ? { model: sessionModel } : {}),
       ...(requiredProfileSession ?? {}),
       ...(workspace ? { workspaceProject: workspace, workspaceProjectSenderId: message.senderId } : {}),
+      ...(gitCheckoutScope ? { managedGitCheckoutScope: gitCheckoutScope } : {}),
     });
   }
 
@@ -896,6 +908,7 @@ async function dispatchCodexExecActions(input: {
   onManagedArtifact?: (reference: ManagedArtifactReference) => void;
 }): Promise<CodexExecActionExecutionResult[]> {
   const blocked = new Set(input.opts.actionPolicy?.blockedActionTypes ?? []);
+  if (input.managed?.git) blocked.add('run_local_cli_tool');
   const allowedActions = input.actions.filter((action) => action.type !== 'register_artifact' && !blocked.has(action.type));
   const allowedResults = input.opts.actionDispatcher && allowedActions.length > 0
     ? await input.opts.actionDispatcher.execute({
@@ -916,7 +929,8 @@ async function dispatchCodexExecActions(input: {
       results.push({
         ok: false,
         action: action.type,
-        message: input.opts.actionPolicy?.reason ?? `${action.type} is unavailable for this turn.`,
+        message: input.managed?.git && action.type === 'run_local_cli_tool' ? 'Host CLI tools cannot run inside the isolated Git checkout sandbox.'
+          : input.opts.actionPolicy?.reason ?? `${action.type} is unavailable for this turn.`,
       });
     } else if (action.type === 'register_artifact') {
       const { managed, opts } = input;

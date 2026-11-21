@@ -17,6 +17,7 @@ echo "=== Workspace storage inventory checks ==="
 node --import tsx scripts/workspace-storage-smoke.ts
 
 node --import tsx scripts/workspace-projects-smoke.ts
+node --import tsx scripts/workspace-git-snapshot-smoke.ts
 node --import tsx scripts/workspace-foreground-smoke.ts
 node --import tsx scripts/workspace-cron-smoke.ts
 node --import tsx scripts/workspace-continuation-smoke.ts
@@ -24,6 +25,7 @@ node --import tsx scripts/workspace-continuation-smoke.ts
 echo '=== Managed workspace storage checks ==='
 node --import tsx scripts/managed-workspace-storage-smoke.ts
 node --import tsx scripts/managed-workspace-repository-smoke.ts
+node --import tsx scripts/workspace-git-replay-smoke.ts
 node --import tsx scripts/managed-workspace-artifact-smoke.ts
 
 echo ""

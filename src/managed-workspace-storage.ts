@@ -13,8 +13,8 @@ import {
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
 import { mkdirInsidePinnedRoot } from './managed-workspace-mkdir.js';
-import { assertProtectedWorkspacePath } from './managed-workspace-ancestry.js';
-import { listWorkspaceSourceProjects, pinWorkspacePath, validateWorkspaceProject, workspacePathContains, WorkspaceProjectError } from './workspace-projects.js';
+import { assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
+import { listWorkspaceSourceProjects, pinWorkspacePath, validateWorkspaceProject, workspacePathContains } from './workspace-projects.js';
 
 const absolutePath = z.string().refine((value) => path.isAbsolute(value) && !value.includes('\0'));
 const configSchema = z.strictObject({ version: z.literal(1), scratchRoot: absolutePath, artifactRoot: absolutePath });
@@ -28,6 +28,7 @@ interface WorkspaceAuthorization {
   fallbackWorkspace?: WorkspaceProjectBinding;
   sourceRegistryPath?: string;
   sourceRegistryRoot?: string;
+  gitCache?: WorkspaceProjectBinding;
 }
 
 export async function readManagedWorkspaceRoots({
@@ -99,15 +100,14 @@ export async function validateManagedRunDirectory(
 
 export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots, authorization: WorkspaceAuthorization) {
   if (authorization.fallbackWorkspace && authorization.project) throw new ManagedWorkspaceStorageError('invalid_binding');
+  const storage = [roots.scratch, roots.artifacts, ...(authorization.gitCache ? [authorization.gitCache] : [])];
+  const bindings = [...storage, ...(authorization.project ? [authorization.project] : [])];
   await Promise.all([
-    validateWorkspaceProject(authorization.authorizedRoots, roots.scratch),
-    validateWorkspaceProject(authorization.authorizedRoots, roots.artifacts),
-    ...(authorization.project ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.project)] : []),
+    ...bindings.map((binding) => validateWorkspaceProject(authorization.authorizedRoots, binding)),
     ...(authorization.fallbackWorkspace ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.fallbackWorkspace)] : []),
   ]);
-  assertDisjoint(roots, authorization.project);
-  const bindings = [roots.scratch, roots.artifacts, ...(authorization.project ? [authorization.project] : [])];
-  const ancestry = await Promise.all(bindings.map(({ directory }) => readAncestors(directory)));
+  assertDisjoint(roots, authorization.project, authorization.gitCache);
+  const ancestry = await Promise.all(bindings.map(({ directory }) => readWorkspaceAncestorIdentities(directory)));
   for (const [index, binding] of bindings.entries()) {
     if (ancestry.some((ancestors, other) => index !== other && ancestors.has(directoryIdentity(binding)))) {
       throw new ManagedWorkspaceStorageError('overlapping_roots');
@@ -117,25 +117,28 @@ export async function validateManagedWorkspaceRoots(roots: ManagedWorkspaceRoots
     const knownSources = await listWorkspaceSourceProjects(authorization.sourceRegistryPath,
       authorization.sourceRegistryRoot ?? authorization.authorizedRoots[0]);
     for (const source of knownSources) {
-      const sourceAncestors = await readAncestors(source.directory);
-      if ([roots.scratch, roots.artifacts].some((root, index) => workspacePathContains(root.directory, source.directory)
+      const sourceAncestors = await readWorkspaceAncestorIdentities(source.directory);
+      if (storage.some((root, index) => workspacePathContains(root.directory, source.directory)
         || workspacePathContains(source.directory, root.directory) || ancestry[index].has(directoryIdentity(source))
         || sourceAncestors.has(directoryIdentity(root)))) throw new ManagedWorkspaceStorageError('overlapping_source');
     }
   }
   await Promise.all([
     assertProtectedWorkspacePath(roots.scratch, true), assertProtectedWorkspacePath(roots.artifacts, true),
+    ...(authorization.gitCache ? [assertProtectedWorkspacePath(authorization.gitCache)] : []),
     ...(authorization.project ? [assertProtectedWorkspacePath(authorization.project)] : []),
     ...(authorization.fallbackWorkspace ? [assertProtectedWorkspacePath(authorization.fallbackWorkspace)] : []),
   ]);
   return {
     all: new Set(ancestry.flatMap((ancestors) => [...ancestors])),
     storage: new Set(ancestry.slice(0, 2).flatMap((ancestors) => [...ancestors])),
+    cache: authorization.gitCache ? ancestry[2] : undefined,
+    project: authorization.project ? ancestry[storage.length] : undefined,
   };
 }
 
-function assertDisjoint(roots: ManagedWorkspaceRoots, project?: WorkspaceProjectBinding): void {
-  const bindings = [roots.scratch, roots.artifacts, ...(project ? [project] : [])];
+function assertDisjoint(roots: ManagedWorkspaceRoots, project?: WorkspaceProjectBinding, cache?: WorkspaceProjectBinding): void {
+  const bindings = [roots.scratch, roots.artifacts, ...(project ? [project] : []), ...(cache ? [cache] : [])];
   for (const [index, binding] of bindings.entries()) {
     if (bindings.slice(index + 1).some((other) => directoryIdentity(binding) === directoryIdentity(other)
       || workspacePathContains(binding.directory, other.directory) || workspacePathContains(other.directory, binding.directory))) {
@@ -146,16 +149,6 @@ function assertDisjoint(roots: ManagedWorkspaceRoots, project?: WorkspaceProject
 
 export function directoryIdentity(binding: Pick<WorkspaceProjectBinding, 'device' | 'inode'>): string {
   return `${binding.device}:${binding.inode}`;
-}
-
-async function readAncestors(directory: string): Promise<Set<string>> {
-  const identities = new Set<string>();
-  for (let current = directory; ; current = path.dirname(current)) {
-    const info = await fs.stat(current, { bigint: true }).catch(() => undefined);
-    if (!info?.isDirectory()) throw new WorkspaceProjectError('unavailable_directory');
-    identities.add(`${info.dev}:${info.ino}`);
-    if (path.dirname(current) === current) return identities;
-  }
 }
 
 async function allocateDirectory(

@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.17.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.18.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -257,6 +257,38 @@ Cron 不支持启用托管目录。
 托管前台 IM 轮次在发送前登记文本回复和用户明确要求的正式文件。文本回复确认后，插件重连或
 重放同一轮次时，可在不重跑 Codex、无需临时目录的情况下发送待投递附件。恢复时会重新核对
 路由授权；结果不确定的发送不会自动重试。
+
+#### 可选的本地 Git 对象复用
+
+启用托管运行目录后，操作者可在 `managed-workspace.json` 同目录创建
+`workspace-git-sources.json`，只为显式绑定的源码项目开启复用：
+
+```json
+{
+  "version": 1,
+  "projects": [{
+    "source": "/Users/you/workspace/app",
+    "cache": "/Users/you/workspace/git-cache/app-snapshot",
+    "repositoryId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "scope": "local-app",
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }]
+}
+```
+
+路径使用规范绝对路径；`repositoryId` 为稳定的 64 位十六进制标识，不是 URL 或密钥；
+`commit` 为完整提交 ID。登记文件必须由操作者保护，且位于所有执行授权根之外。缓存必须预先
+存在于原有授权范围内，并与源码、临时目录、产物目录分离。按[本地缓存准备步骤](README.md#optional-local-git-object-reuse)
+从已获授权的本地仓库生成对象包。不要原地替换缓存、对其执行维护，或用同一个目录登记不同的缓存键。
+
+此功能需要支持命名权限配置的原生 Codex CLI（已在 macOS 和 Linux 的 `0.171.0` 验证），以及系统 Git
+`/usr/bin/git`。请将 `LARK_CODEX_EXEC_COMMAND` 指向原生可执行文件，而不是 shell 或 npm 包装器。
+Linux 使用官方 `0.171.0` 软件包，保留 `bin/codex`、`codex-package.json`、
+`codex-resources/bwrap` 和 `codex-path/rg` 的原有目录布局。程序及辅助程序应装在所有插件可写目录之外，由操作者保护。
+首次启用登记前请先停止服务，确保已有沙箱命令全部结束；启用后子进程只使用系统 `PATH`。
+组可写的启动路径、不兼容的配置或命令规则、以及不支持的挂载布局均会被拒绝。
+运行只写自己的 checkout 和索引；源码与共享缓存保持只读，宿主 CLI 工具不可用。删除或修改登记会
+阻止不再匹配的已接纳运行，包括重启后的重试。不会拉取远端、迁移或清理文件，也不会回退到源码。
 
 ### 第 4 步：启动
 

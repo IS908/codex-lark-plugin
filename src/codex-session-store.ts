@@ -19,6 +19,7 @@ export interface CodexExecSessionRecord {
   memoryContextSenderId?: string;
   workspaceProject?: WorkspaceProjectBinding;
   workspaceProjectSenderId?: string;
+  managedGitCheckoutScope?: string;
 }
 
 export interface CodexExecSessionStore {

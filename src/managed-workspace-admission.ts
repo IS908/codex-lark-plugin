@@ -8,6 +8,7 @@ import type { ManagedWorkspaceRecord, ManagedWorkspaceStore } from './ports/mana
 import { ManagedWorkspaceStorageError, readManagedWorkspaceRoots } from './managed-workspace-storage.js';
 import { assertManagedWorkspaceSandbox } from './managed-workspace-exec.js';
 import { pinWorkspacePath } from './workspace-projects.js';
+import { resolveManagedGitSelection } from './managed-git-registry.js';
 
 export function managedForegroundRunOwner(
   message: Pick<LarkMessage, 'messageId' | 'senderId' | 'messageType' | 'reaction' | 'timestampMs'>, sessionKey: string,
@@ -49,9 +50,14 @@ export async function admitManagedForegroundRun(options: {
     : await pinWorkspacePath(options.authorizedRoot, '.');
   if (!project && !fallbackWorkspace) throw new ManagedWorkspaceStorageError('invalid_binding');
   const now = new Date().toISOString();
+  const git = await resolveManagedGitSelection({
+    configPath: options.configPath, roots, project, authorizedRoots, sourceRegistryPath: options.sourceRegistryPath,
+    expected: recorded?.allocation.git, preserveOptOut: Boolean(recorded && !recorded.allocation.git),
+  });
   return store.ensure({
     owner, roots, authorizedRoots, project, sourceRegistryPath: options.sourceRegistryPath,
     fallbackWorkspace,
+    ...(git ? { git } : {}),
     foregroundSessionKey: options.sessionKey,
     createdAt: recorded?.allocation.createdAt ?? now,
     usedAt: now,
