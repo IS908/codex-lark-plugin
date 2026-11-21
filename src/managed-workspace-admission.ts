@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type { CodexExecSandbox } from './codex-exec.js';
 import type { ManagedRunAllocation, ManagedRunOwner } from './domain/managed-workspace.js';
 import type { WorkspaceProjectBinding } from './domain/workspace.js';
@@ -30,7 +31,13 @@ export async function admitManagedForegroundRun(options: {
   const roots = recorded?.allocation.roots ?? await readManagedWorkspaceRoots({
     configPath: options.configPath, authorizedRoots, project,
   });
-  if (!roots) return undefined;
+  if (!roots) {
+    if (store) store.rememberUnmanagedForeground(owner.runId, {
+      sessionKey: options.sessionKey,
+      ...(project ? { project } : { fallbackCwd: path.resolve(options.authorizedRoot) }),
+    });
+    return undefined;
+  }
   assertManagedWorkspaceSandbox(options.sandbox, project);
   if (!store) throw new ManagedWorkspaceStorageError('allocation_failed');
   const now = new Date().toISOString();

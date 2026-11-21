@@ -4,10 +4,12 @@ import { z } from 'zod';
 import {
   managedRunAllocationSchema,
   managedRunIntentSchema,
+  unmanagedForegroundAdmissionSchema,
   type ManagedRunAllocation,
   type ManagedRunIntent,
   type ManagedRunOwner,
   type ManagedWorkspacePurpose,
+  type UnmanagedForegroundAdmission,
 } from '../domain/managed-workspace.js';
 import { sameWorkspaceProject } from '../domain/workspace.js';
 import type { ManagedWorkspaceAuthorizedRoots, ManagedWorkspaceRecord, ManagedWorkspaceStore } from '../ports/managed-workspace.js';
@@ -41,7 +43,40 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       CREATE INDEX IF NOT EXISTS workspace_run_artifact_path ON workspace_run_allocations(artifact_path);
       CREATE INDEX IF NOT EXISTS workspace_run_scratch_identity ON workspace_run_allocations(scratch_identity);
       CREATE INDEX IF NOT EXISTS workspace_run_artifact_identity ON workspace_run_allocations(artifact_identity);
+      CREATE TABLE IF NOT EXISTS workspace_unmanaged_foreground (
+        run_id TEXT PRIMARY KEY,
+        admission_json TEXT NOT NULL CHECK (json_valid(admission_json))
+      ) STRICT;
     `);
+  }
+
+  getUnmanagedForeground(runId: string): UnmanagedForegroundAdmission | null {
+    const row = this.database.prepare('SELECT admission_json FROM workspace_unmanaged_foreground WHERE run_id = ?').get(runId);
+    return row ? parseStored(unmanagedForegroundAdmissionSchema, row.admission_json) : null;
+  }
+
+  rememberUnmanagedForeground(runId: string, admission: UnmanagedForegroundAdmission): void {
+    this.requireAutocommit();
+    const parsed = unmanagedForegroundAdmissionSchema.safeParse(admission);
+    if (!parsed.success) throw new ManagedWorkspaceStorageError('invalid_binding');
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      if (this.get({ kind: 'foreground', runId })) throw new ManagedWorkspaceStorageError('invalid_binding');
+      const prior = this.getUnmanagedForeground(runId);
+      if (prior) {
+        const matches = 'project' in prior
+          ? 'project' in admission && sameWorkspaceProject(prior.project, admission.project)
+          : 'fallbackCwd' in admission && prior.fallbackCwd === admission.fallbackCwd;
+        if (prior.sessionKey !== admission.sessionKey || !matches) throw new ManagedWorkspaceStorageError('invalid_binding');
+      } else {
+        this.database.prepare('INSERT INTO workspace_unmanaged_foreground (run_id, admission_json) VALUES (?, ?)')
+          .run(runId, JSON.stringify(parsed.data));
+      }
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   get(owner: ManagedRunOwner): ManagedWorkspaceRecord | null {
@@ -120,6 +155,9 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     this.requireAutocommit();
     this.database.exec('BEGIN IMMEDIATE');
     try {
+      if (intent.owner.kind === 'foreground' && this.getUnmanagedForeground(intent.owner.runId)) {
+        throw new ManagedWorkspaceStorageError('invalid_binding');
+      }
       const existing = this.get(intent.owner);
       if (!existing) {
         const scratchPath = managedRunDirectoryPath(intent.roots.scratch, intent.owner);

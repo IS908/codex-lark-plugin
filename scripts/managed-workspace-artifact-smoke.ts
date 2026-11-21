@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js';
 import { publishManagedArtifact, readManagedArtifact } from '../src/managed-workspace-artifact.js';
 import { pinWorkspacePath, validateWorkspaceProject } from '../src/workspace-projects.js';
 
@@ -34,6 +35,44 @@ try {
   await publish(previousAttempt);
   await assert.rejects(fs.stat(stage), { code: 'ENOENT' });
   assert.deepEqual((await read(previousAttempt)).content, content);
+
+  const bounded = new ContinuationArtifactStore(base, content.length);
+  const replica = async (name: string) => {
+    const folder = path.join(base, name);
+    await fs.mkdir(folder, { mode: 0o700 });
+    const pin = await pinWorkspacePath(base, folder);
+    return { folder, store: bounded.forManagedJob(name, pin, async () => (await validateWorkspaceProject(base, pin)).directory) };
+  };
+  const original = await replica('job_original');
+  const filename = 'result.txt';
+  await fs.writeFile(path.join(original.folder, filename), content);
+  const replicaKey = createHash('sha256').update(`${filename}\0${sha256}`).digest('hex');
+  for (const linked of [false, true]) {
+    const jobId = linked ? 'job_interrupted_after_link' : 'job_interrupted_before_link';
+    const target = await replica(jobId);
+    const staged = path.join(target.folder, `.lark-retry-${replicaKey}-${'b'.repeat(32)}.tmp`);
+    const result = path.join(target.folder, filename);
+    await fs.writeFile(staged, content, { flag: 'wx', mode: 0o600 });
+    if (linked) await fs.link(staged, result);
+    assert.equal(await original.store.copyVerified('job_original', jobId,
+      [{ id: 'result', deliverableId: 'output', path: filename, sha256 }], target.store), true);
+    assert.deepEqual(await fs.readFile(result), content);
+    assert.deepEqual(await fs.readdir(target.folder), [filename]);
+  }
+  const torn = await replica('job_torn');
+  const unknown = path.join(torn.folder, `.lark-retry-${replicaKey}-${'c'.repeat(32)}.tmp`);
+  await fs.writeFile(unknown, content.subarray(0, 4), { flag: 'wx', mode: 0o600 });
+  await assert.rejects(original.store.copyVerified('job_original', 'job_torn',
+    [{ id: 'result', deliverableId: 'output', path: filename, sha256 }], torn.store), { code: 'artifact_invalid' });
+  assert.deepEqual(await fs.readFile(unknown), content.subarray(0, 4));
+  await assert.rejects(fs.stat(path.join(torn.folder, filename)), { code: 'ENOENT' });
+
+  await fs.mkdir(path.join(original.folder, 'nested'), { mode: 0o700 });
+  await fs.rename(path.join(original.folder, filename), path.join(original.folder, relativePath));
+  const empty = await replica('job_empty');
+  assert.equal(await original.store.copyVerified('job_original', 'job_empty',
+    [{ id: 'result', deliverableId: 'output', path: relativePath, sha256 }], empty.store), true);
+  assert.deepEqual(await fs.readFile(path.join(empty.folder, relativePath)), content);
 
   await fs.writeFile(path.join(elsewhere, 'result.txt'), content);
   await fs.symlink(elsewhere, path.join(directory, 'linked'), 'dir');

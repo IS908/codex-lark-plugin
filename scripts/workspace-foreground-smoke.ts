@@ -173,8 +173,47 @@ try {
     await dispatch({ messageId: 'om_new_legacy', chatId: 'managed' }, getStore);
     assert.equal(requests.at(-1)?.extraEnv?.LARK_MANAGED_SCRATCH_DIR, undefined);
     assert.equal(requests.at(-1)?.cwd, path.join(base, 'old-app'));
+    await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify({ ...registry, default: undefined }));
+    await dispatch({ messageId: 'om_legacy_fallback', chatId: 'managed' }, getStore);
+    assert.equal(path.resolve(requests.at(-1)!.cwd!), base);
   } finally {
     restarted.close();
+  }
+  await fs.writeFile(appConfig.managedWorkspaceConfigPath, JSON.stringify(roots));
+  await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify(registry));
+  const withOptIn = await SqliteDurableRunRepository.open({ databasePath });
+  try {
+    const getStore = () => withOptIn.getManagedWorkspaceStore();
+    const count = (await fs.readdir(roots.scratchRoot)).length;
+    await dispatch({ messageId: 'om_new_legacy', chatId: 'managed' }, getStore);
+    assert.equal(requests.at(-1)?.extraEnv?.LARK_MANAGED_SCRATCH_DIR, undefined, 'the original unmanaged decision survives opt-in');
+    assert.equal(requests.at(-1)?.cwd, path.join(base, 'old-app'));
+    await dispatch({ messageId: 'om_legacy_fallback', chatId: 'managed' }, getStore);
+    assert.equal(requests.at(-1)?.extraEnv?.LARK_MANAGED_SCRATCH_DIR, undefined);
+    assert.equal(path.resolve(requests.at(-1)!.cwd!), base);
+    assert.equal((await fs.readdir(roots.scratchRoot)).length, count);
+    await dispatch({ messageId: 'om_after_opt_in', chatId: 'managed' }, getStore);
+    assert.ok(requests.at(-1)?.extraEnv?.LARK_MANAGED_SCRATCH_DIR);
+    assert.equal(requests.at(-1)?.cwd, docs);
+    const ownerFor = (messageId: string) => managedForegroundRunOwner({
+      messageId, chatId: 'managed', chatType: 'group', senderId: 'owner', messageType: 'text', text: '', rawContent: '',
+    }, buildCodexExecSessionKey('managed'));
+    const pinned = getStore().get(ownerFor('om_after_opt_in'))!.allocation;
+    const unmanagedOwner = ownerFor('om_new_legacy');
+    assert.throws(() => getStore().rememberUnmanagedForeground(pinned.owner.runId, {
+      sessionKey: pinned.foregroundSessionKey!, fallbackCwd: base,
+    }), { code: 'invalid_binding' });
+    await assert.rejects(getStore().ensure({
+      owner: unmanagedOwner, roots: pinned.roots, project: pinned.project, authorizedRoots: [base],
+      foregroundSessionKey: pinned.foregroundSessionKey, createdAt: new Date().toISOString(),
+    }), { code: 'invalid_binding' });
+    assert.equal(getStore().get(unmanagedOwner), null);
+    appConfig.codexExecCwd = docs;
+    const beforeChangedRoot = requests.length;
+    await assert.rejects(dispatch({ messageId: 'om_legacy_fallback', chatId: 'managed' }, getStore), { code: 'invalid_binding' });
+    assert.equal(requests.length, beforeChangedRoot);
+  } finally {
+    withOptIn.close();
   }
 } finally {
   await fs.rm(fixture, { recursive: true, force: true });

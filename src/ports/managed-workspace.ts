@@ -1,4 +1,4 @@
-import type { ManagedRunAllocation, ManagedRunIntent, ManagedRunOwner, ManagedWorkspacePurpose } from '../domain/managed-workspace.js';
+import type { ManagedRunAllocation, ManagedRunIntent, ManagedRunOwner, ManagedWorkspacePurpose, UnmanagedForegroundAdmission } from '../domain/managed-workspace.js';
 
 export type ManagedWorkspaceAuthorizedRoots = readonly [string, ...string[]];
 
@@ -9,6 +9,8 @@ export interface ManagedWorkspaceRecord {
 
 export interface ManagedWorkspaceStore {
   get(owner: ManagedRunOwner): ManagedWorkspaceRecord | null;
+  getUnmanagedForeground(runId: string): UnmanagedForegroundAdmission | null;
+  rememberUnmanagedForeground(runId: string, admission: UnmanagedForegroundAdmission): void;
   ensure(request: Omit<ManagedRunIntent, 'version'> & {
     authorizedRoots: ManagedWorkspaceAuthorizedRoots;
     usedAt?: string;

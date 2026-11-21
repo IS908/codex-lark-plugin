@@ -16,12 +16,19 @@ export const managedWorkspaceAdmissionSchema = z.strictObject({
   createdAt: z.iso.datetime(),
 });
 
+const foregroundSessionKey = z.string().min(1).max(1024);
+
+export const unmanagedForegroundAdmissionSchema = z.union([
+  z.strictObject({ sessionKey: foregroundSessionKey, project: workspaceProjectBindingSchema }),
+  z.strictObject({ sessionKey: foregroundSessionKey, fallbackCwd: workspaceProjectBindingSchema.shape.directory }),
+]);
+
 export const managedRunIntentSchema = z.strictObject({
   version: z.literal(1),
   owner: managedRunOwnerSchema,
   roots: managedWorkspaceRootsSchema,
   project: workspaceProjectBindingSchema.optional(),
-  foregroundSessionKey: z.string().min(1).max(1024).optional(),
+  foregroundSessionKey: foregroundSessionKey.optional(),
   createdAt: z.iso.datetime(),
 });
 
@@ -33,6 +40,7 @@ export const managedRunAllocationSchema = managedRunIntentSchema.extend({
 export type ManagedRunOwner = z.infer<typeof managedRunOwnerSchema>;
 export type ManagedWorkspaceRoots = z.infer<typeof managedWorkspaceRootsSchema>;
 export type ManagedWorkspaceAdmission = z.infer<typeof managedWorkspaceAdmissionSchema>;
+export type UnmanagedForegroundAdmission = z.infer<typeof unmanagedForegroundAdmissionSchema>;
 export type ManagedRunIntent = z.infer<typeof managedRunIntentSchema>;
 export type ManagedRunAllocation = z.infer<typeof managedRunAllocationSchema>;
 export type ManagedWorkspacePurpose = 'scratch' | 'artifacts';

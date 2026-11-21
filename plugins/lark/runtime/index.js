@@ -3260,8 +3260,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path33) {
-      let input2 = path33;
+    function removeDotSegments(path34) {
+      let input2 = path34;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3335,11 +3335,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path33) {
-      if (path33 === "" || path33[0] === "/") {
-        return removeDotSegments(path33);
+    function removeDotSegmentsRelative(path34) {
+      if (path34 === "" || path34[0] === "/") {
+        return removeDotSegments(path34);
       }
-      const segments = path33.split("/");
+      const segments = path34.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3702,8 +3702,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path33 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path33 && path33 !== "/" ? path33 : void 0;
+        const path34 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path34 && path34 !== "/" ? path34 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -16861,8 +16861,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path33, errorMaps, issueData } = params;
-  const fullPath = [...path33, ...issueData.path || []];
+  const { data, path: path34, errorMaps, issueData } = params;
+  const fullPath = [...path34, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -16977,11 +16977,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path33, key) {
+  constructor(parent, value, path34, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path33;
+    this._path = path34;
     this._key = key;
   }
   get path() {
@@ -20936,10 +20936,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path33) {
-  if (!path33)
+function getElementAtPath(obj, path34) {
+  if (!path34)
     return obj;
-  return path33.reduce((acc, key) => acc?.[key], obj);
+  return path34.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -21279,11 +21279,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path33, issues) {
+function prefixIssues(path34, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path33);
+    iss.path.unshift(path34);
     return iss;
   });
 }
@@ -21745,16 +21745,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path33 = []) => {
+  const processError = (error63, path34 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path33, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path34, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path33, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path34, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path33, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path34, ...issue2.path]);
       } else {
-        const fullpath = [...path33, ...issue2.path];
+        const fullpath = [...path34, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -21793,17 +21793,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path33 = []) => {
+  const processError = (error63, path34 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path33, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path34, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path33, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path34, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path33, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path34, ...issue2.path]);
       } else {
-        const fullpath = [...path33, ...issue2.path];
+        const fullpath = [...path34, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -21842,8 +21842,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path33 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path33) {
+  const path34 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path34) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -37394,11 +37394,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path33) {
-  if (path33.length === 0) {
+function getDotPath(path34) {
+  if (path34.length === 0) {
     return "object root";
   }
-  return path33.reduce((acc, seg, index) => {
+  return path34.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -39625,13 +39625,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path33 = ref.slice(1).split("/").filter(Boolean);
-  if (path33.length === 0) {
+  const path34 = ref.slice(1).split("/").filter(Boolean);
+  if (path34.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path33[0] === defsKey) {
-    const key = path33[1] === void 0 ? void 0 : decodeJSONPointerSegment(path33[1]);
+  if (path34[0] === defsKey) {
+    const key = path34[1] === void 0 ? void 0 : decodeJSONPointerSegment(path34[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -56492,12 +56492,17 @@ var managedWorkspaceAdmissionSchema = external_exports.strictObject({
   roots: managedWorkspaceRootsSchema,
   createdAt: external_exports.iso.datetime()
 });
+var foregroundSessionKey = external_exports.string().min(1).max(1024);
+var unmanagedForegroundAdmissionSchema = external_exports.union([
+  external_exports.strictObject({ sessionKey: foregroundSessionKey, project: workspaceProjectBindingSchema }),
+  external_exports.strictObject({ sessionKey: foregroundSessionKey, fallbackCwd: workspaceProjectBindingSchema.shape.directory })
+]);
 var managedRunIntentSchema = external_exports.strictObject({
   version: external_exports.literal(1),
   owner: managedRunOwnerSchema,
   roots: managedWorkspaceRootsSchema,
   project: workspaceProjectBindingSchema.optional(),
-  foregroundSessionKey: external_exports.string().min(1).max(1024).optional(),
+  foregroundSessionKey: foregroundSessionKey.optional(),
   createdAt: external_exports.iso.datetime()
 });
 var managedRunAllocationSchema = managedRunIntentSchema.extend({
@@ -56622,7 +56627,7 @@ async function allocateManagedRunDirectories({
   roots,
   owner,
   createdAt,
-  foregroundSessionKey,
+  foregroundSessionKey: foregroundSessionKey2,
   ...authorization
 }) {
   if (!managedRunOwnerSchema.safeParse(owner).success || !external_exports.iso.datetime().safeParse(createdAt).success) {
@@ -56638,7 +56643,7 @@ async function allocateManagedRunDirectories({
     scratch,
     artifacts,
     createdAt,
-    ...foregroundSessionKey ? { foregroundSessionKey } : {},
+    ...foregroundSessionKey2 ? { foregroundSessionKey: foregroundSessionKey2 } : {},
     ...authorization.project ? { project: authorization.project } : {}
   };
 }
@@ -65577,7 +65582,7 @@ function startSdkChannelRuntimeWithRetry(channel, options = {}) {
 }
 
 // src/codex-exec-delivery.ts
-import path23 from "node:path";
+import path24 from "node:path";
 
 // src/codex-exec-progress.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
@@ -66221,6 +66226,7 @@ ${[
 
 // src/managed-workspace-admission.ts
 import { createHash as createHash9 } from "node:crypto";
+import path23 from "node:path";
 function managedForegroundRunOwner(message, sessionKey2) {
   const identity = JSON.stringify([
     sessionKey2,
@@ -66239,7 +66245,13 @@ async function admitManagedForegroundRun(options) {
     authorizedRoots,
     project
   });
-  if (!roots) return void 0;
+  if (!roots) {
+    if (store) store.rememberUnmanagedForeground(owner.runId, {
+      sessionKey: options.sessionKey,
+      ...project ? { project } : { fallbackCwd: path23.resolve(options.authorizedRoot) }
+    });
+    return void 0;
+  }
   assertManagedWorkspaceSandbox(options.sandbox, project);
   if (!store) throw new ManagedWorkspaceStorageError("allocation_failed");
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -66519,12 +66531,22 @@ async function deliverMessageViaCodexExec(opts) {
   const workspaceOwner = foreground && opts.managedWorkspaceStore ? managedForegroundRunOwner(message, sessionKey2) : void 0;
   const managedStore = workspaceOwner ? opts.managedWorkspaceStore?.() : void 0;
   const priorManaged = workspaceOwner ? managedStore?.get(workspaceOwner) : void 0;
+  const priorUnmanaged = workspaceOwner ? managedStore?.getUnmanagedForeground(workspaceOwner.runId) : void 0;
+  if (priorUnmanaged && (priorManaged || priorUnmanaged.sessionKey !== sessionKey2)) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
   const directive = foreground && message.messageType !== "reaction" ? readWorkspaceProjectDirective(message.chatType === "doc_comment" ? message.currentUserText : message.workspaceDirectiveText) : void 0;
   const selector = directive?.selector;
   const savedWorkspace = storedSession?.workspaceProjectSenderId === message.senderId ? storedSession.workspaceProject : void 0;
   const legacySession = compatibleSession?.sessionId && compatibleSession.workspaceProject === void 0;
   let workspace;
-  if (priorManaged) {
+  if (priorUnmanaged) {
+    if ("project" in priorUnmanaged) {
+      workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, priorUnmanaged.project);
+    } else if (priorUnmanaged.fallbackCwd !== path24.resolve(workspaceOptions.authorizedRoot)) {
+      throw new ManagedWorkspaceStorageError("invalid_binding");
+    }
+  } else if (priorManaged) {
     const previousProject = priorManaged.allocation.project;
     if (previousProject) workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, previousProject);
   } else if (foreground && (selector !== void 0 || savedWorkspace !== void 0 || !legacySession)) {
@@ -66532,7 +66554,7 @@ async function deliverMessageViaCodexExec(opts) {
   } else if (message.chatType === "cronjob" && opts.cronWorkspaceProject !== void 0) {
     workspace = await resolveWorkspaceProject({ ...workspaceOptions, persisted: opts.cronWorkspaceProject });
   }
-  const managed = workspaceOwner ? await admitManagedForegroundRun({
+  const managed = priorUnmanaged ? void 0 : workspaceOwner ? await admitManagedForegroundRun({
     owner: workspaceOwner,
     sessionKey: sessionKey2,
     store: managedStore,
@@ -66547,13 +66569,13 @@ async function deliverMessageViaCodexExec(opts) {
   }
   const launchWorkspace = workspace ?? (managed ? await pinWorkspacePath(
     workspaceOptions.authorizedRoot,
-    path23.resolve(workspaceOptions.authorizedRoot)
+    path24.resolve(workspaceOptions.authorizedRoot)
   ) : void 0);
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace) && (workspace === void 0 || compatibleSession?.workspaceProjectSenderId === message.senderId) ? compatibleSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
-  const progressBaseDir = path23.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
-  const actionBaseDir = path23.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
+  const progressBaseDir = path24.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
+  const actionBaseDir = path24.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
   const actionChannel = await createCodexExecActionChannel({
     baseDir: actionBaseDir,
     caller: message.senderId,
@@ -66629,7 +66651,7 @@ async function deliverMessageViaCodexExec(opts) {
     if (!launchWorkspace) return runCodexExec(runRequest);
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...progressSink ? [progressSink.filePath] : []];
-    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path23.dirname(file2)))) : [];
+    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path24.dirname(file2)))) : [];
     if (managed) {
       await Promise.all([
         validateManagedRunDirectory(managed, "scratch", [authorizedRoot]),
@@ -68477,18 +68499,18 @@ async function startChannelServices(options) {
 // src/continuation/runtime.ts
 import fs23 from "node:fs/promises";
 import os3 from "node:os";
-import path32 from "node:path";
+import path33 from "node:path";
 
 // src/continuation/artifact-store.ts
 import { createHash as createHash11, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import fs19 from "node:fs/promises";
-import path25 from "node:path";
+import path26 from "node:path";
 
 // src/managed-workspace-artifact.ts
 import { execFile as execFile2 } from "node:child_process";
 import { createHash as createHash10 } from "node:crypto";
-import path24 from "node:path";
+import path25 from "node:path";
 import { promisify as promisify2 } from "node:util";
 var exec2 = promisify2(execFile2);
 var HARD_BYTE_LIMIT = 100 * 1024 * 1024;
@@ -68528,23 +68550,36 @@ var artifactProgram = String.raw`
       return content;
     } finally { fs.closeSync(fd); }
   }
+  const prefix = '.lark-retry-' + sha(relative + '\0' + expected) + '-';
+  function reconcile(leaf) {
+    let existing;
+    try { existing = stat(leaf); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const stages = fs.readdirSync('.').filter((name) => name.startsWith(prefix)
+      && /^[a-f0-9]{32}\.tmp$/.test(name.slice(prefix.length)));
+    if (stages.length === 0) return !!existing;
+    guard(stages.length === 1);
+    const [stage] = stages;
+    const staged = stat(stage);
+    guard(staged.isFile() && staged.uid === BigInt(process.geteuid()) && (staged.mode & 0o077n) === 0n);
+    if (existing) {
+      guard(same(existing, staged));
+      read(leaf, 2n);
+    } else {
+      read(stage, 1n);
+      guardParent();
+      guard(stable(staged, stat(stage)));
+      fs.linkSync(stage, leaf);
+    }
+    guardParent();
+    guard(same(staged, stat(stage)) && same(staged, stat(leaf)));
+    fs.unlinkSync(stage);
+    read(leaf, 1n);
+    return true;
+  }
   function publish(leaf) {
     const content = fs.readFileSync(0);
     guard(content.length <= limit && sha(content) === expected);
-    const prefix = '.lark-retry-' + sha(relative + '\0' + expected) + '-';
-    let existing;
-    try { existing = stat(leaf); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (existing) {
-      if (existing.nlink === 2n) {
-        // Recover a crash after the exclusive link was published but before its staging name was removed.
-        const stage = fs.readdirSync('.').find((name) => name.startsWith(prefix)
-          && /^[a-f0-9]{32}\.tmp$/.test(name.slice(prefix.length)) && same(existing, stat(name)));
-        guard(stage && existing.isFile() && existing.uid === BigInt(process.geteuid()) && (existing.mode & 0o077n) === 0n);
-        read(leaf, 2n);
-        guardParent();
-        guard(same(existing, stat(stage)) && same(existing, stat(leaf)));
-        fs.unlinkSync(stage);
-      }
+    if (reconcile(leaf)) {
       read(leaf, 1n);
       return;
     }
@@ -68562,7 +68597,7 @@ var artifactProgram = String.raw`
       if (same(created, stat(staged))) fs.unlinkSync(staged);
     }
   }
-  try {
+  function main() {
     const start = stat('.');
     guard(process.geteuid && String(start.dev) === dev && String(start.ino) === ino);
     identity = start;
@@ -68573,7 +68608,12 @@ var artifactProgram = String.raw`
       if (operation === 'publish') {
         try { fs.mkdirSync(name, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
       }
-      const fd = fs.openSync(name, mode | fs.constants.O_DIRECTORY);
+      let fd;
+      try { fd = fs.openSync(name, mode | fs.constants.O_DIRECTORY); }
+      catch (error) {
+        if (operation === 'reconcile' && error.code === 'ENOENT') return;
+        throw error;
+      }
       try {
         const child = fs.fstatSync(fd, { bigint: true });
         guard(child.isDirectory() && child.uid === start.uid && (child.mode & 0o022n) === 0n);
@@ -68586,11 +68626,14 @@ var artifactProgram = String.raw`
     if (operation === 'publish') {
       publish(leaf);
       guardParent();
+    } else if (operation === 'reconcile') {
+      reconcile(leaf);
     } else {
       const result = read(leaf, 1n);
       process.stdout.write(result);
     }
-  } catch {
+  }
+  try { main(); } catch {
     process.exitCode = 1;
   }
 `;
@@ -68602,10 +68645,13 @@ async function publishManagedArtifact(options) {
   const sha2562 = createHash10("sha256").update(options.content).digest("hex");
   await runArtifactOperation(options, sha2562, options.content);
 }
-async function runArtifactOperation(options, sha2562, input2) {
+async function reconcileManagedArtifact(options) {
+  await runArtifactOperation(options, options.expectedSha256.toLowerCase(), void 0, "reconcile");
+}
+async function runArtifactOperation(options, sha2562, input2, operation = input2 ? "publish" : "read") {
   const { binding, relativePath, maxBytes, revalidate } = options;
   const safePath = relativePath.split("/").every((part) => part && part !== "." && part !== ".." && !part.startsWith(".lark-retry-") && !/[\\\0]/.test(part));
-  if (!safePath || path24.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
+  if (!safePath || path25.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
   try {
     if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
     const running = exec2(process.execPath, [
@@ -68613,7 +68659,7 @@ async function runArtifactOperation(options, sha2562, input2) {
       "-e",
       artifactProgram,
       "--",
-      input2 ? "publish" : "read",
+      operation,
       binding.directory,
       binding.device,
       binding.inode,
@@ -68647,7 +68693,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     this.maxBytes = maxBytes;
     this.maxEntries = maxEntries;
     this.maxDepth = maxDepth;
-    this.rootDir = path25.resolve(rootDir);
+    this.rootDir = path26.resolve(rootDir);
   }
   maxBytes;
   maxEntries;
@@ -68655,7 +68701,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
   rootDir;
   managedJob;
   forManagedJob(jobId, binding, revalidate) {
-    const store = new _ContinuationArtifactStore(path25.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
+    const store = new _ContinuationArtifactStore(path26.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
     store.managedJob = { jobId, binding, revalidate };
     return store;
   }
@@ -68674,12 +68720,12 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     return directory;
   }
   resolve(jobId, relativePath) {
-    if (!relativePath || path25.isAbsolute(relativePath)) {
+    if (!relativePath || path26.isAbsolute(relativePath)) {
       throw new Error("Continuation artifact path must be relative.");
     }
     const directory = this.jobDirectory(jobId);
-    const resolved = path25.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path25.sep}`)) {
+    const resolved = path26.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path26.sep}`)) {
       throw new Error("Continuation artifact path resolves outside job directory.");
     }
     return resolved;
@@ -68708,7 +68754,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
             `Continuation artifact entry limit exceeded for ${jobId}: ${totalEntries} > ${this.maxEntries}.`
           );
         }
-        const entryPath = path25.join(current, entry.name);
+        const entryPath = path26.join(current, entry.name);
         const metadata = await fs19.lstat(entryPath).catch((error62) => {
           if (error62.code === "ENOENT") return null;
           throw error62;
@@ -68748,7 +68794,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (metadata.isSymbolicLink() || !metadata.isFile()) {
         throw new Error(`Continuation artifact is not a regular file: ${reference}`);
       }
-      const normalized = path25.relative(directory, resolved).split(path25.sep).join("/");
+      const normalized = path26.relative(directory, resolved).split(path26.sep).join("/");
       if (!seen.has(normalized)) {
         seen.add(normalized);
         canonical.push(normalized);
@@ -68779,7 +68825,18 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       throw new Error("Continuation retry artifact references must be unique.");
     }
     await targetStore.ensure(targetJobId);
-    if (targetStore.managedJob) await targetStore.assertWithinLimit(targetJobId);
+    if (targetStore.managedJob) {
+      for (let index = 0; index < canonical.length; index += 1) {
+        await reconcileManagedArtifact({
+          binding: targetStore.managedJob.binding,
+          relativePath: canonical[index],
+          expectedSha256: artifacts[index].sha256,
+          maxBytes: targetStore.maxBytes,
+          revalidate: targetStore.managedJob.revalidate
+        });
+      }
+      await targetStore.assertWithinLimit(targetJobId);
+    }
     try {
       for (let index = 0; index < canonical.length; index += 1) {
         const reference = canonical[index];
@@ -68795,7 +68852,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
           });
         } else {
           const target = targetStore.resolve(targetJobId, reference);
-          await fs19.mkdir(path25.dirname(target), { recursive: true, mode: 448 });
+          await fs19.mkdir(path26.dirname(target), { recursive: true, mode: 448 });
           await fs19.copyFile(this.resolve(sourceJobId, reference), target, constants.COPYFILE_EXCL);
           await fs19.chmod(target, 384);
         }
@@ -68830,7 +68887,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     if (sourceMetadata.isSymbolicLink() || !sourceMetadata.isDirectory()) {
       throw new Error("Continuation artifact quarantine source is not a real directory.");
     }
-    const quarantineName = path25.basename(destination);
+    const quarantineName = path26.basename(destination);
     ACTIVE_REDACTION_QUARANTINES.add(quarantineName);
     try {
       await fs19.rename(source, destination);
@@ -68851,7 +68908,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     try {
       await fs19.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path25.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path26.basename(source));
     }
   }
   async discardQuarantine(jobId, token) {
@@ -68859,7 +68916,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     try {
       await removeArtifactTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path25.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path26.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown, withJobLock) {
@@ -68869,7 +68926,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const quarantine = parseRedactionQuarantine(entry.name);
       if (!quarantine) continue;
-      const candidate = path25.join(this.rootDir, entry.name);
+      const candidate = path26.join(this.rootDir, entry.name);
       const reconcile = async () => {
         const shouldRestore = isJobKnown ? await isJobKnown(quarantine.jobId) : jobIds.has(quarantine.jobId);
         if (!shouldRestore) {
@@ -68919,8 +68976,8 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (jobId !== this.managedJob.jobId) throw new Error("Managed artifact store belongs to a different run.");
       return this.managedJob.binding.directory;
     }
-    const resolved = path25.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path25.sep}`)) {
+    const resolved = path26.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path26.sep}`)) {
       throw new Error("Continuation artifact job directory escapes the artifact root.");
     }
     return resolved;
@@ -68930,7 +68987,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error("Continuation artifact quarantine token is invalid.");
     }
-    return path25.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
+    return path26.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
   }
 };
 function parseRedactionQuarantine(name) {
@@ -68984,7 +69041,7 @@ async function pathExists(target) {
 import { createHash as createHash12, randomBytes as randomBytes2 } from "node:crypto";
 import { constants as constants2, createWriteStream as createWriteStream3 } from "node:fs";
 import fs20 from "node:fs/promises";
-import path26 from "node:path";
+import path27 from "node:path";
 import { Transform } from "node:stream";
 import { pipeline as pipeline2 } from "node:stream/promises";
 var InvalidManagedInputError = class extends Error {
@@ -69005,7 +69062,7 @@ var ContinuationInputStore = class {
   maxTotalBytes;
   orphanAgeMs;
   constructor(rootDir, options = {}) {
-    this.rootDir = path26.resolve(rootDir);
+    this.rootDir = path27.resolve(rootDir);
     this.maxFiles = options.maxFiles ?? CONTINUATION_LIMITS.inputFileCount;
     this.maxFileBytes = options.maxFileBytes ?? CONTINUATION_LIMITS.inputBytesPerFile;
     this.maxTotalBytes = options.maxTotalBytes ?? CONTINUATION_LIMITS.managedInputBytesPerJob;
@@ -69019,7 +69076,7 @@ var ContinuationInputStore = class {
   async withCreationLock(jobId, operation) {
     assertJobId(jobId);
     await this.ensureRoot();
-    const lockDirectory = path26.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
+    const lockDirectory = path27.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
     let ownerNonce;
     while (true) {
@@ -69095,7 +69152,7 @@ var ContinuationInputStore = class {
     this.validateSources(sources);
     await this.ensureRoot();
     const finalDirectory = this.jobDirectory(jobId);
-    const stagingDirectory = path26.join(
+    const stagingDirectory = path27.join(
       this.rootDir,
       `.staging-${jobId}-${process.pid}-${randomBytes2(8).toString("hex")}`
     );
@@ -69110,7 +69167,7 @@ var ContinuationInputStore = class {
         const relativePath = neutralInputFileName(id, source.fileName);
         const copied = await copyRegularFile(
           source.sourcePath,
-          path26.join(stagingDirectory, relativePath),
+          path27.join(stagingDirectory, relativePath),
           this.maxFileBytes
         );
         if (source.expectedSizeBytes !== void 0 && copied.sizeBytes !== source.expectedSizeBytes) {
@@ -69133,11 +69190,11 @@ var ContinuationInputStore = class {
         });
       }
       const manifest = { version: 1, jobId, requestFingerprint, inputs: artifacts };
-      const manifestPath = path26.join(stagingDirectory, MANIFEST_FILE);
+      const manifestPath = path27.join(stagingDirectory, MANIFEST_FILE);
       await fs20.writeFile(manifestPath, `${JSON.stringify(manifest)}
 `, { mode: 384, flag: "wx" });
       for (const artifact of artifacts) {
-        await fs20.chmod(path26.join(stagingDirectory, artifact.relativePath), 256);
+        await fs20.chmod(path27.join(stagingDirectory, artifact.relativePath), 256);
       }
       await fs20.chmod(manifestPath, 256);
       await fs20.chmod(stagingDirectory, 320);
@@ -69220,11 +69277,11 @@ var ContinuationInputStore = class {
   }
   resolve(jobId, relativePath) {
     const directory = this.jobDirectory(jobId);
-    if (!relativePath || path26.isAbsolute(relativePath)) {
+    if (!relativePath || path27.isAbsolute(relativePath)) {
       throw new Error("Continuation input path must be relative.");
     }
-    const resolved = path26.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path26.sep}`)) {
+    const resolved = path27.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path27.sep}`)) {
       throw new Error("Continuation input path resolves outside its managed directory.");
     }
     return resolved;
@@ -69246,7 +69303,7 @@ var ContinuationInputStore = class {
     if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
       throw new Error("Continuation input path is not a real directory.");
     }
-    const quarantineName = path26.basename(destination);
+    const quarantineName = path27.basename(destination);
     ACTIVE_REDACTION_QUARANTINES2.add(quarantineName);
     try {
       await fs20.rename(source, destination);
@@ -69273,7 +69330,7 @@ var ContinuationInputStore = class {
     try {
       await fs20.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path26.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path27.basename(source));
     }
   }
   async discardQuarantine(jobId, token) {
@@ -69281,7 +69338,7 @@ var ContinuationInputStore = class {
     try {
       await removeManagedTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path26.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path27.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown) {
@@ -69291,7 +69348,7 @@ var ContinuationInputStore = class {
       if (!entry.isFile() && !entry.isDirectory() || entry.isSymbolicLink()) continue;
       const reclaim = parseCreationReclaim(entry.name);
       if (!reclaim) continue;
-      const candidate = path26.join(this.rootDir, entry.name);
+      const candidate = path27.join(this.rootDir, entry.name);
       const metadata = await fs20.lstat(candidate).catch((error62) => {
         if (error62.code === "ENOENT") return null;
         throw error62;
@@ -69302,7 +69359,7 @@ var ContinuationInputStore = class {
     const liveCreationJobs = /* @__PURE__ */ new Set();
     for (const entry of entries) {
       if (!entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
-      const lockDirectory = path26.join(this.rootDir, entry.name);
+      const lockDirectory = path27.join(this.rootDir, entry.name);
       const jobId = entry.name.slice(CREATION_LOCK_PREFIX.length);
       if (!await tryReclaimCreationLock(lockDirectory, this.rootDir)) {
         liveCreationJobs.add(jobId);
@@ -69312,7 +69369,7 @@ var ContinuationInputStore = class {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const redactionQuarantine = parseRedactionQuarantine2(entry.name);
       if (redactionQuarantine) {
-        const candidate2 = path26.join(this.rootDir, entry.name);
+        const candidate2 = path27.join(this.rootDir, entry.name);
         await this.withCreationLock(redactionQuarantine.jobId, async () => {
           const shouldRestore = isJobKnown ? await isJobKnown(redactionQuarantine.jobId) : jobIds.has(redactionQuarantine.jobId);
           if (!shouldRestore) {
@@ -69346,7 +69403,7 @@ var ContinuationInputStore = class {
       if (!isStaging && jobIds.has(entry.name)) continue;
       if (!isStaging && liveCreationJobs.has(entry.name)) continue;
       if (isStaging && [...liveCreationJobs].some((jobId) => entry.name.startsWith(`.staging-${jobId}-`))) continue;
-      const candidate = path26.join(this.rootDir, entry.name);
+      const candidate = path27.join(this.rootDir, entry.name);
       if (!isStaging && isValidJobId(entry.name)) {
         await this.withCreationLock(entry.name, async () => {
           if (jobIds.has(entry.name) || await isJobKnown?.(entry.name)) return;
@@ -69366,7 +69423,7 @@ var ContinuationInputStore = class {
         throw new Error("Continuation input kind is invalid.");
       }
       validateFileName(source.fileName);
-      if (!path26.isAbsolute(source.sourcePath)) {
+      if (!path27.isAbsolute(source.sourcePath)) {
         throw new Error("Continuation input source path must be absolute and server-admitted.");
       }
       if (source.expectedSha256 !== void 0 && !/^[a-f0-9]{64}$/.test(source.expectedSha256)) {
@@ -69379,8 +69436,8 @@ var ContinuationInputStore = class {
   }
   jobDirectory(jobId) {
     assertJobId(jobId);
-    const resolved = path26.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path26.sep}`)) {
+    const resolved = path27.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path27.sep}`)) {
       throw new Error("Continuation input job directory escapes the input root.");
     }
     return resolved;
@@ -69390,12 +69447,12 @@ var ContinuationInputStore = class {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error("Continuation input quarantine token is invalid.");
     }
-    return path26.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token}`);
+    return path27.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token}`);
   }
   async readManifestIfPresent(directory, jobId) {
     try {
       await assertDirectory(directory);
-      const parsed = JSON.parse(await fs20.readFile(path26.join(directory, MANIFEST_FILE), "utf8"));
+      const parsed = JSON.parse(await fs20.readFile(path27.join(directory, MANIFEST_FILE), "utf8"));
       if (parsed.version !== 1 || parsed.jobId !== jobId || typeof parsed.requestFingerprint !== "string" || !Array.isArray(parsed.inputs)) {
         throw new Error("Continuation input manifest is invalid.");
       }
@@ -69482,12 +69539,12 @@ async function sha256File(filePath) {
   }
 }
 function validateFileName(fileName) {
-  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path26.basename(fileName) !== fileName) {
+  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path27.basename(fileName) !== fileName) {
     throw new Error("Continuation input file name is invalid.");
   }
 }
 function neutralInputFileName(id, originalFileName) {
-  const extension = path26.extname(originalFileName).toLowerCase();
+  const extension = path27.extname(originalFileName).toLowerCase();
   return /^\.[a-z0-9]{1,8}$/.test(extension) ? `${id}${extension}` : id;
 }
 function validateArtifact(artifact) {
@@ -69495,7 +69552,7 @@ function validateArtifact(artifact) {
     throw new Error("Continuation input artifact id is invalid.");
   }
   validateFileName(artifact.fileName);
-  if (!artifact.relativePath || path26.isAbsolute(artifact.relativePath)) {
+  if (!artifact.relativePath || path27.isAbsolute(artifact.relativePath)) {
     throw new Error("Continuation input artifact path is invalid.");
   }
   if (!/^[a-f0-9]{64}$/.test(artifact.sha256)) {
@@ -69546,7 +69603,7 @@ function safeAdmissionError(error62) {
 async function readCreationOwner(lockDirectory) {
   try {
     const metadata = await fs20.lstat(lockDirectory);
-    const ownerPath = metadata.isDirectory() ? path26.join(lockDirectory, "owner.json") : lockDirectory;
+    const ownerPath = metadata.isDirectory() ? path27.join(lockDirectory, "owner.json") : lockDirectory;
     const parsed = JSON.parse(await fs20.readFile(ownerPath, "utf8"));
     if (!Number.isInteger(parsed.pid) || Number(parsed.pid) <= 0 || typeof parsed.createdAt !== "string") return null;
     const nonce = typeof parsed.nonce === "string" && /^[a-f0-9]{32}$/.test(parsed.nonce) ? parsed.nonce : null;
@@ -69585,9 +69642,9 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
     Date.now() - metadata.mtimeMs,
     UNKNOWN_CREATION_OWNER_GRACE_MS
   )) return false;
-  const quarantine = path26.join(
+  const quarantine = path27.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}${path26.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`
+    `${CREATION_RECLAIM_PREFIX}${path27.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`
   );
   try {
     await fs20.rename(lockDirectory, quarantine);
@@ -69610,10 +69667,10 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
   return true;
 }
 async function hasCompetingCreationReclaim(rootDir, lockDirectory) {
-  const prefix = `${CREATION_RECLAIM_PREFIX}${path26.basename(lockDirectory)}-`;
+  const prefix = `${CREATION_RECLAIM_PREFIX}${path27.basename(lockDirectory)}-`;
   for (const entry of await fs20.readdir(rootDir)) {
     if (!entry.startsWith(prefix)) continue;
-    const candidate = path26.join(rootDir, entry);
+    const candidate = path27.join(rootDir, entry);
     const metadata = await fs20.lstat(candidate).catch((error62) => {
       if (error62.code === "ENOENT") return null;
       throw error62;
@@ -69652,9 +69709,9 @@ async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   if (owner?.nonce !== nonce) {
     throw new Error("Continuation creation lock ownership changed before release.");
   }
-  const releaseDirectory = path26.join(
+  const releaseDirectory = path27.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}release-${path26.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
+    `${CREATION_RECLAIM_PREFIX}release-${path27.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
   );
   try {
     await fs20.rename(lockDirectory, releaseDirectory);
@@ -69725,7 +69782,7 @@ async function removeManagedTree(target) {
     throw error62;
   }
   for (const entry of entries) {
-    const child = path26.join(target, entry);
+    const child = path27.join(target, entry);
     let childMetadata;
     try {
       childMetadata = await fs20.lstat(child);
@@ -71380,7 +71437,7 @@ function stringArray(value) {
 }
 
 // src/continuation/sqlite-repository.ts
-import path31 from "node:path";
+import path32 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
 
 // src/continuation/progress-policy.ts
@@ -71465,7 +71522,7 @@ function materialProjection(checkpoint2) {
     completedStepIds: sorted(checkpoint2.completedStepIds),
     completedCriterionIds: sorted(checkpoint2.completedCriterionIds),
     completedDeliverableIds: sorted(checkpoint2.completedDeliverableIds),
-    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path33, sha256: sha2562 }) => ({ id, deliverableId, path: path33, sha256: sha2562 })).sort(compareId),
+    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path34, sha256: sha2562 }) => ({ id, deliverableId, path: path34, sha256: sha2562 })).sort(compareId),
     evidence: [...checkpoint2.evidence].map((entry) => ({
       id: entry.id,
       requirementId: entry.requirementId,
@@ -71703,10 +71760,10 @@ function requireEntitiesUnchanged(name, previous, candidate, add) {
 // src/durable-run/sqlite-repository.ts
 import { createHash as createHash17, randomBytes as randomBytes3 } from "node:crypto";
 import fs21 from "node:fs/promises";
-import path28 from "node:path";
+import path29 from "node:path";
 
 // src/durable-run/sqlite-managed-workspace.ts
-import path27 from "node:path";
+import path28 from "node:path";
 var timestamp = external_exports.iso.datetime();
 var SqliteManagedWorkspaceStore = class {
   constructor(database) {
@@ -71728,9 +71785,37 @@ var SqliteManagedWorkspaceStore = class {
       CREATE INDEX IF NOT EXISTS workspace_run_artifact_path ON workspace_run_allocations(artifact_path);
       CREATE INDEX IF NOT EXISTS workspace_run_scratch_identity ON workspace_run_allocations(scratch_identity);
       CREATE INDEX IF NOT EXISTS workspace_run_artifact_identity ON workspace_run_allocations(artifact_identity);
+      CREATE TABLE IF NOT EXISTS workspace_unmanaged_foreground (
+        run_id TEXT PRIMARY KEY,
+        admission_json TEXT NOT NULL CHECK (json_valid(admission_json))
+      ) STRICT;
     `);
   }
   database;
+  getUnmanagedForeground(runId) {
+    const row = this.database.prepare("SELECT admission_json FROM workspace_unmanaged_foreground WHERE run_id = ?").get(runId);
+    return row ? parseStored(unmanagedForegroundAdmissionSchema, row.admission_json) : null;
+  }
+  rememberUnmanagedForeground(runId, admission) {
+    this.requireAutocommit();
+    const parsed = unmanagedForegroundAdmissionSchema.safeParse(admission);
+    if (!parsed.success) throw new ManagedWorkspaceStorageError("invalid_binding");
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.get({ kind: "foreground", runId })) throw new ManagedWorkspaceStorageError("invalid_binding");
+      const prior = this.getUnmanagedForeground(runId);
+      if (prior) {
+        const matches = "project" in prior ? "project" in admission && sameWorkspaceProject(prior.project, admission.project) : "fallbackCwd" in admission && prior.fallbackCwd === admission.fallbackCwd;
+        if (prior.sessionKey !== admission.sessionKey || !matches) throw new ManagedWorkspaceStorageError("invalid_binding");
+      } else {
+        this.database.prepare("INSERT INTO workspace_unmanaged_foreground (run_id, admission_json) VALUES (?, ?)").run(runId, JSON.stringify(parsed.data));
+      }
+      this.database.exec("COMMIT");
+    } catch (error62) {
+      this.database.exec("ROLLBACK");
+      throw error62;
+    }
+  }
   get(owner) {
     const row = this.database.prepare(`
       SELECT intent_json, allocation_json, last_used_at, scratch_path, artifact_path, scratch_identity, artifact_identity
@@ -71795,6 +71880,9 @@ var SqliteManagedWorkspaceStore = class {
     this.requireAutocommit();
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      if (intent.owner.kind === "foreground" && this.getUnmanagedForeground(intent.owner.runId)) {
+        throw new ManagedWorkspaceStorageError("invalid_binding");
+      }
       const existing = this.get(intent.owner);
       if (!existing) {
         const scratchPath = managedRunDirectoryPath(intent.roots.scratch, intent.owner);
@@ -71825,12 +71913,12 @@ var SqliteManagedWorkspaceStore = class {
     const exact = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations WHERE scratch_path = ? OR artifact_path = ? LIMIT 1
     `);
-    for (let current = candidate; ; current = path27.dirname(current)) {
+    for (let current = candidate; ; current = path28.dirname(current)) {
       if (exact.get(current, current)) throw new ManagedWorkspaceStorageError("overlapping_runs");
-      if (path27.dirname(current) === current) break;
+      if (path28.dirname(current) === current) break;
     }
-    const prefix = `${candidate}${path27.sep}`;
-    const upper = `${candidate}${String.fromCharCode(path27.sep.charCodeAt(0) + 1)}`;
+    const prefix = `${candidate}${path28.sep}`;
+    const upper = `${candidate}${String.fromCharCode(path28.sep.charCodeAt(0) + 1)}`;
     const nested = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations
       WHERE (scratch_path >= ? AND scratch_path < ?) OR (artifact_path >= ? AND artifact_path < ?)
@@ -73584,9 +73672,9 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
     return new _SqliteDurableRunRepository(database, DEFAULT_DELIVERY_LEASE_MS, false);
   }
   static async open(options) {
-    const databasePath = path28.resolve(options.databasePath);
-    await fs21.mkdir(path28.dirname(databasePath), { recursive: true, mode: 448 });
-    await fs21.chmod(path28.dirname(databasePath), 448);
+    const databasePath = path29.resolve(options.databasePath);
+    await fs21.mkdir(path29.dirname(databasePath), { recursive: true, mode: 448 });
+    await fs21.chmod(path29.dirname(databasePath), 448);
     const { DatabaseSync } = await import("node:sqlite");
     const database = new DatabaseSync(databasePath, {
       timeout: 5e3,
@@ -75736,7 +75824,7 @@ function hasOnlyKeys(value, allowed) {
 
 // src/continuation/sqlite-codec.ts
 import { createHash as createHash18, randomBytes as randomBytes4 } from "node:crypto";
-import path29 from "node:path";
+import path30 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var PROGRESS_PAYLOAD_MAX_CHARS = 4e3;
 var MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT = 2;
@@ -76502,7 +76590,7 @@ function validatePermissionEnvelope(value, requireAbsoluteRoot2) {
     "requestedPaths",
     "workspaceProject",
     "managedWorkspaceRoots"
-  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path29.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path29.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
+  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path30.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path30.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
     throw new Error("Continuation permission envelope is invalid.");
   }
   if (envelope.profile === "bounded" && (envelope.network !== "none" || envelope.externalSideEffects !== "denied") || envelope.profile === "trusted_personal_workspace" && (requestedPaths.length === 0 || envelope.network !== "enabled" || envelope.externalSideEffects !== "allowed")) {
@@ -77397,12 +77485,12 @@ function staleClaimError(jobId) {
 
 // src/continuation/sqlite-database.ts
 import fs22 from "node:fs/promises";
-import path30 from "node:path";
+import path31 from "node:path";
 var ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
 async function openContinuationDatabase(databasePath) {
-  const resolvedPath = path30.resolve(databasePath);
-  await fs22.mkdir(path30.dirname(resolvedPath), { recursive: true, mode: 448 });
-  await fs22.chmod(path30.dirname(resolvedPath), 448);
+  const resolvedPath = path31.resolve(databasePath);
+  await fs22.mkdir(path31.dirname(resolvedPath), { recursive: true, mode: 448 });
+  await fs22.chmod(path31.dirname(resolvedPath), 448);
   const { DatabaseSync } = await import("node:sqlite");
   const database = new DatabaseSync(resolvedPath, {
     timeout: 5e3,
@@ -77490,13 +77578,13 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
   durableRuns;
   cronMessageOrigins;
   static async open(options) {
-    const databasePath = path31.resolve(options.databasePath);
+    const databasePath = path32.resolve(options.databasePath);
     const database = await openContinuationDatabase(databasePath);
     try {
       const artifacts = options.artifactStore ?? new ContinuationArtifactStore(options.artifactsDir);
       await artifacts.ensureRoot();
       const inputs = options.inputStore ?? new ContinuationInputStore(
-        options.inputsDir ?? path31.join(path31.dirname(path31.resolve(options.artifactsDir)), "inputs")
+        options.inputsDir ?? path32.join(path32.dirname(path32.resolve(options.artifactsDir)), "inputs")
       );
       await inputs.ensureRoot();
       const repository = new _SqliteContinuationRepository(
@@ -79833,7 +79921,7 @@ async function createContinuationRuntime(options) {
     const storage = options.dryRun ? await createDryRunStorage() : {
       databasePath: options.databasePath,
       artifactsDir: options.artifactsDir,
-      inputsDir: path32.join(path32.dirname(options.artifactsDir), "inputs")
+      inputsDir: path33.join(path33.dirname(options.artifactsDir), "inputs")
     };
     temporaryRoot = "root" in storage ? storage.root : void 0;
     repository = await (options.openRepository ?? defaultOpenRepository)({
@@ -79996,12 +80084,12 @@ async function defaultOpenRepository(options) {
   return SqliteContinuationRepository.open(options);
 }
 async function createDryRunStorage() {
-  const root = await fs23.mkdtemp(path32.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
+  const root = await fs23.mkdtemp(path33.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
   return {
     root,
-    databasePath: path32.join(root, "jobs.sqlite"),
-    artifactsDir: path32.join(root, "artifacts"),
-    inputsDir: path32.join(root, "inputs")
+    databasePath: path33.join(root, "jobs.sqlite"),
+    artifactsDir: path33.join(root, "artifacts"),
+    inputsDir: path33.join(root, "inputs")
   };
 }
 function retentionCutoff(now, retentionDays) {

@@ -486,6 +486,10 @@ export async function deliverMessageViaCodexExec(
   const workspaceOwner = foreground && opts.managedWorkspaceStore ? managedForegroundRunOwner(message, sessionKey) : undefined;
   const managedStore = workspaceOwner ? opts.managedWorkspaceStore?.() : undefined;
   const priorManaged = workspaceOwner ? managedStore?.get(workspaceOwner) : undefined;
+  const priorUnmanaged = workspaceOwner ? managedStore?.getUnmanagedForeground(workspaceOwner.runId) : undefined;
+  if (priorUnmanaged && (priorManaged || priorUnmanaged.sessionKey !== sessionKey)) {
+    throw new ManagedWorkspaceStorageError('invalid_binding');
+  }
   const directive = foreground && message.messageType !== 'reaction'
     ? readWorkspaceProjectDirective(message.chatType === 'doc_comment' ? message.currentUserText : message.workspaceDirectiveText)
     : undefined;
@@ -495,7 +499,13 @@ export async function deliverMessageViaCodexExec(
     : undefined;
   const legacySession = compatibleSession?.sessionId && compatibleSession.workspaceProject === undefined;
   let workspace: WorkspaceProjectBinding | undefined;
-  if (priorManaged) {
+  if (priorUnmanaged) {
+    if ('project' in priorUnmanaged) {
+      workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, priorUnmanaged.project);
+    } else if (priorUnmanaged.fallbackCwd !== path.resolve(workspaceOptions.authorizedRoot)) {
+      throw new ManagedWorkspaceStorageError('invalid_binding');
+    }
+  } else if (priorManaged) {
     const previousProject = priorManaged.allocation.project;
     if (previousProject) workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, previousProject);
   } else if (foreground && (selector !== undefined || savedWorkspace !== undefined || !legacySession)) {
@@ -503,7 +513,7 @@ export async function deliverMessageViaCodexExec(
   } else if (message.chatType === 'cronjob' && opts.cronWorkspaceProject !== undefined) {
     workspace = await resolveWorkspaceProject({ ...workspaceOptions, persisted: opts.cronWorkspaceProject });
   }
-  const managed = workspaceOwner ? await admitManagedForegroundRun({
+  const managed = priorUnmanaged ? undefined : workspaceOwner ? await admitManagedForegroundRun({
     owner: workspaceOwner, sessionKey, store: managedStore, recorded: priorManaged,
     configPath: appConfig.managedWorkspaceConfigPath, authorizedRoot: workspaceOptions.authorizedRoot, project: workspace,
     sandbox: appConfig.codexExecSandbox,

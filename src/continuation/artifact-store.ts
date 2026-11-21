@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { publishManagedArtifact, readManagedArtifact } from '../managed-workspace-artifact.js';
+import { publishManagedArtifact, readManagedArtifact, reconcileManagedArtifact } from '../managed-workspace-artifact.js';
 import type { WorkspaceProjectBinding } from '../domain/workspace.js';
 import {
   CONTINUATION_LIMITS,
@@ -170,7 +170,17 @@ export class ContinuationArtifactStore {
       throw new Error('Continuation retry artifact references must be unique.');
     }
     await targetStore.ensure(targetJobId);
-    if (targetStore.managedJob) await targetStore.assertWithinLimit(targetJobId);
+    if (targetStore.managedJob) {
+      // The retry creation lock serializes reconciliation, quota checks and publication.
+      for (let index = 0; index < canonical.length; index += 1) {
+        await reconcileManagedArtifact({
+          binding: targetStore.managedJob.binding, relativePath: canonical[index],
+          expectedSha256: artifacts[index].sha256, maxBytes: targetStore.maxBytes,
+          revalidate: targetStore.managedJob.revalidate,
+        });
+      }
+      await targetStore.assertWithinLimit(targetJobId);
+    }
     try {
       for (let index = 0; index < canonical.length; index += 1) {
         const reference = canonical[index];
