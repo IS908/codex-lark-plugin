@@ -1,0 +1,57 @@
+name: Workspace Git sandbox
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/workspace-git-sandbox.yml'
+      - 'src/**'
+      - 'scripts/workspace-git-*-smoke.ts'
+      - 'scripts/fixtures/codex-loopback-exec.ts'
+      - 'scripts/fixtures/managed-git-entrypoints.ts'
+      - 'package-lock.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workspace-git-sandbox.yml'
+      - 'src/**'
+      - 'scripts/workspace-git-*-smoke.ts'
+      - 'scripts/fixtures/codex-loopback-exec.ts'
+      - 'scripts/fixtures/managed-git-entrypoints.ts'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Verify native Linux Git isolation
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      - name: Run production launcher with an offline model fixture
+        shell: bash
+        env:
+          CODEX_NPM_PACKAGE: '@openai/codex@0.171.0-linux-x64'
+          CODEX_NPM_SHA512: 'l66NZkQgdk2C3pbcfULDz42yEUB581MVA6I+Y43Wp4OIqEy73HCdmZ0GTjeAHY2ycuH4N00d9VsLrwT1jxshTw=='
+        run: |
+          unshare --user --map-root-user /usr/bin/true
+          bundle_dir=$(mktemp -d)
+          trap 'rm -rf -- "$bundle_dir"' EXIT
+          archive="$bundle_dir/$(npm pack "$CODEX_NPM_PACKAGE" --ignore-scripts --pack-destination "$bundle_dir" --registry=https://registry.npmjs.org)"
+          digest=$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)
+          test "$digest" = "$CODEX_NPM_SHA512"
+          binary=package/vendor/x86_64-unknown-linux-musl/bin/codex
+          tar -xzf "$archive" -C "$bundle_dir" "$binary"
+          test "$("$bundle_dir/$binary" --version)" = 'codex-cli 0.171.0'
+          LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX=1 \
+          LARK_TEST_CODEX_NATIVE_BINARY="$bundle_dir/$binary" \
+            node --import tsx scripts/workspace-git-replay-smoke.ts
