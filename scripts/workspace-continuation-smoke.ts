@@ -40,9 +40,9 @@ try {
     text: '/project path:app\nRun the check in the background.', messageType: 'text', rawContent: '',
   };
   const launches: string[] = [];
-  const open = (allowedWorkingRoot = base) => createContinuationRuntime({
+  const open = (allowedWorkingRoot = base, foregroundWorkingRoot = base) => createContinuationRuntime({
     enabled: true, databasePath: path.join(base, 'runs.sqlite'), artifactsDir: path.join(base, 'artifacts'),
-    allowedWorkingRoot, maxAttempts: 1, maxRetries: 0, maxTotalMinutes: 30, timeoutMs: 10_000,
+    allowedWorkingRoot, foregroundWorkingRoot, maxAttempts: 1, maxRetries: 0, maxTotalMinutes: 30, timeoutMs: 10_000,
     retentionDays: 7, maxConcurrency: 1, configuredSandbox: 'read-only',
     getTransport: () => ({} as never),
     runCodexExec: async ({ cwd }) => { launches.push(cwd); throw new Error('Test stopped after observing CWD.'); },
@@ -78,28 +78,42 @@ try {
   }
   await configure('path:docs');
   const restarted = await open();
-  const status = async (jobId: string) => restarted.service.getForActor(jobId, source.senderId);
-  const runUntil = async (jobId: string, result: string) => {
+  const status = (runtime: typeof restarted, jobId: string) => runtime.service.getForActor(jobId, source.senderId);
+  const runUntil = async (runtime: typeof restarted, jobId: string, result: string) => {
     for (let attempt = 0; attempt < 100; attempt++) {
-      if ((await status(jobId)).status === result) return;
-      await restarted.worker!.tick();
+      if ((await status(runtime, jobId)).status === result) return;
+      await runtime.worker!.tick();
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    assert.equal((await status(jobId)).status, result);
+    assert.equal((await status(runtime, jobId)).status, result);
   };
+  let narrowedJobId: string;
   try {
-    assert.equal((await status(validJobId)).workingDirectory, app);
-    assert.deepEqual((await status(validJobId)).permissions.filesystem.workspaceProject, binding);
-    await runUntil(validJobId, 'failed');
+    assert.equal((await status(restarted, validJobId)).workingDirectory, app);
+    assert.deepEqual((await status(restarted, validJobId)).permissions.filesystem.workspaceProject, binding);
+    await runUntil(restarted, validJobId, 'failed');
     assert.deepEqual(launches, [app], 'restart does not pick up the new registry default');
     await fs.rename(app, path.join(base, 'old-app'));
     await fs.symlink(docs, app, 'dir');
-    await runUntil(staleJobId, 'blocked');
-    assert.equal((await status(staleJobId)).errorCode, 'continuation_working_directory_denied');
-    await runUntil(legacyJobId, 'failed');
+    await runUntil(restarted, staleJobId, 'blocked');
+    assert.equal((await status(restarted, staleJobId)).errorCode, 'continuation_working_directory_denied');
+    await runUntil(restarted, legacyJobId, 'failed');
     assert.deepEqual(launches, [app, docs], 'only the legacy job may use docs');
+    const moved = await resolveWorkspaceProject({ authorizedRoot: base, registryPath, selector: 'path:old-app' });
+    assert.ok(moved);
+    narrowedJobId = (await restarted.service.createFromMessage(
+      action, { ...source, messageId: 'om_narrowed' }, null, null, [], moved,
+    )).job.jobId;
   } finally {
     await restarted.close();
+  }
+  const execRootNarrowed = await open(base, docs);
+  try {
+    await runUntil(execRootNarrowed, narrowedJobId, 'blocked');
+    assert.equal((await status(execRootNarrowed, narrowedJobId)).errorCode, 'continuation_working_directory_denied');
+    assert.deepEqual(launches, [app, docs], 'the old execution root does not authorize launches after restart');
+  } finally {
+    await execRootNarrowed.close();
   }
 } finally {
   const inputsDir = path.join(fixture, 'inputs');

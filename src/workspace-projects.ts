@@ -36,13 +36,15 @@ export class WorkspaceProjectError extends Error {
   }
 }
 
-export function readWorkspaceProjectSelector(currentUserText?: string): string | undefined {
-  const firstLine = currentUserText?.split(/\r?\n/, 1)[0]
+export function readWorkspaceProjectDirective(text?: string): { selector: string; requestText: string } | undefined {
+  if (text === undefined) return undefined;
+  const firstLine = text.split(/\r?\n/, 1)[0]
     .trimStart().replace(/^(?:@\S+\s+){1,8}/, '');
   if (!firstLine || !/^\/project(?:\s|$)/.test(firstLine)) return undefined;
   const selector = firstLine.slice('/project'.length).trim();
   if (!selector) throw new WorkspaceProjectError('invalid_selector');
-  return selector;
+  const newline = text.indexOf('\n');
+  return { selector, requestText: newline < 0 ? '' : text.slice(newline + 1) };
 }
 
 export interface WorkspaceProjectOptions {
@@ -67,9 +69,7 @@ export async function resolveWorkspaceProject({
   if (requested.startsWith('path:')) {
     const directory = requested.slice('path:'.length).trim();
     if (!directory) throw new WorkspaceProjectError('invalid_selector');
-    const candidate = await readDirectory(path.resolve(authorizedRoot, directory));
-    await requireAuthorized(authorizedRoot, candidate.directory);
-    return candidate;
+    return pinWorkspacePath(authorizedRoot, directory);
   }
 
   const matches = registry?.projects.filter((project) => requested.includes('/')
@@ -89,15 +89,25 @@ export async function resolveWorkspaceProject({
   return candidate;
 }
 
+export async function pinWorkspacePath(authorizedRoot: string, directory: string): Promise<WorkspaceProjectBinding> {
+  const candidate = await readDirectory(path.resolve(authorizedRoot, directory));
+  await requireAuthorized(authorizedRoot, candidate.directory);
+  return candidate;
+}
+
 export async function validateWorkspaceProject(
-  authorizedRoot: string,
+  authorizedRoot: string | readonly string[],
   persisted: unknown,
 ): Promise<WorkspaceProjectBinding> {
   const parsed = workspaceProjectBindingSchema.safeParse(persisted);
   if (!parsed.success) throw new WorkspaceProjectError('invalid_binding');
+  const roots = new Set(typeof authorizedRoot === 'string' ? [authorizedRoot] : authorizedRoot);
+  if (!roots.size) throw new WorkspaceProjectError('outside_authorized_root');
+  for (const root of roots) {
+    await requireAuthorized(root, parsed.data.directory);
+  }
   const current = await readDirectory(parsed.data.directory);
   if (!sameWorkspaceProject(current, parsed.data)) throw new WorkspaceProjectError('directory_changed');
-  await requireAuthorized(authorizedRoot, current.directory);
   return parsed.data;
 }
 

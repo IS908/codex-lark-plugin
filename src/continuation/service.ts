@@ -28,6 +28,7 @@ import {
 export interface ContinuationServiceOptions {
   repository: ContinuationRepository;
   allowedWorkingRoot: string;
+  foregroundWorkingRoot?: string;
   filesystemMode: ContinuationFilesystemMode;
   maxAttempts: number;
   maxRetries: number;
@@ -262,7 +263,10 @@ export class ContinuationService implements ContinuationTaskService {
       workspaceProject ? '.' : action.working_directory ?? '.',
     );
     if (workspaceProject) {
-      const bound = await validateWorkspaceProject(resolvedWorkingDirectory.root, workspaceProject);
+      const bound = await validateWorkspaceProject([
+        resolvedWorkingDirectory.root,
+        this.options.foregroundWorkingRoot ?? resolvedWorkingDirectory.root,
+      ], workspaceProject);
       resolvedWorkingDirectory.workingDirectory = bound.directory;
     }
     const route = deriveRoute(message);

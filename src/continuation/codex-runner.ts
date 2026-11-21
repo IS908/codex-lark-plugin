@@ -33,6 +33,7 @@ import { ContinuationArtifactStore } from './artifact-store.js';
 import { redactContinuationText } from './redaction.js';
 import { decideRecovery } from './recovery-policy.js';
 import type { DurableRunFailure } from '../domain/durable-run.js';
+import type { WorkspaceDirectoryGuard } from '../domain/workspace.js';
 import {
   ContinuationWorkingDirectoryError,
   validateContinuationWorkingDirectory,
@@ -45,6 +46,7 @@ export interface ContinuationCodexExecutorOptions {
   inputStore?: ContinuationInputStorePort;
   configuredSandbox: CodexExecSandbox;
   currentWorkingRoot: string;
+  foregroundWorkingRoot?: string;
   runCodexExec?: CodexExecRunner;
   command?: string;
   toolInvoker?: ContinuationToolInvoker;
@@ -394,17 +396,22 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
 
   private async validateRunWorkingDirectory(claim: ContinuationClaim): Promise<string> {
     const { permissions, workingDirectory } = claim.job;
-    const resolved = await validateContinuationWorkingDirectory(
-      [permissions.filesystem.root, this.options.currentWorkingRoot],
-      workingDirectory,
-    );
-    if (permissions.filesystem.workspaceProject !== undefined) {
-      const binding = await validateWorkspaceProject(this.options.currentWorkingRoot, permissions.filesystem.workspaceProject);
-      if (binding.directory !== resolved || binding.directory !== workingDirectory) {
-        throw new WorkspaceProjectError('directory_changed');
-      }
+    const guard = this.workspaceDirectoryGuard(claim);
+    if (!guard) {
+      return validateContinuationWorkingDirectory([permissions.filesystem.root, this.options.currentWorkingRoot], workingDirectory);
     }
-    return resolved;
+    const binding = await validateWorkspaceProject(guard.authorizedRoots, guard.binding);
+    if (binding.directory !== workingDirectory) throw new WorkspaceProjectError('directory_changed');
+    return binding.directory;
+  }
+
+  private workspaceDirectoryGuard(claim: ContinuationClaim): WorkspaceDirectoryGuard | undefined {
+    const { root, workspaceProject } = claim.job.permissions.filesystem;
+    if (workspaceProject === undefined) return undefined;
+    return {
+      binding: workspaceProject,
+      authorizedRoots: [root, this.options.currentWorkingRoot, this.options.foregroundWorkingRoot ?? this.options.currentWorkingRoot],
+    };
   }
 
   private async executeGuardedStep(
@@ -431,6 +438,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         prompt: buildContinuationPrompt(claim, artifactDir, managedInputs),
         ...(this.options.command ? { command: this.options.command } : {}),
         cwd: workingDirectory,
+        workspaceDirectory: this.workspaceDirectoryGuard(claim),
         timeoutMs: claim.job.timeoutSeconds * 1_000,
         sandbox: effectiveSandbox(
           claim.job.permissions.filesystem.mode,

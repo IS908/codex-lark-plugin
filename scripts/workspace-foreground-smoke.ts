@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { appConfig } from '../src/config.js';
 import { deliverMessageViaCodexExec } from '../src/codex-exec-delivery.js';
-import type { CodexExecRequest } from '../src/codex-exec.js';
+import { runCodexExecCommand, type CodexExecRequest } from '../src/codex-exec.js';
+import { handleCodexModelCommand } from '../src/codex-model-command.js';
 import { FileCodexExecSessionStore, buildCodexExecSessionKey } from '../src/codex-session-store.js';
 import type { LarkMessage } from '../src/lark-message.js';
 import { WorkspaceProjectError } from '../src/workspace-projects.js';
@@ -18,7 +19,9 @@ try {
   await fs.mkdir(docs);
   Object.assign(appConfig, {
     codexExecCwd: base,
+    codexExecSandbox: 'workspace-write',
     workspaceProjectsConfigPath: path.join(base, 'workspace-projects.json'),
+    auditLogPath: path.join(base, 'audit.log'),
   });
   const store = new FileCodexExecSessionStore(path.join(base, 'sessions'));
   const requests: CodexExecRequest[] = [];
@@ -50,17 +53,37 @@ try {
   await dispatch({ chatId: 'new-chat' });
   assert.equal(requests.at(-1)?.cwd, docs, 'new sessions use the configured default');
 
-  await dispatch({ currentUserText: '@_user_1 /project path:app\nRead the status.' });
+  const chooseApp = '@_user_1 /project path:app\nRead the status.';
+  const key = buildCodexExecSessionKey('group');
+  await store.set({ ...(await store.get(key))!, cutoffMessageId: 'om_older', cutoffTimestampMs: 9 });
+  await dispatch({ currentUserText: chooseApp, workspaceDirectiveText: chooseApp });
   assert.equal(requests.at(-1)?.cwd, app);
   assert.equal(requests.at(-1)?.resumeSessionId, null);
+  const selectedRequest = requests.at(-1)!;
+  assert.deepEqual(selectedRequest.additionalWritableDirs, [path.dirname(selectedRequest.actions!.filePath)]);
+  assert.notEqual(selectedRequest.additionalWritableDirs?.[0], base);
   assert.equal((await store.get(buildCodexExecSessionKey('group')))?.workspaceProject?.directory, app);
+  assert.equal((await store.get(key))?.cutoffMessageId, 'om_older');
+
+  for (const text of ['/model gpt-codex-test', '/model reset']) {
+    assert.equal(await handleCodexModelCommand({
+      message: {
+        messageId: 'om_model_change', chatId: 'group', chatType: 'group', senderId: 'owner',
+        text, rawContent: JSON.stringify({ text }), messageType: 'text',
+      },
+      sessionStore: new FileCodexExecSessionStore(path.join(base, 'sessions')),
+      useCodexSessions: true,
+      sendReply: async () => ({ sentCount: 1 }),
+    }), true);
+    assert.equal((await store.get(key))?.workspaceProject?.directory, app);
+  }
 
   await fs.writeFile(appConfig.workspaceProjectsConfigPath, JSON.stringify({ ...registry, default: undefined }));
   await dispatch({});
   assert.equal(requests.at(-1)?.cwd, app, 'saved selection survives registry changes');
   assert.equal(requests.at(-1)?.resumeSessionId, 'session-4');
   const beforeInvalid = requests.length;
-  await assert.rejects(dispatch({ currentUserText: '/project no-such-project\nRead it' }), WorkspaceProjectError);
+  await assert.rejects(dispatch({ workspaceDirectiveText: '/project no-such-project\nRead it' }), WorkspaceProjectError);
   assert.equal(requests.length, beforeInvalid);
 
   await fs.rename(app, path.join(base, 'old-app'));
@@ -71,6 +94,27 @@ try {
   await dispatch({ senderId: 'another-user' });
   assert.equal(requests.at(-1)?.cwd, base, 'a different sender does not inherit the saved selection');
   assert.equal(requests.at(-1)?.resumeSessionId, null);
+
+  const directoryWithIntentWords = 'run in the background';
+  await fs.mkdir(path.join(base, directoryWithIntentWords));
+  const directive = `/project path:${directoryWithIntentWords}\n`;
+  await dispatch({ currentUserText: `${directive}Check status.`, workspaceDirectiveText: `${directive}Check status.` });
+  assert.doesNotMatch(requests.at(-1)!.prompt, /create_continuation_job/);
+  const explicitIntent = `${directive}Run the status check in the background.`;
+  await dispatch({ currentUserText: explicitIntent, workspaceDirectiveText: explicitIntent });
+  assert.match(requests.at(-1)!.prompt, /create_continuation_job/);
+
+  const vanished = path.join(base, 'vanished');
+  await fs.mkdir(vanished);
+  await dispatch({ workspaceDirectiveText: '/project path:vanished\nCheck status.' });
+  const snapshot = (await store.get(key))?.workspaceProject;
+  assert.ok(snapshot);
+  await fs.rmdir(vanished);
+  await assert.rejects(runCodexExecCommand({
+    cwd: vanished, command: process.execPath, prompt: 'Check status.',
+    workspaceDirectory: { binding: snapshot, authorizedRoots: [base] },
+  }), { code: 'unavailable_directory' });
+  await assert.rejects(fs.stat(vanished), { code: 'ENOENT' });
 } finally {
   await fs.rm(fixture, { recursive: true, force: true });
 }

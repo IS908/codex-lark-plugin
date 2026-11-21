@@ -72,7 +72,7 @@ try {
   const throughForeground = (type: 'create_job' | 'upsert_job', text: string) => deliverMessageViaCodexExec({
     message: {
       messageId: 'om_workspace_select', chatId: 'oc_target', chatType: 'p2p', senderId: 'ou_owner',
-      text, currentUserText: text, messageType: 'text', rawContent: '',
+      text, currentUserText: text, workspaceDirectiveText: text, messageType: 'text', rawContent: '',
     },
     displayLabel: 'Select Cron workspace',
     useCodexSessions: false,
@@ -92,6 +92,16 @@ try {
   await throughForeground('create_job', '/project path:app\nCreate a Cron job.');
   const original = await readJob('action-job');
   assert.equal(original?.meta.workspace_project?.directory, app, 'Cron uses the parent selection, not the registry default');
+  const beforeRebind = await SqliteDurableRunRepository.open({ databasePath });
+  let originalActionRunId: string;
+  try {
+    const admission = new CronRunAdmission({ runRepository: beforeRebind });
+    const admitted = await admission.admitManual(original!, 'before-rebind', new Date());
+    assert.ok(admitted.admitted);
+    originalActionRunId = admitted.runId;
+  } finally {
+    beforeRebind.close();
+  }
   await throughForeground('upsert_job', 'Update the Cron job.');
   assert.equal((await readJob('action-job'))?.meta.workspace_project?.directory, app);
   await throughForeground('upsert_job', '/project path:docs\nUpdate the Cron job.');
@@ -117,15 +127,18 @@ try {
     };
     const signal = new AbortController().signal;
     const bound = await read(pinnedRun);
+    const actionRun = await read(originalActionRunId);
     assert.equal(bound.job.workspaceProject?.directory, app);
+    assert.equal(actionRun.job.workspaceProject?.directory, app, 'rebinding a definition does not retarget its queued Run');
     assert.equal((await execute(bound, signal)).runStatus, 'success');
+    assert.equal((await execute(actionRun, signal)).runStatus, 'success');
     assert.equal((await execute(await read(legacyRun), signal)).runStatus, 'success');
-    assert.deepEqual(results, [app, base]);
+    assert.deepEqual(results, [app, app, base]);
 
     await fs.rename(app, path.join(base, 'old-app'));
     await fs.symlink(docs, app, 'dir');
     assert.equal((await execute(bound, signal)).runStatus, 'failed');
-    assert.deepEqual(results, [app, base], 'a saved run never opens a swapped project');
+    assert.deepEqual(results, [app, app, base], 'a saved run never opens a swapped project');
   } finally {
     second.close();
   }

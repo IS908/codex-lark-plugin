@@ -9,6 +9,12 @@ export const workspaceProjectBindingSchema = z.strictObject({
 
 export type WorkspaceProjectBinding = z.infer<typeof workspaceProjectBindingSchema>;
 
+export interface WorkspaceDirectoryGuard {
+  binding: WorkspaceProjectBinding;
+  authorizedRoots: readonly [string, ...string[]];
+  sideChannelBindings?: WorkspaceProjectBinding[];
+}
+
 export function sameWorkspaceProject(
   first: WorkspaceProjectBinding | undefined,
   second: WorkspaceProjectBinding | undefined,

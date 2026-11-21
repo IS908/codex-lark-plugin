@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  readWorkspaceProjectSelector,
+  readWorkspaceProjectDirective,
   resolveWorkspaceProject,
   WorkspaceProjectError,
 } from '../src/workspace-projects.js';
@@ -73,13 +73,15 @@ try {
   await fs.mkdir(firstApp);
   await rejects({ ...opts, persisted: selected }, 'directory_changed');
 
-  assert.equal(readWorkspaceProjectSelector('普通问题\n/project first/app'), undefined);
-  assert.equal(readWorkspaceProjectSelector('> /project first/app'), undefined);
-  assert.equal(readWorkspaceProjectSelector('/projectile'), undefined);
-  assert.equal(readWorkspaceProjectSelector('@_user_1 /project first/app\nTask'), 'first/app');
-  assert.equal(readWorkspaceProjectSelector('/project first/app\n继续处理'), 'first/app');
-  assert.equal(readWorkspaceProjectSelector('/project path:dir with spaces\r\nTask'), 'path:dir with spaces');
-  assert.throws(() => readWorkspaceProjectSelector('/project\nTask'), WorkspaceProjectError);
+  assert.equal(readWorkspaceProjectDirective('普通问题\n/project first/app'), undefined);
+  assert.equal(readWorkspaceProjectDirective('> /project first/app'), undefined);
+  assert.equal(readWorkspaceProjectDirective('/projectile'), undefined);
+  assert.equal(readWorkspaceProjectDirective('@_user_1 /project first/app\nTask')?.selector, 'first/app');
+  assert.equal(readWorkspaceProjectDirective('/project first/app\n继续处理')?.selector, 'first/app');
+  assert.deepEqual(readWorkspaceProjectDirective('/project path:dir with spaces\r\nTask'), {
+    selector: 'path:dir with spaces', requestText: 'Task',
+  });
+  assert.throws(() => readWorkspaceProjectDirective('/project\nTask'), WorkspaceProjectError);
 } finally {
   await fs.rm(fixture, { recursive: true, force: true });
 }

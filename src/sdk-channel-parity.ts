@@ -1,8 +1,30 @@
 import type { CommentEvent, NormalizedMessage, ResourceDescriptor } from '@larksuite/channel';
+import { z } from 'zod';
 import type { LarkMessage } from './lark-message.js';
 import { DOC_CHAT_ID_PREFIX, type IdentitySession } from './identity-session.js';
+import { extractMessageText } from './message-content.js';
 import type { AccessControlReader } from './runtime-access-control.js';
 import { bindSdkMessageIdentity } from './sdk-channel-identity.js';
+
+const sdkWorkspaceSourceSchema = z.object({
+  message: z.object({
+    message_id: z.string(), chat_id: z.string(),
+    message_type: z.enum(['text', 'post']), content: z.string(),
+  }),
+  sender: z.object({ sender_id: z.object({
+    open_id: z.string().optional(), user_id: z.string().optional(), union_id: z.string().optional(),
+  }) }),
+});
+
+function sdkWorkspaceDirectiveText(message: NormalizedMessage): string | undefined {
+  const parsed = sdkWorkspaceSourceSchema.safeParse(message.raw);
+  if (!parsed.success) return undefined;
+  const { message: source, sender: { sender_id: actor } } = parsed.data;
+  if (source.message_id !== message.messageId || source.chat_id !== message.chatId
+    || (actor.open_id ?? actor.user_id ?? actor.union_id) !== message.senderId) return undefined;
+  const text = extractMessageText(source.content, source.message_type);
+  return typeof text === 'string' ? text : undefined;
+}
 
 export type SdkMessageDropReason = 'bot_self' | 'no_mention' | 'no_mention_trigger' | 'not_allowed';
 export type NoMentionTriggerReason =
@@ -162,6 +184,7 @@ export async function processSdkMessage(
     },
     deps.identitySession,
   );
+  larkMessage.workspaceDirectiveText = sdkWorkspaceDirectiveText(sdkMessage);
   if (sdkMessage.chatType === 'group' && !sdkMessage.mentionedBot) {
     larkMessage.unmentionedGroupTrigger = true;
   }

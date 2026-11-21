@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import type { WorkspaceDirectoryGuard } from './domain/workspace.js';
+import { validateWorkspaceProject, WorkspaceProjectError } from './workspace-projects.js';
 import { createCodexExecToolTraceWriter } from './codex-exec-trace.js';
 import {
   createCodexExecRuntimeMetricsCollector,
@@ -22,6 +24,7 @@ export interface CodexExecRequest {
   imagePaths?: string[];
   command?: string;
   cwd?: string;
+  workspaceDirectory?: WorkspaceDirectoryGuard;
   timeoutMs?: number;
   sandbox?: CodexExecSandbox;
   model?: string | null;
@@ -309,7 +312,16 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
   }
 
   try {
-    await fs.mkdir(cwd, { recursive: true });
+    if (request.workspaceDirectory) {
+      const { authorizedRoots, sideChannelBindings, binding: savedBinding } = request.workspaceDirectory;
+      for (const sideChannel of sideChannelBindings ?? []) {
+        await validateWorkspaceProject(authorizedRoots, sideChannel);
+      }
+      const binding = await validateWorkspaceProject(authorizedRoots, savedBinding);
+      if (binding.directory !== cwd) throw new WorkspaceProjectError('directory_changed');
+    } else {
+      await fs.mkdir(cwd, { recursive: true });
+    }
     await new Promise<void>((resolve, reject) => {
       const usePosixProcessGroup = process.platform !== 'win32';
       const child = spawn(command, args, {

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { appConfig } from './config.js';
 import type { LarkMessage } from './lark-message.js';
 import type { CodexExecRequest, CodexExecRunner } from './codex-exec.js';
@@ -39,7 +40,13 @@ import { listConfiguredLocalCliToolNames } from './local-cli-tools.js';
 import { logSafeError } from './safe-log.js';
 import { accessControlStore } from './runtime-access-control.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
-import { readWorkspaceProjectSelector, resolveWorkspaceProject, WorkspaceProjectError } from './workspace-projects.js';
+import {
+  pinWorkspacePath,
+  readWorkspaceProjectDirective,
+  resolveWorkspaceProject,
+  validateWorkspaceProject,
+  WorkspaceProjectError,
+} from './workspace-projects.js';
 import {
   isProfileSessionCompatible,
   profileSessionBinding,
@@ -269,11 +276,11 @@ function normalizeLifecycleGuardText(text: string): string {
   return prose.normalize('NFKC').replace(/\s+/g, ' ').trim();
 }
 
-export function shouldExposeContinuationForMessage(message: LarkMessage): boolean {
+export function shouldExposeContinuationForMessage(message: LarkMessage, requestText?: string): boolean {
   if (message.quotedCronJobId) return false;
   if (message.messageType === 'reaction' || message.chatType === 'cronjob') return false;
   if (!['p2p', 'group', 'doc_comment'].includes(message.chatType)) return false;
-  const userText = (message.currentUserText ?? message.text).normalize('NFKC');
+  const userText = (requestText ?? message.currentUserText ?? message.text).normalize('NFKC');
   return EXPLICIT_CONTINUATION_INTENT_PATTERNS.some((pattern) => pattern.test(userText));
 }
 
@@ -469,7 +476,10 @@ export async function deliverMessageViaCodexExec(
     registryPath: appConfig.workspaceProjectsConfigPath,
   };
   const foreground = message.chatType === 'p2p' || message.chatType === 'group' || message.chatType === 'doc_comment';
-  const selector = foreground ? readWorkspaceProjectSelector(message.currentUserText) : undefined;
+  const directive = foreground && message.messageType !== 'reaction'
+    ? readWorkspaceProjectDirective(message.chatType === 'doc_comment' ? message.currentUserText : message.workspaceDirectiveText)
+    : undefined;
+  const selector = directive?.selector;
   const savedWorkspace = storedSession?.workspaceProjectSenderId === message.senderId
     ? storedSession.workspaceProject
     : undefined;
@@ -498,7 +508,7 @@ export async function deliverMessageViaCodexExec(
   if (!actionChannel) {
     throw new Error('Codex exec action side channel setup failed.');
   }
-  const continuationPermitted = shouldExposeContinuationForMessage(message);
+  const continuationPermitted = shouldExposeContinuationForMessage(message, directive?.requestText);
   const progressSink = await createCodexExecProgressSink({
     baseDir: progressBaseDir,
     limits: {
@@ -575,8 +585,19 @@ export async function deliverMessageViaCodexExec(
   let result;
   let usedResumeSessionId = request.resumeSessionId;
   const runInWorkspace: CodexExecRunner = async (runRequest) => {
-    if (workspace) await resolveWorkspaceProject({ ...workspaceOptions, persisted: workspace });
-    return runCodexExec(runRequest);
+    if (!workspace) return runCodexExec(runRequest);
+    const { authorizedRoot } = workspaceOptions;
+    const sideChannelFiles = [actionChannel.filePath, ...(progressSink ? [progressSink.filePath] : [])];
+    // A narrower CWD still needs its one-turn IPC directories, not the entire old working root.
+    const sideChannelBindings = runRequest.sandbox === 'workspace-write'
+      ? await Promise.all(sideChannelFiles.map((file) => pinWorkspacePath(authorizedRoot, path.dirname(file))))
+      : [];
+    await validateWorkspaceProject(authorizedRoot, workspace);
+    return runCodexExec({
+      ...runRequest,
+      workspaceDirectory: { binding: workspace, authorizedRoots: [authorizedRoot], sideChannelBindings },
+      ...(sideChannelBindings.length ? { additionalWritableDirs: sideChannelBindings.map((binding) => binding.directory) } : {}),
+    });
   };
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
   try {
@@ -614,7 +635,7 @@ export async function deliverMessageViaCodexExec(
       chatId: message.chatId,
       ...(message.threadId ? { threadId: message.threadId } : {}),
       updatedAt: new Date().toISOString(),
-      ...preserveConversationBoundaryFields(existingSession),
+      ...preserveConversationBoundaryFields(compatibleSession),
       ...(sessionModel ? { model: sessionModel } : {}),
       ...(requiredProfileSession ?? {}),
       ...(workspace ? { workspaceProject: workspace, workspaceProjectSenderId: message.senderId } : {}),

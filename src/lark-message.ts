@@ -20,6 +20,8 @@ export interface LarkMessage {
   text: string;
   /** Unenriched current-turn user text. Routing classifiers must not inspect stored memory or quoted content. */
   currentUserText?: string;
+  /** Unbatched text from the authenticated IM event, used for workspace selection. */
+  workspaceDirectiveText?: string;
   /** Unenriched source envelope that may include selected document or parent-comment context. */
   sourceContextText?: string;
   messageType: string;
