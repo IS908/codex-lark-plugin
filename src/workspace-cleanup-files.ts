@@ -15,7 +15,7 @@ import type { WorkspaceGitCleanupProof } from './workspace-git-snapshot.js';
 
 type ClaimIdentity = { owner: ManagedRunOwner; scratch: WorkspaceProjectBinding; nonce: string }
   & Partial<Pick<WorkspaceCleanupClaim, 'state' | 'baseline' | 'lastUsedAt'>>;
-type Location = 'source' | 'quarantine' | 'missing' | 'ambiguous';
+type Location = 'source' | 'quarantine' | 'missing' | 'ambiguous' | 'unavailable';
 type AuthorizeMutation = (helperPid: number) => boolean;
 const applePythonRoot = '/Library/Developer/CommandLineTools';
 const maxInput = 4 * 1024 * 1024;
@@ -76,7 +76,7 @@ export async function createWorkspaceCleanupFiles(root: WorkspaceProjectBinding,
           const quarantine = workspaceCleanupQuarantinePath(root, claim);
           await assertProtectedWorkspacePath(root, true);
           const mounts = await readWorkspaceDependencyMountPolicy();
-          if (![source, quarantine].every((item) => supportsScratch(item, root, mounts))) return 'ambiguous';
+          if (![source, quarantine].every((item) => supportsScratch(item, root, mounts))) return 'unavailable';
           const original = await inspect(source);
           const isolated = await inspect(quarantine);
           if (original === 'match' && isolated === 'absent') return 'source';
@@ -95,7 +95,7 @@ export async function createWorkspaceCleanupFiles(root: WorkspaceProjectBinding,
               throw error;
             }
           }
-        } catch { return 'ambiguous'; }
+        } catch { return 'unavailable'; }
       },
       move: (claim: ClaimIdentity, tree: WorkspaceCleanupTree, authorize: AuthorizeMutation, backing?: WorkspaceGitCleanupProof) =>
         native('move', claim, authorize, tree, undefined, backing),

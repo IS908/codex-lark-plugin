@@ -73,6 +73,15 @@ try {
   assert.deepEqual(resumed.claims.pending(roots.scratch, 5), [renameCrash.claim]);
   const openDirectory = fs.opendir.bind(fs);
   const quarantineDirectory = workspaceCleanupQuarantinePath(roots.scratch, renameCrash.claim);
+  const readIdentity = fs.lstat.bind(fs);
+  const unavailableIdentity = mock.method(fs, 'lstat', async (...args: Parameters<typeof readIdentity>) => {
+    if (args[0] === quarantineDirectory) throw Object.assign(new Error('temporary unavailable'), { code: 'EIO' });
+    return readIdentity(...args);
+  });
+  try {
+    assert.equal(await recoverWorkspaceCleanupClaim(resumed, renameCrash.claim), 'deferred');
+    assert.equal(resumed.claims.get(renameCrash.owner)?.state, 'reserved');
+  } finally { unavailableIdentity.mock.restore(); }
   const unavailable = mock.method(fs, 'opendir', async (...args: Parameters<typeof openDirectory>) => {
     if (args[0] === quarantineDirectory) throw Object.assign(new Error('temporary unavailable'), { code: 'EIO' });
     return openDirectory(...args);

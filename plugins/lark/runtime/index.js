@@ -64558,7 +64558,7 @@ async function createWorkspaceCleanupFiles(root, database) {
           const quarantine = workspaceCleanupQuarantinePath(root, claim);
           await assertProtectedWorkspacePath(root, true);
           const mounts = await readWorkspaceDependencyMountPolicy();
-          if (![source, quarantine].every((item) => supportsScratch(item, root, mounts))) return "ambiguous";
+          if (![source, quarantine].every((item) => supportsScratch(item, root, mounts))) return "unavailable";
           const original = await inspect2(source);
           const isolated = await inspect2(quarantine);
           if (original === "match" && isolated === "absent") return "source";
@@ -64575,7 +64575,7 @@ async function createWorkspaceCleanupFiles(root, database) {
             }
           }
         } catch {
-          return "ambiguous";
+          return "unavailable";
         }
       },
       move: (claim, tree, authorize2, backing) => native("move", claim, authorize2, tree, void 0, backing),
@@ -64904,6 +64904,7 @@ async function recoverWorkspaceCleanupClaim(context, claim) {
       if (!approved) return "deferred";
       const { request, baseline, quarantine, backing } = approved;
       const location = await files.location(claim);
+      if (location === "unavailable") return "deferred";
       if (location === "ambiguous" || location === "source" && claim.state !== "reserved" || location === "missing" && claim.state !== "purging") return hold("identity_unverified");
       const binding = location === "source" ? claim.scratch : { ...claim.scratch, directory: quarantine };
       const tree = location === "missing" ? void 0 : await observeWorkspaceCleanupTree(binding, signal, false, claim.scratch.directory);

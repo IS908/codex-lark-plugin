@@ -51,6 +51,7 @@ export async function recoverWorkspaceCleanupClaim(context: WorkspaceCleanupCont
       if (!approved) return 'deferred';
       const { request, baseline, quarantine, backing } = approved;
       const location = await files.location(claim);
+      if (location === 'unavailable') return 'deferred';
       if (location === 'ambiguous' || (location === 'source' && claim.state !== 'reserved')
         || (location === 'missing' && claim.state !== 'purging')) return hold('identity_unverified');
       const binding = location === 'source' ? claim.scratch : { ...claim.scratch, directory: quarantine! };
