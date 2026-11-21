@@ -263,11 +263,11 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
     }
     await assertWorkspaceDependencyWriteIsolation(dependencyRegistryConfigPath, [snapshot.roots.scratch.directory, snapshot.roots.artifacts.directory]);
     await assertWorkspaceDependencySelectionAuthorized(dependencyRegistryConfigPath, snapshot.project, snapshot.git, snapshot.dependencySelections);
+    for (const { cache } of snapshot.dependencySelections ?? []) await validateWorkspaceProject(authorizedRoots, cache);
     const lastUsedAt = new Date(lastUse.data).toISOString();
     const policy = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
     const existing = this.get(owner);
     if (existing) return this.reuse(existing, snapshot, policy, lastUsedAt);
-    for (const { cache } of snapshot.dependencySelections ?? []) await validateWorkspaceProject(authorizedRoots, cache);
     const placement = { ...policy, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace, gitCache: snapshot.git?.cache };
     const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, placement);
     if (snapshot.git && snapshot.project) {

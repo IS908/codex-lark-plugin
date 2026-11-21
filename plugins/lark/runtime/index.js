@@ -51061,7 +51061,7 @@ function mkdirGitCheckoutInsidePinnedRun(runRoot) {
   return mkdirInsideRoot(runRoot, MANAGED_GIT_CHECKOUT_LEAF);
 }
 async function mkdirTemporaryInsidePinnedRoot(root, leaf) {
-  if (!/^lark-codex-exec-[a-f0-9]{24}$/.test(leaf)) throw new ManagedWorkspaceStorageError("invalid_binding");
+  if (!/^(?:lark-codex-exec|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) throw new ManagedWorkspaceStorageError("invalid_binding");
   return mkdirInsideRoot(root, leaf, true);
 }
 async function mkdirInsideRoot(root, leaf, temporary = false) {
@@ -52172,6 +52172,7 @@ async function loadWorkspaceDependencyWriteGuard(configPath, options) {
           ancestors: await readWorkspaceAncestorIdentities(parent.directory),
           aliases: registry2.mounts.aliases(target)
         }, registry2.protected);
+        if (target !== path14.resolve(directory)) fail("dependency_storage_unverifiable");
         await assertProtectedWorkspacePath(parent, false, missing);
       }
     }
@@ -70670,6 +70671,7 @@ async function startChannelServices(options) {
 }
 
 // src/continuation/runtime.ts
+import { randomBytes as randomBytes7 } from "node:crypto";
 import fs31 from "node:fs/promises";
 import os4 from "node:os";
 import path42 from "node:path";
@@ -74048,11 +74050,11 @@ var SqliteManagedWorkspaceStore = class {
     }
     await assertWorkspaceDependencyWriteIsolation(dependencyRegistryConfigPath, [snapshot.roots.scratch.directory, snapshot.roots.artifacts.directory]);
     await assertWorkspaceDependencySelectionAuthorized(dependencyRegistryConfigPath, snapshot.project, snapshot.git, snapshot.dependencySelections);
+    for (const { cache } of snapshot.dependencySelections ?? []) await validateWorkspaceProject(authorizedRoots, cache);
     const lastUsedAt = new Date(lastUse.data).toISOString();
     const policy2 = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
     const existing = this.get(owner);
     if (existing) return this.reuse(existing, snapshot, policy2, lastUsedAt);
-    for (const { cache } of snapshot.dependencySelections ?? []) await validateWorkspaceProject(authorizedRoots, cache);
     const placement = { ...policy2, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace, gitCache: snapshot.git?.cache };
     const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, placement);
     if (snapshot.git && snapshot.project) {
@@ -82295,15 +82297,15 @@ var ContinuationWorker = class {
 var DEFAULT_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1e3;
 async function createContinuationRuntime(options) {
   const clock = options.clock ?? { now: () => /* @__PURE__ */ new Date() };
-  let temporaryRoot;
+  let cleanupTemporary;
   let repository;
   try {
-    const storage = options.dryRun ? await createDryRunStorage() : {
+    const storage = options.dryRun ? await createDryRunStorage(options.managedWorkspaceConfigPath ?? managedWorkspaceConfigPath) : {
       databasePath: options.databasePath,
       artifactsDir: options.artifactsDir,
       inputsDir: path42.join(path42.dirname(options.artifactsDir), "inputs")
     };
-    temporaryRoot = "root" in storage ? storage.root : void 0;
+    cleanupTemporary = "cleanup" in storage ? storage.cleanup : void 0;
     repository = await (options.openRepository ?? defaultOpenRepository)({
       databasePath: storage.databasePath,
       artifactsDir: storage.artifactsDir,
@@ -82331,7 +82333,7 @@ async function createContinuationRuntime(options) {
             try {
               repository.close();
             } finally {
-              if (temporaryRoot) await fs31.rm(temporaryRoot, { recursive: true, force: true });
+              await cleanupTemporary?.();
             }
           })();
           return closePromise2;
@@ -82439,7 +82441,7 @@ async function createContinuationRuntime(options) {
           try {
             repository.close();
           } finally {
-            if (temporaryRoot) await fs31.rm(temporaryRoot, { recursive: true, force: true });
+            await cleanupTemporary?.();
           }
         })();
         return closePromise;
@@ -82450,7 +82452,7 @@ async function createContinuationRuntime(options) {
       repository?.close();
     } catch {
     }
-    if (temporaryRoot) await fs31.rm(temporaryRoot, { recursive: true, force: true }).catch(() => {
+    await cleanupTemporary?.().catch(() => {
     });
     safeReportError(options, error62);
     safeDebug(options, "[continuation] event=runtime_unavailable job_id=- attempt_id=- state=initialization_failed");
@@ -82476,10 +82478,16 @@ function unavailableRuntime(health) {
 async function defaultOpenRepository(options) {
   return SqliteContinuationRepository.open(options);
 }
-async function createDryRunStorage() {
-  const root = await fs31.mkdtemp(path42.join(os4.tmpdir(), "codex-lark-continuation-dry-run-"));
+async function createDryRunStorage(configPath) {
+  const guard = await loadWorkspaceDependencyWriteGuard(configPath, { allowMissingCachesForStorage: true });
+  const leaf = `codex-lark-continuation-dry-run-${randomBytes7(12).toString("hex")}`;
+  const pinned = guard && await mkdirTemporaryInsidePinnedRoot(await guard.assertNewDirectory(path42.join(os4.tmpdir(), leaf)), leaf);
+  const root = pinned?.directory ?? await fs31.mkdtemp(path42.join(os4.tmpdir(), "codex-lark-continuation-dry-run-"));
   return {
-    root,
+    async cleanup() {
+      if (pinned) await assertProtectedWorkspacePath(pinned, true);
+      await fs31.rm(root, { recursive: true, force: true });
+    },
     databasePath: path42.join(root, "jobs.sqlite"),
     artifactsDir: path42.join(root, "artifacts"),
     inputsDir: path42.join(root, "inputs")

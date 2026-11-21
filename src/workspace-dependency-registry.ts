@@ -181,6 +181,7 @@ export async function loadWorkspaceDependencyWriteGuard(configPath?: string, opt
         const { parent, target, missing } = await projectStorageDirectory(directory);
         check(target, { id: missing ? '' : `${parent.device}:${parent.inode}`,
           ancestors: await readWorkspaceAncestorIdentities(parent.directory), aliases: registry.mounts.aliases(target) }, registry.protected);
+        if (target !== path.resolve(directory)) fail('dependency_storage_unverifiable');
         await assertProtectedWorkspacePath(parent, false, missing);
       }
     },

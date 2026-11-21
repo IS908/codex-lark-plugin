@@ -1,9 +1,14 @@
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { audit as writeAudit } from '../audit-log.js';
 import type { CodexExecRunner, CodexExecSandbox } from '../codex-exec.js';
 import type { LarkTransport } from '../lark-transport-contracts.js';
+import { assertProtectedWorkspacePath } from '../managed-workspace-ancestry.js';
+import { mkdirTemporaryInsidePinnedRoot } from '../managed-workspace-mkdir.js';
+import { managedWorkspaceConfigPath } from '../runtime-paths.js';
+import { loadWorkspaceDependencyWriteGuard } from '../workspace-dependency-registry.js';
 import type {
   ContinuationAudit,
   ContinuationClock,
@@ -93,17 +98,17 @@ export async function createContinuationRuntime(
   options: ContinuationRuntimeOptions,
 ): Promise<ContinuationRuntime> {
   const clock = options.clock ?? { now: () => new Date() };
-  let temporaryRoot: string | undefined;
+  let cleanupTemporary: (() => Promise<void>) | undefined;
   let repository: ContinuationRepository | undefined;
   try {
     const storage = options.dryRun
-      ? await createDryRunStorage()
+      ? await createDryRunStorage(options.managedWorkspaceConfigPath ?? managedWorkspaceConfigPath)
       : {
           databasePath: options.databasePath,
           artifactsDir: options.artifactsDir,
           inputsDir: path.join(path.dirname(options.artifactsDir), 'inputs'),
         };
-    temporaryRoot = 'root' in storage ? storage.root : undefined;
+    cleanupTemporary = 'cleanup' in storage ? storage.cleanup : undefined;
     repository = await (options.openRepository ?? defaultOpenRepository)({
       databasePath: storage.databasePath,
       artifactsDir: storage.artifactsDir,
@@ -127,7 +132,7 @@ export async function createContinuationRuntime(
             try {
               repository!.close();
             } finally {
-              if (temporaryRoot) await fs.rm(temporaryRoot, { recursive: true, force: true });
+              await cleanupTemporary?.();
             }
           })();
           return closePromise;
@@ -239,7 +244,7 @@ export async function createContinuationRuntime(
           try {
             repository!.close();
           } finally {
-            if (temporaryRoot) await fs.rm(temporaryRoot, { recursive: true, force: true });
+            await cleanupTemporary?.();
           }
         })();
         return closePromise;
@@ -247,7 +252,7 @@ export async function createContinuationRuntime(
     };
   } catch (error) {
     try { repository?.close(); } catch {}
-    if (temporaryRoot) await fs.rm(temporaryRoot, { recursive: true, force: true }).catch(() => {});
+    await cleanupTemporary?.().catch(() => {});
     safeReportError(options, error);
     safeDebug(options, '[continuation] event=runtime_unavailable job_id=- attempt_id=- state=initialization_failed');
     return unavailableRuntime({ enabled: true, available: false, reason: 'initialization_failed' });
@@ -282,15 +287,21 @@ async function defaultOpenRepository(options: {
   return SqliteContinuationRepository.open(options);
 }
 
-async function createDryRunStorage(): Promise<{
-  root: string;
+async function createDryRunStorage(configPath: string): Promise<{
+  cleanup(): Promise<void>;
   databasePath: string;
   artifactsDir: string;
   inputsDir: string;
 }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-lark-continuation-dry-run-'));
+  const guard = await loadWorkspaceDependencyWriteGuard(configPath, { allowMissingCachesForStorage: true });
+  const leaf = `codex-lark-continuation-dry-run-${randomBytes(12).toString('hex')}`;
+  const pinned = guard && await mkdirTemporaryInsidePinnedRoot(await guard.assertNewDirectory(path.join(os.tmpdir(), leaf)), leaf);
+  const root = pinned?.directory ?? await fs.mkdtemp(path.join(os.tmpdir(), 'codex-lark-continuation-dry-run-'));
   return {
-    root,
+    async cleanup() {
+      if (pinned) await assertProtectedWorkspacePath(pinned, true);
+      await fs.rm(root, { recursive: true, force: true });
+    },
     databasePath: path.join(root, 'jobs.sqlite'),
     artifactsDir: path.join(root, 'artifacts'),
     inputsDir: path.join(root, 'inputs'),

@@ -18,7 +18,9 @@ const fixture = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lark-
 try {
   const config = path.join(fixture, 'config');
   const work = path.join(fixture, 'work');
-  const [source, cache, bare, scratch, artifacts] = ['project', 'wheelhouse', 'git-cache', 'scratch', 'artifacts'].map((dir) => path.join(work, dir));
+  const runRoot = path.join(work, 'runs');
+  const [source, bare, scratch, artifacts] = ['project', 'git-cache', 'scratch', 'artifacts'].map((dir) => path.join(runRoot, dir));
+  const cache = path.join(work, 'wheelhouse');
   await Promise.all([config, source, cache, bare, scratch, artifacts].map((dir) => fs.mkdir(dir, { recursive: true, mode: 0o700 })));
   const selected = await pinWorkspacePath(fixture, source);
   const wheelhouse = await pinWorkspacePath(fixture, cache);
@@ -123,6 +125,7 @@ try {
     await assert.rejects(store.ensure({ ...firstRun, dependencySelections: [] }), { code: 'invalid_binding' });
     await assert.rejects(store.ensure({ ...legacy, dependencySelections: [] }), { code: 'invalid_binding' });
     await assert.rejects(store.ensure({ ...firstRun, dependencySelections: [{ ...expected[0], cacheFingerprint: 'f'.repeat(64) }] }), { code: 'invalid_binding' });
+    await assert.rejects(store.ensure({ ...firstRun, authorizedRoots: [runRoot] }), { code: 'outside_authorized_root' });
     assert.deepEqual((await store.ensure(firstRun)).dependencySelections, expected);
     const sql = "UPDATE workspace_run_allocations SET allocation_json = json_remove(allocation_json, '$.dependencySelections') WHERE workload_kind = ? AND run_id = ?";
     assert.equal(reopenedLedger.prepare(sql).run(optOut.owner.kind, optOut.owner.runId).changes, 1);
@@ -162,6 +165,14 @@ try {
     managedWorkspacePolicy: { managedWorkspaceConfigPath: configPath, currentWorkingRoot: work } }), { code: 'dependency_write_overlap' });
   await assert.rejects(fs.access(path.dirname(laterDb)), { code: 'ENOENT' });
   assert.deepEqual(await fs.readdir(cache), [wheelName]);
+  const alternate = path.join(fixture, 'storage-via-symlink');
+  const realStorage = path.join(fixture, 'real-storage');
+  await fs.mkdir(realStorage, { mode: 0o700 });
+  await fs.symlink(realStorage, alternate);
+  await assert.rejects(SqliteContinuationRepository.open({ databasePath: path.join(alternate, 'database', 'jobs.sqlite'),
+    artifactsDir: path.join(realStorage, 'artifacts'), managedWorkspacePolicy: { managedWorkspaceConfigPath: configPath, currentWorkingRoot: work } }),
+  { code: 'dependency_storage_unverifiable' });
+  assert.deepEqual(await fs.readdir(realStorage), []);
   assert.deepEqual(await resolveWorkspaceDependencySelections(request), []);
   await assert.rejects(assertWorkspaceDependencyWriteIsolation(configPath, [cache]), { code: 'dependency_write_overlap' });
   await writeRegistry({ ...policy, caches: [entry, { ...entry, scope: 'team-b', key: 'b'.repeat(64) }] });

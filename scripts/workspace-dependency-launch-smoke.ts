@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { mock } from 'node:test';
 import { promisify } from 'node:util';
 import { createManagedGitSandboxOptions, DEPENDENCY_GUARD_PROFILE, dependencyGuardSandboxOverrides } from '../src/managed-git-sandbox.js';
 import { MANAGED_GIT_CHECKOUT_LEAF } from '../src/managed-workspace-mkdir.js';
@@ -82,10 +83,28 @@ exit 1
   await assert.rejects(fs.access(marker), { code: 'ENOENT' });
   process.env.TMPDIR = cache;
   await assert.rejects(runCodexExecCommand(request), { code: 'dependency_write_overlap' });
+  const { createContinuationRuntime } = await import('../src/continuation/runtime.js');
+  const dryRunOptions = { enabled: true, databasePath: path.join(home, 'unused.sqlite'),
+    artifactsDir: path.join(home, 'unused-artifacts'), allowedWorkingRoot: work, maxAttempts: 5, maxRetries: 2,
+    maxTotalMinutes: 30, timeoutMs: 60_000, retentionDays: 30, maxConcurrency: 1, configuredSandbox: 'workspace-write',
+    getTransport: () => ({} as never), dryRun: true } as const;
+  let dryRunError: unknown;
+  const allocateTemporary = mock.method(fs, 'mkdtemp');
+  try {
+    const dryRun = await createContinuationRuntime({ ...dryRunOptions, reportError: (error) => { dryRunError = error; } });
+    assert.equal(dryRun.health.available, false);
+    assert.equal((dryRunError as { code?: string })?.code, 'dependency_write_overlap');
+    assert.equal(allocateTemporary.mock.callCount(), 0, 'dry-run must not allocate before checking the cache boundary');
+    await dryRun.close();
+  } finally { allocateTemporary.mock.restore(); }
   assert.deepEqual(await fs.readdir(cache), [], 'output storage must not be allocated inside the protected cache');
   process.env.TMPDIR = work;
   await assert.rejects(runCodexExecCommand(request), { code: 'dependency_write_overlap' });
   process.env.TMPDIR = temp;
+  const allowedDryRun = await createContinuationRuntime(dryRunOptions);
+  try { assert.equal(allowedDryRun.health.available, true); }
+  finally { await allowedDryRun.close(); }
+  assert.deepEqual(await fs.readdir(temp), [], 'guarded dry-run removes only its owned temporary directory');
   const tool = await runConfiguredLocalCliToolAsCaller({ caller: 'ou_fixture', tool: 'fixture' });
   assert.equal(tool.ok, false);
   assert.equal(tool.failure?.subtype, 'dependency_host_cli_unavailable');
