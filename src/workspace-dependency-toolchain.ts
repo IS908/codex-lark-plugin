@@ -18,11 +18,12 @@ const maxFiles = 20_000;
 const maxBytes = 1024n * 1024n * 1024n;
 const maxMetadataBytes = 64n * 1024n;
 const installerVersion = /^\d+\.\d+(?:\.\d+)?(?:[-+][a-zA-Z0-9.]+)?$/;
+const probeRecordPrefix = 'LARK_DEPENDENCY_PROBE_V1:';
 type Entry = { info: BigIntStats; digest?: string; target?: string; header?: string; content?: Buffer };
 
 export class WorkspaceDependencyToolchainError extends Error {
   constructor(readonly code: 'dependency_toolchain_invalid' | 'dependency_toolchain_changed' | 'dependency_toolchain_probe_failed',
-    readonly probeStage?: 'private_home' | 'configuration' | 'launcher' | 'runtime' | 'protocol') {
+    readonly probeStage?: 'private_home' | 'configuration' | 'launcher' | 'runtime' | 'protocol' | 'empty_protocol') {
     super({ dependency_toolchain_invalid: 'The configured dependency toolchain or its protected paths are invalid.',
       dependency_toolchain_changed: 'The configured dependency toolchain changed after it was selected.',
       dependency_toolchain_probe_failed: 'The dependency toolchain could not be verified in the private offline sandbox.' }[code]);
@@ -32,7 +33,7 @@ export class WorkspaceDependencyToolchainError extends Error {
 const nodeProbe = `const os = require('node:os');
 const platformAbi = process.platform === 'darwin' ? 'darwin-' + os.release()
   : 'glibc-' + (process.report.getReport().header.glibcVersionRuntime || 'unsupported');
-console.log(JSON.stringify({ runtime: process.versions.node, abi: process.versions.modules,
+console.log('${probeRecordPrefix}' + JSON.stringify({ runtime: process.versions.node, abi: process.versions.modules,
   platform: process.platform, arch: process.arch, platformAbi }));`;
 
 // -S skips .pth startup. Check paths using built-in and frozen modules before loading pip or filesystem-backed probe imports.
@@ -54,7 +55,7 @@ sys.modules['pip'] = pip
 spec.loader.exec_module(pip)
 platformAbi = ('darwin-' + os.uname().release if sys.platform == 'darwin'
     else (os.confstr('CS_GNU_LIBC_VERSION') or 'unsupported').replace(' ', '-'))
-print(json.dumps(dict(runtime='.'.join(map(str, sys.version_info[:3])), installer=pip.__version__,
+print('${probeRecordPrefix}' + json.dumps(dict(runtime='.'.join(map(str, sys.version_info[:3])), installer=pip.__version__,
     abi=sysconfig.get_config_var('SOABI'), platform=sys.platform,
     arch={'x86_64':'x64','aarch64':'arm64','arm64':'arm64'}.get(os.uname().machine), platformAbi=platformAbi)))
 `;
@@ -180,7 +181,11 @@ export async function probeWorkspaceDependencyToolchain(input: {
       stage = 'runtime';
       const raw = await probeOutput(launcher.command, [...profileArgs, ...args], cwd, launcher.env);
       stage = 'protocol';
-      return JSON.parse(raw);
+      // The native launcher can emit its own status lines. Only a single tagged child record is protocol data.
+      const records = raw.split('\n').filter((line) => line.startsWith(probeRecordPrefix));
+      if (records.length !== 1) throw new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed',
+        raw.length === 0 ? 'empty_protocol' : 'protocol');
+      return JSON.parse(records[0].slice(probeRecordPrefix.length));
     };
     let output: unknown;
     if (ecosystem === 'npm') {
