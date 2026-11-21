@@ -18,12 +18,13 @@ const maxFiles = 20_000;
 const maxBytes = 1024n * 1024n * 1024n;
 const maxMetadataBytes = 64n * 1024n;
 const installerVersion = /^\d+\.\d+(?:\.\d+)?(?:[-+][a-zA-Z0-9.]+)?$/;
-const probeRecordPrefix = 'LARK_DEPENDENCY_PROBE_V1:';
+const probeResultFile = 'measurement.json';
+const nodeMeasurement = dependencyToolchainSchema.omit({ installer: true });
 type Entry = { info: BigIntStats; digest?: string; target?: string; header?: string; content?: Buffer };
 
 export class WorkspaceDependencyToolchainError extends Error {
   constructor(readonly code: 'dependency_toolchain_invalid' | 'dependency_toolchain_changed' | 'dependency_toolchain_probe_failed',
-    readonly probeStage?: 'private_home' | 'configuration' | 'launcher' | 'runtime' | 'protocol' | 'empty_protocol') {
+    readonly probeStage?: 'private_home' | 'configuration' | 'launcher' | 'runtime' | 'protocol') {
     super({ dependency_toolchain_invalid: 'The configured dependency toolchain or its protected paths are invalid.',
       dependency_toolchain_changed: 'The configured dependency toolchain changed after it was selected.',
       dependency_toolchain_probe_failed: 'The dependency toolchain could not be verified in the private offline sandbox.' }[code]);
@@ -33,8 +34,8 @@ export class WorkspaceDependencyToolchainError extends Error {
 const nodeProbe = `const os = require('node:os');
 const platformAbi = process.platform === 'darwin' ? 'darwin-' + os.release()
   : 'glibc-' + (process.report.getReport().header.glibcVersionRuntime || 'unsupported');
-console.log('${probeRecordPrefix}' + JSON.stringify({ runtime: process.versions.node, abi: process.versions.modules,
-  platform: process.platform, arch: process.arch, platformAbi }));`;
+require('node:fs').writeFileSync('${probeResultFile}', JSON.stringify({ runtime: process.versions.node,
+  abi: process.versions.modules, platform: process.platform, arch: process.arch, platformAbi }), { flag: 'wx', mode: 0o600 });`;
 
 // -S skips .pth startup. Check paths using built-in and frozen modules before loading pip or filesystem-backed probe imports.
 const pipProbe = `
@@ -55,9 +56,11 @@ sys.modules['pip'] = pip
 spec.loader.exec_module(pip)
 platformAbi = ('darwin-' + os.uname().release if sys.platform == 'darwin'
     else (os.confstr('CS_GNU_LIBC_VERSION') or 'unsupported').replace(' ', '-'))
-print('${probeRecordPrefix}' + json.dumps(dict(runtime='.'.join(map(str, sys.version_info[:3])), installer=pip.__version__,
-    abi=sysconfig.get_config_var('SOABI'), platform=sys.platform,
-    arch={'x86_64':'x64','aarch64':'arm64','arm64':'arm64'}.get(os.uname().machine), platformAbi=platformAbi)))
+os.umask(0o077)
+with open('${probeResultFile}', 'x', encoding='utf-8') as result:
+    json.dump(dict(runtime='.'.join(map(str, sys.version_info[:3])), installer=pip.__version__,
+        abi=sysconfig.get_config_var('SOABI'), platform=sys.platform,
+        arch={'x86_64':'x64','aarch64':'arm64','arm64':'arm64'}.get(os.uname().machine), platformAbi=platformAbi), result)
 `;
 
 export async function inspectWorkspaceDependencyToolchain(input: WorkspaceDependencyToolchainConfig, expectedFingerprint?: string) {
@@ -179,17 +182,14 @@ export async function probeWorkspaceDependencyToolchain(input: {
       '-P', DEPENDENCY_GUARD_PROFILE, '-C', cwd, '--', executable];
     const run = async (args: string[]) => {
       stage = 'runtime';
-      const raw = await probeOutput(launcher.command, [...profileArgs, ...args], cwd, launcher.env);
+      await runBoundedProbe(launcher.command, [...profileArgs, ...args], cwd, launcher.env);
       stage = 'protocol';
-      // The native launcher can emit its own status lines. Only a single tagged child record is protocol data.
-      const records = raw.split('\n').filter((line) => line.startsWith(probeRecordPrefix));
-      if (records.length !== 1) throw new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed',
-        raw.length === 0 ? 'empty_protocol' : 'protocol');
-      return JSON.parse(records[0].slice(probeRecordPrefix.length));
+      await assertProtectedWorkspacePath(home, true);
+      return readProbeResult(path.join(cwd, probeResultFile));
     };
     let output: unknown;
     if (ecosystem === 'npm') {
-      const measured = await run(['--no-global-search-paths', '-e', nodeProbe]);
+      const measured = nodeMeasurement.parse(await run(['--no-global-search-paths', '-e', nodeProbe]));
       // Do not resolve npm's executable module graph merely to identify its measured package version.
       output = { ...measured, installer: selected.npmVersion };
     } else {
@@ -211,10 +211,23 @@ export async function probeWorkspaceDependencyToolchain(input: {
   }
 }
 
-function probeOutput(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+async function readProbeResult(filename: string): Promise<unknown> {
+  const fd = await fs.open(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const info = await fd.stat({ bigint: true });
+    if (!process.geteuid || !info.isFile() || info.uid !== BigInt(process.geteuid()) || info.nlink !== 1n
+      || (info.mode & 0o077n) !== 0n || info.size < 1n || info.size > 4096n) throw new Error('Invalid probe result file.');
+    const bytes = Buffer.alloc(Number(info.size));
+    const { bytesRead } = await fd.read(bytes, 0, bytes.length, 0);
+    if (bytesRead !== bytes.length || stamp(info) !== stamp(await fd.stat({ bigint: true }))
+      || stamp(info) !== stamp(await fs.lstat(filename, { bigint: true }))) throw new Error('Changed probe result file.');
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } finally { await fd.close(); }
+}
+
+function runBoundedProbe(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    const output: Buffer[] = [];
     let size = 0;
     let done = false;
     const stop = () => {
@@ -232,14 +245,13 @@ function probeOutput(command: string, args: string[], cwd: string, env: NodeJS.P
       if (done) return;
       size += chunk.length;
       if (size > 16 * 1024) stop();
-      else if (stream === child.stdout) output.push(chunk);
     });
     child.once('error', stop);
     child.once('close', (code) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      if (code === 0) resolve(Buffer.concat(output).toString('utf8'));
+      if (code === 0) resolve();
       else reject(new WorkspaceDependencyToolchainError('dependency_toolchain_probe_failed', 'runtime'));
     });
   });
