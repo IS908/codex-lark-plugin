@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { deflateSync, inflateSync } from 'node:zlib';
-import { createWorkspaceGitCheckout, gitSnapshotKey, inspectWorkspaceGitSnapshot, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
+import { createWorkspaceGitCheckout, gitSnapshotKey, inspectWorkspaceGitSnapshot, readWorkspaceGitDependencyInputs, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
 import { createManagedGitSandboxOptions } from '../src/managed-git-sandbox.js';
 import { workspaceMountLayoutSupported } from '../src/managed-workspace-ancestry.js';
@@ -104,6 +104,28 @@ try {
   assert.equal(verified.key, snapshot.key);
   assert.match(verified.storeFingerprint, /^[0-9a-f]{64}$/);
   assert.deepEqual(await verifyWorkspaceGitCache(cache), verified);
+  const dependencySource = path.join(base, 'dependency-source');
+  git('init', '-q', '--object-format=sha1', dependencySource);
+  await fs.mkdir(path.join(dependencySource, 'deps'));
+  const lockPath = path.join(dependencySource, 'deps', 'requirements.lock');
+  await fs.writeFile(lockPath, 'pinned dependency bytes\n');
+  await fs.writeFile(path.join(dependencySource, 'package.json'), '{"name":"fixture"}\n');
+  await fs.writeFile(path.join(dependencySource, 'oversized.lock'), Buffer.alloc(8 * 1024 * 1024 + 1));
+  await fs.symlink('package.json', path.join(dependencySource, 'linked.lock'));
+  git('-C', dependencySource, 'add', 'deps/requirements.lock', 'package.json', 'linked.lock', 'oversized.lock');
+  git('-C', dependencySource, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'dependencies');
+  await fs.writeFile(lockPath, 'mutable dependency bytes\n');
+  const dependencyCommit = git('-C', dependencySource, 'rev-parse', 'HEAD');
+  const dependencyCache = await makeCache('dependency cache', [dependencyCommit], dependencyCommit, dependencySource);
+  const dependencySelection = await verifyWorkspaceGitCache(dependencyCache);
+  const dependencyBytes = await readWorkspaceGitDependencyInputs(dependencyCache, dependencySelection, ['deps/requirements.lock', 'package.json']);
+  assert.deepEqual([...dependencyBytes], [['deps/requirements.lock', Buffer.from('pinned dependency bytes\n')],
+    ['package.json', Buffer.from('{"name":"fixture"}\n')]]);
+  for (const bad of ['linked.lock', 'missing.lock', '../requirements.lock', 'deps', 'deps/*', 'oversized.lock']) {
+    await assert.rejects(readWorkspaceGitDependencyInputs(dependencyCache, dependencySelection, [bad]), { code: 'git_dependency_input_unavailable' });
+  }
+  await assert.rejects(readWorkspaceGitDependencyInputs(dependencyCache, { ...dependencySelection, storeFingerprint: 'a'.repeat(64) }, ['package.json']),
+    { code: 'git_cache_mismatch' });
   const sourceBinding = await pinWorkspacePath(base, source);
   async function isolatedScratch(name: string) {
     await fs.mkdir(path.join(base, name), { mode: 0o700 });
@@ -328,7 +350,9 @@ try {
 
   const sha256Repo = path.join(base, 'sha256-source');
   git('init', '-q', '--object-format=sha256', sha256Repo);
-  git('-C', sha256Repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'fixture');
+  await fs.writeFile(path.join(sha256Repo, 'deps.lock'), 'sha256 fixture\n');
+  git('-C', sha256Repo, 'add', 'deps.lock');
+  git('-C', sha256Repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture');
   const sha256Commit = git('-C', sha256Repo, 'rev-parse', 'HEAD');
   const sha256 = await inspectWorkspaceGitSnapshot({ ...request,
     gitDirectory: await pinWorkspacePath(base, path.join(sha256Repo, '.git')), commit: sha256Commit });
@@ -338,6 +362,7 @@ try {
   const sha256Cache = await makeCache('sha256-cache', [sha256Commit], sha256Commit, sha256Repo);
   const sha256Verified = await verifyWorkspaceGitCache(sha256Cache);
   assert.equal(sha256Verified.key, sha256.key);
+  assert.deepEqual((await readWorkspaceGitDependencyInputs(sha256Cache, sha256Verified, ['deps.lock'])).get('deps.lock'), Buffer.from('sha256 fixture\n'));
   const sha256Checkout = await createWorkspaceGitCheckout({ cache: sha256Cache, expected: sha256Verified,
     source: await pinWorkspacePath(base, sha256Repo), scratch: await isolatedScratch('run-sha256') });
   assert.equal(git('-C', sha256Checkout.checkout.directory, 'rev-parse', 'HEAD'), sha256Commit);

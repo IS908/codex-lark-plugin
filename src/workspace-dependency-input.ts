@@ -33,7 +33,7 @@ export const workspaceDependencyIdentitySchema = dependencyIdentityShape.refine(
   } catch { return false; }
 }, 'Invalid dependency compatibility identity.');
 
-type DependencyInput = { lock: Uint8Array; scope: string; toolchain: z.input<typeof toolchainSchema> } & (
+export type WorkspaceDependencyInput = { lock: Uint8Array; scope: string; toolchain: z.input<typeof toolchainSchema> } & (
   { ecosystem: 'npm'; manifest: Uint8Array; registry: string } | { ecosystem: 'pip' });
 
 export class WorkspaceDependencyInputError extends Error {
@@ -49,7 +49,7 @@ const npmArtifactManifestSchema = z.array(z.strictObject({ resolved: z.string().
 const pythonArtifactManifestSchema = z.array(z.strictObject({ filename: z.string().max(255), sha256: digestSchema })).max(MAX_PACKAGES);
 
 // The installer must verify the actual protected cache bytes against this manifest before use.
-export function prepareWorkspaceNpmLock(input: Extract<DependencyInput, { ecosystem: 'npm' }>, manifest: unknown) {
+export function prepareWorkspaceNpmLock(input: Extract<WorkspaceDependencyInput, { ecosystem: 'npm' }>, manifest: unknown) {
   const plan = describeWorkspaceDependencies(input);
   if (plan.ecosystem !== 'npm') invalid();
   const parsed = npmArtifactManifestSchema.safeParse(manifest);
@@ -74,24 +74,28 @@ export function prepareWorkspaceNpmLock(input: Extract<DependencyInput, { ecosys
   const sorted = [...accepted.entries()].sort(([a], [b]) => lexical(a, b));
   const staged = JSON.stringify({ ...lock, packages }) + '\n';
   if (Buffer.byteLength(staged) > MAX_INPUT_BYTES) invalid();
-  return { identity, lock: staged, artifactManifestSha256: digest(JSON.stringify(['npm-artifacts-v1', sorted])) };
+  return { identity, lock: staged, artifacts: sorted.map(([resolved, integrity]) => ({ resolved, integrity })),
+    artifactManifestSha256: digest(JSON.stringify(['npm-artifacts-v1', sorted])) };
 }
 
-export function prepareWorkspacePipLock(input: Extract<DependencyInput, { ecosystem: 'pip' }>, manifest: unknown) {
+export function prepareWorkspacePipLock(input: Extract<WorkspaceDependencyInput, { ecosystem: 'pip' }>, manifest: unknown) {
   const plan = describeWorkspaceDependencies(input);
   if (plan.ecosystem !== 'pip') invalid();
   const parsed = pythonArtifactManifestSchema.safeParse(manifest);
   if (!parsed.success) invalid();
   const { requirements, ...identity } = plan;
-  const pins = new Map(requirements.map(({ name, hashes }) => [name, new Set(hashes)]));
+  const pins = new Map(requirements.map(({ name, version, hashes }) => [name, { version, hashes: new Set(hashes) }]));
   const collected = new Map<string, Set<string>>();
   const seen = new Set<string>();
   for (const { filename, sha256 } of parsed.data) {
-    const wheel = /^([a-zA-Z0-9_]+)-[0-9][a-zA-Z0-9_.!+]*(?:-\d[a-zA-Z0-9_]*)?-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+\.whl$/.exec(filename);
+    const wheel = /^([a-zA-Z0-9_]+)-([0-9][a-zA-Z0-9_.!+]*)(?:-\d[a-zA-Z0-9_]*)?-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+\.whl$/.exec(filename);
     if (!wheel || seen.has(filename)) invalid();
     seen.add(filename);
     const name = pythonName(wheel[1]);
-    if (!pins.get(name)?.has(sha256)) throw new WorkspaceDependencyInputError('dependency_artifact_conflict');
+    const pin = pins.get(name);
+    if (!pin || !pin.hashes.has(sha256) || !matchesPythonPin(pin.version, wheel[2])) {
+      throw new WorkspaceDependencyInputError('dependency_artifact_conflict');
+    }
     if (!collected.has(name)) collected.set(name, new Set());
     collected.get(name)!.add(sha256);
   }
@@ -102,10 +106,11 @@ export function prepareWorkspacePipLock(input: Extract<DependencyInput, { ecosys
   }).join('\n') + '\n';
   if (Buffer.byteLength(lock) > MAX_INPUT_BYTES) invalid();
   const sorted = parsed.data.map(({ filename, sha256 }) => [filename, sha256]).sort(([a], [b]) => lexical(a, b));
-  return { identity, lock, artifactManifestSha256: digest(JSON.stringify(['pip-artifacts-v1', sorted])) };
+  return { identity, lock, artifacts: sorted.map(([filename, sha256]) => ({ filename, sha256 })),
+    artifactManifestSha256: digest(JSON.stringify(['pip-artifacts-v1', sorted])) };
 }
 
-export function describeWorkspaceDependencies(input: DependencyInput) {
+export function describeWorkspaceDependencies(input: WorkspaceDependencyInput) {
   const scope = scopeSchema.safeParse(input.scope);
   const toolchain = toolchainSchema.safeParse(input.toolchain);
   if (!scope.success || !toolchain.success) invalid();
@@ -227,14 +232,17 @@ function readNpmArtifacts(lock: Record<string, unknown>, manifest: Record<string
   if (!root.success || Object.keys(packages.data).length > MAX_PACKAGES + 1) invalid();
   const rootDependencies = npmDependencyTables(root.data);
   if (JSON.stringify(rootDependencies) !== JSON.stringify(npmDependencyTables(manifest))
-    || root.data.name !== manifest.name || root.data.version !== manifest.version) invalid();
-  requireNpmDependencyRecords(packages.data, '', root.data, rootDependencies);
+    || root.data.name !== manifest.name || root.data.version !== manifest.version
+    || rootDependencies[3].some(([name]) => optionalNpmPeer(root.data, name) !== optionalNpmPeer(manifest, name))) invalid();
+  requireNpmDependencyRecords(packages.data, '', manifest, rootDependencies);
   return Object.entries(packages.data).filter(([relative]) => relative !== '').sort(([left], [right]) => lexical(left, right))
     .map(([relative, raw]) => {
+      if (relative.length > 4096) unsupported();
       const segments = relative.split('/');
       let name = '';
+      let depth = 0;
       for (let i = 0; i < segments.length;) {
-        if (segments[i++] !== 'node_modules' || i === segments.length) unsupported();
+        if (++depth > 32 || segments[i++] !== 'node_modules' || i === segments.length) unsupported();
         name = segments[i++];
         if (name.startsWith('@')) name += `/${segments[i++] ?? ''}`;
         if (!npmName.test(name)) unsupported();
@@ -252,15 +260,18 @@ function readNpmArtifacts(lock: Record<string, unknown>, manifest: Record<string
     });
 }
 
+function optionalNpmPeer(record: Record<string, unknown>, name: string): boolean {
+  const table = record.peerDependenciesMeta;
+  if (typeof table !== 'object' || table === null || !Object.hasOwn(table, name)) return false;
+  const meta = (table as Record<string, unknown>)[name];
+  return typeof meta === 'object' && meta !== null && Object.hasOwn(meta, 'optional') && (meta as Record<string, unknown>).optional === true;
+}
+
 // Check required record coverage here; npm still validates the effective install graph and versions.
 function requireNpmDependencyRecords(packages: Record<string, unknown>, owner: string, record: Record<string, unknown>,
   [dependencies, dev, optional, peers]: Array<Array<[string, string]>>): void {
   const optionalNames = new Set(optional.map(([name]) => name));
-  const peerMeta = jsonRecord.safeParse(record.peerDependenciesMeta);
-  for (const [name] of [...dependencies, ...(owner === '' ? dev : []), ...peers.filter(([peer]) => {
-    const meta = peerMeta.success ? jsonRecord.safeParse(peerMeta.data[peer]) : undefined;
-    return !meta?.success || meta.data.optional !== true;
-  })]) {
+  for (const [name] of [...dependencies, ...(owner === '' ? dev : []), ...peers.filter(([peer]) => !optionalNpmPeer(record, peer))]) {
     if (optionalNames.has(name)) continue;
     let cursor = owner;
     for (;;) {
@@ -271,7 +282,21 @@ function requireNpmDependencyRecords(packages: Record<string, unknown>, owner: s
   }
 }
 
-const canonicalPythonVersion = /^(?:\d+!)?\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?(?:\+[a-z0-9]+(?:\.[a-z0-9]+)*)?$/;
+const canonicalPythonVersion = /^(?:(\d+)!)?(\d+(?:\.\d+)*)(?:(a|b|rc)(\d+))?(?:\.post(\d+))?(?:\.dev(\d+))?(?:\+([a-z0-9]+(?:\.[a-z0-9]+)*))?$/;
+
+// Only equality for canonical PEP 440 versions is needed here; pip still validates wheel tags and metadata.
+function matchesPythonPin(pin: string, version: string): boolean {
+  const required = canonicalPythonVersion.exec(pin);
+  const wheel = canonicalPythonVersion.exec(version);
+  if (!required || !wheel) return false;
+  const number = (part: string) => part.replace(/^0+(?=\d)/, '');
+  const publicVersion = ([, epoch, release, pre, preNumber, post, dev]: RegExpExecArray) => [
+    number(epoch ?? '0'), release.split('.').map(number).join('.').replace(/(?:\.0)+$/, ''), pre ?? '',
+    number(preNumber ?? ''), number(post ?? ''), number(dev ?? ''),
+  ].join('/');
+  const local = (value?: string) => value?.split('.').map((part) => /^\d+$/.test(part) ? number(part) : part).join('.');
+  return publicVersion(required) === publicVersion(wheel) && (required[7] === undefined || local(required[7]) === local(wheel[7]));
+}
 
 function readPythonRequirements(text: string) {
   const records = new Map<string, { name: string; version: string; hashes: string[] }>();
@@ -285,12 +310,13 @@ function readPythonRequirements(text: string) {
       if (continued) unsupported();
       continue;
     }
-    if (continued.length + line.length > 65_536) invalid();
+    if (continued.length + raw.length > 65_536) invalid();
     if (line.endsWith('\\')) {
-      continued += `${line.slice(0, -1).trim()} `;
+      if (line === '\\') unsupported();
+      continued += raw.slice(0, -1);
       continue;
     }
-    const [requirement, ...flags] = `${continued}${line}`.split(/\s+/);
+    const [requirement, ...flags] = `${continued}${comment >= 0 ? raw.slice(0, comment) : raw}`.trim().split(/\s+/);
     continued = '';
     const pin = /^([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?)==([0-9][A-Za-z0-9.!+_-]*)$/.exec(requirement);
     if (!pin || pin[2].length > 128 || !canonicalPythonVersion.test(pin[2])

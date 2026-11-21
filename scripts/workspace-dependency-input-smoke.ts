@@ -63,6 +63,12 @@ assert.deepEqual(JSON.parse(prepared.lock).packages['node_modules/@fixture/a'], 
 assert.equal(JSON.parse(sparse.lock.toString()).packages['node_modules/@fixture/a'].integrity, undefined);
 assert.equal(prepared.artifactManifestSha256, prepareWorkspaceNpmLock(npm, catalog).artifactManifestSha256);
 throwsInput(() => describeWorkspaceDependencies(withArtifact({}, 'node_modules/../outside')));
+throwsInput(() => describeWorkspaceDependencies(withArtifact({}, `${'node_modules/long/'.repeat(33)}node_modules/@fixture/a`)));
+const peers = { name: 'fixture', version: '1.0.0', peerDependencies: { missing: '^1' } };
+const ignoredPeer = { ...peers, peerDependenciesMeta: { missing: { optional: true } } };
+const peerLock = bytes({ lockfileVersion: 3, packages: { '': ignoredPeer } });
+throwsInput(() => describeWorkspaceDependencies({ ...npm, manifest: bytes(peers), lock: peerLock }));
+assert.deepEqual(describeWorkspaceDependencies({ ...npm, manifest: bytes(ignoredPeer), lock: peerLock }).artifacts, []);
 throwsInput(() => describeWorkspaceDependencies({ ...npm, manifest: bytes({ ...manifest, workspaces: ['packages/*'] }) }));
 assert.notEqual(describeWorkspaceDependencies({ ...npm, manifest: bytes({ ...manifest, overrides: { '@fixture/a@^1': { '.': '$@fixture/a' } } }) }).key,
   npmPlan.key);
@@ -89,12 +95,19 @@ assert.match(wheels.artifactManifestSha256, /^[0-9a-f]{64}$/);
 assert.throws(() => prepareWorkspacePipLock(pip, []), { code: 'dependency_artifact_missing' });
 assert.throws(() => prepareWorkspacePipLock(pip, [{ ...wheel, sha256: '8'.repeat(64) }]), { code: 'dependency_artifact_conflict' });
 for (const invalid of [{ ...wheel, filename: `../${wheel.filename}` }, { ...wheel, filename: 'some_project-1.0.0.tar.gz' },
-  { ...wheel, filename: 'other_project-1.0.0-py3-none-any.whl' }]) throwsInput(() => prepareWorkspacePipLock(pip, [invalid]));
+  { ...wheel, filename: 'other_project-1.0.0-py3-none-any.whl' }, { ...wheel, filename: 'some_project-2.0.0-py3-none-any.whl' }]) {
+  throwsInput(() => prepareWorkspacePipLock(pip, [invalid]));
+}
+assert.equal(prepareWorkspacePipLock(pip, [{ ...wheel, filename: 'some_project-1-py3-none-any.whl' }]).lock, wheels.lock);
+assert.equal(prepareWorkspacePipLock(pip, [{ ...wheel, filename: 'some_project-1.0+vendor-py3-none-any.whl' }]).lock, wheels.lock);
+const localPin = { ...pip, lock: Buffer.from(`some-project==1.0+vendor ${hashArg}\n`) };
+throwsInput(() => prepareWorkspacePipLock(localPin, [wheel]));
+assert.match(prepareWorkspacePipLock(localPin, [{ ...wheel, filename: 'some_project-1+vendor-py3-none-any.whl' }]).lock, /\+vendor/);
 throwsInput(() => prepareWorkspacePipLock(pip, [wheel, wheel]));
 for (const line of ['-r another.txt', '--extra-index-url https://example.test', `a>=1.0 ${hashArg}`, 'a==1.0',
   `a @ https://example.test/a.whl ${hashArg}`, `a==1.0.* ${hashArg}`, `a==1.0; sys_platform=="linux" ${hashArg}`,
   `a==1.0 ${hashArg} --find-links other`, `a_b==1.0 ${hashArg}\nA-B==1.0 ${hashArg}`, `a==1.0 ${hashArg} \\`,
-  `a==1.0 # ambiguous \\\n--hash=sha256:${'9'.repeat(64)}`, `a==1.0.0.lark ${hashArg}`]) {
+  `a==1.0 # ambiguous \\\n--hash=sha256:${'9'.repeat(64)}`, `a==1.0\\\n${hashArg}`, `a==1.0.0.lark ${hashArg}`]) {
   throwsInput(() => describeWorkspaceDependencies({ ...pip, lock: Buffer.from(`${line}\n`) }));
 }
 const repo = describeWorkspaceDependencies({ ...npm, registry: 'https://registry.npmjs.org/',

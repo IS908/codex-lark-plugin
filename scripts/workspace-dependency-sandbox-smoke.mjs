@@ -14,6 +14,7 @@ assert.ok(codex && path.isAbsolute(codex), 'Provide the absolute path of a nativ
 const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lark-deps-feasibility-')));
 const home = path.join(root, 'home');
 const cache = path.join(root, 'npm-cache');
+const contentCache = path.join(root, 'npm-content-cache');
 const py = process.env.LARK_TEST_PYTHON || 'python3';
 const npm = process.env.LARK_TEST_NPM || 'npm';
 const digest = (value, type = 'sha256', format = 'hex') => createHash(type).update(value).digest(format);
@@ -80,8 +81,17 @@ try {
   }
   assert.deepEqual(requests, new Set(contents.keys()));
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  for (const { integrity } of Object.values(lockPackages)) {
+    const hex = Buffer.from(integrity.slice(7), 'base64').toString('hex');
+    const parts = ['_cacache', 'content-v2', 'sha512', hex.slice(0, 2), hex.slice(2, 4), hex.slice(4)];
+    const destination = path.join(contentCache, ...parts);
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.copyFile(path.join(cache, ...parts), destination);
+  }
   await permissions(cache, true);
+  await permissions(contentCache, true);
   const cacheHash = await fingerprint(cache);
+  const contentCacheHash = await fingerprint(contentCache);
   const metadata = { name: 'lark-probe-project', version: '1.0.0', dependencies: { 'lark-fixture-a': '1.0.0' } };
   const lock = { name: metadata.name, version: metadata.version, lockfileVersion: 3, requires: true, packages: { '': metadata, ...lockPackages } };
   const bootstrapNode = async (dest) => {
@@ -157,15 +167,15 @@ try {
   await fs.mkdir(codexHome);
   await bootstrapNode(sandboxRun);
   await fs.mkdir(privateTemp);
-  const rules = new Map([[':root', 'read'], [sandboxRun, 'write'], [cache, 'read'], [wheelhouse, 'read']]);
+  const rules = new Map([[':root', 'read'], [sandboxRun, 'write'], [contentCache, 'read'], [wheelhouse, 'read']]);
   const rulesConfig = [...rules].map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(',');
   const permission = `permissions={lark-deps={filesystem={${rulesConfig}},network={enabled=false}}}`;
   const usingSandbox = (cmd, args, profile = 'lark-deps') => run(codex, ['sandbox', '-c', permission, '-P', profile, '-C', sandboxRun, '--', cmd, ...args],
     sandboxRun, { CODEX_HOME: codexHome, TMPDIR: privateTemp, PIP_CONFIG_FILE: '/dev/null' });
   await usingSandbox('/usr/bin/touch', [path.join(sandboxRun, 'allowed')]);
-  const denied = path.join(cache, 'denied');
+  const denied = path.join(contentCache, 'denied');
   // This directory must be writable outside the sandbox, otherwise the denial proves nothing.
-  await fs.chmod(cache, 0o700);
+  await fs.chmod(contentCache, 0o700);
   try {
     await run('/usr/bin/touch', [denied], sandboxRun);
     await fs.unlink(denied);
@@ -173,7 +183,7 @@ try {
       (error) => /permission denied|operation not permitted|read-only file system/i.test(error.stderr));
     await assert.rejects(fs.stat(denied), { code: 'ENOENT' });
   } finally {
-    await fs.chmod(cache, 0o500);
+    await fs.chmod(contentCache, 0o500);
   }
   const invalidMarker = path.join(sandboxRun, 'unexpected-profile-launch');
   await assert.rejects(usingSandbox('/usr/bin/touch', [invalidMarker], 'missing-profile'));
@@ -186,21 +196,22 @@ try {
   await run(process.execPath, connect, sandboxRun);
   await assert.rejects(usingSandbox(process.execPath, connect), { code: 42 });
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  await usingSandbox(npm, ['ci', '--offline', ...npmOptions, registryOption, `--cache=${cache}`]);
+  await usingSandbox(npm, ['ci', '--offline', ...npmOptions, registryOption, `--cache=${contentCache}`]);
   assert.match(await fs.readFile(js(sandboxRun), 'utf8'), /lark-fixture-b/);
   const sandboxPython = path.join(sandboxRun, 'python');
   await usingSandbox(py, ['-I', '-m', 'pip', '--isolated', 'install', '--disable-pip-version-check', '--no-cache-dir', '--no-index',
     `--find-links=${wheelhouse}`, '--only-binary=:all:', '--require-hashes', '--ignore-installed', `--target=${sandboxPython}`, `--requirement=${req}`]);
   assert.match(await fs.readFile(module(sandboxPython), 'utf8'), /lark_fixture_b/);
   assert.equal(await fingerprint(cache), cacheHash);
+  assert.equal(await fingerprint(contentCache), contentCacheHash);
   assert.equal(await fingerprint(wheelhouse), wheelsHash);
-  console.log('Native Codex: direct offline npm/pip installs passed; private writes allowed, shared writes and network denied, invalid profile rejected.');
+  console.log('Native Codex: direct offline npm (content-only cache) and pip installs passed; shared writes and network denied.');
 } catch (error) {
   console.error(error.stderr || error.stack || error.message);
   process.exitCode = 1;
 } finally {
   if (server.listening) await new Promise((resolve) => server.close(resolve));
-  for (const dir of [cache, path.join(root, 'wheelhouse')]) {
+  for (const dir of [cache, contentCache, path.join(root, 'wheelhouse')]) {
     try { await permissions(dir, false); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   await fs.rm(root, { recursive: true, force: true });
