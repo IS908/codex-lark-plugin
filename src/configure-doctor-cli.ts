@@ -11,6 +11,8 @@ import {
   type ConfigureDoctorRemoteProbe,
 } from './configure-doctor.js';
 import { formatWorkspaceStorage, inventoryWorkspaceStorage } from './workspace-storage.js';
+import { formatWorkspaceCleanupPreview, previewWorkspaceCleanup } from './workspace-cleanup-preview.js';
+import { continuationRuntimeDir, managedWorkspaceConfigPath, runtimeConfigDir } from './runtime-paths.js';
 
 const silentLogger: Lark.Logger = {
   error: () => undefined,
@@ -65,9 +67,9 @@ async function main(args: string[]): Promise<void> {
     process.exitCode = report.exitCode;
     return;
   }
-  if (!args.includes('--workspace-storage') || args.some((arg) =>
-    arg !== '--workspace-storage' && arg !== '--json')) {
-    process.stderr.write('Usage: npm run doctor -- [--workspace-storage [--json]]\n');
+  const modes = args.filter((arg) => arg !== '--json');
+  if (modes.length !== 1 || args.length > 2 || !['--workspace-storage', '--workspace-cleanup-preview'].includes(modes[0])) {
+    process.stderr.write('Usage: npm run doctor -- [(--workspace-storage | --workspace-cleanup-preview) [--json]]\n');
     process.exitCode = 1;
     return;
   }
@@ -84,9 +86,21 @@ async function main(args: string[]): Promise<void> {
         LARK_CODEX_EXEC_CWD: process.env.LARK_CODEX_EXEC_CWD ?? fileEnv.LARK_CODEX_EXEC_CWD,
         LARK_CONTINUATION_WORKING_ROOT: process.env.LARK_CONTINUATION_WORKING_ROOT
           ?? fileEnv.LARK_CONTINUATION_WORKING_ROOT,
+        ...(modes[0] === '--workspace-cleanup-preview' ? { LARK_CONTINUATION_RETENTION_DAYS: process.env.LARK_CONTINUATION_RETENTION_DAYS
+          ?? fileEnv.LARK_CONTINUATION_RETENTION_DAYS } : {}),
       },
       dryRun: true,
     });
+    if (modes[0] === '--workspace-cleanup-preview') {
+      const report = await previewWorkspaceCleanup({ configPath: managedWorkspaceConfigPath,
+        sourceRegistryPath: path.join(runtimeConfigDir, 'workspace-projects.json'),
+        databasePath: path.join(continuationRuntimeDir, 'jobs.sqlite'),
+        authorizedRoots: [config.LARK_CODEX_EXEC_CWD, config.LARK_CONTINUATION_WORKING_ROOT],
+        minimumAgeDays: config.LARK_CONTINUATION_RETENTION_DAYS, now: new Date() });
+      process.stdout.write(`${args.includes('--json') ? JSON.stringify(report, null, 2) : formatWorkspaceCleanupPreview(report)}\n`);
+      process.exitCode = report.status === 'complete' ? 0 : 1;
+      return;
+    }
     const roots = await inventoryWorkspaceStorage([
       { role: 'exec', directory: config.LARK_CODEX_EXEC_CWD },
       { role: 'continuation', directory: config.LARK_CONTINUATION_WORKING_ROOT },
@@ -97,7 +111,9 @@ async function main(args: string[]): Promise<void> {
     process.exitCode = roots.every(({ status }) => status === 'complete') ? 0 : 1;
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'Unknown error';
-    process.stderr.write(`Workspace storage inventory failed: ${detail}\n`);
+    process.stderr.write(modes[0] === '--workspace-cleanup-preview'
+      ? 'Workspace cleanup preview could not read its local configuration.\n'
+      : `Workspace storage inventory failed: ${detail}\n`);
     process.exitCode = 1;
   }
 }

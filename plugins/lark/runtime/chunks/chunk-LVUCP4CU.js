@@ -1,7 +1,7 @@
 import { createRequire as __larkCreateRequire } from 'node:module'; import { fileURLToPath as __larkFileURLToPath } from 'node:url'; import { dirname as __larkPathDirname } from 'node:path'; const require = __larkCreateRequire(import.meta.url); const __filename = __larkFileURLToPath(import.meta.url); const __dirname = __larkPathDirname(__filename);
 import {
   appConfig
-} from "./chunk-SZVMSHRI.js";
+} from "./chunk-QPYBKJVG.js";
 
 // src/privacy-rules.ts
 import { readFile, writeFile, mkdir } from "node:fs/promises";

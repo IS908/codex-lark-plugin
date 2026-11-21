@@ -201,6 +201,17 @@ npm run --silent doctor -- --workspace-storage --json
 嵌套根目录的结果不可相加。依赖和 Git 分类仅描述内容，不表明归属或可删性。不会扫描符号链接
 目标或不同文件系统；扫描不完整或根目录不可用时会报告并返回非零退出码。不会删除或迁移任何文件。
 
+可按持久化归属账本预览已配置的托管临时目录：
+
+```bash
+npm run --silent doctor -- --workspace-cleanup-preview
+npm run --silent doctor -- --workspace-cleanup-preview --json
+```
+
+预览报告有限范围的占用估算和保留原因，不生成删除清单。最低保留时长使用
+`LARK_CONTINUATION_RETENTION_DAYS`；未知、活动、仍被引用或已变化的路径均保留。
+未登记和历史目录不会成为候选。命令不会启动插件、连接飞书或修改托管目录；结果只反映扫描时刻。
+
 #### 选择工作项目
 
 管理员可选建 `~/.codex/channels/lark/runtime-config/workspace-projects.json`，

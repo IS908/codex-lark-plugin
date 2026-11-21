@@ -282,27 +282,10 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       FROM workspace_run_allocations WHERE workload_kind = ? AND run_id = ?
     `).get(owner.kind, owner.runId);
     if (!row) return null;
-    if (row.allocation_json === null) throw new ManagedWorkspaceStorageError('allocation_incomplete');
-    const intent = parseStored(managedRunIntentSchema, row.intent_json);
-    const allocation = parseStored(managedRunAllocationSchema, row.allocation_json);
-    const lastUsedAt = timestamp.safeParse(row.last_used_at);
-    if (!lastUsedAt.success || intent.owner.kind !== owner.kind || intent.owner.runId !== owner.runId
-      || allocation.owner.kind !== owner.kind || allocation.owner.runId !== owner.runId
-      || row.scratch_path !== allocation.scratch.directory || row.artifact_path !== allocation.artifacts.directory
-      || row.scratch_identity !== directoryIdentity(allocation.scratch) || row.artifact_identity !== directoryIdentity(allocation.artifacts)
-      || intent.createdAt !== allocation.createdAt
-      || intent.foregroundSessionKey !== allocation.foregroundSessionKey
-      || !sameWorkspaceProject(intent.project, allocation.project)
-      || !sameWorkspaceProject(intent.fallbackWorkspace, allocation.fallbackWorkspace)
-      || !sameManagedGitSelection(intent.git, allocation.git)
-      || !sameWorkspaceDependencySelections(intent.dependencySelections, allocation.dependencySelections)
-      || !validGitAllocation(allocation)
-      || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch)
-      || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
-      throw new ManagedWorkspaceStorageError('invalid_binding');
-    }
+    const record = parseManagedWorkspaceRecord(owner, row);
+    const { allocation } = record;
     if (allocation.git && !this.recordedGitCacheMatches(allocation.git, 'read')) throw new ManagedWorkspaceStorageError('invalid_binding');
-    return { allocation, lastUsedAt: lastUsedAt.data };
+    return record;
   }
 
   async ensure({ authorizedRoots, usedAt, sourceRegistryPath, sourceRegistryRoot, dependencyRegistryConfigPath = managedWorkspaceConfigPath,
@@ -517,6 +500,26 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
       WHERE workload_kind = ? AND run_id = ?
     `).run(usedAt, owner.kind, owner.runId);
   }
+}
+
+export function parseManagedWorkspaceRecord(owner: ManagedRunOwner, row: Record<string, unknown>): ManagedWorkspaceRecord {
+  if (row.allocation_json === null) throw new ManagedWorkspaceStorageError('allocation_incomplete');
+  const intent = parseStored(managedRunIntentSchema, row.intent_json);
+  const allocation = parseStored(managedRunAllocationSchema, row.allocation_json);
+  const lastUsedAt = timestamp.safeParse(row.last_used_at);
+  if (!lastUsedAt.success || intent.owner.kind !== owner.kind || intent.owner.runId !== owner.runId
+    || allocation.owner.kind !== owner.kind || allocation.owner.runId !== owner.runId
+    || row.scratch_path !== allocation.scratch.directory || row.artifact_path !== allocation.artifacts.directory
+    || row.scratch_identity !== directoryIdentity(allocation.scratch) || row.artifact_identity !== directoryIdentity(allocation.artifacts)
+    || intent.createdAt !== allocation.createdAt || intent.foregroundSessionKey !== allocation.foregroundSessionKey
+    || !sameWorkspaceProject(intent.project, allocation.project) || !sameWorkspaceProject(intent.fallbackWorkspace, allocation.fallbackWorkspace)
+    || !sameManagedGitSelection(intent.git, allocation.git)
+    || !sameWorkspaceDependencySelections(intent.dependencySelections, allocation.dependencySelections)
+    || !validGitAllocation(allocation) || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch)
+    || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
+    throw new ManagedWorkspaceStorageError('invalid_binding');
+  }
+  return { allocation, lastUsedAt: lastUsedAt.data };
 }
 
 function assertDependencyReceiptBinding(scratch: WorkspaceProjectBinding, ecosystem: WorkspaceDependencyEcosystem, nonce: string,

@@ -1,0 +1,10 @@
+# Managed workspace cleanup preview (#401)
+
+Ship this read-only phase independently from an opt-in cleanup executor. A preview is not authorization to delete a directory or a lease on it.
+
+- [x] Add a separate text and JSON doctor mode. Never initialize, connect to, or recover the live SQLite database; read a bounded owner-only temporary snapshot of stable DB and WAL bytes. Missing or unstable evidence retains every affected directory.
+- [x] Validate persisted scratch ownership and current path identity. Report bounded size estimates and retained reasons for existing foreground, prompt Cron and Async Task records. Account for retention, running/recoverable work, deliveries, retry references and interrupted staging. Never report arbitrary names or task content for unmanaged entries.
+- [x] Restrict the initial positive case to expired, empty scratch for a durably terminal run whose ledger proves it never reached an attempt and whose terminal delivery is confirmed. Recheck both filesystem and ledger after observation. Keep every executed, untracked, or Git-backed case protected for now.
+- [ ] Add auditable quiescence evidence for executed runs. Do not equate a missing lease, a terminal status, a service restart, or the exit of a parent process with termination of every descendant. Preserve old or ambiguous records rather than inferring safety from a timestamp.
+- [ ] Establish positive Git preservation evidence for otherwise eligible checkouts. Detect local refs/objects, changes to tracked or untracked files (including ignored ones), links and missing metadata. Do not run Git with checkout-controlled configuration. Keep preexisting or changed checkouts when the initial state cannot be proved.
+- [ ] Verify activity and delivery changes during scan, database reopen, aliases, incomplete observations, host/process ambiguity and Git changes on macOS/Linux. Review the exact PR, merge and publish a minor release, and close #401 only after verifying the release. Keep #387 open for the later executor.

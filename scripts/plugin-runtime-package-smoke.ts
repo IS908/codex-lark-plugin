@@ -99,6 +99,10 @@ try {
   assert.equal(inventory.roots[0].status, 'complete');
   assert.deepEqual(inventory.roots[0].roles, ['exec', 'continuation']);
   assert.ok(inventory.roots[0].total.apparentBytes > 0);
+  const preview = runPluginScript('doctor', ['--', '--workspace-cleanup-preview', '--json']);
+  assert.equal(preview.status, 1, preview.stderr);
+  assert.deepEqual(JSON.parse(preview.stdout).observations, ['managed_storage_disabled']);
+  assert.ok(!existsSync(join(home, '.codex/channels/lark/runtime/continuations/jobs.sqlite')));
 } finally {
   rmSync(runtimeRoot, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });

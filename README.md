@@ -227,6 +227,20 @@ Symlink targets and different filesystems are not scanned; incomplete or
 unavailable scans are reported and return a nonzero status. The inventory never
 deletes or moves anything.
 
+For an ownership-based, read-only preview of the configured managed scratch root:
+
+```bash
+npm run --silent doctor -- --workspace-cleanup-preview
+npm run --silent doctor -- --workspace-cleanup-preview --json
+```
+
+The preview reports bounded estimates and retention reasons, not a deletion
+list. It uses `LARK_CONTINUATION_RETENTION_DAYS` as its minimum age and retains
+unknown, active, referenced or changed paths. Unregistered and historical
+directories are never candidates. It does not start the plugin, connect to
+Feishu, or change any managed directory. Treat the result as an advisory snapshot;
+eligibility can change after observation.
+
 #### Select a workspace project
 
 Optionally create `~/.codex/channels/lark/runtime-config/workspace-projects.json`
