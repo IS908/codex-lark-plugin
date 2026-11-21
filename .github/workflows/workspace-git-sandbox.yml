@@ -46,8 +46,19 @@ jobs:
           LARK_APP_SECRET: test_app_secret
         run: |
           unshare --user --map-root-user /usr/bin/true
-          bundle_dir=$(mktemp -d)
+          bundle_dir=$(mktemp -d "$HOME/codex-git-ci.XXXXXX")
           trap 'rm -rf -- "$bundle_dir"' EXIT
+          export TMPDIR="$bundle_dir"
+          node --import tsx --input-type=module -e '
+            import { readWorkspaceMountTable, workspaceMountLayoutSupported } from "./src/managed-workspace-ancestry.ts";
+            import { workspacePathContains } from "./src/workspace-projects.ts";
+            const directory = process.env.TMPDIR;
+            const mounts = readWorkspaceMountTable();
+            const relevant = mounts.filter((mount) => workspacePathContains(mount.directory, directory)
+              || workspacePathContains(directory, mount.directory));
+            console.log("Fixture mount coverage:", relevant.map(({ directory, root }) => ({ directory, filesystemRoot: root === "/" })));
+            if (!workspaceMountLayoutSupported([directory], mounts)) process.exitCode = 1;
+          '
           archive="$bundle_dir/$(npm pack "$CODEX_NPM_PACKAGE" --ignore-scripts --pack-destination "$bundle_dir" --registry=https://registry.npmjs.org)"
           digest=$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)
           test "$digest" = "$CODEX_NPM_SHA512"
