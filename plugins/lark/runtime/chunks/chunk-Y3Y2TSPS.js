@@ -43,8 +43,8 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports, module) {
     var fs = __require("fs");
-    var path2 = __require("path");
-    var os2 = __require("os");
+    var path3 = __require("path");
+    var os3 = __require("os");
     var crypto = __require("crypto");
     var TIPS = [
       "\u25C8 encrypted .env [www.dotenvx.com]",
@@ -182,7 +182,7 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path2.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path3.resolve(process.cwd(), ".env.vault");
       }
       if (fs.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
@@ -190,7 +190,7 @@ var require_main = __commonJS({
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path2.join(os2.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path3.join(os3.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -207,7 +207,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path2.resolve(process.cwd(), ".env");
+      const dotenvPath = path3.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -235,13 +235,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path3 of optionPaths) {
+      for (const path4 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs.readFileSync(path3, { encoding }));
+          const parsed = DotenvModule.parse(fs.readFileSync(path4, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug) {
-            _debug(`failed to load ${path3} ${e.message}`);
+            _debug(`failed to load ${path4} ${e.message}`);
           }
           lastError = e;
         }
@@ -254,7 +254,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path2.relative(process.cwd(), filePath);
+            const relative = path3.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e) {
             if (debug) {
@@ -1079,6 +1079,14 @@ function readConfigValues(options) {
   return Object.fromEntries(values);
 }
 
+// src/runtime-paths.ts
+import os2 from "node:os";
+import path2 from "node:path";
+var channelHome = path2.join(os2.homedir(), ".codex", "channels", "lark");
+var runtimeConfigDir = path2.join(channelHome, "runtime-config");
+var continuationRuntimeDir = path2.join(channelHome, "runtime", "continuations");
+var managedWorkspaceConfigPath = path2.join(runtimeConfigDir, "managed-workspace.json");
+
 export {
   __require,
   __commonJS,
@@ -1086,5 +1094,9 @@ export {
   __toESM,
   require_main,
   assertSupportedNodeVersion,
-  readConfigValues
+  readConfigValues,
+  channelHome,
+  runtimeConfigDir,
+  continuationRuntimeDir,
+  managedWorkspaceConfigPath
 };

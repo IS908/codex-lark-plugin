@@ -3,14 +3,13 @@ import path from 'node:path';
 import os from 'node:os';
 import { assertSupportedNodeVersion } from './runtime-version.js';
 import { readConfigValues } from './config-schema.js';
-import { channelHome, managedWorkspaceConfigPath, runtimeConfigDir } from './runtime-paths.js';
+import { channelHome, continuationRuntimeDir, managedWorkspaceConfigPath, runtimeConfigDir } from './runtime-paths.js';
 
 assertSupportedNodeVersion();
 
 const envPath = path.join(channelHome, '.env');
 config({ path: envPath, quiet: true });
 
-const continuationRuntimeDir = path.join(channelHome, 'runtime', 'continuations');
 const isDryRun = process.argv.includes('--dry-run');
 
 function rejectRemovedChannelRuntime(): void {

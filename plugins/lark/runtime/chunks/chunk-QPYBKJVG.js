@@ -2,27 +2,21 @@ import { createRequire as __larkCreateRequire } from 'node:module'; import { fil
 import {
   __toESM,
   assertSupportedNodeVersion,
+  channelHome,
+  continuationRuntimeDir,
+  managedWorkspaceConfigPath,
   readConfigValues,
-  require_main
-} from "./chunk-WOBAO6HM.js";
+  require_main,
+  runtimeConfigDir
+} from "./chunk-Y3Y2TSPS.js";
 
 // src/config.ts
 var import_dotenv = __toESM(require_main(), 1);
-import path2 from "node:path";
-import os2 from "node:os";
-
-// src/runtime-paths.ts
-import os from "node:os";
 import path from "node:path";
-var channelHome = path.join(os.homedir(), ".codex", "channels", "lark");
-var runtimeConfigDir = path.join(channelHome, "runtime-config");
-var managedWorkspaceConfigPath = path.join(runtimeConfigDir, "managed-workspace.json");
-
-// src/config.ts
+import os from "node:os";
 assertSupportedNodeVersion();
-var envPath = path2.join(channelHome, ".env");
+var envPath = path.join(channelHome, ".env");
 (0, import_dotenv.config)({ path: envPath, quiet: true });
-var continuationRuntimeDir = path2.join(channelHome, "runtime", "continuations");
 var isDryRun = process.argv.includes("--dry-run");
 function rejectRemovedChannelRuntime() {
   const key = "LARK_CHANNEL_RUNTIME";
@@ -132,24 +126,23 @@ var appConfig = {
   quotedCardUserFetchTimeoutMs: envValues.LARK_QUOTED_CARD_USER_FETCH_TIMEOUT_MS,
   quotedCardUserFetchMaxBytes: envValues.LARK_QUOTED_CARD_USER_FETCH_MAX_BYTES,
   // Paths
-  memoriesDir: path2.join(os2.homedir(), ".codex", "channels", "lark", "memories"),
-  inboxDir: path2.join(os2.homedir(), ".codex", "channels", "lark", "inbox"),
-  jobsDir: path2.join(os2.homedir(), ".codex", "channels", "lark", "jobs"),
-  codexExecSessionsDir: path2.join(os2.homedir(), ".codex", "channels", "lark", "codex-sessions"),
-  continuationDbPath: path2.join(continuationRuntimeDir, "jobs.sqlite"),
-  continuationArtifactsDir: path2.join(continuationRuntimeDir, "artifacts"),
+  memoriesDir: path.join(os.homedir(), ".codex", "channels", "lark", "memories"),
+  inboxDir: path.join(os.homedir(), ".codex", "channels", "lark", "inbox"),
+  jobsDir: path.join(os.homedir(), ".codex", "channels", "lark", "jobs"),
+  codexExecSessionsDir: path.join(os.homedir(), ".codex", "channels", "lark", "codex-sessions"),
+  continuationDbPath: path.join(continuationRuntimeDir, "jobs.sqlite"),
+  continuationArtifactsDir: path.join(continuationRuntimeDir, "artifacts"),
   runtimeConfigDir,
-  workspaceProjectsConfigPath: path2.join(runtimeConfigDir, "workspace-projects.json"),
+  workspaceProjectsConfigPath: path.join(runtimeConfigDir, "workspace-projects.json"),
   managedWorkspaceConfigPath,
-  accessControlConfigPath: path2.join(runtimeConfigDir, "access-control.json"),
-  localCliToolsConfigPath: path2.join(runtimeConfigDir, "local-cli-tools.json"),
-  privacyRulesPath: path2.join(runtimeConfigDir, "privacy-rules.md"),
+  accessControlConfigPath: path.join(runtimeConfigDir, "access-control.json"),
+  localCliToolsConfigPath: path.join(runtimeConfigDir, "local-cli-tools.json"),
+  privacyRulesPath: path.join(runtimeConfigDir, "privacy-rules.md"),
   debugLogPath: envValues.LARK_DEBUG_LOG,
   auditLogPath: envValues.LARK_AUDIT_LOG,
   codexExecTraceLogPath: envValues.LARK_CODEX_EXEC_TRACE_LOG
 };
 
 export {
-  managedWorkspaceConfigPath,
   appConfig
 };

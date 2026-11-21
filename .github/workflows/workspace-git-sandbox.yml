@@ -9,6 +9,7 @@ on:
       - 'scripts/workspace-dependency-sandbox-smoke.mjs'
       - 'scripts/workspace-dependency-install-fixture.ts'
       - 'scripts/workspace-dependency-*-smoke.ts'
+      - 'scripts/workspace-cleanup-*-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
       - 'scripts/fixtures/managed-dependency-entrypoints.ts'
@@ -22,6 +23,7 @@ on:
       - 'scripts/workspace-dependency-sandbox-smoke.mjs'
       - 'scripts/workspace-dependency-install-fixture.ts'
       - 'scripts/workspace-dependency-*-smoke.ts'
+      - 'scripts/workspace-cleanup-*-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
       - 'scripts/fixtures/managed-dependency-entrypoints.ts'
@@ -48,6 +50,11 @@ jobs:
         with:
           python-version: '3.13'
       - run: npm ci
+      - name: Install native filesystem attribute tools
+        run: sudo apt-get update -qq && sudo apt-get install -y attr
+      - run: node --import tsx scripts/workspace-cleanup-ledger-smoke.ts
+      - run: node --import tsx scripts/workspace-cleanup-evidence-smoke.ts
+      - run: node --import tsx scripts/workspace-cleanup-preview-smoke.ts
       - run: node --import tsx scripts/workspace-dependency-input-smoke.ts
       - run: node --import tsx scripts/workspace-dependency-cache-smoke.ts
       - run: node --import tsx scripts/workspace-dependency-archive-smoke.ts

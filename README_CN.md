@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.19.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.20.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -200,6 +200,26 @@ npm run --silent doctor -- --workspace-storage --json
 列出占用最大的 20 个顶层条目。分配大小来自文件系统块计数，逻辑大小来自文件和链接长度；
 嵌套根目录的结果不可相加。依赖和 Git 分类仅描述内容，不表明归属或可删性。不会扫描符号链接
 目标或不同文件系统；扫描不完整或根目录不可用时会报告并返回非零退出码。不会删除或迁移任何文件。
+
+可按持久化归属账本预览已配置的托管临时目录：
+
+```bash
+npm run --silent doctor -- --workspace-cleanup-preview
+npm run --silent doctor -- --workspace-cleanup-preview --json
+```
+
+预览报告有限范围的占用估算和保留原因，不生成删除清单。最低保留时长使用
+`LARK_CONTINUATION_RETENTION_DAYS`；未知、活动、仍被引用或已变化的路径均保留。
+未登记和历史目录不会成为候选。命令不会启动插件、连接飞书或修改托管目录；结果只反映扫描时刻。
+
+任务结束不等于后台进程已退出。执行过的运行需要证明最后使用发生在同一可信本地主机的上一次系统启动，
+且没有未完成的执行或投递引用；重启插件本身不满足此条件。目前此证据仅支持已核验的 Apple silicon Mac
+和内置物理 Data 卷；其他主机的已执行目录仍保留。Git 工作区还必须能从固定缓存恢复，且和首次交付时的基线
+一致，包括跟踪文件、未跟踪文件和本地 Git 元数据。空目录也必须符合初始元数据基线。
+扩展属性有变化或无法验证、存在挂载别名（已验证的 macOS Data 系统映射除外），
+或安装器、运行留下额外内容时，都会保留。Linux 由 `attr` 软件包提供的系统
+`/usr/bin/getfattr` 核验扩展属性；缺失时保留受影响的目录。在 Linux 上运行完整的
+`npm test` 前，请安装 `attr`；测试还需要其中的 `setfattr`。
 
 #### 选择工作项目
 

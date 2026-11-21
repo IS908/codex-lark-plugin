@@ -1,19 +1,45 @@
 import { createRequire as __larkCreateRequire } from 'node:module'; import { fileURLToPath as __larkFileURLToPath } from 'node:url'; import { dirname as __larkPathDirname } from 'node:path'; const require = __larkCreateRequire(import.meta.url); const __filename = __larkFileURLToPath(import.meta.url); const __dirname = __larkPathDirname(__filename);
 import {
-  require_lib
-} from "./chunks/chunk-BQZ4X75D.js";
+  ManagedWorkspaceStorageError,
+  assertDenyOnlyWorkspaceAcls,
+  assertProtectedWorkspacePath,
+  assertWorkspaceGitCacheIdentity,
+  hasExclusiveWorkspaceCleanupStorage,
+  hasLocalWorkspaceCleanupStorage,
+  hasWorkspaceCleanupWitnessTrigger,
+  loadWorkspaceDependencyWriteGuard,
+  managedRunDirectoryPath,
+  managedRunOwnerSchema,
+  mkdirTemporaryInsidePinnedRoot,
+  observeWorkspaceCleanupTree,
+  parseManagedWorkspaceRecord,
+  parseWorkspaceCleanupEpoch,
+  pinWorkspacePath,
+  readManagedWorkspaceRoots,
+  readWorkspaceCleanupEpoch,
+  readWorkspaceDependencyMountPolicy,
+  require_lib,
+  resolveManagedGitSelection,
+  sameWorkspaceProject,
+  validateManagedRunDirectory,
+  verifyWorkspaceGitCache,
+  wasUsedOnPriorHostBoot
+} from "./chunks/chunk-ZV32EYUV.js";
 import {
   __toESM,
   assertSupportedNodeVersion,
+  continuationRuntimeDir,
+  managedWorkspaceConfigPath,
   readConfigValues,
-  require_main
-} from "./chunks/chunk-WOBAO6HM.js";
+  require_main,
+  runtimeConfigDir
+} from "./chunks/chunk-Y3Y2TSPS.js";
 
 // src/configure-doctor-cli.ts
 var Lark = __toESM(require_lib(), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 import os from "node:os";
-import path2 from "node:path";
+import path5 from "node:path";
 import { readFile as readFile2 } from "node:fs/promises";
 
 // src/configure-doctor.ts
@@ -455,6 +481,548 @@ function formatWorkspaceStorage(roots) {
   return lines.join("\n");
 }
 
+// src/workspace-cleanup-preview.ts
+import fs2 from "node:fs/promises";
+import path4 from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+// src/durable-run/workspace-cleanup-ledger.ts
+import fs from "node:fs/promises";
+import path2 from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+var maxSnapshotBytes = 128n * 1024n * 1024n;
+var WorkspaceCleanupLedgerError = class extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+  code;
+};
+function fail(code) {
+  throw new WorkspaceCleanupLedgerError(code);
+}
+function fileStamp(info) {
+  return [info.dev, info.ino, info.uid, info.mode, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(":");
+}
+async function optionalStat(filename) {
+  return fs.lstat(filename, { bigint: true }).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+    return void 0;
+  });
+}
+async function observe(databasePath) {
+  if (!path2.isAbsolute(databasePath) || path2.normalize(databasePath) !== databasePath || !process.geteuid) fail("ledger_unavailable");
+  const parentPath = path2.dirname(databasePath);
+  const parent = await pinWorkspacePath(parentPath, ".");
+  if (parent.directory !== parentPath) fail("ledger_unavailable");
+  await assertProtectedWorkspacePath(parent, true);
+  const walPath = `${databasePath}-wal`;
+  const journalPath = `${databasePath}-journal`;
+  const infos = await Promise.all([databasePath, walPath, journalPath].map(optionalStat));
+  const [database, wal, journal] = infos;
+  if (!database || journal) fail("ledger_unavailable");
+  const uid = BigInt(process.geteuid());
+  const files = [{ filename: databasePath, info: database }, ...wal ? [{ filename: walPath, info: wal }] : []];
+  for (const { info } of files) {
+    if (!info.isFile() || info.uid !== uid || (info.mode & 0o022n) !== 0n || info.nlink !== 1n || `${info.dev}` !== parent.device) fail("ledger_unavailable");
+  }
+  if (files.reduce((total, { info }) => total + info.size, 0n) > maxSnapshotBytes) fail("ledger_snapshot_limit");
+  await assertDenyOnlyWorkspaceAcls(files.map(({ filename }) => filename));
+  const stamp = createHash("sha256").update(JSON.stringify([parent.device, parent.inode, ...files.map(({ info }) => fileStamp(info))])).digest("hex");
+  return { files, stamp };
+}
+async function verifyWorkspaceCleanupLedger(databasePath, expected) {
+  try {
+    return (await observe(databasePath)).stamp === expected;
+  } catch {
+    return false;
+  }
+}
+async function copyObservedFile(filename, expected, destination) {
+  const input = await fs.open(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const stamp = fileStamp(expected);
+    if (fileStamp(await input.stat({ bigint: true })) !== stamp) fail("ledger_changed");
+    const output = await fs.open(destination, "wx", 384);
+    try {
+      const buffer = Buffer.allocUnsafe(128 * 1024);
+      for (let remaining = Number(expected.size); remaining > 0; ) {
+        const { bytesRead } = await input.read(buffer, 0, Math.min(remaining, buffer.length), null);
+        if (bytesRead === 0) fail("ledger_changed");
+        for (let offset = 0; offset < bytesRead; ) {
+          const { bytesWritten } = await output.write(buffer, offset, bytesRead - offset, null);
+          if (bytesWritten === 0) fail("ledger_unavailable");
+          offset += bytesWritten;
+        }
+        remaining -= bytesRead;
+      }
+    } finally {
+      await output.close();
+    }
+    if (fileStamp(await input.stat({ bigint: true })) !== stamp) fail("ledger_changed");
+  } finally {
+    await input.close();
+  }
+}
+async function readWorkspaceCleanupLedger(databasePath, read, validateTemporaryDestination) {
+  try {
+    const { files, stamp } = await observe(databasePath);
+    const tempParent = await pinWorkspacePath(await fs.realpath("/tmp"), ".");
+    const leaf = `lark-cleanup-preview-${randomBytes(12).toString("hex")}`;
+    await validateTemporaryDestination(path2.join(tempParent.directory, leaf));
+    const temporary = await mkdirTemporaryInsidePinnedRoot(tempParent, leaf);
+    try {
+      const snapshot = path2.join(temporary.directory, "ledger.sqlite");
+      for (const [index, { filename, info }] of files.entries()) {
+        await copyObservedFile(filename, info, index === 0 ? snapshot : `${snapshot}-wal`);
+      }
+      if (!await verifyWorkspaceCleanupLedger(databasePath, stamp)) fail("ledger_changed");
+      const database = new DatabaseSync(snapshot, { readOnly: true, timeout: 0 });
+      let value;
+      try {
+        value = read(database);
+      } finally {
+        database.close();
+      }
+      if (!await verifyWorkspaceCleanupLedger(databasePath, stamp)) fail("ledger_changed");
+      return { stamp, value };
+    } finally {
+      await assertProtectedWorkspacePath(temporary, true);
+      await fs.rm(temporary.directory, { recursive: true, force: true });
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceCleanupLedgerError) throw error;
+    return fail("ledger_unavailable");
+  }
+}
+
+// src/durable-run/workspace-cleanup-references.ts
+import path3 from "node:path";
+var maxCleanupPreviewRows = 100;
+var maxRetryReferences = 4096;
+var maxPathReferences = 1024;
+function readWorkspaceCleanupReferences(database, root) {
+  const retries = database.prepare(`SELECT json_extract(input_json, '$.job.retryOfJobId') AS source
+    FROM durable_runs WHERE workload_kind = 'async_task' AND deleted_at IS NULL
+      AND json_type(input_json, '$.job.retryOfJobId') = 'text' LIMIT ?`).all(maxRetryReferences + 1);
+  const incomplete = retries.length > maxRetryReferences;
+  const retrySource = new Set(retries.map(({ source }) => source));
+  const prefix = root.directory + path3.sep;
+  const upper = root.directory + String.fromCharCode(path3.sep.charCodeAt(0) + 1);
+  const hasEvidence = !!database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_cleanup_evidence'").get();
+  const trustedEpoch = hasEvidence && hasWorkspaceCleanupWitnessTrigger(database);
+  const evidenceFields = hasEvidence ? "e.host, e.boot, e.scratch_baseline" : "NULL AS host, NULL AS boot, NULL AS scratch_baseline";
+  const evidenceJoin = hasEvidence ? "LEFT JOIN workspace_cleanup_evidence e ON e.workload_kind = w.workload_kind AND e.run_id = w.run_id" : "";
+  const selected = database.prepare(`SELECT w.*, ${evidenceFields}, r.status AS run_status, r.completed_at AS terminal_at,
+    r.retained AS run_retained, (r.lease_owner IS NOT NULL OR r.lease_expires_at IS NOT NULL) AS has_lease,
+    r.attempt_count, (SELECT count(*) FROM durable_attempts a WHERE a.run_id = r.run_id) AS observed_attempt_count,
+    (EXISTS(SELECT 1 FROM durable_attempts a WHERE a.run_id = r.run_id AND (a.finished_at IS NULL OR a.recovery_pending <> 0))
+      OR EXISTS(SELECT 1 FROM durable_operation_receipts o WHERE o.run_id = r.run_id AND o.status = 'running')
+      OR EXISTS(SELECT 1 FROM durable_interrupts i WHERE i.run_id = r.run_id AND i.status = 'pending')) AS open_execution_reference,
+    EXISTS(SELECT 1 FROM durable_outbox o WHERE o.run_id = r.run_id AND (o.status NOT IN ('sent', 'superseded')
+      OR o.lease_expires_at IS NOT NULL OR o.worker_id IS NOT NULL)) AS unsettled_delivery,
+    EXISTS(SELECT 1 FROM durable_outbox o WHERE o.run_id = r.run_id AND o.status = 'sent'
+      AND o.kind = CASE w.workload_kind WHEN 'async_task' THEN 'terminal' WHEN 'cron_prompt' THEN 'cron_terminal' END
+      AND o.message_id IS NOT NULL) AS terminal_delivery_sent,
+    EXISTS(SELECT 1 FROM workspace_foreground_artifacts f WHERE w.workload_kind = 'foreground' AND f.run_id = w.run_id
+      AND (json_extract(f.batch_json, '$.version') IS NOT 2 OR json_extract(f.batch_json, '$.reply.status') IS NOT 'sent'
+      OR json_type(f.batch_json, '$.files') IS NOT 'array' OR EXISTS(SELECT 1 FROM json_each(f.batch_json, '$.files') part
+        WHERE json_extract(part.value, '$.status') IS NOT 'sent'))) AS foreground_delivery_pending,
+    (EXISTS(SELECT 1 FROM workspace_retry_artifact_stages s WHERE w.workload_kind = 'async_task' AND s.run_id = w.run_id)
+      OR EXISTS(SELECT 1 FROM workspace_dependency_installs i WHERE i.workload_kind = w.workload_kind
+      AND i.run_id = w.run_id AND i.receipt_json IS NULL)) AS pending_stage
+    FROM workspace_run_allocations w LEFT JOIN durable_runs r ON r.run_id = w.run_id AND r.workload_kind = w.workload_kind ${evidenceJoin}
+    WHERE w.scratch_path >= ? AND w.scratch_path < ? ORDER BY w.scratch_path LIMIT ?`).all(prefix, upper, maxCleanupPreviewRows + 1);
+  const references = [];
+  let invalidRows = 0;
+  for (const row of selected.slice(0, maxCleanupPreviewRows)) {
+    const owner = managedRunOwnerSchema.safeParse({ kind: row.workload_kind, runId: row.run_id });
+    if (!owner.success || row.scratch_path !== managedRunDirectoryPath(root, owner.data)) {
+      invalidRows++;
+      continue;
+    }
+    let record;
+    let allocationError;
+    try {
+      record = parseManagedWorkspaceRecord(owner.data, row);
+    } catch (error) {
+      allocationError = error instanceof ManagedWorkspaceStorageError && error.code === "allocation_incomplete" ? "allocation_incomplete" : "allocation_invalid";
+    }
+    references.push({
+      leaf: path3.basename(row.scratch_path),
+      owner: owner.data,
+      record,
+      allocationError,
+      runStatus: typeof row.run_status === "string" ? row.run_status : null,
+      terminalAt: typeof row.terminal_at === "string" ? row.terminal_at : null,
+      retained: row.run_retained !== 0,
+      lease: row.has_lease === 1,
+      observedAttemptCount: typeof row.observed_attempt_count === "number" ? row.observed_attempt_count : -1,
+      attemptCount: typeof row.attempt_count === "number" || typeof row.attempt_count === "bigint" ? row.attempt_count : null,
+      openExecutionReference: row.open_execution_reference === 1,
+      unsettledDelivery: row.unsettled_delivery === 1,
+      terminalDeliverySent: row.terminal_delivery_sent === 1,
+      foregroundDeliveryPending: row.foreground_delivery_pending === 1,
+      retryReference: incomplete || retrySource.has(owner.data.runId),
+      pendingStage: row.pending_stage === 1,
+      epoch: trustedEpoch ? parseWorkspaceCleanupEpoch(row.host, row.boot) : void 0,
+      scratchBaseline: typeof row.scratch_baseline === "string" && /^[a-f0-9]{64}$/.test(row.scratch_baseline) ? row.scratch_baseline : void 0
+    });
+  }
+  return {
+    references,
+    invalidRows,
+    truncated: selected.length > maxCleanupPreviewRows || incomplete,
+    paths: readProtectedPathReferences(database)
+  };
+}
+function readProtectedPathReferences(database) {
+  const paths = /* @__PURE__ */ new Set();
+  let incomplete = false;
+  let unresolvedActiveCron = false;
+  const add = (value, required = false) => {
+    if (value === null && !required) return;
+    if (typeof value !== "string" || !path3.isAbsolute(value) || path3.normalize(value) !== value || value.length > 4096 || /[\u0000-\u001f\u007f]/.test(value) || paths.size >= maxPathReferences) {
+      incomplete = true;
+      return;
+    }
+    paths.add(value);
+  };
+  const saved = database.prepare(`SELECT json_extract(intent_json, '$.project.directory') AS project,
+    json_extract(intent_json, '$.fallbackWorkspace.directory') AS fallback, NULL AS legacy
+    FROM workspace_run_allocations
+    WHERE json_type(intent_json, '$.project') IS NOT NULL OR json_type(intent_json, '$.fallbackWorkspace') IS NOT NULL
+    UNION ALL SELECT json_extract(admission_json, '$.project.directory'), NULL, json_extract(admission_json, '$.fallbackCwd')
+    FROM workspace_unmanaged_foreground LIMIT ?`).all(maxPathReferences + 1);
+  if (saved.length > maxPathReferences) incomplete = true;
+  for (const { project, fallback, legacy } of saved.slice(0, maxPathReferences)) {
+    if (project === null && fallback === null && legacy === null) incomplete = true;
+    add(project);
+    add(fallback);
+    add(legacy);
+  }
+  const jobs = database.prepare(`SELECT workload_kind, status, input_version,
+    json_extract(input_json, '$.job.workingDirectory') AS cwd,
+    json_extract(input_json, '$.job.permissions.filesystem.workspaceProject.directory') AS async_project,
+    json_extract(input_json, '$.job.permissions.filesystem.requestedPaths') AS requested_paths,
+    json_type(input_json, '$.job.permissions.filesystem.requestedPaths') AS requested_type,
+    json_extract(input_json, '$.job.workspaceProject.directory') AS cron_project,
+    json_extract(input_json, '$.managedWorkspace.fallbackWorkspace.directory') AS cron_fallback
+    FROM durable_runs WHERE deleted_at IS NULL AND workload_kind IN ('async_task', 'cron_prompt')
+    LIMIT ?`).all(maxPathReferences + 1);
+  if (jobs.length > maxPathReferences) incomplete = true;
+  for (const job of jobs.slice(0, maxPathReferences)) {
+    if (job.input_version !== 1) {
+      incomplete = true;
+      continue;
+    }
+    if (job.workload_kind === "async_task") {
+      add(job.cwd, true);
+      add(job.async_project);
+      if (job.requested_type === "array" && typeof job.requested_paths === "string" && job.requested_paths.length <= 64 * 1024) {
+        let parsed;
+        try {
+          parsed = JSON.parse(job.requested_paths);
+        } catch {
+          incomplete = true;
+        }
+        if (Array.isArray(parsed) && parsed.length <= 100) for (const entry of parsed) add(entry, true);
+        else incomplete = true;
+      } else incomplete = true;
+    } else {
+      add(job.cron_project);
+      add(job.cron_fallback);
+      if (job.cron_project === null && job.cron_fallback === null && !["completed", "partial", "blocked", "failed", "cancelled"].includes(String(job.status))) {
+        unresolvedActiveCron = true;
+      }
+    }
+  }
+  return { paths: [...paths], incomplete, unresolvedActiveCron };
+}
+
+// src/workspace-cleanup-preview.ts
+var day = 24 * 60 * 60 * 1e3;
+var terminalStatuses = /* @__PURE__ */ new Set(["completed", "partial", "blocked", "failed", "cancelled"]);
+var runStatuses = /* @__PURE__ */ new Set([...terminalStatuses, "queued", "running", "waiting_retry", "waiting_user", "recovering", "cancel_requested"]);
+var maxRootNames = 256;
+var exec = promisify(execFile);
+async function previewWorkspaceCleanup(request) {
+  const report = {
+    readOnly: true,
+    advisory: true,
+    observedAt: request.now.toISOString(),
+    minimumAgeDays: request.minimumAgeDays,
+    scratchRoot: null,
+    status: "complete",
+    observations: [],
+    entries: [],
+    unregisteredObserved: 0
+  };
+  if (!Number.isSafeInteger(request.minimumAgeDays) || request.minimumAgeDays < 1 || request.minimumAgeDays > 3650) {
+    return { ...report, status: "unavailable", observations: ["invalid_retention_policy"] };
+  }
+  const observeRoots = async () => {
+    const roots = await readManagedWorkspaceRoots(request);
+    if (!roots) return void 0;
+    await resolveManagedGitSelection({ ...request, roots });
+    const guard = await loadWorkspaceDependencyWriteGuard(request.configPath, { allowMissingCachesForStorage: true });
+    await guard?.assertWrites([roots.scratch.directory]);
+    const mounts = await readWorkspaceDependencyMountPolicy();
+    if (!mounts.supports(roots.scratch.directory) || !mounts.supports(roots.artifacts.directory)) throw new Error("Unsupported layout.");
+    return { roots, mounts, guard };
+  };
+  try {
+    const layout = await observeRoots();
+    if (!layout) return { ...report, status: "unavailable", observations: ["managed_storage_disabled"] };
+    const { roots, mounts } = layout;
+    report.scratchRoot = roots.scratch.directory;
+    const snapshot = await readWorkspaceCleanupLedger(request.databasePath, (db) => readWorkspaceCleanupReferences(db, roots.scratch), async (temp) => {
+      const authorized = await Promise.all(request.authorizedRoots.map((directory) => fs2.realpath(directory)));
+      const protectedPaths = [roots.scratch.directory, roots.artifacts.directory, path4.dirname(request.databasePath), path4.dirname(request.configPath), ...authorized];
+      const current = await observeRoots();
+      if (!current || !sameWorkspaceProject(roots.scratch, current.roots.scratch) || !sameWorkspaceProject(roots.artifacts, current.roots.artifacts) || !current.mounts.supports(temp) || protectedPaths.some((protectedPath) => pathsOverlap(temp, protectedPath, current.mounts))) {
+        throw new WorkspaceCleanupLedgerError("ledger_unavailable");
+      }
+      await current.guard?.assertNewDirectory(temp);
+    });
+    const { references, invalidRows, truncated, paths } = snapshot.value;
+    const registered = new Set(references.map(({ leaf }) => leaf));
+    let seen = 0;
+    for await (const entry of await fs2.opendir(roots.scratch.directory)) {
+      if (++seen > maxRootNames) {
+        report.observations.push("directory_limit");
+        break;
+      }
+      if (!truncated && !invalidRows && !registered.has(entry.name)) report.unregisteredObserved++;
+    }
+    if (truncated) report.observations.push("ledger_limit");
+    if (invalidRows) report.observations.push("invalid_ledger_rows");
+    if (report.unregisteredObserved) report.observations.push("unregistered_entries_retained");
+    const storagePaths = [roots.scratch.directory, request.databasePath];
+    const local = await hasLocalWorkspaceCleanupStorage(storagePaths);
+    const exclusive = local && await (request.checkExclusiveStorage ?? hasExclusiveWorkspaceCleanupStorage)(storagePaths);
+    const epoch = exclusive ? await (request.readEpoch ?? readWorkspaceCleanupEpoch)() : void 0;
+    if (!local) report.observations.push("local_storage_unverified");
+    const baselineBudget = AbortSignal.timeout(2e4);
+    const candidates = /* @__PURE__ */ new Map();
+    for (const reference of references) {
+      const result = await inspect(reference, request, roots, mounts, truncated || invalidRows > 0, epoch, baselineBudget);
+      report.entries.push(result.entry);
+      if (result.candidate) candidates.set(result.entry, result.candidate);
+    }
+    if (candidates.size > 0) {
+      const current = await observeRoots().catch(() => void 0);
+      if (!current || !sameWorkspaceProject(roots.scratch, current.roots.scratch) || !sameWorkspaceProject(roots.artifacts, current.roots.artifacts) || !await hasLocalWorkspaceCleanupStorage(storagePaths) || epoch && !await (request.checkExclusiveStorage ?? hasExclusiveWorkspaceCleanupStorage)(storagePaths)) report.observations.push("policy_changed");
+      const referenced = current && await resolveProtectedPaths(paths, request.authorizedRoots[0]);
+      if (!referenced || !referenced.complete) report.observations.push("saved_references_unverified");
+      const verifiedCaches = /* @__PURE__ */ new Map();
+      const observedScratch = /* @__PURE__ */ new Map();
+      for (const [entry, { binding, stamp, baseline, git }] of candidates) {
+        if (!current || !supportsScratch(binding.directory, roots.scratch, current.mounts) || await directoryStamp(binding).catch(() => void 0) !== stamp) demote(entry, "directory_changed");
+        if (current && referenced?.directories.some((directory) => pathsOverlap(binding.directory, directory, current.mounts))) {
+          demote(entry, "saved_workspace_reference");
+        }
+        if (entry.disposition === "candidate" && git && !await verifyGitBacking(git, request.authorizedRoots, verifiedCaches, baselineBudget)) demote(entry, "git_backing_unverified");
+        if (entry.disposition === "candidate") {
+          const tree = await observeWorkspaceCleanupTree(binding, baselineBudget, !git);
+          if (tree?.digest === baseline) observedScratch.set(entry, tree);
+          else demote(entry, git ? "git_baseline_unverified_or_changed" : "scratch_baseline_unverified_or_changed");
+        }
+      }
+      for (const [entry, { git }] of candidates) {
+        if (entry.disposition !== "candidate" || !git) continue;
+        try {
+          await assertWorkspaceGitCacheIdentity(git, request.authorizedRoots);
+        } catch {
+          demote(entry, "git_backing_unverified");
+        }
+      }
+      const finalMounts = await readWorkspaceDependencyMountPolicy().catch(() => void 0);
+      for (const [entry, tree] of observedScratch) {
+        if (entry.disposition !== "candidate") continue;
+        const { binding } = candidates.get(entry);
+        if (!finalMounts || !supportsScratch(binding.directory, roots.scratch, finalMounts) || !await tree.unchanged()) {
+          demote(entry, "directory_changed");
+        }
+      }
+    }
+    if (!await verifyWorkspaceCleanupLedger(request.databasePath, snapshot.stamp)) report.observations.push("ledger_changed");
+    if (report.observations.some((reason) => reason !== "unregistered_entries_retained")) {
+      report.status = "partial";
+      for (const [entry] of candidates) demote(entry, "incomplete_observation");
+    }
+    return report;
+  } catch (error) {
+    return { ...report, status: "unavailable", entries: [], observations: [
+      error instanceof WorkspaceCleanupLedgerError ? error.code : "workspace_policy_unavailable"
+    ] };
+  }
+}
+async function inspect(reference, request, roots, mounts, incomplete, epoch, baselineBudget) {
+  const entry = {
+    leaf: reference.leaf,
+    workload: reference.owner.kind,
+    disposition: "retain",
+    reasons: [],
+    runStatus: reference.runStatus && runStatuses.has(reference.runStatus) ? reference.runStatus : "untracked"
+  };
+  const record = reference.record;
+  if (!record) {
+    entry.reasons.push(reference.allocationError ?? "allocation_invalid");
+    return { entry };
+  }
+  const { allocation, lastUsedAt } = record;
+  entry.lastUsedAt = lastUsedAt;
+  if (!sameWorkspaceProject(allocation.roots.scratch, roots.scratch) || !sameWorkspaceProject(allocation.roots.artifacts, roots.artifacts)) {
+    entry.reasons.push("historical_root");
+    return { entry };
+  }
+  try {
+    const { directory, device } = allocation.scratch;
+    if (device !== roots.scratch.device || !supportsScratch(directory, roots.scratch, mounts)) {
+      entry.reasons.push("unverified_mount");
+      return { entry };
+    }
+    if (await validateManagedRunDirectory(allocation, "scratch", request.authorizedRoots) !== directory) throw new Error("Displaced scratch.");
+    const stamp = await directoryStamp(allocation.scratch);
+    const [inventory] = await inventoryWorkspaceStorage([{ role: "continuation", directory }], { maxEntries: 128, maxDepth: 4 });
+    if (inventory.total) entry.usage = {
+      apparentBytes: inventory.total.apparentBytes,
+      allocatedBytes: inventory.total.allocatedBytes,
+      complete: inventory.status === "complete"
+    };
+    if (inventory.status !== "complete" && !allocation.gitCheckout) entry.reasons.push("usage_incomplete");
+    const priorBoot = wasUsedOnPriorHostBoot(reference.epoch, epoch);
+    if (reference.owner.kind === "foreground") {
+      entry.reasons.push("foreground_quiescence_untracked");
+      if (reference.foregroundDeliveryPending) entry.reasons.push("delivery_not_confirmed");
+    } else if (!reference.runStatus) entry.reasons.push("run_missing");
+    else if (!terminalStatuses.has(reference.runStatus) || reference.lease) entry.reasons.push("live_or_recoverable_run");
+    else {
+      if (reference.retained) entry.reasons.push("explicitly_retained");
+      if (reference.unsettledDelivery || !reference.terminalDeliverySent) entry.reasons.push("delivery_not_confirmed");
+      const attemptCount = reference.attemptCount === null ? NaN : Number(reference.attemptCount);
+      if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attemptCount !== reference.observedAttemptCount || attemptCount > 0 && !priorBoot) {
+        entry.reasons.push("process_quiescence_unverified");
+      }
+      if (reference.openExecutionReference) entry.reasons.push("open_execution_reference");
+      const terminalAt = Date.parse(reference.terminalAt ?? "");
+      const cutoff = request.now.getTime() - request.minimumAgeDays * day;
+      if (!Number.isFinite(terminalAt) || terminalAt > cutoff || Date.parse(lastUsedAt) > cutoff) entry.reasons.push("retention_window");
+    }
+    if (reference.retryReference || reference.pendingStage) entry.reasons.push("retry_or_staging_reference");
+    const baseline = reference.scratchBaseline;
+    if (!entry.reasons.length) {
+      if (!allocation.gitCheckout && !await isPinnedScratchEmpty(allocation.scratch)) entry.reasons.push("scratch_contains_files");
+      else if (!baseline || (await observeWorkspaceCleanupTree(allocation.scratch, baselineBudget, !allocation.gitCheckout))?.digest !== baseline) {
+        entry.reasons.push(allocation.gitCheckout ? "git_baseline_unverified_or_changed" : "scratch_baseline_unverified_or_changed");
+      }
+    }
+    if (await directoryStamp(allocation.scratch) !== stamp) entry.reasons.push("directory_changed");
+    if (incomplete) entry.reasons.push("incomplete_observation");
+    if (baseline && !entry.reasons.length) {
+      entry.disposition = "candidate";
+      entry.reasons.push(allocation.gitCheckout ? "expired_original_checkout" : "expired_empty_scratch");
+      if (priorBoot) entry.reasons.push("last_use_on_prior_host_boot");
+      return { entry, candidate: { binding: allocation.scratch, stamp, baseline, git: allocation.git } };
+    }
+  } catch {
+    entry.reasons.push("directory_unverified");
+  }
+  return { entry };
+}
+async function verifyGitBacking(git, authorizedRoots, checked, signal) {
+  const key = JSON.stringify([git.key, git.storeFingerprint, git.cache.directory, git.cache.device, git.cache.inode]);
+  if (signal.aborted) return false;
+  try {
+    if (!checked.has(key)) {
+      if (checked.size >= 8) return false;
+      const actual = await verifyWorkspaceGitCache({
+        gitDirectory: git.cache,
+        authorizedRoots,
+        repositoryId: git.repositoryId,
+        scope: git.scope,
+        commit: git.commit
+      });
+      checked.set(key, actual.key === git.key && actual.storeFingerprint === git.storeFingerprint);
+    }
+    if (!checked.get(key) || signal.aborted) return false;
+    await assertWorkspaceGitCacheIdentity(git, authorizedRoots);
+    return true;
+  } catch {
+    checked.set(key, false);
+    return false;
+  }
+}
+function supportsScratch(directory, root, mounts, platform = process.platform) {
+  if (!mounts.supports(directory) || path4.dirname(directory) !== root.directory) return false;
+  if (platform === "linux") {
+    return [root.directory, directory].every((candidate) => mounts.aliases(candidate).every((alias) => alias === candidate));
+  }
+  if (platform !== "darwin") return false;
+  const allowed = new Set(mounts.aliases(root.directory).map((alias) => path4.join(alias, path4.basename(directory))));
+  return mounts.aliases(directory).every((alias) => allowed.has(alias));
+}
+async function directoryStamp(binding) {
+  const observe2 = async () => {
+    const stat = await fs2.lstat(binding.directory, { bigint: true });
+    if (!stat.isDirectory() || `${stat.dev}` !== binding.device || `${stat.ino}` !== binding.inode || !process.geteuid || stat.uid !== BigInt(process.geteuid()) || (stat.mode & 0o022n) !== 0n) throw new Error("Displaced or unprotected directory.");
+    return [stat.dev, stat.ino, stat.mode, stat.uid, stat.mtimeNs, stat.ctimeNs].join(":");
+  };
+  const stamp = await observe2();
+  await assertDenyOnlyWorkspaceAcls([binding.directory]);
+  if (await observe2() !== stamp) throw new Error("Directory permissions changed while reading.");
+  return stamp;
+}
+async function isPinnedScratchEmpty(binding) {
+  const program = `const fs = require('node:fs');
+    const stat = fs.statSync('.', { bigint: true });
+    if (String(stat.dev) !== process.argv[1] || String(stat.ino) !== process.argv[2] || !process.geteuid
+      || stat.uid !== BigInt(process.geteuid()) || (stat.mode & 0o022n) !== 0n) process.exit(2);
+    const directory = fs.opendirSync('.');
+    try { process.stdout.write(directory.readSync() === null ? 'empty' : 'occupied'); } finally { directory.closeSync(); }`;
+  const { stdout } = await exec(
+    process.execPath,
+    ["--input-type=commonjs", "-e", program, "--", binding.device, binding.inode],
+    { cwd: binding.directory, env: {}, maxBuffer: 64, timeout: 5e3 }
+  );
+  if (stdout !== "empty" && stdout !== "occupied") throw new Error("Directory observation failed.");
+  return stdout === "empty";
+}
+async function resolveProtectedPaths(input, execRoot) {
+  let complete = !input.incomplete;
+  const directories = new Set(input.paths);
+  if (input.unresolvedActiveCron) directories.add(execRoot);
+  for (const directory of [...directories]) {
+    try {
+      directories.add(await fs2.realpath(directory));
+    } catch {
+      complete = false;
+    }
+  }
+  return { directories: [...directories], complete };
+}
+function pathsOverlap(left, right, mounts) {
+  return mounts.aliases(left).some((a) => mounts.aliases(right).some((b) => mounts.contains(a, b) || mounts.contains(b, a)));
+}
+function demote(entry, reason) {
+  if (entry.disposition === "candidate") entry.reasons = [];
+  entry.disposition = "retain";
+  entry.reasons.push(reason);
+}
+function formatWorkspaceCleanupPreview(report) {
+  return [
+    "Managed workspace cleanup preview (read-only, advisory).",
+    `Observed: ${report.observedAt}; minimum age: ${report.minimumAgeDays} days; status: ${report.status}.`,
+    `Protected: sources, caches, toolchains, formal artifacts, unknown or unregistered directories.`,
+    `Unregistered entries observed: ${report.unregisteredObserved}.`,
+    ...report.observations.map((reason) => `Observation: ${reason}`),
+    ...report.entries.map(({ disposition, leaf, workload, runStatus, reasons, usage: usage2 }) => `${disposition}: ${leaf} (${workload}, ${runStatus})${usage2 ? `, ${usage2.apparentBytes} bytes${usage2.complete ? "" : " (partial)"}` : ""}: ${reasons.join(", ")}`)
+  ].join("\n");
+}
+
 // src/configure-doctor-cli.ts
 var silentLogger = {
   error: () => void 0,
@@ -494,7 +1062,7 @@ function assertApiSuccess(response) {
   throw Object.assign(new Error("Lark API request failed."), { code: response.code });
 }
 async function main(args) {
-  const configPath = path2.join(os.homedir(), ".codex", "channels", "lark", ".env");
+  const configPath = path5.join(os.homedir(), ".codex", "channels", "lark", ".env");
   if (args.length === 0) {
     const report = await runConfigureDoctor({ configPath, remoteProbe });
     process.stderr.write(`${formatConfigureDoctorReport(report)}
@@ -502,8 +1070,9 @@ async function main(args) {
     process.exitCode = report.exitCode;
     return;
   }
-  if (!args.includes("--workspace-storage") || args.some((arg) => arg !== "--workspace-storage" && arg !== "--json")) {
-    process.stderr.write("Usage: npm run doctor -- [--workspace-storage [--json]]\n");
+  const modes = args.filter((arg) => arg !== "--json");
+  if (modes.length !== 1 || args.length > 2 || !["--workspace-storage", "--workspace-cleanup-preview"].includes(modes[0])) {
+    process.stderr.write("Usage: npm run doctor -- [(--workspace-storage | --workspace-cleanup-preview) [--json]]\n");
     process.exitCode = 1;
     return;
   }
@@ -517,10 +1086,25 @@ async function main(args) {
     const config = readConfigValues({
       env: {
         LARK_CODEX_EXEC_CWD: process.env.LARK_CODEX_EXEC_CWD ?? fileEnv.LARK_CODEX_EXEC_CWD,
-        LARK_CONTINUATION_WORKING_ROOT: process.env.LARK_CONTINUATION_WORKING_ROOT ?? fileEnv.LARK_CONTINUATION_WORKING_ROOT
+        LARK_CONTINUATION_WORKING_ROOT: process.env.LARK_CONTINUATION_WORKING_ROOT ?? fileEnv.LARK_CONTINUATION_WORKING_ROOT,
+        ...modes[0] === "--workspace-cleanup-preview" ? { LARK_CONTINUATION_RETENTION_DAYS: process.env.LARK_CONTINUATION_RETENTION_DAYS ?? fileEnv.LARK_CONTINUATION_RETENTION_DAYS } : {}
       },
       dryRun: true
     });
+    if (modes[0] === "--workspace-cleanup-preview") {
+      const report = await previewWorkspaceCleanup({
+        configPath: managedWorkspaceConfigPath,
+        sourceRegistryPath: path5.join(runtimeConfigDir, "workspace-projects.json"),
+        databasePath: path5.join(continuationRuntimeDir, "jobs.sqlite"),
+        authorizedRoots: [config.LARK_CODEX_EXEC_CWD, config.LARK_CONTINUATION_WORKING_ROOT],
+        minimumAgeDays: config.LARK_CONTINUATION_RETENTION_DAYS,
+        now: /* @__PURE__ */ new Date()
+      });
+      process.stdout.write(`${args.includes("--json") ? JSON.stringify(report, null, 2) : formatWorkspaceCleanupPreview(report)}
+`);
+      process.exitCode = report.status === "complete" ? 0 : 1;
+      return;
+    }
     const roots = await inventoryWorkspaceStorage([
       { role: "exec", directory: config.LARK_CODEX_EXEC_CWD },
       { role: "continuation", directory: config.LARK_CONTINUATION_WORKING_ROOT }
@@ -530,7 +1114,7 @@ async function main(args) {
     process.exitCode = roots.every(({ status }) => status === "complete") ? 0 : 1;
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown error";
-    process.stderr.write(`Workspace storage inventory failed: ${detail}
+    process.stderr.write(modes[0] === "--workspace-cleanup-preview" ? "Workspace cleanup preview could not read its local configuration.\n" : `Workspace storage inventory failed: ${detail}
 `);
     process.exitCode = 1;
   }

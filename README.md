@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.19.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.20.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -227,6 +227,35 @@ Symlink targets and different filesystems are not scanned; incomplete or
 unavailable scans are reported and return a nonzero status. The inventory never
 deletes or moves anything.
 
+For an ownership-based, read-only preview of the configured managed scratch root:
+
+```bash
+npm run --silent doctor -- --workspace-cleanup-preview
+npm run --silent doctor -- --workspace-cleanup-preview --json
+```
+
+The preview reports bounded estimates and retention reasons, not a deletion
+list. It uses `LARK_CONTINUATION_RETENTION_DAYS` as its minimum age and retains
+unknown, active, referenced or changed paths. Unregistered and historical
+directories are never candidates. It does not start the plugin, connect to
+Feishu, or change any managed directory. Treat the result as an advisory snapshot;
+eligibility can change after observation.
+
+Completed work is not proof that background processes have exited. For a run
+with an execution attempt, the preview requires recorded use on a previous
+system boot of the same verified local host, with no outstanding execution or
+delivery references. Restarting the plugin does not qualify. It protects
+historical records without such evidence. The reboot witness currently requires
+a verified Apple silicon Mac and its internal physical Data volume. Other hosts
+still report executed runs as retained. For Git-backed work it also requires a
+recoverable pinned backing cache and an exact match to the original, bounded
+scratch snapshot, including tracked and untracked files and local Git metadata.
+Empty scratch also needs its original metadata baseline. Changed or unverified
+extended attributes, mount aliases (other than verified macOS Data firmlinks),
+and additional contents left by an installer or run all cause retention.
+On Linux, verifying filesystem attributes requires the system `/usr/bin/getfattr`
+from the `attr` package; without it, the preview retains the affected directories.
+
 #### Select a workspace project
 
 Optionally create `~/.codex/channels/lark/runtime-config/workspace-projects.json`
@@ -415,6 +444,7 @@ The repository intentionally tracks `.env.example`, `.mcp.json`, `.codex-plugin/
 
 Release version checklist:
 
+- Install the system `attr` package before running `npm test` on Linux; the native cleanup fixtures need both `getfattr` and `setfattr`. CI installs it for the native workspace job.
 - Bump `package.json`, `package-lock.json`, `plugins/lark/package.json`, and `plugins/lark/package-lock.json`.
 - Bump `.codex-plugin/plugin.json` and `plugins/lark/.codex-plugin/plugin.json`; Codex uses manifest versions when selecting plugin cache directories, so stale manifest versions can leave a new package running from an old runtime cache.
 - Update the README badges and `CHANGELOG.md` release heading.

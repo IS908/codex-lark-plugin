@@ -15,6 +15,9 @@ node --import tsx scripts/runtime-version-smoke.ts
 echo ""
 echo "=== Workspace storage inventory checks ==="
 node --import tsx scripts/workspace-storage-smoke.ts
+node --import tsx scripts/workspace-cleanup-ledger-smoke.ts
+node --import tsx scripts/workspace-cleanup-evidence-smoke.ts
+node --import tsx scripts/workspace-cleanup-preview-smoke.ts
 
 node --import tsx scripts/workspace-projects-smoke.ts
 node --import tsx scripts/workspace-git-snapshot-smoke.ts
