@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.14.4-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.15.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -209,6 +209,23 @@ The doctor performs read-only credential, app identity, permission, and
 WebSocket configuration checks. Feishu does not expose message-event
 subscriptions through the read-only application API, so those events are
 reported as a manual `WARN` check instead of a false `PASS`.
+
+To inspect local workspace storage, run this from the source checkout or the
+installed plugin directory. This mode does not need credentials or contact Feishu.
+
+```bash
+npm run --silent doctor -- --workspace-storage
+npm run --silent doctor -- --workspace-storage --json
+```
+
+The inventory uses the configured exec and continuation roots, merges identical
+canonical paths, and shows the 20 largest top-level entries per root. Allocated
+bytes come from filesystem block counts; apparent bytes come from file and link
+lengths. Measurements for overlapping roots are not additive. Dependency and
+Git categories describe contents, not ownership or eligibility for deletion.
+Symlink targets and different filesystems are not scanned; incomplete or
+unavailable scans are reported and return a nonzero status. The inventory never
+deletes or moves anything.
 
 ### 4. Start
 

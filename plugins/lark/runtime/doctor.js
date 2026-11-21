@@ -11,8 +11,10 @@ import {
 
 // src/configure-doctor-cli.ts
 var Lark = __toESM(require_lib(), 1);
+var import_dotenv2 = __toESM(require_main(), 1);
 import os from "node:os";
-import path from "node:path";
+import path2 from "node:path";
+import { readFile as readFile2 } from "node:fs/promises";
 
 // src/configure-doctor.ts
 var import_dotenv = __toESM(require_main(), 1);
@@ -266,18 +268,190 @@ function finish(configPath, checks) {
     exitCode: checks.some((item) => item.status === "FAIL") ? 1 : 0
   };
 }
-function formatConfigureDoctorReport(report2) {
+function formatConfigureDoctorReport(report) {
   const counts = {
-    PASS: report2.checks.filter((item) => item.status === "PASS").length,
-    WARN: report2.checks.filter((item) => item.status === "WARN").length,
-    FAIL: report2.checks.filter((item) => item.status === "FAIL").length
+    PASS: report.checks.filter((item) => item.status === "PASS").length,
+    WARN: report.checks.filter((item) => item.status === "WARN").length,
+    FAIL: report.checks.filter((item) => item.status === "FAIL").length
   };
   const lines = ["codex-lark-plugin doctor"];
-  for (const item of report2.checks) {
+  for (const item of report.checks) {
     lines.push(`${item.status.padEnd(4)}  ${item.id}  ${item.detail}`);
     if (item.remediation) lines.push(`      remediation  ${item.remediation}`);
   }
   lines.push(`Summary: ${counts.PASS} PASS, ${counts.WARN} WARN, ${counts.FAIL} FAIL`);
+  return lines.join("\n");
+}
+
+// src/workspace-storage.ts
+import { lstat, opendir, realpath } from "node:fs/promises";
+import path from "node:path";
+function usage() {
+  return { entries: 0, apparentBytes: 0, allocatedBytes: 0 };
+}
+function newInventory(directory, role) {
+  return {
+    directory,
+    roles: [role],
+    status: "complete",
+    total: null,
+    categories: {
+      dependencies: usage(),
+      gitMetadata: usage(),
+      runtimeControl: usage(),
+      links: usage(),
+      other: usage()
+    },
+    largestEntries: [],
+    duplicateHardLinks: 0,
+    issueCount: 0,
+    issues: []
+  };
+}
+function errorReason(error) {
+  return error?.code ?? "filesystem_error";
+}
+function issue(inventory, relative, reason) {
+  if (inventory.status === "complete") inventory.status = "partial";
+  inventory.issueCount++;
+  if (inventory.issues.length < 50) inventory.issues.push({ path: relative || ".", reason });
+}
+function categoryFor(name, parent, depth) {
+  if (parent !== "other") return parent;
+  if (depth === 1 && (name === ".lark-actions" || name === ".lark-progress")) return "runtimeControl";
+  if (name === ".git") return "gitMetadata";
+  if (name === "node_modules" || name === "venv" || name === ".venv" || /^\..+-venv$/.test(name)) {
+    return "dependencies";
+  }
+  return "other";
+}
+function addUsage(target, stats, duplicate) {
+  target.entries++;
+  if (duplicate) return;
+  if (stats.isFile() || stats.isSymbolicLink()) target.apparentBytes += stats.size;
+  if (target.allocatedBytes !== null) {
+    target.allocatedBytes = Number.isFinite(stats.blocks) && stats.blocks >= 0 ? target.allocatedBytes + stats.blocks * 512 : null;
+  }
+}
+async function scan(inventory, rootStats, { maxEntries = 1e6, maxDepth = 96 }) {
+  const total = usage();
+  inventory.total = total;
+  const seenHardLinks = /* @__PURE__ */ new Set();
+  let visited = 0;
+  let entryLimit = false;
+  async function visit(absolute, relative, category, depth, group, knownStats) {
+    if (visited >= maxEntries) {
+      entryLimit = true;
+      issue(inventory, relative, "entry_limit");
+      return;
+    }
+    visited++;
+    try {
+      const stats = knownStats ?? await lstat(absolute);
+      if (stats.dev !== rootStats.dev) {
+        issue(inventory, relative, "other_filesystem");
+        return;
+      }
+      if (stats.isSymbolicLink()) category = "links";
+      const hardLink = !stats.isDirectory() && stats.nlink > 1;
+      const duplicate = hardLink && seenHardLinks.has(stats.ino);
+      if (hardLink) seenHardLinks.add(stats.ino);
+      if (duplicate) inventory.duplicateHardLinks++;
+      addUsage(total, stats, duplicate);
+      addUsage(inventory.categories[category], stats, duplicate);
+      if (group) addUsage(group, stats, duplicate);
+      if (!stats.isDirectory()) return;
+      if (depth >= maxDepth) {
+        issue(inventory, relative, "depth_limit");
+        return;
+      }
+      if (await realpath(absolute) !== absolute) {
+        issue(inventory, relative, "directory_changed");
+        return;
+      }
+      const entries = await opendir(absolute);
+      for await (const entry of entries) {
+        const child = path.join(relative, entry.name);
+        const childGroup = group ?? usage();
+        await visit(
+          path.join(absolute, entry.name),
+          child,
+          categoryFor(entry.name, category, depth + 1),
+          depth + 1,
+          childGroup
+        );
+        if (!group && childGroup.entries > 0) {
+          inventory.largestEntries.push({ path: child, ...childGroup });
+          inventory.largestEntries.sort((a, b) => (b.allocatedBytes ?? b.apparentBytes) - (a.allocatedBytes ?? a.apparentBytes) || b.apparentBytes - a.apparentBytes || a.path.localeCompare(b.path));
+          if (inventory.largestEntries.length > 20) inventory.largestEntries.pop();
+        }
+        if (entryLimit) break;
+      }
+    } catch (error) {
+      issue(inventory, relative, errorReason(error));
+    }
+  }
+  await visit(inventory.directory, "", "other", 0, void 0, rootStats);
+}
+async function inventoryWorkspaceStorage(roots, options = {}) {
+  const results = /* @__PURE__ */ new Map();
+  for (const { role, directory } of roots) {
+    let canonical = path.resolve(directory);
+    try {
+      canonical = await realpath(canonical);
+      const existing = results.get(canonical);
+      if (existing) {
+        existing.roles.push(role);
+        continue;
+      }
+      const stats = await lstat(canonical);
+      if (!stats.isDirectory()) throw Object.assign(new Error("Not a directory"), { code: "ENOTDIR" });
+      const inventory = newInventory(canonical, role);
+      results.set(canonical, inventory);
+      await scan(inventory, stats, options);
+    } catch (error) {
+      const existing = results.get(canonical);
+      if (existing) {
+        existing.roles.push(role);
+        continue;
+      }
+      const inventory = newInventory(canonical, role);
+      inventory.status = "unavailable";
+      issue(inventory, "", errorReason(error));
+      results.set(canonical, inventory);
+    }
+  }
+  return [...results.values()];
+}
+var categoryLabels = {
+  dependencies: "Dependency directories",
+  gitMetadata: "Git metadata",
+  runtimeControl: "Lark turn-control files",
+  links: "Symlinks (targets not scanned)",
+  other: "Other / ownership unknown"
+};
+function formatWorkspaceStorage(roots) {
+  const formatBytes = (bytes) => bytes === null ? "unavailable" : `${bytes} B`;
+  const formatUsage = (value) => `${formatBytes(value.allocatedBytes)} allocated; ${formatBytes(value.apparentBytes)} apparent; ${value.entries} entries`;
+  const lines = [
+    "Workspace storage inventory (read-only; no cleanup eligibility inferred).",
+    "Sizes are per root, not additive for overlapping roots or a reclaim estimate."
+  ];
+  for (const root of roots) {
+    lines.push("", `${JSON.stringify(root.directory)} [${root.roles.join(", ")}] (${root.status})`);
+    if (root.total) {
+      lines.push(`  ${formatUsage(root.total)}`);
+      for (const [category, value] of Object.entries(root.categories)) {
+        if (value.entries > 0) lines.push(`  ${categoryLabels[category]}: ${formatUsage(value)}`);
+      }
+      if (root.largestEntries.length > 0) lines.push("  Largest entries:");
+      for (const entry of root.largestEntries) {
+        lines.push(`    ${JSON.stringify(entry.path)}: ${formatUsage(entry)}`);
+      }
+    }
+    if (root.issueCount > 0) lines.push(`  Incomplete scan: ${root.issueCount} issue(s).`);
+    for (const entry of root.issues) lines.push(`    ${JSON.stringify(entry.path)}: ${entry.reason}`);
+  }
   return lines.join("\n");
 }
 
@@ -319,10 +493,46 @@ function assertApiSuccess(response) {
   if ((response.code ?? 0) === 0) return;
   throw Object.assign(new Error("Lark API request failed."), { code: response.code });
 }
-var report = await runConfigureDoctor({
-  configPath: path.join(os.homedir(), ".codex", "channels", "lark", ".env"),
-  remoteProbe
-});
-process.stderr.write(`${formatConfigureDoctorReport(report)}
+async function main(args) {
+  const configPath = path2.join(os.homedir(), ".codex", "channels", "lark", ".env");
+  if (args.length === 0) {
+    const report = await runConfigureDoctor({ configPath, remoteProbe });
+    process.stderr.write(`${formatConfigureDoctorReport(report)}
 `);
-process.exitCode = report.exitCode;
+    process.exitCode = report.exitCode;
+    return;
+  }
+  if (!args.includes("--workspace-storage") || args.some((arg) => arg !== "--workspace-storage" && arg !== "--json")) {
+    process.stderr.write("Usage: npm run doctor -- [--workspace-storage [--json]]\n");
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    assertSupportedNodeVersion();
+    const file = await readFile2(configPath, "utf8").catch((error) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+    const fileEnv = (0, import_dotenv2.parse)(file);
+    const config = readConfigValues({
+      env: {
+        LARK_CODEX_EXEC_CWD: process.env.LARK_CODEX_EXEC_CWD ?? fileEnv.LARK_CODEX_EXEC_CWD,
+        LARK_CONTINUATION_WORKING_ROOT: process.env.LARK_CONTINUATION_WORKING_ROOT ?? fileEnv.LARK_CONTINUATION_WORKING_ROOT
+      },
+      dryRun: true
+    });
+    const roots = await inventoryWorkspaceStorage([
+      { role: "exec", directory: config.LARK_CODEX_EXEC_CWD },
+      { role: "continuation", directory: config.LARK_CONTINUATION_WORKING_ROOT }
+    ]);
+    process.stdout.write(`${args.includes("--json") ? JSON.stringify({ readOnly: true, roots }, null, 2) : formatWorkspaceStorage(roots)}
+`);
+    process.exitCode = roots.every(({ status }) => status === "complete") ? 0 : 1;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown error";
+    process.stderr.write(`Workspace storage inventory failed: ${detail}
+`);
+    process.exitCode = 1;
+  }
+}
+await main(process.argv.slice(2));

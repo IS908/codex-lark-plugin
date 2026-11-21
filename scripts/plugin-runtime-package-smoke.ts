@@ -85,6 +85,20 @@ try {
   assert.match(doctorResult.stderr, /codex-lark-plugin doctor/);
   assert.match(doctorResult.stderr, /^FAIL\s/m);
   assert.doesNotMatch(doctorResult.stderr, /ERR_MODULE_NOT_FOUND|Cannot find module/);
+
+  const storage = runPluginScript('doctor', ['--', '--workspace-storage', '--json'], {
+    LARK_APP_ID: '',
+    LARK_APP_SECRET: '',
+    LARK_CODEX_EXEC_CWD: runtimeRoot,
+    LARK_CONTINUATION_WORKING_ROOT: runtimeRoot,
+  });
+  assert.equal(storage.status, 0, storage.stderr);
+  const inventory = JSON.parse(storage.stdout);
+  assert.equal(inventory.readOnly, true);
+  assert.equal(inventory.roots.length, 1);
+  assert.equal(inventory.roots[0].status, 'complete');
+  assert.deepEqual(inventory.roots[0].roles, ['exec', 'continuation']);
+  assert.ok(inventory.roots[0].total.apparentBytes > 0);
 } finally {
   rmSync(runtimeRoot, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });

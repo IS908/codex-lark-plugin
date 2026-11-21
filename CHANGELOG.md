@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-11-21
+
+### Added
+- Add a read-only doctor mode for workspace storage inventory, reporting apparent and allocated sizes, storage categories, large entries, and incomplete scans.
+
 ## [2.14.4] - 2026-11-20
 
 ### Fixed
