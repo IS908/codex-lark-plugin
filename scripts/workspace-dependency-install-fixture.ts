@@ -37,6 +37,20 @@ export async function exerciseWorkspaceDependencyInstall(fixture: string, common
     const request = { ...common, input, artifactManifest, selection, configured: tool.configured, authorizedRoots: scope };
     const before = (await fs.readdir(fixture)).sort();
     if (input.ecosystem === 'npm') {
+      const group = path.join(fixture, 'overlapping-runtime');
+      const embeddedPath = path.join(group, 'cache');
+      await fs.mkdir(group, { mode: 0o700 });
+      try {
+        await fs.cp(cache.directory, embeddedPath, { recursive: true });
+        const embedded = await pinWorkspacePath(group, embeddedPath);
+        const nested = await verifyWorkspaceDependencyCache({ input, artifactManifest, cache: embedded, authorizedRoots: scope });
+        const overlapping = { ...tool.configured, runtime: await pinWorkspacePath(group, '.'), executable: path.join(group, 'node') };
+        await assert.rejects(installWorkspaceDependencyInStaging({ ...request, configured: overlapping,
+          selection: { ...selection, cache: embedded, cacheFingerprint: nested.cacheFingerprint,
+            toolchainBindingDigest: workspaceDependencyToolchainBindingDigest(overlapping) },
+        }), { code: 'dependency_install_storage_invalid' });
+      } finally { await fs.rm(group, { recursive: true, force: true }); }
+      assert.deepEqual((await fs.readdir(fixture)).sort(), before);
       const lock = JSON.parse(Buffer.from(input.lock).toString('utf8'));
       lock.packages['node_modules/lark-fixture/node_modules/lark-fixture'] = lock.packages['node_modules/lark-fixture'];
       const repeated = { ...input, lock: json(lock) };

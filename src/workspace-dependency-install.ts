@@ -78,6 +78,15 @@ export async function installWorkspaceDependencyInStaging(request: {
   const verified = await verifyCache(true);
   if (verified.bytes > MAX_WORKSPACE_DEPENDENCY_SNAPSHOT_BYTES) throw new WorkspaceDependencyCacheError('dependency_snapshot_limit');
   const mounts = await readWorkspaceDependencyMountPolicy();
+  const aliasesOverlap = (left: string, right: string) => mounts.aliases(left).some((a) =>
+    mounts.aliases(right).some((b) => mounts.contains(a, b) || mounts.contains(b, a)));
+  const cacheAncestors = await readWorkspaceAncestorIdentities(selection.cache.directory);
+  for (const readonly of [configured.runtime, configured.installer]) {
+    const toolchainAncestors = await readWorkspaceAncestorIdentities(readonly.directory);
+    if (cacheAncestors.has(`${readonly.device}:${readonly.inode}`)
+      || toolchainAncestors.has(`${selection.cache.device}:${selection.cache.inode}`)
+      || aliasesOverlap(selection.cache.directory, readonly.directory)) fail('dependency_install_storage_invalid');
+  }
   const guard = await loadWorkspaceDependencyWriteGuard(request.configPath);
   const parent = await validateWorkspaceProject(request.temporaryRoot.directory, request.temporaryRoot);
   await assertProtectedWorkspacePath(parent, false, true);
@@ -85,11 +94,9 @@ export async function installWorkspaceDependencyInStaging(request: {
   const leaf = `lark-dependency-install-${nonce}`;
   const snapshotLeaf = `lark-dependency-snapshot-${nonce}`;
   const planned = path.join(parent.directory, leaf);
-  const aliases = mounts.aliases(planned);
   const ancestors = await readWorkspaceAncestorIdentities(parent.directory);
   if (!mounts.supports(planned) || [selection.cache, configured.runtime, configured.installer].some((root) =>
-    ancestors.has(`${root.device}:${root.inode}`) || mounts.aliases(root.directory).some((read) => aliases.some((write) =>
-      mounts.contains(read, write) || mounts.contains(write, read))))) fail('dependency_install_storage_invalid');
+    ancestors.has(`${root.device}:${root.inode}`) || aliasesOverlap(root.directory, planned))) fail('dependency_install_storage_invalid');
   await guard?.assertNewDirectory(planned);
   const snapshotPath = path.join(parent.directory, snapshotLeaf);
   if (!mounts.supports(snapshotPath)) fail('dependency_install_storage_invalid');
