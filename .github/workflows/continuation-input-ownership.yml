@@ -1,0 +1,43 @@
+name: Continuation input ownership
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/continuation-input-ownership.yml'
+      - 'src/continuation/**'
+      - 'src/process-identity.ts'
+      - 'scripts/process-identity-smoke.ts'
+      - 'scripts/continuation-repository-smoke.ts'
+      - 'package-lock.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/continuation-input-ownership.yml'
+      - 'src/continuation/**'
+      - 'src/process-identity.ts'
+      - 'scripts/process-identity-smoke.ts'
+      - 'scripts/continuation-repository-smoke.ts'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Protect live continuation inputs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    env:
+      LARK_APP_ID: cli_test_app_id
+      LARK_APP_SECRET: test_app_secret
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx scripts/process-identity-smoke.ts
+      - run: node --import tsx scripts/continuation-repository-smoke.ts

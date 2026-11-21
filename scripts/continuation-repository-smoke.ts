@@ -44,9 +44,9 @@ import {
 import { currentProcessStartedAt } from '../src/process-identity.js';
 
 if (process.argv[2] === '--hold-managed-input-create') {
-  const [childRoot, childJobId, childSource] = process.argv.slice(3);
+  const [childRoot, childJobId, childSource, stamp] = process.argv.slice(3);
   if (!childRoot || !childJobId || !childSource) throw new Error('Missing managed-input child arguments.');
-  await holdManagedInputCreate(childRoot, childJobId, childSource);
+  await holdManagedInputCreate(childRoot, childJobId, childSource, stamp);
   process.exit(0);
 }
 if (process.argv[2] === '--reclaim-dead-creation-lock') {
@@ -100,7 +100,7 @@ if (process.argv[2] === '--open-continuation-repository') {
   process.exit(0);
 }
 
-async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath: string): Promise<void> {
+async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath: string, stamp?: string): Promise<void> {
   const store = new ContinuationInputStore(join(rootDir, 'inputs'));
   await store.withCreationLock(jobId, async () => {
     await store.install(jobId, [{
@@ -110,6 +110,13 @@ async function holdManagedInputCreate(rootDir: string, jobId: string, sourcePath
     }], 'cross-process-live-create');
     const aged = new Date(Date.now() - 2 * 60 * 60 * 1_000);
     await utimes(join(rootDir, 'inputs', jobId), aged, aged);
+    if (stamp === 'legacy-estimate' || stamp === 'legacy-pid-only') {
+      const lock = join(rootDir, 'inputs', `.creating-${jobId}`);
+      const owner = JSON.parse(await readFile(lock, 'utf8'));
+      owner.startedAt = stamp === 'legacy-estimate' ? currentProcessStartedAt() + 1_040 : null;
+      await writeFile(lock, `${JSON.stringify(owner)}\n`, 'utf8');
+      await utimes(lock, aged, aged);
+    }
     process.stdout.write('MANAGED_INPUT_INSTALLED\n');
     const releasePath = join(rootDir, `.release-${jobId}`);
     while (true) {
@@ -3598,22 +3605,24 @@ assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', concurrentResultA
 concurrentCreateA.close();
 concurrentCreateB.close();
 
-const liveCleanupJobId = continuationJobId('live-cleanup-create');
-const liveCreateChild = spawn(process.execPath, [
-  '--import',
-  'tsx',
-  new URL(import.meta.url).pathname,
-  '--hold-managed-input-create',
-  concurrentCreateRoot,
-  liveCleanupJobId,
-  concurrentCreateSource,
-], { stdio: ['ignore', 'pipe', 'pipe'] });
-const liveCreateStderr = await waitForChildMarker(liveCreateChild, 'MANAGED_INPUT_INSTALLED');
-await concurrentStore.cleanupOrphans(new Set(), Date.now());
-assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', liveCleanupJobId))).isDirectory(), true);
-const liveCreateExit = new Promise<number | null>((resolve) => liveCreateChild.once('close', resolve));
-await writeFile(join(concurrentCreateRoot, `.release-${liveCleanupJobId}`), 'release', 'utf8');
-assert.equal(await liveCreateExit, 0, liveCreateStderr);
+for (const stamp of ['native', 'legacy-estimate', 'legacy-pid-only']) {
+  const liveCleanupJobId = continuationJobId(`live-cleanup-create-${stamp}`);
+  const liveCreateChild = spawn(process.execPath, [
+    '--import', 'tsx', new URL(import.meta.url).pathname, '--hold-managed-input-create',
+    concurrentCreateRoot, liveCleanupJobId, concurrentCreateSource, stamp,
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const liveCreateExit = new Promise<number | null>((resolve) => liveCreateChild.once('close', resolve));
+  try {
+    const liveCreateStderr = await waitForChildMarker(liveCreateChild, 'MANAGED_INPUT_INSTALLED');
+    await concurrentStore.cleanupOrphans(new Set(), Date.now());
+    assert.equal((await lstat(join(concurrentCreateRoot, 'inputs', liveCleanupJobId))).isDirectory(), true, stamp);
+    await writeFile(join(concurrentCreateRoot, `.release-${liveCleanupJobId}`), 'release', 'utf8');
+    assert.equal(await liveCreateExit, 0, liveCreateStderr);
+  } finally {
+    if (liveCreateChild.exitCode === null && liveCreateChild.signalCode === null) liveCreateChild.kill();
+    await liveCreateExit;
+  }
+}
 
 const concurrentOrphan = join(concurrentCreateRoot, 'inputs', 'job_concurrent_orphan');
 await mkdir(join(concurrentOrphan, 'nested'), { recursive: true });

@@ -47,7 +47,6 @@ const CREATION_RECLAIM_PREFIX = '.reclaim-';
 const REDACTION_QUARANTINE_PREFIX = '.redacting-';
 const CREATION_LOCK_WAIT_MS = 5 * 60 * 1_000;
 const OWNERLESS_LOCK_GRACE_MS = 30_000;
-const UNKNOWN_CREATION_OWNER_GRACE_MS = CREATION_LOCK_WAIT_MS + OWNERLESS_LOCK_GRACE_MS;
 const ACTIVE_REDACTION_QUARANTINES = new Set<string>();
 
 interface CreationLockOwner {
@@ -419,12 +418,7 @@ export class ContinuationInputStore implements ContinuationInputStorePort {
           const ownerIsActive = redactionQuarantine.ownerStartedAt === null
             ? isProcessAlive(redactionQuarantine.ownerPid)
               && stateAgeMs < OWNERLESS_LOCK_GRACE_MS
-            : await isProcessInstanceAlive(
-              redactionQuarantine.ownerPid,
-              redactionQuarantine.ownerStartedAt,
-              stateAgeMs,
-              OWNERLESS_LOCK_GRACE_MS,
-            );
+            : await isProcessInstanceAlive(redactionQuarantine.ownerPid, redactionQuarantine.ownerStartedAt);
           if (
             ownerIsActive
             && (redactionQuarantine.ownerPid !== process.pid
@@ -738,16 +732,7 @@ async function tryReclaimCreationLock(lockDirectory: string, rootDir: string): P
   const owner = await readCreationOwner(lockDirectory);
   if (owner === null) {
     if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
-  } else if (owner.startedAt === null) {
-    if (isProcessAlive(owner.pid) && Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) {
-      return false;
-    }
-  } else if (await isProcessInstanceAlive(
-    owner.pid,
-    owner.startedAt,
-    Date.now() - metadata.mtimeMs,
-    UNKNOWN_CREATION_OWNER_GRACE_MS,
-  )) return false;
+  } else if (await isProcessInstanceAlive(owner.pid, owner.startedAt)) return false;
 
   const quarantine = path.join(
     rootDir,
@@ -820,14 +805,7 @@ async function isCreationReclaimActive(
 ): Promise<boolean> {
   const stateAgeMs = nowMs - (reclaim.createdAt ?? mtimeMs);
   if (stateAgeMs >= OWNERLESS_LOCK_GRACE_MS) return false;
-  return reclaim.startedAt === null
-    ? isProcessAlive(reclaim.pid)
-    : isProcessInstanceAlive(
-      reclaim.pid,
-      reclaim.startedAt,
-      stateAgeMs,
-      OWNERLESS_LOCK_GRACE_MS,
-    );
+  return isProcessInstanceAlive(reclaim.pid, reclaim.startedAt);
 }
 
 async function releaseCreationLock(

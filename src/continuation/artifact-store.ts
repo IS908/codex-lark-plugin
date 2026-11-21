@@ -297,12 +297,7 @@ export class ContinuationArtifactStore {
         const ownerIsActive = quarantine.ownerStartedAt === null
           ? isProcessAlive(quarantine.ownerPid)
             && stateAgeMs < LEGACY_QUARANTINE_GRACE_MS
-          : await isProcessInstanceAlive(
-            quarantine.ownerPid,
-            quarantine.ownerStartedAt,
-            stateAgeMs,
-            LEGACY_QUARANTINE_GRACE_MS,
-          );
+          : await isProcessInstanceAlive(quarantine.ownerPid, quarantine.ownerStartedAt);
         if (
           ownerIsActive
           && (quarantine.ownerPid !== process.pid

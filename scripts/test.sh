@@ -23,6 +23,7 @@ node --import tsx scripts/workspace-cron-smoke.ts
 node --import tsx scripts/workspace-continuation-smoke.ts
 
 echo '=== Managed workspace storage checks ==='
+node --import tsx scripts/process-identity-smoke.ts
 node --import tsx scripts/managed-workspace-storage-smoke.ts
 node --import tsx scripts/managed-workspace-repository-smoke.ts
 node --import tsx scripts/workspace-git-replay-smoke.ts

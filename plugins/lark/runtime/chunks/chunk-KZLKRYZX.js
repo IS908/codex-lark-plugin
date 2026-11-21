@@ -31,13 +31,22 @@ import { basename, dirname, join } from "node:path";
 import { promisify as promisify2 } from "node:util";
 
 // src/process-identity.ts
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
 var PROCESS_START_TOLERANCE_MS = 1e3;
-var CURRENT_PROCESS_STARTED_AT = Math.floor(Date.now() - process.uptime() * 1e3);
+var ESTIMATED_PROCESS_STARTED_AT = Math.floor(Date.now() - process.uptime() * 1e3);
+var PS_OPTIONS = { encoding: "utf8", env: { LC_ALL: "C", TZ: "UTC" }, timeout: 2e3, maxBuffer: 4096 };
+var ownProcessStartedAt;
 function currentProcessStartedAt() {
-  return CURRENT_PROCESS_STARTED_AT;
+  if (ownProcessStartedAt === void 0) {
+    try {
+      ownProcessStartedAt = parseProcessStart(execFileSync("/bin/ps", psArgs(process.pid), PS_OPTIONS)) ?? ESTIMATED_PROCESS_STARTED_AT;
+    } catch {
+      ownProcessStartedAt = ESTIMATED_PROCESS_STARTED_AT;
+    }
+  }
+  return ownProcessStartedAt;
 }
 function isProcessAlive(pid) {
   try {
@@ -48,16 +57,23 @@ function isProcessAlive(pid) {
   }
 }
 async function getProcessStartedAt(pid) {
-  if (pid === process.pid) return CURRENT_PROCESS_STARTED_AT;
+  if (!Number.isSafeInteger(pid) || pid < 1) return null;
+  if (pid === process.pid) return currentProcessStartedAt();
   try {
-    const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(pid)]);
-    const raw = String(stdout).trim();
-    if (!raw) return null;
-    const parsed = Date.parse(raw);
-    return Number.isFinite(parsed) ? parsed : null;
+    const { stdout } = await execFileAsync("/bin/ps", psArgs(pid), PS_OPTIONS);
+    return parseProcessStart(stdout);
   } catch {
     return null;
   }
+}
+function psArgs(pid) {
+  return ["-o", "lstart=", "-p", String(pid)];
+}
+function parseProcessStart(output) {
+  const raw = output.trim();
+  if (!raw) return null;
+  const startedAt = Date.parse(`${raw} UTC`);
+  return Number.isFinite(startedAt) ? startedAt : null;
 }
 function isSameProcessStart(a, b) {
   return Math.abs(a - b) <= PROCESS_START_TOLERANCE_MS;
@@ -67,17 +83,12 @@ function isRecordedProcessInstanceActive(processAlive, recordedStartedAt, actual
   if (actualStartedAt === null) return stateAgeMs < unknownIdentityGraceMs;
   return isSameProcessStart(actualStartedAt, recordedStartedAt);
 }
-async function isProcessInstanceAlive(pid, startedAt, stateAgeMs, unknownIdentityGraceMs) {
-  const processAlive = isProcessAlive(pid);
-  if (!processAlive) return false;
-  const actualStartedAt = await getProcessStartedAt(pid);
-  return isRecordedProcessInstanceActive(
-    processAlive,
-    startedAt,
-    actualStartedAt,
-    stateAgeMs,
-    unknownIdentityGraceMs
-  );
+function isCleanupProcessOwnerActive(processAlive, recordedStartedAt, actualStartedAt) {
+  return processAlive && (recordedStartedAt === null || actualStartedAt === null || actualStartedAt <= recordedStartedAt);
+}
+async function isProcessInstanceAlive(pid, startedAt) {
+  if (!isProcessAlive(pid)) return false;
+  return isCleanupProcessOwnerActive(true, startedAt, startedAt === null ? null : await getProcessStartedAt(pid));
 }
 
 // src/resource-governance.ts

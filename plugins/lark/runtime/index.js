@@ -8,7 +8,7 @@ import {
   isProcessInstanceAlive,
   registerLockCleanup,
   sweepInbox
-} from "./chunks/chunk-L3455GPA.js";
+} from "./chunks/chunk-KZLKRYZX.js";
 import {
   require_lib,
   require_src
@@ -70369,12 +70369,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
         });
         if (!candidateMetadata) return;
         const stateAgeMs = nowMs - (quarantine.createdAt ?? candidateMetadata.mtimeMs);
-        const ownerIsActive = quarantine.ownerStartedAt === null ? isProcessAlive(quarantine.ownerPid) && stateAgeMs < LEGACY_QUARANTINE_GRACE_MS : await isProcessInstanceAlive(
-          quarantine.ownerPid,
-          quarantine.ownerStartedAt,
-          stateAgeMs,
-          LEGACY_QUARANTINE_GRACE_MS
-        );
+        const ownerIsActive = quarantine.ownerStartedAt === null ? isProcessAlive(quarantine.ownerPid) && stateAgeMs < LEGACY_QUARANTINE_GRACE_MS : await isProcessInstanceAlive(quarantine.ownerPid, quarantine.ownerStartedAt);
         if (ownerIsActive && (quarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES.has(entry.name))) return;
         try {
           await fs24.rename(candidate, this.jobDirectory(quarantine.jobId));
@@ -70483,7 +70478,6 @@ var CREATION_RECLAIM_PREFIX = ".reclaim-";
 var REDACTION_QUARANTINE_PREFIX2 = ".redacting-";
 var CREATION_LOCK_WAIT_MS = 5 * 60 * 1e3;
 var OWNERLESS_LOCK_GRACE_MS = 3e4;
-var UNKNOWN_CREATION_OWNER_GRACE_MS = CREATION_LOCK_WAIT_MS + OWNERLESS_LOCK_GRACE_MS;
 var ACTIVE_REDACTION_QUARANTINES2 = /* @__PURE__ */ new Set();
 var ContinuationInputStore = class {
   rootDir;
@@ -70812,12 +70806,7 @@ var ContinuationInputStore = class {
           });
           if (!candidateMetadata) return;
           const stateAgeMs = nowMs - (redactionQuarantine.createdAt ?? candidateMetadata.mtimeMs);
-          const ownerIsActive = redactionQuarantine.ownerStartedAt === null ? isProcessAlive(redactionQuarantine.ownerPid) && stateAgeMs < OWNERLESS_LOCK_GRACE_MS : await isProcessInstanceAlive(
-            redactionQuarantine.ownerPid,
-            redactionQuarantine.ownerStartedAt,
-            stateAgeMs,
-            OWNERLESS_LOCK_GRACE_MS
-          );
+          const ownerIsActive = redactionQuarantine.ownerStartedAt === null ? isProcessAlive(redactionQuarantine.ownerPid) && stateAgeMs < OWNERLESS_LOCK_GRACE_MS : await isProcessInstanceAlive(redactionQuarantine.ownerPid, redactionQuarantine.ownerStartedAt);
           if (ownerIsActive && (redactionQuarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES2.has(entry.name))) return;
           try {
             await fs25.rename(candidate2, this.jobDirectory(redactionQuarantine.jobId));
@@ -71062,16 +71051,7 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
   const owner = await readCreationOwner(lockDirectory);
   if (owner === null) {
     if (Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) return false;
-  } else if (owner.startedAt === null) {
-    if (isProcessAlive(owner.pid) && Date.now() - metadata.mtimeMs < OWNERLESS_LOCK_GRACE_MS) {
-      return false;
-    }
-  } else if (await isProcessInstanceAlive(
-    owner.pid,
-    owner.startedAt,
-    Date.now() - metadata.mtimeMs,
-    UNKNOWN_CREATION_OWNER_GRACE_MS
-  )) return false;
+  } else if (await isProcessInstanceAlive(owner.pid, owner.startedAt)) return false;
   const quarantine = path34.join(
     rootDir,
     `${CREATION_RECLAIM_PREFIX}${path34.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes3(8).toString("hex")}`
@@ -71127,12 +71107,7 @@ function parseCreationReclaim(name) {
 async function isCreationReclaimActive(reclaim, mtimeMs, nowMs) {
   const stateAgeMs = nowMs - (reclaim.createdAt ?? mtimeMs);
   if (stateAgeMs >= OWNERLESS_LOCK_GRACE_MS) return false;
-  return reclaim.startedAt === null ? isProcessAlive(reclaim.pid) : isProcessInstanceAlive(
-    reclaim.pid,
-    reclaim.startedAt,
-    stateAgeMs,
-    OWNERLESS_LOCK_GRACE_MS
-  );
+  return isProcessInstanceAlive(reclaim.pid, reclaim.startedAt);
 }
 async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   const owner = await readCreationOwner(lockDirectory);
