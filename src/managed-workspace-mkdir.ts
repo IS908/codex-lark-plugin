@@ -53,7 +53,7 @@ export function mkdirGitCheckoutInsidePinnedRun(runRoot: WorkspaceProjectBinding
 }
 
 export async function mkdirTemporaryInsidePinnedRoot(root: WorkspaceProjectBinding, leaf: string): Promise<WorkspaceProjectBinding> {
-  if (!/^(?:lark-codex-exec|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) throw new ManagedWorkspaceStorageError('invalid_binding');
+  if (!/^(?:lark-codex-exec|lark-dependency-probe|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) throw new ManagedWorkspaceStorageError('invalid_binding');
   return mkdirInsideRoot(root, leaf, true);
 }
 

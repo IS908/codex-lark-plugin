@@ -10,7 +10,8 @@ import { sameWorkspaceDependencySelections, workspaceDependencySelectionsSchema 
 import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
 import { SqliteContinuationRepository } from '../src/continuation/sqlite-repository.js';
 import { describeWorkspaceDependencies, prepareWorkspaceNpmLock, prepareWorkspacePipLock } from '../src/workspace-dependency-input.js';
-import { assertWorkspaceDependencyWriteIsolation, resolveWorkspaceDependencySelections } from '../src/workspace-dependency-registry.js';
+import { assertWorkspaceDependencySelectionAuthorized, assertWorkspaceDependencyWriteIsolation,
+  resolveWorkspaceDependencySelections } from '../src/workspace-dependency-registry.js';
 import { readWorkspaceGitCacheIdentity } from '../src/workspace-git-snapshot.js';
 import { pinWorkspacePath } from '../src/workspace-projects.js';
 
@@ -202,6 +203,35 @@ try {
   await assert.rejects(assertWorkspaceDependencyWriteIsolation(configPath, [npmCache]), { code: 'dependency_write_overlap' });
   await writeRegistry({ ...dual, projects: [{ ...dual.projects[0], policies: [{ ecosystem: 'npm', registry: 'http://registry.example.test/' }] }] });
   await assert.rejects(assertWorkspaceDependencyWriteIsolation(configPath, [scratch]), { code: 'dependency_registry_invalid' });
+  const runtimePath = path.join(fixture, 'trusted-runtime');
+  const installerPath = path.join(fixture, 'trusted-installer');
+  await Promise.all([runtimePath, installerPath].map((directory) => fs.mkdir(directory, { mode: 0o700 })));
+  const declared = { ecosystem: 'pip', executable: path.join(runtimePath, 'python'), runtime: await pinWorkspacePath(fixture, runtimePath),
+    installer: await pinWorkspacePath(fixture, installerPath) } as const;
+  const fingerprint = 'a'.repeat(64);
+  await writeRegistry({ ...policy, toolchains: [declared] });
+  await assert.rejects(resolveWorkspaceDependencySelections(request), { code: 'dependency_toolchain_unavailable' });
+  const measured = await resolveWorkspaceDependencySelections({ ...request, probeToolchain: async (configured, saved) => {
+    assert.deepEqual(configured, declared);
+    assert.equal(saved, undefined);
+    return { toolchain, fingerprint };
+  } });
+  assert.equal(measured[0].selection.identity.key, key, 'the same ABI can reuse the cache across protected installations');
+  assert.equal(measured[0].selection.toolchainFingerprint, fingerprint);
+  const toolchainSelections = measured.map(({ selection }) => selection);
+  await assertWorkspaceDependencySelectionAuthorized(configPath, request.project, request.git, toolchainSelections);
+  await assert.rejects(assertWorkspaceDependencyWriteIsolation(configPath, [runtimePath]), { code: 'dependency_write_overlap' });
+  await assert.rejects(assertWorkspaceDependencyWriteIsolation(configPath, [installerPath]), { code: 'dependency_write_overlap' });
+  await assert.rejects(resolveWorkspaceDependencySelections({ ...request, expected: measured.map(({ selection }) => selection),
+    probeToolchain: async (_configured, saved) => {
+      assert.equal(saved, fingerprint);
+      return { toolchain, fingerprint: 'b'.repeat(64) };
+    } }), { code: 'dependency_selection_revoked' });
+  await assert.rejects(resolveWorkspaceDependencySelections({ ...request, expected, probeToolchain: async () => ({ toolchain, fingerprint }) }),
+    { code: 'dependency_selection_revoked' });
+  await writeRegistry({ ...policy, toolchains: [{ ...declared, executable: path.join(runtimePath, 'different-python') }] });
+  await assert.rejects(assertWorkspaceDependencySelectionAuthorized(configPath, request.project, request.git, toolchainSelections),
+    { code: 'dependency_selection_revoked' });
   await writeRegistry(policy);
   const wheelPath = path.join(cache, wheelName);
   await fs.unlink(wheelPath);

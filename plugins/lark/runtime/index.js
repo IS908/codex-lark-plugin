@@ -46381,8 +46381,8 @@ function debugLog(msg) {
 function formatDebugMessage(msg) {
   const match = msg.match(/^\[([^\]\r\n]+)\]\s*(.*)$/);
   if (!match) return msg;
-  const [, scope2, rest] = match;
-  return rest ? `${scope2} ${rest}` : scope2;
+  const [, scope, rest] = match;
+  return rest ? `${scope} ${rest}` : scope;
 }
 
 // src/queue.ts
@@ -50598,19 +50598,39 @@ var identityShape = external_exports.discriminatedUnion("ecosystem", [
   external_exports.strictObject({ ...commonIdentity, ecosystem: external_exports.literal("pip"), policy: external_exports.literal("pip-offline-hashed-wheels-v1"), key: dependencyDigestSchema })
 ]);
 function workspaceDependencyCompatibilityKey(identity) {
-  const { ecosystem: ecosystem2, policy: policy2, scope: scope2, lockSha256, toolchain: { runtime, installer, abi, platform, arch, platformAbi } } = identity;
-  const parts = ["workspace-dependencies-v1", scope2, runtime, installer, abi, platform, arch, platformAbi, lockSha256, ecosystem2, policy2];
+  const { ecosystem: ecosystem2, policy: policy2, scope, lockSha256, toolchain: { runtime, installer, abi, platform, arch, platformAbi } } = identity;
+  const parts = ["workspace-dependencies-v1", scope, runtime, installer, abi, platform, arch, platformAbi, lockSha256, ecosystem2, policy2];
   if (identity.ecosystem === "npm") parts.push(identity.registry, identity.manifestSha256);
   return createHash3("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 var workspaceDependencyIdentitySchema = identityShape.refine((identity) => workspaceDependencyCompatibilityKey(identity) === identity.key, "Invalid dependency compatibility identity.");
 var workspaceDependencyBindingSchema = workspaceProjectBindingSchema.refine(({ directory }) => path5.resolve(directory) === directory && directory.length <= 4096 && !/[\u0000-\u001f\u007f*?\[\]]/.test(directory));
+var workspaceDependencyToolchainConfigSchema = external_exports.strictObject({
+  ecosystem: external_exports.enum(["npm", "pip"]),
+  executable: external_exports.string().max(4096).refine((value) => path5.isAbsolute(value) && path5.resolve(value) === value && !/[\u0000-\u001f\u007f*?\[\]]/.test(value)),
+  runtime: workspaceDependencyBindingSchema,
+  installer: workspaceDependencyBindingSchema
+});
+function workspaceDependencyToolchainBindingDigest({ ecosystem: ecosystem2, executable, runtime, installer }) {
+  return createHash3("sha256").update(JSON.stringify([
+    "workspace-toolchain-binding-v1",
+    ecosystem2,
+    executable,
+    [runtime.directory, runtime.device, runtime.inode],
+    [installer.directory, installer.device, installer.inode]
+  ])).digest("hex");
+}
 var workspaceDependencySelectionSchema = external_exports.strictObject({
   identity: workspaceDependencyIdentitySchema,
   cache: workspaceDependencyBindingSchema,
   artifactManifestSha256: dependencyDigestSchema,
-  cacheFingerprint: dependencyDigestSchema
-});
+  cacheFingerprint: dependencyDigestSchema,
+  toolchainFingerprint: dependencyDigestSchema.optional(),
+  toolchainBindingDigest: dependencyDigestSchema.optional()
+}).refine(
+  ({ toolchainFingerprint, toolchainBindingDigest }) => toolchainFingerprint === void 0 === (toolchainBindingDigest === void 0),
+  "A measured toolchain requires its declared binding."
+);
 var workspaceDependencySelectionsSchema = external_exports.array(workspaceDependencySelectionSchema).max(2).refine(
   (selections) => new Set(selections.map(({ identity }) => identity.ecosystem)).size === selections.length && new Set(selections.map(({ cache }) => `${cache.device}:${cache.inode}`)).size === selections.length && new Set(selections.map(({ cache }) => cache.directory)).size === selections.length,
   "Select distinct dependency caches with at most one per ecosystem."
@@ -50618,7 +50638,7 @@ var workspaceDependencySelectionsSchema = external_exports.array(workspaceDepend
 function sameWorkspaceDependencySelections(a, b) {
   return a === b || !!a && !!b && a.length === b.length && a.every((selection) => {
     const other = b.find(({ identity }) => identity.ecosystem === selection.identity.ecosystem);
-    return !!other && selection.identity.key === other.identity.key && sameWorkspaceProject(selection.cache, other.cache) && selection.artifactManifestSha256 === other.artifactManifestSha256 && selection.cacheFingerprint === other.cacheFingerprint;
+    return !!other && selection.identity.key === other.identity.key && sameWorkspaceProject(selection.cache, other.cache) && selection.artifactManifestSha256 === other.artifactManifestSha256 && selection.cacheFingerprint === other.cacheFingerprint && selection.toolchainFingerprint === other.toolchainFingerprint && selection.toolchainBindingDigest === other.toolchainBindingDigest;
   });
 }
 
@@ -51061,7 +51081,7 @@ function mkdirGitCheckoutInsidePinnedRun(runRoot) {
   return mkdirInsideRoot(runRoot, MANAGED_GIT_CHECKOUT_LEAF);
 }
 async function mkdirTemporaryInsidePinnedRoot(root, leaf) {
-  if (!/^(?:lark-codex-exec|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) throw new ManagedWorkspaceStorageError("invalid_binding");
+  if (!/^(?:lark-codex-exec|lark-dependency-probe|codex-lark-continuation-dry-run)-[a-f0-9]{24}$/.test(leaf)) throw new ManagedWorkspaceStorageError("invalid_binding");
   return mkdirInsideRoot(root, leaf, true);
 }
 async function mkdirInsideRoot(root, leaf, temporary = false) {
@@ -51442,16 +51462,16 @@ var WorkspaceGitSnapshotError = class extends Error {
   code;
 };
 function gitSnapshotKey(identity) {
-  const { repositoryId, scope: scope2, commit, objectFormat } = identity;
-  if (!repositoryIdentity.safeParse({ repositoryId, scope: scope2, commit }).success || objectFormat !== "sha1" && objectFormat !== "sha256" || commit.length !== (objectFormat === "sha1" ? 40 : 64)) {
+  const { repositoryId, scope, commit, objectFormat } = identity;
+  if (!repositoryIdentity.safeParse({ repositoryId, scope, commit }).success || objectFormat !== "sha1" && objectFormat !== "sha256" || commit.length !== (objectFormat === "sha1" ? 40 : 64)) {
     throw new WorkspaceGitSnapshotError("invalid_snapshot");
   }
-  return createHash5("sha256").update(JSON.stringify(["git-snapshot-v1", repositoryId, scope2, objectFormat, commit])).digest("hex");
+  return createHash5("sha256").update(JSON.stringify(["git-snapshot-v1", repositoryId, scope, objectFormat, commit])).digest("hex");
 }
 async function readWorkspaceGitCacheIdentity(input2) {
-  const { repositoryId, scope: scope2, commit } = input2;
+  const { repositoryId, scope, commit } = input2;
   const objectFormat = commit.length === 40 ? "sha1" : "sha256";
-  const identity = { repositoryId, scope: scope2, commit, objectFormat };
+  const identity = { repositoryId, scope, commit, objectFormat };
   const key = gitSnapshotKey(identity);
   const binding = await validateWorkspaceProject(input2.authorizedRoots, input2.gitDirectory);
   const { storeFingerprint } = await fingerprintCache(binding, commit, objectFormat).catch(() => {
@@ -51916,9 +51936,9 @@ async function resolveManagedGitSelection(input2) {
   const bindings = [project, cache, roots.scratch, roots.artifacts];
   try {
     await assertWorkspaceGitCheckoutMounts(bindings);
-    const { commit, repositoryId, scope: scope2 } = selected;
-    if (input2.expected && (input2.expected.commit !== commit || input2.expected.repositoryId !== repositoryId || input2.expected.scope !== scope2)) return inactive();
-    const snapshot = await readWorkspaceGitCacheIdentity({ gitDirectory: cache, authorizedRoots, commit, repositoryId, scope: scope2 });
+    const { commit, repositoryId, scope } = selected;
+    if (input2.expected && (input2.expected.commit !== commit || input2.expected.repositoryId !== repositoryId || input2.expected.scope !== scope)) return inactive();
+    const snapshot = await readWorkspaceGitCacheIdentity({ gitDirectory: cache, authorizedRoots, commit, repositoryId, scope });
     const selection = { cache, ...snapshot };
     if (input2.expected && !sameManagedGitSelection(selection, input2.expected)) return inactive();
     return selection;
@@ -52083,8 +52103,6 @@ function unsupported() {
 var REGISTRY = "workspace-dependencies.json";
 var REGISTRY_BYTES = 256 * 1024;
 var MANIFEST_BYTES = 8 * 1024 * 1024;
-var digest = external_exports.string().regex(/^[a-f0-9]{64}$/);
-var scope = external_exports.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/);
 var ecosystem = external_exports.enum(["npm", "pip"]);
 var policy = external_exports.discriminatedUnion("ecosystem", [
   external_exports.strictObject({ ecosystem: external_exports.literal("npm"), registry: workspaceDependencyNpmRegistrySchema }),
@@ -52092,12 +52110,13 @@ var policy = external_exports.discriminatedUnion("ecosystem", [
 ]);
 var registrySchema3 = external_exports.strictObject({
   version: external_exports.literal(1),
-  projects: external_exports.array(external_exports.strictObject({ source: workspaceDependencyBindingSchema, repositoryId: digest, policies: external_exports.array(policy).min(1).max(2).refine((policies) => new Set(policies.map(({ ecosystem: ecosystem2 }) => ecosystem2)).size === policies.length) })).max(128),
-  caches: external_exports.array(external_exports.strictObject({ scope, key: digest, ecosystem, cache: workspaceDependencyBindingSchema, artifactManifestSha256: digest })).max(128)
+  projects: external_exports.array(external_exports.strictObject({ source: workspaceDependencyBindingSchema, repositoryId: dependencyDigestSchema, policies: external_exports.array(policy).min(1).max(2).refine((policies) => new Set(policies.map(({ ecosystem: ecosystem2 }) => ecosystem2)).size === policies.length) })).max(128),
+  caches: external_exports.array(external_exports.strictObject({ scope: dependencyScopeSchema, key: dependencyDigestSchema, ecosystem, cache: workspaceDependencyBindingSchema, artifactManifestSha256: dependencyDigestSchema })).max(128),
+  toolchains: external_exports.array(workspaceDependencyToolchainConfigSchema).max(2).refine((toolchains) => new Set(toolchains.map(({ ecosystem: ecosystem2 }) => ecosystem2)).size === toolchains.length).default([])
 });
 var messages = {
   dependency_registry_invalid: "The operator dependency cache registry is invalid or unreadable.",
-  dependency_write_overlap: "An effective write directory overlaps the registered dependency caches or their policy directory.",
+  dependency_write_overlap: "An effective write directory overlaps registered dependency caches, toolchains, or their policy directory.",
   dependency_write_layout_unsupported: "The effective writable directory has an unsupported mount layout.",
   dependency_launch_unsupported: "This Codex launch configuration cannot enforce the dependency cache write boundary.",
   dependency_runtime_home_required: "Dependency cache protection requires a pre-existing, dedicated absolute CODEX_HOME outside the policy and cache locations.",
@@ -52131,7 +52150,8 @@ async function assertWorkspaceDependencySelectionAuthorized(configPath, project,
   for (const dependency of dependencies) {
     const { identity, cache, artifactManifestSha256 } = dependency;
     const policy2 = entry.policies.find(({ ecosystem: ecosystem2 }) => ecosystem2 === identity.ecosystem);
-    if (!policy2 || policy2.ecosystem === "npm" && (identity.ecosystem !== "npm" || policy2.registry !== identity.registry) || identity.scope !== git2.scope || !registry2.caches.some((candidate) => candidate.ecosystem === identity.ecosystem && candidate.key === identity.key && candidate.scope === identity.scope && candidate.artifactManifestSha256 === artifactManifestSha256 && sameWorkspaceProject(candidate.cache, cache))) fail("dependency_selection_revoked");
+    const execution = registry2.toolchains.find(({ ecosystem: ecosystem2 }) => ecosystem2 === identity.ecosystem);
+    if (!policy2 || policy2.ecosystem === "npm" && (identity.ecosystem !== "npm" || policy2.registry !== identity.registry) || dependency.toolchainBindingDigest !== (execution && workspaceDependencyToolchainBindingDigest(execution)) || Boolean(dependency.toolchainFingerprint) !== Boolean(execution) || identity.scope !== git2.scope || !registry2.caches.some((candidate) => candidate.ecosystem === identity.ecosystem && candidate.key === identity.key && candidate.scope === identity.scope && candidate.artifactManifestSha256 === artifactManifestSha256 && sameWorkspaceProject(candidate.cache, cache))) fail("dependency_selection_revoked");
   }
 }
 async function loadWorkspaceDependencyWriteGuard(configPath, options) {
@@ -52206,26 +52226,20 @@ async function readRegistry3(configPath, allowMissingCachesForStorage = false) {
       projectIds.add(id);
       projectPaths.add(source.directory);
     }
+    const toolchainLocations = [];
+    for (const configured of registry2.toolchains) {
+      for (const root of [configured.runtime, configured.installer]) {
+        if (toolchainLocations.some(({ binding }) => sameWorkspaceProject(binding, root))) continue;
+        const location = await protectedRegistryLocation(root, mounts, allowMissingCachesForStorage);
+        if (protectedLocations.some((other) => overlap2(location, other, mounts.contains))) fail("dependency_registry_invalid");
+        toolchainLocations.push(location);
+      }
+    }
+    protectedLocations.push(...toolchainLocations);
     for (const { cache, key } of registry2.caches) {
       if (keys.has(key)) fail("dependency_registry_invalid");
       keys.add(key);
-      let location;
-      if (allowMissingCachesForStorage && !await pathExists(cache.directory)) {
-        const { parent, target } = await projectStorageDirectory(cache.directory);
-        await assertProtectedWorkspacePath(parent, false, true);
-        if (!mounts.supports(target)) fail("dependency_registry_invalid");
-        location = {
-          binding: cache,
-          id: `${cache.device}:${cache.inode}`,
-          ancestors: await readWorkspaceAncestorIdentities(parent.directory),
-          aliases: mounts.aliases(target)
-        };
-      } else {
-        const current = await validateWorkspaceProject(cache.directory, cache);
-        await assertProtectedWorkspacePath(current);
-        if (!mounts.supports(current.directory)) fail("dependency_registry_invalid");
-        location = await describeLocation(current, mounts);
-      }
+      const location = await protectedRegistryLocation(cache, mounts, allowMissingCachesForStorage);
       if (protectedLocations.some((other) => overlap2(location, other, mounts.contains))) fail("dependency_registry_invalid");
       protectedLocations.push(location);
     }
@@ -52233,6 +52247,23 @@ async function readRegistry3(configPath, allowMissingCachesForStorage = false) {
   } catch {
     return fail("dependency_registry_invalid");
   }
+}
+async function protectedRegistryLocation(binding, mounts, allowMissing) {
+  if (allowMissing && !await pathExists(binding.directory)) {
+    const { parent, target } = await projectStorageDirectory(binding.directory);
+    await assertProtectedWorkspacePath(parent, false, true);
+    if (!mounts.supports(target) || target !== binding.directory) fail("dependency_registry_invalid");
+    return {
+      binding,
+      id: `${binding.device}:${binding.inode}`,
+      ancestors: await readWorkspaceAncestorIdentities(parent.directory),
+      aliases: mounts.aliases(target)
+    };
+  }
+  const current = await validateWorkspaceProject(binding.directory, binding);
+  await assertProtectedWorkspacePath(current);
+  if (!mounts.supports(current.directory)) fail("dependency_registry_invalid");
+  return describeLocation(current, mounts);
 }
 async function projectStorageDirectory(directory) {
   const suffix = [];
@@ -56140,9 +56171,9 @@ var MemoryStore = class {
     });
   }
   // ── Episodes ──
-  async searchEpisodes(query, scope2) {
-    if (!scope2?.chatId) return [];
-    const dir = scope2.threadId ? path20.join(this.baseDir, "episodes", scope2.chatId, "threads", scope2.threadId) : path20.join(this.baseDir, "episodes", scope2.chatId);
+  async searchEpisodes(query, scope) {
+    if (!scope?.chatId) return [];
+    const dir = scope.threadId ? path20.join(this.baseDir, "episodes", scope.chatId, "threads", scope.threadId) : path20.join(this.baseDir, "episodes", scope.chatId);
     try {
       const files = await fs15.readdir(dir);
       const mdFiles = files.filter((f) => f.endsWith(".md") && !f.startsWith("archive-"));
@@ -56172,8 +56203,8 @@ var MemoryStore = class {
             id: file2,
             content,
             timestamp: stat2.mtime.toISOString(),
-            chatId: scope2.chatId,
-            threadId: scope2.threadId
+            chatId: scope.chatId,
+            threadId: scope.threadId
           },
           score: totalScore
         });
@@ -57042,9 +57073,9 @@ async function listVisibleJobs(input2) {
   void audit("list_jobs", input2.caller, input2.auditArgs ?? {}, "ok");
   return { ok: true, jobs: visible };
 }
-function jobVisibleToCaller(job, scope2) {
-  if (scope2.isPrivateChat) return job.meta.created_by === scope2.caller;
-  return job.meta.target_chat_id === scope2.chatId;
+function jobVisibleToCaller(job, scope) {
+  if (scope.isPrivateChat) return job.meta.created_by === scope.caller;
+  return job.meta.target_chat_id === scope.chatId;
 }
 function canReadJobBody(job, caller) {
   return job.meta.created_by === caller || job.meta.type === "message";
@@ -62459,8 +62490,8 @@ var MeetingDedup = class {
   * `scope` isolates sessions: one meeting can carry both an app-identity bot and a
   * user-identity follower, reading the same endpoint.
   */
-  async isDuplicate(activity, scope2) {
-    const keys = [activity.eventId ? `${scope2}|d|${activity.eventId}` : void 0, `${scope2}|c|${contentKey(activity)}`].filter((k) => k !== void 0);
+  async isDuplicate(activity, scope) {
+    const keys = [activity.eventId ? `${scope}|d|${activity.eventId}` : void 0, `${scope}|c|${contentKey(activity)}`].filter((k) => k !== void 0);
     if ((await Promise.all(keys.map((k) => this.seen.has(k)))).some(Boolean)) return true;
     await Promise.all(keys.map((k) => this.seen.add(k)));
     return false;
@@ -65791,17 +65822,17 @@ var ChatPipelineManager = class {
   constructor(config2) {
     this.config = config2;
   }
-  push(scope2, msg, handler) {
-    this.getOrCreate(scope2, false).push(msg, handler);
+  push(scope, msg, handler) {
+    this.getOrCreate(scope, false).push(msg, handler);
   }
-  run(scope2, task) {
-    return this.getOrCreate(scope2, true).run(task);
+  run(scope, task) {
+    return this.getOrCreate(scope, true).run(task);
   }
-  getOrCreate(scope2, serialOnly) {
-    let p = this.pipelines.get(scope2);
+  getOrCreate(scope, serialOnly) {
+    let p = this.pipelines.get(scope);
     if (!p) {
       p = new ChatPipeline(this.config, serialOnly);
-      this.pipelines.set(scope2, p);
+      this.pipelines.set(scope, p);
     }
     return p;
   }
@@ -69340,13 +69371,13 @@ var SessionHealthMonitor = class {
   }
 };
 function buildSessionHealthNudgeText(nudge) {
-  const scope2 = nudge.threadId ? `${nudge.chatId} / ${nudge.threadId}` : nudge.chatId;
+  const scope = nudge.threadId ? `${nudge.chatId} / ${nudge.threadId}` : nudge.chatId;
   const reason = nudge.reason === "token_usage_threshold" ? "reported Codex exec token usage crossed the configured threshold" : nudge.reason === "prompt_bytes_threshold" ? "estimated prompt bytes crossed the configured threshold" : "turn count crossed the configured threshold";
   const usageLine = nudge.totalTokens !== void 0 ? `Codex exec usage: ${nudge.totalTokens} total tokens${nudge.contextWindowTokens ? ` / ${nudge.contextWindowTokens} context window` : ""} (usage samples: ${nudge.usageSamples}, missing: ${nudge.missingUsageSamples}).` : `Heuristic: ${nudge.turnCount} exec turns, ${nudge.promptBytes} prompt bytes, ${nudge.responseBytes} response bytes observed by the Lark bridge.`;
   const usageNote = nudge.totalTokens !== void 0 ? "Codex exec JSON exposed token/context usage for this session, so token usage was preferred over the prompt-byte heuristic." : "Codex exec JSON did not expose a stable token/context usage statistic for this session, so this warning is heuristic.";
   return [
     "[Codex session health nudge]",
-    `Scope: ${scope2}`,
+    `Scope: ${scope}`,
     nudge.sessionId ? `Session: ${nudge.sessionId}` : "Session: unknown",
     `Reason: ${reason}`,
     usageLine,
@@ -70138,8 +70169,8 @@ function formatFlushFailure(err, newSession) {
 Error: ${message}`;
 }
 function formatHelpMessage() {
-  const formatSection = (scope2, title) => {
-    const rows = CHAT_COMMANDS.filter((command) => command.scope === scope2);
+  const formatSection = (scope, title) => {
+    const rows = CHAT_COMMANDS.filter((command) => command.scope === scope);
     return [
       title,
       ...rows.map((command) => `- ${command.usage}: ${command.description}`)
@@ -70346,12 +70377,12 @@ function registerCodexDeliveryHandlers(options) {
       const handledCron = await handleCronInboundCommand({
         message,
         service: cronControlService,
-        listVisibleJobs: (scope2) => listVisibleJobs({
-          ...scope2,
+        listVisibleJobs: (scope) => listVisibleJobs({
+          ...scope,
           status: "all",
           auditArgs: {
             source: "quoted_cron_control",
-            chat_id: scope2.chatId
+            chat_id: scope.chatId
           }
         }),
         isPrivateChat: (chatId) => channel.isPrivateChat(chatId),
@@ -71269,9 +71300,9 @@ var ContinuationInputStore = class {
       if (!metadata) return { ok: false, reason: "missing" };
       if (metadata.isSymbolicLink() || !metadata.isFile()) return { ok: false, reason: "invalid" };
       if (metadata.size !== artifact.sizeBytes) return { ok: false, reason: "modified" };
-      let digest2;
+      let digest;
       try {
-        digest2 = await sha256File(filePath);
+        digest = await sha256File(filePath);
       } catch (error62) {
         const code = error62?.code;
         if (code === "ENOENT") {
@@ -71285,7 +71316,7 @@ var ContinuationInputStore = class {
         }
         throw error62;
       }
-      if (digest2 !== artifact.sha256) return { ok: false, reason: "modified" };
+      if (digest !== artifact.sha256) return { ok: false, reason: "modified" };
     }
     return { ok: true };
   }
@@ -71501,7 +71532,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
     if (before.size > maxFileBytes) {
       throw new Error(`Continuation input file byte limit exceeded: ${before.size} > ${maxFileBytes}.`);
     }
-    const digest2 = createHash16("sha256");
+    const digest = createHash16("sha256");
     let copiedBytes = 0;
     const hashing = new Transform({
       transform(chunk, _encoding, callback) {
@@ -71510,7 +71541,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
           callback(new Error(`Continuation input file byte limit exceeded: ${copiedBytes} > ${maxFileBytes}.`));
           return;
         }
-        digest2.update(chunk);
+        digest.update(chunk);
         callback(null, chunk);
       }
     });
@@ -71523,7 +71554,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
     if (before.size !== after.size || copiedBytes !== after.size) {
       throw new Error("Continuation input source changed while it was being admitted.");
     }
-    return { sha256: digest2.digest("hex"), sizeBytes: copiedBytes };
+    return { sha256: digest.digest("hex"), sizeBytes: copiedBytes };
   } finally {
     await source.close();
   }
@@ -71537,7 +71568,7 @@ async function lstatForVerification(filePath) {
   }
 }
 async function sha256File(filePath) {
-  const digest2 = createHash16("sha256");
+  const digest = createHash16("sha256");
   const file2 = await fs27.open(
     filePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
@@ -71546,8 +71577,8 @@ async function sha256File(filePath) {
     if (!(await file2.stat()).isFile()) {
       throw new InvalidManagedInputError("Continuation managed input is not a regular file.");
     }
-    for await (const chunk of file2.createReadStream({ autoClose: false })) digest2.update(chunk);
-    return digest2.digest("hex");
+    for await (const chunk of file2.createReadStream({ autoClose: false })) digest.update(chunk);
+    return digest.digest("hex");
   } finally {
     await file2.close();
   }

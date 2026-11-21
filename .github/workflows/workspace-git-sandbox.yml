@@ -87,6 +87,8 @@ jobs:
           test "$("$bundle_dir/$binary" --version)" = 'codex-cli 0.171.0'
           node --import tsx scripts/workspace-git-snapshot-smoke.ts
           node --import tsx scripts/workspace-dependency-registry-smoke.ts
+          LARK_TEST_CODEX_NATIVE_BINARY="$bundle_dir/$binary" LARK_TEST_PYTHON_PATH="$(command -v python)" \
+            node --import tsx scripts/workspace-dependency-toolchain-smoke.ts
           node --import tsx scripts/workspace-dependency-mount-policy-smoke.ts
           LARK_TEST_CODEX_NATIVE_BINARY="$bundle_dir/$binary" node --import tsx scripts/workspace-dependency-launch-smoke.ts
           LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX=1 \

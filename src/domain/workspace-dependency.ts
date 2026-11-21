@@ -48,12 +48,29 @@ export const workspaceDependencyIdentitySchema = identityShape.refine((identity)
 export const workspaceDependencyBindingSchema = workspaceProjectBindingSchema.refine(({ directory }) => path.resolve(directory) === directory
   && directory.length <= 4096 && !/[\u0000-\u001f\u007f*?\[\]]/.test(directory));
 
+export const workspaceDependencyToolchainConfigSchema = z.strictObject({
+  ecosystem: z.enum(['npm', 'pip']),
+  executable: z.string().max(4096).refine((value) => path.isAbsolute(value) && path.resolve(value) === value
+    && !/[\u0000-\u001f\u007f*?\[\]]/.test(value)),
+  runtime: workspaceDependencyBindingSchema,
+  installer: workspaceDependencyBindingSchema,
+});
+export type WorkspaceDependencyToolchainConfig = z.infer<typeof workspaceDependencyToolchainConfigSchema>;
+
+export function workspaceDependencyToolchainBindingDigest({ ecosystem, executable, runtime, installer }: WorkspaceDependencyToolchainConfig): string {
+  return createHash('sha256').update(JSON.stringify(['workspace-toolchain-binding-v1', ecosystem, executable,
+    [runtime.directory, runtime.device, runtime.inode], [installer.directory, installer.device, installer.inode]])).digest('hex');
+}
+
 export const workspaceDependencySelectionSchema = z.strictObject({
   identity: workspaceDependencyIdentitySchema,
   cache: workspaceDependencyBindingSchema,
   artifactManifestSha256: dependencyDigestSchema,
   cacheFingerprint: dependencyDigestSchema,
-});
+  toolchainFingerprint: dependencyDigestSchema.optional(),
+  toolchainBindingDigest: dependencyDigestSchema.optional(),
+}).refine(({ toolchainFingerprint, toolchainBindingDigest }) => (toolchainFingerprint === undefined) === (toolchainBindingDigest === undefined),
+  'A measured toolchain requires its declared binding.');
 export type WorkspaceDependencySelection = z.infer<typeof workspaceDependencySelectionSchema>;
 
 export const workspaceDependencySelectionsSchema = z.array(workspaceDependencySelectionSchema).max(2).refine((selections) =>
@@ -66,6 +83,7 @@ export function sameWorkspaceDependencySelections(a?: readonly WorkspaceDependen
   return a === b || !!a && !!b && a.length === b.length && a.every((selection) => {
     const other = b.find(({ identity }) => identity.ecosystem === selection.identity.ecosystem);
     return !!other && selection.identity.key === other.identity.key && sameWorkspaceProject(selection.cache, other.cache)
-      && selection.artifactManifestSha256 === other.artifactManifestSha256 && selection.cacheFingerprint === other.cacheFingerprint;
+      && selection.artifactManifestSha256 === other.artifactManifestSha256 && selection.cacheFingerprint === other.cacheFingerprint
+      && selection.toolchainFingerprint === other.toolchainFingerprint && selection.toolchainBindingDigest === other.toolchainBindingDigest;
   });
 }

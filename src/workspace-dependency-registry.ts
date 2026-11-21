@@ -3,8 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import type { ManagedGitSelection, ManagedWorkspaceRoots } from './domain/managed-workspace.js';
-import { workspaceDependencyBindingSchema as binding, workspaceDependencyNpmRegistrySchema,
-  type WorkspaceDependencySelection } from './domain/workspace-dependency.js';
+import { dependencyDigestSchema as digest, dependencyScopeSchema as scope, workspaceDependencyBindingSchema as binding,
+  workspaceDependencyNpmRegistrySchema, workspaceDependencyToolchainBindingDigest, workspaceDependencyToolchainConfigSchema,
+  type WorkspaceDependencySelection, type WorkspaceDependencyToolchainConfig } from './domain/workspace-dependency.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { resolveManagedGitSelection } from './managed-git-registry.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath, readWorkspaceAncestorIdentities } from './managed-workspace-ancestry.js';
@@ -18,8 +19,6 @@ const REGISTRY = 'workspace-dependencies.json';
 const MANIFESTS = 'workspace-dependency-manifests';
 const REGISTRY_BYTES = 256 * 1024;
 const MANIFEST_BYTES = 8 * 1024 * 1024;
-const digest = z.string().regex(/^[a-f0-9]{64}$/);
-const scope = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/);
 const ecosystem = z.enum(['npm', 'pip']);
 const policy = z.discriminatedUnion('ecosystem', [
   z.strictObject({ ecosystem: z.literal('npm'), registry: workspaceDependencyNpmRegistrySchema }),
@@ -29,11 +28,13 @@ const registrySchema = z.strictObject({ version: z.literal(1),
   projects: z.array(z.strictObject({ source: binding, repositoryId: digest, policies: z.array(policy).min(1).max(2)
     .refine((policies) => new Set(policies.map(({ ecosystem }) => ecosystem)).size === policies.length) })).max(128),
   caches: z.array(z.strictObject({ scope, key: digest, ecosystem, cache: binding, artifactManifestSha256: digest })).max(128),
+  toolchains: z.array(workspaceDependencyToolchainConfigSchema).max(2)
+    .refine((toolchains) => new Set(toolchains.map(({ ecosystem }) => ecosystem)).size === toolchains.length).default([]),
 });
 
 const messages = {
   dependency_registry_invalid: 'The operator dependency cache registry is invalid or unreadable.',
-  dependency_write_overlap: 'An effective write directory overlaps the registered dependency caches or their policy directory.',
+  dependency_write_overlap: 'An effective write directory overlaps registered dependency caches, toolchains, or their policy directory.',
   dependency_write_layout_unsupported: 'The effective writable directory has an unsupported mount layout.',
   dependency_launch_unsupported: 'This Codex launch configuration cannot enforce the dependency cache write boundary.',
   dependency_runtime_home_required: 'Dependency cache protection requires a pre-existing, dedicated absolute CODEX_HOME outside the policy and cache locations.',
@@ -54,7 +55,8 @@ export class WorkspaceDependencyPolicyError extends Error {
   }
 }
 
-type PreparedDependency = { selection: WorkspaceDependencySelection; stagedLock: string; npmManifest?: Buffer };
+type PreparedDependency = { selection: WorkspaceDependencySelection; stagedLock: string; npmManifest?: Buffer;
+  execution?: WorkspaceDependencyToolchainConfig };
 
 export async function resolveWorkspaceDependencySelections(request: {
   configPath?: string;
@@ -64,7 +66,10 @@ export async function resolveWorkspaceDependencySelections(request: {
   git?: ManagedGitSelection;
   sourceRegistryPath?: string;
   sourceRegistryRoot?: string;
-  toolchains: Partial<Record<z.infer<typeof ecosystem>, WorkspaceDependencyInput['toolchain']>>;
+  toolchains?: Partial<Record<z.infer<typeof ecosystem>, WorkspaceDependencyInput['toolchain']>>;
+  probeToolchain?: (configured: WorkspaceDependencyToolchainConfig, expectedFingerprint?: string) => Promise<{
+    toolchain: WorkspaceDependencyInput['toolchain']; fingerprint: string;
+  }>;
   expected?: readonly WorkspaceDependencySelection[];
 }): Promise<PreparedDependency[]> {
   const { project, git, authorizedRoots, expected, roots } = request;
@@ -92,8 +97,25 @@ export async function resolveWorkspaceDependencySelections(request: {
   const files = await readWorkspaceGitDependencyInputs({ gitDirectory: git.cache, authorizedRoots, ...git }, git, filenames);
   const prepared: PreparedDependency[] = [];
   const approvedEntries: typeof registry.caches = [];
+  const approvedToolchains: typeof registry.toolchains = [];
   for (const policy of policies) {
-    const toolchain = request.toolchains[policy.ecosystem] ?? fail('dependency_toolchain_unavailable');
+    const previous = expected?.find(({ identity }) => identity.ecosystem === policy.ecosystem);
+    const execution = registry.toolchains.find(({ ecosystem }) => ecosystem === policy.ecosystem);
+    const toolchainBindingDigest = execution && workspaceDependencyToolchainBindingDigest(execution);
+    if (previous && previous.toolchainBindingDigest !== toolchainBindingDigest) fail('dependency_selection_revoked');
+    let toolchain: WorkspaceDependencyInput['toolchain'];
+    let toolchainFingerprint: string | undefined;
+    if (execution) {
+      if (!request.probeToolchain) fail('dependency_toolchain_unavailable');
+      const probed = await request.probeToolchain(execution, previous?.toolchainFingerprint);
+      if (!digest.safeParse(probed.fingerprint).success) fail('dependency_toolchain_unavailable');
+      if (previous && probed.fingerprint !== previous.toolchainFingerprint) fail('dependency_selection_revoked');
+      approvedToolchains.push(execution);
+      ({ toolchain, fingerprint: toolchainFingerprint } = probed);
+    } else {
+      if (request.probeToolchain || !request.toolchains?.[policy.ecosystem]) fail('dependency_toolchain_unavailable');
+      toolchain = request.toolchains[policy.ecosystem]!;
+    }
     const identityFields = { scope: git.scope, toolchain };
     const input = policy.ecosystem === 'pip'
       ? { ...policy, ...identityFields, lock: files.get('requirements.lock')! }
@@ -102,7 +124,6 @@ export async function resolveWorkspaceDependencySelections(request: {
     const approved = registry.caches.find((entry) => entry.key === key && entry.scope === input.scope && entry.ecosystem === input.ecosystem);
     if (!approved) fail(expected ? 'dependency_selection_revoked' : 'dependency_cache_unavailable');
     approvedEntries.push(approved);
-    const previous = expected?.find(({ identity }) => identity.ecosystem === input.ecosystem);
     if (previous && (previous.identity.key !== key || !sameWorkspaceProject(previous.cache, approved.cache)
       || previous.artifactManifestSha256 !== approved.artifactManifestSha256)) fail('dependency_selection_revoked');
     const artifactManifest = await readProtectedJson(path.join(registry.directory, MANIFESTS, `${key}.json`), MANIFEST_BYTES,
@@ -113,7 +134,9 @@ export async function resolveWorkspaceDependencySelections(request: {
       expectedFingerprint: previous?.cacheFingerprint });
     if (measured.artifactManifestSha256 !== approved.artifactManifestSha256) fail('dependency_manifest_mismatch');
     const { cache, identity, artifactManifestSha256, cacheFingerprint } = measured;
-    prepared.push({ selection: { cache, identity, artifactManifestSha256, cacheFingerprint }, stagedLock: measured.stagedLock,
+    prepared.push({ selection: { cache, identity, artifactManifestSha256, cacheFingerprint,
+      ...(toolchainFingerprint ? { toolchainFingerprint, toolchainBindingDigest } : {}) },
+      stagedLock: measured.stagedLock, ...(execution ? { execution } : {}),
       ...(input.ecosystem === 'npm' ? { npmManifest: input.manifest } : {}) });
   }
   // Revoke, rather than substitute, if observed policy changed during expensive verification.
@@ -121,7 +144,9 @@ export async function resolveWorkspaceDependencySelections(request: {
   const current = await readRegistry(request.configPath);
   const currentProject = current?.projects.find(({ source }) => source.directory === project.directory);
   if (JSON.stringify(currentProject) !== JSON.stringify(entry) || approvedEntries.some((approved) =>
-    JSON.stringify(current?.caches.find(({ key }) => key === approved.key)) !== JSON.stringify(approved))) fail('dependency_selection_revoked');
+    JSON.stringify(current?.caches.find(({ key }) => key === approved.key)) !== JSON.stringify(approved))
+    || approvedToolchains.some((approved) => JSON.stringify(current?.toolchains.find(({ ecosystem }) => ecosystem === approved.ecosystem))
+      !== JSON.stringify(approved))) fail('dependency_selection_revoked');
   return prepared;
 }
 
@@ -142,7 +167,10 @@ export async function assertWorkspaceDependencySelectionAuthorized(configPath: s
   for (const dependency of dependencies) {
     const { identity, cache, artifactManifestSha256 } = dependency;
     const policy = entry.policies.find(({ ecosystem }) => ecosystem === identity.ecosystem);
+    const execution = registry.toolchains.find(({ ecosystem }) => ecosystem === identity.ecosystem);
     if (!policy || (policy.ecosystem === 'npm' && (identity.ecosystem !== 'npm' || policy.registry !== identity.registry))
+      || dependency.toolchainBindingDigest !== (execution && workspaceDependencyToolchainBindingDigest(execution))
+      || Boolean(dependency.toolchainFingerprint) !== Boolean(execution)
       || identity.scope !== git.scope || !registry.caches.some((candidate) => candidate.ecosystem === identity.ecosystem
         && candidate.key === identity.key && candidate.scope === identity.scope && candidate.artifactManifestSha256 === artifactManifestSha256
         && sameWorkspaceProject(candidate.cache, cache))) fail('dependency_selection_revoked');
@@ -217,27 +245,40 @@ async function readRegistry(configPath?: string, allowMissingCachesForStorage = 
       projectIds.add(id);
       projectPaths.add(source.directory);
     }
+    const toolchainLocations: typeof protectedLocations = [];
+    for (const configured of registry.toolchains) {
+      for (const root of [configured.runtime, configured.installer]) {
+        if (toolchainLocations.some(({ binding }) => sameWorkspaceProject(binding, root))) continue;
+        const location = await protectedRegistryLocation(root, mounts, allowMissingCachesForStorage);
+        if (protectedLocations.some((other) => overlap(location, other, mounts.contains))) fail('dependency_registry_invalid');
+        toolchainLocations.push(location);
+      }
+    }
+    protectedLocations.push(...toolchainLocations);
     for (const { cache, key } of registry.caches) {
       if (keys.has(key)) fail('dependency_registry_invalid');
       keys.add(key);
-      let location: Awaited<ReturnType<typeof describeLocation>>;
-      if (allowMissingCachesForStorage && !await pathExists(cache.directory)) {
-        const { parent, target } = await projectStorageDirectory(cache.directory);
-        await assertProtectedWorkspacePath(parent, false, true);
-        if (!mounts.supports(target)) fail('dependency_registry_invalid');
-        location = { binding: cache, id: `${cache.device}:${cache.inode}`, ancestors: await readWorkspaceAncestorIdentities(parent.directory),
-          aliases: mounts.aliases(target) };
-      } else {
-        const current = await validateWorkspaceProject(cache.directory, cache);
-        await assertProtectedWorkspacePath(current);
-        if (!mounts.supports(current.directory)) fail('dependency_registry_invalid');
-        location = await describeLocation(current, mounts);
-      }
+      const location = await protectedRegistryLocation(cache, mounts, allowMissingCachesForStorage);
       if (protectedLocations.some((other) => overlap(location, other, mounts.contains))) fail('dependency_registry_invalid');
       protectedLocations.push(location);
     }
     return { ...registry, directory, mounts, protected: protectedLocations };
   } catch { return fail('dependency_registry_invalid'); }
+}
+
+async function protectedRegistryLocation(binding: WorkspaceProjectBinding, mounts: WorkspaceDependencyMountPolicy,
+  allowMissing: boolean): Promise<Awaited<ReturnType<typeof describeLocation>>> {
+  if (allowMissing && !await pathExists(binding.directory)) {
+    const { parent, target } = await projectStorageDirectory(binding.directory);
+    await assertProtectedWorkspacePath(parent, false, true);
+    if (!mounts.supports(target) || target !== binding.directory) fail('dependency_registry_invalid');
+    return { binding, id: `${binding.device}:${binding.inode}`, ancestors: await readWorkspaceAncestorIdentities(parent.directory),
+      aliases: mounts.aliases(target) };
+  }
+  const current = await validateWorkspaceProject(binding.directory, binding);
+  await assertProtectedWorkspacePath(current);
+  if (!mounts.supports(current.directory)) fail('dependency_registry_invalid');
+  return describeLocation(current, mounts);
 }
 
 async function projectStorageDirectory(directory: string) {
