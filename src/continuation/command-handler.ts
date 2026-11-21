@@ -11,6 +11,7 @@ import {
 import type { LarkMessage } from '../lark-message.js';
 import { extractMessageText } from '../message-content.js';
 import type { ReplyRequest, ReplySendResult } from '../reply-sender.js';
+import { IM_ARTIFACT_SIZE_NOTE } from './artifact-delivery.js';
 import {
   CONTINUATION_RUNTIME_UNAVAILABLE,
   ContinuationServiceError,
@@ -20,7 +21,7 @@ import {
 
 export const CONTINUATION_COMMAND_DEFINITION = {
   name: 'task' as const,
-  usage: '/task <list|status|cancel|retry|resume|retain|delete>',
+  usage: '/task <list|status|artifact|cancel|retry|resume|retain|delete>',
   description: 'List and manage durable background tasks.',
   scope: 'user' as const,
 };
@@ -29,6 +30,7 @@ const TASK_USAGE = [
   'Usage:',
   '- /task list [--status pending,running,waiting_user,completed,partial,blocked,failed,cancelled]',
   '- /task status <job_id>',
+  '- /task artifact <job_id> <artifact_id>',
   '- /task cancel <job_id>',
   '- /task retry <job_id>',
   '- /task resume <job_id> <input>',
@@ -41,6 +43,7 @@ type TaskCommand =
   | { action: 'status' | 'cancel' | 'retry' | 'delete'; jobId: string }
   | { action: 'resume'; jobId: string; input: string }
   | { action: 'retain'; jobId: string; retained: boolean }
+  | { action: 'artifact'; jobId: string; artifactId: string }
   | { action: 'invalid' };
 
 const LIST_STATUSES = new Set<ContinuationListStatus>([
@@ -120,6 +123,12 @@ export async function handleContinuationCommand(
     } else if (!options.service) {
       auditResult = 'error';
       text = CONTINUATION_RUNTIME_UNAVAILABLE;
+    } else if (command.action === 'artifact') {
+      if (!options.service.enqueueArtifactForActor) {
+        throw new Error('Managed artifact delivery is unavailable.');
+      }
+      await options.service.enqueueArtifactForActor(command.jobId, command.artifactId, options.message, options.ownerOpenId);
+      text = `Artifact delivery queued: ${command.jobId} / ${command.artifactId}`;
     } else {
       text = await executeTaskCommand(
         command,
@@ -151,6 +160,9 @@ function parseTaskCommand(message: LarkMessage): TaskCommand | null {
   if (message.messageType === 'reaction' || message.reaction) return null;
   const text = taskCommandText(message);
   const normalized = stripLeadingMentions(text.replace(/\u00a0/g, ' ').trim());
+  const authenticated = stripLeadingMentions((message.workspaceDirectiveText ?? '').replace(/\u00a0/g, ' ').trim());
+  const artifact = authenticated.match(/^\/task\s+artifact\s+(job_[A-Za-z0-9_-]{8,128})\s+([A-Za-z0-9_.-]{1,80})$/i);
+  if (artifact) return { action: 'artifact', jobId: artifact[1], artifactId: artifact[2] };
   if (!/^\/task(?:\s|$)/i.test(normalized)) return null;
   const listMatch = normalized.match(/^\/task\s+list(?:\s+--status\s+(.+?))?\s*$/i);
   if (listMatch) {
@@ -205,7 +217,7 @@ function stripLeadingMentions(text: string): string {
 }
 
 async function executeTaskCommand(
-  command: Exclude<TaskCommand, { action: 'invalid' }>,
+  command: Exclude<TaskCommand, { action: 'invalid' | 'artifact' }>,
   service: ContinuationTaskService,
   actorOpenId: string,
   ownerOpenId: string | null | undefined,
@@ -319,6 +331,9 @@ function formatTaskStatus(job: ContinuationJob): string {
     ...(job.resultSummary ? [`Result: ${job.resultSummary}`] : []),
     ...(job.resultArtifacts.length > 0
       ? [`Artifacts:\n${job.resultArtifacts.map((artifact) => `- ${artifact}`).join('\n')}`]
+      : []),
+    ...(job.permissions.filesystem.managedWorkspaceRoots && job.checkpoint?.artifacts.length
+      ? [`Checkpoint artifact IDs: ${job.checkpoint.artifacts.map((artifact) => artifact.id).join(', ')}\n${IM_ARTIFACT_SIZE_NOTE}`]
       : []),
   ].join('\n');
 }

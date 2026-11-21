@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { SqliteManagedWorkspaceStore } from './sqlite-managed-workspace.js';
 import {
   assertDurableRunDeliveryRequests,
   assertDurableRunTransition,
@@ -43,6 +44,7 @@ export interface SqliteDurableRunRepositoryOptions {
 const DEFAULT_DELIVERY_LEASE_MS = 30_000;
 
 export class SqliteDurableRunRepository implements DurableRunRepository {
+  private managedWorkspaceStore?: SqliteManagedWorkspaceStore;
   private constructor(
     private readonly database: DatabaseSync,
     private readonly deliveryLeaseMs: number,
@@ -87,6 +89,10 @@ export class SqliteDurableRunRepository implements DurableRunRepository {
 
   async initialize(): Promise<void> {
     await retrySqliteBusy(() => migrateSqliteToDurableV11(this.database));
+  }
+
+  getManagedWorkspaceStore(): SqliteManagedWorkspaceStore {
+    return this.managedWorkspaceStore ??= new SqliteManagedWorkspaceStore(this.database);
   }
 
   async create(request: DurableRunCreateRequest): Promise<DurableRunCreateResult> {

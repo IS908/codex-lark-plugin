@@ -412,6 +412,7 @@ export async function sendFeishuReply(
     const response = await sendTransportMessage({
       input: { raw: rawMessage },
       ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
+      ...(effectiveReplyTo && shouldStayInThread ? { replyInThread: true } : {}),
     });
     trackBotMessage(response.messageId);
     deliveredCount++;

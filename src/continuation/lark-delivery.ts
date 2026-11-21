@@ -3,6 +3,7 @@ import {
   isRetryableFeishuError,
 } from '../feishu-retry.js';
 import type {
+  ContinuationArtifactDelivery,
   ContinuationDeliveryClaim,
   ContinuationDeliveryResult,
   ContinuationDeliveryRoute,
@@ -12,6 +13,7 @@ import type {
   ContinuationClock,
   ContinuationDelivery,
 } from '../ports/continuation.js';
+import { artifactDeliveryFileName, IM_ARTIFACT_SIZE_NOTE, isImArtifactSize, parseArtifactDelivery } from './artifact-delivery.js';
 
 const IM_UUID_WINDOW_MS = 60 * 60 * 1_000;
 const DOC_COMMENT_MAX_CHARS = 1_000;
@@ -22,9 +24,39 @@ type DeliveryErrorKind = 'pre_send' | 'rejected' | 'ambiguous';
 export function createLarkContinuationDelivery(
   getTransport: () => LarkTransport,
   clock: ContinuationClock,
+  loadArtifact?: (claim: ContinuationDeliveryClaim, reference: ContinuationArtifactDelivery) => Promise<Buffer | undefined>,
 ): ContinuationDelivery {
+  const prepareArtifact: NonNullable<ContinuationDelivery['prepareArtifact']> = async (claim) => {
+    const route = claim.route;
+    if (route.kind !== 'message_thread') return invalidArtifact();
+    let reference: ContinuationArtifactDelivery;
+    let content: Buffer | undefined;
+    try {
+      reference = parseArtifactDelivery(claim.payload);
+      content = await loadArtifact?.(claim, reference);
+    } catch {
+      return invalidArtifact();
+    }
+    if (!content) return invalidArtifact();
+    if (!isImArtifactSize(content.length)) return {
+      status: 'failed', errorCode: 'artifact_delivery_size_unsupported', errorSummary: IM_ARTIFACT_SIZE_NOTE,
+    };
+    let transport: LarkTransport;
+    try {
+      transport = getTransport();
+    } catch {
+      return deliveryErrorResult('pre_send', 'im');
+    }
+    const bytes = content;
+    return () => deliverIm(transport, clock, claim, route, () => transport.uploadFile(bytes, artifactDeliveryFileName(reference.path)));
+  };
   return {
+    prepareArtifact,
     deliver: async (claim) => {
+      if (claim.kind === 'artifact') {
+        const prepared = await prepareArtifact(claim);
+        return typeof prepared === 'function' ? prepared() : prepared;
+      }
       let transport: LarkTransport;
       try {
         transport = getTransport();
@@ -59,6 +91,7 @@ async function deliverIm(
   clock: ContinuationClock,
   claim: ContinuationDeliveryClaim,
   route: Extract<ContinuationDeliveryRoute, { kind: 'message_thread' }>,
+  uploadArtifact?: () => Promise<string | undefined>,
 ): Promise<ContinuationDeliveryResult> {
   if (
     claim.attemptCount > 1
@@ -71,10 +104,20 @@ async function deliverIm(
       errorSummary: 'The prior IM delivery could not be confirmed before the UUID deduplication window expired.',
     };
   }
+  let input: Parameters<LarkTransport['sendMessage']>[0]['input'] = { text: claim.payload };
+  if (uploadArtifact) {
+    try {
+      const key = await uploadArtifact();
+      if (!key) return { status: 'retry', errorCode: 'artifact_upload_unconfirmed', errorSummary: 'Lark returned no attachment key.' };
+      input = { raw: { msgType: 'file', content: JSON.stringify({ file_key: key }) } };
+    } catch (error) {
+      return deliveryErrorResult(classifyDeliveryError(error), 'im');
+    }
+  }
   try {
     const result = await transport.sendMessage({
       chatId: route.conversationId,
-      input: { text: claim.payload },
+      input,
       replyTo: route.sourceMessageId,
       ...(route.threadId ? { replyInThread: true } : {}),
       uuid: claim.idempotencyKey,
@@ -90,6 +133,10 @@ async function deliverIm(
   } catch (error) {
     return deliveryErrorResult(classifyDeliveryError(error), 'im');
   }
+}
+
+function invalidArtifact(): ContinuationDeliveryResult {
+  return { status: 'failed', errorCode: 'artifact_delivery_reference_invalid', errorSummary: 'The committed managed artifact is unavailable or no longer matches its delivery reference.' };
 }
 
 async function deliverDocComment(

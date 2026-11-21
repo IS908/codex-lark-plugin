@@ -28,6 +28,7 @@ import type { ReplyRequest, ReplySendResult } from './reply-sender.js';
 import { logSafeError, redactErrorForLog } from './safe-log.js';
 import type { TurnObligationTracker } from './turn-obligation.js';
 import { listVisibleJobs } from './job-service.js';
+import { accessControlStore } from './runtime-access-control.js';
 
 export interface CodexDeliveryChannelPorts {
   getClient(): Lark.Client;
@@ -80,6 +81,7 @@ export interface RegisterCodexDeliveryHandlersOptions {
   actionDispatcher: CodexExecActionDispatcher | null;
   continuationService?: ContinuationTaskService | null;
   continuationAvailable?: boolean;
+  managedWorkspaceStore?: import('./codex-exec-delivery.js').CodexExecDeliveryOptions['managedWorkspaceStore'];
   cronControlService?: CronControlService;
 }
 
@@ -94,6 +96,7 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
     actionDispatcher,
     continuationService,
     continuationAvailable,
+    managedWorkspaceStore,
     cronControlService,
   } = options;
 
@@ -194,6 +197,9 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
         turnObligations,
         actionDispatcher: actionDispatcher ?? undefined,
         continuationAvailable,
+        managedWorkspaceStore,
+        uploadManagedArtifact: (data, name) => channel.getLarkTransport().uploadFile(data, name),
+        authorizeForegroundArtifactRoute: (actorId, chatId) => accessControlStore.allowsMessage(actorId, chatId),
       });
       if (hasReplyObligation) {
         turnObligations.requireSatisfiedOrDeferred(message.messageId);

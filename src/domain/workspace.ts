@@ -12,7 +12,8 @@ export type WorkspaceProjectBinding = z.infer<typeof workspaceProjectBindingSche
 export interface WorkspaceDirectoryGuard {
   binding: WorkspaceProjectBinding;
   authorizedRoots: readonly [string, ...string[]];
-  sideChannelBindings?: WorkspaceProjectBinding[];
+  auxiliaryBindings?: WorkspaceProjectBinding[];
+  requireProtectedAncestry?: boolean;
 }
 
 export function sameWorkspaceProject(

@@ -80,6 +80,7 @@ export function materializeDurableRunWorkloadClaim<Input, State>(
 }
 
 export interface DurableRunRepository {
+  getManagedWorkspaceStore?(): import('./managed-workspace.js').ManagedWorkspaceStore;
   initialize(): Promise<void>;
   create(request: DurableRunCreateRequest): Promise<DurableRunCreateResult>;
   get(runId: string): Promise<DurableRunRecord | null>;

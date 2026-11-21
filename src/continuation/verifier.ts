@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import fs from 'node:fs/promises';
 import type {
   AsyncTaskContract,
   ContinuationCheckpointV2,
@@ -12,7 +11,10 @@ import { ContinuationArtifactStore } from './artifact-store.js';
 const MAX_FINDINGS = 20;
 
 export class ContinuationVerifier {
-  constructor(private readonly artifacts: ContinuationArtifactStore) {}
+  constructor(
+    private readonly artifacts: ContinuationArtifactStore,
+    private readonly resolveArtifacts?: (job: ContinuationJob) => ContinuationArtifactStore,
+  ) {}
 
   async verify(input: {
     job: ContinuationJob;
@@ -45,7 +47,7 @@ export class ContinuationVerifier {
       add('Checkpoint structure is invalid.');
     }
     if (findings.length === 0) {
-      await this.validateArtifacts(input.job.jobId, input.candidate, add);
+      await this.validateArtifacts(input.job, input.candidate, add);
     }
     return findings.length === 0
       ? { status: 'accepted', findings: [] }
@@ -53,14 +55,16 @@ export class ContinuationVerifier {
   }
 
   private async validateArtifacts(
-    jobId: string,
+    job: ContinuationJob,
     checkpoint: ContinuationCheckpointV2,
     add: (finding: string) => void,
   ): Promise<void> {
     if (checkpoint.artifacts.length === 0) return;
     try {
+      const jobId = job.jobId;
+      const artifacts = this.resolveArtifacts?.(job) ?? this.artifacts;
       const paths = checkpoint.artifacts.map((artifact) => artifact.path);
-      const canonical = await this.artifacts.canonicalizeReferences(jobId, paths);
+      const canonical = await artifacts.canonicalizeReferences(jobId, paths);
       if (canonical.length !== paths.length) {
         add('Checkpoint artifact paths must be unique.');
         return;
@@ -71,7 +75,7 @@ export class ContinuationVerifier {
           add(`Artifact ${artifact.id} does not use its canonical path.`);
           continue;
         }
-        const content = await fs.readFile(this.artifacts.resolve(jobId, artifact.path));
+        const content = await artifacts.readArtifact(jobId, artifact.path);
         const actual = createHash('sha256').update(content).digest('hex');
         if (actual !== artifact.sha256.toLowerCase()) {
           add(`Artifact ${artifact.id} checksum does not match persisted content.`);

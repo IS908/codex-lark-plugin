@@ -19,10 +19,10 @@ import {
   extractL2PrivatePhrases,
   filterCredentialMaterial,
   loadL2Rules
-} from "./chunks/chunk-X5YBFG6Q.js";
+} from "./chunks/chunk-HYVFZ5CX.js";
 import {
   appConfig
-} from "./chunks/chunk-AIK7LKL7.js";
+} from "./chunks/chunk-WRZ2HO6K.js";
 import {
   __commonJS,
   __export,
@@ -3260,8 +3260,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path28) {
-      let input2 = path28;
+    function removeDotSegments(path37) {
+      let input2 = path37;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3335,11 +3335,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path28) {
-      if (path28 === "" || path28[0] === "/") {
-        return removeDotSegments(path28);
+    function removeDotSegmentsRelative(path37) {
+      if (path37 === "" || path37[0] === "/") {
+        return removeDotSegments(path37);
       }
-      const segments = path28.split("/");
+      const segments = path37.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3702,8 +3702,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path28 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path28 && path28 !== "/" ? path28 : void 0;
+        const path37 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path37 && path37 !== "/" ? path37 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7240,12 +7240,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs24, exportName) {
+    function addFormats(ajv, list, fs25, exportName) {
       var _a3;
       var _b;
       (_a3 = (_b = ajv.opts.code).formats) !== null && _a3 !== void 0 ? _a3 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs24[f]);
+        ajv.addFormat(f, fs25[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -14267,27 +14267,27 @@ var require_CronDate = __commonJS({
        * @param {CronDate | Date | number | string} [timestamp] - The timestamp to initialize the CronDate with.
        * @param {string} [tz] - The timezone to use for the CronDate.
        */
-      constructor(timestamp, tz) {
+      constructor(timestamp2, tz) {
         const dateOpts = { zone: tz };
-        if (!timestamp) {
+        if (!timestamp2) {
           this.#date = luxon_1.DateTime.local();
-        } else if (timestamp instanceof _CronDate) {
-          this.#date = timestamp.#date;
-          this.#dstStart = timestamp.#dstStart;
-          this.#dstStartLandingHour = timestamp.#dstStartLandingHour;
-          this.#dstEnd = timestamp.#dstEnd;
-        } else if (timestamp instanceof Date) {
-          this.#date = luxon_1.DateTime.fromJSDate(timestamp, dateOpts);
-        } else if (typeof timestamp === "number") {
-          this.#date = luxon_1.DateTime.fromMillis(timestamp, dateOpts);
+        } else if (timestamp2 instanceof _CronDate) {
+          this.#date = timestamp2.#date;
+          this.#dstStart = timestamp2.#dstStart;
+          this.#dstStartLandingHour = timestamp2.#dstStartLandingHour;
+          this.#dstEnd = timestamp2.#dstEnd;
+        } else if (timestamp2 instanceof Date) {
+          this.#date = luxon_1.DateTime.fromJSDate(timestamp2, dateOpts);
+        } else if (typeof timestamp2 === "number") {
+          this.#date = luxon_1.DateTime.fromMillis(timestamp2, dateOpts);
         } else {
-          this.#date = luxon_1.DateTime.fromISO(timestamp, dateOpts);
-          this.#date.isValid || (this.#date = luxon_1.DateTime.fromRFC2822(timestamp, dateOpts));
-          this.#date.isValid || (this.#date = luxon_1.DateTime.fromSQL(timestamp, dateOpts));
-          this.#date.isValid || (this.#date = luxon_1.DateTime.fromFormat(timestamp, "EEE, d MMM yyyy HH:mm:ss", dateOpts));
+          this.#date = luxon_1.DateTime.fromISO(timestamp2, dateOpts);
+          this.#date.isValid || (this.#date = luxon_1.DateTime.fromRFC2822(timestamp2, dateOpts));
+          this.#date.isValid || (this.#date = luxon_1.DateTime.fromSQL(timestamp2, dateOpts));
+          this.#date.isValid || (this.#date = luxon_1.DateTime.fromFormat(timestamp2, "EEE, d MMM yyyy HH:mm:ss", dateOpts));
         }
         if (!this.#date.isValid) {
-          throw new Error(`CronDate: unhandled timestamp: ${timestamp}`);
+          throw new Error(`CronDate: unhandled timestamp: ${timestamp2}`);
         }
         if (tz && tz !== this.#date.zoneName) {
           this.#date = this.#date.setZone(tz);
@@ -16861,8 +16861,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path28, errorMaps, issueData } = params;
-  const fullPath = [...path28, ...issueData.path || []];
+  const { data, path: path37, errorMaps, issueData } = params;
+  const fullPath = [...path37, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -16977,11 +16977,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path28, key) {
+  constructor(parent, value, path37, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path28;
+    this._path = path37;
     this._key = key;
   }
   get path() {
@@ -20936,10 +20936,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path28) {
-  if (!path28)
+function getElementAtPath(obj, path37) {
+  if (!path37)
     return obj;
-  return path28.reduce((acc, key) => acc?.[key], obj);
+  return path37.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -21279,11 +21279,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path28, issues) {
+function prefixIssues(path37, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path28);
+    iss.path.unshift(path37);
     return iss;
   });
 }
@@ -21745,16 +21745,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path28 = []) => {
+  const processError = (error63, path37 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path28, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path37, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path28, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path28, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
       } else {
-        const fullpath = [...path28, ...issue2.path];
+        const fullpath = [...path37, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -21793,17 +21793,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path28 = []) => {
+  const processError = (error63, path37 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path28, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path37, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path28, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path28, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
       } else {
-        const fullpath = [...path28, ...issue2.path];
+        const fullpath = [...path37, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -21842,8 +21842,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path28 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path28) {
+  const path37 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path37) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -37394,11 +37394,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path28) {
-  if (path28.length === 0) {
+function getDotPath(path37) {
+  if (path37.length === 0) {
     return "object root";
   }
-  return path28.reduce((acc, seg, index) => {
+  return path37.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -39625,13 +39625,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path28 = ref.slice(1).split("/").filter(Boolean);
-  if (path28.length === 0) {
+  const path37 = ref.slice(1).split("/").filter(Boolean);
+  if (path37.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path28[0] === defsKey) {
-    const key = path28[1] === void 0 ? void 0 : decodeJSONPointerSegment(path28[1]);
+  if (path37[0] === defsKey) {
+    const key = path37[1] === void 0 ? void 0 : decodeJSONPointerSegment(path37[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -46607,8 +46607,8 @@ var AckReactionTracker = class {
     return this.pendingRevokes.has(messageId);
   }
   cleanup(now = Date.now()) {
-    for (const [messageId, timestamp] of this.recentInbound.entries()) {
-      if (now - timestamp > this.recentInboundTtlMs) {
+    for (const [messageId, timestamp2] of this.recentInbound.entries()) {
+      if (now - timestamp2 > this.recentInboundTtlMs) {
         this.recentInbound.delete(messageId);
         this.pendingRevokes.delete(messageId);
       }
@@ -47326,7 +47326,7 @@ function normalizeContext(context) {
   if (context.hydrationErrorReason) normalized.hydrationErrorReason = context.hydrationErrorReason;
   return normalized;
 }
-function markUnresolvedIfNeeded(context, fetchStage, diagnostic, details = {}) {
+function markUnresolvedIfNeeded(context, fetchStage, diagnostic2, details = {}) {
   if (context.text && !isPlaceholderCardText(context.text, context.msgType)) {
     return normalizeContext({
       ...context,
@@ -47338,13 +47338,13 @@ function markUnresolvedIfNeeded(context, fetchStage, diagnostic, details = {}) {
   return normalizeContext({
     ...context,
     fetchStage,
-    diagnostic: diagnostic ?? (context.text ? "placeholder_content" : void 0),
+    diagnostic: diagnostic2 ?? (context.text ? "placeholder_content" : void 0),
     fetchIdentity: details.fetchIdentity,
     fetchResult: details.fetchResult ?? (context.text ? "placeholder" : "missing_content"),
     hydrationErrorReason: "fetch_failed"
   });
 }
-function createUnresolvedContext(messageId, msgType, fetchStage, diagnostic, details = {}) {
+function createUnresolvedContext(messageId, msgType, fetchStage, diagnostic2, details = {}) {
   return normalizeContext({
     messageId,
     text: null,
@@ -47352,7 +47352,7 @@ function createUnresolvedContext(messageId, msgType, fetchStage, diagnostic, det
     fetchStage,
     fetchIdentity: details.fetchIdentity,
     fetchResult: details.fetchResult,
-    diagnostic,
+    diagnostic: diagnostic2,
     hydrationErrorReason: "fetch_failed"
   });
 }
@@ -48702,11 +48702,11 @@ function formatFailureBlock(context, options) {
   const fetchStage = normalizeMetadataValue(context.fetchStage);
   const fetchIdentity = normalizeMetadataValue(context.fetchIdentity);
   const fetchResult = normalizeMetadataValue(context.fetchResult);
-  const diagnostic = normalizeMetadataValue(context.diagnostic);
+  const diagnostic2 = normalizeMetadataValue(context.diagnostic);
   if (fetchStage) lines.push(`fetch_stage: ${fetchStage}`);
   if (fetchIdentity) lines.push(`fetch_identity: ${fetchIdentity}`);
   if (fetchResult) lines.push(`fetch_result: ${fetchResult}`);
-  if (diagnostic) lines.push(`diagnostic: ${diagnostic}`);
+  if (diagnostic2) lines.push(`diagnostic: ${diagnostic2}`);
   if (options.includeRecoveryHint && shouldAddQuotedCardRecoveryHint(context.msgType, reason)) {
     lines.push(
       `codex_recovery_hint: quoted interactive card context is unavailable through ${fetchIdentity || "current"} identity; if the answer depends on it, fetch message_id=${context.messageId} with Lark user-context tooling and parse the card content before answering.`
@@ -50285,8 +50285,8 @@ var LarkChannel = class {
       }
     });
     if (result.status === "dropped") {
-      const diagnostic = result.diagnostic ? ` chat=${result.diagnostic.chatId} top_level=${result.diagnostic.topLevel} thread=${result.diagnostic.threadMessage} no_mention_allowed=${result.diagnostic.noMentionAllowed} heuristic=${result.diagnostic.triggerDecision}` : "";
-      debugLog(`[sdk-channel] Dropped message ${sdkMessage.messageId}: ${result.reason}${diagnostic}`);
+      const diagnostic2 = result.diagnostic ? ` chat=${result.diagnostic.chatId} top_level=${result.diagnostic.topLevel} thread=${result.diagnostic.threadMessage} no_mention_allowed=${result.diagnostic.noMentionAllowed} heuristic=${result.diagnostic.triggerDecision}` : "";
+      debugLog(`[sdk-channel] Dropped message ${sdkMessage.messageId}: ${result.reason}${diagnostic2}`);
     }
   }
   async handleSdkCommentEvent(comment, sdkChannel) {
@@ -51262,13 +51262,13 @@ function registerDocCommentTools(deps) {
 }
 
 // src/tools/reply.ts
-import fs7 from "node:fs/promises";
-import path9 from "node:path";
+import fs8 from "node:fs/promises";
+import path10 from "node:path";
 
 // src/reply-sender.ts
 import { createHash as createHash3 } from "node:crypto";
-import fs6 from "node:fs/promises";
-import path8 from "node:path";
+import fs7 from "node:fs/promises";
+import path9 from "node:path";
 
 // src/feishu-card.ts
 var CARD_MD_LIMIT = 4e3;
@@ -52107,9 +52107,9 @@ function formatCountMetricLogFields(name, metric) {
 
 // src/codex-exec.ts
 import { spawn as spawn3 } from "node:child_process";
-import fs5 from "node:fs/promises";
+import fs6 from "node:fs/promises";
 import os from "node:os";
-import path7 from "node:path";
+import path8 from "node:path";
 
 // src/workspace-projects.ts
 import fs4 from "node:fs/promises";
@@ -52187,18 +52187,32 @@ async function resolveWorkspaceProject({
     if (!directory) throw new WorkspaceProjectError("invalid_selector");
     return pinWorkspacePath(authorizedRoot, directory);
   }
-  const matches = registry2?.projects.filter((project2) => requested.includes("/") ? `${project2.root}/${project2.name}` === requested : project2.name === requested) ?? [];
+  const matches = registry2?.projects.filter((project) => requested.includes("/") ? `${project.root}/${project.name}` === requested : project.name === requested) ?? [];
   if (!matches.length || !registry2) throw new WorkspaceProjectError("unknown_project");
   if (matches.length > 1) throw new WorkspaceProjectError("ambiguous_project");
-  const project = matches[0];
+  const candidate = await readRegisteredProject(registry2, matches[0]);
+  await requireAuthorized(authorizedRoot, candidate.directory);
+  return candidate;
+}
+async function listWorkspaceSourceProjects(registryPath, authorizedRoot) {
+  const registry2 = await readRegistry(registryPath);
+  if (!registry2) return [];
+  const projects = await Promise.all(registry2.projects.map((project) => readRegisteredProject(registry2, project)));
+  if (registry2.default?.startsWith("path:")) {
+    const directory = registry2.default.slice("path:".length).trim();
+    if (!directory) throw new WorkspaceProjectError("invalid_selector");
+    projects.push(await readDirectory(path6.resolve(authorizedRoot, directory)));
+  }
+  return projects;
+}
+async function readRegisteredProject(registry2, project) {
   const root = registry2.roots.find((source) => source.name === project.root);
   if (!root) throw new WorkspaceProjectError("invalid_registry");
   const sourceRoot = await readDirectory(root.path);
   const projectPath = path6.resolve(sourceRoot.directory, project.path);
-  if (!contains(sourceRoot.directory, projectPath)) throw new WorkspaceProjectError("outside_project_root");
+  if (!workspacePathContains(sourceRoot.directory, projectPath)) throw new WorkspaceProjectError("outside_project_root");
   const candidate = await readDirectory(projectPath);
-  if (!contains(sourceRoot.directory, candidate.directory)) throw new WorkspaceProjectError("outside_project_root");
-  await requireAuthorized(authorizedRoot, candidate.directory);
+  if (!workspacePathContains(sourceRoot.directory, candidate.directory)) throw new WorkspaceProjectError("outside_project_root");
   return candidate;
 }
 async function pinWorkspacePath(authorizedRoot, directory) {
@@ -52254,11 +52268,90 @@ async function readDirectory(candidate) {
 }
 async function requireAuthorized(authorizedRoot, candidate) {
   const root = await readDirectory(authorizedRoot);
-  if (!contains(root.directory, candidate)) throw new WorkspaceProjectError("outside_authorized_root");
+  if (!workspacePathContains(root.directory, candidate)) throw new WorkspaceProjectError("outside_authorized_root");
 }
-function contains(root, candidate) {
+function workspacePathContains(root, candidate) {
   const relative = path6.relative(root, candidate);
   return relative !== ".." && !relative.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relative);
+}
+
+// src/managed-workspace-ancestry.ts
+import { execFile } from "node:child_process";
+import fs5 from "node:fs/promises";
+import path7 from "node:path";
+import { promisify } from "node:util";
+
+// src/managed-workspace-errors.ts
+var diagnostic = {
+  invalid_config: "The operator managed workspace configuration is invalid or unreadable.",
+  unprotected_root: "The managed workspace path or its ancestors allow writes outside the trusted plugin account.",
+  unisolated_source: "Managed storage requires a separate source project for workspace-write and is not available with unrestricted filesystem access.",
+  overlapping_roots: "Managed scratch, artifacts, and the selected source project must use disjoint directories.",
+  overlapping_runs: "The managed workspace would overlap an existing or reserved run directory.",
+  overlapping_source: "The managed storage location overlaps a registered source project.",
+  allocation_conflict: "The managed run directory already exists without a matching stored allocation.",
+  allocation_failed: "The managed run directories could not be allocated.",
+  allocation_incomplete: "The stored managed workspace allocation is incomplete.",
+  allocation_transaction: "Managed workspace provisioning requires a committed database context.",
+  invalid_binding: "The managed workspace allocation is invalid.",
+  artifact_invalid: "The managed artifact is missing, outside its registered directory, oversized, or no longer matches its checksum."
+};
+var ManagedWorkspaceStorageError = class extends Error {
+  constructor(code) {
+    super(diagnostic[code]);
+    this.code = code;
+    this.name = "ManagedWorkspaceStorageError";
+  }
+  code;
+};
+
+// src/managed-workspace-ancestry.ts
+var exec = promisify(execFile);
+async function assertProtectedWorkspacePath(binding, owned = false) {
+  if (!process.geteuid) throw new ManagedWorkspaceStorageError("unprotected_root");
+  const uid = BigInt(process.geteuid());
+  const ancestry = [];
+  for (let current = binding.directory; ; current = path7.dirname(current)) {
+    const leaf = ancestry.length === 0;
+    const info = await fs5.lstat(current, { bigint: true }).catch(() => void 0);
+    if (!info?.isDirectory() || leaf && (String(info.dev) !== binding.device || String(info.ino) !== binding.inode)) {
+      throw new WorkspaceProjectError("directory_changed");
+    }
+    const trustedOwner = info.uid === uid || (!leaf || !owned) && info.uid === 0n;
+    const protectedNames = (info.mode & 0o022n) === 0n || !leaf && (info.mode & 0o1000n) !== 0n;
+    if (!trustedOwner || !protectedNames) throw new ManagedWorkspaceStorageError("unprotected_root");
+    ancestry.push(current);
+    if (path7.dirname(current) === current) break;
+  }
+  if (process.platform === "darwin") await requireDenyOnlyAcls(ancestry);
+}
+async function requireDenyOnlyAcls(directories) {
+  try {
+    const { stdout, stderr } = await exec("/bin/ls", ["-ldebn", "--", ...directories], {
+      encoding: "utf8",
+      env: { LC_ALL: "C" },
+      timeout: 5e3,
+      maxBuffer: 1e6
+    });
+    const lines = stdout.split("\n").filter(Boolean);
+    if (stderr) throw new Error("ACL inspection failed.");
+    let headers = 0;
+    let needsAcl = false;
+    for (const line of lines) {
+      const header = /^d[rwxstST-]{9}([+@]?)\s/.exec(line);
+      if (header && !needsAcl) {
+        headers++;
+        needsAcl = header[1] === "+";
+      } else if (headers && /^\s+\d+: .+ deny [a-z_,]+$/.test(line)) {
+        needsAcl = false;
+      } else {
+        throw new Error("Unsupported ACL.");
+      }
+    }
+    if (needsAcl || headers !== directories.length) throw new Error("Incomplete ACL data.");
+  } catch {
+    throw new ManagedWorkspaceStorageError("unprotected_root");
+  }
 }
 
 // src/codex-exec-trace.ts
@@ -52660,24 +52753,24 @@ function normalizeCodexExecResult(result) {
   return result;
 }
 async function runCodexExecCommand(request) {
-  const tmpDir = await fs5.mkdtemp(path7.join(os.tmpdir(), "lark-codex-exec-"));
-  const outputFile = path7.join(tmpDir, "last-message.txt");
-  const schemaFile = request.outputSchema ? path7.join(tmpDir, "outcome-schema.json") : void 0;
+  const tmpDir = await fs6.mkdtemp(path8.join(os.tmpdir(), "lark-codex-exec-"));
+  const outputFile = path8.join(tmpDir, "last-message.txt");
+  const schemaFile = request.outputSchema ? path8.join(tmpDir, "outcome-schema.json") : void 0;
   const command = request.command ?? "codex";
   const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const cwd = request.cwd ?? process.cwd();
   try {
     if (request.abortSignal?.aborted) throw new CodexExecAbortedError("", "");
     if (schemaFile) {
-      await fs5.writeFile(schemaFile, `${JSON.stringify(request.outputSchema)}
+      await fs6.writeFile(schemaFile, `${JSON.stringify(request.outputSchema)}
 `, {
         encoding: "utf-8",
         mode: 384
       });
-      await fs5.chmod(schemaFile, 384);
+      await fs6.chmod(schemaFile, 384);
     }
   } catch (error62) {
-    await fs5.rm(tmpDir, { recursive: true, force: true }).catch(() => {
+    await fs6.rm(tmpDir, { recursive: true, force: true }).catch(() => {
     });
     throw error62;
   }
@@ -52705,14 +52798,18 @@ async function runCodexExecCommand(request) {
   }
   try {
     if (request.workspaceDirectory) {
-      const { authorizedRoots, sideChannelBindings, binding: savedBinding } = request.workspaceDirectory;
-      for (const sideChannel of sideChannelBindings ?? []) {
-        await validateWorkspaceProject(authorizedRoots, sideChannel);
+      const { authorizedRoots, auxiliaryBindings, binding: savedBinding, requireProtectedAncestry } = request.workspaceDirectory;
+      for (const auxiliary of auxiliaryBindings ?? []) {
+        await validateWorkspaceProject(authorizedRoots, auxiliary);
       }
       const binding = await validateWorkspaceProject(authorizedRoots, savedBinding);
       if (binding.directory !== cwd) throw new WorkspaceProjectError("directory_changed");
+      if (requireProtectedAncestry) await Promise.all([
+        assertProtectedWorkspacePath(binding),
+        ...(auxiliaryBindings ?? []).map((auxiliary) => assertProtectedWorkspacePath(auxiliary, true))
+      ]);
     } else {
-      await fs5.mkdir(cwd, { recursive: true });
+      await fs6.mkdir(cwd, { recursive: true });
     }
     await new Promise((resolve, reject) => {
       const usePosixProcessGroup = process.platform !== "win32";
@@ -52867,7 +52964,7 @@ async function runCodexExecCommand(request) {
     const metrics = runtimeMetrics.finish();
     usage = mergeCodexExecUsage(usage, metrics.usage ?? null);
     await logCodexExecRuntimeMetrics(metrics, { logId: request.traceLogId });
-    const answer = await fs5.readFile(outputFile, "utf8");
+    const answer = await fs6.readFile(outputFile, "utf8");
     return {
       text: answer.trim(),
       sessionId,
@@ -52875,15 +52972,15 @@ async function runCodexExecCommand(request) {
       runtimeMetrics: metrics
     };
   } catch (error62) {
-    const diagnostic = diagnoseCodexExecFailure(error62);
+    const diagnostic2 = diagnoseCodexExecFailure(error62);
     toolTrace?.recordLine(JSON.stringify({
       type: "codex_exec.failed",
       name: "codex_exec",
       status: "failed",
       id: "process",
       error: {
-        stage: diagnostic.stage,
-        error_code: diagnostic.errorCode
+        stage: diagnostic2.stage,
+        error_code: diagnostic2.errorCode
       }
     }));
     throw error62;
@@ -52895,7 +52992,7 @@ async function runCodexExecCommand(request) {
       }
     }
     await toolTrace?.flush();
-    await fs5.rm(tmpDir, { recursive: true, force: true }).catch(() => {
+    await fs6.rm(tmpDir, { recursive: true, force: true }).catch(() => {
     });
   }
 }
@@ -53338,7 +53435,7 @@ async function sendFeishuReply(deps, request) {
           }
           continue;
         }
-        const fileData = await fs6.readFile(part.path);
+        const fileData = await fs7.readFile(part.path);
         const imageKey = await transport.uploadImage(fileData);
         if (!imageKey) throw new Error(`Image upload returned no image_key for ${part.path}`);
         const resp = await sendTransportMessage({
@@ -53391,7 +53488,7 @@ async function sendFeishuReply(deps, request) {
           uploadedParts.push(part);
           continue;
         }
-        const fileData = await fs6.readFile(part.path);
+        const fileData = await fs7.readFile(part.path);
         const imageKey = await transport.uploadImage(fileData);
         if (!imageKey) throw new Error(`Image upload returned no image_key for ${part.path}`);
         uploadedParts.push({ type: "image", imageKey, alt: part.alt });
@@ -53430,7 +53527,8 @@ async function sendFeishuReply(deps, request) {
   if (rawMessage) {
     const response = await sendTransportMessage({
       input: { raw: rawMessage },
-      ...effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}
+      ...effectiveReplyTo ? { replyTo: effectiveReplyTo } : {},
+      ...effectiveReplyTo && shouldStayInThread ? { replyInThread: true } : {}
     });
     trackBotMessage(response.messageId);
     deliveredCount++;
@@ -53563,7 +53661,7 @@ async function sendFeishuReply(deps, request) {
   if (files?.length) {
     for (const file2 of files) {
       try {
-        const fileData = await fs6.readFile(file2.path);
+        const fileData = await fs7.readFile(file2.path);
         if (file2.type === "image") {
           const imageKey = await transport.uploadImage(fileData);
           if (imageKey) {
@@ -53575,7 +53673,7 @@ async function sendFeishuReply(deps, request) {
             recordAndRevokeAck(text || "[image]", sent?.messageId);
           }
         } else {
-          const fileName = path8.basename(file2.path);
+          const fileName = path9.basename(file2.path);
           const fileKey = await transport.uploadFile(fileData, fileName);
           if (fileKey) {
             const sent = await sendFollowup({ fileKey, fileName });
@@ -53654,7 +53752,7 @@ function capUtf8Text3(text, maxBytes) {
 
 // src/tools/reply.ts
 function capSanitizedFilename(raw, maxLen) {
-  const sanitized = path9.basename(raw).replace(/[^\w.\-]/g, "_");
+  const sanitized = path10.basename(raw).replace(/[^\w.\-]/g, "_");
   if (sanitized.length <= maxLen) return sanitized;
   const dotIdx = sanitized.lastIndexOf(".");
   if (dotIdx <= 0 || dotIdx === sanitized.length - 1) {
@@ -53755,11 +53853,11 @@ function registerReplyTools(ctx) {
     },
     async ({ message_id, file_key, file_name }) => {
       const inboxDir = appConfig.inboxDir;
-      await fs7.mkdir(inboxDir, { recursive: true });
+      await fs8.mkdir(inboxDir, { recursive: true });
       const resourceType = file_key.startsWith("img_") ? "image" : "file";
       const sanitizedName = file_name ? capSanitizedFilename(file_name, 200) : "";
       const savedName = sanitizedName ? `${file_key}-${sanitizedName}` : file_key;
-      const filePath = path9.join(inboxDir, savedName);
+      const filePath = path10.join(inboxDir, savedName);
       try {
         const data = await transport.downloadResource(message_id, file_key, resourceType);
         if (!data) {
@@ -54006,9 +54104,9 @@ function registerMessageMutationTools(ctx) {
 }
 
 // src/memory/file.ts
-import fs8 from "node:fs/promises";
+import fs9 from "node:fs/promises";
 import { existsSync } from "node:fs";
-import path10 from "node:path";
+import path11 from "node:path";
 
 // src/memory/profile-policy.ts
 import { createHash as createHash4 } from "node:crypto";
@@ -54120,13 +54218,13 @@ var MemoryStore = class {
   }
   // ── User Profile (tiered, v0.10.0+) ──
   profileDir(userId) {
-    return path10.join(this.baseDir, "profiles", userId);
+    return path11.join(this.baseDir, "profiles", userId);
   }
   profileTierPath(userId, tier) {
-    return path10.join(this.profileDir(userId), `${tier}.md`);
+    return path11.join(this.profileDir(userId), `${tier}.md`);
   }
   legacyProfilePath(userId) {
-    return path10.join(this.baseDir, "profiles", `${userId}.md`);
+    return path11.join(this.baseDir, "profiles", `${userId}.md`);
   }
   async loadL2PrivatePhrases() {
     return extractL2PrivatePhrases(await loadL2Rules()).map((p) => p.toLowerCase());
@@ -54169,23 +54267,23 @@ var MemoryStore = class {
     if (!existsSync(legacy)) return;
     if (existsSync(dir)) {
       try {
-        await fs8.unlink(legacy);
+        await fs9.unlink(legacy);
       } catch {
       }
       return;
     }
-    const content = await fs8.readFile(legacy, "utf-8");
+    const content = await fs9.readFile(legacy, "utf-8");
     const l2Phrases = await this.loadL2PrivatePhrases();
     const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
     const publicCount = publicContent.split("\n").filter((line) => line.trim()).length;
     const privateCount = privateContent.split("\n").filter((line) => line.trim()).length;
-    await fs8.mkdir(dir, { recursive: true });
-    await fs8.writeFile(this.profileTierPath(userId, "public"), publicContent, "utf-8");
+    await fs9.mkdir(dir, { recursive: true });
+    await fs9.writeFile(this.profileTierPath(userId, "public"), publicContent, "utf-8");
     if (privateContent.trim()) {
-      await fs8.writeFile(this.profileTierPath(userId, "private"), privateContent, "utf-8");
+      await fs9.writeFile(this.profileTierPath(userId, "private"), privateContent, "utf-8");
     }
     try {
-      await fs8.unlink(legacy);
+      await fs9.unlink(legacy);
     } catch {
     }
     console.error(
@@ -54212,7 +54310,7 @@ var MemoryStore = class {
       const readOpt = async (p) => {
         if (!existsSync(p)) return "";
         try {
-          return await fs8.readFile(p, "utf-8");
+          return await fs9.readFile(p, "utf-8");
         } catch {
           return "";
         }
@@ -54252,7 +54350,7 @@ var MemoryStore = class {
     await this.withProfileLock(userId, async () => {
       await this.migrateIfNeededUnlocked(userId);
       const dir = this.profileDir(userId);
-      await fs8.mkdir(dir, { recursive: true });
+      await fs9.mkdir(dir, { recursive: true });
       if (tier === "public") {
         const l2Phrases = await this.loadL2PrivatePhrases();
         const { publicContent, privateContent } = splitProfileContentByPrivacy(content, l2Phrases);
@@ -54269,19 +54367,19 @@ var MemoryStore = class {
     const filePath = this.profileTierPath(userId, tier);
     if (mode === "replace") {
       if (tier !== "private" || !existsSync(filePath)) {
-        await fs8.writeFile(filePath, content, "utf-8");
+        await fs9.writeFile(filePath, content, "utf-8");
         return;
       }
-      const existing2 = await fs8.readFile(filePath, "utf-8");
+      const existing2 = await fs9.readFile(filePath, "utf-8");
       const deterministicExisting = existing2.split("\n").filter((line) => line.trim() && isDeterministicPrivate(line, l2PrivatePhrases)).join("\n");
       const next = deterministicExisting ? mergeProfileLines(content, deterministicExisting, { userId, tier }) : content;
-      await fs8.writeFile(filePath, next, "utf-8");
+      await fs9.writeFile(filePath, next, "utf-8");
       return;
     }
-    const existing = existsSync(filePath) ? await fs8.readFile(filePath, "utf-8") : "";
+    const existing = existsSync(filePath) ? await fs9.readFile(filePath, "utf-8") : "";
     const merged = mergeProfileLines(existing, content, { userId, tier });
     if (merged === existing) return;
-    await fs8.writeFile(filePath, merged, "utf-8");
+    await fs9.writeFile(filePath, merged, "utf-8");
   }
   /**
    * Return the lines of a profile tier as addressable items. Each line carries
@@ -54304,7 +54402,7 @@ var MemoryStore = class {
   async listProfileLinesUnlocked(ownerId, tier) {
     const p = this.profileTierPath(ownerId, tier);
     if (!existsSync(p)) return [];
-    const content = filterCredentialMaterial(await fs8.readFile(p, "utf-8")).content;
+    const content = filterCredentialMaterial(await fs9.readFile(p, "utf-8")).content;
     return content.split("\n").map((raw) => raw.trim().replace(/^[-*]\s+/, "")).filter(Boolean).map((text, index) => ({ index, hash: lineHash(text), text }));
   }
   /**
@@ -54324,26 +54422,26 @@ var MemoryStore = class {
       const kept = lines.filter((l) => l.hash !== hash2);
       if (kept.length === lines.length) return false;
       const next = kept.map((l) => `- ${l.text}`).join("\n") + (kept.length > 0 ? "\n" : "");
-      await fs8.writeFile(this.profileTierPath(ownerId, tier), next, "utf-8");
+      await fs9.writeFile(this.profileTierPath(ownerId, tier), next, "utf-8");
       return true;
     });
   }
   // ── Episodes ──
   async searchEpisodes(query, scope) {
     if (!scope?.chatId) return [];
-    const dir = scope.threadId ? path10.join(this.baseDir, "episodes", scope.chatId, "threads", scope.threadId) : path10.join(this.baseDir, "episodes", scope.chatId);
+    const dir = scope.threadId ? path11.join(this.baseDir, "episodes", scope.chatId, "threads", scope.threadId) : path11.join(this.baseDir, "episodes", scope.chatId);
     try {
-      const files = await fs8.readdir(dir);
+      const files = await fs9.readdir(dir);
       const mdFiles = files.filter((f) => f.endsWith(".md") && !f.startsWith("archive-"));
       const keywords = this.extractKeywords(query);
       const scored = [];
       for (const file2 of mdFiles) {
-        const filePath = path10.join(dir, file2);
+        const filePath = path11.join(dir, file2);
         const content = filterCredentialMaterial(
-          await fs8.readFile(filePath, "utf-8")
+          await fs9.readFile(filePath, "utf-8")
         ).content;
         if (!content.trim()) continue;
-        const stat2 = await fs8.stat(filePath);
+        const stat2 = await fs9.stat(filePath);
         const firstLines = content.split("\n").slice(0, 3).join(" ").toLowerCase();
         const filenameLower = file2.toLowerCase();
         let keywordScore = 0;
@@ -54378,31 +54476,31 @@ var MemoryStore = class {
   }
   async saveEpisode(type, content, meta3) {
     assertNoCredentialMaterial(content);
-    const dir = type === "thread" && meta3.threadId ? path10.join(this.baseDir, "episodes", meta3.chatId, "threads", meta3.threadId) : path10.join(this.baseDir, "episodes", meta3.chatId);
-    await fs8.mkdir(dir, { recursive: true });
-    const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-    let fileName = `${timestamp}.md`;
-    for (let i = 1; existsSync(path10.join(dir, fileName)); i++) {
-      fileName = `${timestamp}-${i}.md`;
+    const dir = type === "thread" && meta3.threadId ? path11.join(this.baseDir, "episodes", meta3.chatId, "threads", meta3.threadId) : path11.join(this.baseDir, "episodes", meta3.chatId);
+    await fs9.mkdir(dir, { recursive: true });
+    const timestamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+    let fileName = `${timestamp2}.md`;
+    for (let i = 1; existsSync(path11.join(dir, fileName)); i++) {
+      fileName = `${timestamp2}-${i}.md`;
     }
-    await fs8.writeFile(path10.join(dir, fileName), capEpisodeContent(content), "utf-8");
+    await fs9.writeFile(path11.join(dir, fileName), capEpisodeContent(content), "utf-8");
     await this.pruneEpisodeDir(dir, {
       maxFilesPerScope: appConfig.maxEpisodeFilesPerScope,
       maxBytesPerScope: appConfig.maxEpisodeScopeBytes
     });
   }
   async listEpisodes(chatId, threadId) {
-    const dir = threadId ? path10.join(this.baseDir, "episodes", chatId, "threads", threadId) : path10.join(this.baseDir, "episodes", chatId);
+    const dir = threadId ? path11.join(this.baseDir, "episodes", chatId, "threads", threadId) : path11.join(this.baseDir, "episodes", chatId);
     try {
-      const files = await fs8.readdir(dir);
+      const files = await fs9.readdir(dir);
       const episodes = [];
       for (const file2 of files.filter((f) => f.endsWith(".md"))) {
-        const filePath = path10.join(dir, file2);
+        const filePath = path11.join(dir, file2);
         const content = filterCredentialMaterial(
-          await fs8.readFile(filePath, "utf-8")
+          await fs9.readFile(filePath, "utf-8")
         ).content;
         if (!content.trim()) continue;
-        const stat2 = await fs8.stat(filePath);
+        const stat2 = await fs9.stat(filePath);
         episodes.push({
           id: file2,
           content,
@@ -54418,16 +54516,16 @@ var MemoryStore = class {
     }
   }
   async deleteEpisodes(chatId, ids) {
-    const dir = path10.join(this.baseDir, "episodes", chatId);
+    const dir = path11.join(this.baseDir, "episodes", chatId);
     for (const id of ids) {
       try {
-        await fs8.unlink(path10.join(dir, id));
+        await fs9.unlink(path11.join(dir, id));
       } catch {
       }
     }
   }
   async pruneEpisodes(options = {}) {
-    const episodesDir = path10.join(this.baseDir, "episodes");
+    const episodesDir = path11.join(this.baseDir, "episodes");
     const totals = { removedFiles: 0, removedBytes: 0 };
     await this.walkEpisodeDirs(episodesDir, async (dir) => {
       const result = await this.pruneEpisodeDir(dir, {
@@ -54442,7 +54540,7 @@ var MemoryStore = class {
   async walkEpisodeDirs(dir, visit3) {
     let entries;
     try {
-      entries = await fs8.readdir(dir, { withFileTypes: true });
+      entries = await fs9.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -54450,20 +54548,20 @@ var MemoryStore = class {
       await visit3(dir);
     }
     for (const entry of entries) {
-      if (entry.isDirectory()) await this.walkEpisodeDirs(path10.join(dir, entry.name), visit3);
+      if (entry.isDirectory()) await this.walkEpisodeDirs(path11.join(dir, entry.name), visit3);
     }
   }
   async pruneEpisodeDir(dir, options) {
     const maxFiles = Number.isFinite(options.maxFilesPerScope) ? Math.max(0, Math.floor(options.maxFilesPerScope)) : 0;
     const maxBytes = Number.isFinite(options.maxBytesPerScope) ? Math.max(0, Math.floor(options.maxBytesPerScope)) : 0;
     if (maxFiles <= 0 && maxBytes <= 0) return { removedFiles: 0, removedBytes: 0 };
-    const entries = await fs8.readdir(dir, { withFileTypes: true }).catch(() => []);
+    const entries = await fs9.readdir(dir, { withFileTypes: true }).catch(() => []);
     const files = [];
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      const filePath = path10.join(dir, entry.name);
+      const filePath = path11.join(dir, entry.name);
       try {
-        const s = await fs8.stat(filePath);
+        const s = await fs9.stat(filePath);
         files.push({ path: filePath, mtimeMs: s.mtimeMs, size: s.size });
       } catch {
       }
@@ -54486,7 +54584,7 @@ var MemoryStore = class {
     let removedBytes = 0;
     for (const file2 of remove) {
       try {
-        await fs8.unlink(file2.path);
+        await fs9.unlink(file2.path);
         removedFiles++;
         removedBytes += file2.size;
       } catch {
@@ -54496,14 +54594,14 @@ var MemoryStore = class {
   }
   // ── Skills ──
   async searchSkills(query) {
-    const dir = path10.join(this.baseDir, "skills");
+    const dir = path11.join(this.baseDir, "skills");
     try {
-      const files = await fs8.readdir(dir);
+      const files = await fs9.readdir(dir);
       const keywords = this.extractKeywords(query);
       const results = [];
       for (const file2 of files.filter((f) => f.endsWith(".md"))) {
-        const filePath = path10.join(dir, file2);
-        const filtered = filterCredentialMaterial(await fs8.readFile(filePath, "utf-8"));
+        const filePath = path11.join(dir, file2);
+        const filtered = filterCredentialMaterial(await fs9.readFile(filePath, "utf-8"));
         if (filtered.blockedClasses.length > 0) continue;
         const content = filtered.content;
         const lines = content.split("\n");
@@ -54531,14 +54629,14 @@ var MemoryStore = class {
     assertNoCredentialMaterial(`${name}
 ${description}
 ${content}`);
-    const dir = path10.join(this.baseDir, "skills");
-    await fs8.mkdir(dir, { recursive: true });
+    const dir = path11.join(this.baseDir, "skills");
+    await fs9.mkdir(dir, { recursive: true });
     const fileName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".md";
     const fileContent = `# ${name}
 ${description}
 
 ${content}`;
-    await fs8.writeFile(path10.join(dir, fileName), fileContent, "utf-8");
+    await fs9.writeFile(path11.join(dir, fileName), fileContent, "utf-8");
   }
   // ── Helpers ──
   extractKeywords(query) {
@@ -54787,8 +54885,8 @@ function registerMemoryTools(ctx) {
 
 // src/job-store.ts
 var import_cron_parser = __toESM(require_dist2(), 1);
-import fs9 from "node:fs/promises";
-import path11 from "node:path";
+import fs10 from "node:fs/promises";
+import path12 from "node:path";
 
 // src/job-timezone.ts
 function normalizeJobTimezone(input2) {
@@ -54955,14 +55053,14 @@ function formatCronDateTime(isoTimestamp2, timezone = appConfig.cronTimezone, em
 }
 async function ensureJobsDir() {
   const dir = appConfig.jobsDir;
-  await fs9.mkdir(dir, { recursive: true });
+  await fs10.mkdir(dir, { recursive: true });
   return dir;
 }
 function jobPath(id) {
-  return path11.join(appConfig.jobsDir, `${id}.json`);
+  return path12.join(appConfig.jobsDir, `${id}.json`);
 }
 function canonicalJobIdFromFile(file2) {
-  return path11.basename(file2, ".json");
+  return path12.basename(file2, ".json");
 }
 var jobWriteQueues = /* @__PURE__ */ new Map();
 async function withJobWriteQueue(id, fn) {
@@ -55025,7 +55123,7 @@ async function readJob(id) {
 }
 async function readJobUnlocked(id) {
   try {
-    const data = await fs9.readFile(jobPath(id), "utf-8");
+    const data = await fs10.readFile(jobPath(id), "utf-8");
     return applyCanonicalJobId(backfillJob(JSON.parse(data)), id, `${id}.json`);
   } catch {
     return null;
@@ -55037,7 +55135,7 @@ async function writeJob(job) {
 async function writeJobUnlocked(job) {
   await ensureJobsDir();
   if (!Number.isSafeInteger(job.meta.revision) || job.meta.revision < 1) job.meta.revision = 1;
-  await fs9.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), "utf-8");
+  await fs10.writeFile(jobPath(job.meta.id), JSON.stringify(job, null, 2), "utf-8");
 }
 async function mutateJob(id, mutate) {
   return withJobWriteQueue(id, async () => {
@@ -55076,7 +55174,7 @@ function jobDefinitionSnapshot(meta3) {
 async function deleteJob(id) {
   return withJobWriteQueue(id, async () => {
     try {
-      await fs9.unlink(jobPath(id));
+      await fs10.unlink(jobPath(id));
       return true;
     } catch {
       return false;
@@ -55087,7 +55185,7 @@ async function listAllJobs() {
   const dir = appConfig.jobsDir;
   let files;
   try {
-    files = await fs9.readdir(dir);
+    files = await fs10.readdir(dir);
   } catch {
     return [];
   }
@@ -55095,7 +55193,7 @@ async function listAllJobs() {
   const results = await Promise.all(
     jsonFiles.map(async (file2) => {
       try {
-        const data = await fs9.readFile(path11.join(dir, file2), "utf-8");
+        const data = await fs10.readFile(path12.join(dir, file2), "utf-8");
         const id = canonicalJobIdFromFile(file2);
         return applyCanonicalJobId(backfillJob(JSON.parse(data)), id, file2);
       } catch (err) {
@@ -55113,7 +55211,7 @@ async function listAllJobs() {
 }
 async function jobExists(id) {
   try {
-    await fs9.access(jobPath(id));
+    await fs10.access(jobPath(id));
     return true;
   } catch {
     return false;
@@ -55808,7 +55906,7 @@ ${parts.join("\n\n")}${footer}`
       let tail = "";
       if (promote_to_rule) {
         try {
-          const { addL2Rule } = await import("./chunks/privacy-rules-LNDROW6S.js");
+          const { addL2Rule } = await import("./chunks/privacy-rules-3W2CLDAX.js");
           await addL2Rule(target.text, "Always private");
           tail = ' Also appended to privacy-rules.md under "Always private" \u2014 future distillations will classify similar content accordingly.';
         } catch (err) {
@@ -55936,8 +56034,8 @@ function registerTools(server, client, memoryStore, identitySession, channel, co
 }
 
 // src/memory/buffer.ts
-import fs10 from "node:fs/promises";
-import path12 from "node:path";
+import fs11 from "node:fs/promises";
+import path13 from "node:path";
 var ConversationBuffer = class {
   buffers = /* @__PURE__ */ new Map();
   timers = /* @__PURE__ */ new Map();
@@ -56000,21 +56098,21 @@ var ConversationBuffer = class {
    * If a chat's most recent episode is older than LARK_INACTIVITY_HOURS, trigger flush.
    */
   async rearmFromDisk() {
-    const episodesDir = path12.join(appConfig.memoriesDir, "episodes");
+    const episodesDir = path13.join(appConfig.memoriesDir, "episodes");
     try {
-      const chatDirs = await fs10.readdir(episodesDir);
+      const chatDirs = await fs11.readdir(episodesDir);
       const thresholdMs = appConfig.inactivityHours * 60 * 60 * 1e3;
       const now = Date.now();
       for (const chatId of chatDirs) {
-        const chatDir = path12.join(episodesDir, chatId);
-        const stat2 = await fs10.stat(chatDir);
+        const chatDir = path13.join(episodesDir, chatId);
+        const stat2 = await fs11.stat(chatDir);
         if (!stat2.isDirectory()) continue;
-        const files = await fs10.readdir(chatDir);
+        const files = await fs11.readdir(chatDir);
         const mdFiles = files.filter((f) => f.endsWith(".md"));
         if (mdFiles.length === 0) continue;
         let latestMs = 0;
         for (const f of mdFiles) {
-          const fStat = await fs10.stat(path12.join(chatDir, f));
+          const fStat = await fs11.stat(path13.join(chatDir, f));
           if (fStat.mtimeMs > latestMs) latestMs = fStat.mtimeMs;
         }
         if (now - latestMs < thresholdMs * 2) {
@@ -56262,12 +56360,12 @@ var packageName = typeof pkg.name === "string" && pkg.name ? pkg.name : "codex-l
 var packageVersion = pkg.version;
 
 // src/codex-exec-config.ts
-import fs11 from "node:fs/promises";
+import fs12 from "node:fs/promises";
 import os2 from "node:os";
-import path13 from "node:path";
+import path14 from "node:path";
 async function readTextIfExists(filePath) {
   try {
-    return await fs11.readFile(filePath, "utf-8");
+    return await fs12.readFile(filePath, "utf-8");
   } catch (err) {
     if (err?.code === "ENOENT" || err?.code === "ENOTDIR") return null;
     throw err;
@@ -56327,7 +56425,7 @@ ${section.body}`.toLowerCase();
 }
 async function collectCodexExecConfigDiagnostics(input2) {
   const diagnostics = [];
-  const mcpJsonPath = path13.join(input2.codexExecCwd, ".mcp.json");
+  const mcpJsonPath = path14.join(input2.codexExecCwd, ".mcp.json");
   const projectMcp = await readTextIfExists(mcpJsonPath);
   if (projectMcp && projectMcpHasLarkServer(projectMcp)) {
     diagnostics.push({
@@ -56344,13 +56442,13 @@ async function collectCodexExecConfigDiagnostics(input2) {
     });
   }
   if (input2.codexExecProfile) {
-    const codexHome = input2.codexHome ?? process.env.CODEX_HOME ?? path13.join(os2.homedir(), ".codex");
-    const codexConfig = await readTextIfExists(path13.join(codexHome, "config.toml"));
+    const codexHome = input2.codexHome ?? process.env.CODEX_HOME ?? path14.join(os2.homedir(), ".codex");
+    const codexConfig = await readTextIfExists(path14.join(codexHome, "config.toml"));
     if (codexConfig && codexProfileHasLarkMcpServer(codexConfig, input2.codexExecProfile)) {
       diagnostics.push({
         code: "codex_exec_profile_lark_mcp",
         severity: "warning",
-        message: `LARK_CODEX_EXEC_PROFILE=${input2.codexExecProfile} appears to include a Lark MCP server in ${path13.join(codexHome, "config.toml")}. This profile can recursively start the current plugin from child codex exec turns; choose a profile without the Lark MCP server.`
+        message: `LARK_CODEX_EXEC_PROFILE=${input2.codexExecProfile} appears to include a Lark MCP server in ${path14.join(codexHome, "config.toml")}. This profile can recursively start the current plugin from child codex exec turns; choose a profile without the Lark MCP server.`
       });
     }
   }
@@ -56362,15 +56460,45 @@ async function emitCodexExecConfigDiagnostics(config2) {
     codexExecProfile: config2.codexExecProfile,
     codexExecIgnoreUserConfig: config2.codexExecIgnoreUserConfig
   });
-  for (const diagnostic of diagnostics) {
-    console.error(`[codex-exec][${diagnostic.severity}] ${diagnostic.message}`);
+  for (const diagnostic2 of diagnostics) {
+    console.error(`[codex-exec][${diagnostic2.severity}] ${diagnostic2.message}`);
   }
 }
 
 // src/codex-exec-actions.ts
-import fs14 from "node:fs/promises";
-import path16 from "node:path";
-import { createHash as createHash6 } from "node:crypto";
+import fs16 from "node:fs/promises";
+import path20 from "node:path";
+import { createHash as createHash8 } from "node:crypto";
+
+// src/continuation/artifact-delivery.ts
+import { createHash as createHash5 } from "node:crypto";
+import path15 from "node:path";
+var artifactDeliverySchema = external_exports.strictObject({
+  version: external_exports.literal(1),
+  chatType: external_exports.enum(["p2p", "group"]),
+  artifactId: external_exports.string().regex(/^[A-Za-z0-9_.-]{1,80}$/),
+  path: external_exports.string().min(1).max(2048),
+  sha256: external_exports.string().regex(/^[a-fA-F0-9]{64}$/)
+});
+var IM_ARTIFACT_MAX_BYTES = 3e7;
+var IM_ARTIFACT_SIZE_NOTE = "IM delivery requires a nonempty file no larger than 30 MB.";
+function artifactDeliveryEventKey(messageId) {
+  return `artifact:${createHash5("sha256").update(messageId).digest("hex").slice(0, 32)}`;
+}
+function parseArtifactDelivery(payload) {
+  return artifactDeliverySchema.parse(JSON.parse(payload));
+}
+function artifactDeliveryMatches(job, route, reference) {
+  if (job.deletedAt || !job.permissions.filesystem.managedWorkspaceRoots || route.kind !== "message_thread" || !isFeishuOpenMessageId(route.sourceMessageId) || !route.conversationId) return false;
+  if (reference.chatType === "group" && (job.route.kind !== "message_thread" || route.conversationId !== job.route.conversationId || route.threadId !== job.route.threadId)) return false;
+  return job.checkpoint?.artifacts.some((artifact) => artifact.id === reference.artifactId && artifact.path === reference.path && artifact.sha256 === reference.sha256) ?? false;
+}
+function isImArtifactSize(bytes) {
+  return bytes > 0 && bytes <= IM_ARTIFACT_MAX_BYTES;
+}
+function artifactDeliveryFileName(relativePath) {
+  return path15.posix.basename(relativePath).replace(/[\u0000-\u001f\u007f]/g, "_");
+}
 
 // src/domain/continuation.ts
 var CONTINUATION_LIMITS = {
@@ -56470,15 +56598,286 @@ function retryDelayMs(failureCount, jitterUnit) {
   return Math.round(base * (1 + boundedJitter * 0.2));
 }
 
+// src/managed-workspace-storage.ts
+import { createHash as createHash6 } from "node:crypto";
+import fs13 from "node:fs/promises";
+import path17 from "node:path";
+
+// src/domain/managed-workspace.ts
+var MANAGED_DELIVERY_MAX_BYTES = 3e7;
+var MANAGED_DELIVERY_MAX_FILES = 5;
+function isManagedArtifactRelativePath(value) {
+  return value.length <= 2048 && value.split("/").every((part) => part && part !== "." && part !== ".." && !part.startsWith(".lark-retry-") && !/[\\\u0000-\u001f\u007f]/.test(part));
+}
+var managedArtifactReferenceSchema = external_exports.strictObject({
+  relativePath: external_exports.string().refine(isManagedArtifactRelativePath),
+  sha256: external_exports.string().regex(/^[a-f0-9]{64}$/)
+});
+var managedArtifactIdentitySchema = workspaceProjectBindingSchema.pick({ device: true, inode: true });
+var managedArtifactStageSchema = external_exports.strictObject({
+  nonce: external_exports.string().regex(/^[a-f0-9]{32}$/),
+  sha256: managedArtifactReferenceSchema.shape.sha256,
+  identity: managedArtifactIdentitySchema.optional()
+});
+var managedRunOwnerSchema = external_exports.strictObject({
+  kind: external_exports.enum(["foreground", "cron_prompt", "async_task"]),
+  runId: external_exports.string().min(1).max(512)
+});
+var managedWorkspaceRootsSchema = external_exports.strictObject({
+  scratch: workspaceProjectBindingSchema,
+  artifacts: workspaceProjectBindingSchema
+});
+var managedWorkspaceAdmissionSchema = external_exports.strictObject({
+  roots: managedWorkspaceRootsSchema,
+  createdAt: external_exports.iso.datetime(),
+  fallbackWorkspace: workspaceProjectBindingSchema.optional()
+});
+var foregroundSessionKey = external_exports.string().min(1).max(1024);
+var foregroundDeliveryReceipt = {
+  status: external_exports.enum(["pending", "sending", "sent", "failed", "unknown"]),
+  messageId: external_exports.string().regex(/^om_/).max(512).optional()
+};
+var foregroundArtifactBatchSchema = external_exports.strictObject({
+  version: external_exports.literal(2),
+  sessionKey: foregroundSessionKey,
+  actorId: external_exports.string().min(1).max(512),
+  messageType: external_exports.string().min(1).max(128).refine((type) => type !== "reaction"),
+  chatId: external_exports.string().min(1).max(512),
+  sourceMessageId: external_exports.string().regex(/^om_/).max(512),
+  threadId: external_exports.string().min(1).max(512).optional(),
+  reply: external_exports.strictObject({ text: external_exports.string().min(1), runtimeFooter: external_exports.string().optional(), ...foregroundDeliveryReceipt }).refine(({ status, messageId }) => status === "sent" === Boolean(messageId)),
+  files: external_exports.array(external_exports.strictObject({
+    reference: managedArtifactReferenceSchema,
+    ...foregroundDeliveryReceipt
+  })).min(1).max(MANAGED_DELIVERY_MAX_FILES).refine((files) => new Set(files.map(({ reference }) => reference.relativePath)).size === files.length && files.every(({ status, messageId }) => status === "sent" === Boolean(messageId)))
+});
+var unmanagedForegroundAdmissionSchema = external_exports.union([
+  external_exports.strictObject({ sessionKey: foregroundSessionKey, project: workspaceProjectBindingSchema }),
+  external_exports.strictObject({ sessionKey: foregroundSessionKey, fallbackCwd: workspaceProjectBindingSchema.shape.directory })
+]);
+var managedRunIntentSchema = external_exports.strictObject({
+  version: external_exports.literal(1),
+  owner: managedRunOwnerSchema,
+  roots: managedWorkspaceRootsSchema,
+  project: workspaceProjectBindingSchema.optional(),
+  fallbackWorkspace: workspaceProjectBindingSchema.optional(),
+  foregroundSessionKey: foregroundSessionKey.optional(),
+  createdAt: external_exports.iso.datetime()
+});
+var managedRunAllocationSchema = managedRunIntentSchema.extend({
+  scratch: workspaceProjectBindingSchema,
+  artifacts: workspaceProjectBindingSchema
+});
+
+// src/managed-workspace-mkdir.ts
+import { execFile as execFile2 } from "node:child_process";
+import path16 from "node:path";
+import { promisify as promisify2 } from "node:util";
+var exec2 = promisify2(execFile2);
+var managedLeaf = /^(?:foreground|cron_prompt|async_task)-[a-f0-9]{64}$/;
+var mkdirProgram = String.raw`
+  const fs = require('node:fs');
+  const [leaf, parentPath, device, inode] = process.argv.slice(1);
+  const respond = (value) => process.stdout.write(JSON.stringify(value));
+  try {
+    const parent = fs.statSync('.', { bigint: true });
+    if (String(parent.dev) !== device || String(parent.ino) !== inode || process.cwd() !== parentPath) {
+      respond({ error: 'directory_changed' });
+    } else if (!process.geteuid || parent.uid !== BigInt(process.geteuid()) || (parent.mode & 0o022n) !== 0n) {
+      respond({ error: 'unprotected_root' });
+    } else {
+      fs.mkdirSync(leaf, { mode: 0o700 });
+      const fd = fs.openSync(leaf, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+      try {
+        const info = fs.fstatSync(fd, { bigint: true });
+        if (!info.isDirectory() || info.uid !== parent.uid || (info.mode & 0o077n) !== 0n) {
+          respond({ error: 'directory_changed' });
+        } else {
+          respond({ device: String(info.dev), inode: String(info.ino) });
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+  } catch (error) {
+    respond({ error: error.code === 'EEXIST' ? 'allocation_conflict' : 'allocation_failed' });
+  }
+`;
+async function mkdirInsidePinnedRoot(root, leaf) {
+  if (!managedLeaf.test(leaf)) throw new ManagedWorkspaceStorageError("invalid_binding");
+  if (!process.geteuid) throw new ManagedWorkspaceStorageError("unprotected_root");
+  let response;
+  try {
+    const { stdout } = await exec2(
+      process.execPath,
+      ["--input-type=commonjs", "-e", mkdirProgram, "--", leaf, root.directory, root.device, root.inode],
+      {
+        cwd: root.directory,
+        env: {},
+        maxBuffer: 1024,
+        timeout: 1e4
+      }
+    );
+    response = JSON.parse(stdout);
+  } catch {
+    throw new ManagedWorkspaceStorageError("allocation_failed");
+  }
+  if (response?.error === "directory_changed") throw new WorkspaceProjectError("directory_changed");
+  if (response?.error === "unprotected_root" || response?.error === "allocation_conflict") {
+    throw new ManagedWorkspaceStorageError(response.error);
+  }
+  const binding = workspaceProjectBindingSchema.safeParse({ ...response, directory: path16.join(root.directory, leaf) });
+  if (!binding.success) throw new ManagedWorkspaceStorageError("allocation_failed");
+  return binding.data;
+}
+
+// src/managed-workspace-storage.ts
+var absolutePath = external_exports.string().refine((value) => path17.isAbsolute(value) && !value.includes("\0"));
+var configSchema = external_exports.strictObject({ version: external_exports.literal(1), scratchRoot: absolutePath, artifactRoot: absolutePath });
+async function readManagedWorkspaceRoots({
+  configPath,
+  ...authorization
+}) {
+  let contents;
+  try {
+    contents = await fs13.readFile(configPath, "utf8");
+  } catch (error62) {
+    if (error62.code === "ENOENT") return void 0;
+    throw new ManagedWorkspaceStorageError("invalid_config");
+  }
+  let config2;
+  try {
+    config2 = configSchema.parse(JSON.parse(contents));
+  } catch {
+    throw new ManagedWorkspaceStorageError("invalid_config");
+  }
+  const [scratch, artifacts] = await Promise.all([
+    pinWorkspacePath(authorization.authorizedRoots[0], config2.scratchRoot),
+    pinWorkspacePath(authorization.authorizedRoots[0], config2.artifactRoot)
+  ]);
+  const roots = { scratch, artifacts };
+  await validateManagedWorkspaceRoots(roots, authorization);
+  return roots;
+}
+async function allocateManagedRunDirectories({
+  roots,
+  owner,
+  createdAt,
+  foregroundSessionKey: foregroundSessionKey2,
+  ...authorization
+}) {
+  if (!managedRunOwnerSchema.safeParse(owner).success || !external_exports.iso.datetime().safeParse(createdAt).success) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  await validateManagedWorkspaceRoots(roots, authorization);
+  const scratch = await allocateDirectory(roots.scratch, owner, authorization.authorizedRoots);
+  const artifacts = await allocateDirectory(roots.artifacts, owner, authorization.authorizedRoots);
+  return {
+    version: 1,
+    owner,
+    roots,
+    scratch,
+    artifacts,
+    createdAt,
+    ...foregroundSessionKey2 ? { foregroundSessionKey: foregroundSessionKey2 } : {},
+    ...authorization.project ? { project: authorization.project } : {},
+    ...authorization.fallbackWorkspace ? { fallbackWorkspace: authorization.fallbackWorkspace } : {}
+  };
+}
+async function validateManagedRunDirectory(value, purpose, authorizedRoots) {
+  const parsed = managedRunAllocationSchema.safeParse(value);
+  if (!parsed.success) throw new ManagedWorkspaceStorageError("invalid_binding");
+  const allocation = parsed.data;
+  assertDisjoint(allocation.roots, allocation.project);
+  const directory = allocation[purpose];
+  const root = allocation.roots[purpose];
+  if (directory.directory !== managedRunDirectoryPath(root, allocation.owner)) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  await validateWorkspaceProject(authorizedRoots, root);
+  const binding = await validateWorkspaceProject(authorizedRoots, directory);
+  await Promise.all([assertProtectedWorkspacePath(root, true), assertProtectedWorkspacePath(binding, true)]);
+  return binding.directory;
+}
+async function validateManagedWorkspaceRoots(roots, authorization) {
+  if (authorization.fallbackWorkspace && authorization.project) throw new ManagedWorkspaceStorageError("invalid_binding");
+  await Promise.all([
+    validateWorkspaceProject(authorization.authorizedRoots, roots.scratch),
+    validateWorkspaceProject(authorization.authorizedRoots, roots.artifacts),
+    ...authorization.project ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.project)] : [],
+    ...authorization.fallbackWorkspace ? [validateWorkspaceProject(authorization.authorizedRoots, authorization.fallbackWorkspace)] : []
+  ]);
+  assertDisjoint(roots, authorization.project);
+  const bindings = [roots.scratch, roots.artifacts, ...authorization.project ? [authorization.project] : []];
+  const ancestry = await Promise.all(bindings.map(({ directory }) => readAncestors(directory)));
+  for (const [index, binding] of bindings.entries()) {
+    if (ancestry.some((ancestors, other) => index !== other && ancestors.has(directoryIdentity(binding)))) {
+      throw new ManagedWorkspaceStorageError("overlapping_roots");
+    }
+  }
+  if (authorization.sourceRegistryPath) {
+    const knownSources = await listWorkspaceSourceProjects(
+      authorization.sourceRegistryPath,
+      authorization.sourceRegistryRoot ?? authorization.authorizedRoots[0]
+    );
+    for (const source of knownSources) {
+      const sourceAncestors = await readAncestors(source.directory);
+      if ([roots.scratch, roots.artifacts].some((root, index) => workspacePathContains(root.directory, source.directory) || workspacePathContains(source.directory, root.directory) || ancestry[index].has(directoryIdentity(source)) || sourceAncestors.has(directoryIdentity(root)))) throw new ManagedWorkspaceStorageError("overlapping_source");
+    }
+  }
+  await Promise.all([
+    assertProtectedWorkspacePath(roots.scratch, true),
+    assertProtectedWorkspacePath(roots.artifacts, true),
+    ...authorization.project ? [assertProtectedWorkspacePath(authorization.project)] : [],
+    ...authorization.fallbackWorkspace ? [assertProtectedWorkspacePath(authorization.fallbackWorkspace)] : []
+  ]);
+  return {
+    all: new Set(ancestry.flatMap((ancestors) => [...ancestors])),
+    storage: new Set(ancestry.slice(0, 2).flatMap((ancestors) => [...ancestors]))
+  };
+}
+function assertDisjoint(roots, project) {
+  const bindings = [roots.scratch, roots.artifacts, ...project ? [project] : []];
+  for (const [index, binding] of bindings.entries()) {
+    if (bindings.slice(index + 1).some((other) => directoryIdentity(binding) === directoryIdentity(other) || workspacePathContains(binding.directory, other.directory) || workspacePathContains(other.directory, binding.directory))) {
+      throw new ManagedWorkspaceStorageError("overlapping_roots");
+    }
+  }
+}
+function directoryIdentity(binding) {
+  return `${binding.device}:${binding.inode}`;
+}
+async function readAncestors(directory) {
+  const identities = /* @__PURE__ */ new Set();
+  for (let current = directory; ; current = path17.dirname(current)) {
+    const info = await fs13.stat(current, { bigint: true }).catch(() => void 0);
+    if (!info?.isDirectory()) throw new WorkspaceProjectError("unavailable_directory");
+    identities.add(`${info.dev}:${info.ino}`);
+    if (path17.dirname(current) === current) return identities;
+  }
+}
+async function allocateDirectory(root, owner, authorizedRoots) {
+  await validateWorkspaceProject(authorizedRoots, root);
+  await assertProtectedWorkspacePath(root, true);
+  const directory = managedRunDirectoryPath(root, owner);
+  const binding = await mkdirInsidePinnedRoot(root, path17.basename(directory));
+  await validateWorkspaceProject(authorizedRoots, root);
+  return validateWorkspaceProject(authorizedRoots, binding);
+}
+function managedRunDirectoryPath(root, owner) {
+  const key = createHash6("sha256").update(owner.runId).digest("hex");
+  return path17.join(root.directory, `${owner.kind}-${key}`);
+}
+
 // src/continuation/idempotency.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 function continuationJobId(idempotencyKey) {
   if (!idempotencyKey) throw new Error("Continuation idempotency key is required.");
-  return `job_${createHash5("sha256").update(idempotencyKey).digest("hex").slice(0, 24)}`;
+  return `job_${createHash7("sha256").update(idempotencyKey).digest("hex").slice(0, 24)}`;
 }
 function continuationCreateIdempotencyKey(sourceMessageId) {
   if (!sourceMessageId) throw new Error("Continuation source message id is required.");
-  return `create-continuation:${createHash5("sha256").update(`${sourceMessageId}\0create_continuation_job`).digest("hex")}`;
+  return `create-continuation:${createHash7("sha256").update(`${sourceMessageId}\0create_continuation_job`).digest("hex")}`;
 }
 function continuationRetryIdempotencyKey(sourceJobId, requestId) {
   if (!sourceJobId || !requestId) {
@@ -56497,8 +56896,8 @@ function redactContinuationText(value) {
 }
 
 // src/continuation/working-directory.ts
-import fs12 from "node:fs/promises";
-import path14 from "node:path";
+import fs14 from "node:fs/promises";
+import path18 from "node:path";
 var RELATIVE_PATH_ERROR = "Continuation working directory must be relative and remain within LARK_CONTINUATION_WORKING_ROOT.";
 var EXISTING_DIRECTORY_ERROR = "Continuation working directory must be an existing directory, and configured roots must exist.";
 var OUTSIDE_ROOT_ERROR = "Continuation working directory resolves outside the configured continuation working root.";
@@ -56510,18 +56909,18 @@ var ContinuationWorkingDirectoryError = class extends Error {
   }
 };
 async function resolveContinuationWorkingDirectory(configuredRoot, relativeDirectory) {
-  if (!relativeDirectory || path14.isAbsolute(relativeDirectory) || /^[A-Za-z]:[\\/]/.test(relativeDirectory) || relativeDirectory.startsWith("\\\\") || relativeDirectory.split(/[\\/]+/).includes("..")) {
+  if (!relativeDirectory || path18.isAbsolute(relativeDirectory) || /^[A-Za-z]:[\\/]/.test(relativeDirectory) || relativeDirectory.startsWith("\\\\") || relativeDirectory.split(/[\\/]+/).includes("..")) {
     throw new ContinuationWorkingDirectoryError(RELATIVE_PATH_ERROR);
   }
   const root = requireAbsoluteRoot(configuredRoot);
-  const candidate = path14.resolve(root, relativeDirectory);
+  const candidate = path18.resolve(root, relativeDirectory);
   assertLexicallyContained(root, candidate);
   const [realRoot, realCandidate] = await canonicalDirectories(root, candidate);
   assertLexicallyContained(realRoot, realCandidate);
   return { root: realRoot, workingDirectory: realCandidate };
 }
 async function validateContinuationWorkingDirectory(configuredRoots, candidate) {
-  if (!path14.isAbsolute(candidate) || configuredRoots.length === 0) {
+  if (!path18.isAbsolute(candidate) || configuredRoots.length === 0) {
     throw new ContinuationWorkingDirectoryError(RELATIVE_PATH_ERROR);
   }
   const roots = configuredRoots.map(requireAbsoluteRoot);
@@ -56547,11 +56946,11 @@ async function resolveContinuationRequestedPaths(configuredRoot, requestedPaths)
     if (!value || value.includes("\0")) {
       throw new ContinuationWorkingDirectoryError(REQUESTED_PATH_ERROR);
     }
-    const candidate = path14.isAbsolute(value) ? path14.resolve(value) : path14.resolve(root, value);
+    const candidate = path18.isAbsolute(value) ? path18.resolve(value) : path18.resolve(root, value);
     let canonical;
     try {
-      canonical = await fs12.realpath(candidate);
-      await fs12.stat(canonical);
+      canonical = await fs14.realpath(candidate);
+      await fs14.stat(canonical);
     } catch {
       throw new ContinuationWorkingDirectoryError(
         `Continuation requested path does not exist or is not accessible: ${value}`
@@ -56565,15 +56964,15 @@ async function resolveContinuationRequestedPaths(configuredRoot, requestedPaths)
   return resolved;
 }
 function requireAbsoluteRoot(root) {
-  if (!path14.isAbsolute(root)) {
+  if (!path18.isAbsolute(root)) {
     throw new ContinuationWorkingDirectoryError(
       "LARK_CONTINUATION_WORKING_ROOT must be an absolute path to an existing directory."
     );
   }
-  return path14.resolve(root);
+  return path18.resolve(root);
 }
 function assertLexicallyContained(root, candidate) {
-  if (candidate !== root && !candidate.startsWith(`${root}${path14.sep}`)) {
+  if (candidate !== root && !candidate.startsWith(`${root}${path18.sep}`)) {
     throw new ContinuationWorkingDirectoryError(OUTSIDE_ROOT_ERROR);
   }
 }
@@ -56585,8 +56984,8 @@ async function canonicalDirectories(root, candidate) {
   }
 }
 async function canonicalDirectory(directory) {
-  const canonical = await fs12.realpath(directory);
-  const metadata = await fs12.stat(canonical);
+  const canonical = await fs14.realpath(directory);
+  const metadata = await fs14.stat(canonical);
   if (!metadata.isDirectory()) throw new Error("not a directory");
   return canonical;
 }
@@ -56640,6 +57039,10 @@ var ContinuationService = class {
   }
   async createFromMessage(action, message, parentSessionId, selectedModel, sourceInputs = [], workspaceProject) {
     assertEligibleSource(message);
+    if (this.options.managedWorkspaceConfigPath) {
+      const existing = await this.findExistingFromMessage(message);
+      if (existing) return { job: existing, created: false };
+    }
     const now = this.options.clock.now();
     const {
       resolvedWorkingDirectory,
@@ -56698,6 +57101,21 @@ var ContinuationService = class {
       ], workspaceProject);
       resolvedWorkingDirectory.workingDirectory = bound.directory;
     }
+    const authorizedRoots = [
+      resolvedWorkingDirectory.root,
+      this.options.foregroundWorkingRoot ?? resolvedWorkingDirectory.root
+    ];
+    const managedWorkspaceRoots = this.options.managedWorkspaceConfigPath ? await readManagedWorkspaceRoots({
+      configPath: this.options.managedWorkspaceConfigPath,
+      authorizedRoots,
+      project: workspaceProject,
+      sourceRegistryPath: this.options.sourceRegistryPath,
+      sourceRegistryRoot: authorizedRoots[1]
+    }) : void 0;
+    if (managedWorkspaceRoots && !workspaceProject) {
+      workspaceProject = await pinWorkspacePath(resolvedWorkingDirectory.root, resolvedWorkingDirectory.workingDirectory);
+      await validateManagedWorkspaceRoots(managedWorkspaceRoots, { authorizedRoots, project: workspaceProject });
+    }
     const route = deriveRoute(message);
     const brief = sanitizeBrief(action);
     if (brief.title.length > CONTINUATION_LIMITS.titleChars) {
@@ -56740,7 +57158,8 @@ var ContinuationService = class {
         root: resolvedWorkingDirectory.root,
         mode: this.options.filesystemMode,
         requestedPaths,
-        ...workspaceProject ? { workspaceProject } : {}
+        ...workspaceProject ? { workspaceProject } : {},
+        ...managedWorkspaceRoots ? { managedWorkspaceRoots } : {}
       },
       hostTools: brief.requiredTools,
       network: profile === "trusted_personal_workspace" ? "enabled" : "none",
@@ -56790,6 +57209,23 @@ var ContinuationService = class {
   }
   async getForActor(jobId, actorOpenId, ownerOpenId) {
     return this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+  }
+  async enqueueArtifactForActor(jobId, artifactId, message, ownerOpenId) {
+    const { chatType, chatId, threadId, messageId } = message;
+    if (chatType !== "p2p" && chatType !== "group" || !isFeishuOpenMessageId(messageId)) throw notAccessibleError();
+    const job = await this.requireAuthorizedJob(jobId, message.senderId, ownerOpenId);
+    const reference = job.checkpoint?.artifacts.find((entry) => entry.id === artifactId);
+    if (!reference) throw notAccessibleError();
+    const route = { kind: "message_thread", conversationId: chatId, sourceMessageId: messageId, ...threadId ? { threadId } : {} };
+    const artifact = { version: 1, chatType, artifactId, path: reference.path, sha256: reference.sha256 };
+    if (!artifactDeliveryMatches(job, route, artifact)) throw notAccessibleError();
+    const { repository, clock } = this.options;
+    const content = await repository.readManagedArtifact?.(job, artifact.path, artifact.sha256);
+    if (!content) throw notAccessibleError();
+    if (!isImArtifactSize(content.length)) {
+      throw new ContinuationServiceError("invalid_state", `Managed artifact retained locally: ${IM_ARTIFACT_SIZE_NOTE}`);
+    }
+    if (!await repository.enqueueManagedArtifact?.(jobId, route, artifact, clock.now().toISOString())) throw notAccessibleError();
   }
   async cancelForActor(jobId, actorOpenId, ownerOpenId) {
     const job = await this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
@@ -57161,7 +57597,7 @@ function boundedFactText(value) {
 }
 
 // src/run-trace-query.ts
-import fs13 from "node:fs/promises";
+import fs15 from "node:fs/promises";
 var DEFAULT_WITHIN_HOURS = 12;
 var MAX_WITHIN_HOURS = 168;
 var DEFAULT_MAX_TOOL_CALLS = 50;
@@ -57222,7 +57658,7 @@ async function readTraceLines(options) {
   const files = traceLogFiles(options.logPath, options.maxFiles);
   const out = [];
   for (const file2 of files) {
-    const text = await fs13.readFile(file2, "utf-8").catch((err) => {
+    const text = await fs15.readFile(file2, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -57244,11 +57680,11 @@ function parseCompactTraceLine(rawLine) {
   if (!line) return null;
   const fullMatch = line.match(/^(\S+)\s\s(\S+)\s\s(\S+)\s\strace\s\sfull\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s-\s\s-\s\s(.*)$/);
   if (fullMatch) {
-    const [, timestamp2, logId2, runId2, eventType, tool2, status2, rawSummary2] = fullMatch;
-    const timestampMs2 = Date.parse(timestamp2);
+    const [, timestamp3, logId2, runId2, eventType, tool2, status2, rawSummary2] = fullMatch;
+    const timestampMs2 = Date.parse(timestamp3);
     if (!Number.isFinite(timestampMs2)) return null;
     return {
-      timestamp: timestamp2,
+      timestamp: timestamp3,
       timestampMs: timestampMs2,
       logId: unquoteField(logId2),
       runId: unquoteField(runId2),
@@ -57260,12 +57696,12 @@ function parseCompactTraceLine(rawLine) {
   }
   const match = line.match(/^(\S+)\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s(.*)$/);
   if (!match) return null;
-  const [, timestamp, logId, runId, tool, status, callId, duration3, rawSummary] = match;
+  const [, timestamp2, logId, runId, tool, status, callId, duration3, rawSummary] = match;
   if (runId === "trace" || runId === "metrics") return null;
-  const timestampMs = Date.parse(timestamp);
+  const timestampMs = Date.parse(timestamp2);
   if (!Number.isFinite(timestampMs)) return null;
   return {
-    timestamp,
+    timestamp: timestamp2,
     timestampMs,
     logId: unquoteField(logId),
     runId: unquoteField(runId),
@@ -57381,7 +57817,7 @@ async function dispatchRegisteredAction(registry2, action, message) {
 }
 
 // src/codex-exec-action-schemas.ts
-import path15 from "node:path";
+import path19 from "node:path";
 var SaveMemoryActionSchema = external_exports.object({
   type: external_exports.literal("save_memory"),
   memory_type: external_exports.enum(["profile", "chat", "thread"]),
@@ -57523,7 +57959,7 @@ var ContinuationCheckpointActionSchema = external_exports.object({
   references: external_exports.array(external_exports.string().max(CONTINUATION_LIMITS.objectiveBytes)).max(CONTINUATION_LIMITS.acceptanceCriteriaCount)
 }).strict();
 var RelativeContinuationDirectorySchema = external_exports.string().min(1).refine((value) => {
-  if (path15.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\")) {
+  if (path19.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\")) {
     return false;
   }
   return !value.split(/[\\/]+/).includes("..");
@@ -57689,6 +58125,7 @@ var CodexExecActionSchema = external_exports.discriminatedUnion("type", [
   ManageAccessControlActionSchema,
   GetRunTraceActionSchema,
   SendMessageActionSchema,
+  external_exports.strictObject({ type: external_exports.literal("register_artifact"), relative_path: external_exports.string().min(1).max(2048) }),
   RecallMessageActionSchema,
   CreateContinuationActionBaseSchema
 ]).superRefine((action, ctx) => {
@@ -58116,7 +58553,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
   } = plan;
   let totalBytes = 0;
   for (const imagePath of imagePaths) {
-    const sizeBytes = (await fs14.stat(imagePath)).size;
+    const sizeBytes = (await fs16.stat(imagePath)).size;
     if (sizeBytes > CONTINUATION_LIMITS.inputBytesPerFile) {
       throw new Error("A continuation input exceeds the per-file byte limit.");
     }
@@ -58128,7 +58565,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
   if (descriptors.length === 0) {
     return {
       inputs: imagePaths.map((imagePath, imageIndex) => ({
-        sourcePath: path16.resolve(imagePath),
+        sourcePath: path20.resolve(imagePath),
         fileName: plannedImageFileNames[imageIndex],
         kind: "message_image"
       })),
@@ -58138,7 +58575,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
   }
   for (const [imageIndex, imagePath] of imagePaths.entries()) {
     inputs.push({
-      sourcePath: path16.resolve(imagePath),
+      sourcePath: path20.resolve(imagePath),
       fileName: plannedImageFileNames[imageIndex],
       kind: "message_image"
     });
@@ -58157,7 +58594,7 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
         messageId: message.messageId,
         fileKey: attachment.fileKey,
         resourceType,
-        fileName: `continuation-input-${createHash6("sha256").update(`${message.messageId}\0${index}`).digest("hex").slice(0, 16)}.bin`,
+        fileName: `continuation-input-${createHash8("sha256").update(`${message.messageId}\0${index}`).digest("hex").slice(0, 16)}.bin`,
         logPrefix: "[continuation-input]"
       }, {
         maxBytes: CONTINUATION_LIMITS.inputBytesPerFile
@@ -58166,12 +58603,12 @@ async function resolveContinuationSourceInputs(message, deps, plan = planContinu
         throw new Error("One or more continuation attachments could not be downloaded.");
       }
       temporaryPaths.push(downloaded);
-      totalBytes += (await fs14.stat(downloaded)).size;
+      totalBytes += (await fs16.stat(downloaded)).size;
       if (totalBytes > CONTINUATION_LIMITS.managedInputBytesPerJob) {
         throw new Error("Continuation inputs exceed the total byte limit.");
       }
       inputs.push({
-        sourcePath: path16.resolve(downloaded),
+        sourcePath: path20.resolve(downloaded),
         fileName,
         kind: resourceType === "image" ? "message_image" : "message_attachment"
       });
@@ -58202,7 +58639,7 @@ function planContinuationSourceInputs(message) {
   const matchedImageDescriptors = /* @__PURE__ */ new Set();
   const matchedDescriptorByImageIndex = imagePaths.map((imagePath, imageIndex) => {
     const explicitFileKey = downloadedImageFileKeys?.[imageIndex];
-    const candidateIndexes = descriptors.flatMap((attachment, index) => !matchedImageDescriptors.has(index) && attachment.fileType === "image" && path16.basename(imagePath).includes(`-${attachment.fileKey}-`) ? [index] : []);
+    const candidateIndexes = descriptors.flatMap((attachment, index) => !matchedImageDescriptors.has(index) && attachment.fileType === "image" && path20.basename(imagePath).includes(`-${attachment.fileKey}-`) ? [index] : []);
     const descriptorIndex = explicitFileKey === void 0 ? candidateIndexes.length === 1 ? candidateIndexes[0] : -1 : descriptors.findIndex((attachment, index) => !matchedImageDescriptors.has(index) && attachment.fileType === "image" && attachment.fileKey === explicitFileKey);
     if (explicitFileKey !== void 0 && descriptorIndex < 0) {
       throw new Error("Continuation downloaded image mapping is invalid.");
@@ -58218,7 +58655,7 @@ function planContinuationSourceInputs(message) {
   });
   const plannedImageFileNames = imagePaths.map((imagePath, imageIndex) => {
     const descriptorIndex = matchedDescriptorByImageIndex[imageIndex];
-    return descriptorIndex === null ? safeContinuationInputName(path16.basename(imagePath)) : descriptorFileNames[descriptorIndex];
+    return descriptorIndex === null ? safeContinuationInputName(path20.basename(imagePath)) : descriptorFileNames[descriptorIndex];
   });
   const inputCount = imagePaths.length + descriptors.length - matchedImageDescriptors.size;
   if (inputCount > CONTINUATION_LIMITS.inputFileCount) {
@@ -58234,10 +58671,10 @@ function planContinuationSourceInputs(message) {
   };
 }
 async function cleanupContinuationTemporaryInputs(temporaryPaths) {
-  await Promise.allSettled(temporaryPaths.map((filePath) => fs14.rm(filePath, { force: true })));
+  await Promise.allSettled(temporaryPaths.map((filePath) => fs16.rm(filePath, { force: true })));
 }
 function safeContinuationInputName(value) {
-  if (!value || value.length > 120 || value === "." || value === ".." || value === ".manifest.json" || value.includes("/") || value.includes("\\") || value.includes("\0") || path16.basename(value) !== value) {
+  if (!value || value.length > 120 || value === "." || value === ".." || value === ".manifest.json" || value.includes("/") || value.includes("\\") || value.includes("\0") || path20.basename(value) !== value) {
     throw new Error("Continuation attachment file name is invalid.");
   }
   return value;
@@ -58732,7 +59169,7 @@ function resolveActionTransport(transport) {
   return typeof transport === "function" ? transport() : transport;
 }
 function resolveSendMessageLocalPath(rawPath) {
-  return path16.isAbsolute(rawPath) ? rawPath : path16.resolve(appConfig.codexExecCwd, rawPath);
+  return path20.isAbsolute(rawPath) ? rawPath : path20.resolve(appConfig.codexExecCwd, rawPath);
 }
 function firstCurrentMessageImagePath(message) {
   return message.imagePath ?? message.imagePaths?.[0] ?? null;
@@ -58832,7 +59269,7 @@ async function resolveSendMessageImagePath(source, rawPath, message, deps) {
     filePath = resolveSendMessageLocalPath(rawPath);
   }
   try {
-    await fs14.access(filePath);
+    await fs16.access(filePath);
   } catch {
     return {
       ok: false,
@@ -58929,7 +59366,7 @@ async function executeSendMessage(action, message, deps) {
   } else {
     filePath = resolveSendMessageLocalPath(action.message.path);
     try {
-      await fs14.access(filePath);
+      await fs16.access(filePath);
     } catch {
       return {
         ok: false,
@@ -59047,6 +59484,7 @@ function createCodexExecActionHandlerRegistry(deps) {
     manage_access_control: (action, context) => executeManageAccessControl(action, context.message, deps),
     get_run_trace: (action, context) => executeGetRunTrace(action, context.message, deps),
     send_message: (action, context) => executeSendMessage(action, context.message, deps),
+    register_artifact: async () => ({ ok: false, action: "register_artifact", message: "Managed artifact registration requires a bound turn." }),
     recall_message: (action, context) => executeRecallMessage(action, context.message, deps),
     create_continuation_job: (action, context) => executeCreateContinuation(action, context, deps)
   };
@@ -59630,12 +60068,12 @@ function omit2(obj, ...keys) {
 }
 
 // node_modules/@larksuite/channel/dist/index.mjs
-import { createHash as createHash7, randomUUID as randomUUID3 } from "node:crypto";
+import { createHash as createHash9, randomUUID as randomUUID3 } from "node:crypto";
 import { inspect } from "node:util";
-import fs15 from "fs";
+import fs17 from "fs";
 import http2 from "http";
 import https from "https";
-import path17 from "path";
+import path21 from "path";
 import { promises } from "dns";
 import { isIP as isIP2 } from "net";
 var AMBIGUOUS = /* @__PURE__ */ Symbol("ambiguous");
@@ -60395,7 +60833,7 @@ function contentKey(activity) {
     item.start_time_ms ?? item.send_time ?? item.time ?? item.join_time ?? item.leave_time ?? null,
     readActor(item).id || null
   ]);
-  return createHash7("sha256").update(JSON.stringify([activity.activityType, parts])).digest("base64url").slice(0, DIGEST_LENGTH);
+  return createHash9("sha256").update(JSON.stringify([activity.activityType, parts])).digest("base64url").slice(0, DIGEST_LENGTH);
 }
 var INCONCLUSIVE_STATUS = /* @__PURE__ */ new Set([
   408,
@@ -61850,7 +62288,7 @@ async function renderItem(item, map2, ctx) {
   const msgType = item.msg_type ?? "text";
   const senderId = item.sender?.id ?? "unknown";
   const createMs = parseInt(String(item.create_time ?? "0"), 10);
-  const timestamp = createMs > 0 ? formatRFC3339Beijing(createMs) : "unknown";
+  const timestamp2 = createMs > 0 ? formatRFC3339Beijing(createMs) : "unknown";
   const displayName = ctx.resolveUserName?.(senderId) ?? senderId;
   let content;
   let resources = [];
@@ -61871,7 +62309,7 @@ async function renderItem(item, map2, ctx) {
     }
   }
   return {
-    content: `[${timestamp}] ${displayName}:
+    content: `[${timestamp2}] ${displayName}:
 ${indentLines(content, "    ")}`,
     resources
   };
@@ -62193,7 +62631,7 @@ function normalizeComment(event, opts) {
   const operatorOpenId = userId?.open_id;
   if (!fileToken || !fileType || !commentId || !operatorOpenId) return null;
   const tsStr = event.create_time ?? event.notice_meta?.timestamp ?? event.action_time;
-  const timestamp = tsStr ? parseInt(tsStr, 10) : Date.now();
+  const timestamp2 = tsStr ? parseInt(tsStr, 10) : Date.now();
   return {
     fileToken,
     fileType,
@@ -62205,7 +62643,7 @@ function normalizeComment(event, opts) {
       unionId: userId?.union_id
     },
     mentionedBot: Boolean(event.is_mentioned ?? event.notice_meta?.is_mentioned ?? event.is_mention),
-    timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
+    timestamp: Number.isFinite(timestamp2) ? timestamp2 : Date.now(),
     raw: opts?.includeRaw ? event : void 0
   };
 }
@@ -62646,20 +63084,20 @@ var MediaUploader = class {
     if (!/^https?:\/\//i.test(source)) {
       const allowedDirs = this.config?.allowedFileDirs;
       if (!allowedDirs || allowedDirs.length === 0) throw new LarkChannelError("upload_failed", "local file source requires `outbound.allowedFileDirs` to be configured");
-      const resolved = path17.resolve(source);
+      const resolved = path21.resolve(source);
       this.assertNotOnPosixBlocklist(resolved);
       try {
-        const realPath = await fs15.promises.realpath(resolved);
+        const realPath = await fs17.promises.realpath(resolved);
         this.assertNotOnPosixBlocklist(realPath);
         if (!(await Promise.all(allowedDirs.map(async (d) => {
-          const r = path17.resolve(d);
+          const r = path21.resolve(d);
           try {
-            return await fs15.promises.realpath(r);
+            return await fs17.promises.realpath(r);
           } catch {
             return r;
           }
-        }))).some((d) => realPath === d || realPath.startsWith(d + path17.sep))) throw new LarkChannelError("upload_failed", `file path is outside allowed directories: ${realPath}`);
-        const fh = await fs15.promises.open(realPath, "r");
+        }))).some((d) => realPath === d || realPath.startsWith(d + path21.sep))) throw new LarkChannelError("upload_failed", `file path is outside allowed directories: ${realPath}`);
+        const fh = await fs17.promises.open(realPath, "r");
         try {
           if (!(await fh.stat()).isFile()) throw new LarkChannelError("upload_failed", `not a regular file: ${realPath}`);
           return await fh.readFile();
@@ -65297,12 +65735,12 @@ function startSdkChannelRuntimeWithRetry(channel, options = {}) {
 }
 
 // src/codex-exec-delivery.ts
-import path20 from "node:path";
+import path27 from "node:path";
 
 // src/codex-exec-progress.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import fs16 from "node:fs/promises";
-import path18 from "node:path";
+import fs18 from "node:fs/promises";
+import path22 from "node:path";
 var IDENTITY_FIELDS = /* @__PURE__ */ new Set([
   "chat_id",
   "chatId",
@@ -65325,13 +65763,13 @@ var LOW_SIGNAL_PATTERNS = [
 var CODEX_EXEC_PROGRESS_RETENTION_MS = 12 * 60 * 60 * 1e3;
 var CODEX_EXEC_PROGRESS_CLEANUP_INTERVAL_MS = 60 * 60 * 1e3;
 function progressParentDir(baseDir) {
-  return path18.join(baseDir, ".lark-progress");
+  return path22.join(baseDir, ".lark-progress");
 }
 var CodexExecProgressSink = class {
   constructor(dir, options) {
     this.dir = dir;
     this.options = options;
-    this.filePath = path18.join(dir, "progress.jsonl");
+    this.filePath = path22.join(dir, "progress.jsonl");
     this.token = randomUUID4();
   }
   dir;
@@ -65361,10 +65799,10 @@ var CodexExecProgressSink = class {
     };
   }
   async prepare() {
-    await fs16.mkdir(this.dir, { recursive: true, mode: 448 });
-    await fs16.chmod(this.dir, 448);
-    await fs16.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs16.chmod(this.filePath, 384);
+    await fs18.mkdir(this.dir, { recursive: true, mode: 448 });
+    await fs18.chmod(this.dir, 448);
+    await fs18.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs18.chmod(this.filePath, 384);
   }
   start() {
     if (!this.options.limits.enabled || this.timer) return;
@@ -65381,7 +65819,7 @@ var CodexExecProgressSink = class {
     }
     await this.drain();
     await this.processPendingLine();
-    await fs16.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
+    await fs18.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
   }
   async drain() {
     if (this.draining) {
@@ -65398,7 +65836,7 @@ var CodexExecProgressSink = class {
     }
   }
   async drainOnce() {
-    const text = await fs16.readFile(this.filePath, "utf-8").catch((err) => {
+    const text = await fs18.readFile(this.filePath, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -65513,13 +65951,13 @@ async function createCodexExecProgressSink(options) {
   if (!options.limits.enabled) return null;
   try {
     const parentDir = progressParentDir(options.baseDir);
-    await fs16.mkdir(parentDir, { recursive: true, mode: 448 });
-    await fs16.chmod(parentDir, 448);
+    await fs18.mkdir(parentDir, { recursive: true, mode: 448 });
+    await fs18.chmod(parentDir, 448);
     await cleanupCodexExecProgressFiles(options.baseDir).catch((err) => {
       logSafeError("[codex-exec-progress] cleanup before setup failed:", err);
     });
-    const dir = await fs16.mkdtemp(path18.join(parentDir, "turn-"));
-    await fs16.chmod(dir, 448);
+    const dir = await fs18.mkdtemp(path22.join(parentDir, "turn-"));
+    await fs18.chmod(dir, 448);
     const sink = new CodexExecProgressSink(dir, options);
     await sink.prepare();
     return sink;
@@ -65535,7 +65973,7 @@ async function cleanupCodexExecProgressFiles(baseDir, options = {}) {
   const result = { progressDir, removed: 0, kept: 0, errors: 0 };
   let entries;
   try {
-    entries = await fs16.readdir(progressDir, { withFileTypes: true });
+    entries = await fs18.readdir(progressDir, { withFileTypes: true });
   } catch (err) {
     if (err?.code === "ENOENT") return result;
     result.errors += 1;
@@ -65544,14 +65982,14 @@ async function cleanupCodexExecProgressFiles(baseDir, options = {}) {
   }
   for (const entry of entries) {
     if (!entry.name.startsWith("turn-")) continue;
-    const entryPath = path18.join(progressDir, entry.name);
+    const entryPath = path22.join(progressDir, entry.name);
     try {
-      const entryStat = await fs16.lstat(entryPath);
+      const entryStat = await fs18.lstat(entryPath);
       if (nowMs - entryStat.mtimeMs <= maxAgeMs) {
         result.kept += 1;
         continue;
       }
-      await fs16.rm(entryPath, { recursive: true, force: true });
+      await fs18.rm(entryPath, { recursive: true, force: true });
       result.removed += 1;
     } catch (err) {
       result.errors += 1;
@@ -65602,8 +66040,8 @@ function isLowSignalProgress(text) {
 
 // src/codex-exec-action-channel.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
-import fs17 from "node:fs/promises";
-import path19 from "node:path";
+import fs19 from "node:fs/promises";
+import path23 from "node:path";
 var IDENTITY_FIELDS2 = /* @__PURE__ */ new Set([
   "chat_id",
   "chatId",
@@ -65622,7 +66060,7 @@ var DEFAULT_MAX_ACTIONS = 5;
 var CODEX_EXEC_ACTION_CHANNEL_RETENTION_MS = 12 * 60 * 60 * 1e3;
 var CODEX_EXEC_ACTION_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 60 * 1e3;
 function actionParentDir(baseDir) {
-  return path19.join(baseDir, ".lark-actions");
+  return path23.join(baseDir, ".lark-actions");
 }
 var CodexExecActionChannelError = class extends Error {
   reason;
@@ -65637,7 +66075,7 @@ var CodexExecActionChannel = class {
   constructor(dir, options) {
     this.dir = dir;
     this.options = options;
-    this.filePath = path19.join(dir, "actions.jsonl");
+    this.filePath = path23.join(dir, "actions.jsonl");
     this.token = randomUUID5();
     this.maxActions = options.maxActions ?? DEFAULT_MAX_ACTIONS;
   }
@@ -65661,17 +66099,17 @@ var CodexExecActionChannel = class {
     };
   }
   async prepare() {
-    await fs17.mkdir(this.dir, { recursive: true, mode: 448 });
-    await fs17.chmod(this.dir, 448);
-    await fs17.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs17.chmod(this.filePath, 384);
+    await fs19.mkdir(this.dir, { recursive: true, mode: 448 });
+    await fs19.chmod(this.dir, 448);
+    await fs19.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs19.chmod(this.filePath, 384);
   }
   async reset() {
-    await fs17.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
-    await fs17.chmod(this.filePath, 384).catch(() => void 0);
+    await fs19.writeFile(this.filePath, "", { encoding: "utf-8", mode: 384 });
+    await fs19.chmod(this.filePath, 384).catch(() => void 0);
   }
   async read() {
-    const text = await fs17.readFile(this.filePath, "utf-8").catch((err) => {
+    const text = await fs19.readFile(this.filePath, "utf-8").catch((err) => {
       if (err?.code === "ENOENT") return "";
       throw err;
     });
@@ -65704,7 +66142,7 @@ var CodexExecActionChannel = class {
     return { actions, requestCount };
   }
   async cleanup() {
-    await fs17.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
+    await fs19.rm(this.dir, { recursive: true, force: true }).catch(() => void 0);
   }
   parseLine(line) {
     let parsed;
@@ -65755,13 +66193,13 @@ var CodexExecActionChannel = class {
 async function createCodexExecActionChannel(options) {
   try {
     const parentDir = actionParentDir(options.baseDir);
-    await fs17.mkdir(parentDir, { recursive: true, mode: 448 });
-    await fs17.chmod(parentDir, 448);
+    await fs19.mkdir(parentDir, { recursive: true, mode: 448 });
+    await fs19.chmod(parentDir, 448);
     await cleanupCodexExecActionChannels(options.baseDir).catch((err) => {
       logSafeError("[codex-exec-actions] cleanup before setup failed:", err);
     });
-    const dir = await fs17.mkdtemp(path19.join(parentDir, "turn-"));
-    await fs17.chmod(dir, 448);
+    const dir = await fs19.mkdtemp(path23.join(parentDir, "turn-"));
+    await fs19.chmod(dir, 448);
     const channel = new CodexExecActionChannel(dir, options);
     await channel.prepare();
     return channel;
@@ -65777,7 +66215,7 @@ async function cleanupCodexExecActionChannels(baseDir, options = {}) {
   const result = { actionDir, removed: 0, kept: 0, errors: 0 };
   let entries;
   try {
-    entries = await fs17.readdir(actionDir, { withFileTypes: true });
+    entries = await fs19.readdir(actionDir, { withFileTypes: true });
   } catch (err) {
     if (err?.code === "ENOENT") return result;
     result.errors += 1;
@@ -65786,14 +66224,14 @@ async function cleanupCodexExecActionChannels(baseDir, options = {}) {
   }
   for (const entry of entries) {
     if (!entry.name.startsWith("turn-")) continue;
-    const entryPath = path19.join(actionDir, entry.name);
+    const entryPath = path23.join(actionDir, entry.name);
     try {
-      const entryStat = await fs17.lstat(entryPath);
+      const entryStat = await fs19.lstat(entryPath);
       if (nowMs - entryStat.mtimeMs <= maxAgeMs) {
         result.kept += 1;
         continue;
       }
-      await fs17.rm(entryPath, { recursive: true, force: true });
+      await fs19.rm(entryPath, { recursive: true, force: true });
       result.removed += 1;
     } catch (err) {
       result.errors += 1;
@@ -65861,6 +66299,10 @@ function buildCodexExecActionChannelPrompt(info) {
     "- Do not include chat_id, thread_id, open_id, user_id, caller, or created_by; the parent Lark bridge derives identity.",
     '- JSONL schema: {"version":1,"token":"<token>","type":"lark_action_request","actions":[{"type":"<supported_action>","...":"..."}]}',
     "- Supported action payloads inside actions[]:",
+    ...info.managedArtifactRegistration ? actionLines("register_artifact", [
+      '  - {"type":"register_artifact","relative_path":"report.csv"}',
+      "    Register only requested deliverables already written under LARK_MANAGED_ARTIFACTS_DIR. The host verifies and delivers them separately. Do not claim they were sent."
+    ]) : [],
     ...actionLines("save_memory", [
       '  - {"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"public|private","mode":"append|replace"}'
     ]),
@@ -65902,6 +66344,424 @@ function buildCodexExecActionChannelPrompt(info) {
   ];
 }
 
+// src/managed-workspace-exec.ts
+function assertManagedWorkspaceSandbox(sandbox, project) {
+  if (sandbox !== "read-only" && (sandbox !== "workspace-write" || !project)) {
+    throw new ManagedWorkspaceStorageError("unisolated_source");
+  }
+}
+function withManagedWorkspace(request, allocation) {
+  assertManagedWorkspaceSandbox(request.sandbox, allocation.project);
+  if (request.sandbox === "workspace-write" && request.cwd !== allocation.project?.directory) {
+    throw new ManagedWorkspaceStorageError("unisolated_source");
+  }
+  const scratch = allocation.scratch.directory;
+  const artifacts = allocation.artifacts.directory;
+  const mayWrite = request.sandbox === "workspace-write";
+  return {
+    ...request,
+    prompt: `${request.prompt}
+
+[Managed run storage]
+${[
+      `Scratch directory: ${JSON.stringify(scratch)}`,
+      `Formal artifact directory: ${JSON.stringify(artifacts)}`,
+      "Use scratch for temporary files. Keep files intended for delivery in the formal artifact directory.",
+      "These paths do not extend the source workspace authorization or override the current sandbox mode."
+    ].join("\n")}`,
+    extraEnv: {
+      ...request.extraEnv,
+      LARK_MANAGED_SCRATCH_DIR: scratch,
+      LARK_MANAGED_ARTIFACTS_DIR: artifacts,
+      ...mayWrite ? { TMPDIR: scratch, TMP: scratch, TEMP: scratch } : {}
+    },
+    ...request.sandbox === "workspace-write" ? {
+      additionalWritableDirs: [.../* @__PURE__ */ new Set([...request.additionalWritableDirs ?? [], scratch, artifacts])]
+    } : {}
+  };
+}
+
+// src/managed-workspace-admission.ts
+import { createHash as createHash10 } from "node:crypto";
+import path24 from "node:path";
+function managedForegroundRunOwner(message, sessionKey2) {
+  const identity = JSON.stringify([
+    sessionKey2,
+    message.messageId,
+    message.senderId,
+    message.messageType,
+    ...message.reaction ? [message.reaction.emojiType, message.timestampMs] : []
+  ]);
+  return { kind: "foreground", runId: createHash10("sha256").update(identity).digest("hex") };
+}
+async function admitManagedForegroundRun(options) {
+  const { store, recorded, project, owner } = options;
+  const authorizedRoots = [options.authorizedRoot];
+  const roots = recorded?.allocation.roots ?? await readManagedWorkspaceRoots({
+    configPath: options.configPath,
+    authorizedRoots,
+    project,
+    sourceRegistryPath: options.sourceRegistryPath
+  });
+  if (!roots) {
+    if (store) store.rememberUnmanagedForeground(owner.runId, {
+      sessionKey: options.sessionKey,
+      ...project ? { project } : { fallbackCwd: path24.resolve(options.authorizedRoot) }
+    });
+    return void 0;
+  }
+  assertManagedWorkspaceSandbox(options.sandbox, project);
+  if (!store) throw new ManagedWorkspaceStorageError("allocation_failed");
+  const fallbackWorkspace = project ? void 0 : recorded ? recorded.allocation.fallbackWorkspace : await pinWorkspacePath(options.authorizedRoot, ".");
+  if (!project && !fallbackWorkspace) throw new ManagedWorkspaceStorageError("invalid_binding");
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  return store.ensure({
+    owner,
+    roots,
+    authorizedRoots,
+    project,
+    sourceRegistryPath: options.sourceRegistryPath,
+    fallbackWorkspace,
+    foregroundSessionKey: options.sessionKey,
+    createdAt: recorded?.allocation.createdAt ?? now,
+    usedAt: now
+  });
+}
+
+// src/managed-workspace-artifact.ts
+import { execFile as execFile3 } from "node:child_process";
+import { createHash as createHash11, randomBytes } from "node:crypto";
+import path25 from "node:path";
+import { promisify as promisify3 } from "node:util";
+var exec3 = promisify3(execFile3);
+var HARD_BYTE_LIMIT = 100 * 1024 * 1024;
+var artifactProgram = String.raw`
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { createHash, randomBytes } = require('node:crypto');
+  const [operation, root, dev, ino, relative, limitText, expected, nonce, stageDev, stageIno] = process.argv.slice(1);
+  const limit = Number(limitText);
+  const mode = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+  const same = (a, b) => a.dev === b.dev && a.ino === b.ino;
+  const stable = (a, b) => same(a, b) && a.size === b.size && a.ctimeNs === b.ctimeNs && a.mtimeNs === b.mtimeNs;
+  const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+  const stat = (name) => fs.lstatSync(name, { bigint: true });
+  function optionalStat(name) { try { return stat(name); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
+  const guard = (ok) => { if (!ok) throw new Error('Invalid artifact'); };
+  let current = root;
+  let identity;
+  function guardParent() {
+    const named = stat(current);
+    guard(named.isDirectory() && same(identity, named) && same(identity, stat('.')));
+    guard(named.uid === BigInt(process.geteuid()) && (named.mode & 0o022n) === 0n);
+  }
+  function read(leaf, allowedLinks) {
+    const fd = fs.openSync(leaf, mode);
+    try {
+      const before = fs.fstatSync(fd, { bigint: true });
+      guard(before.isFile() && before.nlink === allowedLinks && before.size <= BigInt(limit) && stable(before, stat(leaf)));
+      const content = Buffer.alloc(Number(before.size));
+      for (let offset = 0; offset < content.length;) {
+        const received = fs.readSync(fd, content, offset, content.length - offset, offset);
+        guard(received > 0);
+        offset += received;
+      }
+      guardParent();
+      guard(stable(before, fs.fstatSync(fd, { bigint: true })) && stable(before, stat(leaf)));
+      guard(!expected || sha(content) === expected);
+      return content;
+    } finally { fs.closeSync(fd); }
+  }
+  const prefix = '.lark-retry-' + sha(relative + '\0' + expected) + '-';
+  const ownedStage = nonce ? prefix + nonce + '.tmp' : undefined;
+  const privateStage = (entry) => entry.isFile() && entry.uid === BigInt(process.geteuid()) && (entry.mode & 0o077n) === 0n;
+  function verifiedStage(entry) {
+    return privateStage(entry) && (stageDev
+      ? String(entry.dev) === stageDev && String(entry.ino) === stageIno
+      : entry.size === 0n && entry.nlink === 1n);
+  }
+  function recoverOwned(leaf) {
+    guard(stageDev && stageIno);
+    const staged = optionalStat(ownedStage);
+    if (!staged) return;
+    guard(verifiedStage(staged));
+    const existing = optionalStat(leaf);
+    if (existing && same(existing, staged)) read(leaf, 2n);
+    else guard(staged.nlink === 1n);
+    guardParent();
+    guard(same(staged, stat(ownedStage)));
+    fs.unlinkSync(ownedStage);
+  }
+  function reconcile(leaf) {
+    const existing = optionalStat(leaf);
+    const stages = fs.readdirSync('.').filter((name) => name.startsWith(prefix)
+      && /^[a-f0-9]{32}\.tmp$/.test(name.slice(prefix.length)));
+    if (stages.length === 0) return !!existing;
+    guard(stages.length === 1);
+    const [stage] = stages;
+    const staged = stat(stage);
+    guard(privateStage(staged));
+    if (existing) {
+      guard(same(existing, staged));
+      read(leaf, 2n);
+    } else {
+      read(stage, 1n);
+      guardParent();
+      guard(stable(staged, stat(stage)));
+      fs.linkSync(stage, leaf);
+    }
+    guardParent();
+    guard(same(staged, stat(stage)) && same(staged, stat(leaf)));
+    fs.unlinkSync(stage);
+    read(leaf, 1n);
+    return true;
+  }
+  function publish(leaf) {
+    const content = fs.readFileSync(0);
+    guard(content.length <= limit && sha(content) === expected);
+    if (ownedStage ? optionalStat(leaf) : reconcile(leaf)) {
+      read(leaf, 1n);
+      if (ownedStage) recoverOwned(leaf);
+      return;
+    }
+    const staged = ownedStage || prefix + randomBytes(16).toString('hex') + '.tmp';
+    const flags = fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+    const fd = fs.openSync(staged, ownedStage ? flags : flags | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
+    let opened;
+    try {
+      const before = fs.fstatSync(fd, { bigint: true });
+      guard(!ownedStage || (verifiedStage(before) && before.nlink === 1n && before.size === 0n && stable(before, stat(staged))));
+      opened = before;
+      fs.writeFileSync(fd, content);
+      fs.fsyncSync(fd);
+      guardParent();
+      guard(same(fs.fstatSync(fd, { bigint: true }), stat(staged)));
+      fs.linkSync(staged, leaf);
+    } finally {
+      fs.closeSync(fd);
+      guardParent();
+      const currentStage = optionalStat(staged);
+      if (opened && currentStage && same(opened, currentStage)) fs.unlinkSync(staged);
+    }
+  }
+  function main() {
+    const start = stat('.');
+    guard(process.geteuid && String(start.dev) === dev && String(start.ino) === ino);
+    identity = start;
+    guardParent();
+    const names = relative.split('/');
+    const leaf = names.pop();
+    for (const name of names) {
+      if (operation === 'publish' || operation === 'prepare') {
+        try { fs.mkdirSync(name, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+      }
+      let fd;
+      try { fd = fs.openSync(name, mode | fs.constants.O_DIRECTORY); }
+      catch (error) {
+        if ((operation === 'reconcile' || operation === 'recover') && error.code === 'ENOENT') return;
+        throw error;
+      }
+      try {
+        const child = fs.fstatSync(fd, { bigint: true });
+        guard(child.isDirectory() && child.uid === start.uid && (child.mode & 0o022n) === 0n);
+        process.chdir(name);
+        current = path.join(current, name);
+        identity = child;
+        guardParent();
+      } finally { fs.closeSync(fd); }
+    }
+    if (operation === 'prepare') {
+      const fd = fs.openSync(ownedStage, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+      try {
+        const before = fs.fstatSync(fd, { bigint: true });
+        guardParent();
+        guard(verifiedStage(before) && stable(before, stat(ownedStage)));
+        process.stdout.write(JSON.stringify({ device: String(before.dev), inode: String(before.ino) }));
+      } finally { fs.closeSync(fd); }
+    } else if (operation === 'recover') {
+      recoverOwned(leaf);
+    } else if (operation === 'publish') {
+      publish(leaf);
+      guardParent();
+    } else if (operation === 'reconcile') {
+      reconcile(leaf);
+    } else {
+      const result = read(leaf, 1n);
+      process.stdout.write(result);
+    }
+  }
+  try { main(); } catch {
+    process.exitCode = 1;
+  }
+`;
+async function readManagedArtifact(options) {
+  const content = await runArtifactOperation(options, options.expectedSha256?.toLowerCase() ?? "");
+  return { content, sha256: createHash11("sha256").update(content).digest("hex") };
+}
+async function publishManagedArtifact(options) {
+  const sha2562 = createHash11("sha256").update(options.content).digest("hex");
+  const { stageJournal, relativePath } = options;
+  if (!stageJournal) {
+    await runArtifactOperation(options, sha2562, options.content);
+    return;
+  }
+  await reconcileManagedArtifact({ ...options, expectedSha256: sha2562 });
+  const stage = { sha256: sha2562, nonce: randomBytes(16).toString("hex") };
+  stageJournal.reserve(relativePath, stage);
+  const output2 = await runArtifactOperation(options, sha2562, void 0, "prepare", stage);
+  const identity = managedArtifactIdentitySchema.parse(JSON.parse(output2.toString("utf8")));
+  stageJournal.pin(relativePath, stage.nonce, identity);
+  await runArtifactOperation(options, sha2562, options.content, "publish", { ...stage, identity });
+  stageJournal.release(relativePath, stage.nonce);
+}
+async function reconcileManagedArtifact(options) {
+  const sha2562 = options.expectedSha256.toLowerCase();
+  const { stageJournal, relativePath } = options;
+  if (stageJournal) {
+    const stage = stageJournal.get(relativePath);
+    if (stage) {
+      if (stage.identity) await runArtifactOperation(options, sha2562, void 0, "recover", stage);
+      stageJournal.release(relativePath, stage.nonce);
+    }
+    return;
+  }
+  await runArtifactOperation(options, sha2562, void 0, "reconcile");
+}
+async function runArtifactOperation(options, sha2562, input2, operation = input2 ? "publish" : "read", stage) {
+  const { binding, relativePath, maxBytes, revalidate } = options;
+  const safePath = isManagedArtifactRelativePath(relativePath);
+  if (!safePath || path25.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || stage && (!managedArtifactStageSchema.safeParse(stage).success || stage.sha256 !== sha2562) || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
+  try {
+    if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
+    const running = exec3(process.execPath, [
+      "--input-type=commonjs",
+      "-e",
+      artifactProgram,
+      "--",
+      operation,
+      binding.directory,
+      binding.device,
+      binding.inode,
+      relativePath,
+      String(maxBytes),
+      sha2562,
+      ...stage ? [stage.nonce, stage.identity?.device ?? "", stage.identity?.inode ?? ""] : []
+    ], {
+      cwd: binding.directory,
+      env: {},
+      maxBuffer: maxBytes + 1024,
+      timeout: 3e4,
+      encoding: "buffer"
+    });
+    running.child.stdin?.on("error", () => {
+    });
+    running.child.stdin?.end(input2);
+    const { stdout } = await running;
+    if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
+    return stdout;
+  } catch {
+    throw new ManagedWorkspaceStorageError("artifact_invalid");
+  }
+}
+
+// src/foreground-artifact-delivery.ts
+import path26 from "node:path";
+async function deliverForegroundArtifacts(store, allocation, batch, authorizedRoot, options) {
+  const sessionKey2 = buildCodexExecSessionKey(batch.chatId, batch.threadId);
+  const owner = managedForegroundRunOwner({
+    messageId: batch.sourceMessageId,
+    senderId: batch.actorId,
+    messageType: batch.messageType
+  }, sessionKey2);
+  if (allocation.owner.kind !== "foreground" || allocation.foregroundSessionKey !== sessionKey2 || batch.sessionKey !== sessionKey2 || allocation.owner.runId !== owner.runId) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  const { runId } = allocation.owner;
+  const maySend = () => !options.abortSignal?.aborted && options.allowsRoute?.(batch.actorId, batch.chatId) !== false;
+  const route = { chat_id: batch.chatId, reply_to: batch.sourceMessageId, thread_id: batch.threadId, routing: "standalone" };
+  if (batch.reply.status === "pending") {
+    if (!maySend()) return false;
+    await store.openDirectory(allocation.owner, "artifacts", [authorizedRoot]);
+    if (!maySend() || !store.transitionForegroundArtifact(runId, "reply", "pending", "sending")) return false;
+    let receipt;
+    try {
+      receipt = confirmedReceipt(await options.sendReply({
+        ...route,
+        routing: "auto",
+        text: batch.reply.text,
+        runtimeFooter: batch.reply.runtimeFooter,
+        idempotencyKey: `foreground:${runId}:reply`,
+        retry: { attempts: 1, retryTimeout: false }
+      }));
+    } catch {
+    }
+    if (!store.transitionForegroundArtifact(runId, "reply", "sending", receipt ? "sent" : "unknown", receipt) || !receipt) return false;
+  } else if (batch.reply.status !== "sent") {
+    return false;
+  }
+  for (const [index, { status, reference }] of batch.files.entries()) {
+    if (!maySend()) return true;
+    if (status !== "pending") continue;
+    let bytes;
+    try {
+      ({ content: bytes } = await readManagedArtifact({
+        binding: allocation.artifacts,
+        relativePath: reference.relativePath,
+        expectedSha256: reference.sha256,
+        maxBytes: MANAGED_DELIVERY_MAX_BYTES,
+        revalidate: () => store.openDirectory(allocation.owner, "artifacts", [authorizedRoot])
+      }));
+      if (!bytes.length) throw new ManagedWorkspaceStorageError("artifact_invalid");
+    } catch {
+      store.transitionForegroundArtifact(runId, index, "pending", "failed");
+      continue;
+    }
+    if (!maySend()) return true;
+    let fileKey;
+    try {
+      fileKey = await options.upload(bytes, path26.posix.basename(reference.relativePath));
+    } catch {
+    }
+    if (!fileKey) continue;
+    if (!maySend()) return true;
+    if (!store.transitionForegroundArtifact(runId, index, "pending", "sending")) continue;
+    let receipt;
+    try {
+      receipt = confirmedReceipt(await options.sendReply({
+        ...route,
+        text: "",
+        idempotencyKey: `foreground:${runId}:artifact:${index}`,
+        retry: { attempts: 1, retryTimeout: false },
+        rawMessage: { msgType: "file", content: JSON.stringify({ file_key: fileKey }) }
+      }));
+    } catch {
+    }
+    store.transitionForegroundArtifact(runId, index, "sending", receipt ? "sent" : "unknown", receipt);
+  }
+  return true;
+}
+function confirmedReceipt(response) {
+  return !response.isError && response.sentCount > 0 ? response.messageIds?.find(isFeishuOpenMessageId) : void 0;
+}
+async function drainForegroundArtifacts(store, authorizedRoot, options, onError) {
+  let after = "";
+  while (!options.abortSignal?.aborted) {
+    const ids = store.listPendingForegroundRuns(after);
+    if (!ids.length) return;
+    for (const runId of ids) {
+      if (options.abortSignal?.aborted) return;
+      after = runId;
+      try {
+        const run = store.get({ kind: "foreground", runId });
+        const batch = store.getForegroundArtifacts(runId);
+        if (run && batch) await deliverForegroundArtifacts(store, run.allocation, batch, authorizedRoot, options);
+      } catch (error62) {
+        onError(error62);
+      }
+    }
+  }
+}
+
 // src/codex-exec-delivery.ts
 var VISIBLE_SUCCESS_ACTIONS = /* @__PURE__ */ new Set([
   "create_job",
@@ -65934,7 +66794,7 @@ function resolveProgressLimits(overrides = {}) {
     pollIntervalMs: overrides.pollIntervalMs ?? appConfig.codexExecProgressPollIntervalMs
   };
 }
-async function enrichCodexExecActionPromptInfo(info, message, continuationAvailable, continuationPermitted, blockedActionTypes = []) {
+async function enrichCodexExecActionPromptInfo(info, message, continuationAvailable, continuationPermitted, blockedActionTypes = [], managedArtifactRegistration = false) {
   if (!info?.enabled) return info;
   const baseInfo = {
     ...info,
@@ -65942,7 +66802,8 @@ async function enrichCodexExecActionPromptInfo(info, message, continuationAvaila
     continuationEnabled: appConfig.continuationEnabled && continuationAvailable && continuationPermitted && message.messageType !== "reaction" && ["p2p", "group", "doc_comment"].includes(message.chatType),
     continuationWorkingRoot: appConfig.continuationWorkingRoot,
     continuationTrustedPersonalWorkspaceEligible: message.senderId === appConfig.ownerOpenId || accessControlStore.isAllowedUserId(message.senderId),
-    ...blockedActionTypes.length > 0 ? { blockedActionTypes } : {}
+    ...blockedActionTypes.length > 0 ? { blockedActionTypes } : {},
+    managedArtifactRegistration
   };
   const exposeForegroundHostTools = appConfig.codexExecSandbox !== "danger-full-access";
   if (!exposeForegroundHostTools && !baseInfo.continuationEnabled) return baseInfo;
@@ -66164,21 +67025,80 @@ async function deliverMessageViaCodexExec(opts) {
     registryPath: appConfig.workspaceProjectsConfigPath
   };
   const foreground = message.chatType === "p2p" || message.chatType === "group" || message.chatType === "doc_comment";
+  const workspaceOwner = foreground && opts.managedWorkspaceStore ? managedForegroundRunOwner(message, sessionKey2) : void 0;
+  const managedStore = workspaceOwner ? opts.managedWorkspaceStore?.() : void 0;
+  const priorManaged = workspaceOwner ? managedStore?.get(workspaceOwner) : void 0;
+  const priorUnmanaged = workspaceOwner ? managedStore?.getUnmanagedForeground(workspaceOwner.runId) : void 0;
+  if (priorUnmanaged && (priorManaged || priorUnmanaged.sessionKey !== sessionKey2)) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  const artifactIO = !opts.deliverySink && opts.uploadManagedArtifact && (message.chatType === "p2p" || message.chatType === "group") && message.messageType !== "reaction" && isFeishuOpenMessageId(message.messageId) && shouldSendFeishuReplyForMessage(message) ? {
+    sendReply: opts.sendReply,
+    upload: opts.uploadManagedArtifact,
+    abortSignal: opts.abortSignal,
+    allowsRoute: opts.authorizeForegroundArtifactRoute
+  } : void 0;
+  if (priorManaged && managedStore && workspaceOwner && artifactIO) {
+    const batch = managedStore.getForegroundArtifacts(workspaceOwner.runId);
+    if (batch) {
+      const confirmed = await deliverForegroundArtifacts(
+        managedStore,
+        priorManaged.allocation,
+        batch,
+        workspaceOptions.authorizedRoot,
+        artifactIO
+      );
+      if (confirmed) turnObligations?.markSatisfied(message.messageId, "reply");
+      else turnObligations?.markDeferred(message.messageId, "exec_assistant_text", "LARK_DEFER", "Managed delivery not confirmed.");
+      return;
+    }
+  }
   const directive = foreground && message.messageType !== "reaction" ? readWorkspaceProjectDirective(message.chatType === "doc_comment" ? message.currentUserText : message.workspaceDirectiveText) : void 0;
   const selector = directive?.selector;
   const savedWorkspace = storedSession?.workspaceProjectSenderId === message.senderId ? storedSession.workspaceProject : void 0;
   const legacySession = compatibleSession?.sessionId && compatibleSession.workspaceProject === void 0;
   let workspace;
-  if (foreground && (selector !== void 0 || savedWorkspace !== void 0 || !legacySession)) {
+  if (priorUnmanaged) {
+    if ("project" in priorUnmanaged) {
+      workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, priorUnmanaged.project);
+    } else if (priorUnmanaged.fallbackCwd !== path27.resolve(workspaceOptions.authorizedRoot)) {
+      throw new ManagedWorkspaceStorageError("invalid_binding");
+    }
+  } else if (priorManaged) {
+    const previousProject = priorManaged.allocation.project;
+    if (previousProject) workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, previousProject);
+  } else if (foreground && (selector !== void 0 || savedWorkspace !== void 0 || !legacySession)) {
     workspace = await resolveWorkspaceProject({ ...workspaceOptions, selector, persisted: savedWorkspace });
   } else if (message.chatType === "cronjob" && opts.cronWorkspaceProject !== void 0) {
     workspace = await resolveWorkspaceProject({ ...workspaceOptions, persisted: opts.cronWorkspaceProject });
   }
+  const managed = priorUnmanaged ? void 0 : workspaceOwner ? await admitManagedForegroundRun({
+    owner: workspaceOwner,
+    sessionKey: sessionKey2,
+    store: managedStore,
+    recorded: priorManaged,
+    configPath: appConfig.managedWorkspaceConfigPath,
+    authorizedRoot: workspaceOptions.authorizedRoot,
+    project: workspace,
+    sourceRegistryPath: workspaceOptions.registryPath,
+    sandbox: appConfig.codexExecSandbox
+  }) : opts.managedWorkspace;
+  if (managed && !sameWorkspaceProject(managed.project, workspace)) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  const foregroundArtifacts = [];
+  const onManagedArtifact = managedStore && artifactIO ? (reference) => {
+    foregroundArtifacts.push(reference);
+  } : opts.onManagedArtifact;
+  const launchWorkspace = workspace ?? (managed ? await validateWorkspaceProject(
+    workspaceOptions.authorizedRoot,
+    managed.fallbackWorkspace
+  ) : void 0);
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace) && (workspace === void 0 || compatibleSession?.workspaceProjectSenderId === message.senderId) ? compatibleSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
-  const progressBaseDir = path20.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
-  const actionBaseDir = path20.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
+  const progressBaseDir = path27.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
+  const actionBaseDir = path27.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
   const actionChannel = await createCodexExecActionChannel({
     baseDir: actionBaseDir,
     caller: message.senderId,
@@ -66213,12 +67133,13 @@ async function deliverMessageViaCodexExec(opts) {
         message,
         opts.continuationAvailable ?? true,
         continuationPermitted,
-        opts.actionPolicy?.blockedActionTypes
+        opts.actionPolicy?.blockedActionTypes,
+        Boolean(managed && onManagedArtifact)
       )
     ),
     imagePaths: collectImagePaths(message),
     command: appConfig.codexExecCommand,
-    cwd: workspace?.directory ?? appConfig.codexExecCwd,
+    cwd: launchWorkspace?.directory ?? appConfig.codexExecCwd,
     timeoutMs: appConfig.codexExecTimeoutMs,
     sandbox: appConfig.codexExecSandbox,
     model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
@@ -66251,23 +67172,38 @@ async function deliverMessageViaCodexExec(opts) {
   let result;
   let usedResumeSessionId = request.resumeSessionId;
   const runInWorkspace = async (runRequest) => {
-    if (!workspace) return runCodexExec(runRequest);
+    if (!launchWorkspace) return runCodexExec(runRequest);
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...progressSink ? [progressSink.filePath] : []];
-    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path20.dirname(file2)))) : [];
-    await validateWorkspaceProject(authorizedRoot, workspace);
-    return runCodexExec({
+    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path27.dirname(file2)))) : [];
+    if (managed) {
+      await Promise.all([
+        validateManagedRunDirectory(managed, "scratch", [authorizedRoot]),
+        validateManagedRunDirectory(managed, "artifacts", [authorizedRoot])
+      ]);
+    }
+    await validateWorkspaceProject(authorizedRoot, launchWorkspace);
+    const guardedRequest = {
       ...runRequest,
-      workspaceDirectory: { binding: workspace, authorizedRoots: [authorizedRoot], sideChannelBindings },
+      workspaceDirectory: {
+        ...managed ? { requireProtectedAncestry: true } : {},
+        binding: launchWorkspace,
+        authorizedRoots: [authorizedRoot],
+        auxiliaryBindings: [
+          ...sideChannelBindings,
+          ...managed ? [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts] : []
+        ]
+      },
       ...sideChannelBindings.length ? { additionalWritableDirs: sideChannelBindings.map((binding) => binding.directory) } : {}
-    });
+    };
+    return runCodexExec(managed ? withManagedWorkspace(guardedRequest, managed) : guardedRequest);
   };
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey2);
   try {
     progressSink?.start();
     result = normalizeCodexExecResult(await runInWorkspace(request));
   } catch (err) {
-    if (!request.resumeSessionId || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError) {
+    if (!request.resumeSessionId || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError || err instanceof ManagedWorkspaceStorageError) {
       await actionChannel.cleanup();
       throw err;
     }
@@ -66323,7 +67259,9 @@ async function deliverMessageViaCodexExec(opts) {
       workspaceProject: workspace,
       explicitWorkspaceProject: selector !== void 0,
       model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
-      continuationPermitted
+      continuationPermitted,
+      managed,
+      onManagedArtifact
     });
     opts.onActionResults?.(actionResults);
     const continuation = actionResults.find(
@@ -66433,6 +67371,24 @@ ${continuationFailure.message}`;
     );
     return;
   }
+  if (managed && managedStore && artifactIO && foregroundArtifacts.length) {
+    const batch = {
+      version: 2,
+      chatId: message.chatId,
+      sourceMessageId: message.messageId,
+      sessionKey: sessionKey2,
+      actorId: message.senderId,
+      messageType: message.messageType,
+      ...message.threadId ? { threadId: message.threadId } : {},
+      reply: { text, ...runtimeFooter ? { runtimeFooter } : {}, status: "pending" },
+      files: foregroundArtifacts.map((reference) => ({ reference, status: "pending" }))
+    };
+    managedStore.rememberForegroundArtifacts(managed.owner.runId, batch);
+    const confirmed = await deliverForegroundArtifacts(managedStore, managed, batch, workspaceOptions.authorizedRoot, artifactIO);
+    if (confirmed) turnObligations?.markSatisfied(message.messageId, "reply");
+    else turnObligations?.markDeferred(message.messageId, "exec_assistant_text", "LARK_DEFER", "Managed delivery not confirmed.");
+    return;
+  }
   await opts.sendReply({
     chat_id: message.chatId,
     text,
@@ -66443,7 +67399,7 @@ ${continuationFailure.message}`;
 }
 async function dispatchCodexExecActions(input2) {
   const blocked2 = new Set(input2.opts.actionPolicy?.blockedActionTypes ?? []);
-  const allowedActions = input2.actions.filter((action) => !blocked2.has(action.type));
+  const allowedActions = input2.actions.filter((action) => action.type !== "register_artifact" && !blocked2.has(action.type));
   const allowedResults = input2.opts.actionDispatcher && allowedActions.length > 0 ? await input2.opts.actionDispatcher.execute({
     message: input2.message,
     actions: allowedActions,
@@ -66454,28 +67410,47 @@ async function dispatchCodexExecActions(input2) {
     explicitWorkspaceProject: input2.explicitWorkspaceProject
   }) : [];
   let allowedIndex = 0;
-  return input2.actions.map((action) => {
+  const registered = /* @__PURE__ */ new Set();
+  const results = [];
+  for (const action of input2.actions) {
     if (blocked2.has(action.type)) {
-      return {
+      results.push({
         ok: false,
         action: action.type,
         message: input2.opts.actionPolicy?.reason ?? `${action.type} is unavailable for this turn.`
-      };
-    }
-    if (!input2.opts.actionDispatcher) {
-      return {
+      });
+    } else if (action.type === "register_artifact") {
+      const { managed, opts } = input2;
+      let ok = false;
+      try {
+        if (!managed || !input2.onManagedArtifact) throw new Error("Managed registration unavailable.");
+        if (!registered.has(action.relative_path)) {
+          if (registered.size >= MANAGED_DELIVERY_MAX_FILES) throw new Error("Too many managed artifacts.");
+          opts.abortSignal?.throwIfAborted();
+          const { content, sha256: sha2562 } = await readManagedArtifact({
+            binding: managed.artifacts,
+            relativePath: action.relative_path,
+            maxBytes: MANAGED_DELIVERY_MAX_BYTES,
+            revalidate: () => validateManagedRunDirectory(managed, "artifacts", [appConfig.codexExecCwd])
+          });
+          if (!content.length) throw new Error("Empty managed artifact.");
+          opts.abortSignal?.throwIfAborted();
+          input2.onManagedArtifact({ relativePath: action.relative_path, sha256: sha2562 });
+          registered.add(action.relative_path);
+        }
+        ok = true;
+      } catch {
+      }
+      results.push({ action: action.type, ok, message: ok ? "Registered managed artifact." : "Managed artifact registration failed." });
+    } else {
+      results.push(allowedResults[allowedIndex++] ?? {
         ok: false,
         action: "action_channel",
-        message: "Lark exec action dispatcher is not configured."
-      };
+        message: input2.opts.actionDispatcher ? `Lark exec action dispatcher returned no result for ${action.type}.` : "Lark exec action dispatcher is not configured."
+      });
     }
-    const actionResult = allowedResults[allowedIndex++];
-    return actionResult ?? {
-      ok: false,
-      action: "action_channel",
-      message: `Lark exec action dispatcher returned no result for ${action.type}.`
-    };
-  });
+  }
+  return results;
 }
 async function sendCodexExecProgressMessage(opts, message, content) {
   if (message.chatType === "doc_comment") {
@@ -66861,7 +67836,7 @@ function registerConversationFlushHandler(options) {
 // src/continuation/command-handler.ts
 var CONTINUATION_COMMAND_DEFINITION = {
   name: "task",
-  usage: "/task <list|status|cancel|retry|resume|retain|delete>",
+  usage: "/task <list|status|artifact|cancel|retry|resume|retain|delete>",
   description: "List and manage durable background tasks.",
   scope: "user"
 };
@@ -66869,6 +67844,7 @@ var TASK_USAGE = [
   "Usage:",
   "- /task list [--status pending,running,waiting_user,completed,partial,blocked,failed,cancelled]",
   "- /task status <job_id>",
+  "- /task artifact <job_id> <artifact_id>",
   "- /task cancel <job_id>",
   "- /task retry <job_id>",
   "- /task resume <job_id> <input>",
@@ -66930,6 +67906,12 @@ Job ID: ${resumed.jobId}`);
     } else if (!options.service) {
       auditResult = "error";
       text = CONTINUATION_RUNTIME_UNAVAILABLE;
+    } else if (command.action === "artifact") {
+      if (!options.service.enqueueArtifactForActor) {
+        throw new Error("Managed artifact delivery is unavailable.");
+      }
+      await options.service.enqueueArtifactForActor(command.jobId, command.artifactId, options.message, options.ownerOpenId);
+      text = `Artifact delivery queued: ${command.jobId} / ${command.artifactId}`;
     } else {
       text = await executeTaskCommand(
         command,
@@ -66957,6 +67939,9 @@ function parseTaskCommand(message) {
   if (message.messageType === "reaction" || message.reaction) return null;
   const text = taskCommandText(message);
   const normalized = stripLeadingMentions(text.replace(/\u00a0/g, " ").trim());
+  const authenticated = stripLeadingMentions((message.workspaceDirectiveText ?? "").replace(/\u00a0/g, " ").trim());
+  const artifact = authenticated.match(/^\/task\s+artifact\s+(job_[A-Za-z0-9_-]{8,128})\s+([A-Za-z0-9_.-]{1,80})$/i);
+  if (artifact) return { action: "artifact", jobId: artifact[1], artifactId: artifact[2] };
   if (!/^\/task(?:\s|$)/i.test(normalized)) return null;
   const listMatch = normalized.match(/^\/task\s+list(?:\s+--status\s+(.+?))?\s*$/i);
   if (listMatch) {
@@ -67108,7 +68093,9 @@ function formatTaskStatus(job) {
     ...job.errorSummary ? [`Error: ${job.errorSummary}`] : [],
     ...job.resultSummary ? [`Result: ${job.resultSummary}`] : [],
     ...job.resultArtifacts.length > 0 ? [`Artifacts:
-${job.resultArtifacts.map((artifact) => `- ${artifact}`).join("\n")}`] : []
+${job.resultArtifacts.map((artifact) => `- ${artifact}`).join("\n")}`] : [],
+    ...job.permissions.filesystem.managedWorkspaceRoots && job.checkpoint?.artifacts.length ? [`Checkpoint artifact IDs: ${job.checkpoint.artifacts.map((artifact) => artifact.id).join(", ")}
+${IM_ARTIFACT_SIZE_NOTE}`] : []
   ].join("\n");
 }
 function formatDeliveryEvents(job) {
@@ -67710,6 +68697,7 @@ function registerCodexDeliveryHandlers(options) {
     actionDispatcher,
     continuationService,
     continuationAvailable,
+    managedWorkspaceStore,
     cronControlService
   } = options;
   const sendReplyViaFeishu = createReplySender({
@@ -67803,7 +68791,10 @@ function registerCodexDeliveryHandlers(options) {
         sessionHealth: sessionHealth ?? void 0,
         turnObligations,
         actionDispatcher: actionDispatcher ?? void 0,
-        continuationAvailable
+        continuationAvailable,
+        managedWorkspaceStore,
+        uploadManagedArtifact: (data, name) => channel.getLarkTransport().uploadFile(data, name),
+        authorizeForegroundArtifactRoute: (actorId, chatId) => accessControlStore.allowsMessage(actorId, chatId)
       });
       if (hasReplyObligation) {
         turnObligations.requireSatisfiedOrDeferred(message.messageId);
@@ -68048,56 +69039,62 @@ async function startChannelServices(options) {
 }
 
 // src/continuation/runtime.ts
-import fs23 from "node:fs/promises";
+import fs24 from "node:fs/promises";
 import os3 from "node:os";
-import path27 from "node:path";
+import path35 from "node:path";
 
 // src/continuation/artifact-store.ts
-import { createHash as createHash8, randomBytes } from "node:crypto";
+import { createHash as createHash12, randomBytes as randomBytes2 } from "node:crypto";
 import { constants } from "node:fs";
-import fs18 from "node:fs/promises";
-import path21 from "node:path";
+import fs20 from "node:fs/promises";
+import path28 from "node:path";
 var REDACTION_QUARANTINE_PREFIX = ".redacting-";
 var ACTIVE_REDACTION_QUARANTINES = /* @__PURE__ */ new Set();
 var LEGACY_QUARANTINE_GRACE_MS = 3e4;
-var ContinuationArtifactStore = class {
+var ContinuationArtifactStore = class _ContinuationArtifactStore {
   constructor(rootDir, maxBytes = CONTINUATION_LIMITS.managedArtifactBytesPerJob, maxEntries = CONTINUATION_LIMITS.managedArtifactEntriesPerJob, maxDepth = CONTINUATION_LIMITS.managedArtifactDirectoryDepth) {
     this.maxBytes = maxBytes;
     this.maxEntries = maxEntries;
     this.maxDepth = maxDepth;
-    this.rootDir = path21.resolve(rootDir);
+    this.rootDir = path28.resolve(rootDir);
   }
   maxBytes;
   maxEntries;
   maxDepth;
   rootDir;
+  managedJob;
+  forManagedJob(jobId, binding, revalidate, stageJournal) {
+    const store = new _ContinuationArtifactStore(path28.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
+    store.managedJob = { jobId, binding, revalidate, stageJournal };
+    return store;
+  }
   async ensureRoot() {
-    await fs18.mkdir(this.rootDir, { recursive: true, mode: 448 });
+    await fs20.mkdir(this.rootDir, { recursive: true, mode: 448 });
     await assertRealDirectory(this.rootDir);
-    await fs18.chmod(this.rootDir, 448);
+    await fs20.chmod(this.rootDir, 448);
   }
   async ensure(jobId) {
+    if (this.managedJob) return this.checkDirectory(jobId);
     await this.ensureRoot();
     const directory = this.jobDirectory(jobId);
-    await fs18.mkdir(directory, { recursive: true, mode: 448 });
+    await fs20.mkdir(directory, { recursive: true, mode: 448 });
     await assertRealDirectory(directory);
-    await fs18.chmod(directory, 448);
+    await fs20.chmod(directory, 448);
     return directory;
   }
   resolve(jobId, relativePath) {
-    if (!relativePath || path21.isAbsolute(relativePath)) {
+    if (!relativePath || path28.isAbsolute(relativePath)) {
       throw new Error("Continuation artifact path must be relative.");
     }
     const directory = this.jobDirectory(jobId);
-    const resolved = path21.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path21.sep}`)) {
+    const resolved = path28.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path28.sep}`)) {
       throw new Error("Continuation artifact path resolves outside job directory.");
     }
     return resolved;
   }
   async assertWithinLimit(jobId) {
-    const directory = this.jobDirectory(jobId);
-    await assertRealDirectory(directory);
+    const directory = await this.checkDirectory(jobId);
     let totalBytes = 0;
     let totalEntries = 0;
     const visit3 = async (current, depth) => {
@@ -68108,7 +69105,7 @@ var ContinuationArtifactStore = class {
       }
       let handle;
       try {
-        handle = await fs18.opendir(current);
+        handle = await fs20.opendir(current);
       } catch (err) {
         if (err?.code === "ENOENT") return;
         throw err;
@@ -68120,8 +69117,8 @@ var ContinuationArtifactStore = class {
             `Continuation artifact entry limit exceeded for ${jobId}: ${totalEntries} > ${this.maxEntries}.`
           );
         }
-        const entryPath = path21.join(current, entry.name);
-        const metadata = await fs18.lstat(entryPath).catch((error62) => {
+        const entryPath = path28.join(current, entry.name);
+        const metadata = await fs20.lstat(entryPath).catch((error62) => {
           if (error62.code === "ENOENT") return null;
           throw error62;
         });
@@ -68146,13 +69143,12 @@ var ContinuationArtifactStore = class {
     await visit3(directory, 0);
   }
   async canonicalizeReferences(jobId, references) {
-    const directory = this.jobDirectory(jobId);
-    await assertRealDirectory(directory);
+    const directory = await this.checkDirectory(jobId);
     const canonical = [];
     const seen = /* @__PURE__ */ new Set();
     for (const reference of references) {
       const resolved = this.resolve(jobId, reference);
-      const metadata = await fs18.lstat(resolved).catch((error62) => {
+      const metadata = await fs20.lstat(resolved).catch((error62) => {
         if (error62.code === "ENOENT") {
           throw new Error(`Continuation artifact does not exist: ${reference}`);
         }
@@ -68161,7 +69157,7 @@ var ContinuationArtifactStore = class {
       if (metadata.isSymbolicLink() || !metadata.isFile()) {
         throw new Error(`Continuation artifact is not a regular file: ${reference}`);
       }
-      const normalized = path21.relative(directory, resolved).split(path21.sep).join("/");
+      const normalized = path28.relative(directory, resolved).split(path28.sep).join("/");
       if (!seen.has(normalized)) {
         seen.add(normalized);
         canonical.push(normalized);
@@ -68170,7 +69166,19 @@ var ContinuationArtifactStore = class {
     await this.assertWithinLimit(jobId);
     return canonical;
   }
-  async copyVerified(sourceJobId, targetJobId, artifacts) {
+  async readArtifact(jobId, relativePath, expectedSha256) {
+    if (!this.managedJob) return fs20.readFile(this.resolve(jobId, relativePath));
+    this.jobDirectory(jobId);
+    const { content } = await readManagedArtifact({
+      binding: this.managedJob.binding,
+      relativePath,
+      expectedSha256,
+      maxBytes: this.maxBytes,
+      revalidate: this.managedJob.revalidate
+    });
+    return content;
+  }
+  async copyVerified(sourceJobId, targetJobId, artifacts, targetStore = this) {
     if (artifacts.length === 0) return false;
     const canonical = await this.canonicalizeReferences(
       sourceJobId,
@@ -68179,42 +69187,64 @@ var ContinuationArtifactStore = class {
     if (canonical.length !== artifacts.length) {
       throw new Error("Continuation retry artifact references must be unique.");
     }
-    await this.ensure(targetJobId);
+    await targetStore.ensure(targetJobId);
+    if (targetStore.managedJob) {
+      for (let index = 0; index < canonical.length; index += 1) {
+        await reconcileManagedArtifact({
+          binding: targetStore.managedJob.binding,
+          relativePath: canonical[index],
+          expectedSha256: artifacts[index].sha256,
+          maxBytes: targetStore.maxBytes,
+          revalidate: targetStore.managedJob.revalidate,
+          stageJournal: targetStore.managedJob.stageJournal
+        });
+      }
+      await targetStore.assertWithinLimit(targetJobId);
+    }
     try {
       for (let index = 0; index < canonical.length; index += 1) {
         const reference = canonical[index];
-        const target = this.resolve(targetJobId, reference);
-        await fs18.mkdir(path21.dirname(target), { recursive: true, mode: 448 });
-        await fs18.copyFile(
-          this.resolve(sourceJobId, reference),
-          target,
-          constants.COPYFILE_EXCL
-        );
-        await fs18.chmod(target, 384);
-        const sha2562 = createHash8("sha256").update(await fs18.readFile(target)).digest("hex");
-        if (sha2562 !== artifacts[index].sha256.toLowerCase()) {
+        const expected = artifacts[index].sha256.toLowerCase();
+        if (targetStore.managedJob) {
+          const content = await this.readArtifact(sourceJobId, reference, expected);
+          await publishManagedArtifact({
+            binding: targetStore.managedJob.binding,
+            relativePath: reference,
+            content,
+            maxBytes: targetStore.maxBytes,
+            revalidate: targetStore.managedJob.revalidate,
+            stageJournal: targetStore.managedJob.stageJournal
+          });
+        } else {
+          const target = targetStore.resolve(targetJobId, reference);
+          await fs20.mkdir(path28.dirname(target), { recursive: true, mode: 448 });
+          await fs20.copyFile(this.resolve(sourceJobId, reference), target, constants.COPYFILE_EXCL);
+          await fs20.chmod(target, 384);
+        }
+        const sha2562 = createHash12("sha256").update(await targetStore.readArtifact(targetJobId, reference, expected)).digest("hex");
+        if (sha2562 !== expected) {
           throw new Error(`Continuation retry artifact checksum mismatch: ${reference}`);
         }
       }
-      await this.assertWithinLimit(targetJobId);
+      await targetStore.assertWithinLimit(targetJobId);
       return true;
     } catch (error62) {
-      await this.remove(targetJobId).catch(() => {
+      if (!targetStore.managedJob) await targetStore.remove(targetJobId).catch(() => {
       });
       throw error62;
     }
   }
   async remove(jobId) {
-    await fs18.rm(this.jobDirectory(jobId), { recursive: true, force: true });
+    await fs20.rm(this.jobDirectory(jobId), { recursive: true, force: true });
   }
   async quarantine(jobId) {
     await this.ensureRoot();
     const source = this.jobDirectory(jobId);
-    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes(8).toString("hex")}`;
+    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`;
     const destination = this.quarantineDirectory(jobId, token);
     let sourceMetadata;
     try {
-      sourceMetadata = await fs18.lstat(source);
+      sourceMetadata = await fs20.lstat(source);
     } catch (error62) {
       if (error62?.code === "ENOENT") return null;
       throw error62;
@@ -68222,13 +69252,13 @@ var ContinuationArtifactStore = class {
     if (sourceMetadata.isSymbolicLink() || !sourceMetadata.isDirectory()) {
       throw new Error("Continuation artifact quarantine source is not a real directory.");
     }
-    const quarantineName = path21.basename(destination);
+    const quarantineName = path28.basename(destination);
     ACTIVE_REDACTION_QUARANTINES.add(quarantineName);
     try {
-      await fs18.rename(source, destination);
-      const moved = await fs18.lstat(destination);
+      await fs20.rename(source, destination);
+      const moved = await fs20.lstat(destination);
       if (moved.dev !== sourceMetadata.dev || moved.ino !== sourceMetadata.ino) {
-        await fs18.rename(destination, source).catch(() => {
+        await fs20.rename(destination, source).catch(() => {
         });
         throw new Error("Continuation artifact quarantine identity changed during rename.");
       }
@@ -68241,9 +69271,9 @@ var ContinuationArtifactStore = class {
   async restoreQuarantine(jobId, token) {
     const source = this.quarantineDirectory(jobId, token);
     try {
-      await fs18.rename(source, this.jobDirectory(jobId));
+      await fs20.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path21.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path28.basename(source));
     }
   }
   async discardQuarantine(jobId, token) {
@@ -68251,24 +69281,24 @@ var ContinuationArtifactStore = class {
     try {
       await removeArtifactTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path21.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path28.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown, withJobLock) {
     await this.ensureRoot();
-    const entries = await fs18.readdir(this.rootDir, { withFileTypes: true });
+    const entries = await fs20.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const quarantine = parseRedactionQuarantine(entry.name);
       if (!quarantine) continue;
-      const candidate = path21.join(this.rootDir, entry.name);
+      const candidate = path28.join(this.rootDir, entry.name);
       const reconcile = async () => {
         const shouldRestore = isJobKnown ? await isJobKnown(quarantine.jobId) : jobIds.has(quarantine.jobId);
         if (!shouldRestore) {
           await removeArtifactTree(candidate);
           return;
         }
-        const candidateMetadata = await fs18.lstat(candidate).catch((error62) => {
+        const candidateMetadata = await fs20.lstat(candidate).catch((error62) => {
           if (error62?.code === "ENOENT") return null;
           throw error62;
         });
@@ -68282,7 +69312,7 @@ var ContinuationArtifactStore = class {
         );
         if (ownerIsActive && (quarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES.has(entry.name))) return;
         try {
-          await fs18.rename(candidate, this.jobDirectory(quarantine.jobId));
+          await fs20.rename(candidate, this.jobDirectory(quarantine.jobId));
         } catch (error62) {
           const code = error62?.code;
           if (!["EEXIST", "ENOENT", "EACCES"].includes(code ?? "") || await pathExists(candidate) || !await isRestoredDirectory(this.jobDirectory(quarantine.jobId))) throw error62;
@@ -68295,12 +69325,24 @@ var ContinuationArtifactStore = class {
   async purge(jobIds) {
     for (const jobId of jobIds) await this.remove(jobId);
   }
+  async checkDirectory(jobId) {
+    const directory = this.jobDirectory(jobId);
+    if (this.managedJob && await this.managedJob.revalidate() !== directory) {
+      throw new Error("Managed continuation artifact directory has changed.");
+    }
+    await assertRealDirectory(directory);
+    return directory;
+  }
   jobDirectory(jobId) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(jobId)) {
       throw new Error(`Invalid continuation job id for artifact storage: ${jobId}`);
     }
-    const resolved = path21.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path21.sep}`)) {
+    if (this.managedJob) {
+      if (jobId !== this.managedJob.jobId) throw new Error("Managed artifact store belongs to a different run.");
+      return this.managedJob.binding.directory;
+    }
+    const resolved = path28.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path28.sep}`)) {
       throw new Error("Continuation artifact job directory escapes the artifact root.");
     }
     return resolved;
@@ -68310,7 +69352,7 @@ var ContinuationArtifactStore = class {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error("Continuation artifact quarantine token is invalid.");
     }
-    return path21.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
+    return path28.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
   }
 };
 function parseRedactionQuarantine(name) {
@@ -68326,7 +69368,7 @@ function parseRedactionQuarantine(name) {
   return { jobId: match[1], ownerPid, ownerStartedAt, createdAt };
 }
 async function removeArtifactTree(directory) {
-  const metadata = await fs18.lstat(directory).catch((error62) => {
+  const metadata = await fs20.lstat(directory).catch((error62) => {
     if (error62.code === "ENOENT") return null;
     throw error62;
   });
@@ -68334,17 +69376,17 @@ async function removeArtifactTree(directory) {
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Refusing to remove non-directory continuation artifact tree: ${directory}`);
   }
-  await fs18.rm(directory, { recursive: true });
+  await fs20.rm(directory, { recursive: true });
 }
 async function assertRealDirectory(directory) {
-  const metadata = await fs18.lstat(directory);
+  const metadata = await fs20.lstat(directory);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Continuation artifact path is not a real directory: ${directory}`);
   }
 }
 async function isRestoredDirectory(directory) {
   try {
-    const metadata = await fs18.lstat(directory);
+    const metadata = await fs20.lstat(directory);
     return metadata.isDirectory() && !metadata.isSymbolicLink();
   } catch {
     return false;
@@ -68352,7 +69394,7 @@ async function isRestoredDirectory(directory) {
 }
 async function pathExists(target) {
   try {
-    await fs18.lstat(target);
+    await fs20.lstat(target);
     return true;
   } catch (error62) {
     if (error62?.code === "ENOENT") return false;
@@ -68361,10 +69403,10 @@ async function pathExists(target) {
 }
 
 // src/continuation/input-store.ts
-import { createHash as createHash9, randomBytes as randomBytes2 } from "node:crypto";
+import { createHash as createHash13, randomBytes as randomBytes3 } from "node:crypto";
 import { constants as constants2, createWriteStream as createWriteStream3 } from "node:fs";
-import fs19 from "node:fs/promises";
-import path22 from "node:path";
+import fs21 from "node:fs/promises";
+import path29 from "node:path";
 import { Transform } from "node:stream";
 import { pipeline as pipeline2 } from "node:stream/promises";
 var InvalidManagedInputError = class extends Error {
@@ -68385,25 +69427,25 @@ var ContinuationInputStore = class {
   maxTotalBytes;
   orphanAgeMs;
   constructor(rootDir, options = {}) {
-    this.rootDir = path22.resolve(rootDir);
+    this.rootDir = path29.resolve(rootDir);
     this.maxFiles = options.maxFiles ?? CONTINUATION_LIMITS.inputFileCount;
     this.maxFileBytes = options.maxFileBytes ?? CONTINUATION_LIMITS.inputBytesPerFile;
     this.maxTotalBytes = options.maxTotalBytes ?? CONTINUATION_LIMITS.managedInputBytesPerJob;
     this.orphanAgeMs = options.orphanAgeMs ?? DEFAULT_ORPHAN_AGE_MS;
   }
   async ensureRoot() {
-    await fs19.mkdir(this.rootDir, { recursive: true, mode: 448 });
+    await fs21.mkdir(this.rootDir, { recursive: true, mode: 448 });
     await assertDirectory(this.rootDir);
-    await fs19.chmod(this.rootDir, 448);
+    await fs21.chmod(this.rootDir, 448);
   }
   async withCreationLock(jobId, operation) {
     assertJobId(jobId);
     await this.ensureRoot();
-    const lockDirectory = path22.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
+    const lockDirectory = path29.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
     let ownerNonce;
     while (true) {
-      const nonce = randomBytes2(16).toString("hex");
+      const nonce = randomBytes3(16).toString("hex");
       const owner = {
         pid: process.pid,
         startedAt: currentProcessStartedAt(),
@@ -68411,7 +69453,7 @@ var ContinuationInputStore = class {
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       try {
-        await fs19.writeFile(lockDirectory, `${JSON.stringify(owner)}
+        await fs21.writeFile(lockDirectory, `${JSON.stringify(owner)}
 `, {
           mode: 384,
           flag: "wx"
@@ -68475,11 +69517,11 @@ var ContinuationInputStore = class {
     this.validateSources(sources);
     await this.ensureRoot();
     const finalDirectory = this.jobDirectory(jobId);
-    const stagingDirectory = path22.join(
+    const stagingDirectory = path29.join(
       this.rootDir,
-      `.staging-${jobId}-${process.pid}-${randomBytes2(8).toString("hex")}`
+      `.staging-${jobId}-${process.pid}-${randomBytes3(8).toString("hex")}`
     );
-    await fs19.mkdir(stagingDirectory, { mode: 448 });
+    await fs21.mkdir(stagingDirectory, { mode: 448 });
     let installed = false;
     try {
       const artifacts = [];
@@ -68490,7 +69532,7 @@ var ContinuationInputStore = class {
         const relativePath = neutralInputFileName(id, source.fileName);
         const copied = await copyRegularFile(
           source.sourcePath,
-          path22.join(stagingDirectory, relativePath),
+          path29.join(stagingDirectory, relativePath),
           this.maxFileBytes
         );
         if (source.expectedSizeBytes !== void 0 && copied.sizeBytes !== source.expectedSizeBytes) {
@@ -68513,14 +69555,14 @@ var ContinuationInputStore = class {
         });
       }
       const manifest = { version: 1, jobId, requestFingerprint, inputs: artifacts };
-      const manifestPath = path22.join(stagingDirectory, MANIFEST_FILE);
-      await fs19.writeFile(manifestPath, `${JSON.stringify(manifest)}
+      const manifestPath = path29.join(stagingDirectory, MANIFEST_FILE);
+      await fs21.writeFile(manifestPath, `${JSON.stringify(manifest)}
 `, { mode: 384, flag: "wx" });
       for (const artifact of artifacts) {
-        await fs19.chmod(path22.join(stagingDirectory, artifact.relativePath), 256);
+        await fs21.chmod(path29.join(stagingDirectory, artifact.relativePath), 256);
       }
-      await fs19.chmod(manifestPath, 256);
-      await fs19.chmod(stagingDirectory, 320);
+      await fs21.chmod(manifestPath, 256);
+      await fs21.chmod(stagingDirectory, 320);
       const existing = await this.readManifestIfPresent(finalDirectory, jobId);
       if (existing) {
         assertEquivalentManifest(existing, manifest);
@@ -68528,7 +69570,7 @@ var ContinuationInputStore = class {
         return { artifacts: existing.inputs, installed: false };
       }
       try {
-        await fs19.rename(stagingDirectory, finalDirectory);
+        await fs21.rename(stagingDirectory, finalDirectory);
         installed = true;
         return { artifacts, installed: true };
       } catch (error62) {
@@ -68600,11 +69642,11 @@ var ContinuationInputStore = class {
   }
   resolve(jobId, relativePath) {
     const directory = this.jobDirectory(jobId);
-    if (!relativePath || path22.isAbsolute(relativePath)) {
+    if (!relativePath || path29.isAbsolute(relativePath)) {
       throw new Error("Continuation input path must be relative.");
     }
-    const resolved = path22.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path22.sep}`)) {
+    const resolved = path29.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path29.sep}`)) {
       throw new Error("Continuation input path resolves outside its managed directory.");
     }
     return resolved;
@@ -68614,11 +69656,11 @@ var ContinuationInputStore = class {
   }
   async quarantine(jobId) {
     const source = this.jobDirectory(jobId);
-    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`;
+    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes3(8).toString("hex")}`;
     const destination = this.quarantineDirectory(jobId, token);
     let metadata;
     try {
-      metadata = await fs19.lstat(source);
+      metadata = await fs21.lstat(source);
     } catch (error62) {
       if (error62?.code === "ENOENT") return null;
       throw error62;
@@ -68626,19 +69668,19 @@ var ContinuationInputStore = class {
     if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
       throw new Error("Continuation input path is not a real directory.");
     }
-    const quarantineName = path22.basename(destination);
+    const quarantineName = path29.basename(destination);
     ACTIVE_REDACTION_QUARANTINES2.add(quarantineName);
     try {
-      await fs19.rename(source, destination);
+      await fs21.rename(source, destination);
     } catch (error62) {
       ACTIVE_REDACTION_QUARANTINES2.delete(quarantineName);
       if (error62?.code === "ENOENT") return null;
       throw error62;
     }
     try {
-      const moved = await fs19.lstat(destination);
+      const moved = await fs21.lstat(destination);
       if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
-        await fs19.rename(destination, source).catch(() => {
+        await fs21.rename(destination, source).catch(() => {
         });
         throw new Error("Continuation input quarantine identity changed during rename.");
       }
@@ -68651,9 +69693,9 @@ var ContinuationInputStore = class {
   async restoreQuarantine(jobId, token) {
     const source = this.quarantineDirectory(jobId, token);
     try {
-      await fs19.rename(source, this.jobDirectory(jobId));
+      await fs21.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path22.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path29.basename(source));
     }
   }
   async discardQuarantine(jobId, token) {
@@ -68661,18 +69703,18 @@ var ContinuationInputStore = class {
     try {
       await removeManagedTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path22.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path29.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown) {
     await this.ensureRoot();
-    const entries = await fs19.readdir(this.rootDir, { withFileTypes: true });
+    const entries = await fs21.readdir(this.rootDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isFile() && !entry.isDirectory() || entry.isSymbolicLink()) continue;
       const reclaim = parseCreationReclaim(entry.name);
       if (!reclaim) continue;
-      const candidate = path22.join(this.rootDir, entry.name);
-      const metadata = await fs19.lstat(candidate).catch((error62) => {
+      const candidate = path29.join(this.rootDir, entry.name);
+      const metadata = await fs21.lstat(candidate).catch((error62) => {
         if (error62.code === "ENOENT") return null;
         throw error62;
       });
@@ -68682,7 +69724,7 @@ var ContinuationInputStore = class {
     const liveCreationJobs = /* @__PURE__ */ new Set();
     for (const entry of entries) {
       if (!entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
-      const lockDirectory = path22.join(this.rootDir, entry.name);
+      const lockDirectory = path29.join(this.rootDir, entry.name);
       const jobId = entry.name.slice(CREATION_LOCK_PREFIX.length);
       if (!await tryReclaimCreationLock(lockDirectory, this.rootDir)) {
         liveCreationJobs.add(jobId);
@@ -68692,14 +69734,14 @@ var ContinuationInputStore = class {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const redactionQuarantine = parseRedactionQuarantine2(entry.name);
       if (redactionQuarantine) {
-        const candidate2 = path22.join(this.rootDir, entry.name);
+        const candidate2 = path29.join(this.rootDir, entry.name);
         await this.withCreationLock(redactionQuarantine.jobId, async () => {
           const shouldRestore = isJobKnown ? await isJobKnown(redactionQuarantine.jobId) : jobIds.has(redactionQuarantine.jobId);
           if (!shouldRestore) {
             await removeManagedTree(candidate2);
             return;
           }
-          const candidateMetadata = await fs19.lstat(candidate2).catch((error62) => {
+          const candidateMetadata = await fs21.lstat(candidate2).catch((error62) => {
             if (error62?.code === "ENOENT") return null;
             throw error62;
           });
@@ -68713,7 +69755,7 @@ var ContinuationInputStore = class {
           );
           if (ownerIsActive && (redactionQuarantine.ownerPid !== process.pid || ACTIVE_REDACTION_QUARANTINES2.has(entry.name))) return;
           try {
-            await fs19.rename(candidate2, this.jobDirectory(redactionQuarantine.jobId));
+            await fs21.rename(candidate2, this.jobDirectory(redactionQuarantine.jobId));
           } catch (error62) {
             const code = error62?.code;
             if (!["EEXIST", "ENOENT", "EACCES"].includes(code ?? "") || await pathExists2(candidate2) || !await isRestoredDirectory2(this.jobDirectory(redactionQuarantine.jobId))) throw error62;
@@ -68726,7 +69768,7 @@ var ContinuationInputStore = class {
       if (!isStaging && jobIds.has(entry.name)) continue;
       if (!isStaging && liveCreationJobs.has(entry.name)) continue;
       if (isStaging && [...liveCreationJobs].some((jobId) => entry.name.startsWith(`.staging-${jobId}-`))) continue;
-      const candidate = path22.join(this.rootDir, entry.name);
+      const candidate = path29.join(this.rootDir, entry.name);
       if (!isStaging && isValidJobId(entry.name)) {
         await this.withCreationLock(entry.name, async () => {
           if (jobIds.has(entry.name) || await isJobKnown?.(entry.name)) return;
@@ -68746,7 +69788,7 @@ var ContinuationInputStore = class {
         throw new Error("Continuation input kind is invalid.");
       }
       validateFileName(source.fileName);
-      if (!path22.isAbsolute(source.sourcePath)) {
+      if (!path29.isAbsolute(source.sourcePath)) {
         throw new Error("Continuation input source path must be absolute and server-admitted.");
       }
       if (source.expectedSha256 !== void 0 && !/^[a-f0-9]{64}$/.test(source.expectedSha256)) {
@@ -68759,8 +69801,8 @@ var ContinuationInputStore = class {
   }
   jobDirectory(jobId) {
     assertJobId(jobId);
-    const resolved = path22.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path22.sep}`)) {
+    const resolved = path29.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path29.sep}`)) {
       throw new Error("Continuation input job directory escapes the input root.");
     }
     return resolved;
@@ -68770,12 +69812,12 @@ var ContinuationInputStore = class {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error("Continuation input quarantine token is invalid.");
     }
-    return path22.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token}`);
+    return path29.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token}`);
   }
   async readManifestIfPresent(directory, jobId) {
     try {
       await assertDirectory(directory);
-      const parsed = JSON.parse(await fs19.readFile(path22.join(directory, MANIFEST_FILE), "utf8"));
+      const parsed = JSON.parse(await fs21.readFile(path29.join(directory, MANIFEST_FILE), "utf8"));
       if (parsed.version !== 1 || parsed.jobId !== jobId || typeof parsed.requestFingerprint !== "string" || !Array.isArray(parsed.inputs)) {
         throw new Error("Continuation input manifest is invalid.");
       }
@@ -68796,11 +69838,11 @@ var ContinuationInputStore = class {
   }
 };
 async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
-  const pathMetadata = await fs19.lstat(sourcePath);
+  const pathMetadata = await fs21.lstat(sourcePath);
   if (pathMetadata.isSymbolicLink() || !pathMetadata.isFile()) {
     throw new Error("Continuation input source must be a regular file.");
   }
-  const source = await fs19.open(
+  const source = await fs21.open(
     sourcePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
   );
@@ -68810,7 +69852,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
     if (before.size > maxFileBytes) {
       throw new Error(`Continuation input file byte limit exceeded: ${before.size} > ${maxFileBytes}.`);
     }
-    const digest = createHash9("sha256");
+    const digest = createHash13("sha256");
     let copiedBytes = 0;
     const hashing = new Transform({
       transform(chunk, _encoding, callback) {
@@ -68839,15 +69881,15 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
 }
 async function lstatForVerification(filePath) {
   try {
-    return await fs19.lstat(filePath);
+    return await fs21.lstat(filePath);
   } catch (error62) {
     if (error62?.code === "ENOENT") return null;
     throw error62;
   }
 }
 async function sha256File(filePath) {
-  const digest = createHash9("sha256");
-  const file2 = await fs19.open(
+  const digest = createHash13("sha256");
+  const file2 = await fs21.open(
     filePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
   );
@@ -68862,12 +69904,12 @@ async function sha256File(filePath) {
   }
 }
 function validateFileName(fileName) {
-  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path22.basename(fileName) !== fileName) {
+  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path29.basename(fileName) !== fileName) {
     throw new Error("Continuation input file name is invalid.");
   }
 }
 function neutralInputFileName(id, originalFileName) {
-  const extension = path22.extname(originalFileName).toLowerCase();
+  const extension = path29.extname(originalFileName).toLowerCase();
   return /^\.[a-z0-9]{1,8}$/.test(extension) ? `${id}${extension}` : id;
 }
 function validateArtifact(artifact) {
@@ -68875,7 +69917,7 @@ function validateArtifact(artifact) {
     throw new Error("Continuation input artifact id is invalid.");
   }
   validateFileName(artifact.fileName);
-  if (!artifact.relativePath || path22.isAbsolute(artifact.relativePath)) {
+  if (!artifact.relativePath || path29.isAbsolute(artifact.relativePath)) {
     throw new Error("Continuation input artifact path is invalid.");
   }
   if (!/^[a-f0-9]{64}$/.test(artifact.sha256)) {
@@ -68886,7 +69928,7 @@ function validateArtifact(artifact) {
   }
 }
 async function assertDirectory(directory) {
-  const metadata = await fs19.lstat(directory);
+  const metadata = await fs21.lstat(directory);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`Continuation input path is not a real directory: ${directory}`);
   }
@@ -68925,9 +69967,9 @@ function safeAdmissionError(error62) {
 }
 async function readCreationOwner(lockDirectory) {
   try {
-    const metadata = await fs19.lstat(lockDirectory);
-    const ownerPath = metadata.isDirectory() ? path22.join(lockDirectory, "owner.json") : lockDirectory;
-    const parsed = JSON.parse(await fs19.readFile(ownerPath, "utf8"));
+    const metadata = await fs21.lstat(lockDirectory);
+    const ownerPath = metadata.isDirectory() ? path29.join(lockDirectory, "owner.json") : lockDirectory;
+    const parsed = JSON.parse(await fs21.readFile(ownerPath, "utf8"));
     if (!Number.isInteger(parsed.pid) || Number(parsed.pid) <= 0 || typeof parsed.createdAt !== "string") return null;
     const nonce = typeof parsed.nonce === "string" && /^[a-f0-9]{32}$/.test(parsed.nonce) ? parsed.nonce : null;
     const startedAt = Number(parsed.startedAt);
@@ -68944,7 +69986,7 @@ async function readCreationOwner(lockDirectory) {
 async function tryReclaimCreationLock(lockDirectory, rootDir) {
   let metadata;
   try {
-    metadata = await fs19.lstat(lockDirectory);
+    metadata = await fs21.lstat(lockDirectory);
   } catch (error62) {
     if (error62?.code === "ENOENT") return true;
     throw error62;
@@ -68965,20 +70007,20 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
     Date.now() - metadata.mtimeMs,
     UNKNOWN_CREATION_OWNER_GRACE_MS
   )) return false;
-  const quarantine = path22.join(
+  const quarantine = path29.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}${path22.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`
+    `${CREATION_RECLAIM_PREFIX}${path29.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes3(8).toString("hex")}`
   );
   try {
-    await fs19.rename(lockDirectory, quarantine);
+    await fs21.rename(lockDirectory, quarantine);
   } catch (error62) {
     if (error62?.code === "ENOENT") return true;
     throw error62;
   }
-  const moved = await fs19.lstat(quarantine);
+  const moved = await fs21.lstat(quarantine);
   if (moved.dev !== metadata.dev || moved.ino !== metadata.ino) {
     try {
-      await fs19.rename(quarantine, lockDirectory);
+      await fs21.rename(quarantine, lockDirectory);
     } catch (error62) {
       throw new Error("Continuation creation lock changed during reclaim and could not be restored.", {
         cause: error62
@@ -68990,11 +70032,11 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
   return true;
 }
 async function hasCompetingCreationReclaim(rootDir, lockDirectory) {
-  const prefix = `${CREATION_RECLAIM_PREFIX}${path22.basename(lockDirectory)}-`;
-  for (const entry of await fs19.readdir(rootDir)) {
+  const prefix = `${CREATION_RECLAIM_PREFIX}${path29.basename(lockDirectory)}-`;
+  for (const entry of await fs21.readdir(rootDir)) {
     if (!entry.startsWith(prefix)) continue;
-    const candidate = path22.join(rootDir, entry);
-    const metadata = await fs19.lstat(candidate).catch((error62) => {
+    const candidate = path29.join(rootDir, entry);
+    const metadata = await fs21.lstat(candidate).catch((error62) => {
       if (error62.code === "ENOENT") return null;
       throw error62;
     });
@@ -69032,12 +70074,12 @@ async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   if (owner?.nonce !== nonce) {
     throw new Error("Continuation creation lock ownership changed before release.");
   }
-  const releaseDirectory = path22.join(
+  const releaseDirectory = path29.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}release-${path22.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
+    `${CREATION_RECLAIM_PREFIX}release-${path29.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
   );
   try {
-    await fs19.rename(lockDirectory, releaseDirectory);
+    await fs21.rename(lockDirectory, releaseDirectory);
   } catch (error62) {
     if (error62?.code === "ENOENT") {
       throw new Error("Continuation creation lock disappeared before release.", { cause: error62 });
@@ -69047,7 +70089,7 @@ async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   const movedOwner = await readCreationOwner(releaseDirectory);
   if (movedOwner?.nonce !== nonce) {
     try {
-      await fs19.rename(releaseDirectory, lockDirectory);
+      await fs21.rename(releaseDirectory, lockDirectory);
     } catch (error62) {
       throw new Error("Continuation creation lock changed during release and could not be restored.", {
         cause: error62
@@ -69082,33 +70124,33 @@ function parseRedactionQuarantine2(name) {
 async function removeManagedTree(target) {
   let metadata;
   try {
-    metadata = await fs19.lstat(target);
+    metadata = await fs21.lstat(target);
   } catch (error62) {
     if (error62?.code === "ENOENT") return;
     throw error62;
   }
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    await fs19.rm(target, { force: true });
+    await fs21.rm(target, { force: true });
     return;
   }
   try {
-    await fs19.chmod(target, 448);
+    await fs21.chmod(target, 448);
   } catch (error62) {
     if (error62?.code === "ENOENT") return;
     throw error62;
   }
   let entries;
   try {
-    entries = await fs19.readdir(target);
+    entries = await fs21.readdir(target);
   } catch (error62) {
     if (error62?.code === "ENOENT") return;
     throw error62;
   }
   for (const entry of entries) {
-    const child = path22.join(target, entry);
+    const child = path29.join(target, entry);
     let childMetadata;
     try {
-      childMetadata = await fs19.lstat(child);
+      childMetadata = await fs21.lstat(child);
     } catch (error62) {
       if (error62?.code === "ENOENT") continue;
       throw error62;
@@ -69118,24 +70160,24 @@ async function removeManagedTree(target) {
     } else {
       if (!childMetadata.isSymbolicLink()) {
         try {
-          await fs19.chmod(child, 384);
+          await fs21.chmod(child, 384);
         } catch (error62) {
           if (error62?.code === "ENOENT") continue;
           throw error62;
         }
       }
-      await fs19.rm(child, { force: true });
+      await fs21.rm(child, { force: true });
     }
   }
   try {
-    await fs19.rmdir(target);
+    await fs21.rmdir(target);
   } catch (error62) {
     if (error62?.code !== "ENOENT") throw error62;
   }
 }
 async function isRestoredDirectory2(directory) {
   try {
-    const metadata = await fs19.lstat(directory);
+    const metadata = await fs21.lstat(directory);
     return metadata.isDirectory() && !metadata.isSymbolicLink();
   } catch {
     return false;
@@ -69143,7 +70185,7 @@ async function isRestoredDirectory2(directory) {
 }
 async function pathExists2(target) {
   try {
-    await fs19.lstat(target);
+    await fs21.lstat(target);
     return true;
   } catch (error62) {
     if (error62?.code === "ENOENT") return false;
@@ -69151,12 +70193,54 @@ async function pathExists2(target) {
   }
 }
 async function removeAgedOrphan(candidate, nowMs, orphanAgeMs) {
-  const metadata = await fs19.stat(candidate).catch((error62) => {
+  const metadata = await fs21.stat(candidate).catch((error62) => {
     if (error62?.code === "ENOENT") return null;
     throw error62;
   });
   if (!metadata || nowMs - metadata.mtimeMs < orphanAgeMs) return;
   await removeManagedTree(candidate);
+}
+
+// src/continuation/managed-workspace.ts
+function continuationWorkspaceRoots(job, policy) {
+  return [
+    job.permissions.filesystem.root,
+    policy.currentWorkingRoot,
+    policy.foregroundWorkingRoot ?? policy.currentWorkingRoot
+  ];
+}
+async function allocateContinuationWorkspace(job, store, policy) {
+  const { managedWorkspaceRoots, workspaceProject } = job.permissions.filesystem;
+  if (!managedWorkspaceRoots) return void 0;
+  if (!store || !policy || !workspaceProject || workspaceProject.directory !== job.workingDirectory) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  return store.ensure({
+    roots: managedWorkspaceRoots,
+    project: workspaceProject,
+    owner: { kind: "async_task", runId: job.jobId },
+    createdAt: job.createdAt,
+    usedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    authorizedRoots: continuationWorkspaceRoots(job, policy),
+    sourceRegistryPath: policy.sourceRegistryPath,
+    sourceRegistryRoot: policy.foregroundWorkingRoot ?? policy.currentWorkingRoot
+  });
+}
+function continuationArtifactView(legacy, job, store, policy) {
+  const { managedWorkspaceRoots, workspaceProject } = job.permissions.filesystem;
+  if (!managedWorkspaceRoots) return legacy;
+  if (!store || !policy) throw new ManagedWorkspaceStorageError("invalid_binding");
+  const owner = { kind: "async_task", runId: job.jobId };
+  const recorded = store.get(owner);
+  if (!recorded || !sameWorkspaceProject(recorded.allocation.project, workspaceProject) || !sameWorkspaceProject(recorded.allocation.roots.scratch, managedWorkspaceRoots.scratch) || !sameWorkspaceProject(recorded.allocation.roots.artifacts, managedWorkspaceRoots.artifacts)) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  return legacy.forManagedJob(
+    job.jobId,
+    recorded.allocation.artifacts,
+    () => store.openDirectory(owner, "artifacts", continuationWorkspaceRoots(job, policy)),
+    store.retryArtifactStages(owner)
+  );
 }
 
 // src/continuation/recovery-policy.ts
@@ -69531,15 +70615,18 @@ var ContinuationCodexExecutor = class {
           };
         }
       }
-      const artifactDir = await this.options.artifactStore.ensure(claim2.job.jobId);
-      return await this.executeGuardedStep(claim2, workingDirectory, artifactDir, signal);
+      const store = claim2.job.permissions.filesystem.managedWorkspaceRoots ? this.options.managedWorkspaceStore?.() : void 0;
+      const managed = await allocateContinuationWorkspace(claim2.job, store, this.options);
+      const artifactStore = continuationArtifactView(this.options.artifactStore, claim2.job, store, this.options);
+      const artifactDir = await artifactStore.ensure(claim2.job.jobId);
+      return await this.executeGuardedStep(claim2, workingDirectory, artifactDir, artifactStore, managed, signal);
     } catch (error62) {
-      if (error62 instanceof ContinuationWorkingDirectoryError || error62 instanceof WorkspaceProjectError) {
+      if (error62 instanceof ContinuationWorkingDirectoryError || error62 instanceof WorkspaceProjectError || error62 instanceof ManagedWorkspaceStorageError) {
         return {
           outcome: blockedCapabilityOutcome({
             checkpoint: checkpointForClaim(claim2),
             errorCode: "continuation_working_directory_denied",
-            errorSummary: error62 instanceof WorkspaceProjectError ? error62.message : "The continuation working directory is no longer authorized by its snapshot and current operator policy.",
+            errorSummary: error62 instanceof WorkspaceProjectError || error62 instanceof ManagedWorkspaceStorageError ? error62.message : "The continuation working directory is no longer authorized by its snapshot and current operator policy.",
             requiredCapability: "filesystem.workspace",
             unperformedWork: ["Use an authorized continuation working directory."]
           })
@@ -69558,16 +70645,20 @@ var ContinuationCodexExecutor = class {
     if (binding.directory !== workingDirectory) throw new WorkspaceProjectError("directory_changed");
     return binding.directory;
   }
-  workspaceDirectoryGuard(claim2) {
+  workspaceDirectoryGuard(claim2, managed) {
     const { root, workspaceProject } = claim2.job.permissions.filesystem;
     if (workspaceProject === void 0) return void 0;
     return {
       binding: workspaceProject,
-      authorizedRoots: [root, this.options.currentWorkingRoot, this.options.foregroundWorkingRoot ?? this.options.currentWorkingRoot]
+      authorizedRoots: [root, this.options.currentWorkingRoot, this.options.foregroundWorkingRoot ?? this.options.currentWorkingRoot],
+      ...managed ? {
+        requireProtectedAncestry: true,
+        auxiliaryBindings: [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts]
+      } : {}
     };
   }
-  async executeGuardedStep(claim2, workingDirectory, artifactDir, parentSignal) {
-    const artifactGuard = await this.startArtifactGuard(claim2.job.jobId, parentSignal);
+  async executeGuardedStep(claim2, workingDirectory, artifactDir, artifactStore, managed, parentSignal) {
+    const artifactGuard = await this.startArtifactGuard(claim2.job.jobId, parentSignal, artifactStore);
     try {
       const managedInputs = claim2.job.sourceFacts.inputs.map((input2) => {
         if (!this.options.inputStore) {
@@ -69581,11 +70672,11 @@ var ContinuationCodexExecutor = class {
           sizeBytes: input2.sizeBytes
         };
       });
-      const request = {
+      const baseRequest = {
         prompt: buildContinuationPrompt(claim2, artifactDir, managedInputs),
         ...this.options.command ? { command: this.options.command } : {},
         cwd: workingDirectory,
-        workspaceDirectory: this.workspaceDirectoryGuard(claim2),
+        workspaceDirectory: this.workspaceDirectoryGuard(claim2, managed),
         timeoutMs: claim2.job.timeoutSeconds * 1e3,
         sandbox: effectiveSandbox(
           claim2.job.permissions.filesystem.mode,
@@ -69603,11 +70694,12 @@ var ContinuationCodexExecutor = class {
           ...claim2.job.permissions.profile === "trusted_personal_workspace" ? ['sandbox_permissions=["disk-full-read-access"]'] : [],
           `sandbox_workspace_write.network_access=${claim2.job.permissions.network === "enabled"}`
         ],
-        additionalWritableDirs: [artifactDir],
+        ...!managed ? { additionalWritableDirs: [artifactDir] } : {},
         traceLogId: claim2.job.jobId,
         traceRunId: claim2.attempt.attemptId,
         ...claim2.job.permissions.profile === "trusted_personal_workspace" ? { forceToolTrace: true } : {}
       };
+      const request = managed ? withManagedWorkspace(baseRequest, managed) : baseRequest;
       const recovery = await this.options.toolInvoker?.recover(claim2);
       if (recovery?.status === "failed") {
         return {
@@ -69642,14 +70734,15 @@ var ContinuationCodexExecutor = class {
           recovery.result.message,
           claim2.job.executionSessionId,
           false,
-          artifactGuard.signal
+          artifactGuard.signal,
+          artifactStore
         );
       }
       const { result, replacedSession } = await this.executeWithResumeFallback(claim2, request);
       const outcome = await parseOutcome(
         result.text,
         claim2.job.jobId,
-        this.options.artifactStore
+        artifactStore
       );
       if (outcome.outcome === "tool_request") {
         return await this.executeToolRequest(
@@ -69658,7 +70751,8 @@ var ContinuationCodexExecutor = class {
           outcome,
           result.sessionId,
           replacedSession,
-          artifactGuard.signal
+          artifactGuard.signal,
+          artifactStore
         );
       }
       return {
@@ -69669,7 +70763,7 @@ var ContinuationCodexExecutor = class {
       await artifactGuard.stop();
     }
   }
-  async startArtifactGuard(jobId, parentSignal) {
+  async startArtifactGuard(jobId, parentSignal, artifactStore) {
     const controller = new AbortController();
     const relayAbort = () => controller.abort(parentSignal.reason);
     if (parentSignal.aborted) relayAbort();
@@ -69679,7 +70773,7 @@ var ContinuationCodexExecutor = class {
     const check2 = async () => {
       if (violation) return;
       try {
-        await this.options.artifactStore.assertWithinLimit(jobId);
+        await artifactStore.assertWithinLimit(jobId);
       } catch (error62) {
         violation = new ContinuationExecutionError(
           "continuation_artifact_limit_exceeded",
@@ -69713,7 +70807,7 @@ var ContinuationCodexExecutor = class {
       }
     };
   }
-  async executeToolRequest(claim2, baseRequest, toolRequest, firstSessionId, firstReplacedSession, signal) {
+  async executeToolRequest(claim2, baseRequest, toolRequest, firstSessionId, firstReplacedSession, signal, artifactStore) {
     const firstSessionPatch = executionSessionPatch(firstSessionId, firstReplacedSession);
     if (!claim2.job.requiredTools.includes(toolRequest.tool) || !claim2.job.permissions.hostTools.includes(toolRequest.tool)) {
       return {
@@ -69777,10 +70871,11 @@ var ContinuationCodexExecutor = class {
       invocation.result.message,
       firstSessionId,
       firstReplacedSession,
-      signal
+      signal,
+      artifactStore
     );
   }
-  async executeWithToolResult(claim2, baseRequest, toolRequest, resultMessage, previousSessionId, previousReplacedSession, signal) {
+  async executeWithToolResult(claim2, baseRequest, toolRequest, resultMessage, previousSessionId, previousReplacedSession, signal, artifactStore) {
     const toolResultPrompt = buildContinuationToolResultPrompt(claim2, toolRequest, resultMessage);
     const freshSessionPrompt = `${baseRequest.prompt}
 
@@ -69800,7 +70895,7 @@ ${toolResultPrompt}`;
     const followupOutcome = await parseOutcome(
       followup.result.text,
       claim2.job.jobId,
-      this.options.artifactStore
+      artifactStore
     );
     if (followupOutcome.outcome === "tool_request") {
       return {
@@ -69832,6 +70927,11 @@ ${toolResultPrompt}`;
     const revalidateWorkspace = async () => {
       if (claim2.job.permissions.filesystem.workspaceProject !== void 0) {
         await this.validateRunWorkingDirectory(claim2);
+      }
+      if (request.workspaceDirectory) {
+        for (const binding of request.workspaceDirectory.auxiliaryBindings ?? []) {
+          await validateWorkspaceProject(request.workspaceDirectory.authorizedRoots, binding);
+        }
       }
     };
     try {
@@ -70283,11 +71383,11 @@ function mapExecutorError(error62) {
     );
   }
   if (error62 instanceof CodexExecProcessError) {
-    const diagnostic = diagnoseCodexExecFailure(error62);
+    const diagnostic2 = diagnoseCodexExecFailure(error62);
     return new ContinuationExecutionError(
-      diagnostic.errorCode,
-      diagnostic.errorSummary,
-      diagnostic.retryable,
+      diagnostic2.errorCode,
+      diagnostic2.errorSummary,
+      diagnostic2.retryable,
       { cause: error62 }
     );
   }
@@ -70303,9 +71403,40 @@ function mapExecutorError(error62) {
 var IM_UUID_WINDOW_MS = 60 * 60 * 1e3;
 var DOC_COMMENT_MAX_CHARS = 1e3;
 var SINGLE_ATTEMPT = { attempts: 1, retryTimeout: false };
-function createLarkContinuationDelivery(getTransport, clock) {
+function createLarkContinuationDelivery(getTransport, clock, loadArtifact) {
+  const prepareArtifact = async (claim2) => {
+    const route = claim2.route;
+    if (route.kind !== "message_thread") return invalidArtifact();
+    let reference;
+    let content;
+    try {
+      reference = parseArtifactDelivery(claim2.payload);
+      content = await loadArtifact?.(claim2, reference);
+    } catch {
+      return invalidArtifact();
+    }
+    if (!content) return invalidArtifact();
+    if (!isImArtifactSize(content.length)) return {
+      status: "failed",
+      errorCode: "artifact_delivery_size_unsupported",
+      errorSummary: IM_ARTIFACT_SIZE_NOTE
+    };
+    let transport;
+    try {
+      transport = getTransport();
+    } catch {
+      return deliveryErrorResult("pre_send", "im");
+    }
+    const bytes = content;
+    return () => deliverIm(transport, clock, claim2, route, () => transport.uploadFile(bytes, artifactDeliveryFileName(reference.path)));
+  };
   return {
+    prepareArtifact,
     deliver: async (claim2) => {
+      if (claim2.kind === "artifact") {
+        const prepared = await prepareArtifact(claim2);
+        return typeof prepared === "function" ? prepared() : prepared;
+      }
       let transport;
       try {
         transport = getTransport();
@@ -70327,7 +71458,7 @@ async function deliverContinuation(transport, clock, claim2) {
   }
   return claim2.route.kind === "message_thread" ? deliverIm(transport, clock, claim2, claim2.route) : deliverDocComment(transport, claim2, claim2.route, marker);
 }
-async function deliverIm(transport, clock, claim2, route) {
+async function deliverIm(transport, clock, claim2, route, uploadArtifact) {
   if (claim2.attemptCount > 1 && claim2.firstAttemptAt && clock.now().getTime() - Date.parse(claim2.firstAttemptAt) >= IM_UUID_WINDOW_MS) {
     return {
       status: "delivery_unknown",
@@ -70335,10 +71466,20 @@ async function deliverIm(transport, clock, claim2, route) {
       errorSummary: "The prior IM delivery could not be confirmed before the UUID deduplication window expired."
     };
   }
+  let input2 = { text: claim2.payload };
+  if (uploadArtifact) {
+    try {
+      const key = await uploadArtifact();
+      if (!key) return { status: "retry", errorCode: "artifact_upload_unconfirmed", errorSummary: "Lark returned no attachment key." };
+      input2 = { raw: { msgType: "file", content: JSON.stringify({ file_key: key }) } };
+    } catch (error62) {
+      return deliveryErrorResult(classifyDeliveryError(error62), "im");
+    }
+  }
   try {
     const result = await transport.sendMessage({
       chatId: route.conversationId,
-      input: { text: claim2.payload },
+      input: input2,
       replyTo: route.sourceMessageId,
       ...route.threadId ? { replyInThread: true } : {},
       uuid: claim2.idempotencyKey,
@@ -70354,6 +71495,9 @@ async function deliverIm(transport, clock, claim2, route) {
   } catch (error62) {
     return deliveryErrorResult(classifyDeliveryError(error62), "im");
   }
+}
+function invalidArtifact() {
+  return { status: "failed", errorCode: "artifact_delivery_reference_invalid", errorSummary: "The committed managed artifact is unavailable or no longer matches its delivery reference." };
 }
 async function deliverDocComment(transport, claim2, route, marker) {
   if (claim2.attemptCount > 1) {
@@ -70493,7 +71637,7 @@ function nestedErrorMessage(error62) {
 }
 
 // src/continuation/local-cli-tool-invoker.ts
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash14 } from "node:crypto";
 var ContinuationLocalCliToolInvoker = class {
   constructor(options) {
     this.options = options;
@@ -70593,7 +71737,7 @@ function normalizeLocalCliFailure(result, context) {
   const message = firstString4(structuredError?.message, result.message);
   const category = failureCategory({ type, subtype, timedOut, message });
   const hints = stringArray(structuredError?.hints).slice(0, 8);
-  const diagnostic = boundedDiagnostic(message);
+  const diagnostic2 = boundedDiagnostic(message);
   const retrySafety = normalizedRetrySafety(
     result.failure?.retrySafe,
     result.failure?.phase,
@@ -70601,12 +71745,12 @@ function normalizeLocalCliFailure(result, context) {
     context.operationRisk
   );
   const capabilityAvailable = category !== "capability_unavailable";
-  const fingerprint = createHash10("sha256").update(JSON.stringify({
+  const fingerprint = createHash14("sha256").update(JSON.stringify({
     category,
     failedStep: context.failedStep,
     type,
     subtype,
-    diagnostic
+    diagnostic: diagnostic2
   })).digest("hex").slice(0, 32);
   return {
     category,
@@ -70615,7 +71759,7 @@ function normalizeLocalCliFailure(result, context) {
     operationRisk: context.operationRisk,
     hints,
     failedStep: context.failedStep,
-    diagnostic,
+    diagnostic: diagnostic2,
     fingerprint
   };
 }
@@ -70708,11 +71852,11 @@ function stringArray(value) {
 }
 
 // src/continuation/sqlite-repository.ts
-import path26 from "node:path";
-import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
+import path34 from "node:path";
+import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
 
 // src/continuation/progress-policy.ts
-import { createHash as createHash11 } from "node:crypto";
+import { createHash as createHash15 } from "node:crypto";
 function evaluateContinuationProgress(input2) {
   const candidateDelta = createAttemptDelta(input2.previous, input2.candidate);
   const delta = input2.verification.status === "accepted" ? candidateDelta : rejectedAttemptDelta(candidateDelta);
@@ -70793,7 +71937,7 @@ function materialProjection(checkpoint2) {
     completedStepIds: sorted(checkpoint2.completedStepIds),
     completedCriterionIds: sorted(checkpoint2.completedCriterionIds),
     completedDeliverableIds: sorted(checkpoint2.completedDeliverableIds),
-    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path28, sha256: sha2562 }) => ({ id, deliverableId, path: path28, sha256: sha2562 })).sort(compareId),
+    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path37, sha256: sha2562 }) => ({ id, deliverableId, path: path37, sha256: sha2562 })).sort(compareId),
     evidence: [...checkpoint2.evidence].map((entry) => ({
       id: entry.id,
       requirementId: entry.requirementId,
@@ -70809,7 +71953,7 @@ function materialProjection(checkpoint2) {
   };
 }
 function hashCanonical(value) {
-  return createHash11("sha256").update(JSON.stringify(value)).digest("hex");
+  return createHash15("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sorted(values) {
   return [...values].sort();
@@ -70819,14 +71963,15 @@ function compareId(left, right) {
 }
 
 // src/continuation/verifier.ts
-import { createHash as createHash12 } from "node:crypto";
-import fs20 from "node:fs/promises";
+import { createHash as createHash16 } from "node:crypto";
 var MAX_FINDINGS = 20;
 var ContinuationVerifier = class {
-  constructor(artifacts) {
+  constructor(artifacts, resolveArtifacts) {
     this.artifacts = artifacts;
+    this.resolveArtifacts = resolveArtifacts;
   }
   artifacts;
+  resolveArtifacts;
   async verify(input2) {
     const findings = [];
     const add = (finding) => {
@@ -70852,15 +71997,17 @@ var ContinuationVerifier = class {
       add("Checkpoint structure is invalid.");
     }
     if (findings.length === 0) {
-      await this.validateArtifacts(input2.job.jobId, input2.candidate, add);
+      await this.validateArtifacts(input2.job, input2.candidate, add);
     }
     return findings.length === 0 ? { status: "accepted", findings: [] } : { status: "revision_required", findings };
   }
-  async validateArtifacts(jobId, checkpoint2, add) {
+  async validateArtifacts(job, checkpoint2, add) {
     if (checkpoint2.artifacts.length === 0) return;
     try {
+      const jobId = job.jobId;
+      const artifacts = this.resolveArtifacts?.(job) ?? this.artifacts;
       const paths = checkpoint2.artifacts.map((artifact) => artifact.path);
-      const canonical = await this.artifacts.canonicalizeReferences(jobId, paths);
+      const canonical = await artifacts.canonicalizeReferences(jobId, paths);
       if (canonical.length !== paths.length) {
         add("Checkpoint artifact paths must be unique.");
         return;
@@ -70871,8 +72018,8 @@ var ContinuationVerifier = class {
           add(`Artifact ${artifact.id} does not use its canonical path.`);
           continue;
         }
-        const content = await fs20.readFile(this.artifacts.resolve(jobId, artifact.path));
-        const actual = createHash12("sha256").update(content).digest("hex");
+        const content = await artifacts.readArtifact(jobId, artifact.path);
+        const actual = createHash16("sha256").update(content).digest("hex");
         if (actual !== artifact.sha256.toLowerCase()) {
           add(`Artifact ${artifact.id} checksum does not match persisted content.`);
         }
@@ -71026,9 +72173,313 @@ function requireEntitiesUnchanged(name, previous, candidate, add) {
 }
 
 // src/durable-run/sqlite-repository.ts
-import { createHash as createHash14, randomBytes as randomBytes3 } from "node:crypto";
-import fs21 from "node:fs/promises";
-import path23 from "node:path";
+import { createHash as createHash18, randomBytes as randomBytes4 } from "node:crypto";
+import fs22 from "node:fs/promises";
+import path31 from "node:path";
+
+// src/durable-run/sqlite-managed-workspace.ts
+import path30 from "node:path";
+var timestamp = external_exports.iso.datetime();
+var sourceRegistries = [
+  ["workspace_run_allocations", "intent_json"],
+  ["workspace_unmanaged_foreground", "admission_json"]
+];
+var sourcePathExpr = (column) => `json_extract(${column}, '$.project.directory')`;
+var sourceIdentityExpr = (column) => `(json_extract(${column}, '$.project.device') || ':' || json_extract(${column}, '$.project.inode'))`;
+var SqliteManagedWorkspaceStore = class {
+  constructor(database) {
+    this.database = database;
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS workspace_run_allocations (
+        workload_kind TEXT NOT NULL CHECK (workload_kind IN ('foreground', 'cron_prompt', 'async_task')),
+        run_id TEXT NOT NULL,
+        scratch_path TEXT NOT NULL,
+        artifact_path TEXT NOT NULL,
+        scratch_identity TEXT,
+        artifact_identity TEXT,
+        intent_json TEXT NOT NULL CHECK (json_valid(intent_json)),
+        allocation_json TEXT CHECK (allocation_json IS NULL OR json_valid(allocation_json)),
+        last_used_at TEXT NOT NULL,
+        PRIMARY KEY (workload_kind, run_id)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS workspace_run_scratch_path ON workspace_run_allocations(scratch_path);
+      CREATE INDEX IF NOT EXISTS workspace_run_artifact_path ON workspace_run_allocations(artifact_path);
+      CREATE INDEX IF NOT EXISTS workspace_run_scratch_identity ON workspace_run_allocations(scratch_identity);
+      CREATE INDEX IF NOT EXISTS workspace_run_artifact_identity ON workspace_run_allocations(artifact_identity);
+      CREATE TABLE IF NOT EXISTS workspace_unmanaged_foreground (
+        run_id TEXT PRIMARY KEY,
+        admission_json TEXT NOT NULL CHECK (json_valid(admission_json))
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS workspace_foreground_artifacts (
+        run_id TEXT PRIMARY KEY,
+        batch_json TEXT NOT NULL CHECK (json_valid(batch_json))
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS workspace_retry_artifact_stages (
+        run_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        identity_json TEXT CHECK (identity_json IS NULL OR json_valid(identity_json)),
+        PRIMARY KEY (run_id, relative_path)
+      ) STRICT;
+      ${sourceRegistries.map(([table, json2]) => `
+        CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${sourcePathExpr(json2)});
+        CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${sourceIdentityExpr(json2)});
+      `).join("")}
+    `);
+  }
+  database;
+  getUnmanagedForeground(runId) {
+    const row = this.database.prepare("SELECT admission_json FROM workspace_unmanaged_foreground WHERE run_id = ?").get(runId);
+    return row ? parseStored(unmanagedForegroundAdmissionSchema, row.admission_json) : null;
+  }
+  getForegroundArtifacts(runId) {
+    const row = this.database.prepare("SELECT batch_json FROM workspace_foreground_artifacts WHERE run_id = ?").get(runId);
+    if (!row) return null;
+    const batch = parseStored(foregroundArtifactBatchSchema, row.batch_json);
+    if (this.get({ kind: "foreground", runId })?.allocation.foregroundSessionKey !== batch.sessionKey) {
+      throw new ManagedWorkspaceStorageError("invalid_binding");
+    }
+    return batch;
+  }
+  listPendingForegroundRuns(afterRunId) {
+    return this.database.prepare(`SELECT run_id FROM workspace_foreground_artifacts
+      WHERE run_id > ? AND json_extract(batch_json, '$.version') = 2
+        AND (json_extract(batch_json, '$.reply.status') = 'pending' OR (
+          json_extract(batch_json, '$.reply.status') = 'sent' AND EXISTS (
+            SELECT 1 FROM json_each(batch_json, '$.files') WHERE json_extract(value, '$.status') = 'pending'
+          )
+        )) ORDER BY run_id LIMIT 50`).all(afterRunId).map((row) => external_exports.string().parse(row.run_id));
+  }
+  retryArtifactStages(owner) {
+    if (owner.kind !== "async_task" || !this.get(owner)) throw new ManagedWorkspaceStorageError("invalid_binding");
+    const runId = owner.runId;
+    return {
+      get: (relativePath) => {
+        const row = this.database.prepare(`SELECT nonce, sha256, identity_json FROM workspace_retry_artifact_stages
+          WHERE run_id = ? AND relative_path = ?`).get(runId, relativePath);
+        return row ? managedArtifactStageSchema.parse({
+          nonce: row.nonce,
+          sha256: row.sha256,
+          ...row.identity_json === null ? {} : { identity: parseStored(managedArtifactIdentitySchema, row.identity_json) }
+        }) : null;
+      },
+      reserve: (relativePath, stage) => {
+        this.requireAutocommit();
+        if (!isManagedArtifactRelativePath(relativePath) || stage.identity || !managedArtifactStageSchema.safeParse(stage).success) {
+          throw new ManagedWorkspaceStorageError("invalid_binding");
+        }
+        this.database.prepare(`INSERT INTO workspace_retry_artifact_stages (run_id, relative_path, nonce, sha256)
+          VALUES (?, ?, ?, ?)`).run(runId, relativePath, stage.nonce, stage.sha256);
+      },
+      pin: (relativePath, nonce, identity) => {
+        this.requireAutocommit();
+        const value = managedArtifactIdentitySchema.parse(identity);
+        const result = this.database.prepare(`UPDATE workspace_retry_artifact_stages SET identity_json = ?
+          WHERE run_id = ? AND relative_path = ? AND nonce = ? AND identity_json IS NULL`).run(JSON.stringify(value), runId, relativePath, nonce);
+        if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+      },
+      release: (relativePath, nonce) => {
+        this.requireAutocommit();
+        const result = this.database.prepare(`DELETE FROM workspace_retry_artifact_stages
+          WHERE run_id = ? AND relative_path = ? AND nonce = ?`).run(runId, relativePath, nonce);
+        if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+      }
+    };
+  }
+  rememberForegroundArtifacts(runId, batch) {
+    this.requireAutocommit();
+    const parsed = foregroundArtifactBatchSchema.safeParse(batch);
+    if (!parsed.success || parsed.data.reply.status !== "pending" || parsed.data.files.some((file2) => file2.status !== "pending") || this.get({ kind: "foreground", runId })?.allocation.foregroundSessionKey !== parsed.data.sessionKey) {
+      throw new ManagedWorkspaceStorageError("invalid_binding");
+    }
+    const result = this.database.prepare(`INSERT INTO workspace_foreground_artifacts (run_id, batch_json)
+      VALUES (?, ?) ON CONFLICT(run_id) DO NOTHING`).run(runId, JSON.stringify(parsed.data));
+    if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  transitionForegroundArtifact(runId, part, expected, status, messageId) {
+    this.requireAutocommit();
+    if (part !== "reply" && (!Number.isSafeInteger(part) || part < 0) || expected === "pending" && status !== "sending" && status !== "failed" || expected === "sending" && status === "sending" || status === "sent" !== Boolean(messageId) || messageId !== void 0 && !/^om_/.test(messageId)) throw new ManagedWorkspaceStorageError("invalid_binding");
+    const entry = part === "reply" ? "$.reply" : `$.files[${part}]`;
+    const values = messageId ? [entry + ".messageId", messageId] : [];
+    return Number(this.database.prepare(`UPDATE workspace_foreground_artifacts
+      SET batch_json = json_set(batch_json, ?, ?${messageId ? ", ?, ?" : ""})
+      WHERE run_id = ? AND json_extract(batch_json, ?) = ?
+        ${part === "reply" ? "" : "AND json_extract(batch_json, '$.reply.status') = 'sent'"}`).run(entry + ".status", status, ...values, runId, entry + ".status", expected).changes) === 1;
+  }
+  rememberUnmanagedForeground(runId, admission) {
+    this.requireAutocommit();
+    const parsed = unmanagedForegroundAdmissionSchema.safeParse(admission);
+    if (!parsed.success) throw new ManagedWorkspaceStorageError("invalid_binding");
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.get({ kind: "foreground", runId })) throw new ManagedWorkspaceStorageError("invalid_binding");
+      const prior = this.getUnmanagedForeground(runId);
+      if (prior) {
+        const matches = "project" in prior ? "project" in admission && sameWorkspaceProject(prior.project, admission.project) : "fallbackCwd" in admission && prior.fallbackCwd === admission.fallbackCwd;
+        if (prior.sessionKey !== admission.sessionKey || !matches) throw new ManagedWorkspaceStorageError("invalid_binding");
+      } else {
+        if ("project" in admission) this.requireUnoccupied(admission.project.directory);
+        this.database.prepare("INSERT INTO workspace_unmanaged_foreground (run_id, admission_json) VALUES (?, ?)").run(runId, JSON.stringify(parsed.data));
+      }
+      this.database.exec("COMMIT");
+    } catch (error62) {
+      this.database.exec("ROLLBACK");
+      throw error62;
+    }
+  }
+  get(owner) {
+    const row = this.database.prepare(`
+      SELECT intent_json, allocation_json, last_used_at, scratch_path, artifact_path, scratch_identity, artifact_identity
+      FROM workspace_run_allocations WHERE workload_kind = ? AND run_id = ?
+    `).get(owner.kind, owner.runId);
+    if (!row) return null;
+    if (row.allocation_json === null) throw new ManagedWorkspaceStorageError("allocation_incomplete");
+    const intent = parseStored(managedRunIntentSchema, row.intent_json);
+    const allocation = parseStored(managedRunAllocationSchema, row.allocation_json);
+    const lastUsedAt = timestamp.safeParse(row.last_used_at);
+    if (!lastUsedAt.success || intent.owner.kind !== owner.kind || intent.owner.runId !== owner.runId || allocation.owner.kind !== owner.kind || allocation.owner.runId !== owner.runId || row.scratch_path !== allocation.scratch.directory || row.artifact_path !== allocation.artifacts.directory || row.scratch_identity !== directoryIdentity(allocation.scratch) || row.artifact_identity !== directoryIdentity(allocation.artifacts) || intent.createdAt !== allocation.createdAt || intent.foregroundSessionKey !== allocation.foregroundSessionKey || !sameWorkspaceProject(intent.project, allocation.project) || !sameWorkspaceProject(intent.fallbackWorkspace, allocation.fallbackWorkspace) || !sameWorkspaceProject(intent.roots.scratch, allocation.roots.scratch) || !sameWorkspaceProject(intent.roots.artifacts, allocation.roots.artifacts)) {
+      throw new ManagedWorkspaceStorageError("invalid_binding");
+    }
+    return { allocation, lastUsedAt: lastUsedAt.data };
+  }
+  async ensure({ authorizedRoots, usedAt, sourceRegistryPath, sourceRegistryRoot, ...input2 }) {
+    const parsed = managedRunIntentSchema.safeParse({ version: 1, ...input2 });
+    const lastUse = timestamp.safeParse(usedAt ?? input2.createdAt);
+    if (!parsed.success || !lastUse.success) throw new ManagedWorkspaceStorageError("invalid_binding");
+    this.requireAutocommit();
+    const { owner, ...snapshot } = parsed.data;
+    const lastUsedAt = new Date(lastUse.data).toISOString();
+    const policy = { authorizedRoots, sourceRegistryPath, sourceRegistryRoot };
+    const existing = this.get(owner);
+    if (existing) return this.reuse(existing, snapshot, policy, lastUsedAt);
+    const ancestry = await validateManagedWorkspaceRoots(snapshot.roots, { ...policy, project: snapshot.project, fallbackWorkspace: snapshot.fallbackWorkspace });
+    const concurrent = this.reserve(parsed.data, lastUsedAt, ancestry);
+    if (concurrent) return this.reuse(concurrent, snapshot, policy, lastUsedAt);
+    const allocation = await allocateManagedRunDirectories({ ...snapshot, owner, ...policy });
+    this.requireAutocommit();
+    const committed = this.database.prepare(`
+      UPDATE workspace_run_allocations SET allocation_json = ?, scratch_identity = ?, artifact_identity = ?
+      WHERE workload_kind = ? AND run_id = ? AND intent_json = ? AND allocation_json IS NULL
+    `).run(
+      JSON.stringify(allocation),
+      directoryIdentity(allocation.scratch),
+      directoryIdentity(allocation.artifacts),
+      owner.kind,
+      owner.runId,
+      JSON.stringify(parsed.data)
+    );
+    if (committed.changes !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+    return allocation;
+  }
+  async openDirectory(owner, purpose, authorizedRoots) {
+    const stored = this.get(owner);
+    if (!stored) throw new ManagedWorkspaceStorageError("invalid_binding");
+    return validateManagedRunDirectory(stored.allocation, purpose, authorizedRoots);
+  }
+  async reuse({ allocation }, snapshot, policy, lastUsedAt) {
+    if (!sameWorkspaceProject(allocation.project, snapshot.project) || !sameWorkspaceProject(allocation.fallbackWorkspace, snapshot.fallbackWorkspace) || allocation.foregroundSessionKey !== snapshot.foregroundSessionKey || allocation.createdAt !== snapshot.createdAt || !sameWorkspaceProject(allocation.roots.scratch, snapshot.roots.scratch) || !sameWorkspaceProject(allocation.roots.artifacts, snapshot.roots.artifacts)) {
+      throw new ManagedWorkspaceStorageError("invalid_binding");
+    }
+    const [ancestry] = await Promise.all([
+      validateManagedWorkspaceRoots(allocation.roots, { ...policy, project: allocation.project, fallbackWorkspace: allocation.fallbackWorkspace }),
+      validateManagedRunDirectory(allocation, "scratch", policy.authorizedRoots),
+      validateManagedRunDirectory(allocation, "artifacts", policy.authorizedRoots)
+    ]);
+    this.requireAutocommit();
+    this.requireSourceDisjoint(allocation.roots, ancestry.storage);
+    this.touch(allocation.owner, lastUsedAt);
+    return allocation;
+  }
+  reserve(intent, lastUsedAt, ancestry) {
+    this.requireAutocommit();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (intent.owner.kind === "foreground" && this.getUnmanagedForeground(intent.owner.runId)) {
+        throw new ManagedWorkspaceStorageError("invalid_binding");
+      }
+      const existing = this.get(intent.owner);
+      if (!existing) {
+        this.requireSourceDisjoint(intent.roots, ancestry.storage);
+        const scratchPath = managedRunDirectoryPath(intent.roots.scratch, intent.owner);
+        const artifactPath = managedRunDirectoryPath(intent.roots.artifacts, intent.owner);
+        if (intent.project) this.requireUnoccupied(intent.project.directory);
+        this.requireUnoccupied(scratchPath);
+        this.requireUnoccupied(artifactPath);
+        const byIdentity = this.database.prepare(`
+          SELECT 1 FROM workspace_run_allocations WHERE scratch_identity = ? OR artifact_identity = ? LIMIT 1
+        `);
+        for (const identity of ancestry.all) {
+          if (byIdentity.get(identity, identity)) throw new ManagedWorkspaceStorageError("overlapping_runs");
+        }
+        this.database.prepare(`
+          INSERT INTO workspace_run_allocations (
+            workload_kind, run_id, scratch_path, artifact_path, intent_json, last_used_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(intent.owner.kind, intent.owner.runId, scratchPath, artifactPath, JSON.stringify(intent), lastUsedAt);
+      }
+      this.database.exec("COMMIT");
+      return existing;
+    } catch (error62) {
+      this.database.exec("ROLLBACK");
+      throw error62;
+    }
+  }
+  requireSourceDisjoint(roots, storageAncestry) {
+    for (const [table, json2] of sourceRegistries) {
+      const byIdentity = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${sourceIdentityExpr(json2)} = ? LIMIT 1`);
+      for (const identity of storageAncestry) {
+        if (byIdentity.get(identity)) throw new ManagedWorkspaceStorageError("overlapping_source");
+      }
+      const expr = sourcePathExpr(json2);
+      const exact = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} = ? LIMIT 1`);
+      const nested = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} >= ? AND ${expr} < ? LIMIT 1`);
+      for (const { directory } of [roots.scratch, roots.artifacts]) {
+        for (let current = directory; ; current = path30.dirname(current)) {
+          if (exact.get(current)) throw new ManagedWorkspaceStorageError("overlapping_source");
+          if (path30.dirname(current) === current) break;
+        }
+        const prefix = `${directory}${path30.sep}`;
+        const upper = `${directory}${String.fromCharCode(path30.sep.charCodeAt(0) + 1)}`;
+        if (nested.get(prefix, upper)) throw new ManagedWorkspaceStorageError("overlapping_source");
+      }
+    }
+  }
+  requireUnoccupied(candidate) {
+    const exact = this.database.prepare(`
+      SELECT 1 FROM workspace_run_allocations WHERE scratch_path = ? OR artifact_path = ? LIMIT 1
+    `);
+    for (let current = candidate; ; current = path30.dirname(current)) {
+      if (exact.get(current, current)) throw new ManagedWorkspaceStorageError("overlapping_runs");
+      if (path30.dirname(current) === current) break;
+    }
+    const prefix = `${candidate}${path30.sep}`;
+    const upper = `${candidate}${String.fromCharCode(path30.sep.charCodeAt(0) + 1)}`;
+    const nested = this.database.prepare(`
+      SELECT 1 FROM workspace_run_allocations
+      WHERE (scratch_path >= ? AND scratch_path < ?) OR (artifact_path >= ? AND artifact_path < ?)
+      LIMIT 1
+    `).get(prefix, upper, prefix, upper);
+    if (nested) throw new ManagedWorkspaceStorageError("overlapping_runs");
+  }
+  requireAutocommit() {
+    if (this.database.isTransaction) throw new ManagedWorkspaceStorageError("allocation_transaction");
+  }
+  touch(owner, usedAt) {
+    this.database.prepare(`
+      UPDATE workspace_run_allocations SET last_used_at = max(last_used_at, ?)
+      WHERE workload_kind = ? AND run_id = ?
+    `).run(usedAt, owner.kind, owner.runId);
+  }
+};
+function parseStored(schema, value) {
+  try {
+    if (typeof value !== "string") throw new Error("Expected a JSON string.");
+    return schema.parse(JSON.parse(value));
+  } catch {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+}
 
 // src/domain/durable-run.ts
 var DURABLE_RUN_WORKLOAD_JSON_MAX_BYTES = 256 * 1024;
@@ -71360,7 +72811,7 @@ function assertBoundedRequiredString(value, label, maxChars) {
 }
 
 // src/durable-run/sqlite-migrations.ts
-import { createHash as createHash13 } from "node:crypto";
+import { createHash as createHash17 } from "node:crypto";
 var DURABLE_RUN_SCHEMA_VERSION = 11;
 var ASYNC_TASK_INPUT_VERSION = 1;
 var ASYNC_TASK_STATE_VERSION = 1;
@@ -72017,7 +73468,7 @@ function legacyOperationStepId(stepIndex, description) {
   return `legacy-step-${stepIndex + 1}-${stableHash(description)}`;
 }
 function stableHash(value) {
-  return createHash13("sha256").update(value).digest("hex").slice(0, 12);
+  return createHash17("sha256").update(value).digest("hex").slice(0, 12);
 }
 function migrateInterrupts(database) {
   const rows = readRows(database, "continuation_interrupts");
@@ -72321,7 +73772,7 @@ function persistedTaskContract(row, projection) {
 }
 function legacyAcceptanceCriteria(descriptions) {
   return descriptions.map((description, index) => ({
-    id: `criterion_${index + 1}_${createHash13("sha256").update(description).digest("hex").slice(0, 12)}`,
+    id: `criterion_${index + 1}_${createHash17("sha256").update(description).digest("hex").slice(0, 12)}`,
     description,
     deliverableIds: []
   }));
@@ -72735,7 +74186,7 @@ function clampInteger(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 function legacyStepId(description, index) {
-  return `legacy-step-${index + 1}-${createHash13("sha256").update(description).digest("hex").slice(0, 12)}`;
+  return `legacy-step-${index + 1}-${createHash17("sha256").update(description).digest("hex").slice(0, 12)}`;
 }
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -72752,20 +74203,21 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
   database;
   deliveryLeaseMs;
   ownsDatabase;
+  managedWorkspaceStore;
   static attach(database) {
     return new _SqliteDurableRunRepository(database, DEFAULT_DELIVERY_LEASE_MS, false);
   }
   static async open(options) {
-    const databasePath = path23.resolve(options.databasePath);
-    await fs21.mkdir(path23.dirname(databasePath), { recursive: true, mode: 448 });
-    await fs21.chmod(path23.dirname(databasePath), 448);
+    const databasePath = path31.resolve(options.databasePath);
+    await fs22.mkdir(path31.dirname(databasePath), { recursive: true, mode: 448 });
+    await fs22.chmod(path31.dirname(databasePath), 448);
     const { DatabaseSync } = await import("node:sqlite");
     const database = new DatabaseSync(databasePath, {
       timeout: 5e3,
       enableForeignKeyConstraints: true
     });
     try {
-      await fs21.chmod(databasePath, 384);
+      await fs22.chmod(databasePath, 384);
       database.exec(`
         PRAGMA busy_timeout = 5000;
         PRAGMA foreign_keys = ON;
@@ -72786,6 +74238,9 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
   }
   async initialize() {
     await retrySqliteBusy(() => migrateSqliteToDurableV11(this.database));
+  }
+  getManagedWorkspaceStore() {
+    return this.managedWorkspaceStore ??= new SqliteManagedWorkspaceStore(this.database);
   }
   async create(request) {
     validateCreateRequest(request);
@@ -73816,18 +75271,18 @@ function uniqueStrings(values) {
   return unique;
 }
 function deliveryEventKey(kind, idempotencyKey) {
-  return `${kind}:${createHash14("sha256").update(idempotencyKey).digest("hex")}`;
+  return `${kind}:${createHash18("sha256").update(idempotencyKey).digest("hex")}`;
 }
 function outboxId(idempotencyKey) {
-  return `outbox_${createHash14("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `outbox_${createHash18("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function newAttemptId() {
-  return `att_${randomBytes3(12).toString("hex")}`;
+  return `att_${randomBytes4(12).toString("hex")}`;
 }
 function addMilliseconds(value, milliseconds) {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) throw new Error("Durable Run timestamp is invalid.");
-  return new Date(timestamp + milliseconds).toISOString();
+  const timestamp2 = Date.parse(value);
+  if (!Number.isFinite(timestamp2)) throw new Error("Durable Run timestamp is invalid.");
+  return new Date(timestamp2 + milliseconds).toISOString();
 }
 function assertTimestamp(value, label) {
   if (!Number.isFinite(Date.parse(value))) throw new Error(`Durable Run ${label} is invalid.`);
@@ -74233,12 +75688,14 @@ var AsyncTaskKernelAdapter = class {
     const continuationClaim = continuationDeliveryClaimFromDurable(claim2);
     let sendBoundaryStarted = false;
     try {
+      const prepared = continuationClaim.kind === "artifact" ? await this.options.delivery.prepareArtifact?.(continuationClaim) : void 0;
+      if (prepared && typeof prepared !== "function") return durableDeliveryResultFromContinuation(prepared);
       if (context && !await context.markExternalSendStarted()) {
         return { status: "superseded" };
       }
       sendBoundaryStarted = Boolean(context);
       return durableDeliveryResultFromContinuation(
-        await this.options.delivery.deliver(continuationClaim)
+        await (prepared ? prepared() : this.options.delivery.deliver(continuationClaim))
       );
     } catch (error62) {
       const result = {
@@ -74662,7 +76119,7 @@ function isDeliveryRoute(value) {
 }
 function isPermissionEnvelope(value) {
   if (!isRecord4(value) || !isRecord4(value.filesystem) || !isRecord4(value.approval)) return false;
-  return ["bounded", "trusted_personal_workspace"].includes(String(value.profile)) && typeof value.filesystem.root === "string" && ["read-only", "workspace-write"].includes(String(value.filesystem.mode)) && isStringArray(value.filesystem.requestedPaths) && (value.filesystem.workspaceProject === void 0 || workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success) && isStringArray(value.hostTools) && ["none", "enabled"].includes(String(value.network)) && ["denied", "allowed"].includes(String(value.externalSideEffects)) && ["never", "interactive"].includes(String(value.approval.mode));
+  return ["bounded", "trusted_personal_workspace"].includes(String(value.profile)) && typeof value.filesystem.root === "string" && ["read-only", "workspace-write"].includes(String(value.filesystem.mode)) && isStringArray(value.filesystem.requestedPaths) && (value.filesystem.workspaceProject === void 0 || workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success) && (value.filesystem.managedWorkspaceRoots === void 0 || workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success && managedWorkspaceRootsSchema.safeParse(value.filesystem.managedWorkspaceRoots).success) && isStringArray(value.hostTools) && ["none", "enabled"].includes(String(value.network)) && ["denied", "allowed"].includes(String(value.externalSideEffects)) && ["never", "interactive"].includes(String(value.approval.mode));
 }
 function isCheckpoint(value) {
   return isRecord4(value) && typeof value.summary === "string" && isStringArray(value.completedSteps) && isStringArray(value.remainingSteps) && isStringArray(value.constraints) && isStringArray(value.decisions) && isStringArray(value.references);
@@ -74761,7 +76218,7 @@ function isOptionalDeliveryStatus(value) {
   ].includes(String(value));
 }
 function isOptionalDeliveryEvents(value) {
-  return value === void 0 || Array.isArray(value) && value.every((entry) => isRecord4(entry) && requiredString3(entry.eventKey) && ["progress", "interrupt", "terminal"].includes(String(entry.kind)) && isOptionalString(entry.attemptId) && isOptionalDeliveryStatus(entry.status) && nonNegativeInteger(entry.attemptCount) && isOptionalTimestamp(entry.firstAttemptAt) && isOptionalTimestamp(entry.lastAttemptAt) && isOptionalString(entry.lastErrorCode) && isOptionalString(entry.lastErrorSummary) && validTimestamp(entry.createdAt) && validTimestamp(entry.updatedAt));
+  return value === void 0 || Array.isArray(value) && value.every((entry) => isRecord4(entry) && requiredString3(entry.eventKey) && ["progress", "interrupt", "terminal", "artifact"].includes(String(entry.kind)) && isOptionalString(entry.attemptId) && isOptionalDeliveryStatus(entry.status) && nonNegativeInteger(entry.attemptCount) && isOptionalTimestamp(entry.firstAttemptAt) && isOptionalTimestamp(entry.lastAttemptAt) && isOptionalString(entry.lastErrorCode) && isOptionalString(entry.lastErrorSummary) && validTimestamp(entry.createdAt) && validTimestamp(entry.updatedAt));
 }
 function isCountRecord(value) {
   return isRecord4(value) && Object.values(value).every(nonNegativeInteger);
@@ -74826,8 +76283,14 @@ function continuationDeliveryClaimFromDurable(claim2) {
   if (claim2.workloadKind !== "async_task" || typeof claim2.payload !== "string") {
     throw new Error("Invalid Continuation delivery envelope.");
   }
-  if (claim2.kind === "terminal" && claim2.eventKey !== "terminal" || claim2.kind === "progress" && claim2.eventKey !== `progress:${claim2.attemptId ?? ""}` || claim2.kind === "interrupt" && !claim2.eventKey.startsWith("interrupt:") || !["terminal", "progress", "interrupt"].includes(claim2.kind)) {
+  if (claim2.kind === "terminal" && claim2.eventKey !== "terminal" || claim2.kind === "progress" && claim2.eventKey !== `progress:${claim2.attemptId ?? ""}` || claim2.kind === "interrupt" && !claim2.eventKey.startsWith("interrupt:") || !["terminal", "progress", "interrupt", "artifact"].includes(claim2.kind)) {
     throw new Error("Invalid Continuation delivery identity.");
+  }
+  if (claim2.kind === "artifact") {
+    parseArtifactDelivery(claim2.payload);
+    if (!isRecord4(claim2.route) || claim2.route.kind !== "message_thread" || typeof claim2.route.sourceMessageId !== "string" || claim2.eventKey !== artifactDeliveryEventKey(claim2.route.sourceMessageId) || claim2.attemptId) {
+      throw new Error("Invalid Continuation artifact delivery identity.");
+    }
   }
   return {
     outboxId: claim2.outboxId,
@@ -74904,8 +76367,8 @@ function hasOnlyKeys(value, allowed) {
 }
 
 // src/continuation/sqlite-codec.ts
-import { createHash as createHash15, randomBytes as randomBytes4 } from "node:crypto";
-import path24 from "node:path";
+import { createHash as createHash19, randomBytes as randomBytes5 } from "node:crypto";
+import path32 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var PROGRESS_PAYLOAD_MAX_CHARS = 4e3;
 var MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT = 2;
@@ -75214,7 +76677,7 @@ function createRequestFingerprint(request) {
   const sourceInputDescriptors = request.sourceInputs.map((input2) => ({
     kind: input2.kind
   }));
-  return createHash15("sha256").update(JSON.stringify({
+  return createHash19("sha256").update(JSON.stringify({
     idempotencyKey: request.idempotencyKey,
     retryOfJobId: request.retryOfJobId ?? null,
     creatorOpenId: request.creatorOpenId,
@@ -75669,8 +77132,9 @@ function validatePermissionEnvelope(value, requireAbsoluteRoot2) {
     "root",
     "mode",
     "requestedPaths",
-    "workspaceProject"
-  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path24.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path24.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
+    "workspaceProject",
+    "managedWorkspaceRoots"
+  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path32.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path32.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
     throw new Error("Continuation permission envelope is invalid.");
   }
   if (envelope.profile === "bounded" && (envelope.network !== "none" || envelope.externalSideEffects !== "denied") || envelope.profile === "trusted_personal_workspace" && (requestedPaths.length === 0 || envelope.network !== "enabled" || envelope.externalSideEffects !== "allowed")) {
@@ -75749,13 +77213,13 @@ function assertUtf8Bytes(name, value, limit) {
   }
 }
 function makeId(prefix) {
-  return `${prefix}_${randomBytes4(12).toString("hex")}`;
+  return `${prefix}_${randomBytes5(12).toString("hex")}`;
 }
 function deliveryIdempotencyKey(jobId, eventKey) {
-  return `ct_${createHash15("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
+  return `ct_${createHash19("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
 }
 function toolCallId(jobId, stepId, requestHash) {
-  return `call_${createHash15("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
+  return `call_${createHash19("sha256").update(`${jobId}\0${stepId}\0${requestHash}`).digest("hex").slice(0, 24)}`;
 }
 function continuationStepId(job) {
   return job.checkpoint?.nextAction?.id ?? job.checkpoint?.currentStepId ?? "initial-step";
@@ -75776,10 +77240,10 @@ function hasOpaqueExecutionEffects(job) {
   return job.permissions.filesystem.mode === "workspace-write" || job.permissions.network === "enabled" || job.permissions.externalSideEffects === "allowed";
 }
 function toolRequestHash(request) {
-  return createHash15("sha256").update(JSON.stringify(request)).digest("hex");
+  return createHash19("sha256").update(JSON.stringify(request)).digest("hex");
 }
-function addMilliseconds2(timestamp, milliseconds) {
-  return new Date(Date.parse(timestamp) + milliseconds).toISOString();
+function addMilliseconds2(timestamp2, milliseconds) {
+  return new Date(Date.parse(timestamp2) + milliseconds).toISOString();
 }
 function emptyRoute() {
   return {
@@ -75971,7 +77435,8 @@ function isManagedInputArtifact(value) {
 }
 
 // src/continuation/sqlite-transitions.ts
-import { createHash as createHash16 } from "node:crypto";
+import { createHash as createHash20 } from "node:crypto";
+import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
 function buildContinuationStepTransition(input2) {
   const {
     claim: claim2,
@@ -76158,7 +77623,8 @@ function buildContinuationStepTransition(input2) {
       verification
     });
   };
-  if (rawVerification.status === "revision_required") {
+  const managedStorageBlocked = outcome.outcome === "blocked" && outcome.errorCode === "continuation_working_directory_denied" && !!current.permissions.filesystem.managedWorkspaceRoots && !!current.checkpoint && isDeepStrictEqual3(outcome.checkpoint, current.checkpoint);
+  if (rawVerification.status === "revision_required" && !managedStorageBlocked) {
     return verificationRecovery(
       current.checkpoint ?? checkpointFromInitialContext2(current.contextSnapshot),
       rawVerification.findings,
@@ -76255,6 +77721,7 @@ ${outcome.finalMessage}`,
       checkpoint: outcome.checkpoint,
       stepCount: current.stepCount + 1,
       resultSummary: outcome.errorSummary,
+      ...managedStorageBlocked ? { resultArtifacts: void 0 } : {},
       errorCode: outcome.errorCode,
       errorSummary: outcome.errorSummary,
       ...terminalRecovery ? {
@@ -76295,7 +77762,7 @@ ${outcome.finalMessage}`,
         hints: ["Confirm the effects of the failed step before resuming."],
         failedStep,
         diagnostic: outcome.errorSummary,
-        fingerprint: createHash16("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+        fingerprint: createHash20("sha256").update(`model-retryable\0${outcome.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
       },
       prompt: "Confirm what the failed step changed, then resume with the observed result.",
       reason: "The model requested a retry after opaque execution, so automatic replay is unsafe."
@@ -76340,7 +77807,7 @@ function buildContinuationFailureTransition(claim2, current, requestedFailure, n
             hints: ["Confirm the effects of the interrupted step before resuming."],
             failedStep,
             diagnostic: requestedFailure.errorSummary,
-            fingerprint: createHash16("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
+            fingerprint: createHash20("sha256").update(`execution-unknown\0${requestedFailure.errorCode}\0${failedStep}`).digest("hex").slice(0, 32)
           },
           prompt: "Confirm what the interrupted step changed, then resume with the observed result.",
           reason: "The execution ended after an opaque operation started, so automatic replay is unsafe."
@@ -76414,7 +77881,7 @@ function durableFailureForContinuationFailure(claim2, failure2) {
     hints: [],
     failedStep,
     diagnostic: bounded.errorSummary,
-    fingerprint: createHash16("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
+    fingerprint: createHash20("sha256").update(`${bounded.errorCode}\0${failedStep}\0${bounded.errorSummary}`).digest("hex").slice(0, 32)
   };
 }
 function continuationDurableTransition(claim2, current, status, patch, now, extras) {
@@ -76503,7 +77970,7 @@ function continuationProgressDelivery(job, claim2, outcome, now) {
   };
 }
 function continuationInterruptId(jobId, attemptId, failure2) {
-  return `int_${createHash16("sha256").update(`${jobId}\0${attemptId}\0${failure2.fingerprint}`).digest("hex").slice(0, 24)}`;
+  return `int_${createHash20("sha256").update(`${jobId}\0${attemptId}\0${failure2.fingerprint}`).digest("hex").slice(0, 24)}`;
 }
 function continuationInterruptDelivery(job, claim2, interruptId, prompt, failure2, recovery, checkpoint2, now) {
   const eventKey = `interrupt:${interruptId}`;
@@ -76549,9 +78016,9 @@ function continuationJobForCommandState(current, status, rowVersion, now) {
 function claimProjectionMatches(claim2) {
   return claim2.job.jobId === claim2.attempt.jobId && claim2.workerId === claim2.attempt.workerId && claim2.job.leaseOwner === claim2.workerId && claim2.job.rowVersion === claim2.claimedRowVersion;
 }
-function timestampAfterElapsed(timestamp, startedAt) {
+function timestampAfterElapsed(timestamp2, startedAt) {
   const elapsedMilliseconds = Number((process.hrtime.bigint() - startedAt) / 1000000n);
-  return elapsedMilliseconds > 0 ? addMilliseconds2(timestamp, elapsedMilliseconds) : timestamp;
+  return elapsedMilliseconds > 0 ? addMilliseconds2(timestamp2, elapsedMilliseconds) : timestamp2;
 }
 function assertOneChange(changes, jobId) {
   if (Number(changes) !== 1) throw staleClaimError(jobId);
@@ -76561,20 +78028,20 @@ function staleClaimError(jobId) {
 }
 
 // src/continuation/sqlite-database.ts
-import fs22 from "node:fs/promises";
-import path25 from "node:path";
+import fs23 from "node:fs/promises";
+import path33 from "node:path";
 var ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
 async function openContinuationDatabase(databasePath) {
-  const resolvedPath = path25.resolve(databasePath);
-  await fs22.mkdir(path25.dirname(resolvedPath), { recursive: true, mode: 448 });
-  await fs22.chmod(path25.dirname(resolvedPath), 448);
+  const resolvedPath = path33.resolve(databasePath);
+  await fs23.mkdir(path33.dirname(resolvedPath), { recursive: true, mode: 448 });
+  await fs23.chmod(path33.dirname(resolvedPath), 448);
   const { DatabaseSync } = await import("node:sqlite");
   const database = new DatabaseSync(resolvedPath, {
     timeout: 5e3,
     enableForeignKeyConstraints: true
   });
   try {
-    await fs22.chmod(resolvedPath, 384);
+    await fs23.chmod(resolvedPath, 384);
     return database;
   } catch (error62) {
     database.close();
@@ -76634,39 +78101,42 @@ async function retrySqliteBusy2(operation, timeoutMs) {
 var OUTCOME_DRIVEN_SCHEMA_VERSION = 8;
 var SCHEMA_VERSION = DURABLE_RUN_SCHEMA_VERSION;
 var SqliteContinuationRepository = class _SqliteContinuationRepository {
-  constructor(database, artifacts, inputs, jitter) {
+  constructor(database, artifacts, inputs, jitter, managedWorkspacePolicy) {
     this.database = database;
     this.artifacts = artifacts;
     this.inputs = inputs;
     this.jitter = jitter;
-    this.verifier = new ContinuationVerifier(artifacts);
+    this.managedWorkspacePolicy = managedWorkspacePolicy;
     this.durableRuns = SqliteDurableRunRepository.attach(database);
+    this.verifier = new ContinuationVerifier(artifacts, (job) => this.artifactsForJob(job));
     this.cronMessageOrigins = SqliteCronMessageOriginStore.attach(database);
   }
   database;
   artifacts;
   inputs;
   jitter;
+  managedWorkspacePolicy;
   jobMutationTails = /* @__PURE__ */ new Map();
   activeDurableClaims = /* @__PURE__ */ new Map();
   verifier;
   durableRuns;
   cronMessageOrigins;
   static async open(options) {
-    const databasePath = path26.resolve(options.databasePath);
+    const databasePath = path34.resolve(options.databasePath);
     const database = await openContinuationDatabase(databasePath);
     try {
       const artifacts = options.artifactStore ?? new ContinuationArtifactStore(options.artifactsDir);
       await artifacts.ensureRoot();
       const inputs = options.inputStore ?? new ContinuationInputStore(
-        options.inputsDir ?? path26.join(path26.dirname(path26.resolve(options.artifactsDir)), "inputs")
+        options.inputsDir ?? path34.join(path34.dirname(path34.resolve(options.artifactsDir)), "inputs")
       );
       await inputs.ensureRoot();
       const repository = new _SqliteContinuationRepository(
         database,
         artifacts,
         inputs,
-        options.jitter ?? Math.random
+        options.jitter ?? Math.random,
+        options.managedWorkspacePolicy
       );
       await repository.initialize();
       await repository.reconcileStorageOrphans();
@@ -76681,6 +78151,40 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
   }
   async healthCheck() {
     healthCheckContinuationDatabase(this.database);
+  }
+  artifactsForJob(job) {
+    return continuationArtifactView(
+      this.artifacts,
+      job,
+      job.permissions.filesystem.managedWorkspaceRoots ? this.durableRuns.getManagedWorkspaceStore() : void 0,
+      this.managedWorkspacePolicy
+    );
+  }
+  async readManagedArtifact(job, relativePath, sha2562) {
+    if (!job.permissions.filesystem.managedWorkspaceRoots) throw new Error("Managed artifacts are not available for this task.");
+    return this.artifactsForJob(job).readArtifact(job.jobId, relativePath, sha2562);
+  }
+  async enqueueManagedArtifact(jobId, route, artifact, now) {
+    const payload = JSON.stringify(artifact);
+    const reference = parseArtifactDelivery(payload);
+    const routeJson = JSON.stringify(route);
+    return this.transaction(() => {
+      const current = this.readJobBy("j.job_id = ?", jobId);
+      if (!current || !artifactDeliveryMatches(current, route, reference)) return false;
+      const eventKey = artifactDeliveryEventKey(route.sourceMessageId);
+      const result = this.database.prepare(`
+        INSERT INTO durable_outbox (
+          outbox_id, run_id, event_key, kind, route_json, idempotency_key, payload_json,
+          metadata_json, status, attempt_count, next_attempt_at, created_at, updated_at
+        ) VALUES (?, ?, ?, 'artifact', ?, ?, ?, '{}', 'pending', 0, ?, ?, ?)
+        ON CONFLICT(run_id, event_key) DO NOTHING
+      `).run(makeId("out"), jobId, eventKey, routeJson, deliveryIdempotencyKey(jobId, eventKey), JSON.stringify(payload), now, now, now);
+      if (Number(result.changes) === 1) return true;
+      const previous = this.database.prepare(`
+        SELECT route_json, payload_json FROM durable_outbox WHERE run_id = ? AND event_key = ? AND kind = 'artifact'
+      `).get(jobId, eventKey);
+      return previous?.route_json === routeJson && previous.payload_json === JSON.stringify(payload);
+    });
   }
   async create(request) {
     validateCreateRequest2(request);
@@ -76704,23 +78208,44 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
         `).get(request.retryOfJobId)) {
         throw new Error("Continuation retry source does not exist.");
       }
-      const requestFingerprint = createRequestFingerprint(request);
+      let admittedRequest = request;
+      if (request.retryOfJobId && request.permissions.filesystem.managedWorkspaceRoots && request.resumeCheckpoint?.artifacts.length) {
+        const prior = this.durableRuns.getManagedWorkspaceStore().get({ kind: "async_task", runId: jobId });
+        if (prior) {
+          const { createdAt } = prior.allocation;
+          const lifetime = Date.parse(request.expiresAt) - Date.parse(request.createdAt);
+          admittedRequest = { ...request, createdAt, expiresAt: new Date(Date.parse(createdAt) + lifetime).toISOString() };
+        }
+      }
+      const requestFingerprint = createRequestFingerprint(admittedRequest);
       const installation = await this.inputs.install(
         jobId,
-        request.sourceInputs,
+        admittedRequest.sourceInputs,
         requestFingerprint
       );
-      const persisted = projectCreateRequest(request, installation.artifacts);
+      const persisted = projectCreateRequest(admittedRequest, installation.artifacts);
+      const initialJob = continuationJobForCreate(jobId, persisted);
       let artifactsInstalled = false;
       try {
         if (persisted.resumeCheckpoint) {
-          artifactsInstalled = await this.artifacts.copyVerified(
-            persisted.resumeArtifactSourceJobId,
-            jobId,
-            persisted.resumeCheckpoint.artifacts
-          );
+          if (initialJob.permissions.filesystem.managedWorkspaceRoots && persisted.resumeCheckpoint.artifacts.length > 0) {
+            const source = await this.get(persisted.resumeArtifactSourceJobId);
+            if (!source || source.deletedAt) throw new Error("Continuation retry artifact source is unavailable.");
+            await allocateContinuationWorkspace(initialJob, this.durableRuns.getManagedWorkspaceStore(), this.managedWorkspacePolicy);
+            await this.artifactsForJob(source).copyVerified(
+              source.jobId,
+              jobId,
+              persisted.resumeCheckpoint.artifacts,
+              this.artifactsForJob(initialJob)
+            );
+          } else {
+            artifactsInstalled = await this.artifacts.copyVerified(
+              persisted.resumeArtifactSourceJobId,
+              jobId,
+              persisted.resumeCheckpoint.artifacts
+            );
+          }
         }
-        const initialJob = continuationJobForCreate(jobId, persisted);
         const durable = await this.durableRuns.create(
           asyncTaskDurableCreateRequestFromJob(initialJob)
         );
@@ -77335,6 +78860,9 @@ The continuation reached its maximum age.`,
     if (automaticRetentionCutoff && (current.retained || current.errorCode !== "continuation_persisted_state_invalid" && current.deliveryStatus !== "delivered" && !current.deliveryEvents?.some((event) => event.kind === "terminal" && event.status === "failed" && event.lastErrorCode === "continuation_delivery_route_invalid") || !current.completedAt || current.completedAt >= automaticRetentionCutoff)) {
       return false;
     }
+    if (current.permissions.filesystem.managedWorkspaceRoots) {
+      throw new Error("Managed continuation data cannot be deleted until its artifact erasure is supported. The task and its files were retained.");
+    }
     const quarantines = { artifact: null, input: null };
     let committed = false;
     let restoreAttempted = false;
@@ -77492,7 +79020,7 @@ The continuation reached its maximum age.`,
       );
       if (!claim2) return null;
       const job = await this.get(claim2.runId);
-      if (!job || !isDeepStrictEqual3(claim2.route, job.route)) {
+      if (!job || claim2.kind !== "artifact" && !isDeepStrictEqual4(claim2.route, job.route)) {
         await this.durableRuns.commitDelivery(claim2, {
           status: "failed",
           errorCode: "continuation_delivery_route_invalid",
@@ -77500,8 +79028,9 @@ The continuation reached its maximum age.`,
         }, now);
         continue;
       }
+      let parsed;
       try {
-        return continuationDeliveryClaimFromDurable(claim2);
+        parsed = continuationDeliveryClaimFromDurable(claim2);
       } catch {
         await this.durableRuns.commitDelivery(claim2, claim2.recoveredFromExpiredLease ? {
           status: "unknown",
@@ -77514,6 +79043,12 @@ The continuation reached its maximum age.`,
         }, now);
         continue;
       }
+      if (parsed.kind !== "artifact" || isDeliveryRoute2(parsed.route) && artifactDeliveryMatches(job, parsed.route, parseArtifactDelivery(parsed.payload))) return parsed;
+      await this.durableRuns.commitDelivery(claim2, {
+        status: claim2.recoveredFromExpiredLease ? "unknown" : "failed",
+        errorCode: "continuation_delivery_route_invalid",
+        errorSummary: "Stored delivery does not match its Async Task route or artifact reference."
+      }, now);
     }
   }
   async markDeliveryResult(claim2, result, now) {
@@ -77542,7 +79077,7 @@ The continuation reached its maximum age.`,
         status: "failed",
         errorCode: result.errorCode,
         errorSummary: result.errorSummary,
-        ...claim2.kind === "terminal" ? {} : { terminalConflict: "superseded" }
+        ...["progress", "interrupt"].includes(claim2.kind) ? { terminalConflict: "superseded" } : {}
       };
     }
     const resetAttemptCount = claim2.attemptCount === 1 && result.errorCode === "lark_pre_send_unavailable";
@@ -77555,9 +79090,9 @@ The continuation reached its maximum age.`,
         retryDelayMs(Math.max(1, claim2.attemptCount), this.jitter())
       ),
       ...resetAttemptCount ? { resetAttemptCount: true } : {},
-      ...claim2.kind === "terminal" ? {} : {
+      ...["progress", "interrupt"].includes(claim2.kind) ? {
         terminalConflict: resetAttemptCount ? "superseded" : "unknown"
-      }
+      } : {}
     };
   }
   async listPendingInterrupts() {
@@ -77871,7 +79406,7 @@ The continuation reached its maximum age.`,
         parseTrustedJson(row.input_json, "durable_runs.input_json"),
         numberField(row, "input_version")
       );
-      if (job.jobId !== jobId || job.idempotencyKey !== stringField2(row, "idempotency_key") || job.creatorOpenId !== stringField2(row, "actor_open_id") || !isDeepStrictEqual3(job.route, route)) return null;
+      if (job.jobId !== jobId || job.idempotencyKey !== stringField2(row, "idempotency_key") || job.creatorOpenId !== stringField2(row, "actor_open_id") || !isDeepStrictEqual4(job.route, route)) return null;
       return job;
     } catch {
       return null;
@@ -78868,7 +80403,7 @@ function unchangedTransition(claim2, status) {
   };
 }
 function classifyExecutionFailure2(claim2, error62) {
-  const diagnostic = boundedErrorSummary(error62);
+  const diagnostic2 = boundedErrorSummary(error62);
   return {
     category: "unknown",
     retrySafety: "unknown",
@@ -78876,8 +80411,8 @@ function classifyExecutionFailure2(claim2, error62) {
     operationRisk: "unknown",
     hints: [],
     failedStep: claim2.run.workloadKind.slice(0, 80),
-    diagnostic,
-    fingerprint: `execution:${claim2.run.workloadKind}:${diagnostic.slice(0, 64)}`.slice(0, 128)
+    diagnostic: diagnostic2,
+    fingerprint: `execution:${claim2.run.workloadKind}:${diagnostic2.slice(0, 64)}`.slice(0, 128)
   };
 }
 function expiredRunFailure(workloadKind) {
@@ -78912,8 +80447,8 @@ function boundedErrorSummary(error62) {
   if (!summary) return "Unknown durable run execution failure.";
   return summary.length > 1e3 ? `${summary.slice(0, 997)}...` : summary;
 }
-function addMilliseconds3(timestamp, milliseconds) {
-  return new Date(Date.parse(timestamp) + milliseconds).toISOString();
+function addMilliseconds3(timestamp2, milliseconds) {
+  return new Date(Date.parse(timestamp2) + milliseconds).toISOString();
 }
 function deliveryRetryDelayMs(attemptCount2) {
   return Math.min(5 * 6e4, 3e4 * 2 ** Math.max(0, attemptCount2 - 1));
@@ -78968,13 +80503,18 @@ async function createContinuationRuntime(options) {
     const storage = options.dryRun ? await createDryRunStorage() : {
       databasePath: options.databasePath,
       artifactsDir: options.artifactsDir,
-      inputsDir: path27.join(path27.dirname(options.artifactsDir), "inputs")
+      inputsDir: path35.join(path35.dirname(options.artifactsDir), "inputs")
     };
     temporaryRoot = "root" in storage ? storage.root : void 0;
     repository = await (options.openRepository ?? defaultOpenRepository)({
       databasePath: storage.databasePath,
       artifactsDir: storage.artifactsDir,
-      inputsDir: storage.inputsDir
+      inputsDir: storage.inputsDir,
+      managedWorkspacePolicy: {
+        currentWorkingRoot: options.allowedWorkingRoot,
+        foregroundWorkingRoot: options.foregroundWorkingRoot,
+        sourceRegistryPath: options.sourceRegistryPath
+      }
     });
     await repository.healthCheck();
     if (!options.enabled) {
@@ -78992,7 +80532,7 @@ async function createContinuationRuntime(options) {
             try {
               repository.close();
             } finally {
-              if (temporaryRoot) await fs23.rm(temporaryRoot, { recursive: true, force: true });
+              if (temporaryRoot) await fs24.rm(temporaryRoot, { recursive: true, force: true });
             }
           })();
           return closePromise2;
@@ -79014,6 +80554,8 @@ async function createContinuationRuntime(options) {
       repository,
       allowedWorkingRoot: options.allowedWorkingRoot,
       foregroundWorkingRoot: options.foregroundWorkingRoot,
+      sourceRegistryPath: options.sourceRegistryPath,
+      managedWorkspaceConfigPath: options.dryRun ? void 0 : options.managedWorkspaceConfigPath,
       filesystemMode: boundedContinuationSandbox(options.configuredSandbox),
       maxAttempts: options.maxAttempts,
       maxRetries: options.maxRetries,
@@ -79033,12 +80575,18 @@ async function createContinuationRuntime(options) {
       configuredSandbox: options.configuredSandbox,
       currentWorkingRoot: options.allowedWorkingRoot,
       foregroundWorkingRoot: options.foregroundWorkingRoot,
+      sourceRegistryPath: options.sourceRegistryPath,
+      managedWorkspaceStore: () => repository?.durableRuns.getManagedWorkspaceStore?.(),
       canUseTrustedPersonalWorkspace: options.canUseTrustedPersonalWorkspace,
       ...toolInvoker ? { toolInvoker } : {},
       ...options.command ? { command: options.command } : {},
       ...options.runCodexExec ? { runCodexExec: options.runCodexExec } : {}
     });
-    const delivery = options.delivery ?? createLarkContinuationDelivery(options.getTransport, clock);
+    const delivery = options.delivery ?? createLarkContinuationDelivery(options.getTransport, clock, async (claim2, reference) => {
+      const job = await repository.get(claim2.jobId);
+      if (!job || !artifactDeliveryMatches(job, claim2.route, reference)) return void 0;
+      return repository.readManagedArtifact?.(job, reference.path, reference.sha256);
+    });
     const adapter = new AsyncTaskKernelAdapter({
       repository,
       executor,
@@ -79090,7 +80638,7 @@ async function createContinuationRuntime(options) {
           try {
             repository.close();
           } finally {
-            if (temporaryRoot) await fs23.rm(temporaryRoot, { recursive: true, force: true });
+            if (temporaryRoot) await fs24.rm(temporaryRoot, { recursive: true, force: true });
           }
         })();
         return closePromise;
@@ -79101,7 +80649,7 @@ async function createContinuationRuntime(options) {
       repository?.close();
     } catch {
     }
-    if (temporaryRoot) await fs23.rm(temporaryRoot, { recursive: true, force: true }).catch(() => {
+    if (temporaryRoot) await fs24.rm(temporaryRoot, { recursive: true, force: true }).catch(() => {
     });
     safeReportError(options, error62);
     safeDebug(options, "[continuation] event=runtime_unavailable job_id=- attempt_id=- state=initialization_failed");
@@ -79128,12 +80676,12 @@ async function defaultOpenRepository(options) {
   return SqliteContinuationRepository.open(options);
 }
 async function createDryRunStorage() {
-  const root = await fs23.mkdtemp(path27.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
+  const root = await fs24.mkdtemp(path35.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
   return {
     root,
-    databasePath: path27.join(root, "jobs.sqlite"),
-    artifactsDir: path27.join(root, "artifacts"),
-    inputsDir: path27.join(root, "inputs")
+    databasePath: path35.join(root, "jobs.sqlite"),
+    artifactsDir: path35.join(root, "artifacts"),
+    inputsDir: path35.join(root, "inputs")
   };
 }
 function retentionCutoff(now, retentionDays) {
@@ -79378,11 +80926,23 @@ function persistedStateValidator(registrations) {
 }
 
 // src/cron/run-admission.ts
-import { createHash as createHash17 } from "node:crypto";
+import { createHash as createHash21 } from "node:crypto";
 
 // src/cron/contracts.ts
 var CRON_RUN_INPUT_VERSION = 1;
 var CRON_RUN_STATE_VERSION = 1;
+var cronArtifactPayloadSchema = external_exports.strictObject({
+  schemaVersion: external_exports.literal(1),
+  jobId: external_exports.string().min(1),
+  jobCreatedAt: external_exports.iso.datetime(),
+  jobRevision: external_exports.number().int().positive(),
+  index: external_exports.number().int().min(0).max(MANAGED_DELIVERY_MAX_FILES - 1),
+  artifact: managedArtifactReferenceSchema
+});
+var registeredArtifacts = external_exports.array(managedArtifactReferenceSchema).min(1).max(MANAGED_DELIVERY_MAX_FILES).refine((entries) => new Set(entries.map((entry) => entry.relativePath)).size === entries.length);
+function parseCronArtifacts(value) {
+  return value === void 0 ? void 0 : registeredArtifacts.parse(value);
+}
 function parseCronRunInput(value, version2, expectedType) {
   if (version2 !== CRON_RUN_INPUT_VERSION) {
     throw new Error(`Unsupported Cron Run input version: ${version2}`);
@@ -79417,7 +80977,14 @@ function parseCronRunInput(value, version2, expectedType) {
   };
   if (type === "prompt" && !job.prompt?.trim()) throw new Error("Cron prompt must not be empty.");
   if (type === "message" && !job.content?.trim()) throw new Error("Cron message content must not be empty.");
-  return { schemaVersion: 1, job };
+  if (type === "message" && (root.managedWorkspace !== void 0 || root.managedWorkspaceFailure !== void 0) || root.managedWorkspace !== void 0 && root.managedWorkspaceFailure !== void 0) {
+    throw new Error("Only prompt Cron runs can use managed workspace roots.");
+  }
+  return { schemaVersion: 1, job, ...root.managedWorkspace === void 0 ? {} : {
+    managedWorkspace: managedWorkspaceAdmissionSchema.parse(root.managedWorkspace)
+  }, ...root.managedWorkspaceFailure === void 0 ? {} : {
+    managedWorkspaceFailure: boundedString(root.managedWorkspaceFailure, "managedWorkspaceFailure", 1e3)
+  } };
 }
 function parseCronRunState(value, version2) {
   if (version2 !== CRON_RUN_STATE_VERSION) {
@@ -79466,6 +81033,8 @@ function parseCronRunState(value, version2) {
   if (diagnostics.status !== runStatus) {
     throw new Error("Cron Run commit status and diagnostics status are inconsistent.");
   }
+  const artifacts = parseCronArtifacts(rawCommit.artifacts);
+  if (artifacts && runStatus !== "success") throw new Error("Failed Cron Run cannot publish artifacts.");
   return {
     schemaVersion: 1,
     phase,
@@ -79475,7 +81044,8 @@ function parseCronRunState(value, version2) {
       runStatus,
       reportType,
       failureReason,
-      diagnostics
+      diagnostics,
+      ...artifacts ? { artifacts } : {}
     }
   };
 }
@@ -79589,6 +81159,10 @@ function literal2(value, values, label) {
   }
   return value;
 }
+
+// src/cron/delivery.ts
+import path36 from "node:path";
+import { isDeepStrictEqual as isDeepStrictEqual6 } from "node:util";
 
 // src/scheduler-policy.ts
 var RETRYABLE_NETWORK_ERRORS2 = /* @__PURE__ */ new Set([
@@ -79826,6 +81400,35 @@ function formatCronJobDiagnostics(snapshot) {
   return lines.join("\n");
 }
 
+// src/cron/managed-artifacts.ts
+import { isDeepStrictEqual as isDeepStrictEqual5 } from "node:util";
+async function loadCommittedCronArtifact(repository, authorizedRoot, claim2, payload) {
+  const run = await repository.get(claim2.runId);
+  if (!run || run.workloadKind !== "cron_prompt" || run.status !== "completed" || !isDeepStrictEqual5(run.route, claim2.route)) {
+    throw new Error("Cron artifact run is unavailable.");
+  }
+  const { job, managedWorkspace } = parseCronRunInput(run.input, run.inputVersion, "prompt");
+  const { commit } = parseCronRunState(run.state, run.stateVersion);
+  if (!managedWorkspace || job.id !== payload.jobId || job.createdAt !== payload.jobCreatedAt || job.revision !== payload.jobRevision || commit?.kind !== "prompt" || commit.runStatus !== "success" || !isDeepStrictEqual5(commit.artifacts?.[payload.index], payload.artifact)) {
+    throw new Error("Cron artifact does not match its committed reference.");
+  }
+  const store = repository.getManagedWorkspaceStore?.();
+  const owner = { kind: "cron_prompt", runId: run.runId };
+  const recorded = store?.get(owner)?.allocation;
+  if (!store || !recorded || recorded.createdAt !== managedWorkspace.createdAt || !sameWorkspaceProject(recorded.project, job.workspaceProject) || !sameWorkspaceProject(recorded.fallbackWorkspace, managedWorkspace.fallbackWorkspace) || !sameWorkspaceProject(recorded.roots.scratch, managedWorkspace.roots.scratch) || !sameWorkspaceProject(recorded.roots.artifacts, managedWorkspace.roots.artifacts)) {
+    throw new Error("Cron artifact workspace binding is unavailable.");
+  }
+  const { content } = await readManagedArtifact({
+    binding: recorded.artifacts,
+    relativePath: payload.artifact.relativePath,
+    expectedSha256: payload.artifact.sha256,
+    maxBytes: MANAGED_DELIVERY_MAX_BYTES,
+    revalidate: () => store.openDirectory(owner, "artifacts", [authorizedRoot])
+  });
+  if (!content.length) throw new Error("Cron artifact is empty.");
+  return content;
+}
+
 // src/cron/runtime-projection.ts
 async function projectCronDeliveryPending(claim2, route, payload, now, repository = { mutateJob }) {
   let applied = false;
@@ -79901,6 +81504,7 @@ function createCronDelivery(options) {
         errorCode: "cron_delivery_interrupted_unknown",
         errorSummary: "Delivery was interrupted after sending may have started; it was not replayed."
       };
+      if (claim2.kind === "cron_artifact") return result;
       try {
         const route = parseCronDeliveryRoute(claim2.route);
         const payload = parseCronTerminalPayload(claim2.payload);
@@ -79918,6 +81522,7 @@ function createCronDelivery(options) {
     },
     async deliver(claim2, context) {
       const now = (options.now ?? (() => /* @__PURE__ */ new Date()))().toISOString();
+      if (claim2.kind === "cron_artifact") return deliverCronArtifact(options, claim2, now, context);
       let route;
       let payload;
       try {
@@ -79980,6 +81585,66 @@ function createCronDelivery(options) {
       return result;
     }
   };
+}
+async function deliverCronArtifact(options, claim2, now, context) {
+  if (claim2.recoveredFromExpiredLease) return {
+    status: "unknown",
+    errorCode: "cron_delivery_interrupted_unknown",
+    errorSummary: "An interrupted attachment send was not replayed."
+  };
+  const { artifacts } = options;
+  let route;
+  let payload;
+  let reportId;
+  let content;
+  try {
+    route = parseCronDeliveryRoute(claim2.route);
+    payload = cronArtifactPayloadSchema.parse(claim2.payload);
+    if (!artifacts || claim2.workloadKind !== "cron_prompt" || claim2.eventKey !== `cron_artifact:${payload.index}` || claim2.idempotencyKey !== `cron:${claim2.runId}:artifact:${payload.index}` || route.jobId !== payload.jobId || route.createdAt !== payload.jobCreatedAt || route.revision !== payload.jobRevision) {
+      throw new Error("Mismatched Cron artifact delivery identity.");
+    }
+    const report = await artifacts.repository.getDeliverySnapshot?.(claim2.runId, "cron_terminal");
+    if (!report || !isDeepStrictEqual6(report.route, claim2.route)) throw new Error("Missing original report.");
+    if (report.status === "pending" || report.status === "sending") return {
+      status: "retry",
+      errorCode: "cron_artifact_report_pending",
+      errorSummary: "Waiting for the original Cron report receipt.",
+      retryAt: new Date(Date.parse(now) + 1e3).toISOString(),
+      resetAttemptCount: true
+    };
+    if (report.status !== "sent" || !report.messageId || !isFeishuOpenMessageId(report.messageId)) return {
+      status: "failed",
+      errorCode: "cron_artifact_report_unconfirmed",
+      errorSummary: "The original report was not confirmed sent."
+    };
+    reportId = report.messageId;
+    content = await loadCommittedCronArtifact(artifacts.repository, artifacts.authorizedRoot(), claim2, payload);
+  } catch {
+    return {
+      status: "failed",
+      errorCode: "cron_artifact_reference_invalid",
+      errorSummary: "The committed Cron attachment or report reference is unavailable or no longer matches."
+    };
+  }
+  try {
+    if (context && !await context.markExternalSendStarted()) return { status: "superseded" };
+    const key = await artifacts.uploadFile(content, path36.posix.basename(payload.artifact.relativePath));
+    if (!key) throw new Error("Lark returned no attachment key.");
+    const response = await options.sendReply({
+      chat_id: route.targetChatId,
+      reply_to: reportId,
+      text: "",
+      routing: "standalone",
+      rawMessage: { msgType: "file", content: JSON.stringify({ file_key: key }) },
+      idempotencyKey: claim2.idempotencyKey,
+      retry: { attempts: 1, retryTimeout: false }
+    });
+    const result = classifyReplyResult(response);
+    if (result.status === "sent") await recordMessageOriginsSafely(options.originRecorder, response, claim2, route, now);
+    return result;
+  } catch (error62) {
+    return classifyDeliveryError2(error62, claim2, now);
+  }
 }
 function deliveryErrorSummary(error62, fallback) {
   return sanitizeDiagnosticText(error62 instanceof Error ? error62.message : String(error62), 1e3) || fallback;
@@ -80304,7 +81969,7 @@ var CronRunAdmission = class {
       return admitted(existing, false, occurrence);
     }
     const created = await this.options.runRepository.create(
-      cronRunCreateRequest(fresh, idempotencyKey, runId, now, occurrence)
+      await this.createRequest(fresh, idempotencyKey, runId, now, occurrence)
     );
     if (created.run.runId !== runId) {
       return { admitted: false, reason: "already_running" };
@@ -80415,13 +82080,32 @@ var CronRunAdmission = class {
       return { admitted: false, reason: "already_running" };
     }
     const created = await this.options.runRepository.create(
-      cronRunCreateRequest(fresh, idempotencyKey, runId, now)
+      await this.createRequest(fresh, idempotencyKey, runId, now)
     );
     if (created.run.runId !== runId) {
       return { admitted: false, reason: "already_running" };
     }
     await this.projectAdmission(fresh, created.run.runId);
     return admitted(created.run, created.created);
+  }
+  async createRequest(job, idempotencyKey, runId, now, occurrence) {
+    let managedWorkspaceRoots;
+    let managedWorkspaceFailure;
+    let fallbackWorkspace;
+    try {
+      if (job.meta.type === "prompt") {
+        managedWorkspaceRoots = await this.options.resolveManagedWorkspaceRoots?.(job.meta.workspace_project);
+        if (managedWorkspaceRoots && !job.meta.workspace_project) {
+          fallbackWorkspace = await this.options.pinManagedFallbackWorkspace?.();
+          if (!fallbackWorkspace) throw new ManagedWorkspaceStorageError("invalid_binding");
+        }
+      }
+    } catch (error62) {
+      if (!(error62 instanceof ManagedWorkspaceStorageError || error62 instanceof WorkspaceProjectError)) throw error62;
+      managedWorkspaceFailure = error62.message;
+      managedWorkspaceRoots = void 0;
+    }
+    return cronRunCreateRequest(job, idempotencyKey, runId, now, occurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace);
   }
   async waitForExecution(runId, signal) {
     let pollMs = this.waitPollMs;
@@ -80485,9 +82169,15 @@ var CronRunAdmission = class {
     }
   }
 };
-function cronRunCreateRequest(job, idempotencyKey, runId, now, scheduledOccurrence) {
+function cronRunCreateRequest(job, idempotencyKey, runId, now, scheduledOccurrence, managedWorkspaceRoots, managedWorkspaceFailure, fallbackWorkspace) {
   const input2 = {
     schemaVersion: 1,
+    ...managedWorkspaceRoots ? { managedWorkspace: {
+      roots: managedWorkspaceRoots,
+      createdAt: now.toISOString(),
+      ...fallbackWorkspace ? { fallbackWorkspace } : {}
+    } } : {},
+    ...managedWorkspaceFailure ? { managedWorkspaceFailure } : {},
     job: {
       id: job.meta.id,
       createdAt: job.meta.created_at,
@@ -80541,7 +82231,7 @@ function cronConcurrencyKey(job) {
   return `cron-job:${cronJobIdentity(job)}`;
 }
 function cronRunId(idempotencyKey) {
-  return `cron_${createHash17("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
+  return `cron_${createHash21("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function admitted(run, created, scheduledOccurrence) {
   return {
@@ -80619,12 +82309,26 @@ var CronPromptWorkload = class {
     return parseCronRunState(value, version2);
   }
   async preflight(context) {
-    return completedCronStatePreflight(context.state) ?? { action: "execute" };
+    const completed = completedCronStatePreflight(context.state);
+    if (completed) return completed;
+    if (context.input.managedWorkspaceFailure) {
+      return { action: "transition", transition: managedAdmissionFailure({ run: context }, context.input) };
+    }
+    return { action: "execute" };
   }
   async execute(claim2, signal) {
     const job = promptJob(claim2.run.input);
     try {
-      return await this.options.executor({ runId: claim2.run.runId, job }, signal);
+      signal.throwIfAborted();
+      if (claim2.run.input.managedWorkspaceFailure) {
+        return failedExecution(job, claim2.run.runId, new Error(claim2.run.input.managedWorkspaceFailure));
+      }
+      const managedWorkspace = claim2.run.input.managedWorkspace;
+      return await this.options.executor({
+        runId: claim2.run.runId,
+        job,
+        ...managedWorkspace ? { managedWorkspace } : {}
+      }, signal);
     } catch (error62) {
       if (signal.aborted) throw error62;
       return {
@@ -80674,7 +82378,8 @@ var CronPromptWorkload = class {
       runStatus: normalized.runStatus,
       reportType,
       failureReason: normalized.failureReason,
-      diagnostics: normalized.diagnostics
+      diagnostics: normalized.diagnostics,
+      ...normalized.artifacts ? { artifacts: normalized.artifacts } : {}
     };
     const failed = normalized.runStatus === "failed";
     return {
@@ -80693,12 +82398,30 @@ var CronPromptWorkload = class {
           errorSummary: sanitizeDiagnosticText(normalized.failureReason ?? "CronJob prompt failed.", 1e3)
         } : {}
       },
-      deliveries: [promptDelivery(claim2, claim2.run.input, normalized, reportType)]
+      deliveries: [
+        promptDelivery(claim2, claim2.run.input, normalized, reportType),
+        ...(normalized.artifacts ?? []).map((artifact, index) => ({
+          kind: "cron_artifact",
+          eventKey: `cron_artifact:${index}`,
+          attemptId: claim2.attempt.attemptId,
+          idempotencyKey: `cron:${claim2.run.runId}:artifact:${index}`,
+          route: claim2.run.route,
+          payload: {
+            schemaVersion: 1,
+            jobId: claim2.run.input.job.id,
+            jobCreatedAt: claim2.run.input.job.createdAt,
+            jobRevision: claim2.run.input.job.revision,
+            index,
+            artifact
+          }
+        }))
+      ]
     };
   }
   recoverInterruptedAttempt(context) {
+    const input2 = this.parseInput(context.claim.run.input, context.claim.run.inputVersion);
+    if (input2.managedWorkspaceFailure) return managedAdmissionFailure(context.claim, input2);
     if (context.executionPhase !== "execution_started" && context.claim.attempt.ordinal >= context.claim.run.maxAttempts) {
-      const input2 = this.parseInput(context.claim.run.input, context.claim.run.inputVersion);
       const reason = "The CronJob exhausted its execution attempt budget before a report could be committed.";
       const execution = failedExecution(
         promptJob(input2),
@@ -80740,16 +82463,14 @@ var CronPromptWorkload = class {
         attempt: { outcome: "interrupted_before_execution", operationRisk: "pure" }
       };
     }
-    return interruptedPromptTransition(
-      context.claim,
-      this.parseInput(context.claim.run.input, context.claim.run.inputVersion)
-    );
+    return interruptedPromptTransition(context.claim, input2);
   }
   terminalizeExpiredAttempt(claim2) {
-    return interruptedPromptTransition(claim2, claim2.run.input);
+    return claim2.run.input.managedWorkspaceFailure ? managedAdmissionFailure(claim2, claim2.run.input) : interruptedPromptTransition(claim2, claim2.run.input);
   }
   terminalizeUnclaimable(run, reason) {
     const input2 = this.parseInput(run.input, run.inputVersion);
+    if (input2.managedWorkspaceFailure) return managedAdmissionFailure({ run }, input2);
     const detail = reason === "expired" ? "The CronJob reached its maximum run age before a report could be committed." : "The CronJob exhausted its execution attempt budget before a report could be committed.";
     const execution = failedExecution(promptJob(input2), run.runId, new Error(detail));
     return {
@@ -80772,6 +82493,31 @@ var CronPromptWorkload = class {
     };
   }
 };
+function managedAdmissionFailure(claim2, input2) {
+  const reason = input2.managedWorkspaceFailure;
+  const execution = failedExecution(promptJob(input2), claim2.run.runId, new Error(reason), "prepare_prompt");
+  const errorCode = "cron_managed_workspace_admission_failed";
+  return {
+    status: "failed",
+    stateVersion: CRON_RUN_STATE_VERSION,
+    state: {
+      schemaVersion: 1,
+      phase: "completed",
+      commit: {
+        kind: "prompt",
+        report: execution.report,
+        runStatus: "failed",
+        reportType: "error_report",
+        failureReason: execution.failureReason,
+        diagnostics: execution.diagnostics
+      }
+    },
+    errorCode,
+    errorSummary: execution.failureReason ?? errorCode,
+    attempt: { outcome: "failed", operationRisk: "pure", errorCode, errorSummary: execution.failureReason ?? errorCode },
+    deliveries: [promptDelivery(claim2, input2, execution, "error_report")]
+  };
+}
 function executionRetryDelayMs(attemptOrdinal) {
   return Math.min(12e4, 3e4 * 2 ** Math.max(0, attemptOrdinal - 1));
 }
@@ -80816,6 +82562,14 @@ function interruptedPromptTransition(claim2, input2) {
   };
 }
 function normalizeExecution(input2, runId, execution) {
+  if (execution.artifacts !== void 0) {
+    try {
+      if (!input2.managedWorkspace || execution.runStatus !== "success") throw new Error("Invalid artifact admission.");
+      parseCronArtifacts(execution.artifacts);
+    } catch {
+      return failedExecution(promptJob(input2), runId, new Error("Cron artifact registration was invalid."));
+    }
+  }
   if (execution.runStatus === "success" && !execution.report.trim()) {
     return failedExecution(promptJob(input2), runId, new Error("CronJob prompt produced no visible report."));
   }
@@ -80851,14 +82605,14 @@ function promptJob(input2) {
   if (job.type !== "prompt" || !job.prompt?.trim()) throw new Error("Cron prompt must not be empty.");
   return { ...job, type: "prompt", prompt: job.prompt };
 }
-function failedExecution(job, runId, error62) {
+function failedExecution(job, runId, error62, stage = "codex_exec") {
   const reason = sanitizeDiagnosticText(error62 instanceof Error ? error62.message : String(error62), 1e3) || "CronJob prompt execution failed.";
   const diagnostics = new CronJobRunDiagnostics({
     job: snapshotAsJobFile(job),
     runId,
     timeoutMs: 0
   });
-  diagnostics.failStage("codex_exec", error62);
+  diagnostics.failStage(stage, error62);
   const snapshot = diagnostics.finish("failed", error62);
   const report = [
     `CronJob "${sanitizeDiagnosticText(job.name, 200)}" failed before a complete report could be delivered.`,
@@ -81081,6 +82835,8 @@ function createCronPromptExecutor(options) {
     );
     try {
       diagnostics.startStage("prepare_prompt");
+      const managedWorkspace = input2.managedWorkspace ? await allocateWorkspace(input2, options.managedWorkspaceStore?.()) : void 0;
+      signal.throwIfAborted();
       const promptContent = cronJobPrompt(
         input2.job.name,
         input2.job.targetChatId,
@@ -81099,6 +82855,7 @@ function createCronPromptExecutor(options) {
         threadId
       };
       let report = "";
+      const artifacts = [];
       let lifecycleGuardReason = null;
       let actionFailureReason = null;
       diagnostics.startStage("codex_exec");
@@ -81107,6 +82864,10 @@ function createCronPromptExecutor(options) {
         displayLabel: `CronJob \xB7 ${input2.job.name}`,
         modelOverride: input2.job.model,
         cronWorkspaceProject: input2.job.workspaceProject,
+        ...managedWorkspace ? { managedWorkspace } : {},
+        ...managedWorkspace ? { onManagedArtifact: (reference) => {
+          artifacts.push(reference);
+        } } : {},
         sessionStore: options.sessionStore,
         sessionHealth: options.sessionHealth,
         actionDispatcher: options.actionDispatcher,
@@ -81152,7 +82913,8 @@ function createCronPromptExecutor(options) {
         report,
         runStatus: "success",
         failureReason: null,
-        diagnostics: diagnostics.finish("success")
+        diagnostics: diagnostics.finish("success"),
+        ...artifacts.length ? { artifacts } : {}
       };
     } catch (error62) {
       if (signal.aborted) throw error62;
@@ -81173,6 +82935,19 @@ function createCronPromptExecutor(options) {
       options.identitySession.endChannelTurn(input2.job.targetChatId, threadId);
     }
   };
+}
+async function allocateWorkspace(input2, store) {
+  if (!input2.managedWorkspace || !store) throw new ManagedWorkspaceStorageError("allocation_failed");
+  assertManagedWorkspaceSandbox(appConfig.codexExecSandbox, input2.job.workspaceProject);
+  if (!input2.job.workspaceProject && !input2.managedWorkspace.fallbackWorkspace) throw new ManagedWorkspaceStorageError("invalid_binding");
+  return store.ensure({
+    ...input2.managedWorkspace,
+    authorizedRoots: [appConfig.codexExecCwd],
+    sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
+    owner: { kind: "cron_prompt", runId: input2.runId },
+    ...input2.job.workspaceProject ? { project: input2.job.workspaceProject } : {},
+    usedAt: (/* @__PURE__ */ new Date()).toISOString()
+  });
 }
 function snapshotAsJobFile2(input2) {
   const job = input2.job;
@@ -81491,6 +83266,8 @@ async function main() {
     artifactsDir: appConfig.continuationArtifactsDir,
     allowedWorkingRoot: appConfig.continuationWorkingRoot,
     foregroundWorkingRoot: appConfig.codexExecCwd,
+    sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
+    managedWorkspaceConfigPath: appConfig.managedWorkspaceConfigPath,
     maxAttempts: appConfig.continuationMaxAttempts,
     maxRetries: appConfig.continuationMaxRetries,
     maxTotalMinutes: appConfig.continuationMaxTotalMinutes,
@@ -81565,13 +83342,19 @@ async function main() {
   if (continuationRuntime.durableRepository) {
     const cronDelivery = createCronDelivery({
       sendReply: sendReplyViaFeishu,
-      originRecorder: continuationRuntime.cronMessageOrigins ?? void 0
+      originRecorder: continuationRuntime.cronMessageOrigins ?? void 0,
+      artifacts: {
+        repository: continuationRuntime.durableRepository,
+        authorizedRoot: () => appConfig.codexExecCwd,
+        uploadFile: (data, name) => channel.getLarkTransport().uploadFile(data, name)
+      }
     });
     const promptExecutor = createCronPromptExecutor({
       identitySession,
       sessionStore: codexSessionStore,
       sessionHealth: sessionHealthMonitor ?? void 0,
-      actionDispatcher: codexExecActionDispatcher
+      actionDispatcher: codexExecActionDispatcher,
+      managedWorkspaceStore: () => continuationRuntime.durableRepository?.getManagedWorkspaceStore?.()
     });
     const registrations = [
       {
@@ -81606,7 +83389,14 @@ async function main() {
       clock: { now: () => /* @__PURE__ */ new Date() }
     });
     cronAdmission = new CronRunAdmission({
-      runRepository: continuationRuntime.durableRepository
+      runRepository: continuationRuntime.durableRepository,
+      pinManagedFallbackWorkspace: () => pinWorkspacePath(appConfig.codexExecCwd, "."),
+      resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
+        configPath: appConfig.managedWorkspaceConfigPath,
+        authorizedRoots: [appConfig.codexExecCwd],
+        sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
+        ...project ? { project } : {}
+      })
     });
     closeContinuationRuntime = async () => {
       await stopChannelServices?.();
@@ -81638,6 +83428,7 @@ async function main() {
     actionDispatcher: codexExecActionDispatcher,
     continuationService: continuationRuntime.service,
     continuationAvailable: continuationRuntime.health.available,
+    managedWorkspaceStore: () => continuationRuntime.durableRepository?.getManagedWorkspaceStore?.(),
     cronControlService: cronControls
   });
   if (isDryRun) {
@@ -81666,9 +83457,29 @@ async function main() {
       startJobNow = scheduler.startJobNow.bind(scheduler);
     }
   });
-  stopChannelServices = startChannelServices2.stop;
+  const foregroundDrainAbort = new AbortController();
+  let foregroundDrain = null;
+  stopChannelServices = async () => {
+    foregroundDrainAbort.abort();
+    await startChannelServices2.stop();
+    await foregroundDrain;
+  };
   startSdkChannelRuntimeWithRetry(channel, {
-    onConnected: startChannelServices2,
+    onConnected: async () => {
+      await startChannelServices2();
+      if (foregroundDrain || foregroundDrainAbort.signal.aborted) return;
+      foregroundDrain = Promise.resolve().then(async () => {
+        const store = continuationRuntime.durableRepository?.getManagedWorkspaceStore?.();
+        if (store) await drainForegroundArtifacts(store, appConfig.codexExecCwd, {
+          sendReply: sendReplyViaFeishu,
+          upload: (data, name) => channel.getLarkTransport().uploadFile(data, name),
+          allowsRoute: (actorId, chatId) => accessControlStore.allowsMessage(actorId, chatId),
+          abortSignal: foregroundDrainAbort.signal
+        }, (error62) => logSafeError("[foreground] Managed delivery recovery failed:", error62));
+      }).catch((error62) => logSafeError("[foreground] Managed delivery scan failed:", error62)).finally(() => {
+        foregroundDrain = null;
+      });
+    },
     onStopped: (err) => logSafeError("[index] Lark channel services stopped:", err)
   });
   console.error("[index] codex-lark-plugin MCP server started; Lark runtime connecting");

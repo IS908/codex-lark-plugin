@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.17.0] - 2026-11-22
+
+### Added
+- Offer opt-in managed scratch and formal artifact directories for foreground turns, prompt Cron runs, and Async Tasks (#393).
+- Preserve verified attachment and checkpoint references independently of scratch, with restart-safe replay and retry staging.
+- Reject overlapping source projects, unprotected directory ancestry, and changed directory or artifact identities. Managed storage does not migrate existing files or enable workspace cleanup.
+
 ## [2.16.0] - 2026-11-21
 
 ### Added

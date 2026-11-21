@@ -19,6 +19,7 @@ export interface CodexExecActionChannelPromptInfo {
   continuationWorkingRoot?: string;
   continuationHostToolNames?: string[];
   continuationTrustedPersonalWorkspaceEligible?: boolean;
+  managedArtifactRegistration?: boolean;
   blockedActionTypes?: readonly CodexExecAction['type'][];
 }
 
@@ -371,6 +372,10 @@ export function buildCodexExecActionChannelPrompt(info: CodexExecActionChannelPr
     '- Do not include chat_id, thread_id, open_id, user_id, caller, or created_by; the parent Lark bridge derives identity.',
     '- JSONL schema: {"version":1,"token":"<token>","type":"lark_action_request","actions":[{"type":"<supported_action>","...":"..."}]}',
     '- Supported action payloads inside actions[]:',
+    ...(info.managedArtifactRegistration ? actionLines('register_artifact', [
+      '  - {"type":"register_artifact","relative_path":"report.csv"}',
+      '    Register only requested deliverables already written under LARK_MANAGED_ARTIFACTS_DIR. The host verifies and delivers them separately. Do not claim they were sent.',
+    ]) : []),
     ...actionLines('save_memory', [
       '  - {"type":"save_memory","memory_type":"profile|chat|thread","content":"...","reason":"...","tier":"public|private","mode":"append|replace"}',
     ]),

@@ -71,7 +71,15 @@ export type ContinuationDeliveryStatus =
   | 'failed'
   | 'superseded';
 
-export type ContinuationDeliveryKind = 'progress' | 'interrupt' | 'terminal';
+export type ContinuationDeliveryKind = 'progress' | 'interrupt' | 'terminal' | 'artifact';
+
+export interface ContinuationArtifactDelivery {
+  version: 1;
+  chatType: 'p2p' | 'group';
+  artifactId: string;
+  path: string;
+  sha256: string;
+}
 
 export interface ContinuationDeliveryRecord {
   eventKey: string;
@@ -228,6 +236,7 @@ export interface ContinuationPermissionEnvelope {
     mode: ContinuationFilesystemMode;
     requestedPaths: string[];
     workspaceProject?: import('./workspace.js').WorkspaceProjectBinding;
+    managedWorkspaceRoots?: import('./managed-workspace.js').ManagedWorkspaceRoots;
   };
   hostTools: string[];
   network: 'none' | 'enabled';

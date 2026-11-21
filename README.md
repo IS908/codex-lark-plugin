@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.16.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.17.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -256,6 +256,48 @@ replaced directory must be explicitly selected again for new work. Every bound
 directory must already be inside `LARK_CODEX_EXEC_CWD` and, for an Async Task,
 inside `LARK_CONTINUATION_WORKING_ROOT`. A registry entry does not grant access,
 change the sandbox, create a checkout, or move any files.
+
+#### Managed run storage
+
+To opt in, create `~/.codex/channels/lark/runtime-config/managed-workspace.json`:
+
+```json
+{
+  "version": 1,
+  "scratchRoot": "/Users/you/workspace/run-scratch",
+  "artifactRoot": "/Users/you/workspace/run-artifacts"
+}
+```
+
+Provision both POSIX directories first. They must be owned by the plugin account,
+not writable by other users, mutually disjoint, and within the workload's existing
+authorized roots. Storage must not overlap the selected project, projects in the
+current registry, or projects previously pinned by this workspace ledger. Managed
+paths and their ancestors must protect names from outside writes; on macOS, only
+deny entries in extended ACLs are accepted.
+For `workspace-write`, bind a source project; exact directory grants do not
+isolate runs from other processes that already have unrestricted access as the
+plugin account. Opt-in storage does not support `danger-full-access` foreground
+or Cron runs.
+
+Each admitted run records its roots and uses separate scratch and formal artifact
+directories. Retries do not select new roots from edited configuration. For a
+managed Async Task, `/task status ID` lists committed checkpoint artifact IDs.
+`/task artifact ID ARTIFACT_ID` queues an IM attachment from the formal artifact
+directory, even if scratch is unavailable. The delivery survives restarts and
+verifies the file again before upload. Request it in a private chat or the
+original task chat/thread. These settings do not move or clean up existing files.
+
+For prompt Cron jobs, request file deliverables in the job prompt. A managed run
+can register up to five nonempty files of at most 30 MB each from its formal
+artifact directory. The outbox verifies and sends the files as replies to the
+confirmed report. A failed attachment does not resend the report.
+
+For managed foreground IM turns, the plugin records the text reply and requested
+formal files before sending. After the text is confirmed, pending files can be
+sent on reconnect or on replay of the same event without rerunning Codex or
+needing scratch. The plugin rechecks the route and does not repeat a send whose
+outcome is unknown.
 
 ### 4. Start
 

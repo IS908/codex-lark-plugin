@@ -26,6 +26,8 @@ import {
   parseCronRunInput,
   parseCronRunState,
   type CronPromptExecution,
+  parseCronArtifacts,
+  type CronArtifactPayload,
   type CronPromptExecutor,
   type CronRunInput,
   type CronRunState,
@@ -53,7 +55,12 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
   async preflight(
     context: DurableRunWorkloadContext<CronRunInput, CronRunState>,
   ): Promise<DurableRunPreflight> {
-    return completedCronStatePreflight(context.state) ?? { action: 'execute' };
+    const completed = completedCronStatePreflight(context.state);
+    if (completed) return completed;
+    if (context.input.managedWorkspaceFailure) {
+      return { action: 'transition', transition: managedAdmissionFailure({ run: context }, context.input) };
+    }
+    return { action: 'execute' };
   }
 
   async execute(
@@ -62,7 +69,14 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
   ): Promise<CronPromptExecution> {
     const job = promptJob(claim.run.input);
     try {
-      return await this.options.executor({ runId: claim.run.runId, job }, signal);
+      signal.throwIfAborted();
+      if (claim.run.input.managedWorkspaceFailure) {
+        return failedExecution(job, claim.run.runId, new Error(claim.run.input.managedWorkspaceFailure));
+      }
+      const managedWorkspace = claim.run.input.managedWorkspace;
+      return await this.options.executor({ runId: claim.run.runId, job,
+        ...(managedWorkspace ? { managedWorkspace } : {}),
+      }, signal);
     } catch (error) {
       if (signal.aborted) throw error;
       return {
@@ -123,6 +137,7 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
       reportType,
       failureReason: normalized.failureReason,
       diagnostics: normalized.diagnostics,
+      ...(normalized.artifacts ? { artifacts: normalized.artifacts } : {}),
     };
     const failed = normalized.runStatus === 'failed';
     return {
@@ -145,16 +160,27 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
             }
           : {}),
       },
-      deliveries: [promptDelivery(claim, claim.run.input, normalized, reportType)],
+      deliveries: [
+        promptDelivery(claim, claim.run.input, normalized, reportType),
+        ...(normalized.artifacts ?? []).map((artifact, index): DurableRunDeliveryRequest => ({
+          kind: 'cron_artifact', eventKey: `cron_artifact:${index}`, attemptId: claim.attempt.attemptId,
+          idempotencyKey: `cron:${claim.run.runId}:artifact:${index}`, route: claim.run.route,
+          payload: {
+            schemaVersion: 1, jobId: claim.run.input.job.id, jobCreatedAt: claim.run.input.job.createdAt,
+            jobRevision: claim.run.input.job.revision, index, artifact,
+          } satisfies CronArtifactPayload,
+        })),
+      ],
     };
   }
 
   recoverInterruptedAttempt(context: DurableRunInterruptedAttempt): DurableRunTransition {
+    const input = this.parseInput(context.claim.run.input, context.claim.run.inputVersion);
+    if (input.managedWorkspaceFailure) return managedAdmissionFailure(context.claim, input);
     if (
       context.executionPhase !== 'execution_started'
       && context.claim.attempt.ordinal >= context.claim.run.maxAttempts
     ) {
-      const input = this.parseInput(context.claim.run.input, context.claim.run.inputVersion);
       const reason = 'The CronJob exhausted its execution attempt budget before a report could be committed.';
       const execution = failedExecution(
         promptJob(input),
@@ -196,16 +222,15 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
         attempt: { outcome: 'interrupted_before_execution', operationRisk: 'pure' },
       };
     }
-    return interruptedPromptTransition(
-      context.claim,
-      this.parseInput(context.claim.run.input, context.claim.run.inputVersion),
-    );
+    return interruptedPromptTransition(context.claim, input);
   }
 
   terminalizeExpiredAttempt(
     claim: DurableRunWorkloadClaim<CronRunInput, CronRunState>,
   ): DurableRunTransition {
-    return interruptedPromptTransition(claim, claim.run.input);
+    return claim.run.input.managedWorkspaceFailure
+      ? managedAdmissionFailure(claim, claim.run.input)
+      : interruptedPromptTransition(claim, claim.run.input);
   }
 
   terminalizeUnclaimable(
@@ -213,6 +238,7 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
     reason: DurableRunUnclaimableReason,
   ): DurableRunPersistedStateFailure {
     const input = this.parseInput(run.input, run.inputVersion);
+    if (input.managedWorkspaceFailure) return managedAdmissionFailure({ run }, input);
     const detail = reason === 'expired'
       ? 'The CronJob reached its maximum run age before a report could be committed.'
       : 'The CronJob exhausted its execution attempt budget before a report could be committed.';
@@ -236,6 +262,30 @@ export class CronPromptWorkload implements DurableRunWorkload<CronRunInput, Cron
       deliveries: [promptDelivery({ run }, input, execution, 'error_report')],
     };
   }
+}
+
+function managedAdmissionFailure(
+  claim: { run: { runId: string; route: unknown }; attempt?: { attemptId: string } }, input: CronRunInput,
+) {
+  const reason = input.managedWorkspaceFailure!;
+  const execution = failedExecution(promptJob(input), claim.run.runId, new Error(reason), 'prepare_prompt');
+  const errorCode = 'cron_managed_workspace_admission_failed';
+  return {
+    status: 'failed',
+    stateVersion: CRON_RUN_STATE_VERSION,
+    state: {
+      schemaVersion: 1,
+      phase: 'completed',
+      commit: {
+        kind: 'prompt', report: execution.report, runStatus: 'failed', reportType: 'error_report',
+        failureReason: execution.failureReason, diagnostics: execution.diagnostics,
+      },
+    } satisfies CronRunState,
+    errorCode,
+    errorSummary: execution.failureReason ?? errorCode,
+    attempt: { outcome: 'failed', operationRisk: 'pure', errorCode, errorSummary: execution.failureReason ?? errorCode },
+    deliveries: [promptDelivery(claim, input, execution, 'error_report')],
+  } satisfies DurableRunTransition;
 }
 
 function executionRetryDelayMs(attemptOrdinal: number): number {
@@ -294,6 +344,14 @@ function normalizeExecution(
   runId: string,
   execution: CronPromptExecution,
 ): CronPromptExecution {
+  if (execution.artifacts !== undefined) {
+    try {
+      if (!input.managedWorkspace || execution.runStatus !== 'success') throw new Error('Invalid artifact admission.');
+      parseCronArtifacts(execution.artifacts);
+    } catch {
+      return failedExecution(promptJob(input), runId, new Error('Cron artifact registration was invalid.'));
+    }
+  }
   if (execution.runStatus === 'success' && !execution.report.trim()) {
     return failedExecution(promptJob(input), runId, new Error('CronJob prompt produced no visible report.'));
   }
@@ -341,6 +399,7 @@ function failedExecution(
   job: ReturnType<typeof promptJob>,
   runId: string,
   error: unknown,
+  stage: 'prepare_prompt' | 'codex_exec' = 'codex_exec',
 ): CronPromptExecution {
   const reason = sanitizeDiagnosticText(error instanceof Error ? error.message : String(error), 1000)
     || 'CronJob prompt execution failed.';
@@ -349,7 +408,7 @@ function failedExecution(
     runId,
     timeoutMs: 0,
   });
-  diagnostics.failStage('codex_exec', error);
+  diagnostics.failStage(stage, error);
   const snapshot = diagnostics.finish('failed', error);
   const report = [
     `CronJob "${sanitizeDiagnosticText(job.name, 200)}" failed before a complete report could be delivered.`,

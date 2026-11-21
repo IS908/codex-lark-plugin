@@ -383,6 +383,7 @@ export const CodexExecActionSchema = z.discriminatedUnion('type', [
   ManageAccessControlActionSchema,
   GetRunTraceActionSchema,
   SendMessageActionSchema,
+  z.strictObject({ type: z.literal('register_artifact'), relative_path: z.string().min(1).max(2048) }),
   RecallMessageActionSchema,
   CreateContinuationActionBaseSchema,
 ]).superRefine((action, ctx) => {

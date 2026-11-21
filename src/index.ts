@@ -52,7 +52,10 @@ import { CronRunAdmission } from './cron/run-admission.js';
 import { CronPromptWorkload } from './cron/direct-exec-workload.js';
 import { CronMessageWorkload } from './cron/message-workload.js';
 import { createCronPromptExecutor } from './cron/prompt-executor.js';
+import { readManagedWorkspaceRoots } from './managed-workspace-storage.js';
 import { createCronDelivery } from './cron/delivery.js';
+import { drainForegroundArtifacts } from './foreground-artifact-delivery.js';
+import { pinWorkspacePath } from './workspace-projects.js';
 import { createCronControlService } from './cron/control-service.js';
 import { createCronCardActionHandler } from './cron/card-actions.js';
 
@@ -131,6 +134,8 @@ async function main() {
     artifactsDir: appConfig.continuationArtifactsDir,
     allowedWorkingRoot: appConfig.continuationWorkingRoot,
     foregroundWorkingRoot: appConfig.codexExecCwd,
+    sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
+    managedWorkspaceConfigPath: appConfig.managedWorkspaceConfigPath,
     maxAttempts: appConfig.continuationMaxAttempts,
     maxRetries: appConfig.continuationMaxRetries,
     maxTotalMinutes: appConfig.continuationMaxTotalMinutes,
@@ -212,12 +217,18 @@ async function main() {
     const cronDelivery = createCronDelivery({
       sendReply: sendReplyViaFeishu,
       originRecorder: continuationRuntime.cronMessageOrigins ?? undefined,
+      artifacts: {
+        repository: continuationRuntime.durableRepository,
+        authorizedRoot: () => appConfig.codexExecCwd,
+        uploadFile: (data, name) => channel.getLarkTransport().uploadFile(data, name),
+      },
     });
     const promptExecutor = createCronPromptExecutor({
       identitySession,
       sessionStore: codexSessionStore,
       sessionHealth: sessionHealthMonitor ?? undefined,
       actionDispatcher: codexExecActionDispatcher,
+      managedWorkspaceStore: () => continuationRuntime.durableRepository?.getManagedWorkspaceStore?.(),
     });
     const registrations: DurableRunRegistration[] = [
       {
@@ -253,6 +264,13 @@ async function main() {
     });
     cronAdmission = new CronRunAdmission({
       runRepository: continuationRuntime.durableRepository,
+      pinManagedFallbackWorkspace: () => pinWorkspacePath(appConfig.codexExecCwd, '.'),
+      resolveManagedWorkspaceRoots: (project) => readManagedWorkspaceRoots({
+        configPath: appConfig.managedWorkspaceConfigPath,
+        authorizedRoots: [appConfig.codexExecCwd],
+        sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
+        ...(project ? { project } : {}),
+      }),
     });
     closeContinuationRuntime = async () => {
       await stopChannelServices?.();
@@ -288,6 +306,7 @@ async function main() {
     actionDispatcher: codexExecActionDispatcher,
     continuationService: continuationRuntime.service,
     continuationAvailable: continuationRuntime.health.available,
+    managedWorkspaceStore: () => continuationRuntime.durableRepository?.getManagedWorkspaceStore?.(),
     cronControlService: cronControls,
   });
 
@@ -322,10 +341,29 @@ async function main() {
       startJobNow = scheduler.startJobNow.bind(scheduler);
     },
   });
-  stopChannelServices = startChannelServices.stop;
+  const foregroundDrainAbort = new AbortController();
+  let foregroundDrain: Promise<void> | null = null;
+  stopChannelServices = async () => {
+    foregroundDrainAbort.abort();
+    await startChannelServices.stop();
+    await foregroundDrain;
+  };
 
   startSdkChannelRuntimeWithRetry(channel, {
-    onConnected: startChannelServices,
+    onConnected: async () => {
+      await startChannelServices();
+      if (foregroundDrain || foregroundDrainAbort.signal.aborted) return;
+      foregroundDrain = Promise.resolve().then(async () => {
+        const store = continuationRuntime.durableRepository?.getManagedWorkspaceStore?.();
+        if (store) await drainForegroundArtifacts(store, appConfig.codexExecCwd, {
+          sendReply: sendReplyViaFeishu,
+          upload: (data, name) => channel.getLarkTransport().uploadFile(data, name),
+          allowsRoute: (actorId, chatId) => accessControlStore.allowsMessage(actorId, chatId),
+          abortSignal: foregroundDrainAbort.signal,
+        }, (error) => logSafeError('[foreground] Managed delivery recovery failed:', error));
+      }).catch((error) => logSafeError('[foreground] Managed delivery scan failed:', error))
+        .finally(() => { foregroundDrain = null; });
+    },
     onStopped: (err) => logSafeError('[index] Lark channel services stopped:', err),
   });
 

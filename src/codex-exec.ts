@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { WorkspaceDirectoryGuard } from './domain/workspace.js';
 import { validateWorkspaceProject, WorkspaceProjectError } from './workspace-projects.js';
+import { assertProtectedWorkspacePath } from './managed-workspace-ancestry.js';
 import { createCodexExecToolTraceWriter } from './codex-exec-trace.js';
 import {
   createCodexExecRuntimeMetricsCollector,
@@ -313,12 +314,16 @@ export async function runCodexExecCommand(request: CodexExecRequest): Promise<Co
 
   try {
     if (request.workspaceDirectory) {
-      const { authorizedRoots, sideChannelBindings, binding: savedBinding } = request.workspaceDirectory;
-      for (const sideChannel of sideChannelBindings ?? []) {
-        await validateWorkspaceProject(authorizedRoots, sideChannel);
+      const { authorizedRoots, auxiliaryBindings, binding: savedBinding, requireProtectedAncestry } = request.workspaceDirectory;
+      for (const auxiliary of auxiliaryBindings ?? []) {
+        await validateWorkspaceProject(authorizedRoots, auxiliary);
       }
       const binding = await validateWorkspaceProject(authorizedRoots, savedBinding);
       if (binding.directory !== cwd) throw new WorkspaceProjectError('directory_changed');
+      if (requireProtectedAncestry) await Promise.all([
+        assertProtectedWorkspacePath(binding),
+        ...(auxiliaryBindings ?? []).map((auxiliary) => assertProtectedWorkspacePath(auxiliary, true)),
+      ]);
     } else {
       await fs.mkdir(cwd, { recursive: true });
     }

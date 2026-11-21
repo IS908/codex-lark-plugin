@@ -40,6 +40,14 @@ import { listConfiguredLocalCliToolNames } from './local-cli-tools.js';
 import { logSafeError } from './safe-log.js';
 import { accessControlStore } from './runtime-access-control.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
+import { MANAGED_DELIVERY_MAX_BYTES, MANAGED_DELIVERY_MAX_FILES, type ManagedArtifactReference, type ManagedRunAllocation } from './domain/managed-workspace.js';
+import { withManagedWorkspace } from './managed-workspace-exec.js';
+import { admitManagedForegroundRun, managedForegroundRunOwner } from './managed-workspace-admission.js';
+import { ManagedWorkspaceStorageError, validateManagedRunDirectory } from './managed-workspace-storage.js';
+import { readManagedArtifact } from './managed-workspace-artifact.js';
+import type { ManagedWorkspaceStore } from './ports/managed-workspace.js';
+import { deliverForegroundArtifacts, type ForegroundArtifactDeliveryOptions } from './foreground-artifact-delivery.js';
+import type { ForegroundArtifactBatch } from './domain/managed-workspace.js';
 import {
   pinWorkspacePath,
   readWorkspaceProjectDirective,
@@ -70,6 +78,9 @@ export interface CodexExecDeliveryBaseOptions {
   onFinalText?: (text: string) => void;
   onLifecycleGuard?: (reason: string) => void;
   onActionResults?: (results: CodexExecActionExecutionResult[]) => void;
+  onManagedArtifact?: (reference: ManagedArtifactReference) => void;
+  uploadManagedArtifact?: ForegroundArtifactDeliveryOptions['upload'];
+  authorizeForegroundArtifactRoute?: ForegroundArtifactDeliveryOptions['allowsRoute'];
   continuationAvailable?: boolean;
   modelOverride?: string;
   actionBaseDir?: string;
@@ -78,6 +89,8 @@ export interface CodexExecDeliveryBaseOptions {
   abortSignal?: AbortSignal;
   actionPolicy?: CodexExecActionPolicy;
   cronWorkspaceProject?: WorkspaceProjectBinding;
+  managedWorkspace?: ManagedRunAllocation;
+  managedWorkspaceStore?: () => ManagedWorkspaceStore | undefined;
 }
 
 export interface CodexExecDeliveryOutput {
@@ -168,6 +181,7 @@ async function enrichCodexExecActionPromptInfo(
   continuationAvailable: boolean,
   continuationPermitted: boolean,
   blockedActionTypes: readonly CodexExecAction['type'][] = [],
+  managedArtifactRegistration = false,
 ): Promise<CodexExecActionChannelPromptInfo | null> {
   if (!info?.enabled) return info;
   const baseInfo = {
@@ -184,6 +198,7 @@ async function enrichCodexExecActionPromptInfo(
       message.senderId === appConfig.ownerOpenId
       || accessControlStore.isAllowedUserId(message.senderId),
     ...(blockedActionTypes.length > 0 ? { blockedActionTypes } : {}),
+    managedArtifactRegistration,
   };
   const exposeForegroundHostTools = appConfig.codexExecSandbox !== 'danger-full-access';
   if (!exposeForegroundHostTools && !baseInfo.continuationEnabled) return baseInfo;
@@ -476,6 +491,29 @@ export async function deliverMessageViaCodexExec(
     registryPath: appConfig.workspaceProjectsConfigPath,
   };
   const foreground = message.chatType === 'p2p' || message.chatType === 'group' || message.chatType === 'doc_comment';
+  const workspaceOwner = foreground && opts.managedWorkspaceStore ? managedForegroundRunOwner(message, sessionKey) : undefined;
+  const managedStore = workspaceOwner ? opts.managedWorkspaceStore?.() : undefined;
+  const priorManaged = workspaceOwner ? managedStore?.get(workspaceOwner) : undefined;
+  const priorUnmanaged = workspaceOwner ? managedStore?.getUnmanagedForeground(workspaceOwner.runId) : undefined;
+  if (priorUnmanaged && (priorManaged || priorUnmanaged.sessionKey !== sessionKey)) {
+    throw new ManagedWorkspaceStorageError('invalid_binding');
+  }
+  const artifactIO = !opts.deliverySink && opts.uploadManagedArtifact
+    && (message.chatType === 'p2p' || message.chatType === 'group') && message.messageType !== 'reaction'
+    && isFeishuOpenMessageId(message.messageId) && shouldSendFeishuReplyForMessage(message)
+    ? { sendReply: opts.sendReply, upload: opts.uploadManagedArtifact, abortSignal: opts.abortSignal,
+      allowsRoute: opts.authorizeForegroundArtifactRoute }
+    : undefined;
+  if (priorManaged && managedStore && workspaceOwner && artifactIO) {
+    const batch = managedStore.getForegroundArtifacts(workspaceOwner.runId);
+    if (batch) {
+      const confirmed = await deliverForegroundArtifacts(managedStore, priorManaged.allocation, batch,
+        workspaceOptions.authorizedRoot, artifactIO);
+      if (confirmed) turnObligations?.markSatisfied(message.messageId, 'reply');
+      else turnObligations?.markDeferred(message.messageId, 'exec_assistant_text', 'LARK_DEFER', 'Managed delivery not confirmed.');
+      return;
+    }
+  }
   const directive = foreground && message.messageType !== 'reaction'
     ? readWorkspaceProjectDirective(message.chatType === 'doc_comment' ? message.currentUserText : message.workspaceDirectiveText)
     : undefined;
@@ -485,11 +523,36 @@ export async function deliverMessageViaCodexExec(
     : undefined;
   const legacySession = compatibleSession?.sessionId && compatibleSession.workspaceProject === undefined;
   let workspace: WorkspaceProjectBinding | undefined;
-  if (foreground && (selector !== undefined || savedWorkspace !== undefined || !legacySession)) {
+  if (priorUnmanaged) {
+    if ('project' in priorUnmanaged) {
+      workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, priorUnmanaged.project);
+    } else if (priorUnmanaged.fallbackCwd !== path.resolve(workspaceOptions.authorizedRoot)) {
+      throw new ManagedWorkspaceStorageError('invalid_binding');
+    }
+  } else if (priorManaged) {
+    const previousProject = priorManaged.allocation.project;
+    if (previousProject) workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, previousProject);
+  } else if (foreground && (selector !== undefined || savedWorkspace !== undefined || !legacySession)) {
     workspace = await resolveWorkspaceProject({ ...workspaceOptions, selector, persisted: savedWorkspace });
   } else if (message.chatType === 'cronjob' && opts.cronWorkspaceProject !== undefined) {
     workspace = await resolveWorkspaceProject({ ...workspaceOptions, persisted: opts.cronWorkspaceProject });
   }
+  const managed = priorUnmanaged ? undefined : workspaceOwner ? await admitManagedForegroundRun({
+    owner: workspaceOwner, sessionKey, store: managedStore, recorded: priorManaged,
+    configPath: appConfig.managedWorkspaceConfigPath, authorizedRoot: workspaceOptions.authorizedRoot, project: workspace,
+    sourceRegistryPath: workspaceOptions.registryPath,
+    sandbox: appConfig.codexExecSandbox,
+  }) : opts.managedWorkspace;
+  if (managed && !sameWorkspaceProject(managed.project, workspace)) {
+    throw new ManagedWorkspaceStorageError('invalid_binding');
+  }
+  const foregroundArtifacts: ManagedArtifactReference[] = [];
+  const onManagedArtifact = managedStore && artifactIO
+    ? (reference: ManagedArtifactReference) => { foregroundArtifacts.push(reference); }
+    : opts.onManagedArtifact;
+  const launchWorkspace = workspace ?? (managed ? await validateWorkspaceProject(
+    workspaceOptions.authorizedRoot, managed.fallbackWorkspace,
+  ) : undefined);
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace)
     && (workspace === undefined || compatibleSession?.workspaceProjectSenderId === message.senderId)
     ? compatibleSession
@@ -541,11 +604,12 @@ export async function deliverMessageViaCodexExec(
         opts.continuationAvailable ?? true,
         continuationPermitted,
         opts.actionPolicy?.blockedActionTypes,
+        Boolean(managed && onManagedArtifact),
       ),
     ),
     imagePaths: collectImagePaths(message),
     command: appConfig.codexExecCommand,
-    cwd: workspace?.directory ?? appConfig.codexExecCwd,
+    cwd: launchWorkspace?.directory ?? appConfig.codexExecCwd,
     timeoutMs: appConfig.codexExecTimeoutMs,
     sandbox: appConfig.codexExecSandbox,
     model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
@@ -585,26 +649,40 @@ export async function deliverMessageViaCodexExec(
   let result;
   let usedResumeSessionId = request.resumeSessionId;
   const runInWorkspace: CodexExecRunner = async (runRequest) => {
-    if (!workspace) return runCodexExec(runRequest);
+    if (!launchWorkspace) return runCodexExec(runRequest);
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...(progressSink ? [progressSink.filePath] : [])];
     // A narrower CWD still needs its one-turn IPC directories, not the entire old working root.
     const sideChannelBindings = runRequest.sandbox === 'workspace-write'
       ? await Promise.all(sideChannelFiles.map((file) => pinWorkspacePath(authorizedRoot, path.dirname(file))))
       : [];
-    await validateWorkspaceProject(authorizedRoot, workspace);
-    return runCodexExec({
+    if (managed) {
+      await Promise.all([
+        validateManagedRunDirectory(managed, 'scratch', [authorizedRoot]),
+        validateManagedRunDirectory(managed, 'artifacts', [authorizedRoot]),
+      ]);
+    }
+    await validateWorkspaceProject(authorizedRoot, launchWorkspace);
+    const guardedRequest: CodexExecRequest = {
       ...runRequest,
-      workspaceDirectory: { binding: workspace, authorizedRoots: [authorizedRoot], sideChannelBindings },
+      workspaceDirectory: {
+        ...(managed ? { requireProtectedAncestry: true } : {}),
+        binding: launchWorkspace, authorizedRoots: [authorizedRoot], auxiliaryBindings: [
+          ...sideChannelBindings,
+          ...(managed ? [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts] : []),
+        ],
+      },
       ...(sideChannelBindings.length ? { additionalWritableDirs: sideChannelBindings.map((binding) => binding.directory) } : {}),
-    });
+    };
+    return runCodexExec(managed ? withManagedWorkspace(guardedRequest, managed) : guardedRequest);
   };
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
   try {
     progressSink?.start();
     result = normalizeCodexExecResult(await runInWorkspace(request));
   } catch (err) {
-    if (!request.resumeSessionId || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError) {
+    if (!request.resumeSessionId || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError
+      || err instanceof ManagedWorkspaceStorageError) {
       await actionChannel.cleanup();
       throw err;
     }
@@ -666,6 +744,8 @@ export async function deliverMessageViaCodexExec(
       explicitWorkspaceProject: selector !== undefined,
       model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
       continuationPermitted,
+      managed,
+      onManagedArtifact,
     });
     opts.onActionResults?.(actionResults);
     const continuation = actionResults.find(
@@ -780,6 +860,20 @@ export async function deliverMessageViaCodexExec(
     return;
   }
 
+  if (managed && managedStore && artifactIO && foregroundArtifacts.length) {
+    const batch: ForegroundArtifactBatch = {
+      version: 2, chatId: message.chatId, sourceMessageId: message.messageId, sessionKey,
+      actorId: message.senderId, messageType: message.messageType,
+      ...(message.threadId ? { threadId: message.threadId } : {}),
+      reply: { text, ...(runtimeFooter ? { runtimeFooter } : {}), status: 'pending' },
+      files: foregroundArtifacts.map((reference) => ({ reference, status: 'pending' })),
+    };
+    managedStore.rememberForegroundArtifacts(managed.owner.runId, batch);
+    const confirmed = await deliverForegroundArtifacts(managedStore, managed, batch, workspaceOptions.authorizedRoot, artifactIO);
+    if (confirmed) turnObligations?.markSatisfied(message.messageId, 'reply');
+    else turnObligations?.markDeferred(message.messageId, 'exec_assistant_text', 'LARK_DEFER', 'Managed delivery not confirmed.');
+    return;
+  }
   await opts.sendReply!({
     chat_id: message.chatId,
     text,
@@ -798,9 +892,11 @@ async function dispatchCodexExecActions(input: {
   continuationPermitted: boolean;
   workspaceProject?: WorkspaceProjectBinding;
   explicitWorkspaceProject: boolean;
+  managed?: ManagedRunAllocation;
+  onManagedArtifact?: (reference: ManagedArtifactReference) => void;
 }): Promise<CodexExecActionExecutionResult[]> {
   const blocked = new Set(input.opts.actionPolicy?.blockedActionTypes ?? []);
-  const allowedActions = input.actions.filter((action) => !blocked.has(action.type));
+  const allowedActions = input.actions.filter((action) => action.type !== 'register_artifact' && !blocked.has(action.type));
   const allowedResults = input.opts.actionDispatcher && allowedActions.length > 0
     ? await input.opts.actionDispatcher.execute({
         message: input.message,
@@ -813,28 +909,48 @@ async function dispatchCodexExecActions(input: {
       })
     : [];
   let allowedIndex = 0;
-  return input.actions.map((action) => {
+  const registered = new Set<string>();
+  const results: CodexExecActionExecutionResult[] = [];
+  for (const action of input.actions) {
     if (blocked.has(action.type)) {
-      return {
+      results.push({
         ok: false,
         action: action.type,
         message: input.opts.actionPolicy?.reason ?? `${action.type} is unavailable for this turn.`,
-      };
-    }
-    if (!input.opts.actionDispatcher) {
-      return {
+      });
+    } else if (action.type === 'register_artifact') {
+      const { managed, opts } = input;
+      let ok = false;
+      try {
+        if (!managed || !input.onManagedArtifact) throw new Error('Managed registration unavailable.');
+        if (!registered.has(action.relative_path)) {
+          if (registered.size >= MANAGED_DELIVERY_MAX_FILES) throw new Error('Too many managed artifacts.');
+          opts.abortSignal?.throwIfAborted();
+          const { content, sha256 } = await readManagedArtifact({
+            binding: managed.artifacts, relativePath: action.relative_path, maxBytes: MANAGED_DELIVERY_MAX_BYTES,
+            revalidate: () => validateManagedRunDirectory(managed, 'artifacts', [appConfig.codexExecCwd]),
+          });
+          if (!content.length) throw new Error('Empty managed artifact.');
+          opts.abortSignal?.throwIfAborted();
+          input.onManagedArtifact({ relativePath: action.relative_path, sha256 });
+          registered.add(action.relative_path);
+        }
+        ok = true;
+      } catch {
+        // Do not expose a host path or unverified artifact name.
+      }
+      results.push({ action: action.type, ok, message: ok ? 'Registered managed artifact.' : 'Managed artifact registration failed.' });
+    } else {
+      results.push(allowedResults[allowedIndex++] ?? {
         ok: false,
-        action: 'action_channel' as const,
-        message: 'Lark exec action dispatcher is not configured.',
-      };
+        action: 'action_channel',
+        message: input.opts.actionDispatcher
+          ? `Lark exec action dispatcher returned no result for ${action.type}.`
+          : 'Lark exec action dispatcher is not configured.',
+      });
     }
-    const actionResult = allowedResults[allowedIndex++];
-    return actionResult ?? {
-      ok: false,
-      action: 'action_channel' as const,
-      message: `Lark exec action dispatcher returned no result for ${action.type}.`,
-    };
-  });
+  }
+  return results;
 }
 
 async function sendCodexExecProgressMessage(

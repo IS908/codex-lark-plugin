@@ -6,11 +6,13 @@ import {
   isContinuationTerminal,
   retryDelayMs,
   type ContinuationClaim,
+  type ContinuationArtifactDelivery,
   type ContinuationCleanupResult,
   type ContinuationCreateRequest,
   type ContinuationDeliveryClaim,
   type ContinuationDeliveryRecord,
   type ContinuationDeliveryResult,
+  type ContinuationDeliveryRoute,
   type ContinuationExecutionResult,
   type ContinuationFailure,
   type ContinuationJob,
@@ -37,6 +39,7 @@ import type {
   ContinuationRepository,
 } from '../ports/continuation.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
+import { artifactDeliveryEventKey, artifactDeliveryMatches, parseArtifactDelivery } from './artifact-delivery.js';
 import {
   continuationJobId,
   continuationRetryIdempotencyKey,
@@ -118,6 +121,7 @@ import {
   initializeContinuationDatabase,
   openContinuationDatabase,
 } from './sqlite-database.js';
+import { allocateContinuationWorkspace, continuationArtifactView, type ContinuationWorkspacePolicy } from './managed-workspace.js';
 
 interface SqliteContinuationRepositoryOptions {
   databasePath: string;
@@ -126,6 +130,7 @@ interface SqliteContinuationRepositoryOptions {
   inputsDir?: string;
   inputStore?: ContinuationInputStorePort;
   jitter?: () => number;
+  managedWorkspacePolicy?: ContinuationWorkspacePolicy;
 }
 
 type DueCandidateSelection =
@@ -146,9 +151,10 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     private readonly artifacts: ContinuationArtifactStore,
     private readonly inputs: ContinuationInputStorePort,
     private readonly jitter: () => number,
+    private readonly managedWorkspacePolicy?: ContinuationWorkspacePolicy,
   ) {
-    this.verifier = new ContinuationVerifier(artifacts);
     this.durableRuns = SqliteDurableRunRepository.attach(database);
+    this.verifier = new ContinuationVerifier(artifacts, (job) => this.artifactsForJob(job));
     this.cronMessageOrigins = SqliteCronMessageOriginStore.attach(database);
   }
 
@@ -169,6 +175,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         artifacts,
         inputs,
         options.jitter ?? Math.random,
+        options.managedWorkspacePolicy,
       );
       await repository.initialize();
       await repository.reconcileStorageOrphans();
@@ -185,6 +192,40 @@ export class SqliteContinuationRepository implements ContinuationRepository {
 
   async healthCheck(): Promise<void> {
     healthCheckContinuationDatabase(this.database);
+  }
+
+  private artifactsForJob(job: ContinuationJob): ContinuationArtifactStore {
+    return continuationArtifactView(this.artifacts, job,
+      job.permissions.filesystem.managedWorkspaceRoots ? this.durableRuns.getManagedWorkspaceStore() : undefined,
+      this.managedWorkspacePolicy);
+  }
+
+  async readManagedArtifact(job: ContinuationJob, relativePath: string, sha256: string): Promise<Buffer> {
+    if (!job.permissions.filesystem.managedWorkspaceRoots) throw new Error('Managed artifacts are not available for this task.');
+    return this.artifactsForJob(job).readArtifact(job.jobId, relativePath, sha256);
+  }
+
+  async enqueueManagedArtifact(jobId: string, route: ContinuationDeliveryRoute, artifact: ContinuationArtifactDelivery, now: string): Promise<boolean> {
+    const payload = JSON.stringify(artifact);
+    const reference = parseArtifactDelivery(payload);
+    const routeJson = JSON.stringify(route);
+    return this.transaction(() => {
+      const current = this.readJobBy('j.job_id = ?', jobId);
+      if (!current || !artifactDeliveryMatches(current, route, reference)) return false;
+      const eventKey = artifactDeliveryEventKey(route.sourceMessageId);
+      const result = this.database.prepare(`
+        INSERT INTO durable_outbox (
+          outbox_id, run_id, event_key, kind, route_json, idempotency_key, payload_json,
+          metadata_json, status, attempt_count, next_attempt_at, created_at, updated_at
+        ) VALUES (?, ?, ?, 'artifact', ?, ?, ?, '{}', 'pending', 0, ?, ?, ?)
+        ON CONFLICT(run_id, event_key) DO NOTHING
+      `).run(makeId('out'), jobId, eventKey, routeJson, deliveryIdempotencyKey(jobId, eventKey), JSON.stringify(payload), now, now, now);
+      if (Number(result.changes) === 1) return true;
+      const previous = this.database.prepare(`
+        SELECT route_json, payload_json FROM durable_outbox WHERE run_id = ? AND event_key = ? AND kind = 'artifact'
+      `).get(jobId, eventKey);
+      return previous?.route_json === routeJson && previous.payload_json === JSON.stringify(payload);
+    });
   }
 
   async create(
@@ -214,23 +255,39 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       ) {
         throw new Error('Continuation retry source does not exist.');
       }
-      const requestFingerprint = createRequestFingerprint(request);
+      let admittedRequest = request;
+      if (request.retryOfJobId && request.permissions.filesystem.managedWorkspaceRoots && request.resumeCheckpoint?.artifacts.length) {
+        // The retry may have provisioned its storage before it could commit a Job.
+        const prior = this.durableRuns.getManagedWorkspaceStore().get({ kind: 'async_task', runId: jobId });
+        if (prior) {
+          const { createdAt } = prior.allocation;
+          const lifetime = Date.parse(request.expiresAt) - Date.parse(request.createdAt);
+          admittedRequest = { ...request, createdAt, expiresAt: new Date(Date.parse(createdAt) + lifetime).toISOString() };
+        }
+      }
+      const requestFingerprint = createRequestFingerprint(admittedRequest);
       const installation = await this.inputs.install(
         jobId,
-        request.sourceInputs,
+        admittedRequest.sourceInputs,
         requestFingerprint,
       );
-      const persisted = projectCreateRequest(request, installation.artifacts);
+      const persisted = projectCreateRequest(admittedRequest, installation.artifacts);
+      const initialJob = continuationJobForCreate(jobId, persisted);
       let artifactsInstalled = false;
       try {
         if (persisted.resumeCheckpoint) {
-          artifactsInstalled = await this.artifacts.copyVerified(
-            persisted.resumeArtifactSourceJobId!,
-            jobId,
-            persisted.resumeCheckpoint.artifacts,
-          );
+          if (initialJob.permissions.filesystem.managedWorkspaceRoots && persisted.resumeCheckpoint.artifacts.length > 0) {
+            const source = await this.get(persisted.resumeArtifactSourceJobId!);
+            if (!source || source.deletedAt) throw new Error('Continuation retry artifact source is unavailable.');
+            await allocateContinuationWorkspace(initialJob, this.durableRuns.getManagedWorkspaceStore(), this.managedWorkspacePolicy);
+            await this.artifactsForJob(source).copyVerified(source.jobId, jobId,
+              persisted.resumeCheckpoint.artifacts, this.artifactsForJob(initialJob));
+          } else {
+            artifactsInstalled = await this.artifacts.copyVerified(
+              persisted.resumeArtifactSourceJobId!, jobId, persisted.resumeCheckpoint.artifacts,
+            );
+          }
         }
-        const initialJob = continuationJobForCreate(jobId, persisted);
         const durable = await this.durableRuns.create(
           asyncTaskDurableCreateRequestFromJob(initialJob),
         );
@@ -975,6 +1032,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
     ) {
       return false;
     }
+    if (current.permissions.filesystem.managedWorkspaceRoots) {
+      throw new Error('Managed continuation data cannot be deleted until its artifact erasure is supported. The task and its files were retained.');
+    }
     const quarantines: RedactionQuarantines = { artifact: null, input: null };
     let committed = false;
     let restoreAttempted = false;
@@ -1139,7 +1199,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
       );
       if (!claim) return null;
       const job = await this.get(claim.runId);
-      if (!job || !isDeepStrictEqual(claim.route, job.route)) {
+      if (!job || (claim.kind !== 'artifact' && !isDeepStrictEqual(claim.route, job.route))) {
         await this.durableRuns.commitDelivery(claim, {
           status: 'failed',
           errorCode: 'continuation_delivery_route_invalid',
@@ -1147,8 +1207,9 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         }, now);
         continue;
       }
+      let parsed: ContinuationDeliveryClaim;
       try {
-        return continuationDeliveryClaimFromDurable(claim);
+        parsed = continuationDeliveryClaimFromDurable(claim);
       } catch {
         await this.durableRuns.commitDelivery(claim, claim.recoveredFromExpiredLease
           ? {
@@ -1163,6 +1224,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
             }, now);
         continue;
       }
+      if (parsed.kind !== 'artifact' || (isDeliveryRoute(parsed.route)
+        && artifactDeliveryMatches(job, parsed.route, parseArtifactDelivery(parsed.payload)))) return parsed;
+      await this.durableRuns.commitDelivery(claim, {
+        status: claim.recoveredFromExpiredLease ? 'unknown' : 'failed',
+        errorCode: 'continuation_delivery_route_invalid',
+        errorSummary: 'Stored delivery does not match its Async Task route or artifact reference.',
+      }, now);
     }
   }
 
@@ -1201,7 +1269,7 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         status: 'failed',
         errorCode: result.errorCode,
         errorSummary: result.errorSummary,
-        ...(claim.kind === 'terminal' ? {} : { terminalConflict: 'superseded' as const }),
+        ...(['progress', 'interrupt'].includes(claim.kind) ? { terminalConflict: 'superseded' as const } : {}),
       };
     }
     const resetAttemptCount = claim.attemptCount === 1
@@ -1215,13 +1283,13 @@ export class SqliteContinuationRepository implements ContinuationRepository {
         retryDelayMs(Math.max(1, claim.attemptCount), this.jitter()),
       ),
       ...(resetAttemptCount ? { resetAttemptCount: true } : {}),
-      ...(claim.kind === 'terminal'
-        ? {}
-        : {
+      ...(['progress', 'interrupt'].includes(claim.kind)
+        ? {
             terminalConflict: resetAttemptCount
               ? 'superseded' as const
               : 'unknown' as const,
-          }),
+          }
+        : {}),
     };
   }
 

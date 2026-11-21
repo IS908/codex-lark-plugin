@@ -133,6 +133,7 @@ var appConfig = {
   continuationArtifactsDir: path.join(continuationRuntimeDir, "artifacts"),
   runtimeConfigDir,
   workspaceProjectsConfigPath: path.join(runtimeConfigDir, "workspace-projects.json"),
+  managedWorkspaceConfigPath: path.join(runtimeConfigDir, "managed-workspace.json"),
   accessControlConfigPath: path.join(runtimeConfigDir, "access-control.json"),
   localCliToolsConfigPath: path.join(runtimeConfigDir, "local-cli-tools.json"),
   privacyRulesPath: path.join(runtimeConfigDir, "privacy-rules.md"),

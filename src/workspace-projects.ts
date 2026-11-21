@@ -79,15 +79,31 @@ export async function resolveWorkspaceProject({
     : project.name === requested) ?? [];
   if (!matches.length || !registry) throw new WorkspaceProjectError('unknown_project');
   if (matches.length > 1) throw new WorkspaceProjectError('ambiguous_project');
-  const project = matches[0];
+  const candidate = await readRegisteredProject(registry, matches[0]);
+  await requireAuthorized(authorizedRoot, candidate.directory);
+  return candidate;
+}
+
+export async function listWorkspaceSourceProjects(registryPath: string, authorizedRoot: string): Promise<WorkspaceProjectBinding[]> {
+  const registry = await readRegistry(registryPath);
+  if (!registry) return [];
+  const projects = await Promise.all(registry.projects.map((project) => readRegisteredProject(registry, project)));
+  if (registry.default?.startsWith('path:')) {
+    const directory = registry.default.slice('path:'.length).trim();
+    if (!directory) throw new WorkspaceProjectError('invalid_selector');
+    projects.push(await readDirectory(path.resolve(authorizedRoot, directory)));
+  }
+  return projects;
+}
+
+async function readRegisteredProject(registry: Registry, project: Registry['projects'][number]): Promise<WorkspaceProjectBinding> {
   const root = registry.roots.find((source) => source.name === project.root);
   if (!root) throw new WorkspaceProjectError('invalid_registry');
   const sourceRoot = await readDirectory(root.path);
   const projectPath = path.resolve(sourceRoot.directory, project.path);
-  if (!contains(sourceRoot.directory, projectPath)) throw new WorkspaceProjectError('outside_project_root');
+  if (!workspacePathContains(sourceRoot.directory, projectPath)) throw new WorkspaceProjectError('outside_project_root');
   const candidate = await readDirectory(projectPath);
-  if (!contains(sourceRoot.directory, candidate.directory)) throw new WorkspaceProjectError('outside_project_root');
-  await requireAuthorized(authorizedRoot, candidate.directory);
+  if (!workspacePathContains(sourceRoot.directory, candidate.directory)) throw new WorkspaceProjectError('outside_project_root');
   return candidate;
 }
 
@@ -152,10 +168,10 @@ async function readDirectory(candidate: string): Promise<WorkspaceProjectBinding
 
 async function requireAuthorized(authorizedRoot: string, candidate: string): Promise<void> {
   const root = await readDirectory(authorizedRoot);
-  if (!contains(root.directory, candidate)) throw new WorkspaceProjectError('outside_authorized_root');
+  if (!workspacePathContains(root.directory, candidate)) throw new WorkspaceProjectError('outside_authorized_root');
 }
 
-function contains(root: string, candidate: string): boolean {
+export function workspacePathContains(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }

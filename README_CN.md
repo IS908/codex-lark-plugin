@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.16.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.17.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -225,6 +225,38 @@ npm run --silent doctor -- --workspace-storage --json
 让已保存的会话或运行换目录，目录被移动或替换时需为新工作重新显式选择。绑定目录必须已在
 `LARK_CODEX_EXEC_CWD` 授权范围内，Async Task 还必须在 `LARK_CONTINUATION_WORKING_ROOT` 内。
 注册表不会扩大权限、改变沙箱、创建 checkout 或移动文件。
+
+#### 托管运行目录
+
+可通过创建 `~/.codex/channels/lark/runtime-config/managed-workspace.json` 启用：
+
+```json
+{
+  "version": 1,
+  "scratchRoot": "/Users/you/workspace/run-scratch",
+  "artifactRoot": "/Users/you/workspace/run-artifacts"
+}
+```
+
+请先创建两个 POSIX 目录。目录必须由插件账号拥有、不能由其他用户写入、互不嵌套，且都在
+工作负载原有授权范围内。托管目录不能与当前选择、项目注册表或账本历史绑定中的源码项目重叠。
+托管路径及其上级目录必须保护目录项不被非受信账号写入；macOS 的扩展 ACL 只接受拒绝条目。
+`workspace-write` 模式需绑定源码项目。
+目录授权不能隔离已作为插件账号拥有无限制访问的其它进程。`danger-full-access` 的前台和
+Cron 不支持启用托管目录。
+
+每次运行登记各自的临时目录和正式产物目录，重试不会从修改后的配置重新选择根目录。
+托管 Async Task 的 `/task status ID` 会显示已提交 checkpoint 的产物 ID；即使临时目录不可用，
+也可以在私聊或任务原群原话题用 `/task artifact ID ARTIFACT_ID` 请求投递正式文件。
+待投递请求可跨重启恢复，上传前会再次校验文件。
+配置不会迁移或清理现有文件。
+
+提示词型 Cron 可在任务提示词中显式要求文件交付。托管运行最多登记 5 个非空正式文件，
+每个不超过 30 MB。报告确认发送后，投递队列再校验并以回复方式发送附件；附件失败不会重发报告。
+
+托管前台 IM 轮次在发送前登记文本回复和用户明确要求的正式文件。文本回复确认后，插件重连或
+重放同一轮次时，可在不重跑 Codex、无需临时目录的情况下发送待投递附件。恢复时会重新核对
+路由授权；结果不确定的发送不会自动重试。
 
 ### 第 4 步：启动
 

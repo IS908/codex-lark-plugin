@@ -21,6 +21,11 @@ node --import tsx scripts/workspace-foreground-smoke.ts
 node --import tsx scripts/workspace-cron-smoke.ts
 node --import tsx scripts/workspace-continuation-smoke.ts
 
+echo '=== Managed workspace storage checks ==='
+node --import tsx scripts/managed-workspace-storage-smoke.ts
+node --import tsx scripts/managed-workspace-repository-smoke.ts
+node --import tsx scripts/managed-workspace-artifact-smoke.ts
+
 echo ""
 echo "=== Continuation domain checks ==="
 node --import tsx scripts/continuation-domain-smoke.ts

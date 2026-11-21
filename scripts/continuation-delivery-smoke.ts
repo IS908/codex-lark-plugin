@@ -309,4 +309,21 @@ assert.deepEqual(await delivery.deliver(commentClaim()), {
   errorSummary: 'Lark rejected the task update.',
 });
 
+const artifactClaim = imClaim({ kind: 'artifact', payload: JSON.stringify({
+  version: 1, chatType: 'group', artifactId: 'result', path: 'result.bin', sha256: 'a'.repeat(64),
+}) });
+for (const size of [0, 30_000_001]) {
+  let resolvedTransport = false;
+  const adapter = createLarkContinuationDelivery(() => {
+    resolvedTransport = true;
+    return transport;
+  }, { now: () => new Date(now) }, async () => Buffer.alloc(size));
+  assert.deepEqual(await adapter.deliver(artifactClaim), {
+    status: 'failed',
+    errorCode: 'artifact_delivery_size_unsupported',
+    errorSummary: 'IM delivery requires a nonempty file no larger than 30 MB.',
+  });
+  assert.equal(resolvedTransport, false);
+}
+
 console.log('continuation delivery smoke: PASS');

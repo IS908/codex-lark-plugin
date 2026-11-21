@@ -1,3 +1,5 @@
+import { isFeishuOpenMessageId } from '../codex-exec-error.js';
+import { artifactDeliveryMatches, IM_ARTIFACT_SIZE_NOTE, isImArtifactSize } from './artifact-delivery.js';
 import type {
   AsyncTaskContract,
   AsyncTaskFactSnapshot,
@@ -13,7 +15,8 @@ import { CONTINUATION_LIMITS, isContinuationTerminal } from '../domain/continuat
 import type { WorkspaceProjectBinding } from '../domain/workspace.js';
 import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
-import { validateWorkspaceProject } from '../workspace-projects.js';
+import { pinWorkspacePath, validateWorkspaceProject } from '../workspace-projects.js';
+import { readManagedWorkspaceRoots, validateManagedWorkspaceRoots } from '../managed-workspace-storage.js';
 import {
   continuationCreateIdempotencyKey,
   continuationJobId,
@@ -29,6 +32,8 @@ export interface ContinuationServiceOptions {
   repository: ContinuationRepository;
   allowedWorkingRoot: string;
   foregroundWorkingRoot?: string;
+  sourceRegistryPath?: string;
+  managedWorkspaceConfigPath?: string;
   filesystemMode: ContinuationFilesystemMode;
   maxAttempts: number;
   maxRetries: number;
@@ -87,6 +92,9 @@ export interface ContinuationTaskService {
     limit?: number,
   ): Promise<ContinuationJob[]>;
   getForActor(jobId: string, actorOpenId: string, ownerOpenId?: string | null): Promise<ContinuationJob>;
+  enqueueArtifactForActor?(
+    jobId: string, artifactId: string, message: LarkMessage, ownerOpenId?: string | null,
+  ): Promise<void>;
   cancelForActor(
     jobId: string,
     actorOpenId: string,
@@ -198,6 +206,10 @@ export class ContinuationService implements ContinuationTaskService {
     workspaceProject?: WorkspaceProjectBinding,
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     assertEligibleSource(message);
+    if (this.options.managedWorkspaceConfigPath) {
+      const existing = await this.findExistingFromMessage(message);
+      if (existing) return { job: existing, created: false };
+    }
     const now = this.options.clock.now();
     const {
       resolvedWorkingDirectory,
@@ -269,6 +281,19 @@ export class ContinuationService implements ContinuationTaskService {
       ], workspaceProject);
       resolvedWorkingDirectory.workingDirectory = bound.directory;
     }
+    const authorizedRoots = [
+      resolvedWorkingDirectory.root,
+      this.options.foregroundWorkingRoot ?? resolvedWorkingDirectory.root,
+    ] as const;
+    const managedWorkspaceRoots = this.options.managedWorkspaceConfigPath
+      ? await readManagedWorkspaceRoots({
+        configPath: this.options.managedWorkspaceConfigPath, authorizedRoots, project: workspaceProject,
+        sourceRegistryPath: this.options.sourceRegistryPath, sourceRegistryRoot: authorizedRoots[1],
+      }) : undefined;
+    if (managedWorkspaceRoots && !workspaceProject) {
+      workspaceProject = await pinWorkspacePath(resolvedWorkingDirectory.root, resolvedWorkingDirectory.workingDirectory);
+      await validateManagedWorkspaceRoots(managedWorkspaceRoots, { authorizedRoots, project: workspaceProject });
+    }
     const route = deriveRoute(message);
     const brief = sanitizeBrief(action);
     if (brief.title.length > CONTINUATION_LIMITS.titleChars) {
@@ -314,6 +339,7 @@ export class ContinuationService implements ContinuationTaskService {
         mode: this.options.filesystemMode,
         requestedPaths,
         ...(workspaceProject ? { workspaceProject } : {}),
+        ...(managedWorkspaceRoots ? { managedWorkspaceRoots } : {}),
       },
       hostTools: brief.requiredTools,
       network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',
@@ -382,6 +408,26 @@ export class ContinuationService implements ContinuationTaskService {
     ownerOpenId?: string | null,
   ): Promise<ContinuationJob> {
     return this.requireAuthorizedJob(jobId, actorOpenId, ownerOpenId);
+  }
+
+  async enqueueArtifactForActor(
+    jobId: string, artifactId: string, message: LarkMessage, ownerOpenId?: string | null,
+  ): Promise<void> {
+    const { chatType, chatId, threadId, messageId } = message;
+    if ((chatType !== 'p2p' && chatType !== 'group') || !isFeishuOpenMessageId(messageId)) throw notAccessibleError();
+    const job = await this.requireAuthorizedJob(jobId, message.senderId, ownerOpenId);
+    const reference = job.checkpoint?.artifacts.find((entry) => entry.id === artifactId);
+    if (!reference) throw notAccessibleError();
+    const route = { kind: 'message_thread', conversationId: chatId, sourceMessageId: messageId, ...(threadId ? { threadId } : {}) } as const;
+    const artifact = { version: 1, chatType, artifactId, path: reference.path, sha256: reference.sha256 } as const;
+    if (!artifactDeliveryMatches(job, route, artifact)) throw notAccessibleError();
+    const { repository, clock } = this.options;
+    const content = await repository.readManagedArtifact?.(job, artifact.path, artifact.sha256);
+    if (!content) throw notAccessibleError();
+    if (!isImArtifactSize(content.length)) {
+      throw new ContinuationServiceError('invalid_state', `Managed artifact retained locally: ${IM_ARTIFACT_SIZE_NOTE}`);
+    }
+    if (!await repository.enqueueManagedArtifact?.(jobId, route, artifact, clock.now().toISOString())) throw notAccessibleError();
   }
 
   async cancelForActor(

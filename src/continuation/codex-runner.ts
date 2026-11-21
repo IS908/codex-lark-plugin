@@ -28,8 +28,13 @@ import type {
   ContinuationToolInvoker,
 } from '../ports/continuation.js';
 import { untrustedDataBlock } from '../prompts.js';
+import type { ManagedRunAllocation } from '../domain/managed-workspace.js';
+import { ManagedWorkspaceStorageError } from '../managed-workspace-errors.js';
+import { withManagedWorkspace } from '../managed-workspace-exec.js';
+import type { ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import { validateWorkspaceProject, WorkspaceProjectError } from '../workspace-projects.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
+import { allocateContinuationWorkspace, continuationArtifactView } from './managed-workspace.js';
 import { redactContinuationText } from './redaction.js';
 import { decideRecovery } from './recovery-policy.js';
 import type { DurableRunFailure } from '../domain/durable-run.js';
@@ -47,6 +52,8 @@ export interface ContinuationCodexExecutorOptions {
   configuredSandbox: CodexExecSandbox;
   currentWorkingRoot: string;
   foregroundWorkingRoot?: string;
+  sourceRegistryPath?: string;
+  managedWorkspaceStore?: () => ManagedWorkspaceStore | undefined;
   runCodexExec?: CodexExecRunner;
   command?: string;
   toolInvoker?: ContinuationToolInvoker;
@@ -374,15 +381,19 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           };
         }
       }
-      const artifactDir = await this.options.artifactStore.ensure(claim.job.jobId);
-      return await this.executeGuardedStep(claim, workingDirectory, artifactDir, signal);
+      const store = claim.job.permissions.filesystem.managedWorkspaceRoots ? this.options.managedWorkspaceStore?.() : undefined;
+      const managed = await allocateContinuationWorkspace(claim.job, store, this.options);
+      const artifactStore = continuationArtifactView(this.options.artifactStore, claim.job, store, this.options);
+      const artifactDir = await artifactStore.ensure(claim.job.jobId);
+      return await this.executeGuardedStep(claim, workingDirectory, artifactDir, artifactStore, managed, signal);
     } catch (error) {
-      if (error instanceof ContinuationWorkingDirectoryError || error instanceof WorkspaceProjectError) {
+      if (error instanceof ContinuationWorkingDirectoryError || error instanceof WorkspaceProjectError
+        || error instanceof ManagedWorkspaceStorageError) {
         return {
           outcome: blockedCapabilityOutcome({
             checkpoint: checkpointForClaim(claim),
             errorCode: 'continuation_working_directory_denied',
-            errorSummary: error instanceof WorkspaceProjectError
+            errorSummary: error instanceof WorkspaceProjectError || error instanceof ManagedWorkspaceStorageError
               ? error.message
               : 'The continuation working directory is no longer authorized by its snapshot and current operator policy.',
             requiredCapability: 'filesystem.workspace',
@@ -405,12 +416,14 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     return binding.directory;
   }
 
-  private workspaceDirectoryGuard(claim: ContinuationClaim): WorkspaceDirectoryGuard | undefined {
+  private workspaceDirectoryGuard(claim: ContinuationClaim, managed?: ManagedRunAllocation): WorkspaceDirectoryGuard | undefined {
     const { root, workspaceProject } = claim.job.permissions.filesystem;
     if (workspaceProject === undefined) return undefined;
     return {
       binding: workspaceProject,
       authorizedRoots: [root, this.options.currentWorkingRoot, this.options.foregroundWorkingRoot ?? this.options.currentWorkingRoot],
+      ...(managed ? { requireProtectedAncestry: true,
+        auxiliaryBindings: [managed.roots.scratch, managed.roots.artifacts, managed.scratch, managed.artifacts] } : {}),
     };
   }
 
@@ -418,9 +431,11 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     claim: ContinuationClaim,
     workingDirectory: string,
     artifactDir: string,
+    artifactStore: ContinuationArtifactStore,
+    managed: ManagedRunAllocation | undefined,
     parentSignal: AbortSignal,
   ): Promise<ContinuationExecutionResult> {
-    const artifactGuard = await this.startArtifactGuard(claim.job.jobId, parentSignal);
+    const artifactGuard = await this.startArtifactGuard(claim.job.jobId, parentSignal, artifactStore);
     try {
       const managedInputs = claim.job.sourceFacts.inputs.map((input) => {
         if (!this.options.inputStore) {
@@ -434,11 +449,11 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           sizeBytes: input.sizeBytes,
         };
       });
-      const request: CodexExecRequest = {
+      const baseRequest: CodexExecRequest = {
         prompt: buildContinuationPrompt(claim, artifactDir, managedInputs),
         ...(this.options.command ? { command: this.options.command } : {}),
         cwd: workingDirectory,
-        workspaceDirectory: this.workspaceDirectoryGuard(claim),
+        workspaceDirectory: this.workspaceDirectoryGuard(claim, managed),
         timeoutMs: claim.job.timeoutSeconds * 1_000,
         sandbox: effectiveSandbox(
           claim.job.permissions.filesystem.mode,
@@ -458,13 +473,14 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
             : []),
           `sandbox_workspace_write.network_access=${claim.job.permissions.network === 'enabled'}`,
         ],
-        additionalWritableDirs: [artifactDir],
+        ...(!managed ? { additionalWritableDirs: [artifactDir] } : {}),
         traceLogId: claim.job.jobId,
         traceRunId: claim.attempt.attemptId,
         ...(claim.job.permissions.profile === 'trusted_personal_workspace'
           ? { forceToolTrace: true }
           : {}),
       };
+      const request = managed ? withManagedWorkspace(baseRequest, managed) : baseRequest;
 
       const recovery = await this.options.toolInvoker?.recover(claim);
       if (recovery?.status === 'failed') {
@@ -499,6 +515,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           claim.job.executionSessionId,
           false,
           artifactGuard.signal,
+          artifactStore,
         );
       }
 
@@ -506,7 +523,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       const outcome = await parseOutcome(
         result.text,
         claim.job.jobId,
-        this.options.artifactStore,
+        artifactStore,
       );
       if (outcome.outcome === 'tool_request') {
         return await this.executeToolRequest(
@@ -516,6 +533,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           result.sessionId,
           replacedSession,
           artifactGuard.signal,
+          artifactStore,
         );
       }
       return {
@@ -530,6 +548,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
   private async startArtifactGuard(
     jobId: string,
     parentSignal: AbortSignal,
+    artifactStore: ContinuationArtifactStore,
   ): Promise<{ signal: AbortSignal; stop: () => Promise<void> }> {
     const controller = new AbortController();
     const relayAbort = (): void => controller.abort(parentSignal.reason);
@@ -541,7 +560,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     const check = async (): Promise<void> => {
       if (violation) return;
       try {
-        await this.options.artifactStore.assertWithinLimit(jobId);
+        await artifactStore.assertWithinLimit(jobId);
       } catch (error) {
         violation = new ContinuationExecutionError(
           'continuation_artifact_limit_exceeded',
@@ -582,6 +601,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     firstSessionId: string | null | undefined,
     firstReplacedSession: boolean,
     signal: AbortSignal,
+    artifactStore: ContinuationArtifactStore,
   ): Promise<ContinuationExecutionResult> {
     const firstSessionPatch = executionSessionPatch(firstSessionId, firstReplacedSession);
     if (
@@ -648,6 +668,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       firstSessionId,
       firstReplacedSession,
       signal,
+      artifactStore,
     );
   }
 
@@ -659,6 +680,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     previousSessionId: string | null | undefined,
     previousReplacedSession: boolean,
     signal: AbortSignal,
+    artifactStore: ContinuationArtifactStore,
   ): Promise<ContinuationExecutionResult> {
     const toolResultPrompt = buildContinuationToolResultPrompt(claim, toolRequest, resultMessage);
     const freshSessionPrompt = `${baseRequest.prompt}\n\n${toolResultPrompt}`;
@@ -677,7 +699,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     const followupOutcome = await parseOutcome(
       followup.result.text,
       claim.job.jobId,
-      this.options.artifactStore,
+      artifactStore,
     );
     if (followupOutcome.outcome === 'tool_request') {
       return {
@@ -713,6 +735,11 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     const revalidateWorkspace = async () => {
       if (claim.job.permissions.filesystem.workspaceProject !== undefined) {
         await this.validateRunWorkingDirectory(claim);
+      }
+      if (request.workspaceDirectory) {
+        for (const binding of request.workspaceDirectory.auxiliaryBindings ?? []) {
+          await validateWorkspaceProject(request.workspaceDirectory.authorizedRoots, binding);
+        }
       }
     };
     try {
