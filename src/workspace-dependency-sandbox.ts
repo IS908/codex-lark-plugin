@@ -68,7 +68,10 @@ export async function prepareWorkspaceDependencySandbox(input: {
     for (const entry of system) {
       if (!mounts.supports(entry) || !mounts.supports(await fs.realpath(entry))) invalid();
     }
-    const rules = new Map<string, 'read' | 'write'>([...system, ...readonly.map(({ directory }) => directory)].map((root) => [root, 'read']));
+    if (!literalPath(launcher.command)) invalid();
+    // The pinned Linux launcher re-enters itself inside Bubblewrap before executing the payload.
+    const rules = new Map<string, 'read' | 'write'>([...system, launcher.command, ...readonly.map(({ directory }) => directory)]
+      .map((root) => [root, 'read']));
     addCodexWorkspaceWriteRoot(rules, cwd);
     return { command: launcher.command, args: ['sandbox', ...namedCodexSandboxOverrides(profile, rules, false)
       .flatMap((setting) => ['-c', setting]), '-P', profile, '-C', cwd, '--', executable], env: launcher.env };
