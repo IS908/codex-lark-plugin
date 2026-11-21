@@ -1,4 +1,5 @@
 import type { CronJobDiagnosticSnapshot } from '../cronjob-diagnostic-contracts.js';
+import { workspaceProjectBindingSchema, type WorkspaceProjectBinding } from '../domain/workspace.js';
 
 export const CRON_RUN_INPUT_VERSION = 1;
 export const CRON_RUN_STATE_VERSION = 1;
@@ -17,6 +18,7 @@ export interface CronRunJobSnapshot {
   content?: string;
   messageType?: string;
   model?: string;
+  workspaceProject?: WorkspaceProjectBinding;
   targetChatId: string;
   originChatId: string;
   createdBy: string;
@@ -140,6 +142,9 @@ export function parseCronRunInput(
       ? { messageType: nonEmpty(rawJob.messageType, 'job.messageType') }
       : {}),
     ...(rawJob.model !== undefined ? { model: nonEmpty(rawJob.model, 'job.model') } : {}),
+    ...(rawJob.workspaceProject !== undefined && type === 'prompt'
+      ? { workspaceProject: workspaceProjectBindingSchema.parse(rawJob.workspaceProject) }
+      : {}),
     targetChatId: nonEmpty(rawJob.targetChatId, 'job.targetChatId'),
     originChatId: nonEmpty(rawJob.originChatId, 'job.originChatId'),
     createdBy: nonEmpty(rawJob.createdBy, 'job.createdBy'),

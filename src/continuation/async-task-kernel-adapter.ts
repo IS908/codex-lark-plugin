@@ -22,6 +22,7 @@ import type {
   DurableRunWorkloadContext,
 } from '../domain/durable-run.js';
 import { serializeDurableRunJson } from '../domain/durable-run.js';
+import { workspaceProjectBindingSchema } from '../domain/workspace.js';
 import { formatContinuationDiagnosticMessage } from '../diagnostic-log-format.js';
 import type {
   ContinuationClaimMutationResult,
@@ -1050,6 +1051,8 @@ function isPermissionEnvelope(value: unknown): boolean {
     && typeof value.filesystem.root === 'string'
     && ['read-only', 'workspace-write'].includes(String(value.filesystem.mode))
     && isStringArray(value.filesystem.requestedPaths)
+    && (value.filesystem.workspaceProject === undefined
+      || workspaceProjectBindingSchema.safeParse(value.filesystem.workspaceProject).success)
     && isStringArray(value.hostTools)
     && ['none', 'enabled'].includes(String(value.network))
     && ['denied', 'allowed'].includes(String(value.externalSideEffects))

@@ -38,6 +38,8 @@ import {
 import { listConfiguredLocalCliToolNames } from './local-cli-tools.js';
 import { logSafeError } from './safe-log.js';
 import { accessControlStore } from './runtime-access-control.js';
+import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
+import { readWorkspaceProjectSelector, resolveWorkspaceProject, WorkspaceProjectError } from './workspace-projects.js';
 import {
   isProfileSessionCompatible,
   profileSessionBinding,
@@ -68,6 +70,7 @@ export interface CodexExecDeliveryBaseOptions {
   traceRunId?: string;
   abortSignal?: AbortSignal;
   actionPolicy?: CodexExecActionPolicy;
+  cronWorkspaceProject?: WorkspaceProjectBinding;
 }
 
 export interface CodexExecDeliveryOutput {
@@ -458,8 +461,28 @@ export async function deliverMessageViaCodexExec(
   const sessionKey = buildCodexExecSessionKey(message.chatId, message.threadId);
   const storedSession = useCodexSessions ? await sessionStore.get(sessionKey) : null;
   const requiredProfileSession = profileSessionBinding(message);
-  const existingSession = isProfileSessionCompatible(message, storedSession)
+  const compatibleSession = isProfileSessionCompatible(message, storedSession)
     ? storedSession
+    : null;
+  const workspaceOptions = {
+    authorizedRoot: appConfig.codexExecCwd,
+    registryPath: appConfig.workspaceProjectsConfigPath,
+  };
+  const foreground = message.chatType === 'p2p' || message.chatType === 'group' || message.chatType === 'doc_comment';
+  const selector = foreground ? readWorkspaceProjectSelector(message.currentUserText) : undefined;
+  const savedWorkspace = storedSession?.workspaceProjectSenderId === message.senderId
+    ? storedSession.workspaceProject
+    : undefined;
+  const legacySession = compatibleSession?.sessionId && compatibleSession.workspaceProject === undefined;
+  let workspace: WorkspaceProjectBinding | undefined;
+  if (foreground && (selector !== undefined || savedWorkspace !== undefined || !legacySession)) {
+    workspace = await resolveWorkspaceProject({ ...workspaceOptions, selector, persisted: savedWorkspace });
+  } else if (message.chatType === 'cronjob' && opts.cronWorkspaceProject !== undefined) {
+    workspace = await resolveWorkspaceProject({ ...workspaceOptions, persisted: opts.cronWorkspaceProject });
+  }
+  const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace)
+    && (workspace === undefined || compatibleSession?.workspaceProjectSenderId === message.senderId)
+    ? compatibleSession
     : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
@@ -512,7 +535,7 @@ export async function deliverMessageViaCodexExec(
     ),
     imagePaths: collectImagePaths(message),
     command: appConfig.codexExecCommand,
-    cwd: appConfig.codexExecCwd,
+    cwd: workspace?.directory ?? appConfig.codexExecCwd,
     timeoutMs: appConfig.codexExecTimeoutMs,
     sandbox: appConfig.codexExecSandbox,
     model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
@@ -551,12 +574,16 @@ export async function deliverMessageViaCodexExec(
 
   let result;
   let usedResumeSessionId = request.resumeSessionId;
+  const runInWorkspace: CodexExecRunner = async (runRequest) => {
+    if (workspace) await resolveWorkspaceProject({ ...workspaceOptions, persisted: workspace });
+    return runCodexExec(runRequest);
+  };
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
   try {
     progressSink?.start();
-    result = normalizeCodexExecResult(await runCodexExec(request));
+    result = normalizeCodexExecResult(await runInWorkspace(request));
   } catch (err) {
-    if (!request.resumeSessionId || isCodexExecTimeoutError(err)) {
+    if (!request.resumeSessionId || isCodexExecTimeoutError(err) || err instanceof WorkspaceProjectError) {
       await actionChannel.cleanup();
       throw err;
     }
@@ -568,7 +595,7 @@ export async function deliverMessageViaCodexExec(
     await actionChannel?.reset();
     try {
       result = normalizeCodexExecResult(
-        await runCodexExec({ ...request, resumeSessionId: null }),
+        await runInWorkspace({ ...request, resumeSessionId: null }),
       );
     } catch (retryErr) {
       await actionChannel.cleanup();
@@ -590,6 +617,7 @@ export async function deliverMessageViaCodexExec(
       ...preserveConversationBoundaryFields(existingSession),
       ...(sessionModel ? { model: sessionModel } : {}),
       ...(requiredProfileSession ?? {}),
+      ...(workspace ? { workspaceProject: workspace, workspaceProjectSenderId: message.senderId } : {}),
     });
   }
 
@@ -613,6 +641,8 @@ export async function deliverMessageViaCodexExec(
       message,
       actions: sideChannelActions,
       parentSessionId: result.sessionId ?? usedResumeSessionId ?? null,
+      workspaceProject: workspace,
+      explicitWorkspaceProject: selector !== undefined,
       model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
       continuationPermitted,
     });
@@ -745,6 +775,8 @@ async function dispatchCodexExecActions(input: {
   parentSessionId: string | null;
   model: string | null;
   continuationPermitted: boolean;
+  workspaceProject?: WorkspaceProjectBinding;
+  explicitWorkspaceProject: boolean;
 }): Promise<CodexExecActionExecutionResult[]> {
   const blocked = new Set(input.opts.actionPolicy?.blockedActionTypes ?? []);
   const allowedActions = input.actions.filter((action) => !blocked.has(action.type));
@@ -755,6 +787,8 @@ async function dispatchCodexExecActions(input: {
         parentSessionId: input.parentSessionId,
         model: input.model,
         continuationPermitted: input.continuationPermitted,
+        workspaceProject: input.workspaceProject,
+        explicitWorkspaceProject: input.explicitWorkspaceProject,
       })
     : [];
   let allowedIndex = 0;

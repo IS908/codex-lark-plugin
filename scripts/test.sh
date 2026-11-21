@@ -16,6 +16,11 @@ echo ""
 echo "=== Workspace storage inventory checks ==="
 node --import tsx scripts/workspace-storage-smoke.ts
 
+node --import tsx scripts/workspace-projects-smoke.ts
+node --import tsx scripts/workspace-foreground-smoke.ts
+node --import tsx scripts/workspace-cron-smoke.ts
+node --import tsx scripts/workspace-continuation-smoke.ts
+
 echo ""
 echo "=== Continuation domain checks ==="
 node --import tsx scripts/continuation-domain-smoke.ts

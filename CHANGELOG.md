@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.16.0] - 2026-11-21
+
+### Added
+- Let operators register multiple workspace source roots and select a project for exec-mode sessions, prompt Cron runs, and Async Tasks without widening filesystem permissions.
+- Pin canonical project bindings in stored sessions and runs; reject directories that have moved, been replaced, or fallen outside the authorized root.
+
 ## [2.15.0] - 2026-11-21
 
 ### Added

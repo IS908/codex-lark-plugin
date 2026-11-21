@@ -28,6 +28,7 @@ import type {
   ContinuationToolInvoker,
 } from '../ports/continuation.js';
 import { untrustedDataBlock } from '../prompts.js';
+import { validateWorkspaceProject, WorkspaceProjectError } from '../workspace-projects.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
 import { redactContinuationText } from './redaction.js';
 import { decideRecovery } from './recovery-policy.js';
@@ -348,24 +349,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           }),
         };
       }
-      let workingDirectory: string;
-      try {
-        workingDirectory = await validateContinuationWorkingDirectory(
-          [claim.job.permissions.filesystem.root, this.options.currentWorkingRoot],
-          claim.job.workingDirectory,
-        );
-      } catch (error) {
-        if (!(error instanceof ContinuationWorkingDirectoryError)) throw error;
-        return {
-          outcome: blockedCapabilityOutcome({
-            checkpoint: checkpointForClaim(claim),
-            errorCode: 'continuation_working_directory_denied',
-            errorSummary: 'The continuation working directory is no longer authorized by its snapshot and current operator policy.',
-            requiredCapability: 'filesystem.workspace',
-            unperformedWork: ['Use an authorized continuation working directory.'],
-          }),
-        };
-      }
+      const workingDirectory = await this.validateRunWorkingDirectory(claim);
       if (claim.job.sourceFacts.inputs.length > 0) {
         if (!this.options.inputStore) {
           throw new Error('Continuation input storage is unavailable for a Job with managed inputs.');
@@ -391,8 +375,36 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
       const artifactDir = await this.options.artifactStore.ensure(claim.job.jobId);
       return await this.executeGuardedStep(claim, workingDirectory, artifactDir, signal);
     } catch (error) {
+      if (error instanceof ContinuationWorkingDirectoryError || error instanceof WorkspaceProjectError) {
+        return {
+          outcome: blockedCapabilityOutcome({
+            checkpoint: checkpointForClaim(claim),
+            errorCode: 'continuation_working_directory_denied',
+            errorSummary: error instanceof WorkspaceProjectError
+              ? error.message
+              : 'The continuation working directory is no longer authorized by its snapshot and current operator policy.',
+            requiredCapability: 'filesystem.workspace',
+            unperformedWork: ['Use an authorized continuation working directory.'],
+          }),
+        };
+      }
       throw mapExecutorError(error);
     }
+  }
+
+  private async validateRunWorkingDirectory(claim: ContinuationClaim): Promise<string> {
+    const { permissions, workingDirectory } = claim.job;
+    const resolved = await validateContinuationWorkingDirectory(
+      [permissions.filesystem.root, this.options.currentWorkingRoot],
+      workingDirectory,
+    );
+    if (permissions.filesystem.workspaceProject !== undefined) {
+      const binding = await validateWorkspaceProject(this.options.currentWorkingRoot, permissions.filesystem.workspaceProject);
+      if (binding.directory !== resolved || binding.directory !== workingDirectory) {
+        throw new WorkspaceProjectError('directory_changed');
+      }
+    }
+    return resolved;
   }
 
   private async executeGuardedStep(
@@ -690,8 +702,14 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
     request: CodexExecRequest,
     freshSessionPrompt = request.prompt,
   ) {
+    const revalidateWorkspace = async () => {
+      if (claim.job.permissions.filesystem.workspaceProject !== undefined) {
+        await this.validateRunWorkingDirectory(claim);
+      }
+    };
     try {
       await this.verifyManagedInputsBeforeLaunch(claim);
+      await revalidateWorkspace();
       return {
         result: normalizeCodexExecResult(await this.runCodexExec(request)),
         replacedSession: false,
@@ -706,6 +724,7 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
         throw error;
       }
       await this.verifyManagedInputsBeforeLaunch(claim);
+      await revalidateWorkspace();
       return {
         result: normalizeCodexExecResult(
           await this.runCodexExec({

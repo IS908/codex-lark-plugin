@@ -92,6 +92,7 @@ export function createCronPromptExecutor(options: CronPromptExecutorOptions): Cr
         message,
         displayLabel: `CronJob · ${input.job.name}`,
         modelOverride: input.job.model,
+        cronWorkspaceProject: input.job.workspaceProject,
         sessionStore: options.sessionStore,
         sessionHealth: options.sessionHealth,
         actionDispatcher: options.actionDispatcher,

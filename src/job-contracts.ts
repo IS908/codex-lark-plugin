@@ -1,4 +1,5 @@
 import type { CronJobDiagnosticSnapshot } from './cronjob-diagnostic-contracts.js';
+import type { WorkspaceProjectBinding } from './domain/workspace.js';
 
 export interface JobMeta {
   id: string;
@@ -19,6 +20,7 @@ export interface JobMeta {
   origin_chat_id: string;
   /** Optional model override for prompt-type jobs. Passed in notification meta so Codex can dispatch with a supported model id. */
   model?: string;
+  workspace_project?: WorkspaceProjectBinding;
   status: 'active' | 'paused';
   created_by: string;
   created_at: string;

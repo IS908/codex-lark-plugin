@@ -10,8 +10,10 @@ import type {
   ContinuationStatus,
 } from '../domain/continuation.js';
 import { CONTINUATION_LIMITS, isContinuationTerminal } from '../domain/continuation.js';
+import type { WorkspaceProjectBinding } from '../domain/workspace.js';
 import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
+import { validateWorkspaceProject } from '../workspace-projects.js';
 import {
   continuationCreateIdempotencyKey,
   continuationJobId,
@@ -67,6 +69,7 @@ export interface ContinuationTaskService {
     parentSessionId?: string | null,
     selectedModel?: string | null,
     sourceInputCount?: number,
+    workspaceProject?: WorkspaceProjectBinding,
   ): Promise<void>;
   createFromMessage(
     action: ContinuationActionInput,
@@ -74,6 +77,7 @@ export interface ContinuationTaskService {
     parentSessionId?: string | null,
     selectedModel?: string | null,
     sourceInputs?: AsyncTaskSourceInput[],
+    workspaceProject?: WorkspaceProjectBinding,
   ): Promise<{ job: ContinuationJob; created: boolean }>;
   listForActor(
     actorOpenId: string,
@@ -178,9 +182,10 @@ export class ContinuationService implements ContinuationTaskService {
     _parentSessionId?: string | null,
     selectedModel?: string | null,
     sourceInputCount = 0,
+    workspaceProject?: WorkspaceProjectBinding,
   ): Promise<void> {
     assertEligibleSource(message);
-    await this.prepareCreation(action, message, selectedModel, sourceInputCount);
+    await this.prepareCreation(action, message, selectedModel, sourceInputCount, workspaceProject);
   }
 
   async createFromMessage(
@@ -189,6 +194,7 @@ export class ContinuationService implements ContinuationTaskService {
     parentSessionId?: string | null,
     selectedModel?: string | null,
     sourceInputs: AsyncTaskSourceInput[] = [],
+    workspaceProject?: WorkspaceProjectBinding,
   ): Promise<{ job: ContinuationJob; created: boolean }> {
     assertEligibleSource(message);
     const now = this.options.clock.now();
@@ -204,6 +210,7 @@ export class ContinuationService implements ContinuationTaskService {
       message,
       selectedModel,
       sourceInputs.length,
+      workspaceProject,
     );
     const request: ContinuationCreateRequest = {
       idempotencyKey: continuationCreateIdempotencyKey(message.messageId),
@@ -241,6 +248,7 @@ export class ContinuationService implements ContinuationTaskService {
     message: LarkMessage,
     selectedModel: string | null | undefined,
     sourceInputCount: number,
+    workspaceProject: WorkspaceProjectBinding | undefined,
   ) {
     if (
       !Number.isInteger(sourceInputCount)
@@ -251,8 +259,12 @@ export class ContinuationService implements ContinuationTaskService {
     }
     const resolvedWorkingDirectory = await resolveContinuationWorkingDirectory(
       this.options.allowedWorkingRoot,
-      action.working_directory ?? '.',
+      workspaceProject ? '.' : action.working_directory ?? '.',
     );
+    if (workspaceProject) {
+      const bound = await validateWorkspaceProject(resolvedWorkingDirectory.root, workspaceProject);
+      resolvedWorkingDirectory.workingDirectory = bound.directory;
+    }
     const route = deriveRoute(message);
     const brief = sanitizeBrief(action);
     if (brief.title.length > CONTINUATION_LIMITS.titleChars) {
@@ -297,6 +309,7 @@ export class ContinuationService implements ContinuationTaskService {
         root: resolvedWorkingDirectory.root,
         mode: this.options.filesystemMode,
         requestedPaths,
+        ...(workspaceProject ? { workspaceProject } : {}),
       },
       hostTools: brief.requiredTools,
       network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',

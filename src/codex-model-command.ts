@@ -458,6 +458,9 @@ async function clearCodexSessionPointer(
     ...(opts.message.threadId ? { threadId: opts.message.threadId } : {}),
     updatedAt: new Date().toISOString(),
     ...(existing?.model ? { model: existing.model } : {}),
+    ...(existing?.workspaceProjectSenderId === opts.message.senderId
+      ? { workspaceProject: existing.workspaceProject, workspaceProjectSenderId: existing.workspaceProjectSenderId }
+      : {}),
     ...(profileBinding ?? {}),
     ...createNextConversationBoundaryFields({
       existing,
