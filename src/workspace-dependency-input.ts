@@ -22,6 +22,9 @@ const dependencyIdentityShape = z.discriminatedUnion('ecosystem', [
     registry: z.string().max(2048), manifestSha256: digestSchema, key: digestSchema }),
   z.strictObject({ ...commonIdentity, ecosystem: z.literal('pip'), policy: z.literal('pip-offline-hashed-wheels-v1'), key: digestSchema }),
 ]);
+export const workspaceDependencyNpmRegistrySchema = z.string().max(2048).refine((value) => {
+  try { registryUrl(value); return true; } catch { return false; }
+});
 export type WorkspaceDependencyIdentity = z.infer<typeof dependencyIdentityShape>;
 type CompatibilityInputs = Omit<Extract<WorkspaceDependencyIdentity, { ecosystem: 'npm' }>, 'key'>
   | Omit<Extract<WorkspaceDependencyIdentity, { ecosystem: 'pip' }>, 'key'>;

@@ -7,8 +7,7 @@ on:
       - 'src/**'
       - 'scripts/workspace-git-*-smoke.ts'
       - 'scripts/workspace-dependency-sandbox-smoke.mjs'
-      - 'scripts/workspace-dependency-input-smoke.ts'
-      - 'scripts/workspace-dependency-cache-smoke.ts'
+      - 'scripts/workspace-dependency-*-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
       - 'package-lock.json'
@@ -19,8 +18,7 @@ on:
       - 'src/**'
       - 'scripts/workspace-git-*-smoke.ts'
       - 'scripts/workspace-dependency-sandbox-smoke.mjs'
-      - 'scripts/workspace-dependency-input-smoke.ts'
-      - 'scripts/workspace-dependency-cache-smoke.ts'
+      - 'scripts/workspace-dependency-*-smoke.ts'
       - 'scripts/fixtures/codex-loopback-exec.ts'
       - 'scripts/fixtures/managed-git-entrypoints.ts'
       - 'package-lock.json'
@@ -88,6 +86,7 @@ jobs:
           test -x "$bundle_dir/$platform/codex-resources/bwrap"
           test "$("$bundle_dir/$binary" --version)" = 'codex-cli 0.171.0'
           node --import tsx scripts/workspace-git-snapshot-smoke.ts
+          node --import tsx scripts/workspace-dependency-registry-smoke.ts
           LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX=1 \
           LARK_TEST_CODEX_NATIVE_BINARY="$bundle_dir/$binary" \
             node --import tsx scripts/workspace-git-replay-smoke.ts
