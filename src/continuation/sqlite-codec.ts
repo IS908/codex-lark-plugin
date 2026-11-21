@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { workspaceProjectBindingSchema } from '../domain/workspace.js';
-import { managedWorkspaceRootsSchema } from '../domain/managed-workspace.js';
+import { managedGitSelectionSchema, managedWorkspaceRootsSchema } from '../domain/managed-workspace.js';
 import { isDeepStrictEqual } from 'node:util';
 import {
   CONTINUATION_CONTRACT_ID_PATTERN,
@@ -1162,12 +1162,14 @@ function validatePermissionEnvelope(
     (envelope.profile !== 'bounded' && envelope.profile !== 'trusted_personal_workspace')
     || !filesystem
     || !hasExactKeys(filesystem as unknown as Record<string, unknown>, [
-      'root', 'mode', 'requestedPaths', 'workspaceProject', 'managedWorkspaceRoots',
+      'root', 'mode', 'requestedPaths', 'workspaceProject', 'managedWorkspaceRoots', 'managedWorkspaceGit',
     ])
     || (filesystem.workspaceProject !== undefined
       && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success)
     || (filesystem.managedWorkspaceRoots !== undefined
       && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success))
+    || (filesystem.managedWorkspaceGit !== undefined
+      && (!filesystem.managedWorkspaceRoots || !managedGitSelectionSchema.safeParse(filesystem.managedWorkspaceGit).success))
     || typeof filesystem.root !== 'string'
     || (requireAbsoluteRoot && !path.isAbsolute(filesystem.root))
     || (filesystem.mode !== 'read-only' && filesystem.mode !== 'workspace-write')

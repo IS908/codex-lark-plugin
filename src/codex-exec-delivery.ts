@@ -41,8 +41,9 @@ import { logSafeError } from './safe-log.js';
 import { accessControlStore } from './runtime-access-control.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { MANAGED_DELIVERY_MAX_BYTES, MANAGED_DELIVERY_MAX_FILES, type ManagedArtifactReference, type ManagedRunAllocation } from './domain/managed-workspace.js';
-import { managedGitCheckoutSessionScope, withManagedWorkspace } from './managed-workspace-exec.js';
+import { managedGitCheckoutSessionScope, protectLegacyGitWorkspace, withManagedWorkspace } from './managed-workspace-exec.js';
 import { admitManagedForegroundRun, managedForegroundRunOwner } from './managed-workspace-admission.js';
+import { resolveManagedGitSelection } from './managed-git-registry.js';
 import { ManagedWorkspaceStorageError, validateManagedRunDirectory } from './managed-workspace-storage.js';
 import { readManagedArtifact } from './managed-workspace-artifact.js';
 import type { ManagedWorkspaceStore } from './ports/managed-workspace.js';
@@ -547,6 +548,10 @@ export async function deliverMessageViaCodexExec(
   if (managed && !sameWorkspaceProject(managed.project, workspace)) {
     throw new ManagedWorkspaceStorageError('invalid_binding');
   }
+  if (!managed) await resolveManagedGitSelection({ configPath: appConfig.managedWorkspaceConfigPath,
+    authorizedRoots: [workspaceOptions.authorizedRoot], project: workspace, preserveOptOut: true,
+    ...(appConfig.codexExecSandbox !== 'read-only' ? { fallbackDirectory: path.resolve(workspaceOptions.authorizedRoot) } : {}),
+  });
   const foregroundArtifacts: ManagedArtifactReference[] = [];
   const onManagedArtifact = managedStore && artifactIO
     ? (reference: ManagedArtifactReference) => { foregroundArtifacts.push(reference); }
@@ -652,7 +657,7 @@ export async function deliverMessageViaCodexExec(
   let result;
   let usedResumeSessionId = request.resumeSessionId;
   const runInWorkspace: CodexExecRunner = async (runRequest) => {
-    if (!launchWorkspace) return runCodexExec(runRequest);
+    if (!launchWorkspace) return runCodexExec(await protectLegacyGitWorkspace(runRequest, appConfig.managedWorkspaceConfigPath));
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...(progressSink ? [progressSink.filePath] : [])];
     // A narrower CWD still needs its one-turn IPC directories, not the entire old working root.
@@ -677,7 +682,9 @@ export async function deliverMessageViaCodexExec(
       },
       ...(sideChannelBindings.length ? { additionalWritableDirs: sideChannelBindings.map((binding) => binding.directory) } : {}),
     };
-    return runCodexExec(managed ? await withManagedWorkspace(guardedRequest, managed) : guardedRequest);
+    return runCodexExec(managed ? await withManagedWorkspace(guardedRequest, managed, {
+      configPath: appConfig.managedWorkspaceConfigPath, sourceRegistryPath: workspaceOptions.registryPath,
+    }) : await protectLegacyGitWorkspace(guardedRequest, appConfig.managedWorkspaceConfigPath));
   };
   if (useCodexSessions) activeCodexExecSessionKeys.add(sessionKey);
   try {

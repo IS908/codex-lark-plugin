@@ -117,6 +117,19 @@ type VerifiedGitCache = SnapshotIdentity & {
   storeFingerprint: string;
 };
 
+// Admission records the exact local footprint. Full object verification belongs to allocation and launch.
+export async function readWorkspaceGitCacheIdentity(input: SnapshotRequest): Promise<VerifiedGitCache> {
+  const { repositoryId, scope, commit } = input;
+  const objectFormat: ObjectFormat = commit.length === 40 ? 'sha1' : 'sha256';
+  const identity = { repositoryId, scope, commit, objectFormat };
+  const key = gitSnapshotKey(identity);
+  const binding = await validateWorkspaceProject(input.authorizedRoots, input.gitDirectory);
+  const { storeFingerprint } = await fingerprintCache(binding, commit, objectFormat).catch(() => {
+    throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  });
+  return { ...identity, key, storeFingerprint };
+}
+
 // Reject stale selections before a caller reserves a run or takes ownership of the cache key.
 export async function assertWorkspaceGitCacheIdentity(input: {
   cache: WorkspaceProjectBinding;

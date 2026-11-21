@@ -33,12 +33,6 @@ export const managedWorkspaceRootsSchema = z.strictObject({
   artifacts: workspaceProjectBindingSchema,
 });
 
-export const managedWorkspaceAdmissionSchema = z.strictObject({
-  roots: managedWorkspaceRootsSchema,
-  createdAt: z.iso.datetime(),
-  fallbackWorkspace: workspaceProjectBindingSchema.optional(),
-});
-
 const foregroundSessionKey = z.string().min(1).max(1024);
 const foregroundDeliveryReceipt = {
   status: z.enum(['pending', 'sending', 'sent', 'failed', 'unknown']),
@@ -80,6 +74,13 @@ export const managedGitSelectionSchema = z.strictObject({
   storeFingerprint: gitDigest,
 }).refine(({ commit, objectFormat }) => commit.length === (objectFormat === 'sha1' ? 40 : 64));
 export type ManagedGitSelection = z.infer<typeof managedGitSelectionSchema>;
+
+export const managedWorkspaceAdmissionSchema = z.strictObject({
+  roots: managedWorkspaceRootsSchema,
+  createdAt: z.iso.datetime(),
+  fallbackWorkspace: workspaceProjectBindingSchema.optional(),
+  git: managedGitSelectionSchema.optional(),
+}).refine(({ git, fallbackWorkspace }) => !git || !fallbackWorkspace);
 
 export function sameManagedGitSelection(a?: ManagedGitSelection, b?: ManagedGitSelection): boolean {
   return a === b || !!a && !!b && sameWorkspaceProject(a.cache, b.cache) && a.repositoryId === b.repositoryId

@@ -30,7 +30,7 @@ import type {
 import { untrustedDataBlock } from '../prompts.js';
 import type { ManagedRunAllocation } from '../domain/managed-workspace.js';
 import { ManagedWorkspaceStorageError } from '../managed-workspace-errors.js';
-import { withManagedWorkspace } from '../managed-workspace-exec.js';
+import { protectLegacyGitWorkspace, withManagedWorkspace } from '../managed-workspace-exec.js';
 import type { ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import { validateWorkspaceProject, WorkspaceProjectError } from '../workspace-projects.js';
 import { ContinuationArtifactStore } from './artifact-store.js';
@@ -53,6 +53,7 @@ export interface ContinuationCodexExecutorOptions {
   currentWorkingRoot: string;
   foregroundWorkingRoot?: string;
   sourceRegistryPath?: string;
+  managedWorkspaceConfigPath?: string;
   managedWorkspaceStore?: () => ManagedWorkspaceStore | undefined;
   runCodexExec?: CodexExecRunner;
   command?: string;
@@ -480,7 +481,10 @@ class ContinuationCodexExecutor implements ContinuationExecutor {
           ? { forceToolTrace: true }
           : {}),
       };
-      const request = managed ? await withManagedWorkspace(baseRequest, managed) : baseRequest;
+      const request = managed ? await withManagedWorkspace(baseRequest, managed, {
+        configPath: this.options.managedWorkspaceConfigPath, sourceRegistryPath: this.options.sourceRegistryPath,
+        sourceRegistryRoot: this.options.foregroundWorkingRoot ?? this.options.currentWorkingRoot,
+      }) : await protectLegacyGitWorkspace(baseRequest, this.options.managedWorkspaceConfigPath);
 
       const recovery = managed?.git ? undefined : await this.options.toolInvoker?.recover(claim);
       if (recovery?.status === 'failed') {

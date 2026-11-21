@@ -93,7 +93,7 @@ try {
     const cacheConfig = selected.length === 40 ? '[core]\n\trepositoryformatversion = 0\n\tbare = true\n'
       : '[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\tobjectformat = sha256\n';
     await fs.writeFile(path.join(directory, 'config'), cacheConfig);
-    execFileSync('git', ['-C', origin, 'pack-objects', '--revs', path.join(directory, 'objects', 'pack', 'pack')], {
+    execFileSync('git', ['-C', origin, '-c', 'pack.writeReverseIndex=false', 'pack-objects', '--no-write-bitmap-index', '--revs', path.join(directory, 'objects', 'pack', 'pack')], {
       env: { PATH: process.env.PATH, HOME: base, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
       input: revisions.join('\n') + '\n', stdio: ['pipe', 'pipe', 'pipe'],
     });

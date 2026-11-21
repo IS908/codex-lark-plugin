@@ -17,6 +17,7 @@ import type { LarkMessage } from '../lark-message.js';
 import type { ContinuationClock, ContinuationRepository } from '../ports/continuation.js';
 import { pinWorkspacePath, validateWorkspaceProject } from '../workspace-projects.js';
 import { readManagedWorkspaceRoots, validateManagedWorkspaceRoots } from '../managed-workspace-storage.js';
+import { resolveManagedGitSelection } from '../managed-git-registry.js';
 import {
   continuationCreateIdempotencyKey,
   continuationJobId,
@@ -294,8 +295,15 @@ export class ContinuationService implements ContinuationTaskService {
       workspaceProject = await pinWorkspacePath(resolvedWorkingDirectory.root, resolvedWorkingDirectory.workingDirectory);
       await validateManagedWorkspaceRoots(managedWorkspaceRoots, { authorizedRoots, project: workspaceProject });
     }
+    const managedWorkspaceGit = managedWorkspaceRoots ? await resolveManagedGitSelection({
+      roots: managedWorkspaceRoots, project: workspaceProject, configPath: this.options.managedWorkspaceConfigPath, authorizedRoots,
+      sourceRegistryPath: this.options.sourceRegistryPath, sourceRegistryRoot: authorizedRoots[1],
+    }) : undefined;
     const route = deriveRoute(message);
     const brief = sanitizeBrief(action);
+    if (managedWorkspaceGit && brief.requiredTools.length) {
+      throw new Error('Host CLI tools are unavailable in an isolated Git checkout.');
+    }
     if (brief.title.length > CONTINUATION_LIMITS.titleChars) {
       throw new Error(`Continuation title exceeds ${CONTINUATION_LIMITS.titleChars} characters.`);
     }
@@ -340,6 +348,7 @@ export class ContinuationService implements ContinuationTaskService {
         requestedPaths,
         ...(workspaceProject ? { workspaceProject } : {}),
         ...(managedWorkspaceRoots ? { managedWorkspaceRoots } : {}),
+        ...(managedWorkspaceGit ? { managedWorkspaceGit } : {}),
       },
       hostTools: brief.requiredTools,
       network: profile === 'trusted_personal_workspace' ? 'enabled' : 'none',

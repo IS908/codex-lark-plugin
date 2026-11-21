@@ -8,7 +8,7 @@ import { mock } from 'node:test';
 import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
 import { buildCodexExecArgs, CodexExecAbortedError, runCodexExecCommand } from '../src/codex-exec.js';
 import { resolveManagedGitLauncher } from '../src/managed-git-launcher.js';
-import { withManagedWorkspace } from '../src/managed-workspace-exec.js';
+import { protectLegacyGitWorkspace, withManagedWorkspace } from '../src/managed-workspace-exec.js';
 import { parseWorkspaceMountTable, workspaceBackingAliases } from '../src/managed-workspace-ancestry.js';
 import { gitSnapshotKey, verifyWorkspaceGitCache } from '../src/workspace-git-snapshot.js';
 import { pinWorkspacePath, workspacePathContains } from '../src/workspace-projects.js';
@@ -28,7 +28,8 @@ assert.ok(!overlaps('/unrelated', '/workspace/cache'));
 
 const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-managed-git-replay-'));
 try {
-  const base = await fs.realpath(fixture);
+  const base = path.join(await fs.realpath(fixture), 'workspace');
+  await fs.mkdir(base);
   const source = path.join(base, 'source');
   const scratch = path.join(base, 'scratch');
   const artifacts = path.join(base, 'artifacts');
@@ -48,7 +49,7 @@ try {
   const commit = git(['-C', source, 'rev-parse', 'HEAD']);
   await fs.writeFile(path.join(cache, 'HEAD'), `${commit}\n`);
   await fs.writeFile(path.join(cache, 'config'), '[core]\n\trepositoryformatversion = 0\n\tbare = true\n');
-  git(['-C', source, 'pack-objects', '--revs', path.join(cache, 'objects', 'pack', 'pack')], `${commit}\n`);
+  git(['-C', source, '-c', 'pack.writeReverseIndex=false', 'pack-objects', '--no-write-bitmap-index', '--revs', path.join(cache, 'objects', 'pack', 'pack')], `${commit}\n`);
 
   const authorizedRoots = [base] as const;
   const gitDirectory = await pinWorkspacePath(base, cache);
@@ -126,7 +127,24 @@ try {
   const execRequest = { cwd: source, prompt: 'Fixture.', sandbox: 'workspace-write' as const,
     extraEnv: { CODEX_HOME: codexHome, GIT_DIR: path.join(source, '.git') },
     workspaceDirectory: { binding: request.project, authorizedRoots } };
-  const prepared = await withManagedWorkspace(execRequest, first);
+  const operator = path.join(path.dirname(base), 'operator');
+  await fs.mkdir(operator, { mode: 0o700 });
+  const gitRegistry = { configPath: path.join(operator, 'managed-workspace.json') };
+  const registryFile = path.join(operator, 'workspace-git-sources.json');
+  const writeRegistry = () => fs.writeFile(registryFile, JSON.stringify({ version: 1, projects: [{ source, cache,
+    repositoryId: request.git.repositoryId, scope: request.git.scope, commit }] }), { mode: 0o600 });
+  await writeRegistry();
+  const legacy = { prompt: 'Fixture.', sandbox: 'workspace-write' as const };
+  assert.deepEqual((await protectLegacyGitWorkspace(legacy, gitRegistry.configPath)).configOverrides, [
+    'sandbox_workspace_write.exclude_tmpdir_env_var=true', 'sandbox_workspace_write.exclude_slash_tmp=true',
+  ]);
+  await assert.rejects(protectLegacyGitWorkspace({ ...legacy, sandbox: 'danger-full-access' }, gitRegistry.configPath),
+    { code: 'git_sandbox_layers_unsupported' });
+  const prepared = await withManagedWorkspace(execRequest, first, gitRegistry);
+  await fs.unlink(registryFile);
+  assert.equal(await protectLegacyGitWorkspace(legacy, gitRegistry.configPath), legacy);
+  await assert.rejects(runCodexExecCommand({ ...prepared, command: '/does-not-exist' }), { code: 'git_selection_revoked' });
+  await writeRegistry();
   assert.equal(prepared.cwd, checkout);
   assert.equal(prepared.workspaceDirectory?.binding.directory, checkout);
   assert.equal(prepared.extraEnv?.GIT_DIR, undefined);
@@ -156,11 +174,11 @@ try {
       abort.abort();
       return { command, env, prefix: [] };
     } }), CodexExecAbortedError);
-  await assert.rejects(withManagedWorkspace({ ...execRequest, profile: 'existing-profile' }, first), { code: 'git_sandbox_invalid' });
-  await assert.rejects(withManagedWorkspace({ ...execRequest, additionalWritableDirs: [source] }, first), { code: 'git_sandbox_invalid' });
+  await assert.rejects(withManagedWorkspace({ ...execRequest, profile: 'existing-profile' }, first, gitRegistry), { code: 'git_sandbox_invalid' });
+  await assert.rejects(withManagedWorkspace({ ...execRequest, additionalWritableDirs: [source] }, first, gitRegistry), { code: 'git_sandbox_invalid' });
   await fs.mkdir(path.join(codexHome, 'rules'));
   await fs.writeFile(path.join(codexHome, 'rules', 'operator.rules'), '# fixture operator policy\n');
-  await assert.rejects(withManagedWorkspace(execRequest, first), { code: 'git_sandbox_layers_unsupported' });
+  await assert.rejects(withManagedWorkspace(execRequest, first, gitRegistry), { code: 'git_sandbox_layers_unsupported' });
   await assert.rejects(runCodexExecCommand({ ...prepared, command: '/does-not-exist' }), { code: 'git_sandbox_layers_unsupported' });
   await fs.unlink(path.join(codexHome, 'rules', 'operator.rules'));
   if (process.env.LARK_TEST_GIT_CHECKOUT_CODEX_SANDBOX === '1') {
@@ -176,7 +194,7 @@ try {
     }
     const env = { ...Object.fromEntries(Object.keys(process.env).map((name) => [name, undefined])),
       CODEX_HOME: codexHome, HOME: base, PATH: process.env.PATH };
-    const launch = await withManagedWorkspace({ ...execRequest, extraEnv: env, command }, first);
+    const launch = await withManagedWorkspace({ ...execRequest, extraEnv: env, command }, first, gitRegistry);
     const marker = 'LARK_SHARED_LAUNCH_SUCCESS';
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
     await fs.writeFile(path.join(checkout, 'launcher-proof.txt'), 'shared launcher');

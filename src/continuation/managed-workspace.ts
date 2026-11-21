@@ -4,11 +4,13 @@ import { sameWorkspaceProject } from '../domain/workspace.js';
 import { ManagedWorkspaceStorageError } from '../managed-workspace-errors.js';
 import type { ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import type { ContinuationArtifactStore } from './artifact-store.js';
+import { resolveManagedGitSelection } from '../managed-git-registry.js';
 
 export interface ContinuationWorkspacePolicy {
   currentWorkingRoot: string;
   foregroundWorkingRoot?: string;
   sourceRegistryPath?: string;
+  managedWorkspaceConfigPath?: string;
 }
 
 export function continuationWorkspaceRoots(job: ContinuationJob, policy: ContinuationWorkspacePolicy) {
@@ -19,17 +21,28 @@ export function continuationWorkspaceRoots(job: ContinuationJob, policy: Continu
 export async function allocateContinuationWorkspace(
   job: ContinuationJob, store: ManagedWorkspaceStore | undefined, policy: ContinuationWorkspacePolicy | undefined,
 ): Promise<ManagedRunAllocation | undefined> {
-  const { managedWorkspaceRoots, workspaceProject } = job.permissions.filesystem;
-  if (!managedWorkspaceRoots) return undefined;
+  const { managedWorkspaceRoots, workspaceProject, managedWorkspaceGit } = job.permissions.filesystem;
+  if (!managedWorkspaceRoots) {
+    if (policy) await resolveManagedGitSelection({ configPath: policy.managedWorkspaceConfigPath,
+      authorizedRoots: continuationWorkspaceRoots(job, policy), project: workspaceProject, fallbackDirectory: job.workingDirectory,
+      expected: managedWorkspaceGit, preserveOptOut: true });
+    return undefined;
+  }
   if (!store || !policy || !workspaceProject || workspaceProject.directory !== job.workingDirectory) {
     throw new ManagedWorkspaceStorageError('invalid_binding');
   }
+  const authorizedRoots = continuationWorkspaceRoots(job, policy);
+  const sourceRegistryRoot = policy.foregroundWorkingRoot ?? policy.currentWorkingRoot;
+  await resolveManagedGitSelection({ configPath: policy.managedWorkspaceConfigPath,
+    roots: managedWorkspaceRoots, project: workspaceProject, authorizedRoots,
+    sourceRegistryPath: policy.sourceRegistryPath, sourceRegistryRoot, expected: managedWorkspaceGit, preserveOptOut: !managedWorkspaceGit });
   return store.ensure({
     roots: managedWorkspaceRoots, project: workspaceProject, owner: { kind: 'async_task', runId: job.jobId },
     createdAt: job.createdAt, usedAt: new Date().toISOString(),
-    authorizedRoots: continuationWorkspaceRoots(job, policy),
+    authorizedRoots,
     sourceRegistryPath: policy.sourceRegistryPath,
-    sourceRegistryRoot: policy.foregroundWorkingRoot ?? policy.currentWorkingRoot,
+    sourceRegistryRoot,
+    ...(managedWorkspaceGit ? { git: managedWorkspaceGit } : {}),
   });
 }
 

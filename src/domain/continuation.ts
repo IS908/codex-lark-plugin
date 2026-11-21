@@ -237,6 +237,7 @@ export interface ContinuationPermissionEnvelope {
     requestedPaths: string[];
     workspaceProject?: import('./workspace.js').WorkspaceProjectBinding;
     managedWorkspaceRoots?: import('./managed-workspace.js').ManagedWorkspaceRoots;
+    managedWorkspaceGit?: import('./managed-workspace.js').ManagedGitSelection;
   };
   hostTools: string[];
   network: 'none' | 'enabled';

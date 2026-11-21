@@ -258,6 +258,34 @@ Cron 不支持启用托管目录。
 重放同一轮次时，可在不重跑 Codex、无需临时目录的情况下发送待投递附件。恢复时会重新核对
 路由授权；结果不确定的发送不会自动重试。
 
+#### 可选的本地 Git 对象复用
+
+启用托管运行目录后，操作者可在 `managed-workspace.json` 同目录创建
+`workspace-git-sources.json`，只为显式绑定的源码项目开启复用：
+
+```json
+{
+  "version": 1,
+  "projects": [{
+    "source": "/Users/you/workspace/app",
+    "cache": "/Users/you/workspace/git-cache/app-snapshot",
+    "repositoryId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "scope": "local-app",
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }]
+}
+```
+
+路径使用规范绝对路径；`repositoryId` 为稳定的 64 位十六进制标识，不是 URL 或密钥；
+`commit` 为完整提交 ID。登记文件必须由操作者保护，且位于所有执行授权根之外。缓存必须预先
+存在于原有授权范围内，并与源码、临时目录、产物目录分离。按[本地缓存准备步骤](README.md#optional-local-git-object-reuse)
+从已获授权的本地仓库生成对象包。不要原地替换缓存、对其执行维护，或用同一个目录登记不同的缓存键。
+
+此功能需要支持命名权限配置的 Codex CLI（已在 macOS 的 `0.171.0` 验证）及上级目录受保护的
+受信任可执行文件。组可写的启动路径、不兼容的配置或命令规则、以及不支持的挂载布局均会被拒绝。
+运行只写自己的 checkout 和索引；源码与共享缓存保持只读，宿主 CLI 工具不可用。删除或修改登记会
+阻止不再匹配的已接纳运行，包括重启后的重试。不会拉取远端、迁移或清理文件，也不会回退到源码。
+
 ### 第 4 步：启动
 
 通过插件市场安装时，插件会随 Codex 自动启动，首次运行时会自动安装依赖。

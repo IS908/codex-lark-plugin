@@ -299,6 +299,62 @@ sent on reconnect or on replay of the same event without rerunning Codex or
 needing scratch. The plugin rechecks the route and does not repeat a send whose
 outcome is unknown.
 
+#### Optional local Git object reuse
+
+With managed storage enabled, an operator can opt a pinned project into Git
+reuse by adding `workspace-git-sources.json` beside `managed-workspace.json`:
+
+```json
+{
+  "version": 1,
+  "projects": [{
+    "source": "/Users/you/workspace/app",
+    "cache": "/Users/you/workspace/git-cache/app-snapshot",
+    "repositoryId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "scope": "local-app",
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }]
+}
+```
+
+Use canonical absolute paths, a stable 64-hex repository identifier (not a URL
+or secret), and a full commit ID. The registry and its ancestors must be
+operator-protected, and the registry must be outside all execution roots. The
+cache must already exist inside the authorized roots, separate from sources,
+scratch and artifacts. Only new runs with the exact registered project opt in;
+existing overlapping runs are blocked rather than switched to a different directory.
+
+Provision each cache once from an approved local repository. In a **new** cache
+directory, prepare the following layout (`source`, `commit`, and `cache` are
+operator-selected variables; this example uses SHA-1):
+
+```bash
+(
+  set -eu
+  umask 077
+  mkdir -m 700 "$cache"
+  mkdir -p "$cache/objects/pack" "$cache/refs"
+  printf '%s\n' "$commit" > "$cache/HEAD"
+  printf '[core]\n\trepositoryformatversion = 0\n\tbare = true\n' > "$cache/config"
+  printf '%s\n' "$commit" | GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL='' \
+    git -C "$source" -c pack.writeReverseIndex=false pack-objects --no-write-bitmap-index --revs "$cache/objects/pack/pack"
+)
+```
+
+For SHA-256 use `repositoryformatversion = 1` and append
+`[extensions]\n\tobjectformat = sha256\n` to the `printf` format for `config`.
+Leave `refs/` empty. Do not run maintenance in the cache, replace it in place,
+or share its physical path with a different key or scope.
+
+Git reuse requires a Codex CLI with named permission profiles (verified with
+`0.171.0` on macOS) and a trusted executable path with protected ancestors.
+Group-writable launch paths, incompatible configuration or command rules, and
+unsupported mount layouts are rejected. The run owns its checkout and index;
+the source and shared object store remain read-only, and unsandboxed host CLI
+tools are unavailable for that run. Removing or changing a registry entry
+blocks previously admitted runs that no longer match, including after restart.
+Nothing fetches, deletes, migrates, or silently falls back to the source.
+
 ### 4. Start
 
 If installed via the plugin marketplace, the plugin starts automatically when Codex launches. Dependencies are installed on first run.

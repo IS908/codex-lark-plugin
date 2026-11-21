@@ -18,6 +18,7 @@ import type { LarkMessage } from '../lark-message.js';
 import type { ManagedArtifactReference } from '../domain/managed-workspace.js';
 import { ManagedWorkspaceStorageError } from '../managed-workspace-errors.js';
 import { assertManagedWorkspaceSandbox } from '../managed-workspace-exec.js';
+import { resolveManagedGitSelection } from '../managed-git-registry.js';
 import type { ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import { cronJobPrompt } from '../prompts.js';
 import type {
@@ -181,6 +182,9 @@ async function allocateWorkspace(input: CronPromptExecutionInput, store: Managed
   if (!input.managedWorkspace || !store) throw new ManagedWorkspaceStorageError('allocation_failed');
   assertManagedWorkspaceSandbox(appConfig.codexExecSandbox, input.job.workspaceProject);
   if (!input.job.workspaceProject && !input.managedWorkspace.fallbackWorkspace) throw new ManagedWorkspaceStorageError('invalid_binding');
+  await resolveManagedGitSelection({ configPath: appConfig.managedWorkspaceConfigPath,
+    roots: input.managedWorkspace.roots, project: input.job.workspaceProject, authorizedRoots: [appConfig.codexExecCwd],
+    sourceRegistryPath: appConfig.workspaceProjectsConfigPath, expected: input.managedWorkspace.git, preserveOptOut: !input.managedWorkspace.git });
   return store.ensure({
     ...input.managedWorkspace,
     authorizedRoots: [appConfig.codexExecCwd],

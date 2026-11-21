@@ -7,6 +7,7 @@ import type { ManagedRunAllocation } from './domain/managed-workspace.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { createManagedGitSandboxOptions } from './managed-git-sandbox.js';
 import { resolveManagedGitLauncher } from './managed-git-launcher.js';
+import { hasManagedGitRegistry, resolveManagedGitSelection } from './managed-git-registry.js';
 import { ManagedWorkspaceStorageError } from './managed-workspace-errors.js';
 import { validateWorkspaceGitCheckout, WorkspaceGitSnapshotError } from './workspace-git-snapshot.js';
 
@@ -23,7 +24,20 @@ export function managedGitCheckoutSessionScope(allocation?: ManagedRunAllocation
     allocation.git.key, allocation.git.storeFingerprint, directory, device, inode])).digest('hex');
 }
 
-export async function withManagedWorkspace(request: CodexExecRequest, allocation: ManagedRunAllocation): Promise<CodexExecRequest> {
+type GitRegistryPolicy = Pick<Parameters<typeof resolveManagedGitSelection>[0], 'configPath' | 'sourceRegistryPath' | 'sourceRegistryRoot'>;
+
+export async function protectLegacyGitWorkspace(request: CodexExecRequest, configPath?: string): Promise<CodexExecRequest> {
+  if (!await hasManagedGitRegistry(configPath) || request.sandbox === 'read-only') return request;
+  if (request.sandbox !== 'workspace-write' || request.profile || request.ignoreUserConfig === false) {
+    throw new ManagedWorkspaceStorageError('git_sandbox_layers_unsupported');
+  }
+  // An active cache registry must not inherit Codex's implicit temp-directory grants.
+  return { ...request, configOverrides: [...(request.configOverrides ?? []),
+    'sandbox_workspace_write.exclude_tmpdir_env_var=true', 'sandbox_workspace_write.exclude_slash_tmp=true'] };
+}
+
+export async function withManagedWorkspace(request: CodexExecRequest, allocation: ManagedRunAllocation,
+  gitRegistry?: GitRegistryPolicy): Promise<CodexExecRequest> {
   assertManagedWorkspaceSandbox(request.sandbox, allocation.project);
   if (request.sandbox === 'workspace-write' && request.cwd !== allocation.project?.directory) {
     throw new ManagedWorkspaceStorageError('unisolated_source');
@@ -49,10 +63,12 @@ export async function withManagedWorkspace(request: CodexExecRequest, allocation
       additionalWritableDirs: [...new Set([...(request.additionalWritableDirs ?? []), scratch, artifacts])],
     } : {}),
   };
-  return allocation.git || allocation.gitCheckout ? withGitCheckout(request, enriched, allocation) : enriched;
+  return allocation.git || allocation.gitCheckout ? withGitCheckout(request, enriched, allocation, gitRegistry)
+    : protectLegacyGitWorkspace(enriched, gitRegistry?.configPath);
 }
 
-async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecRequest, allocation: ManagedRunAllocation): Promise<CodexExecRequest> {
+async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecRequest, allocation: ManagedRunAllocation,
+  gitRegistry?: GitRegistryPolicy): Promise<CodexExecRequest> {
   const { project, git, gitCheckout, scratch, artifacts } = allocation;
   const guard = request.workspaceDirectory;
   const mode = request.sandbox;
@@ -80,6 +96,7 @@ async function withGitCheckout(request: CodexExecRequest, enriched: CodexExecReq
   for (const name of Object.keys({ ...process.env, ...extraEnv })) if (name.startsWith('GIT_')) extraEnv[name] = undefined;
   Object.assign(extraEnv, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' });
   const validate = async () => {
+    await resolveManagedGitSelection({ ...gitRegistry, project, roots: allocation.roots, authorizedRoots: guard.authorizedRoots, expected: git });
     await assertCompatibleCodexLayers({ ...process.env, ...extraEnv }, [project.directory, gitCheckout.checkout.directory]);
     try {
       await validateWorkspaceGitCheckout(selection, gitCheckout);

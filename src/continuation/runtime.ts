@@ -109,7 +109,7 @@ export async function createContinuationRuntime(
       artifactsDir: storage.artifactsDir,
       inputsDir: storage.inputsDir,
       managedWorkspacePolicy: { currentWorkingRoot: options.allowedWorkingRoot, foregroundWorkingRoot: options.foregroundWorkingRoot,
-        sourceRegistryPath: options.sourceRegistryPath },
+        sourceRegistryPath: options.sourceRegistryPath, managedWorkspaceConfigPath: options.managedWorkspaceConfigPath },
     });
     await repository.healthCheck();
     if (!options.enabled) {
@@ -175,6 +175,7 @@ export async function createContinuationRuntime(
       foregroundWorkingRoot: options.foregroundWorkingRoot,
       sourceRegistryPath: options.sourceRegistryPath,
       managedWorkspaceStore: () => repository?.durableRuns.getManagedWorkspaceStore?.(),
+      managedWorkspaceConfigPath: options.managedWorkspaceConfigPath,
       canUseTrustedPersonalWorkspace: options.canUseTrustedPersonalWorkspace,
       ...(toolInvoker ? { toolInvoker } : {}),
       ...(options.command ? { command: options.command } : {}),
