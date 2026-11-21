@@ -824,6 +824,10 @@ var LARK_INSTANCE_LOCK_PATH = path.join(
   "continuations",
   ".instance.lock"
 );
+var liveLocks = /* @__PURE__ */ new WeakSet();
+function isLarkInstanceLockHeld(lock, stateRoot) {
+  return !!lock && liveLocks.has(lock) && lock.path === path.join(stateRoot, path.basename(LARK_INSTANCE_LOCK_PATH));
+}
 async function acquireLarkInstanceLock(appId, stateRoot = path.dirname(LARK_INSTANCE_LOCK_PATH), legacyLockRoot = os.tmpdir(), legacyOwnerUid = process.getuid?.()) {
   const globalPath = path.join(stateRoot, path.basename(LARK_INSTANCE_LOCK_PATH));
   const paths = [
@@ -846,15 +850,18 @@ async function acquireLarkInstanceLock(appId, stateRoot = path.dirname(LARK_INST
     }
     throw error;
   }
-  return {
+  const handle = {
     path: globalPath,
     pid: process.pid,
-    startedAt: acquired[0]?.startedAt ?? Math.floor(Date.now() - process.uptime() * 1e3),
+    startedAt: acquired[acquired.length - 1].startedAt,
     release: () => {
+      liveLocks.delete(handle);
       const errors = releaseLocks(acquired);
       if (errors.length > 0) throw new AggregateError(errors, "Failed to release Lark instance locks.");
     }
   };
+  liveLocks.add(handle);
+  return handle;
 }
 async function stopLarkInstances(appId, stateRoot = path.dirname(LARK_INSTANCE_LOCK_PATH), legacyLockRoot = os.tmpdir(), legacyOwnerUid = process.getuid?.()) {
   const results = [];
@@ -913,6 +920,7 @@ export {
   appendRotatingLine,
   sweepInbox,
   BoundedCache,
+  isLarkInstanceLockHeld,
   acquireLarkInstanceLock,
   stopLarkInstances
 };

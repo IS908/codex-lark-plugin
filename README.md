@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.20.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.21.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -255,6 +255,40 @@ extended attributes, mount aliases (other than verified macOS Data firmlinks),
 and additional contents left by an installer or run all cause retention.
 On Linux, verifying filesystem attributes requires the system `/usr/bin/getfattr`
 from the `attr` package; without it, the preview retains the affected directories.
+
+#### Opt in to startup cleanup
+
+After inspecting the preview, an operator may create the owner-only file
+`~/.codex/channels/lark/runtime-config/managed-workspace-cleanup.json`:
+
+```json
+{
+  "version": 1,
+  "enabled": true,
+  "maxScratchBytes": 10737418240,
+  "maxRunsPerStartup": 4
+}
+```
+
+Omit the file or use `{"version":1,"enabled":false}` to disable cleanup.
+An enabled pass runs once at startup, before workers and message ingress.
+Dry run and doctor never clean. The limit is allocated bytes in the managed
+scratch root, not apparent file size or a guarantee of reclaimed capacity.
+New claims require a complete inventory above the limit and the existing
+`LARK_CONTINUATION_RETENTION_DAYS` retention age. Interrupted claims are
+reconciled first, including below the threshold. Each pass handles at most
+the configured number of runs (1–32, default 4), and reports counts and a
+reason on stderr. Unknown content contributes to usage but is never selected.
+
+Keep managed scratch separate from plugin state, configuration, memory and
+inbox directories. Cleanup also needs a
+trusted system Python 3 (`/usr/bin/python3` on Linux, or the Apple Command Line
+Tools installation on macOS). The plugin does not install missing utilities.
+Linux still needs `attr`, and executed Linux runs without proof of quiescence
+remain protected. Do not edit the policy, registry, scratch or quarantine tree
+during maintenance. Formal artifacts and retry inputs remain accessible.
+Purge is irreversible; an unverified or partially purged quarantine is retained
+and must be investigated manually, not renamed back or deleted by pattern.
 
 #### Select a workspace project
 

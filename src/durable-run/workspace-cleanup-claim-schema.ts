@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { ManagedRunOwner } from '../domain/managed-workspace.js';
 
 export const workspaceCleanupClaimsTable = 'workspace_cleanup_claims';
+export const workspaceCleanupCursorTable = 'workspace_cleanup_scan_cursor';
 const triggerName = 'workspace_cleanup_fence_claimed';
 const installTriggerName = 'workspace_cleanup_fence_dependency_install';
 const tableSql = `CREATE TABLE ${workspaceCleanupClaimsTable} (
@@ -20,6 +21,14 @@ const tableSql = `CREATE TABLE ${workspaceCleanupClaimsTable} (
   CHECK ((state = 'held') = (reason IS NOT NULL)),
   PRIMARY KEY (workload_kind, run_id),
   FOREIGN KEY (workload_kind, run_id) REFERENCES workspace_run_allocations(workload_kind, run_id)
+) STRICT`;
+const cursorSql = `CREATE TABLE ${workspaceCleanupCursorTable} (
+  scratch_root TEXT PRIMARY KEY,
+  root_device TEXT NOT NULL,
+  root_inode TEXT NOT NULL,
+  completion TEXT NOT NULL,
+  workload_kind TEXT NOT NULL,
+  run_id TEXT NOT NULL
 ) STRICT`;
 const triggerSql = `CREATE TRIGGER ${triggerName}
   BEFORE UPDATE OF last_used_at, allocation_json, scratch_path, scratch_identity, intent_json ON workspace_run_allocations
@@ -53,6 +62,7 @@ export function hasWorkspaceCleanupFences(database: DatabaseSync): boolean {
   const matches = (actual: unknown, expected: string) =>
     typeof actual === 'string' && actual.trim().replace(/\s+/g, ' ') === expected.trim().replace(/\s+/g, ' ');
   return matches(sqlFor(database, 'table', workspaceCleanupClaimsTable), tableSql)
+    && matches(sqlFor(database, 'table', workspaceCleanupCursorTable), cursorSql)
     && matches(sqlFor(database, 'trigger', triggerName), triggerSql)
     && matches(sqlFor(database, 'trigger', installTriggerName), installTriggerSql);
 }
@@ -62,9 +72,10 @@ export function initializeWorkspaceCleanupClaims(database: DatabaseSync): void {
   database.exec('BEGIN IMMEDIATE');
   try {
     // Do not repair a partial schema: a missing guard could have allowed an unrecorded scratch handoff.
-    if (!sqlFor(database, 'table', workspaceCleanupClaimsTable) && !sqlFor(database, 'trigger', triggerName)
+    if (!sqlFor(database, 'table', workspaceCleanupClaimsTable) && !sqlFor(database, 'table', workspaceCleanupCursorTable)
+      && !sqlFor(database, 'trigger', triggerName)
       && !sqlFor(database, 'trigger', installTriggerName)) {
-      database.exec(`${tableSql}; ${triggerSql}; ${installTriggerSql};`);
+      database.exec(`${tableSql}; ${cursorSql}; ${triggerSql}; ${installTriggerSql};`);
     }
     if (!hasWorkspaceCleanupFences(database)) throw new Error('Workspace cleanup claim fences are unavailable.');
     database.exec('COMMIT');

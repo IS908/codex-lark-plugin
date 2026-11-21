@@ -19,6 +19,11 @@ export const LARK_INSTANCE_LOCK_PATH = path.join(
   'continuations',
   '.instance.lock',
 );
+const liveLocks = new WeakSet<SingleInstanceLockHandle>();
+
+export function isLarkInstanceLockHeld(lock: SingleInstanceLockHandle | null, stateRoot: string): lock is SingleInstanceLockHandle {
+  return !!lock && liveLocks.has(lock) && lock.path === path.join(stateRoot, path.basename(LARK_INSTANCE_LOCK_PATH));
+}
 
 export async function acquireLarkInstanceLock(
   appId: string,
@@ -47,15 +52,18 @@ export async function acquireLarkInstanceLock(
     }
     throw error;
   }
-  return {
+  const handle: SingleInstanceLockHandle = {
     path: globalPath,
     pid: process.pid,
-    startedAt: acquired[0]?.startedAt ?? Math.floor(Date.now() - process.uptime() * 1000),
+    startedAt: acquired[acquired.length - 1].startedAt,
     release: () => {
+      liveLocks.delete(handle);
       const errors = releaseLocks(acquired);
       if (errors.length > 0) throw new AggregateError(errors, 'Failed to release Lark instance locks.');
     },
   };
+  liveLocks.add(handle);
+  return handle;
 }
 
 export async function stopLarkInstances(

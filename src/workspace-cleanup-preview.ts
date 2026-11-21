@@ -201,7 +201,7 @@ export async function verifyGitBacking(git: ManagedGitSelection, authorizedRoots
     if (!checked.has(key)) {
       if (checked.size >= 8) return false;
       const actual = await verifyWorkspaceGitCache({ gitDirectory: git.cache, authorizedRoots,
-        repositoryId: git.repositoryId, scope: git.scope, commit: git.commit });
+        repositoryId: git.repositoryId, scope: git.scope, commit: git.commit }, signal);
       checked.set(key, actual.key === git.key && actual.storeFingerprint === git.storeFingerprint);
     }
     if (!checked.get(key) || signal.aborted) return false;

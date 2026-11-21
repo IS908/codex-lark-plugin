@@ -35,14 +35,17 @@ export interface WorkspaceCleanupReference {
   retryReference: boolean;
   pendingStage: boolean;
   cleanupClaimed: boolean;
+  continuationRoot?: string;
   epoch?: WorkspaceCleanupEpoch;
   scratchBaseline?: string;
 }
 
 export function readWorkspaceCleanupReferences(database: DatabaseSync, root: WorkspaceProjectBinding, target?: ManagedRunOwner) {
-  const retries = database.prepare(`SELECT json_extract(input_json, '$.job.retryOfJobId') AS source
+  const retries = database.prepare(`SELECT DISTINCT json_extract(input_json, '$.job.retryOfJobId') AS source
     FROM durable_runs WHERE workload_kind = 'async_task' AND deleted_at IS NULL
-      AND json_type(input_json, '$.job.retryOfJobId') = 'text' LIMIT ?`).all(maxRetryReferences + 1);
+      AND json_type(input_json, '$.job.retryOfJobId') = 'text'
+      ${target ? "AND json_extract(input_json, '$.job.retryOfJobId') = ?" : ''}
+    LIMIT ?`).all(...(target ? [target.runId, 1] : [maxRetryReferences + 1]));
   const incomplete = retries.length > maxRetryReferences;
   const retrySource = new Set(retries.map(({ source }) => source));
   const prefix = root.directory + path.sep;
@@ -56,7 +59,8 @@ export function readWorkspaceCleanupReferences(database: DatabaseSync, root: Wor
     ? `EXISTS(SELECT 1 FROM ${workspaceCleanupClaimsTable} c WHERE c.workload_kind = w.workload_kind AND c.run_id = w.run_id)` : '0';
   const selected = database.prepare(`SELECT w.*, ${evidenceFields}, r.status AS run_status, r.completed_at AS terminal_at, ${cleanupClaimed} AS cleanup_claimed,
     r.retained AS run_retained, (r.lease_owner IS NOT NULL OR r.lease_expires_at IS NOT NULL) AS has_lease,
-    r.attempt_count, (SELECT count(*) FROM durable_attempts a WHERE a.run_id = r.run_id) AS observed_attempt_count,
+    r.attempt_count, json_extract(r.input_json, '$.job.permissions.filesystem.root') AS saved_continuation_root,
+    (SELECT count(*) FROM durable_attempts a WHERE a.run_id = r.run_id) AS observed_attempt_count,
     (EXISTS(SELECT 1 FROM durable_attempts a WHERE a.run_id = r.run_id AND (a.finished_at IS NULL OR a.recovery_pending <> 0))
       OR EXISTS(SELECT 1 FROM durable_operation_receipts o WHERE o.run_id = r.run_id AND o.status = 'running')
       OR EXISTS(SELECT 1 FROM durable_interrupts i WHERE i.run_id = r.run_id AND i.status = 'pending')) AS open_execution_reference,
@@ -99,6 +103,8 @@ export function readWorkspaceCleanupReferences(database: DatabaseSync, root: Wor
       foregroundDeliveryPending: row.foreground_delivery_pending === 1,
       retryReference: incomplete || retrySource.has(owner.data.runId), pendingStage: row.pending_stage === 1,
       cleanupClaimed: row.cleanup_claimed !== 0,
+      continuationRoot: typeof row.saved_continuation_root === 'string' && path.isAbsolute(row.saved_continuation_root)
+        && path.normalize(row.saved_continuation_root) === row.saved_continuation_root ? row.saved_continuation_root : undefined,
       epoch: trustedEpoch ? parseWorkspaceCleanupEpoch(row.host, row.boot) : undefined,
       scratchBaseline: typeof row.scratch_baseline === 'string' && /^[a-f0-9]{64}$/.test(row.scratch_baseline) ? row.scratch_baseline : undefined });
   }
@@ -133,29 +139,16 @@ export function workspaceCleanupLedgerEligibility(reference: WorkspaceCleanupRef
   return { reasons, priorBoot };
 }
 
-function readProtectedPathReferences(database: DatabaseSync) {
+export function readProtectedPathReferences(database: DatabaseSync) {
   const paths = new Set<string>();
-  let incomplete = false;
-  let unresolvedActiveCron = false;
-  const add = (value: unknown, required = false) => {
-    if (value === null && !required) return;
-    if (typeof value !== 'string' || !path.isAbsolute(value) || path.normalize(value) !== value
-      || value.length > 4096 || /[\u0000-\u001f\u007f]/.test(value)
-      || paths.size >= maxPathReferences) { incomplete = true; return; }
-    paths.add(value);
-  };
-  const saved = database.prepare(`SELECT json_extract(intent_json, '$.project.directory') AS project,
-    json_extract(intent_json, '$.fallbackWorkspace.directory') AS fallback, NULL AS legacy
-    FROM workspace_run_allocations
-    WHERE json_type(intent_json, '$.project') IS NOT NULL OR json_type(intent_json, '$.fallbackWorkspace') IS NOT NULL
+  const observations = `WITH saved AS (
+    SELECT json_extract(intent_json, '$.project.directory') AS project,
+      json_extract(intent_json, '$.fallbackWorkspace.directory') AS fallback, NULL AS legacy
+    FROM workspace_run_allocations WHERE json_type(intent_json, '$.project') IS NOT NULL
+      OR json_type(intent_json, '$.fallbackWorkspace') IS NOT NULL
     UNION ALL SELECT json_extract(admission_json, '$.project.directory'), NULL, json_extract(admission_json, '$.fallbackCwd')
-    FROM workspace_unmanaged_foreground LIMIT ?`).all(maxPathReferences + 1);
-  if (saved.length > maxPathReferences) incomplete = true;
-  for (const { project, fallback, legacy } of saved.slice(0, maxPathReferences)) {
-    if (project === null && fallback === null && legacy === null) incomplete = true;
-    add(project); add(fallback); add(legacy);
-  }
-  const jobs = database.prepare(`SELECT workload_kind, status, input_version,
+    FROM workspace_unmanaged_foreground
+  ), jobs AS (SELECT workload_kind, status, input_version,
     json_extract(input_json, '$.job.workingDirectory') AS cwd,
     json_extract(input_json, '$.job.permissions.filesystem.workspaceProject.directory') AS async_project,
     json_extract(input_json, '$.job.permissions.filesystem.requestedPaths') AS requested_paths,
@@ -163,24 +156,33 @@ function readProtectedPathReferences(database: DatabaseSync) {
     json_extract(input_json, '$.job.workspaceProject.directory') AS cron_project,
     json_extract(input_json, '$.managedWorkspace.fallbackWorkspace.directory') AS cron_fallback
     FROM durable_runs WHERE deleted_at IS NULL AND workload_kind IN ('async_task', 'cron_prompt')
-    LIMIT ?`).all(maxPathReferences + 1);
-  if (jobs.length > maxPathReferences) incomplete = true;
-  for (const job of jobs.slice(0, maxPathReferences)) {
-    if (job.input_version !== 1) { incomplete = true; continue; }
-    if (job.workload_kind === 'async_task') {
-      add(job.cwd, true); add(job.async_project);
-      if (job.requested_type === 'array' && typeof job.requested_paths === 'string' && job.requested_paths.length <= 64 * 1024) {
-        let parsed: unknown;
-        try { parsed = JSON.parse(job.requested_paths); } catch { incomplete = true; }
-        if (Array.isArray(parsed) && parsed.length <= 100) for (const entry of parsed) add(entry, true);
-        else incomplete = true;
-      } else incomplete = true;
-    } else {
-      add(job.cron_project); add(job.cron_fallback);
-      if (job.cron_project === null && job.cron_fallback === null && !['completed', 'partial', 'blocked', 'failed', 'cancelled'].includes(String(job.status))) {
-        unresolvedActiveCron = true;
-      }
-    }
+  ), requested AS (
+    SELECT value, type FROM jobs, json_each(CASE WHEN requested_type = 'array' THEN
+      CASE WHEN length(requested_paths) <= 65536 AND json_array_length(requested_paths) <= 100
+        THEN requested_paths ELSE '[]' END ELSE '[]' END) WHERE workload_kind = 'async_task'
+  )`;
+  const diagnostics = database.prepare(`${observations} SELECT
+    (EXISTS(SELECT 1 FROM saved WHERE project IS NULL AND fallback IS NULL AND legacy IS NULL)
+      OR EXISTS(SELECT 1 FROM jobs WHERE input_version <> 1 OR (workload_kind = 'async_task'
+        AND (cwd IS NULL OR requested_type IS NOT 'array' OR length(requested_paths) > 65536
+        OR (CASE WHEN requested_type = 'array' THEN json_array_length(requested_paths) ELSE 0 END) > 100)))
+      OR EXISTS(SELECT 1 FROM requested WHERE type <> 'text')) AS incomplete,
+    EXISTS(SELECT 1 FROM jobs WHERE workload_kind = 'cron_prompt' AND cron_project IS NULL AND cron_fallback IS NULL
+      AND status NOT IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')) AS unresolved_cron`).get();
+  const rows = database.prepare(`${observations}, paths(value) AS (
+    SELECT project FROM saved UNION SELECT fallback FROM saved UNION SELECT legacy FROM saved
+    UNION SELECT cwd FROM jobs WHERE workload_kind = 'async_task'
+    UNION SELECT async_project FROM jobs WHERE workload_kind = 'async_task'
+    UNION SELECT value FROM requested
+    UNION SELECT cron_project FROM jobs WHERE workload_kind = 'cron_prompt'
+    UNION SELECT cron_fallback FROM jobs WHERE workload_kind = 'cron_prompt'
+  ) SELECT value FROM paths WHERE value IS NOT NULL ORDER BY value LIMIT ?`).all(maxPathReferences + 1);
+  const limitReached = rows.length > maxPathReferences;
+  let incomplete = diagnostics?.incomplete !== 0 || limitReached;
+  for (const { value } of rows.slice(0, maxPathReferences)) {
+    if (typeof value !== 'string' || !path.isAbsolute(value) || path.normalize(value) !== value
+      || value.length > 4096 || /[\u0000-\u001f\u007f]/.test(value)) incomplete = true;
+    else paths.add(value);
   }
-  return { paths: [...paths].sort(), incomplete, unresolvedActiveCron };
+  return { paths: [...paths].sort(), incomplete, unresolvedActiveCron: diagnostics?.unresolved_cron !== 0, limitReached };
 }

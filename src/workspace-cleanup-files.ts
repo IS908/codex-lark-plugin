@@ -1,7 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { lstatSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ManagedRunOwner } from './domain/managed-workspace.js';
+import type { WorkspaceCleanupClaim } from './durable-run/workspace-cleanup-claims.js';
 import { sameWorkspaceProject, type WorkspaceProjectBinding } from './domain/workspace.js';
 import { assertDenyOnlyWorkspaceAcls, assertProtectedWorkspacePath } from './managed-workspace-ancestry.js';
 import { managedRunDirectoryPath } from './managed-workspace-storage.js';
@@ -9,8 +11,10 @@ import { hasLocalWorkspaceCleanupStorage, type WorkspaceCleanupTree } from './wo
 import { supportsScratch } from './workspace-cleanup-preview.js';
 import { readWorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
 import { workspacePathContains } from './workspace-projects.js';
+import type { WorkspaceGitCleanupProof } from './workspace-git-snapshot.js';
 
-type ClaimIdentity = { owner: ManagedRunOwner; scratch: WorkspaceProjectBinding; nonce: string };
+type ClaimIdentity = { owner: ManagedRunOwner; scratch: WorkspaceProjectBinding; nonce: string }
+  & Partial<Pick<WorkspaceCleanupClaim, 'state' | 'baseline' | 'lastUsedAt'>>;
 type Location = 'source' | 'quarantine' | 'missing' | 'ambiguous';
 type AuthorizeMutation = (helperPid: number) => boolean;
 const applePythonRoot = '/Library/Developer/CommandLineTools';
@@ -31,6 +35,7 @@ export async function createWorkspaceCleanupFiles(root: WorkspaceProjectBinding,
     await assertDenyOnlyWorkspaceAcls([database.directory]);
     const python = await resolveCleanupInterpreter();
     if (!python) return;
+    const sidecars = ledgerSidecars(database);
     const invoke = (request: object) => {
       const input = JSON.stringify({ ...request, root, database, parentPid: process.pid });
       if (Buffer.byteLength(input) > maxInput) return;
@@ -40,19 +45,24 @@ export async function createWorkspaceCleanupFiles(root: WorkspaceProjectBinding,
       if (child.status === 0 && !child.stderr) return child.stdout;
     };
     const native = async (operation: 'move' | 'purge' | 'flush', claim: ClaimIdentity, authorize: AuthorizeMutation,
-      tree?: WorkspaceCleanupTree, expected?: 'quarantine' | 'missing') => {
+      tree?: WorkspaceCleanupTree, expected?: 'quarantine' | 'missing', backing?: WorkspaceGitCleanupProof) => {
       const quarantine = workspaceCleanupQuarantinePath(root, claim);
       const binding = operation === 'purge' ? { ...claim.scratch, directory: quarantine } : claim.scratch;
       if (operation !== 'flush' && (!tree || !sameWorkspaceProject(tree.binding, binding))) return false;
-      const input = JSON.stringify({ operation, root, database, parentPid: process.pid, scratch: claim.scratch,
-        quarantine: path.basename(quarantine), entries: tree?.entries ?? [], expected });
+      if (!sidecars || JSON.stringify(ledgerSidecars(database)) !== JSON.stringify(sidecars)) return false;
+      const expectedClaim = claim.state ? [claim.nonce, claim.scratch.directory, claim.scratch.device, claim.scratch.inode,
+        claim.baseline, claim.lastUsedAt, claim.state] : undefined;
+      const input = JSON.stringify({ operation, root, database, sidecars, parentPid: process.pid, scratch: claim.scratch,
+        quarantine: path.basename(quarantine), entries: tree?.entries ?? [], expected, backing,
+        expectedClaim, owner: claim.owner });
       if (Buffer.byteLength(input) + 1 > maxInput) return false;
-      return await lockedMutation(python, input, authorize);
+      return await lockedMutation(python, input, (pid) => JSON.stringify(ledgerSidecars(database)) === JSON.stringify(sidecars) && authorize(pid));
     };
     return {
       databasePath: database.directory,
       canStage(owner: ManagedRunOwner, tree: WorkspaceCleanupTree): boolean {
-        if (tree.binding.directory !== managedRunDirectoryPath(root, owner) || tree.binding.device !== root.device
+        if (!sidecars || JSON.stringify(ledgerSidecars(database)) !== JSON.stringify(sidecars)
+          || tree.binding.directory !== managedRunDirectoryPath(root, owner) || tree.binding.device !== root.device
           || Buffer.byteLength(JSON.stringify(tree.entries)) > maxInput - 8192) return false;
         return invoke({ operation: 'validate', scratch: tree.binding, entries: tree.entries }) === 'verified\n';
       },
@@ -87,11 +97,27 @@ export async function createWorkspaceCleanupFiles(root: WorkspaceProjectBinding,
           }
         } catch { return 'ambiguous'; }
       },
-      move: (claim: ClaimIdentity, tree: WorkspaceCleanupTree, authorize: AuthorizeMutation) => native('move', claim, authorize, tree),
-      purge: (claim: ClaimIdentity, tree: WorkspaceCleanupTree, authorize: AuthorizeMutation) => native('purge', claim, authorize, tree),
+      move: (claim: ClaimIdentity, tree: WorkspaceCleanupTree, authorize: AuthorizeMutation, backing?: WorkspaceGitCleanupProof) =>
+        native('move', claim, authorize, tree, undefined, backing),
+      purge: (claim: ClaimIdentity, tree: WorkspaceCleanupTree, authorize: AuthorizeMutation, backing?: WorkspaceGitCleanupProof) =>
+        native('purge', claim, authorize, tree, undefined, backing),
       flush: (claim: ClaimIdentity, expected: 'quarantine' | 'missing', authorize: AuthorizeMutation) =>
         native('flush', claim, authorize, undefined, expected),
     };
+  } catch { return undefined; }
+}
+
+function ledgerSidecars(database: WorkspaceProjectBinding) {
+  try {
+    return ['-wal', '-shm'].map((suffix) => {
+      const directory = database.directory + suffix;
+      const info = lstatSync(directory, { bigint: true });
+      if (!info.isFile() || !process.geteuid || info.uid !== BigInt(process.geteuid())
+        || info.nlink !== 1n || (info.mode & 0o022n) !== 0n || String(info.dev) !== database.device) {
+        throw new Error('Untrusted SQLite sidecar.');
+      }
+      return { directory, device: String(info.dev), inode: String(info.ino) };
+    });
   } catch { return undefined; }
 }
 
@@ -161,6 +187,20 @@ def require(condition):
 def parent_alive():
     require(os.getppid() == data['parentPid'])
 
+def before_mutation():
+    parent_alive()
+    proof = data.get('backing')
+    if proof is None:
+        return
+    root = proof['directory']
+    require(os.path.realpath(root) == root and len(proof['entries']) == 8)
+    for name, *expected in proof['entries']:
+        require(not os.path.isabs(name) and '..' not in name.split('/'))
+        info = os.stat(os.path.join(root, name), follow_symlinks=False)
+        require(stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1))
+        require(expected == [str(n) for n in (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+                                               info.st_size, info.st_mtime_ns, info.st_ctime_ns)])
+
 def require_no_acl(fd):
     if sys.platform != 'darwin':
         return
@@ -171,17 +211,20 @@ def require_no_acl(fd):
         raise ValueError()
     require(ctypes.get_errno() == errno.ENOENT)
 
-def locks_ledger(binding):
-    def verify():
-        info = os.stat(binding['directory'], follow_symlinks=False)
-        require(stat.S_ISREG(info.st_mode) and str(info.st_dev) == binding['device']
-                and str(info.st_ino) == binding['inode'] and info.st_uid == os.geteuid()
-                and info.st_nlink == 1 and not info.st_mode & 0o022)
-    verify()
+def verify_ledger(binding):
+    info = os.stat(binding['directory'], follow_symlinks=False)
+    require(stat.S_ISREG(info.st_mode) and str(info.st_dev) == binding['device']
+            and str(info.st_ino) == binding['inode'] and info.st_uid == os.geteuid()
+            and info.st_nlink == 1 and not info.st_mode & 0o022)
+
+def locks_ledger(binding, sidecars=()):
+    for item in (binding, *sidecars):
+        verify_ledger(item)
     db = sqlite3.connect('file:' + urllib.parse.quote(binding['directory'], safe='/') + '?mode=rw', uri=True, timeout=0)
     require(db.execute('PRAGMA main.journal_mode').fetchone() == ('wal',))
     db.execute('BEGIN IMMEDIATE')
-    verify()
+    for item in (binding, *sidecars):
+        verify_ledger(item)
     return db
 
 def sync(fd):
@@ -235,7 +278,7 @@ def check(parent, leaf, node, remove=False):
             finally:
                 os.close(filefd)
         if remove:
-            parent_alive()
+            before_mutation()
             os.unlink(leaf, dir_fd=parent)
         return
     require(stat.S_ISDIR(info.st_mode))
@@ -252,7 +295,7 @@ def check(parent, leaf, node, remove=False):
                     and (current.st_dev, current.st_ino, current.st_uid, current.st_gid, current.st_mode)
                     == (info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode))
             sync(fd)
-            parent_alive()
+            before_mutation()
             os.rmdir(leaf, dir_fd=parent)
     finally:
         os.close(fd)
@@ -265,7 +308,7 @@ def rename_exclusive(parent, source, quarantine):
         require(sys.platform.startswith('linux'))
         rename, mode = libc.renameat2, 1  # RENAME_NOREPLACE
     rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-    parent_alive()
+    before_mutation()
     require(rename(parent, os.fsencode(source), parent, os.fsencode(quarantine), mode) == 0)
 
 try:
@@ -304,10 +347,21 @@ try:
             sys.exit(0)
         quarantine = data['quarantine']
         require(re.fullmatch(r'\.lark-cleanup-[0-9a-f]{32}', quarantine))
-        ledger = locks_ledger(data['database'])
+        sidecars = data['sidecars']
+        require([item['directory'] for item in sidecars] == [data['database']['directory'] + suffix for suffix in ('-wal', '-shm')])
+        ledger = locks_ledger(data['database'], sidecars)
+        expected_claim = data.get('expectedClaim')
+        if expected_claim is not None:
+            owner = data['owner']
+            record = ledger.execute('SELECT nonce, scratch_path, scratch_device, scratch_inode, scratch_baseline, last_used_at, state '
+                                    'FROM main.workspace_cleanup_claims WHERE workload_kind = ? AND run_id = ?',
+                                    (owner['kind'], owner['runId'])).fetchone()
+            require(record is not None and list(record) == expected_claim)
         print('locked', flush=True)
         require(sys.stdin.buffer.readline(16) == b'GO\n')
         parent_alive()
+        for item in (data['database'], *sidecars):
+            verify_ledger(item)
         if op == 'move':
             require(directory_matches(named(rootfd, source), scratch) and named(rootfd, quarantine) is None)
             check(rootfd, source, build(data['entries']))

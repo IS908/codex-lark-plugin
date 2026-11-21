@@ -57,6 +57,16 @@ try {
   await checkOrphanedWriteLock();
   const staged = await observeWorkspaceCleanupTree(scratch);
   assert.ok(staged);
+  const shared = ledgerPath + '-shm';
+  await fs.rename(shared, shared + '.saved');
+  try {
+    await fs.writeFile(shared, 'not the pinned SQLite shared memory file', { mode: 0o600 });
+    assert.equal(files.canStage(owner, staged), false);
+    assert.equal(await files.move(claim, staged, () => assert.fail('a mismatched WAL cannot request authorization')), false);
+  } finally {
+    await fs.unlink(shared);
+    await fs.rename(shared + '.saved', shared);
+  }
   const lockHolder = spawn('/usr/bin/python3', ['-I', '-S', '-B', '-c', [
     'import fcntl, os, sys',
     'fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)',

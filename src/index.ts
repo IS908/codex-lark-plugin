@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import path from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { appConfig } from './config.js';
 import { validateFeishuChatAccess } from './access-control-validation.js';
@@ -60,6 +61,8 @@ import { drainForegroundArtifacts } from './foreground-artifact-delivery.js';
 import { pinWorkspacePath } from './workspace-projects.js';
 import { createCronControlService } from './cron/control-service.js';
 import { createCronCardActionHandler } from './cron/card-actions.js';
+import { channelHome, managedWorkspaceCleanupPolicyPath } from './runtime-paths.js';
+import { runStartupWorkspaceCleanup } from './workspace-cleanup-startup.js';
 
 let closeContinuationRuntime: (() => Promise<void>) | null = null;
 let stopChannelServices: (() => Promise<void>) | null = null;
@@ -69,9 +72,28 @@ async function main() {
   const isDryRun = process.argv.includes('--dry-run');
   const lock = isDryRun ? null : await acquireLarkInstanceLock(appConfig.appId);
   if (lock) {
+    const maintenanceAbort = new AbortController();
+    let maintenance: ReturnType<typeof runStartupWorkspaceCleanup> | undefined;
     registerLockCleanup(lock, undefined, async () => {
+      maintenanceAbort.abort();
+      await maintenance;
       await closeContinuationRuntime?.();
     });
+    maintenance = runStartupWorkspaceCleanup({
+      databasePath: appConfig.continuationDbPath,
+      configPath: appConfig.managedWorkspaceConfigPath,
+      policyPath: managedWorkspaceCleanupPolicyPath,
+      sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
+      lock, authorizedRoots: [appConfig.codexExecCwd],
+      continuationRoot: appConfig.continuationWorkingRoot,
+      protectedDirectories: [appConfig.memoriesDir, appConfig.inboxDir, appConfig.jobsDir, appConfig.codexExecSessionsDir,
+        path.join(channelHome, '.env'), path.join(channelHome, 'runtime')],
+      minimumAgeDays: appConfig.continuationRetentionDays, dryRun: false, signal: maintenanceAbort.signal,
+    });
+    const cleanup = await maintenance;
+    if (maintenanceAbort.signal.aborted) return;
+    if (cleanup.status !== 'disabled') console.error(`[workspace-cleanup] ${JSON.stringify(cleanup)}`);
+    if (cleanup.status === 'blocked') throw new Error('Startup deferred while a managed workspace operation still holds the native lock.');
   }
   await emitCodexExecConfigDiagnostics(appConfig);
   await accessControlStore.load();

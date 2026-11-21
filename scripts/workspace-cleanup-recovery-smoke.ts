@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { renameSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { mock } from 'node:test';
 import type { ManagedGitSelection } from '../src/domain/managed-workspace.js';
 import { SqliteDurableRunRepository } from '../src/durable-run/sqlite-repository.js';
 import { SqliteWorkspaceCleanupClaims } from '../src/durable-run/workspace-cleanup-claims.js';
@@ -69,6 +71,16 @@ try {
   const renameCrash = await moveBeforeJournal('crash-after-move');
   const resumed = options();
   assert.deepEqual(resumed.claims.pending(roots.scratch, 5), [renameCrash.claim]);
+  const openDirectory = fs.opendir.bind(fs);
+  const quarantineDirectory = workspaceCleanupQuarantinePath(roots.scratch, renameCrash.claim);
+  const unavailable = mock.method(fs, 'opendir', async (...args: Parameters<typeof openDirectory>) => {
+    if (args[0] === quarantineDirectory) throw Object.assign(new Error('temporary unavailable'), { code: 'EIO' });
+    return openDirectory(...args);
+  });
+  try {
+    assert.equal(await recoverWorkspaceCleanupClaim(resumed, renameCrash.claim), 'deferred');
+    assert.equal(resumed.claims.get(renameCrash.owner)?.state, 'reserved');
+  } finally { unavailable.mock.restore(); }
   db.prepare("UPDATE durable_outbox SET status = 'pending' WHERE run_id = ?").run(renameCrash.owner.runId);
   assert.equal(await recoverWorkspaceCleanupClaim(resumed, renameCrash.claim), 'deferred');
   assert.equal(await files.location(renameCrash.claim), 'quarantine');
@@ -167,6 +179,18 @@ try {
   assert.equal(partialOptions.claims.get(partial.owner)?.reason, 'purge_incomplete');
   assert.equal((await fs.stat(path.join(partialPath, 'git-checkout', '.git'))).isDirectory(), true);
   assert.equal(await fs.readFile(partial.report, 'utf8'), 'kept');
+
+  const lateCache = await fixture('backing-changed-before-approval', git);
+  const missingCache = path.join(work, 'moved-cache');
+  let checked = false;
+  assert.equal(await recoverWorkspaceCleanupClaim({ ...options(), confirmPolicy: () => {
+    checked = true;
+    renameSync(bare, missingCache);
+    return true;
+  } }, lateCache.claim), 'deferred');
+  assert.equal(checked, true);
+  assert.equal(await files.location(lateCache.claim), 'source');
+  assert.equal(await fs.readFile(lateCache.report, 'utf8'), 'kept');
 } finally {
   db.close();
   repository.close();

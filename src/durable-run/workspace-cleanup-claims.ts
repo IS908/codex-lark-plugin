@@ -7,7 +7,7 @@ import { sameWorkspaceProject, workspaceProjectBindingSchema, type WorkspaceProj
 import type { WorkspaceCleanupEpoch } from '../workspace-cleanup-evidence.js';
 import { workspacePathContains } from '../workspace-projects.js';
 import { assertWorkspaceCleanupConnection, hasWorkspaceCleanupFences, initializeWorkspaceCleanupClaims,
-  workspaceCleanupClaimsTable } from './workspace-cleanup-claim-schema.js';
+  workspaceCleanupClaimsTable, workspaceCleanupCursorTable } from './workspace-cleanup-claim-schema.js';
 import { readWorkspaceCleanupReferences, workspaceCleanupLedgerEligibility, type WorkspaceCleanupReference } from './workspace-cleanup-references.js';
 
 const timestamp = z.iso.datetime();
@@ -40,6 +40,11 @@ export interface WorkspaceCleanupAuthorization {
   minimumAgeDays: number;
   now: string;
   epoch?: WorkspaceCleanupEpoch;
+}
+
+interface CandidateCursor {
+  owner: ManagedRunOwner;
+  completedAt: string;
 }
 
 export class SqliteWorkspaceCleanupClaims {
@@ -104,6 +109,42 @@ export class SqliteWorkspaceCleanupClaims {
     return rows.map((row) => this.get(managedRunOwnerSchema.parse({ kind: row.workload_kind, runId: row.run_id }))!);
   }
 
+  candidates(root: WorkspaceProjectBinding, cutoff: string, limit: number): CandidateCursor[] {
+    if (!timestamp.safeParse(cutoff).success || !Number.isSafeInteger(limit) || limit < 1 || limit > 256) {
+      throw new Error('Invalid workspace cleanup candidate query.');
+    }
+    const cursor = this.database.prepare(`SELECT completion, workload_kind, run_id FROM main.${workspaceCleanupCursorTable}
+      WHERE scratch_root = ? AND root_device = ? AND root_inode = ?`).get(root.directory, root.device, root.inode);
+    const scan = (after?: Array<string | number | bigint | Uint8Array | null>) => this.database.prepare(`
+      SELECT a.workload_kind, a.run_id, r.completed_at
+      FROM main.workspace_run_allocations a JOIN main.durable_runs r
+        ON r.run_id = a.run_id AND r.workload_kind = a.workload_kind
+      WHERE a.scratch_path >= ? AND a.scratch_path < ? AND a.workload_kind IN ('async_task', 'cron_prompt')
+        AND r.status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')
+        AND r.completed_at <= ? AND a.last_used_at <= ?
+        AND r.retained = 0 AND r.lease_owner IS NULL AND r.lease_expires_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM main.${workspaceCleanupClaimsTable} j
+          WHERE j.workload_kind = a.workload_kind AND j.run_id = a.run_id)
+        ${after ? 'AND (r.completed_at, a.workload_kind, a.run_id) > (?, ?, ?)' : ''}
+      ORDER BY r.completed_at, a.workload_kind, a.run_id LIMIT ?`)
+      .all(root.directory + '/', root.directory + '0', cutoff, cutoff, ...(after ?? []), limit);
+    const rows = cursor ? scan([cursor.completion, cursor.workload_kind, cursor.run_id]) : scan();
+    return (cursor && !rows.length ? scan() : rows).map((row) => ({
+      owner: managedRunOwnerSchema.parse({ kind: row.workload_kind, runId: row.run_id }),
+      completedAt: timestamp.parse(row.completed_at),
+    }));
+  }
+
+  recordCandidateScan(root: WorkspaceProjectBinding, { owner, completedAt }: CandidateCursor): void {
+    this.transaction(() => {
+      this.database.prepare(`INSERT INTO main.${workspaceCleanupCursorTable}
+        (scratch_root, root_device, root_inode, completion, workload_kind, run_id) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scratch_root) DO UPDATE SET root_device=excluded.root_device, root_inode=excluded.root_inode,
+          completion=excluded.completion, workload_kind=excluded.workload_kind, run_id=excluded.run_id`)
+        .run(root.directory, root.device, root.inode, completedAt, owner.kind, owner.runId);
+    });
+  }
+
   postpone(expected: WorkspaceCleanupClaim, now: string): boolean {
     return this.transaction(() => {
       if (!timestamp.safeParse(now).success || Date.parse(now) <= Date.parse(expected.updatedAt)
@@ -117,7 +158,17 @@ export class SqliteWorkspaceCleanupClaims {
   confirm(expected: WorkspaceCleanupClaim, request: WorkspaceCleanupAuthorization): boolean {
     if (this.database.isTransaction) return false;
     assertWorkspaceCleanupConnection(this.database);
-    return hasWorkspaceCleanupFences(this.database) && this.sameClaim(expected) && !!this.eligible(request, expected);
+    // The already-open Node connection must conflict with the helper's writer lock.
+    // Filesystem-side pins independently require the same WAL and shared-memory files.
+    try {
+      this.database.exec('BEGIN IMMEDIATE');
+      this.database.exec('ROLLBACK');
+      return false;
+    } catch (error) {
+      if (((error as { errcode?: number }).errcode ?? 0) % 256 !== 5) return false;
+    }
+    return Date.parse(request.now) >= Date.parse(expected.updatedAt)
+      && hasWorkspaceCleanupFences(this.database) && this.sameClaim(expected) && !!this.eligible(request, expected);
   }
 
   perform(expected: WorkspaceCleanupClaim, request: WorkspaceCleanupAuthorization, next: 'isolated' | 'purging' | 'removed',

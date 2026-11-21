@@ -5,19 +5,23 @@ import { workspaceCleanupLedgerEligibility } from './durable-run/workspace-clean
 import { validateManagedRunDirectory } from './managed-workspace-storage.js';
 import { observeWorkspaceCleanupTree, type WorkspaceCleanupEpoch } from './workspace-cleanup-evidence.js';
 import { type createWorkspaceCleanupFiles, workspaceCleanupQuarantinePath } from './workspace-cleanup-files.js';
-import { pathsOverlap, resolveProtectedPaths, supportsScratch, verifyGitBacking } from './workspace-cleanup-preview.js';
+import { pathsOverlap, resolveProtectedPaths, supportsScratch } from './workspace-cleanup-preview.js';
 import { readWorkspaceDependencyMountPolicy } from './workspace-dependency-mounts.js';
+import { isWorkspaceGitCleanupProofCurrent, verifyWorkspaceGitCacheForCleanup } from './workspace-git-snapshot.js';
+import { validateWorkspaceProject } from './workspace-projects.js';
 
 export interface WorkspaceCleanupContext {
   claims: SqliteWorkspaceCleanupClaims;
   files: NonNullable<Awaited<ReturnType<typeof createWorkspaceCleanupFiles>>>;
   roots: { scratch: WorkspaceProjectBinding; artifacts: WorkspaceProjectBinding };
   authorizedRoots: readonly [string, ...string[]];
+  continuationRoot?: string;
   minimumAgeDays: number;
   now(): Date;
   signal: AbortSignal;
   epoch?: WorkspaceCleanupEpoch;
   revalidatePolicy(): Promise<boolean>;
+  confirmPolicy?(): boolean;
 }
 
 // The caller owns the global instance lock and provides fresh mount and registry policy.
@@ -25,8 +29,8 @@ export async function reserveWorkspaceCleanupCandidate(context: WorkspaceCleanup
   try {
     const approved = await authorize(context, owner);
     if (!approved) return;
-    const { allocation, baseline, request } = approved;
-    if (await validateManagedRunDirectory(allocation, 'scratch', context.authorizedRoots) !== allocation.scratch.directory) return;
+    const { allocation, baseline, request, authorizedRoots } = approved;
+    if (await validateManagedRunDirectory(allocation, 'scratch', authorizedRoots) !== allocation.scratch.directory) return;
     const tree = await observeWorkspaceCleanupTree(allocation.scratch, context.signal, !allocation.gitCheckout);
     if (tree?.digest !== baseline || context.files.readiness() !== 'ready' || !context.files.canStage(owner, tree)
       || !await context.revalidatePolicy() || !await tree.unchanged() || context.signal.aborted) return;
@@ -45,29 +49,31 @@ export async function recoverWorkspaceCleanupClaim(context: WorkspaceCleanupCont
       if (files.readiness() !== 'ready') return 'deferred';
       const approved = await authorize(context, claim.owner, claim);
       if (!approved) return 'deferred';
-      const { allocation, request, baseline, quarantine } = approved;
+      const { request, baseline, quarantine, backing } = approved;
       const location = await files.location(claim);
       if (location === 'ambiguous' || (location === 'source' && claim.state !== 'reserved')
         || (location === 'missing' && claim.state !== 'purging')) return hold('identity_unverified');
       const binding = location === 'source' ? claim.scratch : { ...claim.scratch, directory: quarantine! };
       const tree = location === 'missing' ? undefined
-        : await observeWorkspaceCleanupTree(binding, signal, !allocation.gitCheckout, claim.scratch.directory);
+        : await observeWorkspaceCleanupTree(binding, signal, false, claim.scratch.directory);
       if (signal.aborted) return 'deferred';
-      if (location !== 'missing' && tree?.digest !== baseline) {
+      if (location !== 'missing' && !tree) return 'deferred';
+      if (tree && tree.digest !== baseline) {
         return hold(location === 'source' ? 'identity_unverified' : claim.state === 'purging' ? 'purge_incomplete' : 'quarantine_unverified');
       }
       if (!await context.revalidatePolicy() || await files.location(claim) !== location || (tree && !await tree.unchanged()) || signal.aborted) {
         return 'deferred';
       }
-      const permit = () => !signal.aborted && claims.confirm(claim, request);
+      const permit = () => !signal.aborted && (context.confirmPolicy?.() ?? true)
+        && (!backing || isWorkspaceGitCleanupProofCurrent(backing)) && claims.confirm(claim, request);
       let updated: WorkspaceCleanupClaim | undefined;
       if (claim.state === 'reserved') {
-        const performed = location === 'source' && tree ? await files.move(claim, tree, permit) : await files.flush(claim, 'quarantine', permit);
+        const performed = location === 'source' && tree ? await files.move(claim, tree, permit, backing) : await files.flush(claim, 'quarantine', permit);
         if (performed) updated = claims.perform(claim, request, 'isolated', () => true);
       } else if (claim.state === 'isolated') {
         updated = claims.perform(claim, request, 'purging');
       } else {
-        const performed = tree ? await files.purge(claim, tree, permit) : await files.flush(claim, 'missing', permit);
+        const performed = tree ? await files.purge(claim, tree, permit, backing) : await files.flush(claim, 'missing', permit);
         if (performed) updated = claims.perform(claim, request, 'removed', () => true);
       }
       // An interrupted or unacknowledged native operation is reconciled from the next fresh location and manifest.
@@ -92,13 +98,22 @@ async function authorize(context: WorkspaceCleanupContext, owner: ManagedRunOwne
   const allocation = record.allocation;
   if (!sameWorkspaceProject(roots.scratch, allocation.roots.scratch) || !sameWorkspaceProject(roots.artifacts, allocation.roots.artifacts)
     || (claim && (!sameWorkspaceProject(claim.scratch, allocation.scratch) || claim.baseline !== reference.scratchBaseline))) return;
+  let authorizedRoots = context.authorizedRoots;
+  if (owner.kind === 'async_task') {
+    if (!context.continuationRoot || !reference.continuationRoot || !allocation.project) return;
+    authorizedRoots = [authorizedRoots[0], ...new Set([...authorizedRoots.slice(1), context.continuationRoot, reference.continuationRoot])];
+    await Promise.all([roots.scratch, roots.artifacts, allocation.project].map((binding) => validateWorkspaceProject(authorizedRoots, binding)));
+  }
   const mounts = await readWorkspaceDependencyMountPolicy();
   const quarantine = claim && workspaceCleanupQuarantinePath(roots.scratch, claim);
   const protectedPaths = await resolveProtectedPaths(observation.paths, context.authorizedRoots[0]);
   if (!protectedPaths.complete || [allocation.scratch.directory, ...(quarantine ? [quarantine] : [])].some((directory) =>
     !supportsScratch(directory, roots.scratch, mounts)
     || [roots.artifacts.directory, ...protectedPaths.directories].some((entry) => pathsOverlap(directory, entry, mounts)))) return;
-  if (allocation.git && !await verifyGitBacking(allocation.git, context.authorizedRoots, new Map(), signal)) return;
-  return { allocation, quarantine, baseline: reference.scratchBaseline,
+  const git = allocation.git;
+  const backing = git && await verifyWorkspaceGitCacheForCleanup({ authorizedRoots,
+    gitDirectory: git.cache, repositoryId: git.repositoryId, scope: git.scope, commit: git.commit }, signal);
+  if (git && (backing?.key !== git.key || backing?.storeFingerprint !== git.storeFingerprint)) return;
+  return { allocation, quarantine, authorizedRoots, backing: backing?.proof, baseline: reference.scratchBaseline,
     request: { roots, observation, minimumAgeDays: context.minimumAgeDays, now: now.toISOString(), epoch } };
 }

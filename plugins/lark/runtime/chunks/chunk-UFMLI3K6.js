@@ -1086,6 +1086,7 @@ var channelHome = path2.join(os2.homedir(), ".codex", "channels", "lark");
 var runtimeConfigDir = path2.join(channelHome, "runtime-config");
 var continuationRuntimeDir = path2.join(channelHome, "runtime", "continuations");
 var managedWorkspaceConfigPath = path2.join(runtimeConfigDir, "managed-workspace.json");
+var managedWorkspaceCleanupPolicyPath = path2.join(runtimeConfigDir, "managed-workspace-cleanup.json");
 
 export {
   __require,
@@ -1098,5 +1099,6 @@ export {
   channelHome,
   runtimeConfigDir,
   continuationRuntimeDir,
-  managedWorkspaceConfigPath
+  managedWorkspaceConfigPath,
+  managedWorkspaceCleanupPolicyPath
 };
