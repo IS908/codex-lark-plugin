@@ -46,6 +46,8 @@ import { admitManagedForegroundRun, managedForegroundRunOwner } from './managed-
 import { ManagedWorkspaceStorageError, validateManagedRunDirectory } from './managed-workspace-storage.js';
 import { readManagedArtifact } from './managed-workspace-artifact.js';
 import type { ManagedWorkspaceStore } from './ports/managed-workspace.js';
+import { deliverForegroundArtifacts, type ForegroundArtifactDeliveryOptions } from './foreground-artifact-delivery.js';
+import type { ForegroundArtifactBatch } from './domain/managed-workspace.js';
 import {
   pinWorkspacePath,
   readWorkspaceProjectDirective,
@@ -77,6 +79,7 @@ export interface CodexExecDeliveryBaseOptions {
   onLifecycleGuard?: (reason: string) => void;
   onActionResults?: (results: CodexExecActionExecutionResult[]) => void;
   onManagedArtifact?: (reference: ManagedArtifactReference) => void;
+  uploadManagedArtifact?: ForegroundArtifactDeliveryOptions['upload'];
   continuationAvailable?: boolean;
   modelOverride?: string;
   actionBaseDir?: string;
@@ -494,6 +497,20 @@ export async function deliverMessageViaCodexExec(
   if (priorUnmanaged && (priorManaged || priorUnmanaged.sessionKey !== sessionKey)) {
     throw new ManagedWorkspaceStorageError('invalid_binding');
   }
+  const artifactIO = !opts.deliverySink && opts.uploadManagedArtifact
+    && (message.chatType === 'p2p' || message.chatType === 'group') && message.messageType !== 'reaction'
+    && isFeishuOpenMessageId(message.messageId) && shouldSendFeishuReplyForMessage(message)
+    ? { sendReply: opts.sendReply, upload: opts.uploadManagedArtifact, abortSignal: opts.abortSignal }
+    : undefined;
+  if (priorManaged && managedStore && workspaceOwner && artifactIO) {
+    const batch = managedStore.getForegroundArtifacts(workspaceOwner.runId);
+    if (batch) {
+      await deliverForegroundArtifacts(managedStore, priorManaged.allocation, batch,
+        message, sessionKey, workspaceOptions.authorizedRoot, artifactIO);
+      turnObligations?.markSatisfied(message.messageId, 'reply');
+      return;
+    }
+  }
   const directive = foreground && message.messageType !== 'reaction'
     ? readWorkspaceProjectDirective(message.chatType === 'doc_comment' ? message.currentUserText : message.workspaceDirectiveText)
     : undefined;
@@ -526,6 +543,10 @@ export async function deliverMessageViaCodexExec(
   if (managed && !sameWorkspaceProject(managed.project, workspace)) {
     throw new ManagedWorkspaceStorageError('invalid_binding');
   }
+  const foregroundArtifacts: ManagedArtifactReference[] = [];
+  const onManagedArtifact = managedStore && artifactIO
+    ? (reference: ManagedArtifactReference) => { foregroundArtifacts.push(reference); }
+    : opts.onManagedArtifact;
   const launchWorkspace = workspace ?? (managed ? await pinWorkspacePath(
     workspaceOptions.authorizedRoot, path.resolve(workspaceOptions.authorizedRoot),
   ) : undefined);
@@ -580,7 +601,7 @@ export async function deliverMessageViaCodexExec(
         opts.continuationAvailable ?? true,
         continuationPermitted,
         opts.actionPolicy?.blockedActionTypes,
-        Boolean(managed && opts.onManagedArtifact),
+        Boolean(managed && onManagedArtifact),
       ),
     ),
     imagePaths: collectImagePaths(message),
@@ -721,6 +742,7 @@ export async function deliverMessageViaCodexExec(
       model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
       continuationPermitted,
       managed,
+      onManagedArtifact,
     });
     opts.onActionResults?.(actionResults);
     const continuation = actionResults.find(
@@ -835,13 +857,23 @@ export async function deliverMessageViaCodexExec(
     return;
   }
 
-  await opts.sendReply!({
+  const response = await opts.sendReply!({
     chat_id: message.chatId,
     text,
     ...(isFeishuOpenMessageId(message.messageId) ? { reply_to: message.messageId } : {}),
     thread_id: message.threadId,
     ...(runtimeFooter ? { runtimeFooter } : {}),
   });
+  if (managed && managedStore && artifactIO && foregroundArtifacts.length
+    && !response.isError && response.sentCount > 0 && response.messageIds?.some(isFeishuOpenMessageId)) {
+    const batch: ForegroundArtifactBatch = {
+      version: 1, chatId: message.chatId, sourceMessageId: message.messageId, sessionKey,
+      ...(message.threadId ? { threadId: message.threadId } : {}),
+      files: foregroundArtifacts.map((reference) => ({ reference, status: 'pending' })),
+    };
+    managedStore.rememberForegroundArtifacts(managed.owner.runId, batch);
+    await deliverForegroundArtifacts(managedStore, managed, batch, message, sessionKey, workspaceOptions.authorizedRoot, artifactIO);
+  }
 }
 
 async function dispatchCodexExecActions(input: {
@@ -854,6 +886,7 @@ async function dispatchCodexExecActions(input: {
   workspaceProject?: WorkspaceProjectBinding;
   explicitWorkspaceProject: boolean;
   managed?: ManagedRunAllocation;
+  onManagedArtifact?: (reference: ManagedArtifactReference) => void;
 }): Promise<CodexExecActionExecutionResult[]> {
   const blocked = new Set(input.opts.actionPolicy?.blockedActionTypes ?? []);
   const allowedActions = input.actions.filter((action) => action.type !== 'register_artifact' && !blocked.has(action.type));
@@ -882,7 +915,7 @@ async function dispatchCodexExecActions(input: {
       const { managed, opts } = input;
       let ok = false;
       try {
-        if (!managed || !opts.onManagedArtifact) throw new Error('Managed registration unavailable.');
+        if (!managed || !input.onManagedArtifact) throw new Error('Managed registration unavailable.');
         if (!registered.has(action.relative_path)) {
           if (registered.size >= MANAGED_DELIVERY_MAX_FILES) throw new Error('Too many managed artifacts.');
           opts.abortSignal?.throwIfAborted();
@@ -892,7 +925,7 @@ async function dispatchCodexExecActions(input: {
           });
           if (!content.length) throw new Error('Empty managed artifact.');
           opts.abortSignal?.throwIfAborted();
-          opts.onManagedArtifact({ relativePath: action.relative_path, sha256 });
+          input.onManagedArtifact({ relativePath: action.relative_path, sha256 });
           registered.add(action.relative_path);
         }
         ok = true;

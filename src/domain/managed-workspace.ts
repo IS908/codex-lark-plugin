@@ -15,6 +15,14 @@ export const managedArtifactReferenceSchema = z.strictObject({
 });
 export type ManagedArtifactReference = z.infer<typeof managedArtifactReferenceSchema>;
 
+export const managedArtifactIdentitySchema = workspaceProjectBindingSchema.pick({ device: true, inode: true });
+export const managedArtifactStageSchema = z.strictObject({
+  nonce: z.string().regex(/^[a-f0-9]{32}$/),
+  sha256: managedArtifactReferenceSchema.shape.sha256,
+  identity: managedArtifactIdentitySchema.optional(),
+});
+export type ManagedArtifactStage = z.infer<typeof managedArtifactStageSchema>;
+
 export const managedRunOwnerSchema = z.strictObject({
   kind: z.enum(['foreground', 'cron_prompt', 'async_task']),
   runId: z.string().min(1).max(512),
@@ -31,6 +39,22 @@ export const managedWorkspaceAdmissionSchema = z.strictObject({
 });
 
 const foregroundSessionKey = z.string().min(1).max(1024);
+
+export const foregroundArtifactBatchSchema = z.strictObject({
+  version: z.literal(1),
+  sessionKey: foregroundSessionKey,
+  chatId: z.string().min(1).max(512),
+  sourceMessageId: z.string().regex(/^om_/).max(512),
+  threadId: z.string().min(1).max(512).optional(),
+  files: z.array(z.strictObject({
+    reference: managedArtifactReferenceSchema,
+    status: z.enum(['pending', 'sending', 'sent', 'failed', 'unknown']),
+    messageId: z.string().regex(/^om_/).max(512).optional(),
+  })).min(1).max(MANAGED_DELIVERY_MAX_FILES).refine((files) =>
+    new Set(files.map(({ reference }) => reference.relativePath)).size === files.length
+    && files.every(({ status, messageId }) => (status === 'sent') === Boolean(messageId))),
+});
+export type ForegroundArtifactBatch = z.infer<typeof foregroundArtifactBatchSchema>;
 
 export const unmanagedForegroundAdmissionSchema = z.union([
   z.strictObject({ sessionKey: foregroundSessionKey, project: workspaceProjectBindingSchema }),

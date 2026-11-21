@@ -3,16 +3,21 @@ import path from 'node:path';
 import { z } from 'zod';
 import {
   managedRunAllocationSchema,
+  foregroundArtifactBatchSchema,
+  isManagedArtifactRelativePath,
+  managedArtifactIdentitySchema,
+  managedArtifactStageSchema,
   managedRunIntentSchema,
   unmanagedForegroundAdmissionSchema,
   type ManagedRunAllocation,
+  type ForegroundArtifactBatch,
   type ManagedRunIntent,
   type ManagedRunOwner,
   type ManagedWorkspacePurpose,
   type UnmanagedForegroundAdmission,
 } from '../domain/managed-workspace.js';
 import { sameWorkspaceProject } from '../domain/workspace.js';
-import type { ManagedWorkspaceAuthorizedRoots, ManagedWorkspaceRecord, ManagedWorkspaceStore } from '../ports/managed-workspace.js';
+import type { ManagedArtifactStageJournal, ManagedWorkspaceAuthorizedRoots, ManagedWorkspaceRecord, ManagedWorkspaceStore } from '../ports/managed-workspace.js';
 import {
   allocateManagedRunDirectories,
   directoryIdentity,
@@ -54,6 +59,18 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
         run_id TEXT PRIMARY KEY,
         admission_json TEXT NOT NULL CHECK (json_valid(admission_json))
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS workspace_foreground_artifacts (
+        run_id TEXT PRIMARY KEY,
+        batch_json TEXT NOT NULL CHECK (json_valid(batch_json))
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS workspace_retry_artifact_stages (
+        run_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        identity_json TEXT CHECK (identity_json IS NULL OR json_valid(identity_json)),
+        PRIMARY KEY (run_id, relative_path)
+      ) STRICT;
       ${sourceRegistries.map(([table, json]) => `
         CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${sourcePathExpr(json)});
         CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${sourceIdentityExpr(json)});
@@ -64,6 +81,80 @@ export class SqliteManagedWorkspaceStore implements ManagedWorkspaceStore {
   getUnmanagedForeground(runId: string): UnmanagedForegroundAdmission | null {
     const row = this.database.prepare('SELECT admission_json FROM workspace_unmanaged_foreground WHERE run_id = ?').get(runId);
     return row ? parseStored(unmanagedForegroundAdmissionSchema, row.admission_json) : null;
+  }
+
+  getForegroundArtifacts(runId: string): ForegroundArtifactBatch | null {
+    const row = this.database.prepare('SELECT batch_json FROM workspace_foreground_artifacts WHERE run_id = ?').get(runId);
+    if (!row) return null;
+    const batch = parseStored(foregroundArtifactBatchSchema, row.batch_json);
+    if (this.get({ kind: 'foreground', runId })?.allocation.foregroundSessionKey !== batch.sessionKey) {
+      throw new ManagedWorkspaceStorageError('invalid_binding');
+    }
+    return batch;
+  }
+
+  retryArtifactStages(owner: ManagedRunOwner): ManagedArtifactStageJournal {
+    if (owner.kind !== 'async_task' || !this.get(owner)) throw new ManagedWorkspaceStorageError('invalid_binding');
+    const runId = owner.runId;
+    return {
+      get: (relativePath) => {
+        const row = this.database.prepare(`SELECT nonce, sha256, identity_json FROM workspace_retry_artifact_stages
+          WHERE run_id = ? AND relative_path = ?`).get(runId, relativePath);
+        return row ? managedArtifactStageSchema.parse({ nonce: row.nonce, sha256: row.sha256,
+          ...(row.identity_json === null ? {} : { identity: parseStored(managedArtifactIdentitySchema, row.identity_json) }),
+        }) : null;
+      },
+      reserve: (relativePath, stage) => {
+        this.requireAutocommit();
+        if (!isManagedArtifactRelativePath(relativePath) || stage.identity || !managedArtifactStageSchema.safeParse(stage).success) {
+          throw new ManagedWorkspaceStorageError('invalid_binding');
+        }
+        this.database.prepare(`INSERT INTO workspace_retry_artifact_stages (run_id, relative_path, nonce, sha256)
+          VALUES (?, ?, ?, ?)`).run(runId, relativePath, stage.nonce, stage.sha256);
+      },
+      pin: (relativePath, nonce, identity) => {
+        this.requireAutocommit();
+        const value = managedArtifactIdentitySchema.parse(identity);
+        const result = this.database.prepare(`UPDATE workspace_retry_artifact_stages SET identity_json = ?
+          WHERE run_id = ? AND relative_path = ? AND nonce = ? AND identity_json IS NULL`)
+          .run(JSON.stringify(value), runId, relativePath, nonce);
+        if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError('invalid_binding');
+      },
+      release: (relativePath, nonce) => {
+        this.requireAutocommit();
+        const result = this.database.prepare(`DELETE FROM workspace_retry_artifact_stages
+          WHERE run_id = ? AND relative_path = ? AND nonce = ?`).run(runId, relativePath, nonce);
+        if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError('invalid_binding');
+      },
+    };
+  }
+
+  rememberForegroundArtifacts(runId: string, batch: ForegroundArtifactBatch): void {
+    this.requireAutocommit();
+    const parsed = foregroundArtifactBatchSchema.safeParse(batch);
+    if (!parsed.success || parsed.data.files.some((file) => file.status !== 'pending')
+      || this.get({ kind: 'foreground', runId })?.allocation.foregroundSessionKey !== parsed.data.sessionKey) {
+      throw new ManagedWorkspaceStorageError('invalid_binding');
+    }
+    const result = this.database.prepare(`INSERT INTO workspace_foreground_artifacts (run_id, batch_json)
+      VALUES (?, ?) ON CONFLICT(run_id) DO NOTHING`).run(runId, JSON.stringify(parsed.data));
+    if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError('invalid_binding');
+  }
+
+  transitionForegroundArtifact(
+    runId: string, index: number, expected: 'pending' | 'sending',
+    status: Exclude<ForegroundArtifactBatch['files'][number]['status'], 'pending'>, messageId?: string,
+  ): boolean {
+    this.requireAutocommit();
+    if (!Number.isSafeInteger(index) || index < 0 || (expected === 'pending' && status !== 'sending' && status !== 'failed')
+      || (expected === 'sending' && status === 'sending') || (status === 'sent') !== Boolean(messageId)
+      || (messageId !== undefined && !/^om_/.test(messageId))) throw new ManagedWorkspaceStorageError('invalid_binding');
+    const file = `$.files[${index}]`;
+    const values = messageId ? [file + '.messageId', messageId] : [];
+    return Number(this.database.prepare(`UPDATE workspace_foreground_artifacts
+      SET batch_json = json_set(batch_json, ?, ?${messageId ? ', ?, ?' : ''})
+      WHERE run_id = ? AND json_extract(batch_json, ?) = ?`)
+      .run(file + '.status', status, ...values, runId, file + '.status', expected).changes) === 1;
   }
 
   rememberUnmanagedForeground(runId: string, admission: UnmanagedForegroundAdmission): void {

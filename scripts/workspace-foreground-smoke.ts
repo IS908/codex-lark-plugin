@@ -223,6 +223,71 @@ try {
   } finally {
     withOptIn.close();
   }
+  appConfig.codexExecCwd = base;
+  const artifactMessage: LarkMessage = {
+    messageId: 'om_foreground_file', chatId: 'oc_foreground_files', threadId: 'omt_foreground_files', chatType: 'group',
+    senderId: 'ou_file_owner', messageType: 'text', text: 'Send the report file.', rawContent: '',
+  };
+  const sent: import('../src/reply-sender.js').ReplyRequest[] = [];
+  const uploaded: string[] = [];
+  let runCount = 0;
+  const deliverArtifactTurn = (repo: SqliteDurableRunRepository, stop?: AbortController) => deliverMessageViaCodexExec({
+    message: artifactMessage, displayLabel: 'Foreground attachment', useCodexSessions: false,
+    managedWorkspaceStore: () => repo.getManagedWorkspaceStore(), progressLimits: { enabled: false }, abortSignal: stop?.signal,
+    uploadManagedArtifact: async (content, name) => { uploaded.push(`${name}:${content.toString()}`); return 'file_ticket'; },
+    sendReply: async (reply) => {
+      sent.push(reply);
+      if (!reply.rawMessage) stop?.abort();
+      return { sentCount: 1, statusText: 'sent', messageIds: [reply.rawMessage ? 'om_attachment' : 'om_summary'] };
+    },
+    runCodexExec: async ({ actions, extraEnv, prompt }) => {
+      runCount++;
+      assert.match(prompt, /"type":"register_artifact"/);
+      assert.ok(actions && extraEnv?.LARK_MANAGED_ARTIFACTS_DIR);
+      await fs.writeFile(path.join(extraEnv.LARK_MANAGED_ARTIFACTS_DIR, 'report.csv'), 'foreground content');
+      await fs.writeFile(path.join(extraEnv.LARK_MANAGED_ARTIFACTS_DIR, 'uncertain.txt'), 'prior send uncertainty');
+      await fs.appendFile(actions.filePath, `${JSON.stringify({
+        version: 1, type: 'lark_action_request', token: actions.token,
+        actions: [
+          { type: 'register_artifact', relative_path: 'report.csv' },
+          { type: 'register_artifact', relative_path: 'uncertain.txt' },
+        ],
+      })}\n`);
+      return { text: 'Report ready.' };
+    },
+  });
+  const deliverySession = buildCodexExecSessionKey(artifactMessage.chatId, artifactMessage.threadId);
+  const deliveryOwner = managedForegroundRunOwner(artifactMessage, deliverySession);
+  const beforeDelivery = await SqliteDurableRunRepository.open({ databasePath });
+  try {
+    await deliverArtifactTurn(beforeDelivery, new AbortController());
+    assert.equal(sent.length, 1);
+    assert.deepEqual(uploaded, []);
+    const registered = beforeDelivery.getManagedWorkspaceStore().getForegroundArtifacts(deliveryOwner.runId);
+    assert.deepEqual(registered?.files.map((file) => file.status), ['pending', 'pending']);
+    assert.equal(beforeDelivery.getManagedWorkspaceStore().transitionForegroundArtifact(deliveryOwner.runId, 1, 'pending', 'sending'), true);
+    const scratchPath = beforeDelivery.getManagedWorkspaceStore().get(deliveryOwner)!.allocation.scratch.directory;
+    await fs.rename(scratchPath, `${scratchPath}.unavailable`);
+  } finally {
+    beforeDelivery.close();
+  }
+  await fs.unlink(appConfig.managedWorkspaceConfigPath);
+  const resumedDelivery = await SqliteDurableRunRepository.open({ databasePath });
+  try {
+    await deliverArtifactTurn(resumedDelivery);
+    await deliverArtifactTurn(resumedDelivery);
+    assert.equal(runCount, 1);
+    assert.deepEqual(uploaded, ['report.csv:foreground content']);
+    assert.equal(sent.length, 2);
+    assert.equal(sent[1].chat_id, artifactMessage.chatId);
+    assert.equal(sent[1].thread_id, artifactMessage.threadId);
+    assert.equal(sent[1].reply_to, artifactMessage.messageId);
+    assert.deepEqual(sent[1].rawMessage, { msgType: 'file', content: JSON.stringify({ file_key: 'file_ticket' }) });
+    assert.deepEqual(resumedDelivery.getManagedWorkspaceStore().getForegroundArtifacts(deliveryOwner.runId)
+      ?.files.map((file) => file.status), ['sent', 'sending']);
+  } finally {
+    resumedDelivery.close();
+  }
 } finally {
   await fs.rm(fixture, { recursive: true, force: true });
 }

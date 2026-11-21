@@ -3260,8 +3260,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path36) {
-      let input2 = path36;
+    function removeDotSegments(path37) {
+      let input2 = path37;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3335,11 +3335,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path36) {
-      if (path36 === "" || path36[0] === "/") {
-        return removeDotSegments(path36);
+    function removeDotSegmentsRelative(path37) {
+      if (path37 === "" || path37[0] === "/") {
+        return removeDotSegments(path37);
       }
-      const segments = path36.split("/");
+      const segments = path37.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3702,8 +3702,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path36 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path36 && path36 !== "/" ? path36 : void 0;
+        const path37 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path37 && path37 !== "/" ? path37 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -16861,8 +16861,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path36, errorMaps, issueData } = params;
-  const fullPath = [...path36, ...issueData.path || []];
+  const { data, path: path37, errorMaps, issueData } = params;
+  const fullPath = [...path37, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -16977,11 +16977,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path36, key) {
+  constructor(parent, value, path37, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path36;
+    this._path = path37;
     this._key = key;
   }
   get path() {
@@ -20936,10 +20936,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path36) {
-  if (!path36)
+function getElementAtPath(obj, path37) {
+  if (!path37)
     return obj;
-  return path36.reduce((acc, key) => acc?.[key], obj);
+  return path37.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -21279,11 +21279,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path36, issues) {
+function prefixIssues(path37, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path36);
+    iss.path.unshift(path37);
     return iss;
   });
 }
@@ -21745,16 +21745,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path36 = []) => {
+  const processError = (error63, path37 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path36, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path37, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path36, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path36, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
       } else {
-        const fullpath = [...path36, ...issue2.path];
+        const fullpath = [...path37, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -21793,17 +21793,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path36 = []) => {
+  const processError = (error63, path37 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path36, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path37, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path36, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path36, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path37, ...issue2.path]);
       } else {
-        const fullpath = [...path36, ...issue2.path];
+        const fullpath = [...path37, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -21842,8 +21842,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path36 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path36) {
+  const path37 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path37) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -37394,11 +37394,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path36) {
-  if (path36.length === 0) {
+function getDotPath(path37) {
+  if (path37.length === 0) {
     return "object root";
   }
-  return path36.reduce((acc, seg, index) => {
+  return path37.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -39625,13 +39625,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path36 = ref.slice(1).split("/").filter(Boolean);
-  if (path36.length === 0) {
+  const path37 = ref.slice(1).split("/").filter(Boolean);
+  if (path37.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path36[0] === defsKey) {
-    const key = path36[1] === void 0 ? void 0 : decodeJSONPointerSegment(path36[1]);
+  if (path37[0] === defsKey) {
+    const key = path37[1] === void 0 ? void 0 : decodeJSONPointerSegment(path37[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -56613,6 +56613,12 @@ var managedArtifactReferenceSchema = external_exports.strictObject({
   relativePath: external_exports.string().refine(isManagedArtifactRelativePath),
   sha256: external_exports.string().regex(/^[a-f0-9]{64}$/)
 });
+var managedArtifactIdentitySchema = workspaceProjectBindingSchema.pick({ device: true, inode: true });
+var managedArtifactStageSchema = external_exports.strictObject({
+  nonce: external_exports.string().regex(/^[a-f0-9]{32}$/),
+  sha256: managedArtifactReferenceSchema.shape.sha256,
+  identity: managedArtifactIdentitySchema.optional()
+});
 var managedRunOwnerSchema = external_exports.strictObject({
   kind: external_exports.enum(["foreground", "cron_prompt", "async_task"]),
   runId: external_exports.string().min(1).max(512)
@@ -56626,6 +56632,18 @@ var managedWorkspaceAdmissionSchema = external_exports.strictObject({
   createdAt: external_exports.iso.datetime()
 });
 var foregroundSessionKey = external_exports.string().min(1).max(1024);
+var foregroundArtifactBatchSchema = external_exports.strictObject({
+  version: external_exports.literal(1),
+  sessionKey: foregroundSessionKey,
+  chatId: external_exports.string().min(1).max(512),
+  sourceMessageId: external_exports.string().regex(/^om_/).max(512),
+  threadId: external_exports.string().min(1).max(512).optional(),
+  files: external_exports.array(external_exports.strictObject({
+    reference: managedArtifactReferenceSchema,
+    status: external_exports.enum(["pending", "sending", "sent", "failed", "unknown"]),
+    messageId: external_exports.string().regex(/^om_/).max(512).optional()
+  })).min(1).max(MANAGED_DELIVERY_MAX_FILES).refine((files) => new Set(files.map(({ reference }) => reference.relativePath)).size === files.length && files.every(({ status, messageId }) => status === "sent" === Boolean(messageId)))
+});
 var unmanagedForegroundAdmissionSchema = external_exports.union([
   external_exports.strictObject({ sessionKey: foregroundSessionKey, project: workspaceProjectBindingSchema }),
   external_exports.strictObject({ sessionKey: foregroundSessionKey, fallbackCwd: workspaceProjectBindingSchema.shape.directory })
@@ -65705,7 +65723,7 @@ function startSdkChannelRuntimeWithRetry(channel, options = {}) {
 }
 
 // src/codex-exec-delivery.ts
-import path26 from "node:path";
+import path27 from "node:path";
 
 // src/codex-exec-progress.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
@@ -66397,7 +66415,7 @@ async function admitManagedForegroundRun(options) {
 
 // src/managed-workspace-artifact.ts
 import { execFile as execFile3 } from "node:child_process";
-import { createHash as createHash11 } from "node:crypto";
+import { createHash as createHash11, randomBytes } from "node:crypto";
 import path25 from "node:path";
 import { promisify as promisify3 } from "node:util";
 var exec3 = promisify3(execFile3);
@@ -66406,13 +66424,14 @@ var artifactProgram = String.raw`
   const fs = require('node:fs');
   const path = require('node:path');
   const { createHash, randomBytes } = require('node:crypto');
-  const [operation, root, dev, ino, relative, limitText, expected] = process.argv.slice(1);
+  const [operation, root, dev, ino, relative, limitText, expected, nonce, stageDev, stageIno] = process.argv.slice(1);
   const limit = Number(limitText);
   const mode = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
   const same = (a, b) => a.dev === b.dev && a.ino === b.ino;
   const stable = (a, b) => same(a, b) && a.size === b.size && a.ctimeNs === b.ctimeNs && a.mtimeNs === b.mtimeNs;
   const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
   const stat = (name) => fs.lstatSync(name, { bigint: true });
+  function optionalStat(name) { try { return stat(name); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
   const guard = (ok) => { if (!ok) throw new Error('Invalid artifact'); };
   let current = root;
   let identity;
@@ -66439,16 +66458,33 @@ var artifactProgram = String.raw`
     } finally { fs.closeSync(fd); }
   }
   const prefix = '.lark-retry-' + sha(relative + '\0' + expected) + '-';
+  const ownedStage = nonce ? prefix + nonce + '.tmp' : undefined;
+  const privateStage = (entry) => entry.isFile() && entry.uid === BigInt(process.geteuid()) && (entry.mode & 0o077n) === 0n;
+  function verifiedStage(entry) {
+    return privateStage(entry) && (stageDev
+      ? String(entry.dev) === stageDev && String(entry.ino) === stageIno
+      : entry.size === 0n && entry.nlink === 1n);
+  }
+  function recoverOwned(leaf) {
+    const staged = optionalStat(ownedStage);
+    if (!staged) return;
+    guard(verifiedStage(staged));
+    const existing = optionalStat(leaf);
+    if (existing && same(existing, staged)) read(leaf, 2n);
+    else guard(staged.nlink === 1n);
+    guardParent();
+    guard(same(staged, stat(ownedStage)));
+    fs.unlinkSync(ownedStage);
+  }
   function reconcile(leaf) {
-    let existing;
-    try { existing = stat(leaf); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const existing = optionalStat(leaf);
     const stages = fs.readdirSync('.').filter((name) => name.startsWith(prefix)
       && /^[a-f0-9]{32}\.tmp$/.test(name.slice(prefix.length)));
     if (stages.length === 0) return !!existing;
     guard(stages.length === 1);
     const [stage] = stages;
     const staged = stat(stage);
-    guard(staged.isFile() && staged.uid === BigInt(process.geteuid()) && (staged.mode & 0o077n) === 0n);
+    guard(privateStage(staged));
     if (existing) {
       guard(same(existing, staged));
       read(leaf, 2n);
@@ -66467,22 +66503,29 @@ var artifactProgram = String.raw`
   function publish(leaf) {
     const content = fs.readFileSync(0);
     guard(content.length <= limit && sha(content) === expected);
-    if (reconcile(leaf)) {
+    if (ownedStage ? optionalStat(leaf) : reconcile(leaf)) {
       read(leaf, 1n);
+      if (ownedStage) recoverOwned(leaf);
       return;
     }
-    const staged = prefix + randomBytes(16).toString('hex') + '.tmp';
-    const fd = fs.openSync(staged, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    const staged = ownedStage || prefix + randomBytes(16).toString('hex') + '.tmp';
+    const flags = fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+    const fd = fs.openSync(staged, ownedStage ? flags : flags | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
+    let opened;
     try {
+      const before = fs.fstatSync(fd, { bigint: true });
+      guard(!ownedStage || (verifiedStage(before) && before.nlink === 1n && before.size === 0n && stable(before, stat(staged))));
+      opened = before;
       fs.writeFileSync(fd, content);
       fs.fsyncSync(fd);
       guardParent();
       guard(same(fs.fstatSync(fd, { bigint: true }), stat(staged)));
       fs.linkSync(staged, leaf);
     } finally {
-      const created = fs.fstatSync(fd, { bigint: true });
       fs.closeSync(fd);
-      if (same(created, stat(staged))) fs.unlinkSync(staged);
+      guardParent();
+      const currentStage = optionalStat(staged);
+      if (opened && currentStage && same(opened, currentStage)) fs.unlinkSync(staged);
     }
   }
   function main() {
@@ -66493,13 +66536,13 @@ var artifactProgram = String.raw`
     const names = relative.split('/');
     const leaf = names.pop();
     for (const name of names) {
-      if (operation === 'publish') {
+      if (operation === 'publish' || operation === 'prepare') {
         try { fs.mkdirSync(name, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
       }
       let fd;
       try { fd = fs.openSync(name, mode | fs.constants.O_DIRECTORY); }
       catch (error) {
-        if (operation === 'reconcile' && error.code === 'ENOENT') return;
+        if ((operation === 'reconcile' || operation === 'recover') && error.code === 'ENOENT') return;
         throw error;
       }
       try {
@@ -66511,7 +66554,17 @@ var artifactProgram = String.raw`
         guardParent();
       } finally { fs.closeSync(fd); }
     }
-    if (operation === 'publish') {
+    if (operation === 'prepare') {
+      const fd = fs.openSync(ownedStage, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+      try {
+        const before = fs.fstatSync(fd, { bigint: true });
+        guardParent();
+        guard(verifiedStage(before) && stable(before, stat(ownedStage)));
+        process.stdout.write(JSON.stringify({ device: String(before.dev), inode: String(before.ino) }));
+      } finally { fs.closeSync(fd); }
+    } else if (operation === 'recover') {
+      recoverOwned(leaf);
+    } else if (operation === 'publish') {
       publish(leaf);
       guardParent();
     } else if (operation === 'reconcile') {
@@ -66531,15 +66584,34 @@ async function readManagedArtifact(options) {
 }
 async function publishManagedArtifact(options) {
   const sha2562 = createHash11("sha256").update(options.content).digest("hex");
-  await runArtifactOperation(options, sha2562, options.content);
+  const { stageJournal, relativePath } = options;
+  if (!stageJournal) {
+    await runArtifactOperation(options, sha2562, options.content);
+    return;
+  }
+  await reconcileManagedArtifact({ ...options, expectedSha256: sha2562 });
+  const stage = { sha256: sha2562, nonce: randomBytes(16).toString("hex") };
+  stageJournal.reserve(relativePath, stage);
+  const output2 = await runArtifactOperation(options, sha2562, void 0, "prepare", stage);
+  const identity = managedArtifactIdentitySchema.parse(JSON.parse(output2.toString("utf8")));
+  stageJournal.pin(relativePath, stage.nonce, identity);
+  await runArtifactOperation(options, sha2562, options.content, "publish", { ...stage, identity });
+  stageJournal.release(relativePath, stage.nonce);
 }
 async function reconcileManagedArtifact(options) {
-  await runArtifactOperation(options, options.expectedSha256.toLowerCase(), void 0, "reconcile");
+  const sha2562 = options.expectedSha256.toLowerCase();
+  const { stageJournal, relativePath } = options;
+  const stage = stageJournal?.get(relativePath);
+  if (stage) {
+    await runArtifactOperation(options, sha2562, void 0, "recover", stage);
+    stageJournal.release(relativePath, stage.nonce);
+  }
+  await runArtifactOperation(options, sha2562, void 0, "reconcile");
 }
-async function runArtifactOperation(options, sha2562, input2, operation = input2 ? "publish" : "read") {
+async function runArtifactOperation(options, sha2562, input2, operation = input2 ? "publish" : "read", stage) {
   const { binding, relativePath, maxBytes, revalidate } = options;
   const safePath = isManagedArtifactRelativePath(relativePath);
-  if (!safePath || path25.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
+  if (!safePath || path25.isAbsolute(relativePath) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || operation !== "read" && !/^[a-f0-9]{64}$/.test(sha2562) || stage && (!managedArtifactStageSchema.safeParse(stage).success || stage.sha256 !== sha2562) || maxBytes > HARD_BYTE_LIMIT || input2 && input2.length > maxBytes) throw new ManagedWorkspaceStorageError("artifact_invalid");
   try {
     if (await revalidate() !== binding.directory) throw new Error("Stale artifact directory.");
     const running = exec3(process.execPath, [
@@ -66553,7 +66625,8 @@ async function runArtifactOperation(options, sha2562, input2, operation = input2
       binding.inode,
       relativePath,
       String(maxBytes),
-      sha2562
+      sha2562,
+      ...stage ? [stage.nonce, stage.identity?.device ?? "", stage.identity?.inode ?? ""] : []
     ], {
       cwd: binding.directory,
       env: {},
@@ -66569,6 +66642,54 @@ async function runArtifactOperation(options, sha2562, input2, operation = input2
     return stdout;
   } catch {
     throw new ManagedWorkspaceStorageError("artifact_invalid");
+  }
+}
+
+// src/foreground-artifact-delivery.ts
+import path26 from "node:path";
+async function deliverForegroundArtifacts(store, allocation, batch, message, sessionKey2, authorizedRoot, options) {
+  if (allocation.owner.kind !== "foreground" || allocation.foregroundSessionKey !== sessionKey2 || batch.sessionKey !== sessionKey2 || batch.chatId !== message.chatId || batch.threadId !== message.threadId || batch.sourceMessageId !== message.messageId) {
+    throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  const { runId } = allocation.owner;
+  for (const [index, { status, reference }] of batch.files.entries()) {
+    if (options.abortSignal?.aborted) return;
+    if (status !== "pending") continue;
+    let bytes;
+    try {
+      ({ content: bytes } = await readManagedArtifact({
+        binding: allocation.artifacts,
+        relativePath: reference.relativePath,
+        expectedSha256: reference.sha256,
+        maxBytes: MANAGED_DELIVERY_MAX_BYTES,
+        revalidate: () => store.openDirectory(allocation.owner, "artifacts", [authorizedRoot])
+      }));
+      if (!bytes.length) throw new ManagedWorkspaceStorageError("artifact_invalid");
+    } catch {
+      store.transitionForegroundArtifact(runId, index, "pending", "failed");
+      continue;
+    }
+    if (options.abortSignal?.aborted) return;
+    if (!store.transitionForegroundArtifact(runId, index, "pending", "sending")) continue;
+    let receipt;
+    try {
+      const fileKey = await options.upload(bytes, path26.posix.basename(reference.relativePath));
+      if (fileKey) {
+        const response = await options.sendReply({
+          chat_id: batch.chatId,
+          reply_to: batch.sourceMessageId,
+          thread_id: batch.threadId,
+          text: "",
+          routing: "standalone",
+          idempotencyKey: `foreground:${runId}:artifact:${index}`,
+          retry: { attempts: 1, retryTimeout: false },
+          rawMessage: { msgType: "file", content: JSON.stringify({ file_key: fileKey }) }
+        });
+        if (!response.isError && response.sentCount > 0) receipt = response.messageIds?.find(isFeishuOpenMessageId);
+      }
+    } catch {
+    }
+    store.transitionForegroundArtifact(runId, index, "sending", receipt ? "sent" : "unknown", receipt);
   }
 }
 
@@ -66842,6 +66963,23 @@ async function deliverMessageViaCodexExec(opts) {
   if (priorUnmanaged && (priorManaged || priorUnmanaged.sessionKey !== sessionKey2)) {
     throw new ManagedWorkspaceStorageError("invalid_binding");
   }
+  const artifactIO = !opts.deliverySink && opts.uploadManagedArtifact && (message.chatType === "p2p" || message.chatType === "group") && message.messageType !== "reaction" && isFeishuOpenMessageId(message.messageId) && shouldSendFeishuReplyForMessage(message) ? { sendReply: opts.sendReply, upload: opts.uploadManagedArtifact, abortSignal: opts.abortSignal } : void 0;
+  if (priorManaged && managedStore && workspaceOwner && artifactIO) {
+    const batch = managedStore.getForegroundArtifacts(workspaceOwner.runId);
+    if (batch) {
+      await deliverForegroundArtifacts(
+        managedStore,
+        priorManaged.allocation,
+        batch,
+        message,
+        sessionKey2,
+        workspaceOptions.authorizedRoot,
+        artifactIO
+      );
+      turnObligations?.markSatisfied(message.messageId, "reply");
+      return;
+    }
+  }
   const directive = foreground && message.messageType !== "reaction" ? readWorkspaceProjectDirective(message.chatType === "doc_comment" ? message.currentUserText : message.workspaceDirectiveText) : void 0;
   const selector = directive?.selector;
   const savedWorkspace = storedSession?.workspaceProjectSenderId === message.senderId ? storedSession.workspaceProject : void 0;
@@ -66850,7 +66988,7 @@ async function deliverMessageViaCodexExec(opts) {
   if (priorUnmanaged) {
     if ("project" in priorUnmanaged) {
       workspace = await validateWorkspaceProject(workspaceOptions.authorizedRoot, priorUnmanaged.project);
-    } else if (priorUnmanaged.fallbackCwd !== path26.resolve(workspaceOptions.authorizedRoot)) {
+    } else if (priorUnmanaged.fallbackCwd !== path27.resolve(workspaceOptions.authorizedRoot)) {
       throw new ManagedWorkspaceStorageError("invalid_binding");
     }
   } else if (priorManaged) {
@@ -66875,15 +67013,19 @@ async function deliverMessageViaCodexExec(opts) {
   if (managed && !sameWorkspaceProject(managed.project, workspace)) {
     throw new ManagedWorkspaceStorageError("invalid_binding");
   }
+  const foregroundArtifacts = [];
+  const onManagedArtifact = managedStore && artifactIO ? (reference) => {
+    foregroundArtifacts.push(reference);
+  } : opts.onManagedArtifact;
   const launchWorkspace = workspace ?? (managed ? await pinWorkspacePath(
     workspaceOptions.authorizedRoot,
-    path26.resolve(workspaceOptions.authorizedRoot)
+    path27.resolve(workspaceOptions.authorizedRoot)
   ) : void 0);
   const existingSession = sameWorkspaceProject(compatibleSession?.workspaceProject, workspace) && (workspace === void 0 || compatibleSession?.workspaceProjectSenderId === message.senderId) ? compatibleSession : null;
   const sessionModel = useCodexSessions && storedSession?.model ? storedSession.model : null;
   const progressLimits = resolveProgressLimits(opts.progressLimits);
-  const progressBaseDir = path26.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
-  const actionBaseDir = path26.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
+  const progressBaseDir = path27.resolve(opts.progressBaseDir ?? appConfig.codexExecCwd);
+  const actionBaseDir = path27.resolve(opts.actionBaseDir ?? appConfig.codexExecCwd);
   const actionChannel = await createCodexExecActionChannel({
     baseDir: actionBaseDir,
     caller: message.senderId,
@@ -66919,7 +67061,7 @@ async function deliverMessageViaCodexExec(opts) {
         opts.continuationAvailable ?? true,
         continuationPermitted,
         opts.actionPolicy?.blockedActionTypes,
-        Boolean(managed && opts.onManagedArtifact)
+        Boolean(managed && onManagedArtifact)
       )
     ),
     imagePaths: collectImagePaths(message),
@@ -66960,7 +67102,7 @@ async function deliverMessageViaCodexExec(opts) {
     if (!launchWorkspace) return runCodexExec(runRequest);
     const { authorizedRoot } = workspaceOptions;
     const sideChannelFiles = [actionChannel.filePath, ...progressSink ? [progressSink.filePath] : []];
-    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path26.dirname(file2)))) : [];
+    const sideChannelBindings = runRequest.sandbox === "workspace-write" ? await Promise.all(sideChannelFiles.map((file2) => pinWorkspacePath(authorizedRoot, path27.dirname(file2)))) : [];
     if (managed) {
       await Promise.all([
         validateManagedRunDirectory(managed, "scratch", [authorizedRoot]),
@@ -67045,7 +67187,8 @@ async function deliverMessageViaCodexExec(opts) {
       explicitWorkspaceProject: selector !== void 0,
       model: sessionModel ?? opts.modelOverride ?? appConfig.codexExecModel,
       continuationPermitted,
-      managed
+      managed,
+      onManagedArtifact
     });
     opts.onActionResults?.(actionResults);
     const continuation = actionResults.find(
@@ -67155,13 +67298,25 @@ ${continuationFailure.message}`;
     );
     return;
   }
-  await opts.sendReply({
+  const response = await opts.sendReply({
     chat_id: message.chatId,
     text,
     ...isFeishuOpenMessageId(message.messageId) ? { reply_to: message.messageId } : {},
     thread_id: message.threadId,
     ...runtimeFooter ? { runtimeFooter } : {}
   });
+  if (managed && managedStore && artifactIO && foregroundArtifacts.length && !response.isError && response.sentCount > 0 && response.messageIds?.some(isFeishuOpenMessageId)) {
+    const batch = {
+      version: 1,
+      chatId: message.chatId,
+      sourceMessageId: message.messageId,
+      sessionKey: sessionKey2,
+      ...message.threadId ? { threadId: message.threadId } : {},
+      files: foregroundArtifacts.map((reference) => ({ reference, status: "pending" }))
+    };
+    managedStore.rememberForegroundArtifacts(managed.owner.runId, batch);
+    await deliverForegroundArtifacts(managedStore, managed, batch, message, sessionKey2, workspaceOptions.authorizedRoot, artifactIO);
+  }
 }
 async function dispatchCodexExecActions(input2) {
   const blocked2 = new Set(input2.opts.actionPolicy?.blockedActionTypes ?? []);
@@ -67189,7 +67344,7 @@ async function dispatchCodexExecActions(input2) {
       const { managed, opts } = input2;
       let ok = false;
       try {
-        if (!managed || !opts.onManagedArtifact) throw new Error("Managed registration unavailable.");
+        if (!managed || !input2.onManagedArtifact) throw new Error("Managed registration unavailable.");
         if (!registered.has(action.relative_path)) {
           if (registered.size >= MANAGED_DELIVERY_MAX_FILES) throw new Error("Too many managed artifacts.");
           opts.abortSignal?.throwIfAborted();
@@ -67201,7 +67356,7 @@ async function dispatchCodexExecActions(input2) {
           });
           if (!content.length) throw new Error("Empty managed artifact.");
           opts.abortSignal?.throwIfAborted();
-          opts.onManagedArtifact({ relativePath: action.relative_path, sha256: sha2562 });
+          input2.onManagedArtifact({ relativePath: action.relative_path, sha256: sha2562 });
           registered.add(action.relative_path);
         }
         ok = true;
@@ -68558,7 +68713,8 @@ function registerCodexDeliveryHandlers(options) {
         turnObligations,
         actionDispatcher: actionDispatcher ?? void 0,
         continuationAvailable,
-        managedWorkspaceStore
+        managedWorkspaceStore,
+        uploadManagedArtifact: (data, name) => channel.getLarkTransport().uploadFile(data, name)
       });
       if (hasReplyObligation) {
         turnObligations.requireSatisfiedOrDeferred(message.messageId);
@@ -68805,13 +68961,13 @@ async function startChannelServices(options) {
 // src/continuation/runtime.ts
 import fs24 from "node:fs/promises";
 import os3 from "node:os";
-import path34 from "node:path";
+import path35 from "node:path";
 
 // src/continuation/artifact-store.ts
-import { createHash as createHash12, randomBytes } from "node:crypto";
+import { createHash as createHash12, randomBytes as randomBytes2 } from "node:crypto";
 import { constants } from "node:fs";
 import fs20 from "node:fs/promises";
-import path27 from "node:path";
+import path28 from "node:path";
 var REDACTION_QUARANTINE_PREFIX = ".redacting-";
 var ACTIVE_REDACTION_QUARANTINES = /* @__PURE__ */ new Set();
 var LEGACY_QUARANTINE_GRACE_MS = 3e4;
@@ -68820,16 +68976,16 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     this.maxBytes = maxBytes;
     this.maxEntries = maxEntries;
     this.maxDepth = maxDepth;
-    this.rootDir = path27.resolve(rootDir);
+    this.rootDir = path28.resolve(rootDir);
   }
   maxBytes;
   maxEntries;
   maxDepth;
   rootDir;
   managedJob;
-  forManagedJob(jobId, binding, revalidate) {
-    const store = new _ContinuationArtifactStore(path27.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
-    store.managedJob = { jobId, binding, revalidate };
+  forManagedJob(jobId, binding, revalidate, stageJournal) {
+    const store = new _ContinuationArtifactStore(path28.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
+    store.managedJob = { jobId, binding, revalidate, stageJournal };
     return store;
   }
   async ensureRoot() {
@@ -68847,12 +69003,12 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     return directory;
   }
   resolve(jobId, relativePath) {
-    if (!relativePath || path27.isAbsolute(relativePath)) {
+    if (!relativePath || path28.isAbsolute(relativePath)) {
       throw new Error("Continuation artifact path must be relative.");
     }
     const directory = this.jobDirectory(jobId);
-    const resolved = path27.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path27.sep}`)) {
+    const resolved = path28.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path28.sep}`)) {
       throw new Error("Continuation artifact path resolves outside job directory.");
     }
     return resolved;
@@ -68881,7 +69037,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
             `Continuation artifact entry limit exceeded for ${jobId}: ${totalEntries} > ${this.maxEntries}.`
           );
         }
-        const entryPath = path27.join(current, entry.name);
+        const entryPath = path28.join(current, entry.name);
         const metadata = await fs20.lstat(entryPath).catch((error62) => {
           if (error62.code === "ENOENT") return null;
           throw error62;
@@ -68921,7 +69077,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (metadata.isSymbolicLink() || !metadata.isFile()) {
         throw new Error(`Continuation artifact is not a regular file: ${reference}`);
       }
-      const normalized = path27.relative(directory, resolved).split(path27.sep).join("/");
+      const normalized = path28.relative(directory, resolved).split(path28.sep).join("/");
       if (!seen.has(normalized)) {
         seen.add(normalized);
         canonical.push(normalized);
@@ -68959,7 +69115,8 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
           relativePath: canonical[index],
           expectedSha256: artifacts[index].sha256,
           maxBytes: targetStore.maxBytes,
-          revalidate: targetStore.managedJob.revalidate
+          revalidate: targetStore.managedJob.revalidate,
+          stageJournal: targetStore.managedJob.stageJournal
         });
       }
       await targetStore.assertWithinLimit(targetJobId);
@@ -68975,11 +69132,12 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
             relativePath: reference,
             content,
             maxBytes: targetStore.maxBytes,
-            revalidate: targetStore.managedJob.revalidate
+            revalidate: targetStore.managedJob.revalidate,
+            stageJournal: targetStore.managedJob.stageJournal
           });
         } else {
           const target = targetStore.resolve(targetJobId, reference);
-          await fs20.mkdir(path27.dirname(target), { recursive: true, mode: 448 });
+          await fs20.mkdir(path28.dirname(target), { recursive: true, mode: 448 });
           await fs20.copyFile(this.resolve(sourceJobId, reference), target, constants.COPYFILE_EXCL);
           await fs20.chmod(target, 384);
         }
@@ -69002,7 +69160,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
   async quarantine(jobId) {
     await this.ensureRoot();
     const source = this.jobDirectory(jobId);
-    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes(8).toString("hex")}`;
+    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`;
     const destination = this.quarantineDirectory(jobId, token);
     let sourceMetadata;
     try {
@@ -69014,7 +69172,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     if (sourceMetadata.isSymbolicLink() || !sourceMetadata.isDirectory()) {
       throw new Error("Continuation artifact quarantine source is not a real directory.");
     }
-    const quarantineName = path27.basename(destination);
+    const quarantineName = path28.basename(destination);
     ACTIVE_REDACTION_QUARANTINES.add(quarantineName);
     try {
       await fs20.rename(source, destination);
@@ -69035,7 +69193,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     try {
       await fs20.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path27.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path28.basename(source));
     }
   }
   async discardQuarantine(jobId, token) {
@@ -69043,7 +69201,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     try {
       await removeArtifactTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES.delete(path27.basename(source));
+      ACTIVE_REDACTION_QUARANTINES.delete(path28.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown, withJobLock) {
@@ -69053,7 +69211,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const quarantine = parseRedactionQuarantine(entry.name);
       if (!quarantine) continue;
-      const candidate = path27.join(this.rootDir, entry.name);
+      const candidate = path28.join(this.rootDir, entry.name);
       const reconcile = async () => {
         const shouldRestore = isJobKnown ? await isJobKnown(quarantine.jobId) : jobIds.has(quarantine.jobId);
         if (!shouldRestore) {
@@ -69103,8 +69261,8 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
       if (jobId !== this.managedJob.jobId) throw new Error("Managed artifact store belongs to a different run.");
       return this.managedJob.binding.directory;
     }
-    const resolved = path27.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path27.sep}`)) {
+    const resolved = path28.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path28.sep}`)) {
       throw new Error("Continuation artifact job directory escapes the artifact root.");
     }
     return resolved;
@@ -69114,7 +69272,7 @@ var ContinuationArtifactStore = class _ContinuationArtifactStore {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error("Continuation artifact quarantine token is invalid.");
     }
-    return path27.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
+    return path28.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX}${jobId}-${token}`);
   }
 };
 function parseRedactionQuarantine(name) {
@@ -69165,10 +69323,10 @@ async function pathExists(target) {
 }
 
 // src/continuation/input-store.ts
-import { createHash as createHash13, randomBytes as randomBytes2 } from "node:crypto";
+import { createHash as createHash13, randomBytes as randomBytes3 } from "node:crypto";
 import { constants as constants2, createWriteStream as createWriteStream3 } from "node:fs";
 import fs21 from "node:fs/promises";
-import path28 from "node:path";
+import path29 from "node:path";
 import { Transform } from "node:stream";
 import { pipeline as pipeline2 } from "node:stream/promises";
 var InvalidManagedInputError = class extends Error {
@@ -69189,7 +69347,7 @@ var ContinuationInputStore = class {
   maxTotalBytes;
   orphanAgeMs;
   constructor(rootDir, options = {}) {
-    this.rootDir = path28.resolve(rootDir);
+    this.rootDir = path29.resolve(rootDir);
     this.maxFiles = options.maxFiles ?? CONTINUATION_LIMITS.inputFileCount;
     this.maxFileBytes = options.maxFileBytes ?? CONTINUATION_LIMITS.inputBytesPerFile;
     this.maxTotalBytes = options.maxTotalBytes ?? CONTINUATION_LIMITS.managedInputBytesPerJob;
@@ -69203,11 +69361,11 @@ var ContinuationInputStore = class {
   async withCreationLock(jobId, operation) {
     assertJobId(jobId);
     await this.ensureRoot();
-    const lockDirectory = path28.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
+    const lockDirectory = path29.join(this.rootDir, `${CREATION_LOCK_PREFIX}${jobId}`);
     const deadline = Date.now() + CREATION_LOCK_WAIT_MS;
     let ownerNonce;
     while (true) {
-      const nonce = randomBytes2(16).toString("hex");
+      const nonce = randomBytes3(16).toString("hex");
       const owner = {
         pid: process.pid,
         startedAt: currentProcessStartedAt(),
@@ -69279,9 +69437,9 @@ var ContinuationInputStore = class {
     this.validateSources(sources);
     await this.ensureRoot();
     const finalDirectory = this.jobDirectory(jobId);
-    const stagingDirectory = path28.join(
+    const stagingDirectory = path29.join(
       this.rootDir,
-      `.staging-${jobId}-${process.pid}-${randomBytes2(8).toString("hex")}`
+      `.staging-${jobId}-${process.pid}-${randomBytes3(8).toString("hex")}`
     );
     await fs21.mkdir(stagingDirectory, { mode: 448 });
     let installed = false;
@@ -69294,7 +69452,7 @@ var ContinuationInputStore = class {
         const relativePath = neutralInputFileName(id, source.fileName);
         const copied = await copyRegularFile(
           source.sourcePath,
-          path28.join(stagingDirectory, relativePath),
+          path29.join(stagingDirectory, relativePath),
           this.maxFileBytes
         );
         if (source.expectedSizeBytes !== void 0 && copied.sizeBytes !== source.expectedSizeBytes) {
@@ -69317,11 +69475,11 @@ var ContinuationInputStore = class {
         });
       }
       const manifest = { version: 1, jobId, requestFingerprint, inputs: artifacts };
-      const manifestPath = path28.join(stagingDirectory, MANIFEST_FILE);
+      const manifestPath = path29.join(stagingDirectory, MANIFEST_FILE);
       await fs21.writeFile(manifestPath, `${JSON.stringify(manifest)}
 `, { mode: 384, flag: "wx" });
       for (const artifact of artifacts) {
-        await fs21.chmod(path28.join(stagingDirectory, artifact.relativePath), 256);
+        await fs21.chmod(path29.join(stagingDirectory, artifact.relativePath), 256);
       }
       await fs21.chmod(manifestPath, 256);
       await fs21.chmod(stagingDirectory, 320);
@@ -69404,11 +69562,11 @@ var ContinuationInputStore = class {
   }
   resolve(jobId, relativePath) {
     const directory = this.jobDirectory(jobId);
-    if (!relativePath || path28.isAbsolute(relativePath)) {
+    if (!relativePath || path29.isAbsolute(relativePath)) {
       throw new Error("Continuation input path must be relative.");
     }
-    const resolved = path28.resolve(directory, relativePath);
-    if (resolved !== directory && !resolved.startsWith(`${directory}${path28.sep}`)) {
+    const resolved = path29.resolve(directory, relativePath);
+    if (resolved !== directory && !resolved.startsWith(`${directory}${path29.sep}`)) {
       throw new Error("Continuation input path resolves outside its managed directory.");
     }
     return resolved;
@@ -69418,7 +69576,7 @@ var ContinuationInputStore = class {
   }
   async quarantine(jobId) {
     const source = this.jobDirectory(jobId);
-    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`;
+    const token = `${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes3(8).toString("hex")}`;
     const destination = this.quarantineDirectory(jobId, token);
     let metadata;
     try {
@@ -69430,7 +69588,7 @@ var ContinuationInputStore = class {
     if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
       throw new Error("Continuation input path is not a real directory.");
     }
-    const quarantineName = path28.basename(destination);
+    const quarantineName = path29.basename(destination);
     ACTIVE_REDACTION_QUARANTINES2.add(quarantineName);
     try {
       await fs21.rename(source, destination);
@@ -69457,7 +69615,7 @@ var ContinuationInputStore = class {
     try {
       await fs21.rename(source, this.jobDirectory(jobId));
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path28.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path29.basename(source));
     }
   }
   async discardQuarantine(jobId, token) {
@@ -69465,7 +69623,7 @@ var ContinuationInputStore = class {
     try {
       await removeManagedTree(source);
     } finally {
-      ACTIVE_REDACTION_QUARANTINES2.delete(path28.basename(source));
+      ACTIVE_REDACTION_QUARANTINES2.delete(path29.basename(source));
     }
   }
   async cleanupOrphans(jobIds, nowMs = Date.now(), isJobKnown) {
@@ -69475,7 +69633,7 @@ var ContinuationInputStore = class {
       if (!entry.isFile() && !entry.isDirectory() || entry.isSymbolicLink()) continue;
       const reclaim = parseCreationReclaim(entry.name);
       if (!reclaim) continue;
-      const candidate = path28.join(this.rootDir, entry.name);
+      const candidate = path29.join(this.rootDir, entry.name);
       const metadata = await fs21.lstat(candidate).catch((error62) => {
         if (error62.code === "ENOENT") return null;
         throw error62;
@@ -69486,7 +69644,7 @@ var ContinuationInputStore = class {
     const liveCreationJobs = /* @__PURE__ */ new Set();
     for (const entry of entries) {
       if (!entry.name.startsWith(CREATION_LOCK_PREFIX)) continue;
-      const lockDirectory = path28.join(this.rootDir, entry.name);
+      const lockDirectory = path29.join(this.rootDir, entry.name);
       const jobId = entry.name.slice(CREATION_LOCK_PREFIX.length);
       if (!await tryReclaimCreationLock(lockDirectory, this.rootDir)) {
         liveCreationJobs.add(jobId);
@@ -69496,7 +69654,7 @@ var ContinuationInputStore = class {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const redactionQuarantine = parseRedactionQuarantine2(entry.name);
       if (redactionQuarantine) {
-        const candidate2 = path28.join(this.rootDir, entry.name);
+        const candidate2 = path29.join(this.rootDir, entry.name);
         await this.withCreationLock(redactionQuarantine.jobId, async () => {
           const shouldRestore = isJobKnown ? await isJobKnown(redactionQuarantine.jobId) : jobIds.has(redactionQuarantine.jobId);
           if (!shouldRestore) {
@@ -69530,7 +69688,7 @@ var ContinuationInputStore = class {
       if (!isStaging && jobIds.has(entry.name)) continue;
       if (!isStaging && liveCreationJobs.has(entry.name)) continue;
       if (isStaging && [...liveCreationJobs].some((jobId) => entry.name.startsWith(`.staging-${jobId}-`))) continue;
-      const candidate = path28.join(this.rootDir, entry.name);
+      const candidate = path29.join(this.rootDir, entry.name);
       if (!isStaging && isValidJobId(entry.name)) {
         await this.withCreationLock(entry.name, async () => {
           if (jobIds.has(entry.name) || await isJobKnown?.(entry.name)) return;
@@ -69550,7 +69708,7 @@ var ContinuationInputStore = class {
         throw new Error("Continuation input kind is invalid.");
       }
       validateFileName(source.fileName);
-      if (!path28.isAbsolute(source.sourcePath)) {
+      if (!path29.isAbsolute(source.sourcePath)) {
         throw new Error("Continuation input source path must be absolute and server-admitted.");
       }
       if (source.expectedSha256 !== void 0 && !/^[a-f0-9]{64}$/.test(source.expectedSha256)) {
@@ -69563,8 +69721,8 @@ var ContinuationInputStore = class {
   }
   jobDirectory(jobId) {
     assertJobId(jobId);
-    const resolved = path28.resolve(this.rootDir, jobId);
-    if (!resolved.startsWith(`${this.rootDir}${path28.sep}`)) {
+    const resolved = path29.resolve(this.rootDir, jobId);
+    if (!resolved.startsWith(`${this.rootDir}${path29.sep}`)) {
       throw new Error("Continuation input job directory escapes the input root.");
     }
     return resolved;
@@ -69574,12 +69732,12 @@ var ContinuationInputStore = class {
     if (!/^[1-9]\d*\.[1-9]\d*(?:\.[1-9]\d*)?-[a-f0-9]{16}$/.test(token)) {
       throw new Error("Continuation input quarantine token is invalid.");
     }
-    return path28.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token}`);
+    return path29.join(this.rootDir, `${REDACTION_QUARANTINE_PREFIX2}${jobId}-${token}`);
   }
   async readManifestIfPresent(directory, jobId) {
     try {
       await assertDirectory(directory);
-      const parsed = JSON.parse(await fs21.readFile(path28.join(directory, MANIFEST_FILE), "utf8"));
+      const parsed = JSON.parse(await fs21.readFile(path29.join(directory, MANIFEST_FILE), "utf8"));
       if (parsed.version !== 1 || parsed.jobId !== jobId || typeof parsed.requestFingerprint !== "string" || !Array.isArray(parsed.inputs)) {
         throw new Error("Continuation input manifest is invalid.");
       }
@@ -69666,12 +69824,12 @@ async function sha256File(filePath) {
   }
 }
 function validateFileName(fileName) {
-  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path28.basename(fileName) !== fileName) {
+  if (!fileName || fileName.length > 120 || fileName === "." || fileName === ".." || fileName === MANIFEST_FILE || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || path29.basename(fileName) !== fileName) {
     throw new Error("Continuation input file name is invalid.");
   }
 }
 function neutralInputFileName(id, originalFileName) {
-  const extension = path28.extname(originalFileName).toLowerCase();
+  const extension = path29.extname(originalFileName).toLowerCase();
   return /^\.[a-z0-9]{1,8}$/.test(extension) ? `${id}${extension}` : id;
 }
 function validateArtifact(artifact) {
@@ -69679,7 +69837,7 @@ function validateArtifact(artifact) {
     throw new Error("Continuation input artifact id is invalid.");
   }
   validateFileName(artifact.fileName);
-  if (!artifact.relativePath || path28.isAbsolute(artifact.relativePath)) {
+  if (!artifact.relativePath || path29.isAbsolute(artifact.relativePath)) {
     throw new Error("Continuation input artifact path is invalid.");
   }
   if (!/^[a-f0-9]{64}$/.test(artifact.sha256)) {
@@ -69730,7 +69888,7 @@ function safeAdmissionError(error62) {
 async function readCreationOwner(lockDirectory) {
   try {
     const metadata = await fs21.lstat(lockDirectory);
-    const ownerPath = metadata.isDirectory() ? path28.join(lockDirectory, "owner.json") : lockDirectory;
+    const ownerPath = metadata.isDirectory() ? path29.join(lockDirectory, "owner.json") : lockDirectory;
     const parsed = JSON.parse(await fs21.readFile(ownerPath, "utf8"));
     if (!Number.isInteger(parsed.pid) || Number(parsed.pid) <= 0 || typeof parsed.createdAt !== "string") return null;
     const nonce = typeof parsed.nonce === "string" && /^[a-f0-9]{32}$/.test(parsed.nonce) ? parsed.nonce : null;
@@ -69769,9 +69927,9 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
     Date.now() - metadata.mtimeMs,
     UNKNOWN_CREATION_OWNER_GRACE_MS
   )) return false;
-  const quarantine = path28.join(
+  const quarantine = path29.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}${path28.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes2(8).toString("hex")}`
+    `${CREATION_RECLAIM_PREFIX}${path29.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${randomBytes3(8).toString("hex")}`
   );
   try {
     await fs21.rename(lockDirectory, quarantine);
@@ -69794,10 +69952,10 @@ async function tryReclaimCreationLock(lockDirectory, rootDir) {
   return true;
 }
 async function hasCompetingCreationReclaim(rootDir, lockDirectory) {
-  const prefix = `${CREATION_RECLAIM_PREFIX}${path28.basename(lockDirectory)}-`;
+  const prefix = `${CREATION_RECLAIM_PREFIX}${path29.basename(lockDirectory)}-`;
   for (const entry of await fs21.readdir(rootDir)) {
     if (!entry.startsWith(prefix)) continue;
-    const candidate = path28.join(rootDir, entry);
+    const candidate = path29.join(rootDir, entry);
     const metadata = await fs21.lstat(candidate).catch((error62) => {
       if (error62.code === "ENOENT") return null;
       throw error62;
@@ -69836,9 +69994,9 @@ async function releaseCreationLock(lockDirectory, rootDir, nonce) {
   if (owner?.nonce !== nonce) {
     throw new Error("Continuation creation lock ownership changed before release.");
   }
-  const releaseDirectory = path28.join(
+  const releaseDirectory = path29.join(
     rootDir,
-    `${CREATION_RECLAIM_PREFIX}release-${path28.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
+    `${CREATION_RECLAIM_PREFIX}release-${path29.basename(lockDirectory)}-${process.pid}.${currentProcessStartedAt()}.${Date.now()}-${nonce}`
   );
   try {
     await fs21.rename(lockDirectory, releaseDirectory);
@@ -69909,7 +70067,7 @@ async function removeManagedTree(target) {
     throw error62;
   }
   for (const entry of entries) {
-    const child = path28.join(target, entry);
+    const child = path29.join(target, entry);
     let childMetadata;
     try {
       childMetadata = await fs21.lstat(child);
@@ -70000,7 +70158,8 @@ function continuationArtifactView(legacy, job, store, policy) {
   return legacy.forManagedJob(
     job.jobId,
     recorded.allocation.artifacts,
-    () => store.openDirectory(owner, "artifacts", continuationWorkspaceRoots(job, policy))
+    () => store.openDirectory(owner, "artifacts", continuationWorkspaceRoots(job, policy)),
+    store.retryArtifactStages(owner)
   );
 }
 
@@ -71613,7 +71772,7 @@ function stringArray(value) {
 }
 
 // src/continuation/sqlite-repository.ts
-import path33 from "node:path";
+import path34 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
 
 // src/continuation/progress-policy.ts
@@ -71698,7 +71857,7 @@ function materialProjection(checkpoint2) {
     completedStepIds: sorted(checkpoint2.completedStepIds),
     completedCriterionIds: sorted(checkpoint2.completedCriterionIds),
     completedDeliverableIds: sorted(checkpoint2.completedDeliverableIds),
-    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path36, sha256: sha2562 }) => ({ id, deliverableId, path: path36, sha256: sha2562 })).sort(compareId),
+    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path37, sha256: sha2562 }) => ({ id, deliverableId, path: path37, sha256: sha2562 })).sort(compareId),
     evidence: [...checkpoint2.evidence].map((entry) => ({
       id: entry.id,
       requirementId: entry.requirementId,
@@ -71934,12 +72093,12 @@ function requireEntitiesUnchanged(name, previous, candidate, add) {
 }
 
 // src/durable-run/sqlite-repository.ts
-import { createHash as createHash18, randomBytes as randomBytes3 } from "node:crypto";
+import { createHash as createHash18, randomBytes as randomBytes4 } from "node:crypto";
 import fs22 from "node:fs/promises";
-import path30 from "node:path";
+import path31 from "node:path";
 
 // src/durable-run/sqlite-managed-workspace.ts
-import path29 from "node:path";
+import path30 from "node:path";
 var timestamp = external_exports.iso.datetime();
 var sourceRegistries = [
   ["workspace_run_allocations", "intent_json"],
@@ -71971,6 +72130,18 @@ var SqliteManagedWorkspaceStore = class {
         run_id TEXT PRIMARY KEY,
         admission_json TEXT NOT NULL CHECK (json_valid(admission_json))
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS workspace_foreground_artifacts (
+        run_id TEXT PRIMARY KEY,
+        batch_json TEXT NOT NULL CHECK (json_valid(batch_json))
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS workspace_retry_artifact_stages (
+        run_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        identity_json TEXT CHECK (identity_json IS NULL OR json_valid(identity_json)),
+        PRIMARY KEY (run_id, relative_path)
+      ) STRICT;
       ${sourceRegistries.map(([table, json2]) => `
         CREATE INDEX IF NOT EXISTS ${table}_project_path ON ${table}(${sourcePathExpr(json2)});
         CREATE INDEX IF NOT EXISTS ${table}_project_identity ON ${table}(${sourceIdentityExpr(json2)});
@@ -71981,6 +72152,70 @@ var SqliteManagedWorkspaceStore = class {
   getUnmanagedForeground(runId) {
     const row = this.database.prepare("SELECT admission_json FROM workspace_unmanaged_foreground WHERE run_id = ?").get(runId);
     return row ? parseStored(unmanagedForegroundAdmissionSchema, row.admission_json) : null;
+  }
+  getForegroundArtifacts(runId) {
+    const row = this.database.prepare("SELECT batch_json FROM workspace_foreground_artifacts WHERE run_id = ?").get(runId);
+    if (!row) return null;
+    const batch = parseStored(foregroundArtifactBatchSchema, row.batch_json);
+    if (this.get({ kind: "foreground", runId })?.allocation.foregroundSessionKey !== batch.sessionKey) {
+      throw new ManagedWorkspaceStorageError("invalid_binding");
+    }
+    return batch;
+  }
+  retryArtifactStages(owner) {
+    if (owner.kind !== "async_task" || !this.get(owner)) throw new ManagedWorkspaceStorageError("invalid_binding");
+    const runId = owner.runId;
+    return {
+      get: (relativePath) => {
+        const row = this.database.prepare(`SELECT nonce, sha256, identity_json FROM workspace_retry_artifact_stages
+          WHERE run_id = ? AND relative_path = ?`).get(runId, relativePath);
+        return row ? managedArtifactStageSchema.parse({
+          nonce: row.nonce,
+          sha256: row.sha256,
+          ...row.identity_json === null ? {} : { identity: parseStored(managedArtifactIdentitySchema, row.identity_json) }
+        }) : null;
+      },
+      reserve: (relativePath, stage) => {
+        this.requireAutocommit();
+        if (!isManagedArtifactRelativePath(relativePath) || stage.identity || !managedArtifactStageSchema.safeParse(stage).success) {
+          throw new ManagedWorkspaceStorageError("invalid_binding");
+        }
+        this.database.prepare(`INSERT INTO workspace_retry_artifact_stages (run_id, relative_path, nonce, sha256)
+          VALUES (?, ?, ?, ?)`).run(runId, relativePath, stage.nonce, stage.sha256);
+      },
+      pin: (relativePath, nonce, identity) => {
+        this.requireAutocommit();
+        const value = managedArtifactIdentitySchema.parse(identity);
+        const result = this.database.prepare(`UPDATE workspace_retry_artifact_stages SET identity_json = ?
+          WHERE run_id = ? AND relative_path = ? AND nonce = ? AND identity_json IS NULL`).run(JSON.stringify(value), runId, relativePath, nonce);
+        if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+      },
+      release: (relativePath, nonce) => {
+        this.requireAutocommit();
+        const result = this.database.prepare(`DELETE FROM workspace_retry_artifact_stages
+          WHERE run_id = ? AND relative_path = ? AND nonce = ?`).run(runId, relativePath, nonce);
+        if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+      }
+    };
+  }
+  rememberForegroundArtifacts(runId, batch) {
+    this.requireAutocommit();
+    const parsed = foregroundArtifactBatchSchema.safeParse(batch);
+    if (!parsed.success || parsed.data.files.some((file2) => file2.status !== "pending") || this.get({ kind: "foreground", runId })?.allocation.foregroundSessionKey !== parsed.data.sessionKey) {
+      throw new ManagedWorkspaceStorageError("invalid_binding");
+    }
+    const result = this.database.prepare(`INSERT INTO workspace_foreground_artifacts (run_id, batch_json)
+      VALUES (?, ?) ON CONFLICT(run_id) DO NOTHING`).run(runId, JSON.stringify(parsed.data));
+    if (Number(result.changes) !== 1) throw new ManagedWorkspaceStorageError("invalid_binding");
+  }
+  transitionForegroundArtifact(runId, index, expected, status, messageId) {
+    this.requireAutocommit();
+    if (!Number.isSafeInteger(index) || index < 0 || expected === "pending" && status !== "sending" && status !== "failed" || expected === "sending" && status === "sending" || status === "sent" !== Boolean(messageId) || messageId !== void 0 && !/^om_/.test(messageId)) throw new ManagedWorkspaceStorageError("invalid_binding");
+    const file2 = `$.files[${index}]`;
+    const values = messageId ? [file2 + ".messageId", messageId] : [];
+    return Number(this.database.prepare(`UPDATE workspace_foreground_artifacts
+      SET batch_json = json_set(batch_json, ?, ?${messageId ? ", ?, ?" : ""})
+      WHERE run_id = ? AND json_extract(batch_json, ?) = ?`).run(file2 + ".status", status, ...values, runId, file2 + ".status", expected).changes) === 1;
   }
   rememberUnmanagedForeground(runId, admission) {
     this.requireAutocommit();
@@ -72110,12 +72345,12 @@ var SqliteManagedWorkspaceStore = class {
       const exact = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} = ? LIMIT 1`);
       const nested = this.database.prepare(`SELECT 1 FROM ${table} WHERE ${expr} >= ? AND ${expr} < ? LIMIT 1`);
       for (const { directory } of [roots.scratch, roots.artifacts]) {
-        for (let current = directory; ; current = path29.dirname(current)) {
+        for (let current = directory; ; current = path30.dirname(current)) {
           if (exact.get(current)) throw new ManagedWorkspaceStorageError("overlapping_source");
-          if (path29.dirname(current) === current) break;
+          if (path30.dirname(current) === current) break;
         }
-        const prefix = `${directory}${path29.sep}`;
-        const upper = `${directory}${String.fromCharCode(path29.sep.charCodeAt(0) + 1)}`;
+        const prefix = `${directory}${path30.sep}`;
+        const upper = `${directory}${String.fromCharCode(path30.sep.charCodeAt(0) + 1)}`;
         if (nested.get(prefix, upper)) throw new ManagedWorkspaceStorageError("overlapping_source");
       }
     }
@@ -72124,12 +72359,12 @@ var SqliteManagedWorkspaceStore = class {
     const exact = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations WHERE scratch_path = ? OR artifact_path = ? LIMIT 1
     `);
-    for (let current = candidate; ; current = path29.dirname(current)) {
+    for (let current = candidate; ; current = path30.dirname(current)) {
       if (exact.get(current, current)) throw new ManagedWorkspaceStorageError("overlapping_runs");
-      if (path29.dirname(current) === current) break;
+      if (path30.dirname(current) === current) break;
     }
-    const prefix = `${candidate}${path29.sep}`;
-    const upper = `${candidate}${String.fromCharCode(path29.sep.charCodeAt(0) + 1)}`;
+    const prefix = `${candidate}${path30.sep}`;
+    const upper = `${candidate}${String.fromCharCode(path30.sep.charCodeAt(0) + 1)}`;
     const nested = this.database.prepare(`
       SELECT 1 FROM workspace_run_allocations
       WHERE (scratch_path >= ? AND scratch_path < ?) OR (artifact_path >= ? AND artifact_path < ?)
@@ -73883,9 +74118,9 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
     return new _SqliteDurableRunRepository(database, DEFAULT_DELIVERY_LEASE_MS, false);
   }
   static async open(options) {
-    const databasePath = path30.resolve(options.databasePath);
-    await fs22.mkdir(path30.dirname(databasePath), { recursive: true, mode: 448 });
-    await fs22.chmod(path30.dirname(databasePath), 448);
+    const databasePath = path31.resolve(options.databasePath);
+    await fs22.mkdir(path31.dirname(databasePath), { recursive: true, mode: 448 });
+    await fs22.chmod(path31.dirname(databasePath), 448);
     const { DatabaseSync } = await import("node:sqlite");
     const database = new DatabaseSync(databasePath, {
       timeout: 5e3,
@@ -74952,7 +75187,7 @@ function outboxId(idempotencyKey) {
   return `outbox_${createHash18("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
 }
 function newAttemptId() {
-  return `att_${randomBytes3(12).toString("hex")}`;
+  return `att_${randomBytes4(12).toString("hex")}`;
 }
 function addMilliseconds(value, milliseconds) {
   const timestamp2 = Date.parse(value);
@@ -76042,8 +76277,8 @@ function hasOnlyKeys(value, allowed) {
 }
 
 // src/continuation/sqlite-codec.ts
-import { createHash as createHash19, randomBytes as randomBytes4 } from "node:crypto";
-import path31 from "node:path";
+import { createHash as createHash19, randomBytes as randomBytes5 } from "node:crypto";
+import path32 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var PROGRESS_PAYLOAD_MAX_CHARS = 4e3;
 var MAX_RECOVERY_ATTEMPTS_PER_FINGERPRINT = 2;
@@ -76809,7 +77044,7 @@ function validatePermissionEnvelope(value, requireAbsoluteRoot2) {
     "requestedPaths",
     "workspaceProject",
     "managedWorkspaceRoots"
-  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path31.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path31.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
+  ]) || filesystem.workspaceProject !== void 0 && !workspaceProjectBindingSchema.safeParse(filesystem.workspaceProject).success || filesystem.managedWorkspaceRoots !== void 0 && (!filesystem.workspaceProject || !managedWorkspaceRootsSchema.safeParse(filesystem.managedWorkspaceRoots).success) || typeof filesystem.root !== "string" || requireAbsoluteRoot2 && !path32.isAbsolute(filesystem.root) || filesystem.mode !== "read-only" && filesystem.mode !== "workspace-write" || !Array.isArray(requestedPaths) || requestedPaths.length > CONTINUATION_LIMITS.requestedPathCount || !requestedPaths.every((requestedPath) => typeof requestedPath === "string" && path32.isAbsolute(requestedPath)) || !Array.isArray(envelope.hostTools) || !envelope.hostTools.every((tool) => typeof tool === "string" && tool.length > 0) || envelope.network !== "none" && envelope.network !== "enabled" || envelope.externalSideEffects !== "denied" && envelope.externalSideEffects !== "allowed" || !approval || !hasExactKeys(approval, ["mode"]) || approval.mode !== "never" && approval.mode !== "interactive") {
     throw new Error("Continuation permission envelope is invalid.");
   }
   if (envelope.profile === "bounded" && (envelope.network !== "none" || envelope.externalSideEffects !== "denied") || envelope.profile === "trusted_personal_workspace" && (requestedPaths.length === 0 || envelope.network !== "enabled" || envelope.externalSideEffects !== "allowed")) {
@@ -76888,7 +77123,7 @@ function assertUtf8Bytes(name, value, limit) {
   }
 }
 function makeId(prefix) {
-  return `${prefix}_${randomBytes4(12).toString("hex")}`;
+  return `${prefix}_${randomBytes5(12).toString("hex")}`;
 }
 function deliveryIdempotencyKey(jobId, eventKey) {
   return `ct_${createHash19("sha256").update(`${jobId}\0${eventKey}`).digest("hex").slice(0, 32)}`;
@@ -77704,12 +77939,12 @@ function staleClaimError(jobId) {
 
 // src/continuation/sqlite-database.ts
 import fs23 from "node:fs/promises";
-import path32 from "node:path";
+import path33 from "node:path";
 var ASYNC_TASK_FACTS_MIGRATION_VERSION = 70;
 async function openContinuationDatabase(databasePath) {
-  const resolvedPath = path32.resolve(databasePath);
-  await fs23.mkdir(path32.dirname(resolvedPath), { recursive: true, mode: 448 });
-  await fs23.chmod(path32.dirname(resolvedPath), 448);
+  const resolvedPath = path33.resolve(databasePath);
+  await fs23.mkdir(path33.dirname(resolvedPath), { recursive: true, mode: 448 });
+  await fs23.chmod(path33.dirname(resolvedPath), 448);
   const { DatabaseSync } = await import("node:sqlite");
   const database = new DatabaseSync(resolvedPath, {
     timeout: 5e3,
@@ -77797,13 +78032,13 @@ var SqliteContinuationRepository = class _SqliteContinuationRepository {
   durableRuns;
   cronMessageOrigins;
   static async open(options) {
-    const databasePath = path33.resolve(options.databasePath);
+    const databasePath = path34.resolve(options.databasePath);
     const database = await openContinuationDatabase(databasePath);
     try {
       const artifacts = options.artifactStore ?? new ContinuationArtifactStore(options.artifactsDir);
       await artifacts.ensureRoot();
       const inputs = options.inputStore ?? new ContinuationInputStore(
-        options.inputsDir ?? path33.join(path33.dirname(path33.resolve(options.artifactsDir)), "inputs")
+        options.inputsDir ?? path34.join(path34.dirname(path34.resolve(options.artifactsDir)), "inputs")
       );
       await inputs.ensureRoot();
       const repository = new _SqliteContinuationRepository(
@@ -80169,7 +80404,7 @@ async function createContinuationRuntime(options) {
     const storage = options.dryRun ? await createDryRunStorage() : {
       databasePath: options.databasePath,
       artifactsDir: options.artifactsDir,
-      inputsDir: path34.join(path34.dirname(options.artifactsDir), "inputs")
+      inputsDir: path35.join(path35.dirname(options.artifactsDir), "inputs")
     };
     temporaryRoot = "root" in storage ? storage.root : void 0;
     repository = await (options.openRepository ?? defaultOpenRepository)({
@@ -80342,12 +80577,12 @@ async function defaultOpenRepository(options) {
   return SqliteContinuationRepository.open(options);
 }
 async function createDryRunStorage() {
-  const root = await fs24.mkdtemp(path34.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
+  const root = await fs24.mkdtemp(path35.join(os3.tmpdir(), "codex-lark-continuation-dry-run-"));
   return {
     root,
-    databasePath: path34.join(root, "jobs.sqlite"),
-    artifactsDir: path34.join(root, "artifacts"),
-    inputsDir: path34.join(root, "inputs")
+    databasePath: path35.join(root, "jobs.sqlite"),
+    artifactsDir: path35.join(root, "artifacts"),
+    inputsDir: path35.join(root, "inputs")
   };
 }
 function retentionCutoff(now, retentionDays) {
@@ -80827,7 +81062,7 @@ function literal2(value, values, label) {
 }
 
 // src/cron/delivery.ts
-import path35 from "node:path";
+import path36 from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual6 } from "node:util";
 
 // src/scheduler-policy.ts
@@ -81294,7 +81529,7 @@ async function deliverCronArtifact(options, claim2, now, context) {
   }
   try {
     if (context && !await context.markExternalSendStarted()) return { status: "superseded" };
-    const key = await artifacts.uploadFile(content, path35.posix.basename(payload.artifact.relativePath));
+    const key = await artifacts.uploadFile(content, path36.posix.basename(payload.artifact.relativePath));
     if (!key) throw new Error("Lark returned no attachment key.");
     const response = await options.sendReply({
       chat_id: route.targetChatId,

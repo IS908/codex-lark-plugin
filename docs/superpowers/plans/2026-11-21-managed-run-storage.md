@@ -33,8 +33,8 @@
 - [x] Preserve the unmanaged decision on a foreground replay, including the prior pinned project or the unchanged legacy fallback root. Fence conflicting admissions in the allocation database.
 - [x] Expose committed Async Task artifacts through the authenticated status and artifact commands. Document opt-in operation and verify on-demand delivery after scratch is unavailable.
 - [x] Reconcile complete retry staging writes under the retry creation lock before applying the target quota. Cover interruption both before and after the exclusive link; do not adopt or remove unverified entries.
-- [ ] Track ownership of incomplete retry writes so their interruption can be recovered without discarding unknown files.
+- [x] Journal retry writes before publication, including the temporary inode before writing bytes. Recover known interrupted writes after restart without discarding unknown or replaced files.
 - [x] Persist requested Async Task artifact deliveries in the existing durable outbox and revalidate the commitment and bytes before sending. Verify restart with missing scratch and isolation from the terminal notification.
 - [x] Register requested prompt Cron files through the parent action channel and commit independent attachment outbox entries. Verify restart, unavailable scratch, report receipt ordering, changed file rejection, and legacy generation after config changes.
-- [ ] Connect formal references to the foreground publishing and delivery path without changing legacy file sends.
+- [x] Connect confirmed foreground replies and formal attachment references in the turn ledger; replay pending files without rerunning Codex. Keep legacy file sends unchanged and do not replay an unconfirmed send.
 - [ ] Run the full suite and marketplace checks, get independent review, merge, verify main CI, publish a tagged release, then close #393. Cache reuse and cleanup remain subsequent #387 milestones.

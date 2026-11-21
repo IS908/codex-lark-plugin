@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { ContinuationArtifactStore } from '../src/continuation/artifact-store.js';
+import { SqliteManagedWorkspaceStore } from '../src/durable-run/sqlite-managed-workspace.js';
 import { publishManagedArtifact, readManagedArtifact } from '../src/managed-workspace-artifact.js';
 import { pinWorkspacePath, validateWorkspaceProject } from '../src/workspace-projects.js';
 
@@ -66,6 +68,53 @@ try {
     [{ id: 'result', deliverableId: 'output', path: filename, sha256 }], torn.store), { code: 'artifact_invalid' });
   assert.deepEqual(await fs.readFile(unknown), content.subarray(0, 4));
   await assert.rejects(fs.stat(path.join(torn.folder, filename)), { code: 'ENOENT' });
+
+  const retryRoots = [path.join(base, 'retry-scratch'), path.join(base, 'retry-artifacts')];
+  for (const dir of retryRoots) await fs.mkdir(dir, { mode: 0o700 });
+  const dbPath = path.join(base, 'staging.sqlite');
+  const owner = { kind: 'async_task', runId: 'job_torn_owned' } as const;
+  const nonce = 'd'.repeat(32);
+  const firstDb = new DatabaseSync(dbPath);
+  let ownedPath: string;
+  try {
+    const ledger = new SqliteManagedWorkspaceStore(firstDb);
+    const allocation = await ledger.ensure({
+      owner, authorizedRoots: [base], createdAt: '2026-11-22T00:00:00.000Z',
+      roots: { scratch: await pinWorkspacePath(base, retryRoots[0]), artifacts: await pinWorkspacePath(base, retryRoots[1]) },
+    });
+    ownedPath = path.join(allocation.artifacts.directory, `.lark-retry-${replicaKey}-${nonce}.tmp`);
+    const stages = ledger.retryArtifactStages(owner);
+    stages.reserve(filename, { nonce, sha256 });
+    await fs.writeFile(ownedPath, content.subarray(0, 4), { flag: 'wx', mode: 0o600 });
+    const pin = await fs.lstat(ownedPath, { bigint: true });
+    stages.pin(filename, nonce, { device: String(pin.dev), inode: String(pin.ino) });
+  } finally {
+    firstDb.close();
+  }
+  const restartedDb = new DatabaseSync(dbPath);
+  try {
+    const ledger = new SqliteManagedWorkspaceStore(restartedDb);
+    const ownedBinding = ledger.get(owner)!.allocation.artifacts;
+    const journal = ledger.retryArtifactStages(owner);
+    const ownedTarget = bounded.forManagedJob(owner.runId, ownedBinding,
+      () => ledger.openDirectory(owner, 'artifacts', [base]), journal);
+    const copy = () => original.store.copyVerified('job_original', owner.runId,
+      [{ id: 'result', deliverableId: 'output', path: filename, sha256 }], ownedTarget);
+    const saved = path.join(elsewhere, 'saved-stage');
+    await fs.rename(ownedPath, saved);
+    await fs.writeFile(ownedPath, 'unowned', { flag: 'wx', mode: 0o600 });
+    await assert.rejects(copy(), { code: 'artifact_invalid' });
+    assert.equal(await fs.readFile(ownedPath, 'utf8'), 'unowned');
+    assert.equal(journal.get(filename)?.nonce, nonce);
+    await fs.rename(ownedPath, path.join(base, 'unowned-stage'));
+    await fs.rename(saved, ownedPath);
+    assert.equal(await copy(), true);
+    assert.equal(journal.get(filename), null);
+    assert.deepEqual(await fs.readdir(ownedBinding.directory), [filename]);
+    assert.deepEqual(await fs.readFile(path.join(ownedBinding.directory, filename)), content);
+  } finally {
+    restartedDb.close();
+  }
 
   await fs.mkdir(path.join(original.folder, 'nested'), { mode: 0o700 });
   await fs.rename(path.join(original.folder, filename), path.join(original.folder, relativePath));

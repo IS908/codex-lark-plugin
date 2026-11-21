@@ -197,6 +197,7 @@ export function registerCodexDeliveryHandlers(options: RegisterCodexDeliveryHand
         actionDispatcher: actionDispatcher ?? undefined,
         continuationAvailable,
         managedWorkspaceStore,
+        uploadManagedArtifact: (data, name) => channel.getLarkTransport().uploadFile(data, name),
       });
       if (hasReplyObligation) {
         turnObligations.requireSatisfiedOrDeferred(message.messageId);

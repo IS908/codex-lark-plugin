@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { publishManagedArtifact, readManagedArtifact, reconcileManagedArtifact } from '../managed-workspace-artifact.js';
 import type { WorkspaceProjectBinding } from '../domain/workspace.js';
+import type { ManagedArtifactStageJournal } from '../ports/managed-workspace.js';
 import {
   CONTINUATION_LIMITS,
   type ContinuationCheckpointArtifact,
@@ -20,7 +21,7 @@ const LEGACY_QUARANTINE_GRACE_MS = 30_000;
 
 export class ContinuationArtifactStore {
   readonly rootDir: string;
-  private managedJob?: { jobId: string; binding: WorkspaceProjectBinding; revalidate: () => Promise<string> };
+  private managedJob?: { jobId: string; binding: WorkspaceProjectBinding; revalidate: () => Promise<string>; stageJournal?: ManagedArtifactStageJournal };
 
   constructor(
     rootDir: string,
@@ -31,9 +32,10 @@ export class ContinuationArtifactStore {
     this.rootDir = path.resolve(rootDir);
   }
 
-  forManagedJob(jobId: string, binding: WorkspaceProjectBinding, revalidate: () => Promise<string>): ContinuationArtifactStore {
+  forManagedJob(jobId: string, binding: WorkspaceProjectBinding, revalidate: () => Promise<string>,
+    stageJournal?: ManagedArtifactStageJournal): ContinuationArtifactStore {
     const store = new ContinuationArtifactStore(path.dirname(binding.directory), this.maxBytes, this.maxEntries, this.maxDepth);
-    store.managedJob = { jobId, binding, revalidate };
+    store.managedJob = { jobId, binding, revalidate, stageJournal };
     return store;
   }
 
@@ -177,6 +179,7 @@ export class ContinuationArtifactStore {
           binding: targetStore.managedJob.binding, relativePath: canonical[index],
           expectedSha256: artifacts[index].sha256, maxBytes: targetStore.maxBytes,
           revalidate: targetStore.managedJob.revalidate,
+          stageJournal: targetStore.managedJob.stageJournal,
         });
       }
       await targetStore.assertWithinLimit(targetJobId);
@@ -190,6 +193,7 @@ export class ContinuationArtifactStore {
           await publishManagedArtifact({
             binding: targetStore.managedJob.binding, relativePath: reference, content, maxBytes: targetStore.maxBytes,
             revalidate: targetStore.managedJob.revalidate,
+            stageJournal: targetStore.managedJob.stageJournal,
           });
         } else {
           const target = targetStore.resolve(targetJobId, reference);

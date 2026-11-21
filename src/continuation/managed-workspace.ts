@@ -50,5 +50,5 @@ export function continuationArtifactView(
     throw new ManagedWorkspaceStorageError('invalid_binding');
   }
   return legacy.forManagedJob(job.jobId, recorded.allocation.artifacts,
-    () => store.openDirectory(owner, 'artifacts', continuationWorkspaceRoots(job, policy)));
+    () => store.openDirectory(owner, 'artifacts', continuationWorkspaceRoots(job, policy)), store.retryArtifactStages(owner));
 }
