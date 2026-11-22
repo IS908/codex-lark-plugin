@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-中文-blue)](README_CN.md)
-[![version](https://img.shields.io/badge/version-2.21.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.21.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -452,7 +452,10 @@ Start a new Codex session after reinstalling.
 ```bash
 cd codex-lark-plugin
 git pull
+npm ci
 ```
+
+`git pull` updates the source and lockfile, but not `node_modules`. Run `npm ci` from the repository root before restarting, including if startup reports `ERR_MODULE_NOT_FOUND` for a dependency such as `tar`.
 
 Configuration in `~/.codex/channels/lark/.env` is preserved across updates. Start a new Codex session or restart Codex to apply changes.
 
