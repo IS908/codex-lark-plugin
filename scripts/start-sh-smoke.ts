@@ -20,6 +20,7 @@ try {
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(result.stdout, '', 'scripts/start.sh must not write to stdout');
+  assert.doesNotMatch(result.stderr, /run npm ci/);
 
   const lines = result.stderr.split(/\r?\n/).filter(Boolean);
   assert.ok(lines.length >= 2, `expected launcher stderr output, got: ${JSON.stringify(result.stderr)}`);
@@ -30,6 +31,32 @@ try {
       `missing timestamp prefix: ${line}`,
     );
   }
+
+  const staleCheckout = join(home, 'stale-checkout');
+  mkdirSync(staleCheckout);
+  writeFileSync(join(staleCheckout, 'package.json'), JSON.stringify({
+    dependencies: { tar: '7.5.23' },
+    scripts: { start: 'node index.mjs' },
+  }));
+  const startStaleCheckout = () => spawnSync('bash', [join(process.cwd(), 'scripts/start.sh'), '--dry-run'], {
+    cwd: staleCheckout,
+    encoding: 'utf-8',
+    env: { ...process.env, HOME: home },
+  });
+  const entry = join(staleCheckout, 'index.mjs');
+  writeFileSync(entry, "import 'tar';\n");
+  const missingDependency = startStaleCheckout();
+  assert.equal(missingDependency.status, 1, missingDependency.stderr);
+  assert.equal(missingDependency.stdout, '');
+  assert.match(missingDependency.stderr, /Error \[ERR_MODULE_NOT_FOUND\]: Cannot find package 'tar'/);
+  assert.match(missingDependency.stderr, /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}\] Local npm dependency missing\. From the plugin repository root, run npm ci and retry\.$/m);
+
+  writeFileSync(entry, "import './missing-local-file.mjs';\n");
+  const missingLocalFile = startStaleCheckout();
+  assert.equal(missingLocalFile.status, 1, missingLocalFile.stderr);
+  assert.equal(missingLocalFile.stdout, '');
+  assert.match(missingLocalFile.stderr, /Error \[ERR_MODULE_NOT_FOUND\]: Cannot find module/);
+  assert.doesNotMatch(missingLocalFile.stderr, /run npm ci/);
 
   const fakeBin = join(home, 'fake-bin');
   const fakeNode = join(fakeBin, 'node');

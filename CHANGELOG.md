@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.21.1] - 2026-11-22
+
+### Fixed
+- Report how to reinstall locked dependencies when the source launcher finds a missing npm package, and include `npm ci` in the source upgrade instructions (#404).
+
 ## [2.21.0] - 2026-11-22
 
 ### Added

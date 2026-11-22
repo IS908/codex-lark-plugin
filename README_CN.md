@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.21.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.21.1-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -369,8 +369,10 @@ codex plugin add lark@codex-lark-plugin
 ```bash
 cd codex-lark-plugin
 git pull
-npm install
+npm ci
 ```
+
+`git pull` 只更新源码和锁文件，不会更新 `node_modules`。重启前请在仓库根目录运行 `npm ci`；启动时如果提示找不到 `tar` 等依赖（`ERR_MODULE_NOT_FOUND`），也可用此命令修复。
 
 `~/.codex/channels/lark/.env` 中的配置不受更新影响。更新后需新开 Codex session 或重启 Codex 生效。
 

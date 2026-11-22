@@ -25,9 +25,16 @@ require_supported_node() {
 
 timestamp_stderr() {
   local line
+  local missing_dependency=0
   while IFS= read -r line || [ -n "$line" ]; do
-    printf '[%s] %s\n' "$(timestamp)" "$line" >&2
+    log "$line"
+    if [[ "$line" == 'Error [ERR_MODULE_NOT_FOUND]: Cannot find package '* ]]; then
+      missing_dependency=1
+    fi
   done
+  if (( missing_dependency )); then
+    log 'Local npm dependency missing. From the plugin repository root, run npm ci and retry.'
+  fi
 }
 
 require_supported_node
