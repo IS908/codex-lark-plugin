@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-11-22
+
+### Added
+- Optional startup cleanup of verified managed scratch, disabled by default. Recheck retention, capacity, ownership, active references and the original filesystem baseline before claiming, isolating or clearing a run (#387).
+- Preserve formal artifacts, retry inputs, caches and unknown paths. Recover interrupted cleanup from durable claims without adopting or recursively deleting partial quarantine directories.
+
 ## [2.20.0] - 2026-11-22
 
 ### Added

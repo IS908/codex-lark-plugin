@@ -7,11 +7,12 @@ import {
   currentProcessStartedAt,
   getLinuxProcessBirthToken,
   isCleanupProcessInstanceAlive,
+  isLarkInstanceLockHeld,
   isProcessAlive,
   isProcessInstanceAlive,
   registerLockCleanup,
   sweepInbox
-} from "./chunks/chunk-HC52HRFT.js";
+} from "./chunks/chunk-UEGXKGFU.js";
 import {
   $ZodObject,
   $ZodType,
@@ -33,6 +34,7 @@ import {
   assertCompatibleCodexLayers,
   assertDenyOnlyWorkspaceAcls,
   assertProtectedWorkspacePath,
+  assertWorkspaceCleanupConnection,
   assertWorkspaceDependencySelectionAuthorized,
   boolean,
   clone,
@@ -43,11 +45,17 @@ import {
   describeWorkspaceDependencies,
   discriminatedUnion,
   external_exports,
+  hasExclusiveWorkspaceCleanupStorage,
+  hasLocalWorkspaceCleanupStorage,
   hasManagedGitRegistry,
+  hasWorkspaceCleanupFences,
   hasWorkspaceDependencyRegistry,
+  initializeWorkspaceCleanupClaims,
   installLazyProp,
   intersection,
+  inventoryWorkspaceStorage,
   isManagedArtifactRelativePath,
+  isWorkspaceGitCleanupProofCurrent,
   iso_exports,
   literal,
   loadWorkspaceDependencyWriteGuard,
@@ -56,20 +64,27 @@ import {
   managedArtifactReferenceSchema,
   managedArtifactStageSchema,
   managedGitSelectionSchema,
+  managedRunDirectoryPath,
+  managedRunOwnerSchema,
   managedWorkspaceAdmissionSchema,
   managedWorkspaceRootsSchema,
   mkdirTemporaryInsidePinnedRoot,
   normalizeParams,
   number,
   object,
+  observeWorkspaceCleanupTree,
   optional,
   own,
   parse,
   parseAsync,
+  pathsOverlap,
   pinWorkspacePath,
   preprocess,
   readManagedWorkspaceRoots,
+  readProtectedPathReferences,
   readWorkspaceAncestorIdentities,
+  readWorkspaceCleanupEpoch,
+  readWorkspaceCleanupReferences,
   readWorkspaceDependencyMountPolicy,
   readWorkspaceMountTable,
   readWorkspaceProjectDirective,
@@ -78,12 +93,14 @@ import {
   require_src,
   resolveManagedGitLauncher,
   resolveManagedGitSelection,
+  resolveProtectedPaths,
   resolveWorkspaceDependencySelections,
   resolveWorkspaceProject,
   safeParse,
   safeParseAsync,
   sameWorkspaceProject,
   string,
+  supportsScratch,
   toJSONSchema,
   union,
   unknown,
@@ -92,7 +109,11 @@ import {
   validateWorkspaceGitCheckout,
   validateWorkspaceProject,
   verifyWorkspaceDependencyCache,
+  verifyWorkspaceGitCacheForCleanup,
   workspaceBackingAliases,
+  workspaceCleanupClaimsTable,
+  workspaceCleanupCursorTable,
+  workspaceCleanupLedgerEligibility,
   workspaceDependencyInstallLeaf,
   workspaceDependencyInstallReceiptSchema,
   workspaceDependencyOutputName,
@@ -103,24 +124,26 @@ import {
   workspaceMountLayoutSupported,
   workspacePathContains,
   workspaceProjectBindingSchema
-} from "./chunks/chunk-ZV32EYUV.js";
+} from "./chunks/chunk-YWGLI5XG.js";
 import {
   applyL1,
   detectCredentialMaterial,
   extractL2PrivatePhrases,
   filterCredentialMaterial,
   loadL2Rules
-} from "./chunks/chunk-LVUCP4CU.js";
+} from "./chunks/chunk-4GJ2P3NT.js";
 import {
   appConfig
-} from "./chunks/chunk-QPYBKJVG.js";
+} from "./chunks/chunk-6ILPZYZM.js";
 import {
   __commonJS,
   __require,
   __toESM,
   assertSupportedNodeVersion,
+  channelHome,
+  managedWorkspaceCleanupPolicyPath,
   managedWorkspaceConfigPath
-} from "./chunks/chunk-Y3Y2TSPS.js";
+} from "./chunks/chunk-UFMLI3K6.js";
 
 // node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
@@ -499,11 +522,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants3);
+          this.rhs = optimizeExpr(this.rhs, names, constants4);
         return this;
       }
       get names() {
@@ -520,10 +543,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants3);
+        this.rhs = optimizeExpr(this.rhs, names, constants4);
         return this;
       }
       get names() {
@@ -584,8 +607,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants3) {
-        this.code = optimizeExpr(this.code, names, constants3);
+      optimizeNames(names, constants4) {
+        this.code = optimizeExpr(this.code, names, constants4);
         return this;
       }
       get names() {
@@ -614,12 +637,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants3))
+          if (n.optimizeNames(names, constants4))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -672,12 +695,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants3);
-        if (!(super.optimizeNames(names, constants3) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants4);
+        if (!(super.optimizeNames(names, constants4) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants3);
+        this.condition = optimizeExpr(this.condition, names, constants4);
         return this;
       }
       get names() {
@@ -700,10 +723,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants3) {
-        if (!super.optimizeNames(names, constants3))
+      optimizeNames(names, constants4) {
+        if (!super.optimizeNames(names, constants4))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants3);
+        this.iteration = optimizeExpr(this.iteration, names, constants4);
         return this;
       }
       get names() {
@@ -739,10 +762,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants3) {
-        if (!super.optimizeNames(names, constants3))
+      optimizeNames(names, constants4) {
+        if (!super.optimizeNames(names, constants4))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants3);
+        this.iterable = optimizeExpr(this.iterable, names, constants4);
         return this;
       }
       get names() {
@@ -784,11 +807,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         var _a, _b;
-        super.optimizeNames(names, constants3);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants3);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants3);
+        super.optimizeNames(names, constants4);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants4);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants4);
         return this;
       }
       get names() {
@@ -1089,7 +1112,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants3) {
+    function optimizeExpr(expr, names, constants4) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1104,14 +1127,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants3[n.str];
+        const c = constants4[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants3[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants4[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -3351,8 +3374,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path35) {
-      let input = path35;
+    function removeDotSegments(path39) {
+      let input = path39;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3426,11 +3449,11 @@ var require_utils = __commonJS({
       }
       return output.join("");
     }
-    function removeDotSegmentsRelative(path35) {
-      if (path35 === "" || path35[0] === "/") {
-        return removeDotSegments(path35);
+    function removeDotSegmentsRelative(path39) {
+      if (path39 === "" || path39[0] === "/") {
+        return removeDotSegments(path39);
       }
-      const segments = path35.split("/");
+      const segments = path39.split("/");
       const last = segments.length - 1;
       const output = [];
       let trailingDirectory = false;
@@ -3793,8 +3816,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path35 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path35 && path35 !== "/" ? path35 : void 0;
+        const path39 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path39 && path39 !== "/" ? path39 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7110,8 +7133,8 @@ var require_formats = __commonJS({
         return false;
       const year = +matches[1];
       const month = +matches[2];
-      const day = +matches[3];
-      return month >= 1 && month <= 12 && day >= 1 && day <= (month === 2 && isLeapYear(year) ? 29 : DAYS[month]);
+      const day2 = +matches[3];
+      return month >= 1 && month <= 12 && day2 >= 1 && day2 <= (month === 2 && isLeapYear(year) ? 29 : DAYS[month]);
     }
     function compareDate(d1, d2) {
       if (!(d1 && d2))
@@ -7331,12 +7354,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs27, exportName) {
+    function addFormats(ajv, list, fs29, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs27[f]);
+        ajv.addFormat(f, fs29[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -8052,7 +8075,7 @@ var require_luxon = __commonJS({
         const date = new Date(ts);
         if (isNaN(date)) return NaN;
         const dtf = makeDTF(this.name);
-        let [year, month, day, adOrBc, hour, minute, second] = dtf.formatToParts ? partsOffset(dtf, date) : hackyOffset(dtf, date);
+        let [year, month, day2, adOrBc, hour, minute, second] = dtf.formatToParts ? partsOffset(dtf, date) : hackyOffset(dtf, date);
         if (adOrBc === "BC") {
           year = -Math.abs(year) + 1;
         }
@@ -8060,7 +8083,7 @@ var require_luxon = __commonJS({
         const asUTC = objToLocalTS({
           year,
           month,
-          day,
+          day: day2,
           hour: adjustedHour,
           minute,
           second,
@@ -8989,22 +9012,22 @@ var require_luxon = __commonJS({
     function unitOutOfRange(unit, value) {
       return new Invalid("unit out of range", `you specified ${value} (of type ${typeof value}) as a ${unit}, which is invalid`);
     }
-    function dayOfWeek(year, month, day) {
-      const d = new Date(Date.UTC(year, month - 1, day));
+    function dayOfWeek(year, month, day2) {
+      const d = new Date(Date.UTC(year, month - 1, day2));
       if (year < 100 && year >= 0) {
         d.setUTCFullYear(d.getUTCFullYear() - 1900);
       }
       const js = d.getUTCDay();
       return js === 0 ? 7 : js;
     }
-    function computeOrdinal(year, month, day) {
-      return day + (isLeapYear(year) ? leapLadder : nonLeapLadder)[month - 1];
+    function computeOrdinal(year, month, day2) {
+      return day2 + (isLeapYear(year) ? leapLadder : nonLeapLadder)[month - 1];
     }
     function uncomputeOrdinal(year, ordinal) {
-      const table = isLeapYear(year) ? leapLadder : nonLeapLadder, month0 = table.findIndex((i) => i < ordinal), day = ordinal - table[month0];
+      const table = isLeapYear(year) ? leapLadder : nonLeapLadder, month0 = table.findIndex((i) => i < ordinal), day2 = ordinal - table[month0];
       return {
         month: month0 + 1,
-        day
+        day: day2
       };
     }
     function isoWeekdayToLocal(isoWeekday, startOfWeek) {
@@ -9014,8 +9037,8 @@ var require_luxon = __commonJS({
       const {
         year,
         month,
-        day
-      } = gregObj, ordinal = computeOrdinal(year, month, day), weekday = isoWeekdayToLocal(dayOfWeek(year, month, day), startOfWeek);
+        day: day2
+      } = gregObj, ordinal = computeOrdinal(year, month, day2), weekday = isoWeekdayToLocal(dayOfWeek(year, month, day2), startOfWeek);
       let weekNumber = Math.floor((ordinal - weekday + 14 - minDaysInFirstWeek) / 7), weekYear;
       if (weekNumber < 1) {
         weekYear = year - 1;
@@ -9051,12 +9074,12 @@ var require_luxon = __commonJS({
       }
       const {
         month,
-        day
+        day: day2
       } = uncomputeOrdinal(year, ordinal);
       return {
         year,
         month,
-        day,
+        day: day2,
         ...timeObject(weekData)
       };
     }
@@ -9064,9 +9087,9 @@ var require_luxon = __commonJS({
       const {
         year,
         month,
-        day
+        day: day2
       } = gregData;
-      const ordinal = computeOrdinal(year, month, day);
+      const ordinal = computeOrdinal(year, month, day2);
       return {
         year,
         ordinal,
@@ -9080,12 +9103,12 @@ var require_luxon = __commonJS({
       } = ordinalData;
       const {
         month,
-        day
+        day: day2
       } = uncomputeOrdinal(year, ordinal);
       return {
         year,
         month,
-        day,
+        day: day2,
         ...timeObject(ordinalData)
       };
     }
@@ -12549,11 +12572,11 @@ var require_luxon = __commonJS({
        * @return {DateTime}
        */
       static local() {
-        const [opts, args] = lastOpts(arguments), [year, month, day, hour, minute, second, millisecond] = args;
+        const [opts, args] = lastOpts(arguments), [year, month, day2, hour, minute, second, millisecond] = args;
         return quickDT({
           year,
           month,
-          day,
+          day: day2,
           hour,
           minute,
           second,
@@ -12586,12 +12609,12 @@ var require_luxon = __commonJS({
        * @return {DateTime}
        */
       static utc() {
-        const [opts, args] = lastOpts(arguments), [year, month, day, hour, minute, second, millisecond] = args;
+        const [opts, args] = lastOpts(arguments), [year, month, day2, hour, minute, second, millisecond] = args;
         opts.zone = FixedOffsetZone.utcInstance;
         return quickDT({
           year,
           month,
-          day,
+          day: day2,
           hour,
           minute,
           second,
@@ -14358,27 +14381,27 @@ var require_CronDate = __commonJS({
        * @param {CronDate | Date | number | string} [timestamp] - The timestamp to initialize the CronDate with.
        * @param {string} [tz] - The timezone to use for the CronDate.
        */
-      constructor(timestamp, tz) {
+      constructor(timestamp2, tz) {
         const dateOpts = { zone: tz };
-        if (!timestamp) {
+        if (!timestamp2) {
           this.#date = luxon_1.DateTime.local();
-        } else if (timestamp instanceof _CronDate) {
-          this.#date = timestamp.#date;
-          this.#dstStart = timestamp.#dstStart;
-          this.#dstStartLandingHour = timestamp.#dstStartLandingHour;
-          this.#dstEnd = timestamp.#dstEnd;
-        } else if (timestamp instanceof Date) {
-          this.#date = luxon_1.DateTime.fromJSDate(timestamp, dateOpts);
-        } else if (typeof timestamp === "number") {
-          this.#date = luxon_1.DateTime.fromMillis(timestamp, dateOpts);
+        } else if (timestamp2 instanceof _CronDate) {
+          this.#date = timestamp2.#date;
+          this.#dstStart = timestamp2.#dstStart;
+          this.#dstStartLandingHour = timestamp2.#dstStartLandingHour;
+          this.#dstEnd = timestamp2.#dstEnd;
+        } else if (timestamp2 instanceof Date) {
+          this.#date = luxon_1.DateTime.fromJSDate(timestamp2, dateOpts);
+        } else if (typeof timestamp2 === "number") {
+          this.#date = luxon_1.DateTime.fromMillis(timestamp2, dateOpts);
         } else {
-          this.#date = luxon_1.DateTime.fromISO(timestamp, dateOpts);
-          this.#date.isValid || (this.#date = luxon_1.DateTime.fromRFC2822(timestamp, dateOpts));
-          this.#date.isValid || (this.#date = luxon_1.DateTime.fromSQL(timestamp, dateOpts));
-          this.#date.isValid || (this.#date = luxon_1.DateTime.fromFormat(timestamp, "EEE, d MMM yyyy HH:mm:ss", dateOpts));
+          this.#date = luxon_1.DateTime.fromISO(timestamp2, dateOpts);
+          this.#date.isValid || (this.#date = luxon_1.DateTime.fromRFC2822(timestamp2, dateOpts));
+          this.#date.isValid || (this.#date = luxon_1.DateTime.fromSQL(timestamp2, dateOpts));
+          this.#date.isValid || (this.#date = luxon_1.DateTime.fromFormat(timestamp2, "EEE, d MMM yyyy HH:mm:ss", dateOpts));
         }
         if (!this.#date.isValid) {
-          throw new Error(`CronDate: unhandled timestamp: ${timestamp}`);
+          throw new Error(`CronDate: unhandled timestamp: ${timestamp2}`);
         }
         if (tz && tz !== this.#date.zoneName) {
           this.#date = this.#date.setZone(tz);
@@ -14786,26 +14809,26 @@ var require_CronDate = __commonJS({
        * @returns {boolean}
        */
       isLastDayOfMonth() {
-        const { day, month } = this.#date;
+        const { day: day2, month } = this.#date;
         if (month === 2) {
           const isLeap = _CronDate.#isLeapYear(this.#date.year);
-          return day === exports.DAYS_IN_MONTH[month - 1] - (isLeap ? 0 : 1);
+          return day2 === exports.DAYS_IN_MONTH[month - 1] - (isLeap ? 0 : 1);
         }
-        return day === exports.DAYS_IN_MONTH[month - 1];
+        return day2 === exports.DAYS_IN_MONTH[month - 1];
       }
       /**
        * Returns true if the day is the last weekday of the month.
        * @returns {boolean}
        */
       isLastWeekdayOfMonth() {
-        const { day, month } = this.#date;
+        const { day: day2, month } = this.#date;
         let lastDay;
         if (month === 2) {
           lastDay = exports.DAYS_IN_MONTH[month - 1] - (_CronDate.#isLeapYear(this.#date.year) ? 0 : 1);
         } else {
           lastDay = exports.DAYS_IN_MONTH[month - 1];
         }
-        return day > lastDay - 7;
+        return day2 > lastDay - 7;
       }
       /**
        * Primarily for internal use.
@@ -15680,8 +15703,8 @@ var require_CronExpression = __commonJS({
         if (!currentDate.isLastWeekdayOfMonth()) {
           return false;
         }
-        const day = currentDate.getDay();
-        return expressions.some((expression) => day === parseInt(expression.toString().charAt(0), 10) % 7);
+        const day2 = currentDate.getDay();
+        return expressions.some((expression) => day2 === parseInt(expression.toString().charAt(0), 10) % 7);
       }
       /**
        * Determines if the current date matches the nth occurrence of a weekday in the month.
@@ -16479,8 +16502,8 @@ var require_CronFileParser = __commonJS({
        * @throws If file cannot be read
        */
       static parseFileSync(filePath) {
-        const { readFileSync } = __require("fs");
-        const data = readFileSync(filePath, "utf8");
+        const { readFileSync: readFileSync2 } = __require("fs");
+        const data = readFileSync2(filePath, "utf8");
         return _CronFileParser.#parseContent(data);
       }
       /**
@@ -16952,8 +16975,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path35, errorMaps, issueData } = params;
-  const fullPath = [...path35, ...issueData.path || []];
+  const { data, path: path39, errorMaps, issueData } = params;
+  const fullPath = [...path39, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -17068,11 +17091,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path35, key) {
+  constructor(parent, value, path39, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path35;
+    this._path = path39;
     this._key = key;
   }
   get path() {
@@ -20623,11 +20646,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path35) {
-  if (path35.length === 0) {
+function getDotPath(path39) {
+  if (path39.length === 0) {
     return "object root";
   }
-  return path35.reduce((acc, seg, index) => {
+  return path39.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -26153,6 +26176,9 @@ var EMPTY_COMPLETION_RESULT = {
   }
 };
 
+// src/index.ts
+import path38 from "node:path";
+
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 import process2 from "node:process";
 
@@ -26981,8 +27007,8 @@ var AckReactionTracker = class {
     return this.pendingRevokes.has(messageId);
   }
   cleanup(now = Date.now()) {
-    for (const [messageId, timestamp] of this.recentInbound.entries()) {
-      if (now - timestamp > this.recentInboundTtlMs) {
+    for (const [messageId, timestamp2] of this.recentInbound.entries()) {
+      if (now - timestamp2 > this.recentInboundTtlMs) {
         this.recentInbound.delete(messageId);
         this.pendingRevokes.delete(messageId);
       }
@@ -34807,10 +34833,10 @@ var MemoryStore = class {
     assertNoCredentialMaterial(content);
     const dir = type === "thread" && meta2.threadId ? path9.join(this.baseDir, "episodes", meta2.chatId, "threads", meta2.threadId) : path9.join(this.baseDir, "episodes", meta2.chatId);
     await fs7.mkdir(dir, { recursive: true });
-    const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-    let fileName = `${timestamp}.md`;
+    const timestamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+    let fileName = `${timestamp2}.md`;
     for (let i = 1; existsSync(path9.join(dir, fileName)); i++) {
-      fileName = `${timestamp}-${i}.md`;
+      fileName = `${timestamp2}-${i}.md`;
     }
     await fs7.writeFile(path9.join(dir, fileName), capEpisodeContent(content), "utf-8");
     await this.pruneEpisodeDir(dir, {
@@ -35326,10 +35352,10 @@ function expandSchedule(input, timezone = appConfig.cronTimezone) {
   if (!result) {
     match = trimmed.match(/^weekly\s+on\s+(\w+)\s+at\s+(\d{1,2}):(\d{2})$/);
     if (match) {
-      const [, day, h, m] = match;
-      const dayNum = DAY_MAP[day];
+      const [, day2, h, m] = match;
+      const dayNum = DAY_MAP[day2];
       if (dayNum !== void 0) {
-        result = { cron: `${parseInt(m)} ${parseInt(h)} * * ${dayNum}`, human: `weekly on ${day} at ${h}:${m}` };
+        result = { cron: `${parseInt(m)} ${parseInt(h)} * * ${dayNum}`, human: `weekly on ${day2} at ${h}:${m}` };
       }
     }
   }
@@ -36235,7 +36261,7 @@ ${parts.join("\n\n")}${footer}`
       let tail = "";
       if (promote_to_rule) {
         try {
-          const { addL2Rule } = await import("./chunks/privacy-rules-LDPOAP3B.js");
+          const { addL2Rule } = await import("./chunks/privacy-rules-GQQI2PBU.js");
           await addL2Rule(target.text, "Always private");
           tail = ' Also appended to privacy-rules.md under "Always private" \u2014 future distillations will classify similar content accordingly.';
         } catch (err) {
@@ -37767,8 +37793,8 @@ async function measureWorkspaceDependencyOutput(output, ecosystem) {
         hash.update(JSON.stringify([relative, "directory", String(info.mode & 0o777n)]));
       } else {
         if (!info.isFile() || info.nlink !== 1n || (bytes += info.size) > maxInstalledBytes) fail("dependency_installed_output_invalid");
-        const digest = await digestOutputFile(filename, info, scratch);
-        hash.update(JSON.stringify([relative, "file", String(info.mode & 0o777n), digest]));
+        const digest2 = await digestOutputFile(filename, info, scratch);
+        hash.update(JSON.stringify([relative, "file", String(info.mode & 0o777n), digest2]));
       }
     }
     for (let index = 0; index < visited.length; index += 16) {
@@ -38707,11 +38733,11 @@ function parseCompactTraceLine(rawLine) {
   if (!line) return null;
   const fullMatch = line.match(/^(\S+)\s\s(\S+)\s\s(\S+)\s\strace\s\sfull\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s-\s\s-\s\s(.*)$/);
   if (fullMatch) {
-    const [, timestamp2, logId2, runId2, eventType, tool2, status2, rawSummary2] = fullMatch;
-    const timestampMs2 = Date.parse(timestamp2);
+    const [, timestamp3, logId2, runId2, eventType, tool2, status2, rawSummary2] = fullMatch;
+    const timestampMs2 = Date.parse(timestamp3);
     if (!Number.isFinite(timestampMs2)) return null;
     return {
-      timestamp: timestamp2,
+      timestamp: timestamp3,
       timestampMs: timestampMs2,
       logId: unquoteField(logId2),
       runId: unquoteField(runId2),
@@ -38723,12 +38749,12 @@ function parseCompactTraceLine(rawLine) {
   }
   const match = line.match(/^(\S+)\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s(\S+)\s\s(.*)$/);
   if (!match) return null;
-  const [, timestamp, logId, runId, tool, status, callId, duration, rawSummary] = match;
+  const [, timestamp2, logId, runId, tool, status, callId, duration, rawSummary] = match;
   if (runId === "trace" || runId === "metrics") return null;
-  const timestampMs = Date.parse(timestamp);
+  const timestampMs = Date.parse(timestamp2);
   if (!Number.isFinite(timestampMs)) return null;
   return {
-    timestamp,
+    timestamp: timestamp2,
     timestampMs,
     logId: unquoteField(logId),
     runId: unquoteField(runId),
@@ -43515,7 +43541,7 @@ async function renderItem(item, map, ctx) {
   const msgType = item.msg_type ?? "text";
   const senderId = item.sender?.id ?? "unknown";
   const createMs = parseInt(String(item.create_time ?? "0"), 10);
-  const timestamp = createMs > 0 ? formatRFC3339Beijing(createMs) : "unknown";
+  const timestamp2 = createMs > 0 ? formatRFC3339Beijing(createMs) : "unknown";
   const displayName = ctx.resolveUserName?.(senderId) ?? senderId;
   let content;
   let resources = [];
@@ -43536,7 +43562,7 @@ async function renderItem(item, map, ctx) {
     }
   }
   return {
-    content: `[${timestamp}] ${displayName}:
+    content: `[${timestamp2}] ${displayName}:
 ${indentLines(content, "    ")}`,
     resources
   };
@@ -43858,7 +43884,7 @@ function normalizeComment(event, opts) {
   const operatorOpenId = userId?.open_id;
   if (!fileToken || !fileType || !commentId || !operatorOpenId) return null;
   const tsStr = event.create_time ?? event.notice_meta?.timestamp ?? event.action_time;
-  const timestamp = tsStr ? parseInt(tsStr, 10) : Date.now();
+  const timestamp2 = tsStr ? parseInt(tsStr, 10) : Date.now();
   return {
     fileToken,
     fileType,
@@ -43870,7 +43896,7 @@ function normalizeComment(event, opts) {
       unionId: userId?.union_id
     },
     mentionedBot: Boolean(event.is_mentioned ?? event.notice_meta?.is_mentioned ?? event.is_mention),
-    timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
+    timestamp: Number.isFinite(timestamp2) ? timestamp2 : Date.now(),
     raw: opts?.includeRaw ? event : void 0
   };
 }
@@ -50869,9 +50895,9 @@ var ContinuationInputStore = class {
       if (!metadata) return { ok: false, reason: "missing" };
       if (metadata.isSymbolicLink() || !metadata.isFile()) return { ok: false, reason: "invalid" };
       if (metadata.size !== artifact.sizeBytes) return { ok: false, reason: "modified" };
-      let digest;
+      let digest2;
       try {
-        digest = await sha256File(filePath);
+        digest2 = await sha256File(filePath);
       } catch (error) {
         const code = error?.code;
         if (code === "ENOENT") {
@@ -50885,7 +50911,7 @@ var ContinuationInputStore = class {
         }
         throw error;
       }
-      if (digest !== artifact.sha256) return { ok: false, reason: "modified" };
+      if (digest2 !== artifact.sha256) return { ok: false, reason: "modified" };
     }
     return { ok: true };
   }
@@ -51101,7 +51127,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
     if (before.size > maxFileBytes) {
       throw new Error(`Continuation input file byte limit exceeded: ${before.size} > ${maxFileBytes}.`);
     }
-    const digest = createHash15("sha256");
+    const digest2 = createHash15("sha256");
     let copiedBytes = 0;
     const hashing = new Transform({
       transform(chunk, _encoding, callback) {
@@ -51110,7 +51136,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
           callback(new Error(`Continuation input file byte limit exceeded: ${copiedBytes} > ${maxFileBytes}.`));
           return;
         }
-        digest.update(chunk);
+        digest2.update(chunk);
         callback(null, chunk);
       }
     });
@@ -51123,7 +51149,7 @@ async function copyRegularFile(sourcePath, destinationPath, maxFileBytes) {
     if (before.size !== after.size || copiedBytes !== after.size) {
       throw new Error("Continuation input source changed while it was being admitted.");
     }
-    return { sha256: digest.digest("hex"), sizeBytes: copiedBytes };
+    return { sha256: digest2.digest("hex"), sizeBytes: copiedBytes };
   } finally {
     await source.close();
   }
@@ -51137,7 +51163,7 @@ async function lstatForVerification(filePath) {
   }
 }
 async function sha256File(filePath) {
-  const digest = createHash15("sha256");
+  const digest2 = createHash15("sha256");
   const file = await fs22.open(
     filePath,
     constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK
@@ -51146,8 +51172,8 @@ async function sha256File(filePath) {
     if (!(await file.stat()).isFile()) {
       throw new InvalidManagedInputError("Continuation managed input is not a regular file.");
     }
-    for await (const chunk of file.createReadStream({ autoClose: false })) digest.update(chunk);
-    return digest.digest("hex");
+    for await (const chunk of file.createReadStream({ autoClose: false })) digest2.update(chunk);
+    return digest2.digest("hex");
   } finally {
     await file.close();
   }
@@ -53212,7 +53238,7 @@ function materialProjection(checkpoint2) {
     completedStepIds: sorted(checkpoint2.completedStepIds),
     completedCriterionIds: sorted(checkpoint2.completedCriterionIds),
     completedDeliverableIds: sorted(checkpoint2.completedDeliverableIds),
-    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path35, sha256: sha2562 }) => ({ id, deliverableId, path: path35, sha256: sha2562 })).sort(compareId),
+    artifacts: [...checkpoint2.artifacts].map(({ id, deliverableId, path: path39, sha256: sha2562 }) => ({ id, deliverableId, path: path39, sha256: sha2562 })).sort(compareId),
     evidence: [...checkpoint2.evidence].map((entry) => ({
       id: entry.id,
       requirementId: entry.requirementId,
@@ -53716,13 +53742,13 @@ function isValidIsoTimestamp(value) {
   const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match;
   const year = Number(yearText);
   const month = Number(monthText);
-  const day = Number(dayText);
+  const day2 = Number(dayText);
   const hour = Number(hourText);
   const minute = Number(minuteText);
   const second = Number(secondText);
   if (hour > 23 || minute > 59 || second > 59) return false;
-  const calendarDate = new Date(Date.UTC(year, month - 1, day));
-  if (calendarDate.getUTCFullYear() !== year || calendarDate.getUTCMonth() !== month - 1 || calendarDate.getUTCDate() !== day) {
+  const calendarDate = new Date(Date.UTC(year, month - 1, day2));
+  if (calendarDate.getUTCFullYear() !== year || calendarDate.getUTCMonth() !== month - 1 || calendarDate.getUTCDate() !== day2) {
     return false;
   }
   return Number.isFinite(Date.parse(value));
@@ -55182,8 +55208,8 @@ var SqliteDurableRunRepository = class _SqliteDurableRunRepository {
     const databasePath = path29.resolve(options.databasePath);
     await fs23.mkdir(path29.dirname(databasePath), { recursive: true, mode: 448 });
     await fs23.chmod(path29.dirname(databasePath), 448);
-    const { DatabaseSync } = await import("node:sqlite");
-    const database = new DatabaseSync(databasePath, {
+    const { DatabaseSync: DatabaseSync2 } = await import("node:sqlite");
+    const database = new DatabaseSync2(databasePath, {
       timeout: 5e3,
       enableForeignKeyConstraints: true
     });
@@ -56251,9 +56277,9 @@ function newAttemptId() {
   return `att_${randomBytes7(12).toString("hex")}`;
 }
 function addMilliseconds(value, milliseconds) {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) throw new Error("Durable Run timestamp is invalid.");
-  return new Date(timestamp + milliseconds).toISOString();
+  const timestamp2 = Date.parse(value);
+  if (!Number.isFinite(timestamp2)) throw new Error("Durable Run timestamp is invalid.");
+  return new Date(timestamp2 + milliseconds).toISOString();
 }
 function assertTimestamp(value, label) {
   if (!Number.isFinite(Date.parse(value))) throw new Error(`Durable Run ${label} is invalid.`);
@@ -58220,8 +58246,8 @@ function hasOpaqueExecutionEffects(job) {
 function toolRequestHash(request) {
   return createHash21("sha256").update(JSON.stringify(request)).digest("hex");
 }
-function addMilliseconds2(timestamp, milliseconds) {
-  return new Date(Date.parse(timestamp) + milliseconds).toISOString();
+function addMilliseconds2(timestamp2, milliseconds) {
+  return new Date(Date.parse(timestamp2) + milliseconds).toISOString();
 }
 function emptyRoute() {
   return {
@@ -58994,9 +59020,9 @@ function continuationJobForCommandState(current, status, rowVersion, now) {
 function claimProjectionMatches(claim) {
   return claim.job.jobId === claim.attempt.jobId && claim.workerId === claim.attempt.workerId && claim.job.leaseOwner === claim.workerId && claim.job.rowVersion === claim.claimedRowVersion;
 }
-function timestampAfterElapsed(timestamp, startedAt) {
+function timestampAfterElapsed(timestamp2, startedAt) {
   const elapsedMilliseconds = Number((process.hrtime.bigint() - startedAt) / 1000000n);
-  return elapsedMilliseconds > 0 ? addMilliseconds2(timestamp, elapsedMilliseconds) : timestamp;
+  return elapsedMilliseconds > 0 ? addMilliseconds2(timestamp2, elapsedMilliseconds) : timestamp2;
 }
 function assertOneChange(changes, jobId) {
   if (Number(changes) !== 1) throw staleClaimError(jobId);
@@ -59013,8 +59039,8 @@ async function openContinuationDatabase(databasePath) {
   const resolvedPath = path31.resolve(databasePath);
   await fs24.mkdir(path31.dirname(resolvedPath), { recursive: true, mode: 448 });
   await fs24.chmod(path31.dirname(resolvedPath), 448);
-  const { DatabaseSync } = await import("node:sqlite");
-  const database = new DatabaseSync(resolvedPath, {
+  const { DatabaseSync: DatabaseSync2 } = await import("node:sqlite");
+  const database = new DatabaseSync2(resolvedPath, {
     timeout: 5e3,
     enableForeignKeyConstraints: true
   });
@@ -61444,8 +61470,8 @@ function boundedErrorSummary(error) {
   if (!summary) return "Unknown durable run execution failure.";
   return summary.length > 1e3 ? `${summary.slice(0, 997)}...` : summary;
 }
-function addMilliseconds3(timestamp, milliseconds) {
-  return new Date(Date.parse(timestamp) + milliseconds).toISOString();
+function addMilliseconds3(timestamp2, milliseconds) {
+  return new Date(Date.parse(timestamp2) + milliseconds).toISOString();
 }
 function deliveryRetryDelayMs(attemptCount2) {
   return Math.min(5 * 6e4, 3e4 * 2 ** Math.max(0, attemptCount2 - 1));
@@ -64228,6 +64254,969 @@ function toast(ok, content) {
   };
 }
 
+// src/workspace-cleanup-startup.ts
+import { constants as constants3, lstatSync as lstatSync2, readFileSync } from "node:fs";
+import fs28 from "node:fs/promises";
+import path37 from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+// src/durable-run/workspace-cleanup-claims.ts
+import { randomBytes as randomBytes10 } from "node:crypto";
+import path35 from "node:path";
+var timestamp = external_exports.iso.datetime();
+var digest = external_exports.string().regex(/^[a-f0-9]{64}$/);
+var claimState = external_exports.enum(["reserved", "isolated", "purging", "removed", "held"]);
+var holdReason = external_exports.enum(["identity_unverified", "references_changed", "quarantine_unverified", "purge_incomplete"]);
+var claimSchema = external_exports.strictObject({
+  owner: managedRunOwnerSchema.refine(({ kind }) => kind !== "foreground"),
+  nonce: external_exports.string().regex(/^[a-f0-9]{32}$/),
+  scratch: workspaceProjectBindingSchema,
+  baseline: digest,
+  lastUsedAt: timestamp,
+  reservedAt: timestamp,
+  updatedAt: timestamp,
+  state: claimState,
+  reason: holdReason.nullable()
+});
+var SqliteWorkspaceCleanupClaims = class {
+  constructor(database) {
+    this.database = database;
+    initializeWorkspaceCleanupClaims(database);
+  }
+  database;
+  scope = /* @__PURE__ */ Symbol();
+  get databasePath() {
+    return this.database.location();
+  }
+  get(owner) {
+    const row = this.database.prepare(`SELECT * FROM main.${workspaceCleanupClaimsTable} WHERE workload_kind = ? AND run_id = ?`).get(owner.kind, owner.runId);
+    if (!row) return;
+    return claimSchema.parse({
+      owner: { kind: row.workload_kind, runId: row.run_id },
+      nonce: row.nonce,
+      scratch: { directory: row.scratch_path, device: row.scratch_device, inode: row.scratch_inode },
+      baseline: row.scratch_baseline,
+      lastUsedAt: row.last_used_at,
+      reservedAt: row.reserved_at,
+      updatedAt: row.updated_at,
+      state: row.state,
+      reason: row.reason
+    });
+  }
+  observe(root, owner) {
+    if (this.database.isTransaction) throw new Error("Workspace cleanup observation requires autocommit.");
+    assertWorkspaceCleanupConnection(this.database);
+    if (!hasWorkspaceCleanupFences(this.database)) throw new Error("Workspace cleanup claim fences are unavailable.");
+    const revision = this.revision();
+    const observation = readWorkspaceCleanupReferences(this.database, root, owner);
+    const reference = observation.references[0];
+    if (!reference || observation.invalidRows || observation.truncated || observation.references.length !== 1 || this.revision() !== revision) return;
+    return { reference, paths: observation.paths, revision, scope: this.scope };
+  }
+  // Caller owns the runtime instance lock and has already verified the filesystem. This transaction fences ledger changes.
+  reserve(request) {
+    return this.transaction(() => {
+      const eligible = this.eligible(request);
+      if (!eligible) return;
+      const { record: record3, reference, baseline } = eligible;
+      const now = request.now;
+      const claim = {
+        owner: reference.owner,
+        nonce: randomBytes10(16).toString("hex"),
+        scratch: record3.allocation.scratch,
+        baseline,
+        lastUsedAt: record3.lastUsedAt,
+        reservedAt: now,
+        updatedAt: now,
+        state: "reserved",
+        reason: null
+      };
+      this.database.prepare(`INSERT INTO main.${workspaceCleanupClaimsTable}
+        (workload_kind, run_id, nonce, scratch_path, scratch_device, scratch_inode, scratch_baseline, last_used_at, reserved_at, updated_at, state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved')`).run(
+        claim.owner.kind,
+        claim.owner.runId,
+        claim.nonce,
+        claim.scratch.directory,
+        claim.scratch.device,
+        claim.scratch.inode,
+        claim.baseline,
+        claim.lastUsedAt,
+        claim.reservedAt,
+        claim.updatedAt
+      );
+      return claim;
+    });
+  }
+  pending(root, limit) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Invalid workspace cleanup claim limit.");
+    const rows = this.database.prepare(`SELECT workload_kind, run_id FROM main.${workspaceCleanupClaimsTable}
+      WHERE scratch_path >= ? AND scratch_path < ? AND state IN ('reserved', 'isolated', 'purging')
+      ORDER BY updated_at, reserved_at, workload_kind, run_id LIMIT ?`).all(root.directory + "/", root.directory + "0", limit);
+    return rows.map((row) => this.get(managedRunOwnerSchema.parse({ kind: row.workload_kind, runId: row.run_id })));
+  }
+  candidates(root, cutoff, limit) {
+    if (!timestamp.safeParse(cutoff).success || !Number.isSafeInteger(limit) || limit < 1 || limit > 256) {
+      throw new Error("Invalid workspace cleanup candidate query.");
+    }
+    const cursor = this.database.prepare(`SELECT completion, workload_kind, run_id FROM main.${workspaceCleanupCursorTable}
+      WHERE scratch_root = ? AND root_device = ? AND root_inode = ?`).get(root.directory, root.device, root.inode);
+    const scan = (after) => this.database.prepare(`
+      SELECT a.workload_kind, a.run_id, r.completed_at
+      FROM main.workspace_run_allocations a JOIN main.durable_runs r
+        ON r.run_id = a.run_id AND r.workload_kind = a.workload_kind
+      WHERE a.scratch_path >= ? AND a.scratch_path < ? AND a.workload_kind IN ('async_task', 'cron_prompt')
+        AND r.status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled')
+        AND r.completed_at <= ? AND a.last_used_at <= ?
+        AND r.retained = 0 AND r.lease_owner IS NULL AND r.lease_expires_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM main.${workspaceCleanupClaimsTable} j
+          WHERE j.workload_kind = a.workload_kind AND j.run_id = a.run_id)
+        ${after ? "AND (r.completed_at, a.workload_kind, a.run_id) > (?, ?, ?)" : ""}
+      ORDER BY r.completed_at, a.workload_kind, a.run_id LIMIT ?`).all(root.directory + "/", root.directory + "0", cutoff, cutoff, ...after ?? [], limit);
+    const rows = cursor ? scan([cursor.completion, cursor.workload_kind, cursor.run_id]) : scan();
+    return (cursor && !rows.length ? scan() : rows).map((row) => ({
+      owner: managedRunOwnerSchema.parse({ kind: row.workload_kind, runId: row.run_id }),
+      completedAt: timestamp.parse(row.completed_at)
+    }));
+  }
+  recordCandidateScan(root, { owner, completedAt }) {
+    this.transaction(() => {
+      this.database.prepare(`INSERT INTO main.${workspaceCleanupCursorTable}
+        (scratch_root, root_device, root_inode, completion, workload_kind, run_id) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scratch_root) DO UPDATE SET root_device=excluded.root_device, root_inode=excluded.root_inode,
+          completion=excluded.completion, workload_kind=excluded.workload_kind, run_id=excluded.run_id`).run(root.directory, root.device, root.inode, completedAt, owner.kind, owner.runId);
+    });
+  }
+  postpone(expected, now) {
+    return this.transaction(() => {
+      if (!timestamp.safeParse(now).success || Date.parse(now) <= Date.parse(expected.updatedAt) || !["reserved", "isolated", "purging"].includes(expected.state) || !this.sameClaim(expected)) return false;
+      this.writeState(expected, expected.state, now, null);
+      return true;
+    });
+  }
+  // Called only during the native helper's BEGIN IMMEDIATE handshake, over this same ledger.
+  confirm(expected, request) {
+    if (this.database.isTransaction) return false;
+    assertWorkspaceCleanupConnection(this.database);
+    try {
+      this.database.exec("BEGIN IMMEDIATE");
+      this.database.exec("ROLLBACK");
+      return false;
+    } catch (error) {
+      if ((error.errcode ?? 0) % 256 !== 5) return false;
+    }
+    return Date.parse(request.now) >= Date.parse(expected.updatedAt) && hasWorkspaceCleanupFences(this.database) && this.sameClaim(expected) && !!this.eligible(request, expected);
+  }
+  perform(expected, request, next, effect) {
+    const previous = { isolated: "reserved", purging: "isolated", removed: "purging" };
+    if (expected.state !== previous[next] || next === "purging" !== (effect === void 0)) return;
+    return this.transaction(() => {
+      if (Date.parse(request.now) < Date.parse(expected.updatedAt) || !this.sameClaim(expected)) return;
+      if (!this.eligible(request, expected)) return;
+      if (effect && effect() !== true) return;
+      return this.writeState(expected, next, request.now, null);
+    });
+  }
+  hold(expected, now, reason) {
+    if (!timestamp.safeParse(now).success || Date.parse(now) < Date.parse(expected.updatedAt)) return;
+    if (!["reserved", "isolated", "purging"].includes(expected.state) || !holdReason.safeParse(reason).success) return;
+    return this.transaction(() => {
+      if (!this.sameClaim(expected)) return;
+      return this.writeState(expected, "held", now, reason);
+    });
+  }
+  eligible(request, claim) {
+    const { roots, observation, minimumAgeDays, now, epoch } = request;
+    const { reference: expected, paths: expectedPaths } = observation;
+    if (!timestamp.safeParse(now).success || !Number.isSafeInteger(minimumAgeDays) || minimumAgeDays < 1 || minimumAgeDays > 3650 || observation.scope !== this.scope || observation.revision !== this.revision()) return;
+    if (claim && (expected.owner.kind !== claim.owner.kind || expected.owner.runId !== claim.owner.runId)) return;
+    const current = readWorkspaceCleanupReferences(this.database, roots.scratch, expected.owner);
+    const reference = current.references[0];
+    const record3 = reference?.record;
+    const baseline = reference?.scratchBaseline;
+    if (!reference || !record3 || !baseline || current.invalidRows || current.truncated || current.references.length !== 1 || current.paths.incomplete || current.paths.unresolvedActiveCron || JSON.stringify(current.paths) !== JSON.stringify(expectedPaths) || JSON.stringify(reference) !== JSON.stringify(expected) || workspaceCleanupLedgerEligibility(
+      { ...reference, cleanupClaimed: !claim && reference.cleanupClaimed },
+      new Date(now),
+      minimumAgeDays,
+      epoch
+    ).reasons.length) return;
+    const { allocation } = record3;
+    const fold = (directory) => process.platform === "darwin" ? directory.normalize("NFD").toLowerCase() : directory;
+    const scratch = fold(allocation.scratch.directory);
+    if (!sameWorkspaceProject(roots.scratch, allocation.roots.scratch) || !sameWorkspaceProject(roots.artifacts, allocation.roots.artifacts) || path35.dirname(allocation.scratch.directory) !== roots.scratch.directory || allocation.scratch.device !== roots.scratch.device || current.paths.paths.map(fold).some((saved) => workspacePathContains(saved, scratch) || workspacePathContains(scratch, saved))) return;
+    if (claim && (!reference.cleanupClaimed || !sameWorkspaceProject(allocation.scratch, claim.scratch) || baseline !== claim.baseline || record3.lastUsedAt !== claim.lastUsedAt)) return;
+    return { record: record3, reference, baseline };
+  }
+  sameClaim(expected) {
+    return JSON.stringify(this.get(expected.owner)) === JSON.stringify(expected);
+  }
+  writeState(expected, state, now, reason) {
+    const result = this.database.prepare(`UPDATE main.${workspaceCleanupClaimsTable} SET state = ?, updated_at = ?, reason = ?
+      WHERE workload_kind = ? AND run_id = ? AND nonce = ? AND state = ?`).run(state, now, reason, expected.owner.kind, expected.owner.runId, expected.nonce, expected.state);
+    if (result.changes !== 1) throw new Error("Workspace cleanup claim changed during transition.");
+    return { ...expected, state, updatedAt: now, reason };
+  }
+  revision() {
+    const remote = this.database.prepare("PRAGMA main.data_version").get()?.data_version;
+    const local = this.database.prepare("SELECT total_changes() AS changes").get()?.changes;
+    if (typeof remote !== "number" || typeof local !== "number") throw new Error("Workspace cleanup ledger revision is unavailable.");
+    return `${remote}:${local}`;
+  }
+  transaction(operation) {
+    assertWorkspaceCleanupConnection(this.database);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (!hasWorkspaceCleanupFences(this.database)) throw new Error("Workspace cleanup claim fences are unavailable.");
+      const result = operation();
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+};
+
+// src/workspace-cleanup-files.ts
+import { spawn as spawn5, spawnSync } from "node:child_process";
+import { lstatSync } from "node:fs";
+import fs27 from "node:fs/promises";
+import path36 from "node:path";
+var applePythonRoot = "/Library/Developer/CommandLineTools";
+var maxInput = 4 * 1024 * 1024;
+function workspaceCleanupQuarantinePath(root, claim) {
+  if (claim.owner.kind === "foreground" || !/^[0-9a-f]{32}$/.test(claim.nonce) || claim.scratch.directory !== managedRunDirectoryPath(root, claim.owner) || claim.scratch.device !== root.device) {
+    throw new Error("Invalid workspace cleanup identity.");
+  }
+  return path36.join(root.directory, `.lark-cleanup-${claim.nonce}`);
+}
+async function createWorkspaceCleanupFiles(root, database) {
+  try {
+    await assertProtectedWorkspacePath(root, true);
+    if (!await hasLocalWorkspaceCleanupStorage([root.directory, database.directory])) return;
+    await assertDenyOnlyWorkspaceAcls([database.directory]);
+    const python = await resolveCleanupInterpreter();
+    if (!python) return;
+    const sidecars = ledgerSidecars(database);
+    const invoke = (request) => {
+      const input = JSON.stringify({ ...request, root, database, parentPid: process.pid });
+      if (Buffer.byteLength(input) > maxInput) return;
+      const child = spawnSync(python, ["-I", "-S", "-B", "-c", cleanupProgram], {
+        input,
+        encoding: "utf8",
+        maxBuffer: 4096,
+        timeout: 1e4,
+        killSignal: "SIGKILL",
+        env: { LC_ALL: "C" }
+      });
+      if (child.status === 0 && !child.stderr) return child.stdout;
+    };
+    const native = async (operation, claim, authorize2, tree, expected, backing) => {
+      const quarantine = workspaceCleanupQuarantinePath(root, claim);
+      const binding = operation === "purge" ? { ...claim.scratch, directory: quarantine } : claim.scratch;
+      if (operation !== "flush" && (!tree || !sameWorkspaceProject(tree.binding, binding))) return false;
+      if (!sidecars || JSON.stringify(ledgerSidecars(database)) !== JSON.stringify(sidecars)) return false;
+      const expectedClaim = claim.state ? [
+        claim.nonce,
+        claim.scratch.directory,
+        claim.scratch.device,
+        claim.scratch.inode,
+        claim.baseline,
+        claim.lastUsedAt,
+        claim.state
+      ] : void 0;
+      const input = JSON.stringify({
+        operation,
+        root,
+        database,
+        sidecars,
+        parentPid: process.pid,
+        scratch: claim.scratch,
+        quarantine: path36.basename(quarantine),
+        entries: tree?.entries ?? [],
+        expected,
+        backing,
+        expectedClaim,
+        owner: claim.owner
+      });
+      if (Buffer.byteLength(input) + 1 > maxInput) return false;
+      return await lockedMutation(python, input, (pid) => JSON.stringify(ledgerSidecars(database)) === JSON.stringify(sidecars) && authorize2(pid));
+    };
+    return {
+      databasePath: database.directory,
+      canStage(owner, tree) {
+        if (!sidecars || JSON.stringify(ledgerSidecars(database)) !== JSON.stringify(sidecars) || tree.binding.directory !== managedRunDirectoryPath(root, owner) || tree.binding.device !== root.device || Buffer.byteLength(JSON.stringify(tree.entries)) > maxInput - 8192) return false;
+        return invoke({ operation: "validate", scratch: tree.binding, entries: tree.entries }) === "verified\n";
+      },
+      readiness() {
+        const result = invoke({ operation: "probe" });
+        return result === "verified\n" ? "ready" : result === "busy\n" ? "busy" : "unavailable";
+      },
+      async location(claim) {
+        try {
+          const source = claim.scratch.directory;
+          const quarantine = workspaceCleanupQuarantinePath(root, claim);
+          await assertProtectedWorkspacePath(root, true);
+          const mounts = await readWorkspaceDependencyMountPolicy();
+          if (![source, quarantine].every((item) => supportsScratch(item, root, mounts))) return "unavailable";
+          const original = await inspect2(source);
+          const isolated = await inspect2(quarantine);
+          if (original === "match" && isolated === "absent") return "source";
+          if (original === "absent" && isolated === "match") return "quarantine";
+          return original === "absent" && isolated === "absent" ? "missing" : "ambiguous";
+          async function inspect2(directory) {
+            try {
+              const info = await fs27.lstat(directory, { bigint: true });
+              if (!info.isDirectory() || String(info.ino) !== claim.scratch.inode || String(info.dev) !== claim.scratch.device || !process.geteuid || info.uid !== BigInt(process.geteuid()) || (info.mode & 0o7022n) !== 0n || await fs27.realpath(directory) !== directory) return "other";
+              return "match";
+            } catch (error) {
+              if (error.code === "ENOENT") return "absent";
+              throw error;
+            }
+          }
+        } catch {
+          return "unavailable";
+        }
+      },
+      move: (claim, tree, authorize2, backing) => native("move", claim, authorize2, tree, void 0, backing),
+      purge: (claim, tree, authorize2, backing) => native("purge", claim, authorize2, tree, void 0, backing),
+      flush: (claim, expected, authorize2) => native("flush", claim, authorize2, void 0, expected)
+    };
+  } catch {
+    return void 0;
+  }
+}
+function ledgerSidecars(database) {
+  try {
+    return ["-wal", "-shm"].map((suffix) => {
+      const directory = database.directory + suffix;
+      const info = lstatSync(directory, { bigint: true });
+      if (!info.isFile() || !process.geteuid || info.uid !== BigInt(process.geteuid()) || info.nlink !== 1n || (info.mode & 0o022n) !== 0n || String(info.dev) !== database.device) {
+        throw new Error("Untrusted SQLite sidecar.");
+      }
+      return { directory, device: String(info.dev), inode: String(info.ino) };
+    });
+  } catch {
+    return void 0;
+  }
+}
+function lockedMutation(python, input, authorize2) {
+  return new Promise((resolve2) => {
+    const child = spawn5(python, ["-I", "-S", "-B", "-c", cleanupProgram], { env: { LC_ALL: "C" } });
+    const stop = () => child.kill("SIGKILL");
+    const timer = setTimeout(stop, 1e4);
+    let output = "";
+    let approved = false;
+    let answered = false;
+    let stderr = false;
+    child.stdin.on("error", () => {
+    });
+    child.stderr.on("data", () => {
+      stderr = true;
+      stop();
+    });
+    child.stdout.setEncoding("utf8").on("data", (part) => {
+      output += part;
+      if (output.length > 128) {
+        stop();
+        return;
+      }
+      if (answered || output !== "locked\n") return;
+      answered = true;
+      try {
+        approved = child.pid !== void 0 && authorize2(child.pid) === true;
+      } catch {
+        approved = false;
+      }
+      child.stdin.end(approved ? "GO\n" : "STOP\n");
+    });
+    child.on("error", () => {
+      approved = false;
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve2(code === 0 && approved && !stderr && output === "locked\nverified\n");
+    });
+    child.stdin.write(input + "\n");
+  });
+}
+async function resolveCleanupInterpreter() {
+  const linux = process.platform === "linux";
+  if (!linux && process.platform !== "darwin") return;
+  const prefix = linux ? "/usr/bin" : applePythonRoot;
+  const executable = await fs27.realpath(linux ? "/usr/bin/python3" : path36.join(applePythonRoot, "usr/bin/python3"));
+  if (!workspacePathContains(prefix, executable)) return;
+  const info = await fs27.lstat(executable);
+  if (!info.isFile() || info.uid !== 0 || (info.mode & 3602) !== 0 || !(info.mode & 73)) return;
+  const checked = [executable];
+  for (let parent = path36.dirname(executable); ; parent = path36.dirname(parent)) {
+    const dir = await fs27.lstat(parent);
+    if (!dir.isDirectory() || dir.uid !== 0 || (dir.mode & 18) !== 0) return;
+    checked.push(parent);
+    if (parent === "/") break;
+  }
+  await assertDenyOnlyWorkspaceAcls(checked);
+  return executable;
+}
+var cleanupProgram = String.raw`
+import ctypes, errno, fcntl, json, os, re, sqlite3, stat, sys, urllib.parse
+
+if sys.platform == 'darwin':
+    system = ctypes.CDLL(None, use_errno=True)
+    get_acl = system.acl_get_fd_np
+    get_acl.argtypes, get_acl.restype = [ctypes.c_int, ctypes.c_int], ctypes.c_void_p
+    free_acl = system.acl_free
+    free_acl.argtypes = [ctypes.c_void_p]
+
+def require(condition):
+    if not condition:
+        raise ValueError()
+
+def parent_alive():
+    require(os.getppid() == data['parentPid'])
+
+def before_mutation():
+    parent_alive()
+    proof = data.get('backing')
+    if proof is None:
+        return
+    root = proof['directory']
+    require(os.path.realpath(root) == root and len(proof['entries']) == 8)
+    for name, *expected in proof['entries']:
+        require(not os.path.isabs(name) and '..' not in name.split('/'))
+        info = os.stat(os.path.join(root, name), follow_symlinks=False)
+        require(stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1))
+        require(expected == [str(n) for n in (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+                                               info.st_size, info.st_mtime_ns, info.st_ctime_ns)])
+
+def require_no_acl(fd):
+    if sys.platform != 'darwin':
+        return
+    ctypes.set_errno(0)
+    acl = get_acl(fd, 0x100)  # ACL_TYPE_EXTENDED
+    if acl:
+        free_acl(acl)
+        raise ValueError()
+    require(ctypes.get_errno() == errno.ENOENT)
+
+def verify_ledger(binding):
+    info = os.stat(binding['directory'], follow_symlinks=False)
+    require(stat.S_ISREG(info.st_mode) and str(info.st_dev) == binding['device']
+            and str(info.st_ino) == binding['inode'] and info.st_uid == os.geteuid()
+            and info.st_nlink == 1 and not info.st_mode & 0o022)
+
+def locks_ledger(binding, sidecars=()):
+    for item in (binding, *sidecars):
+        verify_ledger(item)
+    db = sqlite3.connect('file:' + urllib.parse.quote(binding['directory'], safe='/') + '?mode=rw', uri=True, timeout=0)
+    require(db.execute('PRAGMA main.journal_mode').fetchone() == ('wal',))
+    db.execute('BEGIN IMMEDIATE')
+    for item in (binding, *sidecars):
+        verify_ledger(item)
+    return db
+
+def sync(fd):
+    if sys.platform == 'darwin':
+        fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+    else:
+        os.fsync(fd)
+
+def signature(info):
+    return ':'.join(str(n) for n in (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+                                     info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns))
+
+def named(parent, leaf):
+    try:
+        return os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+
+def directory_matches(info, binding):
+    return (info is not None and stat.S_ISDIR(info.st_mode) and str(info.st_ino) == binding['inode']
+            and str(info.st_dev) == binding['device'] and info.st_uid == os.geteuid() and not info.st_mode & 0o7022)
+
+def build(entries):
+    require(isinstance(entries, list) and 1 <= len(entries) <= 4096)
+    nodes = {}
+    for relative, directory, stamp in entries:
+        require(isinstance(relative, str) and isinstance(directory, bool) and isinstance(stamp, str))
+        parts = relative.split('/') if relative else []
+        require(len(parts) <= 32 and all(p and p not in ('.', '..') and not re.search(r'[\\\x00-\x1f\x7f]', p) for p in parts))
+        require(relative not in nodes)
+        nodes[relative] = (directory, stamp, {})
+        if relative:
+            parent, _, leaf = relative.rpartition('/')
+            require(parent in nodes and nodes[parent][0])
+            nodes[parent][2][leaf] = nodes[relative]
+    require('' in nodes and nodes[''][0])
+    return nodes['']
+
+def check(parent, leaf, node, remove=False):
+    directory, stamp, children = node
+    info = named(parent, leaf)
+    require(info is not None and info.st_dev == device and info.st_uid == os.geteuid() and not getattr(info, 'st_flags', 0)
+            and not info.st_mode & 0o7022 and signature(info) == stamp)
+    if not directory:
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+        if sys.platform == 'darwin':
+            filefd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            try:
+                require(signature(os.fstat(filefd)) == stamp)
+                require_no_acl(filefd)
+            finally:
+                os.close(filefd)
+        if remove:
+            before_mutation()
+            os.unlink(leaf, dir_fd=parent)
+        return
+    require(stat.S_ISDIR(info.st_mode))
+    fd = os.open(leaf, flags, dir_fd=parent)
+    try:
+        require(signature(os.fstat(fd)) == stamp and set(os.listdir(fd)) == set(children))
+        require_no_acl(fd)
+        for child, child_node in children.items():
+            check(fd, child, child_node, remove)
+        if remove:
+            require(os.listdir(fd) == [])
+            current = named(parent, leaf)
+            require(current is not None and stat.S_ISDIR(current.st_mode)
+                    and (current.st_dev, current.st_ino, current.st_uid, current.st_gid, current.st_mode)
+                    == (info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode))
+            sync(fd)
+            before_mutation()
+            os.rmdir(leaf, dir_fd=parent)
+    finally:
+        os.close(fd)
+
+def rename_exclusive(parent, source, quarantine):
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == 'darwin':
+        rename, mode = libc.renameatx_np, 4  # RENAME_EXCL
+    else:
+        require(sys.platform.startswith('linux'))
+        rename, mode = libc.renameat2, 1  # RENAME_NOREPLACE
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    before_mutation()
+    require(rename(parent, os.fsencode(source), parent, os.fsencode(quarantine), mode) == 0)
+
+try:
+    data = json.loads(sys.stdin.buffer.readline(4 * 1024 * 1024))
+    root, op = data['root'], data['operation']
+    parent_alive()
+    device, flags = int(root['device']), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    rootfd = os.open(root['directory'], flags)
+    try:
+        require(directory_matches(os.fstat(rootfd), root))
+        require_no_acl(rootfd)
+        try:
+            fcntl.flock(rootfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            require(error.errno in (errno.EAGAIN, errno.EACCES))
+            print('busy')
+            sys.exit(0)
+        parent_alive()
+        if op == 'probe':
+            libc = ctypes.CDLL(None)
+            require(hasattr(libc, 'renameatx_np' if sys.platform == 'darwin' else 'renameat2'))
+            ledger = locks_ledger(data['database'])
+            sync(rootfd)
+            ledger.rollback()
+            ledger.close()
+            print('verified')
+            sys.exit(0)
+        scratch = data['scratch']
+        source = os.path.basename(scratch['directory'])
+        require(os.path.dirname(scratch['directory']) == root['directory']
+                and re.fullmatch(r'(cron_prompt|async_task)-[0-9a-f]{64}', source))
+        if op == 'validate':
+            require(directory_matches(named(rootfd, source), scratch))
+            check(rootfd, source, build(data['entries']))
+            print('verified')
+            sys.exit(0)
+        quarantine = data['quarantine']
+        require(re.fullmatch(r'\.lark-cleanup-[0-9a-f]{32}', quarantine))
+        sidecars = data['sidecars']
+        require([item['directory'] for item in sidecars] == [data['database']['directory'] + suffix for suffix in ('-wal', '-shm')])
+        ledger = locks_ledger(data['database'], sidecars)
+        expected_claim = data.get('expectedClaim')
+        if expected_claim is not None:
+            owner = data['owner']
+            record = ledger.execute('SELECT nonce, scratch_path, scratch_device, scratch_inode, scratch_baseline, last_used_at, state '
+                                    'FROM main.workspace_cleanup_claims WHERE workload_kind = ? AND run_id = ?',
+                                    (owner['kind'], owner['runId'])).fetchone()
+            require(record is not None and list(record) == expected_claim)
+        print('locked', flush=True)
+        require(sys.stdin.buffer.readline(16) == b'GO\n')
+        parent_alive()
+        for item in (data['database'], *sidecars):
+            verify_ledger(item)
+        if op == 'move':
+            require(directory_matches(named(rootfd, source), scratch) and named(rootfd, quarantine) is None)
+            check(rootfd, source, build(data['entries']))
+            require(directory_matches(named(rootfd, source), scratch))
+            rename_exclusive(rootfd, source, quarantine)
+            require(named(rootfd, source) is None and directory_matches(named(rootfd, quarantine), scratch))
+        elif op == 'purge':
+            require(named(rootfd, source) is None and directory_matches(named(rootfd, quarantine), scratch))
+            manifest = build(data['entries'])
+            check(rootfd, quarantine, manifest)
+            check(rootfd, quarantine, manifest, True)
+            require(named(rootfd, source) is None and named(rootfd, quarantine) is None)
+        elif op == 'flush':
+            require(named(rootfd, source) is None)
+            current = named(rootfd, quarantine)
+            require((data['expected'] == 'missing' and current is None)
+                    or (data['expected'] == 'quarantine' and directory_matches(current, scratch)))
+        else:
+            raise ValueError()
+        sync(rootfd)
+        ledger.rollback()
+        ledger.close()
+    finally:
+        os.close(rootfd)
+    print('verified')
+except (OSError, ValueError, KeyError, TypeError, AttributeError, sqlite3.Error):
+    sys.exit(1)
+`;
+
+// src/workspace-cleanup-recovery.ts
+async function reserveWorkspaceCleanupCandidate(context, owner) {
+  try {
+    const approved = await authorize(context, owner);
+    if (!approved) return;
+    const { allocation, baseline, request, authorizedRoots } = approved;
+    if (await validateManagedRunDirectory(allocation, "scratch", authorizedRoots) !== allocation.scratch.directory) return;
+    const tree = await observeWorkspaceCleanupTree(allocation.scratch, context.signal, !allocation.gitCheckout);
+    if (tree?.digest !== baseline || context.files.readiness() !== "ready" || !context.files.canStage(owner, tree) || !await context.revalidatePolicy() || !await tree.unchanged() || context.signal.aborted) return;
+    return context.claims.reserve(request);
+  } catch {
+    return void 0;
+  }
+}
+async function recoverWorkspaceCleanupClaim(context, claim) {
+  const { claims, files, signal } = context;
+  const hold = (reason) => claims.hold(claim, context.now().toISOString(), reason) ? "held" : "deferred";
+  try {
+    if (claim.state === "removed" || claim.state === "held") return claim.state;
+    for (let step = 0; step < 3 && !signal.aborted; step++) {
+      if (files.readiness() !== "ready") return "deferred";
+      const approved = await authorize(context, claim.owner, claim);
+      if (!approved) return "deferred";
+      const { request, baseline, quarantine, backing } = approved;
+      const location = await files.location(claim);
+      if (location === "unavailable") return "deferred";
+      if (location === "ambiguous" || location === "source" && claim.state !== "reserved" || location === "missing" && claim.state !== "purging") return hold("identity_unverified");
+      const binding = location === "source" ? claim.scratch : { ...claim.scratch, directory: quarantine };
+      const tree = location === "missing" ? void 0 : await observeWorkspaceCleanupTree(binding, signal, false, claim.scratch.directory);
+      if (signal.aborted) return "deferred";
+      if (location !== "missing" && !tree) return "deferred";
+      if (tree && tree.digest !== baseline) {
+        return hold(location === "source" ? "identity_unverified" : claim.state === "purging" ? "purge_incomplete" : "quarantine_unverified");
+      }
+      if (!await context.revalidatePolicy() || await files.location(claim) !== location || tree && !await tree.unchanged() || signal.aborted) {
+        return "deferred";
+      }
+      const permit = () => !signal.aborted && (context.confirmPolicy?.() ?? true) && (!backing || isWorkspaceGitCleanupProofCurrent(backing)) && claims.confirm(claim, request);
+      let updated;
+      if (claim.state === "reserved") {
+        const performed = location === "source" && tree ? await files.move(claim, tree, permit, backing) : await files.flush(claim, "quarantine", permit);
+        if (performed) updated = claims.perform(claim, request, "isolated", () => true);
+      } else if (claim.state === "isolated") {
+        updated = claims.perform(claim, request, "purging");
+      } else {
+        const performed = tree ? await files.purge(claim, tree, permit, backing) : await files.flush(claim, "missing", permit);
+        if (performed) updated = claims.perform(claim, request, "removed", () => true);
+      }
+      if (!updated) return "deferred";
+      claim = updated;
+      if (claim.state === "removed") return "removed";
+    }
+  } catch {
+  }
+  return "deferred";
+}
+async function authorize(context, owner, claim) {
+  const { roots, signal, epoch } = context;
+  if (signal.aborted || context.claims.databasePath !== context.files.databasePath || !await context.revalidatePolicy()) return;
+  const observation = context.claims.observe(roots.scratch, owner);
+  const reference = observation?.reference;
+  const record3 = reference?.record;
+  const now = context.now();
+  if (!observation || !reference || !record3 || !reference.scratchBaseline || observation.paths.unresolvedActiveCron || workspaceCleanupLedgerEligibility(
+    { ...reference, cleanupClaimed: !claim && reference.cleanupClaimed },
+    now,
+    context.minimumAgeDays,
+    epoch
+  ).reasons.length) return;
+  const allocation = record3.allocation;
+  if (!sameWorkspaceProject(roots.scratch, allocation.roots.scratch) || !sameWorkspaceProject(roots.artifacts, allocation.roots.artifacts) || claim && (!sameWorkspaceProject(claim.scratch, allocation.scratch) || claim.baseline !== reference.scratchBaseline)) return;
+  let authorizedRoots = context.authorizedRoots;
+  if (owner.kind === "async_task") {
+    if (!context.continuationRoot || !reference.continuationRoot || !allocation.project) return;
+    authorizedRoots = [authorizedRoots[0], .../* @__PURE__ */ new Set([...authorizedRoots.slice(1), context.continuationRoot, reference.continuationRoot])];
+    await Promise.all([roots.scratch, roots.artifacts, allocation.project].map((binding) => validateWorkspaceProject(authorizedRoots, binding)));
+  }
+  const mounts = await readWorkspaceDependencyMountPolicy();
+  const quarantine = claim && workspaceCleanupQuarantinePath(roots.scratch, claim);
+  const protectedPaths = await resolveProtectedPaths(observation.paths, context.authorizedRoots[0]);
+  if (!protectedPaths.complete || [allocation.scratch.directory, ...quarantine ? [quarantine] : []].some((directory) => !supportsScratch(directory, roots.scratch, mounts) || [roots.artifacts.directory, ...protectedPaths.directories].some((entry) => pathsOverlap(directory, entry, mounts)))) return;
+  const git = allocation.git;
+  const backing = git && await verifyWorkspaceGitCacheForCleanup({
+    authorizedRoots,
+    gitDirectory: git.cache,
+    repositoryId: git.repositoryId,
+    scope: git.scope,
+    commit: git.commit
+  }, signal);
+  if (git && (backing?.key !== git.key || backing?.storeFingerprint !== git.storeFingerprint)) return;
+  return {
+    allocation,
+    quarantine,
+    authorizedRoots,
+    backing: backing?.proof,
+    baseline: reference.scratchBaseline,
+    request: { roots, observation, minimumAgeDays: context.minimumAgeDays, now: now.toISOString(), epoch }
+  };
+}
+
+// src/workspace-cleanup-startup.ts
+var day = 864e5;
+var candidateLimit = 128;
+var cleanupPolicy = external_exports.discriminatedUnion("enabled", [
+  external_exports.strictObject({ version: external_exports.literal(1), enabled: external_exports.literal(false) }),
+  external_exports.strictObject({
+    version: external_exports.literal(1),
+    enabled: external_exports.literal(true),
+    maxScratchBytes: external_exports.int().positive(),
+    maxRunsPerStartup: external_exports.int().min(1).max(32).default(4)
+  })
+]);
+async function runStartupWorkspaceCleanup(request) {
+  const report = {
+    status: "skipped",
+    reason: "policy_unverified",
+    examined: 0,
+    removed: 0,
+    held: 0,
+    deferred: 0,
+    allocatedBytes: null
+  };
+  const outcome = (status, reason) => ({ ...report, status, reason });
+  if (request.dryRun || request.signal?.aborted) return outcome("disabled", "dry_run_or_stopping");
+  const signal = AbortSignal.any([AbortSignal.timeout(3e4), ...request.signal ? [request.signal] : []]);
+  const now = request.now ?? (() => /* @__PURE__ */ new Date());
+  let database;
+  try {
+    const configured = await readPolicy(request.policyPath);
+    if (!configured?.policy.enabled) return outcome("disabled", "not_enabled");
+    const { policy, stamp: stamp2 } = configured;
+    const { configPath, databasePath, lock, minimumAgeDays } = request;
+    const stateRoot = path37.dirname(databasePath);
+    if (!isLarkInstanceLockHeld(lock, stateRoot) || !lockMatches(lock)) return outcome("skipped", "lock_unverified");
+    if (!Number.isSafeInteger(minimumAgeDays) || minimumAgeDays < 1 || minimumAgeDays > 3650) {
+      return outcome("skipped", "retention_unverified");
+    }
+    const ledger = await pinLedger(databasePath);
+    if (!ledger) return outcome("skipped", "ledger_unavailable");
+    const configureRoot = path37.dirname(configPath);
+    if (path37.dirname(request.policyPath) !== configureRoot) return outcome("skipped", "policy_unverified");
+    const policyFiles = [
+      configPath,
+      ...request.sourceRegistryPath ? [request.sourceRegistryPath] : [],
+      path37.join(configureRoot, "workspace-git-sources.json"),
+      path37.join(configureRoot, "workspace-dependencies.json")
+    ];
+    const stamps = policyFiles.map((file) => fileStamp(file, true));
+    const guardPaths = [stateRoot, configureRoot, path37.dirname(request.policyPath), ...request.protectedDirectories];
+    const confirmPolicy = () => {
+      try {
+        return !signal.aborted && isLarkInstanceLockHeld(lock, stateRoot) && lockMatches(lock) && fileStamp(request.policyPath, true) === stamp2 && policyFiles.every((file, index) => fileStamp(file, true) === stamps[index]) && sameFile(databasePath, ledger);
+      } catch {
+        return false;
+      }
+    };
+    const readLayout = async () => {
+      if (!confirmPolicy()) return;
+      const roots2 = await readManagedWorkspaceRoots(request);
+      if (!roots2) return;
+      await resolveManagedGitSelection({ ...request, roots: roots2 });
+      const dependencies = await loadWorkspaceDependencyWriteGuard(configPath, { allowMissingCachesForStorage: true });
+      await dependencies?.assertWrites([roots2.scratch.directory]);
+      const mounts = await readWorkspaceDependencyMountPolicy();
+      if (!mounts.supports(roots2.scratch.directory) || !mounts.supports(roots2.artifacts.directory) || guardPaths.some((entry) => pathsOverlap(roots2.scratch.directory, entry, mounts))) return;
+      return confirmPolicy() ? roots2 : void 0;
+    };
+    const roots = await readLayout();
+    if (!roots) return outcome("skipped", "layout_unverified");
+    const exclusive = await hasExclusiveWorkspaceCleanupStorage([roots.scratch.directory, databasePath]);
+    const epoch = exclusive ? await readWorkspaceCleanupEpoch() : void 0;
+    const revalidatePolicy = async () => {
+      const current = await readLayout();
+      return !!current && sameWorkspaceProject(current.scratch, roots.scratch) && sameWorkspaceProject(current.artifacts, roots.artifacts) && (!epoch || await hasExclusiveWorkspaceCleanupStorage([roots.scratch.directory, databasePath]));
+    };
+    const refreshUsage = async () => {
+      const [inventory] = await inventoryWorkspaceStorage(
+        [{ role: "continuation", directory: roots.scratch.directory }],
+        { maxEntries: 3e4, maxDepth: 32, signal }
+      );
+      const usage = inventory?.total?.allocatedBytes;
+      if (inventory?.status !== "complete" || typeof usage !== "number" || !Number.isSafeInteger(usage) || !await revalidatePolicy()) return false;
+      report.allocatedBytes = usage;
+      return true;
+    };
+    const probe = await createWorkspaceCleanupFiles(roots.scratch, ledger);
+    if (!probe) return outcome("skipped", "native_adapter_unavailable");
+    const ready = probe.readiness();
+    if (ready === "busy") return outcome("blocked", "native_operation_in_progress");
+    if (ready !== "ready") return outcome("skipped", "native_adapter_unavailable");
+    if (!await refreshUsage()) return outcome("skipped", "inventory_unverified");
+    if (!confirmPolicy()) return outcome("skipped", "policy_changed");
+    database = new DatabaseSync(databasePath, { timeout: 0 });
+    if (!sameFile(databasePath, ledger) || database.prepare("PRAGMA user_version").get()?.user_version !== DURABLE_RUN_SCHEMA_VERSION) {
+      return outcome("skipped", "ledger_unavailable");
+    }
+    database.exec("PRAGMA synchronous = FULL; PRAGMA fullfsync = ON;");
+    const references = readProtectedPathReferences(database);
+    if (references.incomplete) return outcome("skipped", references.limitReached ? "reference_scan_limit" : "references_unverified");
+    const claims = new SqliteWorkspaceCleanupClaims(database);
+    const files = await createWorkspaceCleanupFiles(roots.scratch, ledger);
+    if (!files || files.readiness() !== "ready" || !confirmPolicy()) return outcome("skipped", "native_adapter_unavailable");
+    const context = {
+      claims,
+      files,
+      roots,
+      authorizedRoots: request.authorizedRoots,
+      continuationRoot: request.continuationRoot,
+      minimumAgeDays,
+      now,
+      signal,
+      epoch,
+      revalidatePolicy,
+      confirmPolicy
+    };
+    async function processClaim(claim) {
+      const result = await recoverWorkspaceCleanupClaim(context, claim);
+      report[result]++;
+      if (result === "deferred" && confirmPolicy()) {
+        const latest = claims.get(claim.owner);
+        if (latest) claims.postpone(latest, now().toISOString());
+      }
+    }
+    const pending = claims.pending(roots.scratch, policy.maxRunsPerStartup);
+    let attempted = 0;
+    for (const claim of pending) {
+      if (!confirmPolicy()) return outcome("partial", "policy_changed_or_budget");
+      attempted++;
+      report.examined++;
+      await processClaim(claim);
+      if (!await refreshUsage()) return outcome("partial", "inventory_unverified");
+    }
+    if (report.allocatedBytes <= policy.maxScratchBytes) {
+      return report.deferred || claims.pending(roots.scratch, 1).length ? outcome("partial", "recovery_pending") : outcome("complete", "within_capacity");
+    }
+    const cutoff = new Date(now().getTime() - minimumAgeDays * day).toISOString();
+    const candidates = claims.candidates(roots.scratch, cutoff, candidateLimit);
+    for (const candidate of candidates) {
+      if (!confirmPolicy()) return outcome("partial", "policy_changed_or_budget");
+      if (attempted >= policy.maxRunsPerStartup) break;
+      report.examined++;
+      const claim = await reserveWorkspaceCleanupCandidate(context, candidate.owner);
+      if (confirmPolicy()) claims.recordCandidateScan(roots.scratch, candidate);
+      if (!claim) continue;
+      attempted++;
+      await processClaim(claim);
+      if (!await refreshUsage()) return outcome("partial", "inventory_unverified");
+      if (report.allocatedBytes <= policy.maxScratchBytes) {
+        return report.deferred ? outcome("partial", "recovery_pending") : outcome("complete", "capacity_reached");
+      }
+    }
+    return outcome("partial", attempted >= policy.maxRunsPerStartup ? "run_limit" : candidates.length === candidateLimit ? "candidate_scan_limit" : "protected_or_ineligible");
+  } catch {
+    return outcome(report.examined ? "partial" : "skipped", "policy_or_ledger_unavailable");
+  } finally {
+    database?.close();
+  }
+}
+async function readPolicy(filename) {
+  const parent = path37.dirname(filename);
+  let file;
+  try {
+    file = await fs28.open(filename, constants3.O_RDONLY | constants3.O_NOFOLLOW | constants3.O_NONBLOCK);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  try {
+    const binding = await pinWorkspacePath(parent, ".");
+    if (binding.directory !== parent) throw new Error("Cleanup policy path is not pinned.");
+    await assertProtectedWorkspacePath(binding, true);
+    const info = await file.stat({ bigint: true });
+    if (!isTrustedFile(info) || info.size > 8192n) throw new Error("Unsafe cleanup configuration.");
+    await assertDenyOnlyWorkspaceAcls([filename]);
+    const buffer = Buffer.alloc(8192);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    const stamp2 = describe2(info);
+    if (BigInt(bytesRead) !== info.size || describe2(await file.stat({ bigint: true })) !== stamp2 || fileStamp(filename) !== stamp2) {
+      throw new Error("Cleanup configuration changed.");
+    }
+    return { policy: cleanupPolicy.parse(JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"))), stamp: stamp2 };
+  } finally {
+    await file.close();
+  }
+}
+async function pinLedger(filename) {
+  try {
+    if (!path37.isAbsolute(filename) || path37.normalize(filename) !== filename) return;
+    const parentPath = path37.dirname(filename);
+    const parent = await pinWorkspacePath(parentPath, ".");
+    if (parent.directory !== parentPath) return;
+    await assertProtectedWorkspacePath(parent, true);
+    const files = [filename, `${filename}-wal`, `${filename}-shm`];
+    const existing = [];
+    let ledger;
+    for (const [index, file] of files.entries()) {
+      const info = await fs28.lstat(file, { bigint: true }).catch((error) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      if (!info && index > 0) continue;
+      if (!info || !isTrustedFile(info) || String(info.dev) !== parent.device) return;
+      existing.push(file);
+      if (index === 0) ledger = { directory: filename, device: String(info.dev), inode: String(info.ino) };
+    }
+    if (fileStamp(`${filename}-journal`) !== "absent") return;
+    await assertDenyOnlyWorkspaceAcls(existing);
+    return ledger;
+  } catch {
+    return void 0;
+  }
+}
+function isTrustedFile(info) {
+  return info.isFile() && !!process.geteuid && info.uid === BigInt(process.geteuid()) && info.nlink === 1n && (info.mode & 0o022n) === 0n;
+}
+function describe2(info) {
+  return [info.dev, info.ino, info.mode, info.uid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(":");
+}
+function fileStamp(filename, trusted = false) {
+  try {
+    const info = lstatSync2(filename, { bigint: true });
+    if (trusted && !isTrustedFile(info)) throw new Error("Untrusted configuration file.");
+    return describe2(info);
+  } catch (error) {
+    if (error.code === "ENOENT") return "absent";
+    throw error;
+  }
+}
+function sameFile(filename, binding) {
+  const info = lstatSync2(filename, { bigint: true });
+  return isTrustedFile(info) && String(info.dev) === binding.device && String(info.ino) === binding.inode;
+}
+function lockMatches(lock) {
+  const info = lstatSync2(lock.path, { bigint: true });
+  if (!isTrustedFile(info) || info.size > 1024n) return false;
+  const record3 = JSON.parse(readFileSync(lock.path, "utf8"));
+  return record3?.pid === process.pid && record3?.startedAt === lock.startedAt;
+}
+
 // src/index.ts
 var closeContinuationRuntime = null;
 var stopChannelServices = null;
@@ -64236,9 +65225,37 @@ async function main() {
   const isDryRun = process.argv.includes("--dry-run");
   const lock = isDryRun ? null : await acquireLarkInstanceLock(appConfig.appId);
   if (lock) {
+    const maintenanceAbort = new AbortController();
+    let maintenance;
     registerLockCleanup(lock, void 0, async () => {
+      maintenanceAbort.abort();
+      await maintenance;
       await closeContinuationRuntime?.();
     });
+    maintenance = runStartupWorkspaceCleanup({
+      databasePath: appConfig.continuationDbPath,
+      configPath: appConfig.managedWorkspaceConfigPath,
+      policyPath: managedWorkspaceCleanupPolicyPath,
+      sourceRegistryPath: appConfig.workspaceProjectsConfigPath,
+      lock,
+      authorizedRoots: [appConfig.codexExecCwd],
+      continuationRoot: appConfig.continuationWorkingRoot,
+      protectedDirectories: [
+        appConfig.memoriesDir,
+        appConfig.inboxDir,
+        appConfig.jobsDir,
+        appConfig.codexExecSessionsDir,
+        path38.join(channelHome, ".env"),
+        path38.join(channelHome, "runtime")
+      ],
+      minimumAgeDays: appConfig.continuationRetentionDays,
+      dryRun: false,
+      signal: maintenanceAbort.signal
+    });
+    const cleanup = await maintenance;
+    if (maintenanceAbort.signal.aborted) return;
+    if (cleanup.status !== "disabled") console.error(`[workspace-cleanup] ${JSON.stringify(cleanup)}`);
+    if (cleanup.status === "blocked") throw new Error("Startup deferred while a managed workspace operation still holds the native lock.");
   }
   await emitCodexExecConfigDiagnostics(appConfig);
   await accessControlStore.load();

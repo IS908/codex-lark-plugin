@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { lstatSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { BigIntStats } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -113,8 +114,30 @@ export async function inspectWorkspaceGitSnapshot(input: SnapshotRequest): Promi
 }
 
 // The producer must authorize the cache separately and normalize it to one exact commit closure.
-export async function verifyWorkspaceGitCache(input: SnapshotRequest): Promise<VerifiedGitCache> {
-  return verifyCache(input);
+export async function verifyWorkspaceGitCache(input: SnapshotRequest, signal?: AbortSignal): Promise<VerifiedGitCache> {
+  return verifyCache(input, undefined, signal);
+}
+
+export interface WorkspaceGitCleanupProof { directory: string; entries: readonly string[][] }
+
+export async function verifyWorkspaceGitCacheForCleanup(input: SnapshotRequest, signal: AbortSignal) {
+  let entries: string[][] | undefined;
+  const verified = await verifyCache(input, undefined, signal, (stamp) => { entries = stamp; });
+  if (!entries || !isWorkspaceGitCleanupProofCurrent({ directory: input.gitDirectory.directory, entries })) {
+    throw new WorkspaceGitSnapshotError('git_cache_invalid');
+  }
+  const proof: WorkspaceGitCleanupProof = { directory: input.gitDirectory.directory, entries };
+  return { ...verified, proof };
+}
+
+export function isWorkspaceGitCleanupProofCurrent(proof: WorkspaceGitCleanupProof): boolean {
+  try {
+    if (realpathSync(proof.directory) !== proof.directory) return false;
+    return proof.entries.every(([relative, ...stamp]) => {
+      const info = lstatSync(path.join(proof.directory, relative), { bigint: true });
+      return (info.isDirectory() || info.isFile() && info.nlink === 1n) && stamp.join(':') === cacheEntryStamp(info).join(':');
+    });
+  } catch { return false; }
 }
 
 type VerifiedGitCache = SnapshotIdentity & {
@@ -184,7 +207,8 @@ export async function assertWorkspaceGitCheckoutMounts(bindings: WorkspaceProjec
   assertLinuxCheckoutMounts(bindings.map(({ directory }) => directory));
 }
 
-async function verifyCache(input: SnapshotRequest, trustedExecutable?: string): Promise<VerifiedGitCache> {
+async function verifyCache(input: SnapshotRequest, trustedExecutable?: string, signal?: AbortSignal,
+  capture?: (stamp: string[][]) => void): Promise<VerifiedGitCache> {
   if (!repositoryIdentity.safeParse({ repositoryId: input.repositoryId, scope: input.scope, commit: input.commit }).success) {
     throw new WorkspaceGitSnapshotError('invalid_snapshot');
   }
@@ -192,16 +216,20 @@ async function verifyCache(input: SnapshotRequest, trustedExecutable?: string): 
   const executable = trustedExecutable ?? await trustedGitExecutable();
   const objectFormat = input.commit.length === 40 ? 'sha1' : 'sha256';
   try {
+    signal?.throwIfAborted();
     const { storeFingerprint, packPath } = await fingerprintCache(binding, input.commit, objectFormat);
-    await verifyCacheGit(executable, binding.directory, ['index-pack', '--verify', '--threads=1', packPath]);
-    const type = await verifyCacheGit(executable, binding.directory, ['cat-file', '-t', input.commit]);
+    await verifyCacheGit(executable, binding.directory, ['index-pack', '--verify', '--threads=1', packPath], signal);
+    const type = await verifyCacheGit(executable, binding.directory, ['cat-file', '-t', input.commit], signal);
     if (type.toString('ascii') !== 'commit\n') throw new WorkspaceGitSnapshotError('git_cache_invalid');
     const unreachable = await verifyCacheGit(executable, binding.directory, ['fsck', '--full', '--strict',
-      '--no-reflogs', '--no-progress', '--unreachable', input.commit]);
-    if (unreachable.length || storeFingerprint !== (await fingerprintCache(binding, input.commit, objectFormat)).storeFingerprint) {
+      '--no-reflogs', '--no-progress', '--unreachable', input.commit], signal);
+    const final = await fingerprintCache(binding, input.commit, objectFormat);
+    if (unreachable.length || storeFingerprint !== final.storeFingerprint) {
       throw new WorkspaceGitSnapshotError('git_cache_invalid');
     }
     await validateWorkspaceProject(input.authorizedRoots, binding);
+    signal?.throwIfAborted();
+    capture?.(final.stamp);
     const identity = { repositoryId: input.repositoryId, scope: input.scope, commit: input.commit, objectFormat } satisfies SnapshotIdentity;
     return { ...identity, key: gitSnapshotKey(identity), storeFingerprint };
   } catch {
@@ -463,6 +491,7 @@ async function validateCheckoutFiles(checkout: WorkspaceProjectBinding, gitDirec
 async function fingerprintCache(binding: WorkspaceProjectBinding, commit: string, format: ObjectFormat): Promise<{
   storeFingerprint: string;
   packPath: string;
+  stamp: string[][];
 }> {
   const { directory, device, inode } = binding;
   await assertProtectedWorkspacePath(binding);
@@ -477,7 +506,7 @@ async function fingerprintCache(binding: WorkspaceProjectBinding, commit: string
       throw new WorkspaceGitSnapshotError('git_cache_invalid');
     }
     await assertDenyOnlyWorkspaceAcls([file]);
-    stamp.push([relative, ...[info.dev, info.ino, info.mode, info.uid, info.gid, info.size, info.mtimeNs, info.ctimeNs].map(String)]);
+    stamp.push([relative, ...cacheEntryStamp(info)]);
     return info;
   };
   const names = async (relative: string, max: number) => {
@@ -517,7 +546,11 @@ async function fingerprintCache(binding: WorkspaceProjectBinding, commit: string
       throw new WorkspaceGitSnapshotError('git_cache_invalid');
     }
   }
-  return { storeFingerprint: createHash('sha256').update(JSON.stringify(['git-cache-footprint-v1', stamp])).digest('hex'), packPath };
+  return { storeFingerprint: createHash('sha256').update(JSON.stringify(['git-cache-footprint-v1', stamp])).digest('hex'), packPath, stamp };
+}
+
+function cacheEntryStamp(info: BigIntStats) {
+  return [info.dev, info.ino, info.mode, info.uid, info.gid, info.size, info.mtimeNs, info.ctimeNs].map(String);
 }
 
 async function readPinnedCachePrefix(file: string, expected: BigIntStats, length: number): Promise<Buffer> {
@@ -598,22 +631,23 @@ async function trustedGitExecutable(): Promise<string> {
   return resolveSystemGit().catch(() => { throw new WorkspaceGitSnapshotError('git_unavailable'); });
 }
 
-function verifyCacheGit(executable: string, cwd: string, args: string[]): Promise<Buffer> {
-  return boundedGit(executable, cwd, [...cacheGit, ...args]);
+function verifyCacheGit(executable: string, cwd: string, args: string[], signal?: AbortSignal): Promise<Buffer> {
+  return boundedGit(executable, cwd, [...cacheGit, ...args], undefined, undefined, signal);
 }
 
-function boundedGit(executable: string, cwd: string, args: string[], maxBuffer?: number, input?: Buffer): Promise<Buffer> {
+function boundedGit(executable: string, cwd: string, args: string[], maxBuffer?: number, input?: Buffer, signal?: AbortSignal): Promise<Buffer> {
   // Darwin does not support this address-space limit; still bound input, allocations, and time there.
   if (process.platform === 'linux') {
     return git('/bin/sh', cwd, ['-c', 'ulimit -v 786432 || exit 125; exec "$@"', 'lark-git-verifier',
-      executable, ...args], input, 60_000, maxBuffer);
+      executable, ...args], input, 60_000, maxBuffer, signal);
   }
-  return git(executable, cwd, args, input, 60_000, maxBuffer);
+  return git(executable, cwd, args, input, 60_000, maxBuffer, signal);
 }
 
-async function git(executable: string, cwd: string, args: string[], input?: string | Buffer, timeout = 10_000, maxBuffer = 256 * 1024): Promise<Buffer> {
+async function git(executable: string, cwd: string, args: string[], input?: string | Buffer, timeout = 10_000, maxBuffer = 256 * 1024,
+  signal?: AbortSignal): Promise<Buffer> {
   const running = exec(executable, args, {
-    cwd, timeout, killSignal: 'SIGKILL', maxBuffer, encoding: 'buffer',
+    cwd, timeout, signal, killSignal: 'SIGKILL', maxBuffer, encoding: 'buffer',
     env: {
       PATH: '/usr/bin:/bin', LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_OPTIONAL_LOCKS: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1',

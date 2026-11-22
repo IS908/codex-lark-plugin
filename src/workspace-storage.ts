@@ -20,6 +20,7 @@ interface WorkspaceRoot {
 interface InventoryOptions {
   maxEntries?: number;
   maxDepth?: number;
+  signal?: AbortSignal;
 }
 
 export interface WorkspaceInventory {
@@ -92,7 +93,7 @@ function addUsage(target: Usage, stats: Stats, duplicate: boolean): void {
 async function scan(
   inventory: WorkspaceInventory,
   rootStats: Stats,
-  { maxEntries = 1_000_000, maxDepth = 96 }: InventoryOptions,
+  { maxEntries = 1_000_000, maxDepth = 96, signal }: InventoryOptions,
 ): Promise<void> {
   const total = usage();
   inventory.total = total;
@@ -108,9 +109,9 @@ async function scan(
     group?: Usage,
     knownStats?: Stats,
   ): Promise<void> {
-    if (visited >= maxEntries) {
+    if (signal?.aborted || visited >= maxEntries) {
       entryLimit = true;
-      issue(inventory, relative, 'entry_limit');
+      issue(inventory, relative, signal?.aborted ? 'scan_aborted' : 'entry_limit');
       return;
     }
     visited++;

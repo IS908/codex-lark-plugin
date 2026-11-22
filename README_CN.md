@@ -1,7 +1,7 @@
 # Codex Lark Plugin
 
 [![docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![version](https://img.shields.io/badge/version-2.20.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.21.0-informational)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -220,6 +220,33 @@ npm run --silent doctor -- --workspace-cleanup-preview --json
 或安装器、运行留下额外内容时，都会保留。Linux 由 `attr` 软件包提供的系统
 `/usr/bin/getfattr` 核验扩展属性；缺失时保留受影响的目录。在 Linux 上运行完整的
 `npm test` 前，请安装 `attr`；测试还需要其中的 `setfattr`。
+
+#### 显式启用启动清理
+
+先检查只读预览，再由管理员创建仅所有者可写的
+`~/.codex/channels/lark/runtime-config/managed-workspace-cleanup.json`：
+
+```json
+{
+  "version": 1,
+  "enabled": true,
+  "maxScratchBytes": 10737418240,
+  "maxRunsPerStartup": 4
+}
+```
+
+文件缺失或设置为 `{"version":1,"enabled":false}` 时关闭。启用后在插件启动、
+接收消息和启动任务 worker 之前运行一次；dry-run 和 doctor 不清理。
+容量阈值按托管临时根目录实际分配的字节计算，不保证能回收到阈值。
+扫描完整且超过阈值时，才会登记满足 `LARK_CONTINUATION_RETENTION_DAYS`
+的新候选。已中断的登记优先恢复，即使此时低于阈值。每次处理 1 至 32 个运行，
+默认 4 个，结果计数和原因写入 stderr。未知文件计入占用，但不作为候选。
+
+托管临时目录需与插件状态、配置、记忆和收件箱目录隔离。Linux 需要系统 `/usr/bin/python3` 和
+`attr`，macOS 需要 Apple Command Line Tools 内受信任的 Python 3；插件不会
+安装缺失工具。无法证明进程已停止的运行（包括执行过的 Linux 运行）仍受保护。
+维护期间不要改动配置、注册表、临时目录或隔离目录。正式产物和重试输入不受清理影响。
+清除不可逆；未能验证或只清除了一部分的隔离目录保留，需人工核对，不能按名称猜测后恢复或删除。
 
 #### 选择工作项目
 
